@@ -4,6 +4,7 @@
 //! `package.json#scripts`, `Procfile`. Each detector returns Vec<DetectedService>
 //! and they're merged. No source is authoritative — user picks per row in the UI.
 
+use crate::classify::{classify_command, classify_script_body, ServerLikelihood};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
@@ -16,6 +17,7 @@ pub struct DetectedService {
     pub cwd_rel: PathBuf, // relative to worktree root, usually "."
     pub source: ServiceSource,
     pub source_file: PathBuf, // which file in the worktree produced this
+    pub likelihood: ServerLikelihood, // computed at detection time
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -62,12 +64,18 @@ fn detect_shell_scripts(root: &Path) -> Vec<DetectedService> {
                 }
             }
             let rel = format!("{subdir}/{name}");
+            // Read the script body and classify based on its actual content.
+            let likelihood = match fs::read_to_string(&path) {
+                Ok(body) => classify_script_body(&body),
+                Err(_) => ServerLikelihood::Maybe,
+            };
             out.push(DetectedService {
                 name: rel.clone(),
                 command: format!("./{rel}"),
                 cwd_rel: PathBuf::from("."),
                 source: ServiceSource::ShellScript,
                 source_file: PathBuf::from(rel),
+                likelihood,
             });
         }
     }
@@ -78,28 +86,69 @@ fn detect_makefile(root: &Path) -> Vec<DetectedService> {
     let mk = root.join("Makefile");
     let Ok(text) = fs::read_to_string(&mk) else { return vec![] };
     let keywords: &[&str] = &["dev", "start", "run", "serve", "up", "web", "api", "watch", "frontend", "backend"];
+    // Parse out a map of target -> recipe lines so we can classify each by its actual body.
+    let recipes = parse_makefile_recipes(&text);
     let mut out = Vec::new();
-    for line in text.lines() {
-        // Quick filter — a target line starts at column 0 (no tab/space) and has a colon.
-        let Some(colon) = line.find(':') else { continue };
-        if colon == 0 || line.starts_with(' ') || line.starts_with('\t') || line.starts_with('#') {
-            continue;
-        }
-        let target = line[..colon].trim();
-        if target.is_empty() || target.contains(|c: char| c.is_whitespace()) || target.starts_with('.') {
-            continue;
-        }
+    for (target, recipe_lines) in &recipes {
         let target_lc = target.to_lowercase();
         if !keywords.iter().any(|k| target_lc == *k) {
             continue;
         }
+        let recipe_body = recipe_lines.join("\n");
+        let likelihood = classify_script_body(&recipe_body);
         out.push(DetectedService {
             name: format!("make {target}"),
             command: format!("make {target}"),
             cwd_rel: PathBuf::from("."),
             source: ServiceSource::Makefile,
             source_file: PathBuf::from("Makefile"),
+            likelihood,
         });
+    }
+    out
+}
+
+/// Parse a Makefile into target -> recipe lines. Skips dependencies, .PHONY,
+/// comments. Recipe lines are those indented with tab or space immediately
+/// after a target: line.
+fn parse_makefile_recipes(text: &str) -> Vec<(String, Vec<String>)> {
+    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    let mut current: Option<(String, Vec<String>)> = None;
+    for line in text.lines() {
+        if line.starts_with('\t') || (line.starts_with(' ') && !line.trim().is_empty()) {
+            if let Some((_, recipe)) = current.as_mut() {
+                recipe.push(line.trim_start().to_string());
+            }
+            continue;
+        }
+        // Non-recipe line: either a new target or anything else (blank, comment, variable).
+        if let Some(colon) = line.find(':') {
+            if colon == 0 || line.starts_with('#') {
+                if let Some(prev) = current.take() {
+                    out.push(prev);
+                }
+                continue;
+            }
+            let target = line[..colon].trim();
+            if target.is_empty() || target.contains(|c: char| c.is_whitespace()) || target.starts_with('.') {
+                if let Some(prev) = current.take() {
+                    out.push(prev);
+                }
+                continue;
+            }
+            if let Some(prev) = current.take() {
+                out.push(prev);
+            }
+            current = Some((target.to_string(), Vec::new()));
+        } else {
+            // blank / variable / comment / etc.
+            if let Some(prev) = current.take() {
+                out.push(prev);
+            }
+        }
+    }
+    if let Some(prev) = current.take() {
+        out.push(prev);
     }
     out
 }
@@ -111,13 +160,16 @@ fn detect_node_scripts(root: &Path) -> Vec<DetectedService> {
     let pm = detect_node_pm(root);
     let mut out = Vec::new();
     for key in ["dev", "start", "serve"] {
-        if pkg.scripts.contains_key(key) {
+        if let Some(script_value) = pkg.scripts.get(key) {
+            // Classify based on what the script actually runs, not the key.
+            let likelihood = classify_command(script_value);
             out.push(DetectedService {
                 name: format!("{pm} {key}"),
                 command: format!("{pm} run {key}"),
                 cwd_rel: PathBuf::from("."),
                 source: ServiceSource::NodeScript,
                 source_file: PathBuf::from("package.json"),
+                likelihood,
             });
         }
     }
@@ -127,7 +179,8 @@ fn detect_node_scripts(root: &Path) -> Vec<DetectedService> {
 fn detect_node_pm(root: &Path) -> &'static str {
     if root.join("pnpm-lock.yaml").exists() { return "pnpm"; }
     if root.join("yarn.lock").exists() { return "yarn"; }
-    if root.join("bun.lockb").exists() { return "bun"; }
+    // Bun moved from binary (bun.lockb) to text (bun.lock) — accept both.
+    if root.join("bun.lock").exists() || root.join("bun.lockb").exists() { return "bun"; }
     "npm"
 }
 
@@ -147,12 +200,23 @@ fn detect_procfile(root: &Path) -> Vec<DetectedService> {
             if entry_name.is_empty() || command.is_empty() {
                 continue;
             }
+            // Procfile entries are by convention long-running processes. We
+            // still run the command-content classifier so a misnamed entry
+            // (e.g. `lint: eslint .`) gets correctly tagged as NotServer.
+            // For ambiguous/Maybe results, promote to Server because of the
+            // Procfile-by-convention signal.
+            let cmd_class = classify_command(command);
+            let likelihood = match cmd_class {
+                ServerLikelihood::NotServer => ServerLikelihood::NotServer,
+                _ => ServerLikelihood::Server,
+            };
             out.push(DetectedService {
                 name: format!("{name}:{entry_name}"),
                 command: command.to_string(),
                 cwd_rel: PathBuf::from("."),
                 source: ServiceSource::Procfile,
                 source_file: PathBuf::from(name),
+                likelihood,
             });
         }
         if !out.is_empty() {
@@ -204,6 +268,36 @@ mod tests {
         let svcs = detect_services(d.path());
         assert!(svcs.iter().any(|s| s.command == "pnpm run dev"));
         assert!(!svcs.iter().any(|s| s.name.contains("build")));
+    }
+
+    #[test]
+    fn bun_text_lockfile_is_recognized() {
+        let d = tmpdir();
+        fs::write(
+            d.path().join("package.json"),
+            r#"{"name":"x","scripts":{"dev":"vite"}}"#,
+        ).unwrap();
+        // Bun's new text-based lockfile.
+        fs::write(d.path().join("bun.lock"), "").unwrap();
+        let svcs = detect_services(d.path());
+        assert!(svcs.iter().any(|s| s.command == "bun run dev"));
+    }
+
+    #[test]
+    fn detects_procfile_entries_with_likelihood() {
+        let d = tmpdir();
+        fs::write(
+            d.path().join("Procfile"),
+            "api: uvicorn src.main:app --reload --port 8000\nweb: bun run dev\nlint: eslint .\n",
+        ).unwrap();
+        let svcs = detect_services(d.path());
+        // 3 entries surface from the Procfile.
+        let procfile_svcs: Vec<_> = svcs.iter().filter(|s| s.source == ServiceSource::Procfile).collect();
+        assert_eq!(procfile_svcs.len(), 3);
+        let api = svcs.iter().find(|s| s.name == "Procfile:api").unwrap();
+        assert_eq!(api.likelihood, ServerLikelihood::Server);
+        let lint = svcs.iter().find(|s| s.name == "Procfile:lint").unwrap();
+        assert_eq!(lint.likelihood, ServerLikelihood::NotServer, "lint should be filtered out even from Procfile");
     }
 
     #[test]

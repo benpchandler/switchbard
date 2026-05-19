@@ -4,7 +4,7 @@ use hive_core::{
     attribute, detect_services, enumerate_worktrees, humanize_age, kill_pgid, open_url,
     probe_ahead_behind, probe_dirty, probe_head_commit_time, scan_listeners, spawn_in_session,
     url_for_port, AttributedListener, DetectedService, KillOutcome, LocalListener, Repo,
-    WorktreeRef, BROWSER_APP_NAMES,
+    ServerLikelihood, WorktreeRef, BROWSER_APP_NAMES,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -138,6 +138,9 @@ struct HiveApp {
     expanded_repos: BTreeSet<String>,
     wt_filter: String,
     server_filter: String,
+    /// When false (default), hide rows whose classifier verdict is NotServer
+    /// (test scripts, build wrappers, ship-gate runners, etc.).
+    show_non_servers: bool,
     /// 0 = system default; 1..=BROWSER_APP_NAMES.len() = specific browser.
     browser_choice: usize,
     /// Last UI feedback message for the Servers view (spawn errors, etc.).
@@ -287,6 +290,7 @@ impl HiveApp {
             expanded_repos: BTreeSet::new(),
             wt_filter: String::new(),
             server_filter: String::new(),
+            show_non_servers: false,
             browser_choice: 0,
             server_msg,
         }
@@ -527,6 +531,7 @@ impl eframe::App for HiveApp {
                 ViewMode::Servers => {
                     ui.label("filter:");
                     ui.text_edit_singleline(&mut self.server_filter);
+                    ui.checkbox(&mut self.show_non_servers, "show non-server scripts");
                     ui.label(
                         egui::RichText::new("matches repo, branch, service, or command")
                             .small()
@@ -1123,6 +1128,18 @@ impl HiveApp {
                                         }
 
                                         for svc in &svcs {
+                                            // Hide NotServer rows unless toggle is on. Show
+                                            // Server + Maybe by default.
+                                            if !self.show_non_servers
+                                                && svc.likelihood == ServerLikelihood::NotServer
+                                                // Always show NotServer rows for a running run, in case the user
+                                                // wants to stop it — but for `idle` rows, hide.
+                                                && !active_runs.values().any(|r| {
+                                                    r.worktree_path == w.path && r.service_name == svc.name
+                                                })
+                                            {
+                                                continue;
+                                            }
                                             let row_text = format!(
                                                 "{} {} {} {}",
                                                 w.repo_name, branch, svc.name, svc.command
@@ -1142,7 +1159,29 @@ impl HiveApp {
                                                     ui.label(&branch);
                                                 });
                                                 r.col(|ui| {
-                                                    ui.label(&svc.name);
+                                                    ui.horizontal(|ui| {
+                                                        match svc.likelihood {
+                                                            ServerLikelihood::Server => {
+                                                                ui.colored_label(
+                                                                    egui::Color32::from_rgb(120, 230, 140),
+                                                                    "●",
+                                                                ).on_hover_text("likely a long-running server");
+                                                            }
+                                                            ServerLikelihood::Maybe => {
+                                                                ui.colored_label(
+                                                                    egui::Color32::from_rgb(230, 200, 100),
+                                                                    "?",
+                                                                ).on_hover_text("ambiguous — could be a server or one-shot");
+                                                            }
+                                                            ServerLikelihood::NotServer => {
+                                                                ui.colored_label(
+                                                                    egui::Color32::DARK_GRAY,
+                                                                    "✕",
+                                                                ).on_hover_text("doesn't look like a server (test/build/lint)");
+                                                            }
+                                                        }
+                                                        ui.label(&svc.name);
+                                                    });
                                                 });
                                                 r.col(|ui| {
                                                     ui.label(
