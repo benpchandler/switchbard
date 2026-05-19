@@ -1,8 +1,9 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
-use hive_core::{attribute, scan_listeners, AttributedListener, Repo};
+use hive_core::{attribute, kill_pgid, scan_listeners, AttributedListener, KillOutcome, Repo};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -43,11 +44,17 @@ fn main() -> eframe::Result<()> {
     )
 }
 
+/// Mutex-protected `()` paired with a Condvar so the kill action can wake the
+/// scanner thread immediately instead of waiting up to 3s for its sleep to expire.
+type Kick = Arc<(Mutex<()>, Condvar)>;
+
 struct HiveApp {
     repos: Vec<Repo>,
     state: Arc<Mutex<ScanState>>,
+    kick: Kick,
     show_only_managed: bool,
     filter: String,
+    confirm_kill_all: bool,
 }
 
 #[derive(Default)]
@@ -55,12 +62,16 @@ struct ScanState {
     listeners: Vec<AttributedListener>,
     last_scan: Option<Instant>,
     last_error: Option<String>,
+    /// Most recent kill action result, surfaced in the top bar.
+    last_kill_msg: Option<String>,
 }
 
 impl HiveApp {
     fn new(cc: &eframe::CreationContext<'_>, repos: Vec<Repo>) -> Self {
         let state = Arc::new(Mutex::new(ScanState::default()));
+        let kick: Kick = Arc::new((Mutex::new(()), Condvar::new()));
         let bg_state = state.clone();
+        let bg_kick = kick.clone();
         let bg_repos = repos.clone();
         let ctx = cc.egui_ctx.clone();
         thread::spawn(move || loop {
@@ -80,38 +91,159 @@ impl HiveApp {
                 s.last_scan = Some(now);
             }
             ctx.request_repaint();
-            thread::sleep(Duration::from_secs(3));
+            // Wait up to 3s, OR until someone notifies us (e.g. after a kill).
+            let (lock, cvar) = &*bg_kick;
+            let guard = lock.lock().unwrap();
+            let _ = cvar.wait_timeout(guard, Duration::from_secs(3)).unwrap();
         });
         Self {
             repos,
             state,
+            kick,
             show_only_managed: false,
             filter: String::new(),
+            confirm_kill_all: false,
         }
+    }
+
+    /// Spawn a background thread that kills `pgid` then wakes the scanner.
+    fn spawn_kill(&self, pgid: i32, ctx: &egui::Context) {
+        let state = self.state.clone();
+        let kick = self.kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let msg = match kill_pgid(pgid, Duration::from_secs(3)) {
+                Ok(KillOutcome::Terminated) => format!("killed pgid {pgid} (SIGTERM)"),
+                Ok(KillOutcome::Killed) => format!("killed pgid {pgid} (SIGKILL)"),
+                Ok(KillOutcome::NotFound) => format!("pgid {pgid} already gone"),
+                Err(e) => format!("kill {pgid} failed: {e}"),
+            };
+            {
+                let mut s = state.lock().unwrap();
+                s.last_kill_msg = Some(msg);
+            }
+            // Wake the scanner.
+            let (lock, cvar) = &*kick;
+            let _g = lock.lock().unwrap();
+            cvar.notify_all();
+            ctx.request_repaint();
+        });
+    }
+
+    /// Kill every unique PGID in `pgids` from a background thread.
+    fn spawn_kill_many(&self, pgids: Vec<i32>, ctx: &egui::Context) {
+        let state = self.state.clone();
+        let kick = self.kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let mut terminated = 0usize;
+            let mut killed = 0usize;
+            let mut not_found = 0usize;
+            let mut errored = 0usize;
+            for pgid in &pgids {
+                match kill_pgid(*pgid, Duration::from_secs(3)) {
+                    Ok(KillOutcome::Terminated) => terminated += 1,
+                    Ok(KillOutcome::Killed) => killed += 1,
+                    Ok(KillOutcome::NotFound) => not_found += 1,
+                    Err(_) => errored += 1,
+                }
+            }
+            {
+                let mut s = state.lock().unwrap();
+                s.last_kill_msg = Some(format!(
+                    "kill-all: {} terminated, {} killed, {} gone, {} errored ({} pgids)",
+                    terminated, killed, not_found, errored, pgids.len()
+                ));
+            }
+            let (lock, cvar) = &*kick;
+            let _g = lock.lock().unwrap();
+            cvar.notify_all();
+            ctx.request_repaint();
+        });
     }
 }
 
 impl eframe::App for HiveApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Snapshot the filtered listener set up front so we can use it both for the
+        // table and for the "Kill all in filter" action without re-locking.
+        let filter_lc = self.filter.to_lowercase();
+        let (rows_snapshot, last_scan, last_error, last_kill_msg, total_count, matched_count) = {
+            let s = self.state.lock().unwrap();
+            let rows: Vec<AttributedListener> = s
+                .listeners
+                .iter()
+                .filter(|l| !self.show_only_managed || l.repo_name.is_some())
+                .filter(|l| {
+                    if filter_lc.is_empty() {
+                        return true;
+                    }
+                    l.listener.command_name.to_lowercase().contains(&filter_lc)
+                        || l.listener.port.to_string().contains(&filter_lc)
+                        || l.listener.pid.to_string().contains(&filter_lc)
+                        || l.listener
+                            .cwd
+                            .as_ref()
+                            .map(|p| p.to_string_lossy().to_lowercase().contains(&filter_lc))
+                            .unwrap_or(false)
+                        || l.repo_name
+                            .as_ref()
+                            .map(|n| n.to_lowercase().contains(&filter_lc))
+                            .unwrap_or(false)
+                })
+                .cloned()
+                .collect();
+            (
+                rows,
+                s.last_scan,
+                s.last_error.clone(),
+                s.last_kill_msg.clone(),
+                s.listeners.len(),
+                s.listeners.iter().filter(|l| l.repo_name.is_some()).count(),
+            )
+        };
+
+        let unique_pgids_in_filter: Vec<i32> = {
+            let mut set = BTreeSet::new();
+            for r in &rows_snapshot {
+                set.insert(r.listener.pgid);
+            }
+            set.into_iter().collect()
+        };
+
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Hive");
                 ui.label(egui::RichText::new("local listeners").weak());
                 ui.separator();
-                let s = self.state.lock().unwrap();
-                if let Some(at) = s.last_scan {
+                if let Some(at) = last_scan {
                     let secs = at.elapsed().as_secs();
                     ui.label(format!("{}s since last scan", secs));
                 } else {
                     ui.label("scanning…");
                 }
-                if let Some(err) = &s.last_error {
+                if let Some(err) = &last_error {
                     ui.colored_label(egui::Color32::RED, format!("error: {err}"));
                 }
                 ui.separator();
-                ui.label(format!("{} listeners", s.listeners.len()));
-                let matched = s.listeners.iter().filter(|l| l.repo_name.is_some()).count();
-                ui.label(format!("({matched} attributed)"));
+                ui.label(format!("{} listeners", total_count));
+                ui.label(format!("({matched_count} attributed)"));
+                ui.separator();
+                let kill_all_label = format!(
+                    "Kill all in filter ({})",
+                    unique_pgids_in_filter.len()
+                );
+                let can_kill_all = !unique_pgids_in_filter.is_empty();
+                if ui
+                    .add_enabled(can_kill_all, egui::Button::new(kill_all_label))
+                    .clicked()
+                {
+                    self.confirm_kill_all = true;
+                }
+                if let Some(msg) = &last_kill_msg {
+                    ui.separator();
+                    ui.label(egui::RichText::new(msg).small());
+                }
             });
             ui.horizontal(|ui| {
                 ui.checkbox(&mut self.show_only_managed, "only attributed to a known repo");
@@ -156,31 +288,7 @@ impl eframe::App for HiveApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let s = self.state.lock().unwrap();
-            let filter_lc = self.filter.to_lowercase();
-            let rows: Vec<&AttributedListener> = s
-                .listeners
-                .iter()
-                .filter(|l| !self.show_only_managed || l.repo_name.is_some())
-                .filter(|l| {
-                    if filter_lc.is_empty() {
-                        return true;
-                    }
-                    l.listener.command_name.to_lowercase().contains(&filter_lc)
-                        || l.listener.port.to_string().contains(&filter_lc)
-                        || l.listener.pid.to_string().contains(&filter_lc)
-                        || l.listener
-                            .cwd
-                            .as_ref()
-                            .map(|p| p.to_string_lossy().to_lowercase().contains(&filter_lc))
-                            .unwrap_or(false)
-                        || l.repo_name
-                            .as_ref()
-                            .map(|n| n.to_lowercase().contains(&filter_lc))
-                            .unwrap_or(false)
-                })
-                .collect();
-
+            let mut kill_request: Option<i32> = None;
             TableBuilder::new(ui)
                 .striped(true)
                 .resizable(true)
@@ -191,6 +299,7 @@ impl eframe::App for HiveApp {
                 .column(Column::initial(140.0).at_least(80.0)) // command
                 .column(Column::initial(140.0).at_least(80.0)) // repo
                 .column(Column::remainder().at_least(120.0)) // cwd
+                .column(Column::initial(70.0).at_least(60.0)) // kill button
                 .header(22.0, |mut h| {
                     h.col(|ui| { ui.strong("PORT"); });
                     h.col(|ui| { ui.strong("PID"); });
@@ -198,9 +307,10 @@ impl eframe::App for HiveApp {
                     h.col(|ui| { ui.strong("COMMAND"); });
                     h.col(|ui| { ui.strong("REPO"); });
                     h.col(|ui| { ui.strong("CWD"); });
+                    h.col(|ui| { ui.strong("ACTION"); });
                 })
                 .body(|mut body| {
-                    for row in rows {
+                    for row in &rows_snapshot {
                         let l = &row.listener;
                         body.row(20.0, |mut r| {
                             r.col(|ui| {
@@ -229,9 +339,58 @@ impl eframe::App for HiveApp {
                                     .unwrap_or_else(|| "(unknown)".into());
                                 ui.label(egui::RichText::new(text).small());
                             });
+                            r.col(|ui| {
+                                if ui.button("Kill").clicked() {
+                                    kill_request = Some(l.pgid);
+                                }
+                            });
                         });
                     }
                 });
+
+            if let Some(pgid) = kill_request {
+                self.spawn_kill(pgid, ctx);
+            }
         });
+
+        // Confirm-kill-all modal. Simple bool-gated window.
+        if self.confirm_kill_all {
+            let mut open = true;
+            let pgid_count = unique_pgids_in_filter.len();
+            let mut do_confirm = false;
+            let mut do_cancel = false;
+            egui::Window::new("Confirm kill all")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "Send SIGTERM (then SIGKILL after 3s) to {} unique process group{} in the current filter?",
+                        pgid_count,
+                        if pgid_count == 1 { "" } else { "s" }
+                    ));
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(egui::Button::new(
+                                egui::RichText::new("Confirm").color(egui::Color32::WHITE),
+                            ).fill(egui::Color32::from_rgb(180, 60, 60)))
+                            .clicked()
+                        {
+                            do_confirm = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                });
+            if do_confirm {
+                self.spawn_kill_many(unique_pgids_in_filter.clone(), ctx);
+                self.confirm_kill_all = false;
+            } else if do_cancel || !open {
+                self.confirm_kill_all = false;
+            }
+        }
     }
 }
