@@ -1,8 +1,10 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use hive_core::{
-    attribute, enumerate_worktrees, humanize_age, kill_pgid, probe_ahead_behind, probe_dirty,
-    probe_head_commit_time, scan_listeners, AttributedListener, KillOutcome, Repo, WorktreeRef,
+    attribute, detect_services, enumerate_worktrees, humanize_age, kill_pgid, open_url,
+    probe_ahead_behind, probe_dirty, probe_head_commit_time, scan_listeners, spawn_in_session,
+    url_for_port, AttributedListener, DetectedService, KillOutcome, LocalListener, Repo,
+    WorktreeRef, BROWSER_APP_NAMES,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -102,12 +104,30 @@ struct WorktreeMeta {
 enum ViewMode {
     Listeners,
     Worktrees,
+    Servers,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveRun {
+    worktree_path: PathBuf,
+    service_name: String,
+    // Surfaced via tooltip / future expanded-row detail; keep for UI v0.4.
+    #[allow(dead_code)]
+    command: String,
+    pid: u32,
+    pgid: i32,
+    started_at: Instant,
+    // Used by a forthcoming "Open log" action.
+    #[allow(dead_code)]
+    log_path: PathBuf,
 }
 
 struct HiveApp {
     repos: Vec<Repo>,
     worktrees: Vec<WorktreeRef>,
     meta: Arc<Mutex<HashMap<PathBuf, WorktreeMeta>>>,
+    services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>>,
+    active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
     state: Arc<Mutex<ScanState>>,
     scanner_kick: Kick,
     probe_kick: Kick,
@@ -117,6 +137,11 @@ struct HiveApp {
     confirm_kill_all: bool,
     expanded_repos: BTreeSet<String>,
     wt_filter: String,
+    server_filter: String,
+    /// 0 = system default; 1..=BROWSER_APP_NAMES.len() = specific browser.
+    browser_choice: usize,
+    /// Last UI feedback message for the Servers view (spawn errors, etc.).
+    server_msg: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Default)]
@@ -133,6 +158,10 @@ impl HiveApp {
         let scanner_kick: Kick = Arc::new((Mutex::new(()), Condvar::new()));
         let probe_kick: Kick = Arc::new((Mutex::new(()), Condvar::new()));
         let meta: Arc<Mutex<HashMap<PathBuf, WorktreeMeta>>> = Arc::new(Mutex::new(HashMap::new()));
+        let services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>> = Arc::new(Mutex::new(HashMap::new()));
+        let server_msg: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
         // Scanner thread.
         {
@@ -192,10 +221,62 @@ impl HiveApp {
             });
         }
 
+        // Service-detection thread: walks every worktree once, fills the services
+        // map. Cheap (a few fs reads per worktree); done in background so the
+        // window opens fast even with 28 worktrees.
+        {
+            let services = services.clone();
+            let worktrees_clone = worktrees.clone();
+            let ctx = cc.egui_ctx.clone();
+            thread::spawn(move || {
+                for w in &worktrees_clone {
+                    let detected = detect_services(&w.path);
+                    let mut map = services.lock().unwrap();
+                    map.insert(w.path.clone(), detected);
+                    drop(map);
+                    ctx.request_repaint();
+                }
+            });
+        }
+
+        // Reaper: every 2s, sweep active_runs for processes whose PGID is gone
+        // (e.g. a dev server that crashed or was killed externally) and drop them
+        // so the UI returns to "idle" state.
+        {
+            let active_runs = active_runs.clone();
+            let ctx = cc.egui_ctx.clone();
+            thread::spawn(move || loop {
+                std::thread::sleep(Duration::from_secs(2));
+                let mut dead = Vec::new();
+                {
+                    let map = active_runs.lock().unwrap();
+                    for (pgid, _) in map.iter() {
+                        let rc = unsafe { libc::kill(-*pgid, 0) };
+                        if rc != 0 {
+                            let errno = std::io::Error::last_os_error().raw_os_error();
+                            if errno == Some(libc::ESRCH) {
+                                dead.push(*pgid);
+                            }
+                        }
+                    }
+                }
+                if !dead.is_empty() {
+                    let mut map = active_runs.lock().unwrap();
+                    for pgid in &dead {
+                        map.remove(pgid);
+                    }
+                    drop(map);
+                    ctx.request_repaint();
+                }
+            });
+        }
+
         Self {
             repos,
             worktrees,
             meta,
+            services,
+            active_runs,
             state,
             scanner_kick,
             probe_kick,
@@ -205,6 +286,9 @@ impl HiveApp {
             confirm_kill_all: false,
             expanded_repos: BTreeSet::new(),
             wt_filter: String::new(),
+            server_filter: String::new(),
+            browser_choice: 0,
+            server_msg,
         }
     }
 
@@ -266,6 +350,93 @@ impl HiveApp {
         let _g = lock.lock().unwrap();
         cvar.notify_all();
     }
+
+    fn browser_app_name(&self) -> Option<&'static str> {
+        if self.browser_choice == 0 {
+            None
+        } else {
+            BROWSER_APP_NAMES.get(self.browser_choice - 1).copied()
+        }
+    }
+
+    fn spawn_start(&self, worktree_path: PathBuf, service: DetectedService, ctx: &egui::Context) {
+        let active_runs = self.active_runs.clone();
+        let server_msg = self.server_msg.clone();
+        let scanner_kick = self.scanner_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let log_root = std::env::temp_dir().join("hive-logs");
+            let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+            let safe_name: String = service
+                .name
+                .chars()
+                .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+                .collect();
+            let log_path = log_root.join(format!("{ts}-{safe_name}.log"));
+            let cwd = worktree_path.join(&service.cwd_rel);
+            match spawn_in_session(&service.command, &cwd, &log_path) {
+                Ok(run) => {
+                    let active = ActiveRun {
+                        worktree_path: worktree_path.clone(),
+                        service_name: service.name.clone(),
+                        command: service.command.clone(),
+                        pid: run.pid,
+                        pgid: run.pgid,
+                        started_at: Instant::now(),
+                        log_path: run.log_path,
+                    };
+                    active_runs.lock().unwrap().insert(run.pgid, active);
+                    *server_msg.lock().unwrap() =
+                        Some(format!("started '{}' (pid {})", service.name, run.pid));
+                    // Wake the scanner so the new listeners appear ASAP.
+                    let (lock, cvar) = &*scanner_kick;
+                    let _g = lock.lock().unwrap();
+                    cvar.notify_all();
+                }
+                Err(e) => {
+                    *server_msg.lock().unwrap() =
+                        Some(format!("spawn failed for '{}': {}", service.name, e));
+                }
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    fn spawn_stop_run(&self, pgid: i32, service_name: String, ctx: &egui::Context) {
+        let active_runs = self.active_runs.clone();
+        let server_msg = self.server_msg.clone();
+        let scanner_kick = self.scanner_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let msg = match kill_pgid(pgid, Duration::from_secs(5)) {
+                Ok(KillOutcome::Terminated) => format!("stopped '{service_name}' (SIGTERM)"),
+                Ok(KillOutcome::Killed) => format!("force-killed '{service_name}' (SIGKILL)"),
+                Ok(KillOutcome::NotFound) => format!("'{service_name}' already gone"),
+                Err(e) => format!("stop '{service_name}' failed: {e}"),
+            };
+            active_runs.lock().unwrap().remove(&pgid);
+            *server_msg.lock().unwrap() = Some(msg);
+            let (lock, cvar) = &*scanner_kick;
+            let _g = lock.lock().unwrap();
+            cvar.notify_all();
+            ctx.request_repaint();
+        });
+    }
+
+    fn open_in_browser(&self, port: u16) {
+        let url = url_for_port(port);
+        let browser = self.browser_app_name();
+        match open_url(&url, browser) {
+            Ok(()) => {
+                let label = browser.unwrap_or("default browser");
+                *self.server_msg.lock().unwrap() =
+                    Some(format!("opened {url} in {label}"));
+            }
+            Err(e) => {
+                *self.server_msg.lock().unwrap() = Some(format!("open failed: {e}"));
+            }
+        }
+    }
 }
 
 impl eframe::App for HiveApp {
@@ -287,6 +458,7 @@ impl eframe::App for HiveApp {
                 ui.separator();
                 ui.selectable_value(&mut self.view, ViewMode::Listeners, "Listeners");
                 ui.selectable_value(&mut self.view, ViewMode::Worktrees, "Worktrees");
+                ui.selectable_value(&mut self.view, ViewMode::Servers, "Servers");
                 ui.separator();
                 if let Some(at) = last_scan {
                     ui.label(format!("{}s since last scan", at.elapsed().as_secs()));
@@ -311,10 +483,29 @@ impl eframe::App for HiveApp {
                         ui.separator();
                         ui.label(egui::RichText::new(msg).small());
                     }
-                } else {
+                } else if self.view == ViewMode::Worktrees {
                     ui.separator();
                     if ui.button("Re-probe git").clicked() {
                         self.kick_probe();
+                    }
+                } else {
+                    ui.separator();
+                    ui.label("Browser:");
+                    let current_label = match self.browser_choice {
+                        0 => "Default".to_string(),
+                        i => BROWSER_APP_NAMES.get(i - 1).copied().unwrap_or("?").to_string(),
+                    };
+                    egui::ComboBox::from_id_salt("browser_choice_combo")
+                        .selected_text(current_label)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.browser_choice, 0, "Default");
+                            for (i, name) in BROWSER_APP_NAMES.iter().enumerate() {
+                                ui.selectable_value(&mut self.browser_choice, i + 1, *name);
+                            }
+                        });
+                    if let Some(msg) = self.server_msg.lock().unwrap().clone() {
+                        ui.separator();
+                        ui.label(egui::RichText::new(msg).small());
                     }
                 }
             });
@@ -333,12 +524,22 @@ impl eframe::App for HiveApp {
                             .weak(),
                     );
                 }
+                ViewMode::Servers => {
+                    ui.label("filter:");
+                    ui.text_edit_singleline(&mut self.server_filter);
+                    ui.label(
+                        egui::RichText::new("matches repo, branch, service, or command")
+                            .small()
+                            .weak(),
+                    );
+                }
             });
         });
 
         match self.view {
             ViewMode::Listeners => self.render_listeners_view(ctx, &rows_snapshot, &unique_pgids_in_filter),
             ViewMode::Worktrees => self.render_worktrees_view(ctx),
+            ViewMode::Servers => self.render_servers_view(ctx),
         }
     }
 }
@@ -771,6 +972,303 @@ impl HiveApp {
                 }
             });
         });
+    }
+}
+
+impl HiveApp {
+    fn render_servers_view(&mut self, ctx: &egui::Context) {
+        // Snapshot everything we need under each lock briefly so the central
+        // panel render below doesn't hold them.
+        let services_snapshot: HashMap<PathBuf, Vec<DetectedService>> =
+            self.services.lock().unwrap().clone();
+        let active_runs: HashMap<i32, ActiveRun> = self.active_runs.lock().unwrap().clone();
+        let listeners: Vec<LocalListener> = {
+            let s = self.state.lock().unwrap();
+            s.listeners.iter().map(|al| al.listener.clone()).collect()
+        };
+        let filter_lc = self.server_filter.to_lowercase();
+
+        // Index listeners by pgid for fast per-run port lookup.
+        let mut ports_by_pgid: HashMap<i32, Vec<u16>> = HashMap::new();
+        for l in &listeners {
+            ports_by_pgid.entry(l.pgid).or_default().push(l.port);
+        }
+        for v in ports_by_pgid.values_mut() {
+            v.sort();
+            v.dedup();
+        }
+
+        // Pending UI actions, applied after the central panel renders so we
+        // don't borrow self while inside its callbacks.
+        let mut pending_start: Option<(PathBuf, DetectedService)> = None;
+        let mut pending_stop: Option<(i32, String)> = None;
+        let mut pending_open: Option<u16> = None;
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let detected_total: usize = services_snapshot.values().map(|v| v.len()).sum();
+            let known_paths: usize = services_snapshot.len();
+            ui.label(
+                egui::RichText::new(format!(
+                    "{detected_total} services detected across {known_paths}/{wt_total} worktrees · {active} running",
+                    wt_total = self.worktrees.len(),
+                    active = active_runs.len(),
+                ))
+                .weak()
+                .small(),
+            );
+            ui.add_space(4.0);
+
+            // Group: by repo, then by worktree, then list services.
+            // Compute visible rows up front so we can skip empty repos under a filter.
+            let mut wts_by_repo: HashMap<&str, Vec<&WorktreeRef>> = HashMap::new();
+            for w in &self.worktrees {
+                wts_by_repo.entry(w.repo_name.as_str()).or_default().push(w);
+            }
+
+            egui::ScrollArea::vertical()
+                .id_salt("servers_outer_scroll")
+                .show(ui, |ui| {
+                    for repo in &self.repos {
+                        let Some(wts) = wts_by_repo.get(repo.name.as_str()) else { continue };
+                        ui.push_id(format!("server_repo_{}", repo.name), |ui| {
+                            let mut any_visible = false;
+                            let mut repo_running = 0usize;
+                            let mut repo_services_total = 0usize;
+                            // First pass for the header counts.
+                            for w in wts.iter() {
+                                let svcs = services_snapshot.get(&w.path).cloned().unwrap_or_default();
+                                repo_services_total += svcs.len();
+                                for s in &svcs {
+                                    if active_runs
+                                        .values()
+                                        .any(|r| r.worktree_path == w.path && r.service_name == s.name)
+                                    {
+                                        repo_running += 1;
+                                    }
+                                }
+                            }
+
+                            ui.horizontal(|ui| {
+                                ui.heading(&repo.name);
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "({} svc · {} wt)",
+                                        repo_services_total, wts.len()
+                                    ))
+                                    .weak(),
+                                );
+                                if repo_running > 0 {
+                                    ui.separator();
+                                    ui.colored_label(
+                                        egui::Color32::from_rgb(120, 230, 140),
+                                        format!("{repo_running} running"),
+                                    );
+                                }
+                            });
+                            ui.add_space(2.0);
+
+                            TableBuilder::new(ui)
+                                .id_salt(format!("server_table_{}", repo.name))
+                                .vscroll(false)
+                                .striped(true)
+                                .resizable(true)
+                                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                .column(Column::initial(220.0).at_least(140.0))   // worktree (branch)
+                                .column(Column::initial(180.0).at_least(120.0))   // service
+                                .column(Column::initial(240.0).at_least(160.0))   // command
+                                .column(Column::initial(96.0).at_least(72.0))     // state
+                                .column(Column::initial(120.0).at_least(70.0))    // ports
+                                .column(Column::remainder().at_least(170.0))      // actions
+                                .header(22.0, |mut h| {
+                                    h.col(|ui| { ui.strong("WORKTREE"); });
+                                    h.col(|ui| { ui.strong("SERVICE"); });
+                                    h.col(|ui| { ui.strong("COMMAND"); });
+                                    h.col(|ui| { ui.strong("STATE"); });
+                                    h.col(|ui| { ui.strong("PORTS"); });
+                                    h.col(|ui| { ui.strong("ACTIONS"); });
+                                })
+                                .body(|mut body| {
+                                    for w in wts {
+                                        let branch =
+                                            w.branch.clone().unwrap_or_else(|| "(detached)".into());
+                                        let svcs = services_snapshot
+                                            .get(&w.path)
+                                            .cloned()
+                                            .unwrap_or_default();
+                                        if svcs.is_empty() {
+                                            // Still useful to surface "no services detected" if the user
+                                            // is searching for a worktree. Skip otherwise to reduce noise.
+                                            if filter_lc.is_empty() {
+                                                continue;
+                                            }
+                                            let row_text = format!(
+                                                "{} {} {}",
+                                                w.repo_name,
+                                                branch,
+                                                w.path.display()
+                                            );
+                                            if !row_text.to_lowercase().contains(&filter_lc) {
+                                                continue;
+                                            }
+                                            any_visible = true;
+                                            body.row(20.0, |mut r| {
+                                                r.col(|ui| { ui.label(&branch); });
+                                                r.col(|ui| { ui.label(egui::RichText::new("(none detected)").weak()); });
+                                                r.col(|_| {});
+                                                r.col(|_| {});
+                                                r.col(|_| {});
+                                                r.col(|_| {});
+                                            });
+                                            continue;
+                                        }
+
+                                        for svc in &svcs {
+                                            let row_text = format!(
+                                                "{} {} {} {}",
+                                                w.repo_name, branch, svc.name, svc.command
+                                            );
+                                            if !filter_lc.is_empty()
+                                                && !row_text.to_lowercase().contains(&filter_lc)
+                                            {
+                                                continue;
+                                            }
+                                            any_visible = true;
+                                            let run_for_this = active_runs.values().find(|r| {
+                                                r.worktree_path == w.path && r.service_name == svc.name
+                                            });
+
+                                            body.row(22.0, |mut r| {
+                                                r.col(|ui| {
+                                                    ui.label(&branch);
+                                                });
+                                                r.col(|ui| {
+                                                    ui.label(&svc.name);
+                                                });
+                                                r.col(|ui| {
+                                                    ui.label(
+                                                        egui::RichText::new(&svc.command)
+                                                            .small()
+                                                            .monospace(),
+                                                    );
+                                                });
+                                                r.col(|ui| match run_for_this {
+                                                    Some(run) => {
+                                                        let uptime = run.started_at.elapsed();
+                                                        let uptime_s = uptime.as_secs();
+                                                        let uptime_str = if uptime_s < 60 {
+                                                            format!("{uptime_s}s")
+                                                        } else if uptime_s < 3600 {
+                                                            format!("{}m", uptime_s / 60)
+                                                        } else {
+                                                            format!("{}h", uptime_s / 3600)
+                                                        };
+                                                        ui.colored_label(
+                                                            egui::Color32::from_rgb(120, 230, 140),
+                                                            format!(
+                                                                "running · pid {} · {}",
+                                                                run.pid, uptime_str
+                                                            ),
+                                                        );
+                                                    }
+                                                    None => {
+                                                        ui.label(egui::RichText::new("idle").weak());
+                                                    }
+                                                });
+                                                r.col(|ui| match run_for_this {
+                                                    Some(run) => {
+                                                        let ports = ports_by_pgid
+                                                            .get(&run.pgid)
+                                                            .cloned()
+                                                            .unwrap_or_default();
+                                                        if ports.is_empty() {
+                                                            ui.label(
+                                                                egui::RichText::new("…")
+                                                                    .weak(),
+                                                            );
+                                                        } else {
+                                                            let txt = ports
+                                                                .iter()
+                                                                .map(|p| p.to_string())
+                                                                .collect::<Vec<_>>()
+                                                                .join(", ");
+                                                            ui.label(
+                                                                egui::RichText::new(txt).monospace().small(),
+                                                            );
+                                                        }
+                                                    }
+                                                    None => {
+                                                        ui.label(egui::RichText::new("—").weak());
+                                                    }
+                                                });
+                                                r.col(|ui| match run_for_this {
+                                                    Some(run) => {
+                                                        if ui
+                                                            .add(
+                                                                egui::Button::new("Stop")
+                                                                    .fill(egui::Color32::from_rgb(
+                                                                        180, 60, 60,
+                                                                    )),
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            pending_stop = Some((
+                                                                run.pgid,
+                                                                svc.name.clone(),
+                                                            ));
+                                                        }
+                                                        let ports = ports_by_pgid
+                                                            .get(&run.pgid)
+                                                            .cloned()
+                                                            .unwrap_or_default();
+                                                        let openable = !ports.is_empty();
+                                                        let open_label = if let Some(p) = ports.first()
+                                                        {
+                                                            format!("Open :{p}")
+                                                        } else {
+                                                            "Open".into()
+                                                        };
+                                                        if ui
+                                                            .add_enabled(
+                                                                openable,
+                                                                egui::Button::new(open_label),
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            if let Some(p) = ports.first() {
+                                                                pending_open = Some(*p);
+                                                            }
+                                                        }
+                                                    }
+                                                    None => {
+                                                        if ui.button("Start").clicked() {
+                                                            pending_start =
+                                                                Some((w.path.clone(), svc.clone()));
+                                                        }
+                                                    }
+                                                });
+                                            });
+                                        }
+                                    }
+                                });
+
+                            // If the user filtered everything out, drop the per-repo
+                            // heading completely so the view doesn't show empty sections.
+                            let _ = any_visible;
+                            ui.add_space(10.0);
+                        });
+                    }
+                });
+        });
+
+        if let Some((path, svc)) = pending_start {
+            self.spawn_start(path, svc, ctx);
+        }
+        if let Some((pgid, name)) = pending_stop {
+            self.spawn_stop_run(pgid, name, ctx);
+        }
+        if let Some(port) = pending_open {
+            self.open_in_browser(port);
+        }
     }
 }
 
