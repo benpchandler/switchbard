@@ -56,21 +56,22 @@ pub struct Worktree {
 }
 
 pub enum WorkflowKind {
-    Procfile,
-    NpmScripts,
-    DockerCompose,
-    Custom,             // hand-entered by user
+    Procfile,                                  // root Procfile entry
+    DockerCompose,                             // opaque `docker compose up`
+    NodePackage,                               // any package.json dev/start/serve — root or workspace member
+    Custom,                                    // user-defined
 }
 
 pub struct Service {
     pub id: ServiceId,
     pub repo_id: RepoId,
-    pub name: String,                          // "web", "api", "worker"
-    pub command: String,                       // raw command string, run via /bin/sh -c
-    pub cwd: PathBuf,                          // relative to repo root; "." by default
+    pub name: String,                          // "web", "api", "@scope/admin", "compose"
+    pub command: String,                       // shell command, run via /bin/sh -c (possibly mise-wrapped)
+    pub cwd: PathBuf,                          // relative to worktree root: "." for root, "apps/web" for a sub-package
     pub env: BTreeMap<String, String>,         // explicit overrides; deterministic order
     pub port_hint: Option<u16>,                // null if detection couldn't infer
     pub source: WorkflowKind,                  // where this came from at detection time
+    pub disabled: bool,                        // user hid it; detector won't re-show it on re-detect
 }
 
 pub enum RunStatus {
@@ -140,9 +141,11 @@ pub trait Db: Send + Sync {
     fn remove_worktree(&self, id: WorktreeId) -> Result<()>;
 
     // Services (defined on Repo — same workflow across all its worktrees)
-    fn upsert_services(&self, repo_id: RepoId, svcs: Vec<NewService>) -> Result<Vec<Service>>;
-    fn list_services(&self, repo_id: RepoId) -> Result<Vec<Service>>;
+    fn add_detected_services(&self, repo_id: RepoId, svcs: Vec<NewService>) -> Result<Vec<Service>>;
+    // ^ inserts only new (repo_id, name) pairs. Never overwrites user edits or disabled rows.
+    fn list_services(&self, repo_id: RepoId, include_disabled: bool) -> Result<Vec<Service>>;
     fn update_service(&self, svc: &Service) -> Result<()>;
+    fn set_service_disabled(&self, id: ServiceId, disabled: bool) -> Result<()>;
 
     // Runs (per Service per Worktree — concurrent runs across worktrees are expected)
     fn record_run(&self, run: NewRun) -> Result<RunId>;
@@ -163,17 +166,33 @@ pub trait WorkflowDetector: Send + Sync {
 }
 
 pub struct DetectedService {
-    pub name: String,
+    pub name: String,                          // package name or Procfile entry name
     pub command: String,
+    pub cwd: PathBuf,                          // "." for root, "apps/web" for a sub-package
     pub port_hint: Option<u16>,
     pub source: WorkflowKind,
 }
 ```
-The default impl composes per-kind detectors and runs them in priority order, stopping at the first that returns a non-empty list:
-1. `ProcfileDetector` — parses `Procfile` lines `name: command`.
-2. `DockerComposeDetector` — opaque: returns a single `Service { name: "compose", command: "docker compose up", ... }`.
-3. `NpmScriptsDetector` — reads `package.json`; surfaces `dev`, `start`, `serve` if present (one service each, named `npm:<script>`).
-4. Returns empty if none match — user adds services manually via Custom.
+
+The default impl is a **composite with mixed semantics**:
+
+- **Procfile is authoritative.** If a Procfile exists at the repo root, only its entries are returned — the user explicitly declared their workflow.
+- Otherwise, every other sub-detector runs and their results are **merged**, deduplicated by `name` (collision policy: WorkspaceDetector > RootNodePackageDetector > DockerComposeDetector, with a warning surfaced to the UI).
+
+Sub-detectors (when no Procfile):
+
+1. **WorkspaceDetector** — the monorepo workhorse. Reads `package.json#workspaces` (npm/yarn/bun) and/or `pnpm-workspace.yaml`. Resolves globs, walks each member's `package.json`, and emits one Service per workspace member that has a `dev`/`start`/`serve` script. Per-package fields:
+   - `name = <package-name>` (member's `package.json#name`, falling back to dir name)
+   - `cwd = <member-path-relative-to-root>`
+   - `command = <pm> run <script>` where `<pm>` comes from root lockfile sniffing: `pnpm-lock.yaml` → `pnpm`, `yarn.lock` → `yarn`, `bun.lockb` → `bun`, else `npm`
+   - Script priority: `dev` > `start` > `serve`; only the first found per package surfaces by default (the rest are addable later via the editor)
+2. **RootNodePackageDetector** — if root `package.json` is *not* a workspace root and has a `dev`/`start`/`serve` script, emit one Service named after the package with `cwd = "."`.
+3. **DockerComposeDetector** — if `docker-compose.yml` / `compose.yaml` / `compose.yml` is present at the root, emit one opaque Service `name: "compose", command: "docker compose up", cwd: "."` *in addition to* whatever the Node detectors found.
+4. **TurborepoOverlay** — post-process: if `turbo.json` is present, rewrite each NodePackage `command` to `turbo run <script> --filter=<name>` so Turbo's pipeline + cache apply.
+5. **NxOverlay** — post-process: if `nx.json` plus per-project `project.json` files are present, rewrite NodePackage commands to `nx run <project>:<target>`.
+6. **MiseWrap** — final post-process: if `.mise.toml` or `.tool-versions` is present at the repo root, wrap every command in `mise exec -- <cmd>` so per-repo tool versions activate. (`asdf` recognized as a fallback if mise isn't installed.)
+
+Returns empty only if none of these match. User can always add Custom services manually.
 
 ### `supervisor` — process lifecycle
 ```rust
@@ -272,7 +291,7 @@ These live in `hive-core` as free functions that compose the components above. T
    - If absent, proceed.
 4. `git_inspector.default_branch(path)`, `remote_url(path)`.
 5. `db.upsert_repo(...)` → `RepoId`.
-6. `workflow_detector.detect(path)` → services attached to the Repo via `db.upsert_services(...)`.
+6. `workflow_detector.detect(path)` → services attached to the Repo via `db.add_detected_services(...)`. Composite walks Procfile (authoritative) or merges WorkspaceDetector + RootNodePackageDetector + DockerComposeDetector, then applies Turbo/Nx/Mise overlays.
 7. `git_inspector.list_worktrees(path)` → enumerate every worktree of this Repo. For each: `db.upsert_worktree(...)`.
 8. Emit `RepoAdded` (if new) + `WorktreeAdded` for each new worktree.
 9. Spawn background task: `git_inspector.fetch_and_remote_sha(...)` per worktree; emit `GitRefreshed`.
@@ -280,8 +299,9 @@ These live in `hive-core` as free functions that compose the components above. T
 ### Start Service (in a specific Worktree)
 Caller passes `(service_id, worktree_id)`. Concurrent runs of the same service across **different** worktrees are expected and allowed. Concurrent runs of the same service in the **same** worktree are refused — stop the existing one first.
 
-1. `db.active_runs_for_worktree(worktree_id)` — refuse if a Run for this service already exists with no `ended_at`.
-2. Resolve `worktree.path` from the DB. Effective spawn cwd = `worktree.path + service.cwd`.
+1. Verify the service is not `disabled` — refuse with a clear error if so (user must re-enable first).
+2. `db.active_runs_for_worktree(worktree_id)` — refuse if a Run for this service already exists with no `ended_at`.
+3. Resolve `worktree.path` from the DB. Effective spawn cwd = `worktree.path + service.cwd`.
 3. `git_inspector.head_sha(worktree.path)` — snapshot SHA at spawn (the worktree's HEAD, not the Repo's).
 4. Pre-allocate `RunId` via `db.record_run({ service_id, worktree_id, sha, log_path, status: Starting, pid: 0 })`.
 5. `supervisor.spawn(svc, worktree.path, log_path)` → real PID.
@@ -328,8 +348,10 @@ Thin layer. Each command is a 5–15 line function that calls into `hive-core`. 
 | `remove_repo(repo_id)` | `void` |
 | `list_worktrees(repo_id)` | `Worktree[]` |
 | `scan_worktrees(repo_id)` | `Worktree[]` |
-| `list_services(repo_id)` | `Service[]` |
+| `list_services(repo_id, include_disabled)` | `Service[]` |
 | `update_service(svc)` | `Service` |
+| `redetect_services(repo_id)` | `Service[]` |
+| `set_service_disabled(service_id, disabled)` | `void` |
 | `start_service(service_id, worktree_id)` | `Run` |
 | `stop_run(run_id)` | `void` |
 | `active_runs()` | `Run[]` |
@@ -375,6 +397,7 @@ CREATE TABLE services (
     env_json TEXT NOT NULL DEFAULT '{}',
     port_hint INTEGER,
     source TEXT NOT NULL,                      -- WorkflowKind as string
+    disabled INTEGER NOT NULL DEFAULT 0,       -- user hid it; detector won't re-show on rescan
     UNIQUE (repo_id, name)
 );
 
@@ -406,22 +429,49 @@ Logs: append-only files at `<data_dir>/logs/<run_id>.log`. No rotation in v1 —
 ## Open Questions
 
 - **`.env` auto-merge** — read repo's `.env` automatically into spawn env, or require explicit `services.env_json`? Recommend auto-merge with `services.env_json` overriding.
-- **Workspace sub-package detection** — see Workspace Monorepos section below. Should v1 auto-detect sub-package `dev` scripts, or punt to manual Custom services? Recommend punt for v1, design a `WorkspaceDetector` trait so it slots in cleanly later.
+- **Python / Cargo monorepo detection** — JS workspaces (npm/yarn/pnpm/bun) + Turbo/Nx are first-class in v1. Python multi-package (`apps/api/pyproject.toml`, uv workspaces, Poetry) and Cargo workspace bins are v1.5. Custom services in the meantime. Open: prioritize Python next since polyglot Node-front / Python-back monorepos are common?
+- **mise wrap default-on** — MiseWrap activates automatically when `.mise.toml` / `.tool-versions` is present, with a per-service "raw shell" toggle for users who manage tool versions another way. Confirm or flip?
 - **Restart-on-new-SHA** — automatic toggle per service, or always manual? Recommend manual button + visible drift badge in v1.
 - **Cross-platform** — Linux probably free (lsof, setsid, sh all present). Windows would need `netstat`/`Get-NetTCPConnection`, job objects instead of process groups, `cmd.exe` shell. Out of scope for v1; keep the supervisor/scanner traits clean so a Windows impl can slot in later.
 
-## Workspace Monorepos — Clarification
+## Workspace Monorepos
 
-A "workspace monorepo" is a single repo with multiple sub-projects, each with its own dev workflow. Examples:
-- pnpm/yarn/npm workspaces — `apps/web/package.json` and `apps/api/package.json` each have a `dev` script.
-- Cargo workspace — multiple binaries under `crates/*` runnable independently.
-- Polyglot — frontend in `web/` (`npm run dev`) and backend in `api/` (`uv run uvicorn ...`).
+**Monorepos are the central case, not an edge case.** The user adds a monorepo, sees every sub-package's dev script as its own Service ready to start, and never opens a config editor. Detection is the product.
 
-The v1 detector only reads the **root** (`Procfile`, root `package.json`, root `docker-compose.yml`). For a monorepo, that won't surface `apps/web/dev` and `apps/api/dev`. The fallback is: the user adds them as Custom services manually —
+### What v1 auto-detects
 
-| name | command | cwd |
+| Repo shape | How v1 handles it | Resulting Services |
 |---|---|---|
-| `web` | `pnpm dev` | `apps/web` |
-| `api` | `pnpm dev` | `apps/api` |
+| `package.json#workspaces: ["apps/*", "packages/*"]` (npm / yarn / bun) | WorkspaceDetector walks globs, reads each child's `package.json` | One Service per workspace package that has a `dev` / `start` / `serve` script |
+| `pnpm-workspace.yaml` | Same as above with pnpm as the command prefix | Same |
+| Bun workspaces (`bun.lockb` + `workspaces` field) | Same with bun prefix | Same |
+| Root `package.json` scripts (non-workspace repo) | RootNodePackageDetector | One Service for the highest-priority script found |
+| `turbo.json` present | TurborepoOverlay rewrites every NodePackage command | `turbo run dev --filter=<name>` per package — honors Turbo's pipeline + remote cache |
+| `nx.json` + per-project `project.json` files | NxOverlay rewrites | `nx run <project>:<target>` per project |
+| `.mise.toml` / `.tool-versions` at repo root | MiseWrap wraps every command (Node and Compose alike) | `mise exec -- <original command>` — activates per-repo Node/Python/etc. versions |
+| `docker-compose.yml` at root | DockerComposeDetector | One opaque Service `compose`, **in addition to** the Node Services |
+| Procfile at root | Authoritative — overrides everything else | One Service per Procfile entry; Node/Compose detectors skipped |
 
-The data model already supports this (`Service.cwd` is per-service, relative to the worktree root), so a v2 `WorkspaceDetector` that walks `pnpm-workspace.yaml` / `package.json#workspaces` / `Cargo.toml#workspace.members` is purely a detector upgrade — no schema change required.
+### Inferences and defaults
+
+- **Package manager** is determined by root lockfile: `pnpm-lock.yaml` → `pnpm`, `yarn.lock` → `yarn`, `bun.lockb` → `bun`, else `npm`. Per-workspace lockfiles aren't honored in v1 (rare in practice).
+- **Script priority per package** is `dev` > `start` > `serve`. Only the first found surfaces by default; the others are addable from the service editor with one click.
+- **Service naming** uses the workspace package's `name` field (including scopes like `@acme/web`); falls back to the directory name. UI shows `<repo-name> / <service-name>` so scoped names don't fight long repo paths.
+- **Port hints** are best-effort: parse common patterns from the resolved command (`--port 3000`, `PORT=4000`, `-p 5173`) and from `package.json` config keys. Null when unsure — `port_observer` resolves the truth at runtime regardless.
+
+### Re-detect semantics (the load-bearing part)
+
+A monorepo grows. After `git pull` adds `apps/admin/`, the user clicks **Re-detect** and Hive adds the new Service without touching anything else. Specifically:
+
+- Detector emits its full current view of the repo.
+- `db.add_detected_services` only inserts `(repo_id, name)` pairs not already present.
+- Existing services keep their `command`, `cwd`, `env`, `disabled` flag, and `port_hint` unchanged.
+- Services that no longer appear in detection output stay in the DB if they have any historical runs (so log history isn't orphaned); otherwise they're marked hidden and offered as a one-click cleanup in the UI.
+
+### Out of scope for v1 (additive in v1.5)
+
+- **Python multi-package monorepos** — `apps/api/pyproject.toml` + `apps/worker/pyproject.toml`, uv workspaces, Poetry. The trait is a new sub-detector (`PythonPackageDetector`) with no schema change.
+- **Cargo workspace bins** — `Cargo.toml#workspace.members` with `[[bin]]` sections. Same shape.
+- **Custom shell-script conventions** — `bin/dev`, `scripts/start.sh`. Possibly auto-surface if executable and named conventionally.
+
+For these in v1, the user adds Custom Services. The data model already accommodates them; only the detector menu grows.
