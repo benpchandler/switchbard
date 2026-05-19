@@ -622,6 +622,11 @@ impl HiveApp {
                         continue;
                     }
 
+                    // Wrap the entire per-repo section so every widget inside (headers,
+                    // chips, the TableBuilder, and all its cells) gets a unique parent
+                    // ID. Without this, the cell-level widget IDs collide across the
+                    // stacked tables because they share the outer ScrollArea as parent.
+                    ui.push_id(format!("repo_section_{}", repo.name), |ui| {
                     let total_listeners: usize = visible_wts
                         .iter()
                         .map(|w| listener_counts.get(&w.path).copied().unwrap_or(0))
@@ -760,6 +765,7 @@ impl HiveApp {
                                 });
                             }
                         });
+                    }); // close ui.push_id
 
                     ui.add_space(12.0);
                 }
