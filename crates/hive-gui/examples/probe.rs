@@ -17,11 +17,11 @@ fn main() {
             for e in entries {
                 if !e.path.exists() { continue; }
                 if e.path == repo.path { added_primary = true; }
-                worktrees.push(WorktreeRef { repo_name: repo.name.clone(), path: e.path, branch: e.branch });
+                worktrees.push(WorktreeRef { repo_name: repo.name.clone(), path: e.path, branch: e.branch, head: e.head });
             }
         }
         if !added_primary {
-            worktrees.push(WorktreeRef { repo_name: repo.name.clone(), path: repo.path.clone(), branch: None });
+            worktrees.push(WorktreeRef { repo_name: repo.name.clone(), path: repo.path.clone(), branch: None, head: String::new() });
         }
     }
     println!("Tracking {} repos with {} total worktrees", base_repos.len(), worktrees.len());

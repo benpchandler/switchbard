@@ -9,22 +9,23 @@ pub struct LocalListener {
     pub cwd: Option<PathBuf>,
 }
 
-/// A canonical project name + its primary checkout path. One Repo can expand to
-/// many WorktreeRefs via `worktree::enumerate_worktrees`.
 #[derive(Debug, Clone)]
 pub struct Repo {
     pub name: String,
     pub path: PathBuf,
 }
 
-/// An individual checkout — either the primary path of a Repo or one of its
-/// `git worktree add` siblings. Attribution matches a listener's cwd against
-/// these paths (prefix match).
+/// A single checkout used both for listener attribution (cwd-prefix match) and
+/// for the dedicated Worktrees view. Carries the immutable `git worktree list`
+/// info; mutable git-status fields (dirty, ahead/behind, last-commit age) live
+/// separately in a probe-populated metadata map keyed by `path` so attribution
+/// scans don't contend on the probe thread.
 #[derive(Debug, Clone)]
 pub struct WorktreeRef {
     pub repo_name: String,
     pub path: PathBuf,
     pub branch: Option<String>,
+    pub head: String,
 }
 
 #[derive(Debug, Clone)]

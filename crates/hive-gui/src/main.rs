@@ -1,10 +1,10 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use hive_core::{
-    attribute, enumerate_worktrees, kill_pgid, scan_listeners, AttributedListener, KillOutcome,
-    Repo, WorktreeRef,
+    attribute, enumerate_worktrees, humanize_age, kill_pgid, probe_ahead_behind, probe_dirty,
+    probe_head_commit_time, scan_listeners, AttributedListener, KillOutcome, Repo, WorktreeRef,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -43,7 +43,7 @@ fn main() -> eframe::Result<()> {
 
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1180.0, 720.0])
+            .with_inner_size([1280.0, 760.0])
             .with_title("Hive — Local Listeners"),
         ..Default::default()
     };
@@ -54,10 +54,6 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-/// For each tracked repo, ask git for the full worktree list and emit a
-/// `WorktreeRef` per existing checkout. If `git worktree list` fails (the path
-/// isn't a git repo, git binary missing, etc.) we still register the primary
-/// path so it isn't silently dropped from attribution.
 fn expand_worktrees(repos: &[Repo]) -> Vec<WorktreeRef> {
     let mut out = Vec::new();
     for repo in repos {
@@ -65,7 +61,7 @@ fn expand_worktrees(repos: &[Repo]) -> Vec<WorktreeRef> {
         if let Ok(entries) = enumerate_worktrees(&repo.path) {
             for e in entries {
                 if !e.path.exists() {
-                    continue; // skip phantom checkouts that were rm'd out from under git
+                    continue;
                 }
                 if e.path == repo.path {
                     added_primary = true;
@@ -74,6 +70,7 @@ fn expand_worktrees(repos: &[Repo]) -> Vec<WorktreeRef> {
                     repo_name: repo.name.clone(),
                     path: e.path,
                     branch: e.branch,
+                    head: e.head,
                 });
             }
         }
@@ -82,25 +79,44 @@ fn expand_worktrees(repos: &[Repo]) -> Vec<WorktreeRef> {
                 repo_name: repo.name.clone(),
                 path: repo.path.clone(),
                 branch: None,
+                head: String::new(),
             });
         }
     }
     out
 }
 
-/// Mutex-protected `()` paired with a Condvar so the kill action can wake the
-/// scanner thread immediately instead of waiting up to 3s for its sleep to expire.
+/// Mutex+Condvar pair for waking sleeping threads (scanner and probe).
 type Kick = Arc<(Mutex<()>, Condvar)>;
+
+#[derive(Debug, Clone, Default)]
+struct WorktreeMeta {
+    dirty: Option<bool>,
+    ahead: Option<u32>,
+    behind: Option<u32>,
+    head_commit_unix: Option<u64>,
+    probed_at: Option<Instant>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewMode {
+    Listeners,
+    Worktrees,
+}
 
 struct HiveApp {
     repos: Vec<Repo>,
     worktrees: Vec<WorktreeRef>,
+    meta: Arc<Mutex<HashMap<PathBuf, WorktreeMeta>>>,
     state: Arc<Mutex<ScanState>>,
-    kick: Kick,
+    scanner_kick: Kick,
+    probe_kick: Kick,
+    view: ViewMode,
     show_only_managed: bool,
     filter: String,
     confirm_kill_all: bool,
     expanded_repos: BTreeSet<String>,
+    wt_filter: String,
 }
 
 #[derive(Default)]
@@ -114,47 +130,87 @@ struct ScanState {
 impl HiveApp {
     fn new(cc: &eframe::CreationContext<'_>, repos: Vec<Repo>, worktrees: Vec<WorktreeRef>) -> Self {
         let state = Arc::new(Mutex::new(ScanState::default()));
-        let kick: Kick = Arc::new((Mutex::new(()), Condvar::new()));
-        let bg_state = state.clone();
-        let bg_kick = kick.clone();
-        let bg_worktrees = worktrees.clone();
-        let ctx = cc.egui_ctx.clone();
-        thread::spawn(move || loop {
-            let result = scan_listeners();
-            let now = Instant::now();
-            {
-                let mut s = bg_state.lock().unwrap();
-                match result {
-                    Ok(listeners) => {
-                        s.listeners = attribute(&listeners, &bg_worktrees);
-                        s.last_error = None;
+        let scanner_kick: Kick = Arc::new((Mutex::new(()), Condvar::new()));
+        let probe_kick: Kick = Arc::new((Mutex::new(()), Condvar::new()));
+        let meta: Arc<Mutex<HashMap<PathBuf, WorktreeMeta>>> = Arc::new(Mutex::new(HashMap::new()));
+
+        // Scanner thread.
+        {
+            let state = state.clone();
+            let kick = scanner_kick.clone();
+            let worktrees = worktrees.clone();
+            let ctx = cc.egui_ctx.clone();
+            thread::spawn(move || loop {
+                let result = scan_listeners();
+                let now = Instant::now();
+                {
+                    let mut s = state.lock().unwrap();
+                    match result {
+                        Ok(listeners) => {
+                            s.listeners = attribute(&listeners, &worktrees);
+                            s.last_error = None;
+                        }
+                        Err(e) => s.last_error = Some(e.to_string()),
                     }
-                    Err(e) => {
-                        s.last_error = Some(e.to_string());
-                    }
+                    s.last_scan = Some(now);
                 }
-                s.last_scan = Some(now);
-            }
-            ctx.request_repaint();
-            let (lock, cvar) = &*bg_kick;
-            let guard = lock.lock().unwrap();
-            let _ = cvar.wait_timeout(guard, Duration::from_secs(3)).unwrap();
-        });
+                ctx.request_repaint();
+                let (lock, cvar) = &*kick;
+                let guard = lock.lock().unwrap();
+                let _ = cvar.wait_timeout(guard, Duration::from_secs(3)).unwrap();
+            });
+        }
+
+        // Git-probe thread. Walks each worktree, runs dirty/ahead/behind/last-commit
+        // probes, stores into the shared map, requests a repaint after each one so
+        // the table fills in incrementally instead of waiting for the whole sweep.
+        {
+            let meta = meta.clone();
+            let kick = probe_kick.clone();
+            let worktrees = worktrees.clone();
+            let ctx = cc.egui_ctx.clone();
+            thread::spawn(move || loop {
+                for w in &worktrees {
+                    let mut m = WorktreeMeta::default();
+                    m.dirty = probe_dirty(&w.path);
+                    m.head_commit_unix = probe_head_commit_time(&w.path);
+                    if let Some((a, b)) = probe_ahead_behind(&w.path) {
+                        m.ahead = Some(a);
+                        m.behind = Some(b);
+                    }
+                    m.probed_at = Some(Instant::now());
+                    {
+                        let mut map = meta.lock().unwrap();
+                        map.insert(w.path.clone(), m);
+                    }
+                    ctx.request_repaint();
+                }
+                // Refresh every 60s, but wake on demand for an immediate re-probe.
+                let (lock, cvar) = &*kick;
+                let guard = lock.lock().unwrap();
+                let _ = cvar.wait_timeout(guard, Duration::from_secs(60)).unwrap();
+            });
+        }
+
         Self {
             repos,
             worktrees,
+            meta,
             state,
-            kick,
+            scanner_kick,
+            probe_kick,
+            view: ViewMode::Listeners,
             show_only_managed: false,
             filter: String::new(),
             confirm_kill_all: false,
             expanded_repos: BTreeSet::new(),
+            wt_filter: String::new(),
         }
     }
 
     fn spawn_kill(&self, pgid: i32, ctx: &egui::Context) {
         let state = self.state.clone();
-        let kick = self.kick.clone();
+        let kick = self.scanner_kick.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             let msg = match kill_pgid(pgid, Duration::from_secs(3)) {
@@ -176,7 +232,7 @@ impl HiveApp {
 
     fn spawn_kill_many(&self, pgids: Vec<i32>, ctx: &egui::Context) {
         let state = self.state.clone();
-        let kick = self.kick.clone();
+        let kick = self.scanner_kick.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             let mut terminated = 0usize;
@@ -204,49 +260,18 @@ impl HiveApp {
             ctx.request_repaint();
         });
     }
+
+    fn kick_probe(&self) {
+        let (lock, cvar) = &*self.probe_kick;
+        let _g = lock.lock().unwrap();
+        cvar.notify_all();
+    }
 }
 
 impl eframe::App for HiveApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let filter_lc = self.filter.to_lowercase();
-        let (rows_snapshot, last_scan, last_error, last_kill_msg, total_count, matched_count) = {
-            let s = self.state.lock().unwrap();
-            let rows: Vec<AttributedListener> = s
-                .listeners
-                .iter()
-                .filter(|l| !self.show_only_managed || l.repo_name.is_some())
-                .filter(|l| {
-                    if filter_lc.is_empty() {
-                        return true;
-                    }
-                    l.listener.command_name.to_lowercase().contains(&filter_lc)
-                        || l.listener.port.to_string().contains(&filter_lc)
-                        || l.listener.pid.to_string().contains(&filter_lc)
-                        || l.listener
-                            .cwd
-                            .as_ref()
-                            .map(|p| p.to_string_lossy().to_lowercase().contains(&filter_lc))
-                            .unwrap_or(false)
-                        || l.repo_name
-                            .as_ref()
-                            .map(|n| n.to_lowercase().contains(&filter_lc))
-                            .unwrap_or(false)
-                        || l.worktree_branch
-                            .as_ref()
-                            .map(|n| n.to_lowercase().contains(&filter_lc))
-                            .unwrap_or(false)
-                })
-                .cloned()
-                .collect();
-            (
-                rows,
-                s.last_scan,
-                s.last_error.clone(),
-                s.last_kill_msg.clone(),
-                s.listeners.len(),
-                s.listeners.iter().filter(|l| l.repo_name.is_some()).count(),
-            )
-        };
+        let (rows_snapshot, last_scan, last_error, last_kill_msg, total_count, matched_count) =
+            snapshot_listeners(&self.state, &self.filter, self.show_only_managed);
 
         let unique_pgids_in_filter: Vec<i32> = {
             let mut set = BTreeSet::new();
@@ -259,11 +284,12 @@ impl eframe::App for HiveApp {
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Hive");
-                ui.label(egui::RichText::new("local listeners").weak());
+                ui.separator();
+                ui.selectable_value(&mut self.view, ViewMode::Listeners, "Listeners");
+                ui.selectable_value(&mut self.view, ViewMode::Worktrees, "Worktrees");
                 ui.separator();
                 if let Some(at) = last_scan {
-                    let secs = at.elapsed().as_secs();
-                    ui.label(format!("{}s since last scan", secs));
+                    ui.label(format!("{}s since last scan", at.elapsed().as_secs()));
                 } else {
                     ui.label("scanning…");
                 }
@@ -273,112 +299,190 @@ impl eframe::App for HiveApp {
                 ui.separator();
                 ui.label(format!("{} listeners", total_count));
                 ui.label(format!("({matched_count} attributed)"));
-                ui.separator();
-                let kill_all_label = format!("Kill all in filter ({})", unique_pgids_in_filter.len());
-                let can_kill_all = !unique_pgids_in_filter.is_empty();
-                if ui
-                    .add_enabled(can_kill_all, egui::Button::new(kill_all_label))
-                    .clicked()
-                {
-                    self.confirm_kill_all = true;
-                }
-                if let Some(msg) = &last_kill_msg {
+
+                if self.view == ViewMode::Listeners {
                     ui.separator();
-                    ui.label(egui::RichText::new(msg).small());
+                    let label = format!("Kill all in filter ({})", unique_pgids_in_filter.len());
+                    let enabled = !unique_pgids_in_filter.is_empty();
+                    if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                        self.confirm_kill_all = true;
+                    }
+                    if let Some(msg) = &last_kill_msg {
+                        ui.separator();
+                        ui.label(egui::RichText::new(msg).small());
+                    }
+                } else {
+                    ui.separator();
+                    if ui.button("Re-probe git").clicked() {
+                        self.kick_probe();
+                    }
                 }
             });
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut self.show_only_managed, "only attributed to a known repo");
-                ui.label("filter:");
-                ui.text_edit_singleline(&mut self.filter);
+            ui.horizontal(|ui| match self.view {
+                ViewMode::Listeners => {
+                    ui.checkbox(&mut self.show_only_managed, "only attributed to a known repo");
+                    ui.label("filter:");
+                    ui.text_edit_singleline(&mut self.filter);
+                }
+                ViewMode::Worktrees => {
+                    ui.label("filter:");
+                    ui.text_edit_singleline(&mut self.wt_filter);
+                    ui.label(
+                        egui::RichText::new("matches repo name, branch, or path")
+                            .small()
+                            .weak(),
+                    );
+                }
             });
         });
 
-        egui::SidePanel::right("repos").resizable(true).default_width(260.0).show(ctx, |ui| {
-            ui.heading("Tracked repos");
-            ui.add_space(2.0);
-            ui.label(egui::RichText::new(format!("{} worktrees", self.worktrees.len())).small().weak());
-            ui.add_space(6.0);
+        match self.view {
+            ViewMode::Listeners => self.render_listeners_view(ctx, &rows_snapshot, &unique_pgids_in_filter),
+            ViewMode::Worktrees => self.render_worktrees_view(ctx),
+        }
+    }
+}
 
-            let s = self.state.lock().unwrap();
-            for repo in &self.repos {
-                let repo_count = s
-                    .listeners
-                    .iter()
-                    .filter(|l| l.repo_name.as_deref() == Some(repo.name.as_str()))
-                    .count();
-                let repo_worktrees: Vec<&WorktreeRef> = self
-                    .worktrees
-                    .iter()
-                    .filter(|w| w.repo_name == repo.name)
-                    .collect();
-                let wt_count = repo_worktrees.len();
-                let expanded = self.expanded_repos.contains(&repo.name);
-
-                let header = ui.horizontal(|ui| {
-                    let color = if repo_count > 0 {
-                        egui::Color32::from_rgb(120, 230, 140)
-                    } else {
-                        egui::Color32::GRAY
-                    };
-                    ui.colored_label(color, "●");
-                    let arrow = if expanded { "▾" } else { "▸" };
-                    let label = format!("{arrow} {} ({wt_count} wt)", repo.name);
-                    let resp = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
-                    if resp.clicked() {
-                        if expanded {
-                            self.expanded_repos.remove(&repo.name);
-                        } else {
-                            self.expanded_repos.insert(repo.name.clone());
-                        }
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if repo_count > 0 {
-                            ui.label(egui::RichText::new(format!("{repo_count}")).strong());
-                        } else {
-                            ui.label(egui::RichText::new("—").weak());
-                        }
-                    });
-                    resp
-                });
-                let _ = header;
-
-                if self.expanded_repos.contains(&repo.name) {
-                    for w in &repo_worktrees {
-                        let n = s
-                            .listeners
-                            .iter()
-                            .filter(|l| l.worktree_path.as_ref() == Some(&w.path))
-                            .count();
-                        ui.horizontal(|ui| {
-                            ui.add_space(18.0);
-                            let dot_color = if n > 0 {
-                                egui::Color32::from_rgb(120, 230, 140)
-                            } else {
-                                egui::Color32::DARK_GRAY
-                            };
-                            ui.colored_label(dot_color, "•");
-                            let branch = w.branch.as_deref().unwrap_or("(detached)");
-                            ui.label(egui::RichText::new(branch).small());
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if n > 0 {
-                                    ui.label(egui::RichText::new(format!("{n}")).small().strong());
-                                }
-                            });
-                        });
-                        ui.horizontal(|ui| {
-                            ui.add_space(28.0);
-                            ui.label(
-                                egui::RichText::new(w.path.display().to_string())
-                                    .small()
-                                    .weak(),
-                            );
-                        });
-                    }
-                    ui.add_space(4.0);
-                }
+fn snapshot_listeners(
+    state: &Arc<Mutex<ScanState>>,
+    filter: &str,
+    only_managed: bool,
+) -> (
+    Vec<AttributedListener>,
+    Option<Instant>,
+    Option<String>,
+    Option<String>,
+    usize,
+    usize,
+) {
+    let filter_lc = filter.to_lowercase();
+    let s = state.lock().unwrap();
+    let rows: Vec<AttributedListener> = s
+        .listeners
+        .iter()
+        .filter(|l| !only_managed || l.repo_name.is_some())
+        .filter(|l| {
+            if filter_lc.is_empty() {
+                return true;
             }
-        });
+            l.listener.command_name.to_lowercase().contains(&filter_lc)
+                || l.listener.port.to_string().contains(&filter_lc)
+                || l.listener.pid.to_string().contains(&filter_lc)
+                || l.listener
+                    .cwd
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_lowercase().contains(&filter_lc))
+                    .unwrap_or(false)
+                || l.repo_name
+                    .as_ref()
+                    .map(|n| n.to_lowercase().contains(&filter_lc))
+                    .unwrap_or(false)
+                || l.worktree_branch
+                    .as_ref()
+                    .map(|n| n.to_lowercase().contains(&filter_lc))
+                    .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+    (
+        rows,
+        s.last_scan,
+        s.last_error.clone(),
+        s.last_kill_msg.clone(),
+        s.listeners.len(),
+        s.listeners.iter().filter(|l| l.repo_name.is_some()).count(),
+    )
+}
+
+impl HiveApp {
+    fn render_listeners_view(
+        &mut self,
+        ctx: &egui::Context,
+        rows_snapshot: &[AttributedListener],
+        unique_pgids_in_filter: &[i32],
+    ) {
+        egui::SidePanel::right("repos")
+            .resizable(true)
+            .default_width(260.0)
+            .show(ctx, |ui| {
+                ui.heading("Tracked repos");
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new(format!("{} worktrees", self.worktrees.len()))
+                        .small()
+                        .weak(),
+                );
+                ui.add_space(6.0);
+
+                let s = self.state.lock().unwrap();
+                for repo in &self.repos {
+                    let repo_count = s
+                        .listeners
+                        .iter()
+                        .filter(|l| l.repo_name.as_deref() == Some(repo.name.as_str()))
+                        .count();
+                    let repo_worktrees: Vec<&WorktreeRef> = self
+                        .worktrees
+                        .iter()
+                        .filter(|w| w.repo_name == repo.name)
+                        .collect();
+                    let wt_count = repo_worktrees.len();
+                    let expanded = self.expanded_repos.contains(&repo.name);
+
+                    ui.horizontal(|ui| {
+                        let color = if repo_count > 0 {
+                            egui::Color32::from_rgb(120, 230, 140)
+                        } else {
+                            egui::Color32::GRAY
+                        };
+                        ui.colored_label(color, "●");
+                        let arrow = if expanded { "▾" } else { "▸" };
+                        let label = format!("{arrow} {} ({wt_count} wt)", repo.name);
+                        let resp = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
+                        if resp.clicked() {
+                            if expanded {
+                                self.expanded_repos.remove(&repo.name);
+                            } else {
+                                self.expanded_repos.insert(repo.name.clone());
+                            }
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if repo_count > 0 {
+                                ui.label(egui::RichText::new(format!("{repo_count}")).strong());
+                            } else {
+                                ui.label(egui::RichText::new("—").weak());
+                            }
+                        });
+                    });
+
+                    if self.expanded_repos.contains(&repo.name) {
+                        for w in &repo_worktrees {
+                            let n = s
+                                .listeners
+                                .iter()
+                                .filter(|l| l.worktree_path.as_ref() == Some(&w.path))
+                                .count();
+                            ui.horizontal(|ui| {
+                                ui.add_space(18.0);
+                                let dot_color = if n > 0 {
+                                    egui::Color32::from_rgb(120, 230, 140)
+                                } else {
+                                    egui::Color32::DARK_GRAY
+                                };
+                                ui.colored_label(dot_color, "•");
+                                let branch = w.branch.as_deref().unwrap_or("(detached)");
+                                ui.label(egui::RichText::new(branch).small());
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if n > 0 {
+                                        ui.label(egui::RichText::new(format!("{n}")).small().strong());
+                                    }
+                                });
+                            });
+                        }
+                        ui.add_space(4.0);
+                    }
+                }
+            });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let mut kill_request: Option<i32> = None;
@@ -405,40 +509,23 @@ impl eframe::App for HiveApp {
                     h.col(|ui| { ui.strong("ACTION"); });
                 })
                 .body(|mut body| {
-                    for row in &rows_snapshot {
+                    for row in rows_snapshot {
                         let l = &row.listener;
                         body.row(20.0, |mut r| {
-                            r.col(|ui| {
-                                ui.label(egui::RichText::new(l.port.to_string()).monospace().strong());
-                            });
-                            r.col(|ui| {
-                                ui.label(egui::RichText::new(l.pid.to_string()).monospace());
-                            });
-                            r.col(|ui| {
-                                ui.label(egui::RichText::new(l.pgid.to_string()).monospace());
-                            });
+                            r.col(|ui| { ui.label(egui::RichText::new(l.port.to_string()).monospace().strong()); });
+                            r.col(|ui| { ui.label(egui::RichText::new(l.pid.to_string()).monospace()); });
+                            r.col(|ui| { ui.label(egui::RichText::new(l.pgid.to_string()).monospace()); });
                             r.col(|ui| { ui.label(&l.command_name); });
                             r.col(|ui| match &row.repo_name {
-                                Some(n) => {
-                                    ui.colored_label(egui::Color32::from_rgb(120, 230, 140), n);
-                                }
-                                None => {
-                                    ui.label(egui::RichText::new("—").weak());
-                                }
+                                Some(n) => { ui.colored_label(egui::Color32::from_rgb(120, 230, 140), n); }
+                                None => { ui.label(egui::RichText::new("—").weak()); }
                             });
                             r.col(|ui| match &row.worktree_branch {
-                                Some(b) => {
-                                    ui.label(egui::RichText::new(b).small());
-                                }
-                                None => {
-                                    ui.label(egui::RichText::new("—").weak());
-                                }
+                                Some(b) => { ui.label(egui::RichText::new(b).small()); }
+                                None => { ui.label(egui::RichText::new("—").weak()); }
                             });
                             r.col(|ui| {
-                                let text = l
-                                    .cwd
-                                    .as_ref()
-                                    .map(|p| p.to_string_lossy().to_string())
+                                let text = l.cwd.as_ref().map(|p| p.to_string_lossy().to_string())
                                     .unwrap_or_else(|| "(unknown)".into());
                                 ui.label(egui::RichText::new(text).small());
                             });
@@ -469,30 +556,227 @@ impl eframe::App for HiveApp {
                 .show(ctx, |ui| {
                     ui.label(format!(
                         "Send SIGTERM (then SIGKILL after 3s) to {} unique process group{} in the current filter?",
-                        pgid_count,
-                        if pgid_count == 1 { "" } else { "s" }
+                        pgid_count, if pgid_count == 1 { "" } else { "s" }
                     ));
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if ui
-                            .add(egui::Button::new(
+                        if ui.add(
+                            egui::Button::new(
                                 egui::RichText::new("Confirm").color(egui::Color32::WHITE),
-                            ).fill(egui::Color32::from_rgb(180, 60, 60)))
-                            .clicked()
-                        {
-                            do_confirm = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            do_cancel = true;
-                        }
+                            ).fill(egui::Color32::from_rgb(180, 60, 60))
+                        ).clicked() { do_confirm = true; }
+                        if ui.button("Cancel").clicked() { do_cancel = true; }
                     });
                 });
             if do_confirm {
-                self.spawn_kill_many(unique_pgids_in_filter.clone(), ctx);
+                self.spawn_kill_many(unique_pgids_in_filter.to_vec(), ctx);
                 self.confirm_kill_all = false;
             } else if do_cancel || !open {
                 self.confirm_kill_all = false;
             }
         }
     }
+
+    fn render_worktrees_view(&mut self, ctx: &egui::Context) {
+        // Pre-compute per-worktree listener counts so we don't re-lock per row.
+        let listener_counts: HashMap<PathBuf, usize> = {
+            let s = self.state.lock().unwrap();
+            let mut counts: HashMap<PathBuf, usize> = HashMap::new();
+            for l in &s.listeners {
+                if let Some(p) = &l.worktree_path {
+                    *counts.entry(p.clone()).or_default() += 1;
+                }
+            }
+            counts
+        };
+        let meta_snapshot: HashMap<PathBuf, WorktreeMeta> = self.meta.lock().unwrap().clone();
+        let wt_filter_lc = self.wt_filter.to_lowercase();
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} worktrees across {} repos. Click 'Re-probe git' to refresh status.",
+                    self.worktrees.len(),
+                    self.repos.len()
+                ))
+                .weak()
+                .small(),
+            );
+            ui.add_space(4.0);
+
+            let mut by_repo: HashMap<&str, Vec<&WorktreeRef>> = HashMap::new();
+            for w in &self.worktrees {
+                by_repo.entry(w.repo_name.as_str()).or_default().push(w);
+            }
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for repo in &self.repos {
+                    let Some(wts) = by_repo.get(repo.name.as_str()) else { continue; };
+
+                    let visible_wts: Vec<&WorktreeRef> = wts
+                        .iter()
+                        .copied()
+                        .filter(|w| matches_wt_filter(w, &wt_filter_lc))
+                        .collect();
+                    if !wt_filter_lc.is_empty() && visible_wts.is_empty() {
+                        continue;
+                    }
+
+                    let total_listeners: usize = visible_wts
+                        .iter()
+                        .map(|w| listener_counts.get(&w.path).copied().unwrap_or(0))
+                        .sum();
+                    let dirty_count = visible_wts
+                        .iter()
+                        .filter(|w| meta_snapshot.get(&w.path).and_then(|m| m.dirty).unwrap_or(false))
+                        .count();
+                    let drifted_count = visible_wts
+                        .iter()
+                        .filter(|w| {
+                            meta_snapshot.get(&w.path).map(|m| {
+                                m.ahead.unwrap_or(0) + m.behind.unwrap_or(0) > 0
+                            }).unwrap_or(false)
+                        })
+                        .count();
+
+                    ui.horizontal(|ui| {
+                        ui.heading(&repo.name);
+                        ui.label(egui::RichText::new(format!("({} wt)", visible_wts.len())).weak());
+                        ui.separator();
+                        if total_listeners > 0 {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(120, 230, 140),
+                                format!("{} listening", total_listeners),
+                            );
+                        }
+                        if dirty_count > 0 {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(230, 180, 100),
+                                format!("{} dirty", dirty_count),
+                            );
+                        }
+                        if drifted_count > 0 {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(180, 180, 240),
+                                format!("{} drifted", drifted_count),
+                            );
+                        }
+                    });
+                    ui.label(
+                        egui::RichText::new(repo.path.display().to_string())
+                            .small()
+                            .weak(),
+                    );
+                    ui.add_space(4.0);
+
+                    TableBuilder::new(ui)
+                        .id_salt(format!("wt_table_{}", repo.name))
+                        .striped(true)
+                        .resizable(true)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(Column::initial(220.0).at_least(140.0))   // branch
+                        .column(Column::initial(82.0).at_least(72.0))     // head
+                        .column(Column::initial(80.0).at_least(60.0))     // status
+                        .column(Column::initial(88.0).at_least(68.0))     // ahead/behind
+                        .column(Column::initial(96.0).at_least(78.0))     // last commit
+                        .column(Column::initial(80.0).at_least(60.0))     // listeners
+                        .column(Column::remainder().at_least(160.0))      // path
+                        .header(22.0, |mut h| {
+                            h.col(|ui| { ui.strong("BRANCH"); });
+                            h.col(|ui| { ui.strong("HEAD"); });
+                            h.col(|ui| { ui.strong("STATUS"); });
+                            h.col(|ui| { ui.strong("↑ / ↓"); });
+                            h.col(|ui| { ui.strong("LAST COMMIT"); });
+                            h.col(|ui| { ui.strong("LISTENERS"); });
+                            h.col(|ui| { ui.strong("PATH"); });
+                        })
+                        .body(|mut body| {
+                            for w in &visible_wts {
+                                let m = meta_snapshot.get(&w.path).cloned().unwrap_or_default();
+                                let listener_n = listener_counts.get(&w.path).copied().unwrap_or(0);
+                                body.row(22.0, |mut r| {
+                                    r.col(|ui| {
+                                        let branch_text = w.branch.clone().unwrap_or_else(|| "(detached)".into());
+                                        if w.branch.is_none() {
+                                            ui.label(egui::RichText::new(branch_text).italics().weak());
+                                        } else {
+                                            ui.label(egui::RichText::new(branch_text));
+                                        }
+                                    });
+                                    r.col(|ui| {
+                                        let head = short_head(&w.head);
+                                        ui.label(egui::RichText::new(head).monospace().small());
+                                    });
+                                    r.col(|ui| match m.dirty {
+                                        Some(true) => {
+                                            ui.colored_label(egui::Color32::from_rgb(230, 180, 100), "dirty");
+                                        }
+                                        Some(false) => {
+                                            ui.colored_label(egui::Color32::from_rgb(120, 230, 140), "clean");
+                                        }
+                                        None => {
+                                            ui.label(egui::RichText::new("…").weak());
+                                        }
+                                    });
+                                    r.col(|ui| {
+                                        let txt = match (m.ahead, m.behind) {
+                                            (Some(0), Some(0)) => "—".to_string(),
+                                            (Some(a), Some(b)) => format!("↑{a} ↓{b}"),
+                                            _ => "…".to_string(),
+                                        };
+                                        let weak = matches!(txt.as_str(), "—" | "…");
+                                        if weak {
+                                            ui.label(egui::RichText::new(txt).weak().small());
+                                        } else {
+                                            ui.label(egui::RichText::new(txt).small().monospace());
+                                        }
+                                    });
+                                    r.col(|ui| match m.head_commit_unix {
+                                        Some(t) => {
+                                            ui.label(egui::RichText::new(humanize_age(t)).small());
+                                        }
+                                        None => {
+                                            ui.label(egui::RichText::new("…").weak());
+                                        }
+                                    });
+                                    r.col(|ui| {
+                                        if listener_n > 0 {
+                                            ui.colored_label(
+                                                egui::Color32::from_rgb(120, 230, 140),
+                                                format!("{listener_n}"),
+                                            );
+                                        } else {
+                                            ui.label(egui::RichText::new("—").weak());
+                                        }
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(
+                                            egui::RichText::new(w.path.display().to_string())
+                                                .small()
+                                                .weak(),
+                                        );
+                                    });
+                                });
+                            }
+                        });
+
+                    ui.add_space(12.0);
+                }
+            });
+        });
+    }
 }
+
+fn matches_wt_filter(w: &WorktreeRef, filter_lc: &str) -> bool {
+    if filter_lc.is_empty() {
+        return true;
+    }
+    w.repo_name.to_lowercase().contains(filter_lc)
+        || w.branch.as_deref().unwrap_or("").to_lowercase().contains(filter_lc)
+        || w.path.to_string_lossy().to_lowercase().contains(filter_lc)
+}
+
+fn short_head(sha: &str) -> &str {
+    if sha.len() >= 8 { &sha[..8] } else { sha }
+}
+

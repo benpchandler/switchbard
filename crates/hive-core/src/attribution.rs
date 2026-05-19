@@ -45,6 +45,7 @@ mod tests {
             repo_name: repo.into(),
             path: PathBuf::from(path),
             branch: branch.map(|b| b.into()),
+            head: String::new(),
         }
     }
 
