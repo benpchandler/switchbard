@@ -609,7 +609,7 @@ impl HiveApp {
                 by_repo.entry(w.repo_name.as_str()).or_default().push(w);
             }
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("worktrees_outer_scroll").show(ui, |ui| {
                 for repo in &self.repos {
                     let Some(wts) = by_repo.get(repo.name.as_str()) else { continue; };
 
@@ -671,6 +671,7 @@ impl HiveApp {
 
                     TableBuilder::new(ui)
                         .id_salt(format!("wt_table_{}", repo.name))
+                        .vscroll(false) // outer ScrollArea owns scrolling; per-table scroll areas would ID-collide
                         .striped(true)
                         .resizable(true)
                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
