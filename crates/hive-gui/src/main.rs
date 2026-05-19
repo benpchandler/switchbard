@@ -1,6 +1,9 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
-use hive_core::{attribute, kill_pgid, scan_listeners, AttributedListener, KillOutcome, Repo};
+use hive_core::{
+    attribute, enumerate_worktrees, kill_pgid, scan_listeners, AttributedListener, KillOutcome,
+    Repo, WorktreeRef,
+};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
@@ -8,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 fn main() -> eframe::Result<()> {
-    let repos = vec![
+    let base_repos = vec![
         Repo {
             name: "alpha".into(),
             path: PathBuf::from("/Users/me/code/alpha"),
@@ -31,17 +34,58 @@ fn main() -> eframe::Result<()> {
         },
     ];
 
+    let worktrees = expand_worktrees(&base_repos);
+    eprintln!(
+        "Hive: tracking {} repos with {} total worktrees (incl. primary)",
+        base_repos.len(),
+        worktrees.len()
+    );
+
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1100.0, 720.0])
+            .with_inner_size([1180.0, 720.0])
             .with_title("Hive — Local Listeners"),
         ..Default::default()
     };
     eframe::run_native(
         "Hive",
         opts,
-        Box::new(|cc| Ok(Box::new(HiveApp::new(cc, repos)))),
+        Box::new(|cc| Ok(Box::new(HiveApp::new(cc, base_repos, worktrees)))),
     )
+}
+
+/// For each tracked repo, ask git for the full worktree list and emit a
+/// `WorktreeRef` per existing checkout. If `git worktree list` fails (the path
+/// isn't a git repo, git binary missing, etc.) we still register the primary
+/// path so it isn't silently dropped from attribution.
+fn expand_worktrees(repos: &[Repo]) -> Vec<WorktreeRef> {
+    let mut out = Vec::new();
+    for repo in repos {
+        let mut added_primary = false;
+        if let Ok(entries) = enumerate_worktrees(&repo.path) {
+            for e in entries {
+                if !e.path.exists() {
+                    continue; // skip phantom checkouts that were rm'd out from under git
+                }
+                if e.path == repo.path {
+                    added_primary = true;
+                }
+                out.push(WorktreeRef {
+                    repo_name: repo.name.clone(),
+                    path: e.path,
+                    branch: e.branch,
+                });
+            }
+        }
+        if !added_primary {
+            out.push(WorktreeRef {
+                repo_name: repo.name.clone(),
+                path: repo.path.clone(),
+                branch: None,
+            });
+        }
+    }
+    out
 }
 
 /// Mutex-protected `()` paired with a Condvar so the kill action can wake the
@@ -50,11 +94,13 @@ type Kick = Arc<(Mutex<()>, Condvar)>;
 
 struct HiveApp {
     repos: Vec<Repo>,
+    worktrees: Vec<WorktreeRef>,
     state: Arc<Mutex<ScanState>>,
     kick: Kick,
     show_only_managed: bool,
     filter: String,
     confirm_kill_all: bool,
+    expanded_repos: BTreeSet<String>,
 }
 
 #[derive(Default)]
@@ -62,17 +108,16 @@ struct ScanState {
     listeners: Vec<AttributedListener>,
     last_scan: Option<Instant>,
     last_error: Option<String>,
-    /// Most recent kill action result, surfaced in the top bar.
     last_kill_msg: Option<String>,
 }
 
 impl HiveApp {
-    fn new(cc: &eframe::CreationContext<'_>, repos: Vec<Repo>) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, repos: Vec<Repo>, worktrees: Vec<WorktreeRef>) -> Self {
         let state = Arc::new(Mutex::new(ScanState::default()));
         let kick: Kick = Arc::new((Mutex::new(()), Condvar::new()));
         let bg_state = state.clone();
         let bg_kick = kick.clone();
-        let bg_repos = repos.clone();
+        let bg_worktrees = worktrees.clone();
         let ctx = cc.egui_ctx.clone();
         thread::spawn(move || loop {
             let result = scan_listeners();
@@ -81,7 +126,7 @@ impl HiveApp {
                 let mut s = bg_state.lock().unwrap();
                 match result {
                     Ok(listeners) => {
-                        s.listeners = attribute(&listeners, &bg_repos);
+                        s.listeners = attribute(&listeners, &bg_worktrees);
                         s.last_error = None;
                     }
                     Err(e) => {
@@ -91,22 +136,22 @@ impl HiveApp {
                 s.last_scan = Some(now);
             }
             ctx.request_repaint();
-            // Wait up to 3s, OR until someone notifies us (e.g. after a kill).
             let (lock, cvar) = &*bg_kick;
             let guard = lock.lock().unwrap();
             let _ = cvar.wait_timeout(guard, Duration::from_secs(3)).unwrap();
         });
         Self {
             repos,
+            worktrees,
             state,
             kick,
             show_only_managed: false,
             filter: String::new(),
             confirm_kill_all: false,
+            expanded_repos: BTreeSet::new(),
         }
     }
 
-    /// Spawn a background thread that kills `pgid` then wakes the scanner.
     fn spawn_kill(&self, pgid: i32, ctx: &egui::Context) {
         let state = self.state.clone();
         let kick = self.kick.clone();
@@ -122,7 +167,6 @@ impl HiveApp {
                 let mut s = state.lock().unwrap();
                 s.last_kill_msg = Some(msg);
             }
-            // Wake the scanner.
             let (lock, cvar) = &*kick;
             let _g = lock.lock().unwrap();
             cvar.notify_all();
@@ -130,7 +174,6 @@ impl HiveApp {
         });
     }
 
-    /// Kill every unique PGID in `pgids` from a background thread.
     fn spawn_kill_many(&self, pgids: Vec<i32>, ctx: &egui::Context) {
         let state = self.state.clone();
         let kick = self.kick.clone();
@@ -165,8 +208,6 @@ impl HiveApp {
 
 impl eframe::App for HiveApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Snapshot the filtered listener set up front so we can use it both for the
-        // table and for the "Kill all in filter" action without re-locking.
         let filter_lc = self.filter.to_lowercase();
         let (rows_snapshot, last_scan, last_error, last_kill_msg, total_count, matched_count) = {
             let s = self.state.lock().unwrap();
@@ -187,6 +228,10 @@ impl eframe::App for HiveApp {
                             .map(|p| p.to_string_lossy().to_lowercase().contains(&filter_lc))
                             .unwrap_or(false)
                         || l.repo_name
+                            .as_ref()
+                            .map(|n| n.to_lowercase().contains(&filter_lc))
+                            .unwrap_or(false)
+                        || l.worktree_branch
                             .as_ref()
                             .map(|n| n.to_lowercase().contains(&filter_lc))
                             .unwrap_or(false)
@@ -229,10 +274,7 @@ impl eframe::App for HiveApp {
                 ui.label(format!("{} listeners", total_count));
                 ui.label(format!("({matched_count} attributed)"));
                 ui.separator();
-                let kill_all_label = format!(
-                    "Kill all in filter ({})",
-                    unique_pgids_in_filter.len()
-                );
+                let kill_all_label = format!("Kill all in filter ({})", unique_pgids_in_filter.len());
                 let can_kill_all = !unique_pgids_in_filter.is_empty();
                 if ui
                     .add_enabled(can_kill_all, egui::Button::new(kill_all_label))
@@ -252,38 +294,89 @@ impl eframe::App for HiveApp {
             });
         });
 
-        egui::SidePanel::right("repos").resizable(true).default_width(220.0).show(ctx, |ui| {
+        egui::SidePanel::right("repos").resizable(true).default_width(260.0).show(ctx, |ui| {
             ui.heading("Tracked repos");
-            ui.add_space(4.0);
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new(format!("{} worktrees", self.worktrees.len())).small().weak());
+            ui.add_space(6.0);
+
             let s = self.state.lock().unwrap();
             for repo in &self.repos {
-                let count = s
+                let repo_count = s
                     .listeners
                     .iter()
                     .filter(|l| l.repo_name.as_deref() == Some(repo.name.as_str()))
                     .count();
-                ui.horizontal(|ui| {
-                    let color = if count > 0 {
+                let repo_worktrees: Vec<&WorktreeRef> = self
+                    .worktrees
+                    .iter()
+                    .filter(|w| w.repo_name == repo.name)
+                    .collect();
+                let wt_count = repo_worktrees.len();
+                let expanded = self.expanded_repos.contains(&repo.name);
+
+                let header = ui.horizontal(|ui| {
+                    let color = if repo_count > 0 {
                         egui::Color32::from_rgb(120, 230, 140)
                     } else {
                         egui::Color32::GRAY
                     };
                     ui.colored_label(color, "●");
-                    ui.label(&repo.name);
+                    let arrow = if expanded { "▾" } else { "▸" };
+                    let label = format!("{arrow} {} ({wt_count} wt)", repo.name);
+                    let resp = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
+                    if resp.clicked() {
+                        if expanded {
+                            self.expanded_repos.remove(&repo.name);
+                        } else {
+                            self.expanded_repos.insert(repo.name.clone());
+                        }
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if count > 0 {
-                            ui.label(egui::RichText::new(format!("{count}")).strong());
+                        if repo_count > 0 {
+                            ui.label(egui::RichText::new(format!("{repo_count}")).strong());
                         } else {
                             ui.label(egui::RichText::new("—").weak());
                         }
                     });
+                    resp
                 });
-                ui.label(
-                    egui::RichText::new(repo.path.display().to_string())
-                        .small()
-                        .weak(),
-                );
-                ui.add_space(6.0);
+                let _ = header;
+
+                if self.expanded_repos.contains(&repo.name) {
+                    for w in &repo_worktrees {
+                        let n = s
+                            .listeners
+                            .iter()
+                            .filter(|l| l.worktree_path.as_ref() == Some(&w.path))
+                            .count();
+                        ui.horizontal(|ui| {
+                            ui.add_space(18.0);
+                            let dot_color = if n > 0 {
+                                egui::Color32::from_rgb(120, 230, 140)
+                            } else {
+                                egui::Color32::DARK_GRAY
+                            };
+                            ui.colored_label(dot_color, "•");
+                            let branch = w.branch.as_deref().unwrap_or("(detached)");
+                            ui.label(egui::RichText::new(branch).small());
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if n > 0 {
+                                    ui.label(egui::RichText::new(format!("{n}")).small().strong());
+                                }
+                            });
+                        });
+                        ui.horizontal(|ui| {
+                            ui.add_space(28.0);
+                            ui.label(
+                                egui::RichText::new(w.path.display().to_string())
+                                    .small()
+                                    .weak(),
+                            );
+                        });
+                    }
+                    ui.add_space(4.0);
+                }
             }
         });
 
@@ -293,19 +386,21 @@ impl eframe::App for HiveApp {
                 .striped(true)
                 .resizable(true)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .column(Column::initial(70.0).at_least(50.0)) // port
-                .column(Column::initial(70.0).at_least(50.0)) // pid
-                .column(Column::initial(70.0).at_least(50.0)) // pgid
-                .column(Column::initial(140.0).at_least(80.0)) // command
-                .column(Column::initial(140.0).at_least(80.0)) // repo
-                .column(Column::remainder().at_least(120.0)) // cwd
-                .column(Column::initial(70.0).at_least(60.0)) // kill button
+                .column(Column::initial(70.0).at_least(50.0))
+                .column(Column::initial(70.0).at_least(50.0))
+                .column(Column::initial(70.0).at_least(50.0))
+                .column(Column::initial(130.0).at_least(80.0))
+                .column(Column::initial(130.0).at_least(80.0))
+                .column(Column::initial(140.0).at_least(80.0))
+                .column(Column::remainder().at_least(120.0))
+                .column(Column::initial(70.0).at_least(60.0))
                 .header(22.0, |mut h| {
                     h.col(|ui| { ui.strong("PORT"); });
                     h.col(|ui| { ui.strong("PID"); });
                     h.col(|ui| { ui.strong("PGID"); });
                     h.col(|ui| { ui.strong("COMMAND"); });
                     h.col(|ui| { ui.strong("REPO"); });
+                    h.col(|ui| { ui.strong("BRANCH"); });
                     h.col(|ui| { ui.strong("CWD"); });
                     h.col(|ui| { ui.strong("ACTION"); });
                 })
@@ -326,6 +421,14 @@ impl eframe::App for HiveApp {
                             r.col(|ui| match &row.repo_name {
                                 Some(n) => {
                                     ui.colored_label(egui::Color32::from_rgb(120, 230, 140), n);
+                                }
+                                None => {
+                                    ui.label(egui::RichText::new("—").weak());
+                                }
+                            });
+                            r.col(|ui| match &row.worktree_branch {
+                                Some(b) => {
+                                    ui.label(egui::RichText::new(b).small());
                                 }
                                 None => {
                                     ui.label(egui::RichText::new("—").weak());
@@ -353,7 +456,6 @@ impl eframe::App for HiveApp {
             }
         });
 
-        // Confirm-kill-all modal. Simple bool-gated window.
         if self.confirm_kill_all {
             let mut open = true;
             let pgid_count = unique_pgids_in_filter.len();
