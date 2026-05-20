@@ -105,12 +105,11 @@ fn render_sidebar(app: &mut HiveApp, ctx: &egui::Context) {
                     worktrees.len(),
                     if worktrees.len() == 1 { "" } else { "s" }
                 ))
-                .small()
                 .weak(),
             );
             if let Some(msg) = &config_msg {
                 ui.add_space(2.0);
-                ui.label(egui::RichText::new(msg).small().weak());
+                ui.label(egui::RichText::new(msg).weak());
             }
             ui.add_space(6.0);
 
@@ -123,7 +122,6 @@ fn render_sidebar(app: &mut HiveApp, ctx: &egui::Context) {
                         egui::RichText::new(
                             "Click ➕ Add above and pick a folder\nthat contains a git repository.",
                         )
-                        .small()
                         .weak(),
                     );
                 });
@@ -348,14 +346,9 @@ fn render_grouped(
                                         rs.len(),
                                         if rs.len() == 1 { "" } else { "s" }
                                     ))
-                                    .small()
                                     .weak(),
                                 );
-                                ui.label(
-                                    egui::RichText::new(wt.path.display().to_string())
-                                        .small()
-                                        .weak(),
-                                );
+                                ui.label(egui::RichText::new(wt.path.display().to_string()).weak());
                             });
                             render_table(
                                 ui,
@@ -422,11 +415,7 @@ fn render_grouped(
             }
 
             if !rendered_any {
-                ui.label(
-                    egui::RichText::new("No listeners match the current filter.")
-                        .weak()
-                        .small(),
-                );
+                ui.label(egui::RichText::new("No listeners match the current filter.").weak());
             }
         });
 }

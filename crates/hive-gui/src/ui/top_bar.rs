@@ -48,21 +48,13 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
             ViewMode::Worktrees => {
                 ui.label("filter:");
                 ui.text_edit_singleline(&mut app.wt_filter);
-                ui.label(
-                    egui::RichText::new("matches repo name, branch, or path")
-                        .small()
-                        .weak(),
-                );
+                ui.label(egui::RichText::new("matches repo name, branch, or path").weak());
             }
             ViewMode::Servers => {
                 ui.label("filter:");
                 ui.text_edit_singleline(&mut app.server_filter);
                 ui.checkbox(&mut app.show_non_servers, "show non-server scripts");
-                ui.label(
-                    egui::RichText::new("matches repo, branch, service, or command")
-                        .small()
-                        .weak(),
-                );
+                ui.label(egui::RichText::new("matches repo, branch, service, or command").weak());
             }
         });
     });
@@ -89,7 +81,7 @@ fn listeners_extras(app: &mut HiveApp, ui: &mut egui::Ui) {
     }
     if let Some(msg) = app.kill_status.snapshot() {
         ui.separator();
-        ui.label(egui::RichText::new(msg).small());
+        ui.label(msg);
     }
 }
 
@@ -111,7 +103,7 @@ fn worktrees_extras(app: &mut HiveApp, ui: &mut egui::Ui) {
     }
     if let Some(msg) = app.config_status.snapshot() {
         ui.separator();
-        ui.label(egui::RichText::new(msg).small());
+        ui.label(msg);
     }
 }
 
@@ -136,6 +128,6 @@ fn servers_extras(app: &mut HiveApp, ui: &mut egui::Ui) {
         });
     if let Some(msg) = app.server_status.snapshot() {
         ui.separator();
-        ui.label(egui::RichText::new(msg).small());
+        ui.label(msg);
     }
 }
