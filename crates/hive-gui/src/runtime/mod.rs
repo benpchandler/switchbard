@@ -5,9 +5,8 @@
 //! - `WorktreeMeta` = git probe results for one worktree (dirty, ahead/behind, age).
 //! - `ActiveRun`    = a process Hive launched that's still going.
 //! - `PickerState`  = the rfd file-picker hand-off.
-//! - `RowState`     = the unified verdict for a Servers-view row (drives the
-//!   STATE/PORTS/ACTIONS columns from a single decision).
-//! - `ViewMode`     = which tab the user is on.
+//! - `RowState`     = the verdict for one service row in the unified tree
+//!   (drives state / ports / actions from a single decision).
 
 pub mod worktrees;
 
@@ -116,13 +115,6 @@ impl WorktreeMeta {
             newest_unix,
         })
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ViewMode {
-    Listeners,
-    Worktrees,
-    Servers,
 }
 
 #[derive(Debug, Clone)]

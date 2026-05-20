@@ -12,7 +12,7 @@
 //!   panel.
 
 use crate::runtime::worktrees::expand_worktrees;
-use crate::runtime::{ActiveRun, PickerState, ViewMode, WorktreeMeta};
+use crate::runtime::{ActiveRun, PickerState, WorktreeMeta};
 use crate::sync::{Kick, Status};
 use crate::ui;
 use crate::workers::{self, Channels};
@@ -58,20 +58,18 @@ pub struct HiveApp {
     pub config: Config,
 
     // View-only state.
-    pub view: ViewMode,
-    pub show_only_managed: bool,
+    /// Single workspace-wide filter. Matches repo, branch, service / command,
+    /// listener command, port — applied across the entire unified tree.
     pub filter: String,
-    /// When true (default), the Listeners central panel renders one section
-    /// per repo, with worktree sub-headings, instead of a single flat table.
-    pub group_listeners: bool,
+    /// When on, the unified tree hides the "Unattributed listeners" section
+    /// AND any listener row not bound to a tracked repo.
+    pub show_only_managed: bool,
     pub confirm_kill_all: bool,
     /// When Some, the sidebar shows a "Remove '{name}'?" confirmation modal
     /// for the repo at the given path. The ✕ button in the sidebar sets this;
     /// the modal clears it on Confirm or Cancel.
     pub confirm_remove_repo: Option<(PathBuf, String)>,
     pub expanded_repos: BTreeSet<String>,
-    pub wt_filter: String,
-    pub server_filter: String,
     /// When false (default), hide rows whose classifier verdict is NotServer
     /// (test scripts, build wrappers, ship-gate runners, etc.).
     pub show_non_servers: bool,
@@ -125,7 +123,6 @@ impl HiveApp {
                     .map(|i| i + 1)
             })
             .unwrap_or(0);
-        let group_listeners = cfg.ui.group_listeners;
         let show_non_servers = cfg.ui.show_non_servers;
 
         Self {
@@ -143,15 +140,11 @@ impl HiveApp {
             config_status: Status::new(),
             kill_status: Status::new(),
             server_status: Status::new(),
-            view: ViewMode::Listeners,
             show_only_managed: false,
             filter: String::new(),
-            group_listeners,
             confirm_kill_all: false,
             confirm_remove_repo: None,
             expanded_repos: BTreeSet::new(),
-            wt_filter: String::new(),
-            server_filter: String::new(),
             show_non_servers,
             browser_choice,
         }
@@ -188,7 +181,6 @@ impl HiveApp {
                 .get(self.browser_choice - 1)
                 .map(|s| s.to_string())
         };
-        self.config.ui.group_listeners = self.group_listeners;
         self.config.ui.show_non_servers = self.show_non_servers;
         self.save_config();
     }
@@ -484,28 +476,16 @@ impl eframe::App for HiveApp {
 
         // Snapshot persistable UI state so we can save the config if any
         // toggle was flipped this update.
-        let ui_before = (
-            self.browser_choice,
-            self.group_listeners,
-            self.show_non_servers,
-        );
+        let ui_before = (self.browser_choice, self.show_non_servers);
 
         ui::top_bar::render(self, ctx);
         // Sidebar must render BEFORE the central panel so the SidePanel claims
         // its docked space first; otherwise the central panel sizes to the full
         // window and the side panel overlays it.
         ui::sidebar::render(self, ctx);
-        match self.view {
-            ViewMode::Listeners => ui::listeners::render(self, ctx),
-            ViewMode::Worktrees => ui::worktrees::render(self, ctx),
-            ViewMode::Servers => ui::servers::render(self, ctx),
-        }
+        ui::unified::render(self, ctx);
 
-        let ui_after = (
-            self.browser_choice,
-            self.group_listeners,
-            self.show_non_servers,
-        );
+        let ui_after = (self.browser_choice, self.show_non_servers);
         if ui_before != ui_after {
             self.save_ui_to_config();
         }

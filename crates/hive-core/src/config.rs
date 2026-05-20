@@ -29,36 +29,20 @@ pub struct Config {
     pub ui: UiConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UiConfig {
     /// Selected browser. `None` or the empty string means "system default";
     /// otherwise one of the names in `BROWSER_APP_NAMES`.
     #[serde(default)]
     pub browser: Option<String>,
-    /// Whether the Listeners view groups by repo/worktree. Default true.
-    #[serde(default = "default_true")]
-    pub group_listeners: bool,
-    /// Whether the Servers view hides NotServer-classified rows. Default false
-    /// (i.e. hide them — matches the current GUI default).
+    /// Whether the workspace tree includes NotServer-classified rows. Default
+    /// false (i.e. hide them).
     #[serde(default)]
     pub show_non_servers: bool,
 }
 
-impl Default for UiConfig {
-    fn default() -> Self {
-        UiConfig {
-            browser: None,
-            group_listeners: true,
-            show_non_servers: false,
-        }
-    }
-}
-
 fn default_version() -> u32 {
     1
-}
-fn default_true() -> bool {
-    true
 }
 
 /// The single canonical config path. Returns `None` only if `dirs::home_dir`
@@ -148,7 +132,6 @@ mod tests {
             ],
             ui: UiConfig {
                 browser: Some("Safari".into()),
-                group_listeners: false,
                 show_non_servers: true,
             },
         };
@@ -189,10 +172,6 @@ mod tests {
         .unwrap();
         let cfg = load_from(&path).unwrap();
         assert_eq!(cfg.repos.len(), 1);
-        assert!(
-            cfg.ui.group_listeners,
-            "ui.group_listeners should default to true"
-        );
         assert!(!cfg.ui.show_non_servers);
         assert_eq!(cfg.ui.browser, None);
     }
