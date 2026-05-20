@@ -82,6 +82,8 @@ impl HiveApp {
         repos: Vec<Repo>,
         worktrees: Vec<WorktreeRef>,
     ) -> Self {
+        ui::theme::apply(&cc.egui_ctx);
+
         let state = Arc::new(Mutex::new(ScanState::default()));
         let scanner_kick = Kick::new();
         let probe_kick = Kick::new();
