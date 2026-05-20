@@ -235,7 +235,8 @@ fn render_repo_section(
 
                     body.row(row_height, |mut r| {
                         r.col(|ui| {
-                            ui.label(&branch);
+                            ui.add(egui::Label::new(&branch).truncate())
+                                .on_hover_text(&branch);
                         });
                         r.col(|ui| render_service_cell(ui, svc));
                         r.col(|ui| render_state_cell(ui, &row_state));
@@ -318,7 +319,8 @@ fn render_service_cell(ui: &mut egui::Ui, svc: &DetectedService) {
                 theme::painted_x(ui, egui::Color32::DARK_GRAY);
             }
         }
-        ui.label(&svc.name);
+        ui.add(egui::Label::new(&svc.name).truncate())
+            .on_hover_text(&svc.name);
     });
 }
 
@@ -500,13 +502,14 @@ impl SvColumnWidths {
             }
         }
 
-        let worktree = column_widths::column_width(
+        let worktree = column_widths::column_width_clamped(
             ctx,
             std::iter::once(s::COL_WORKTREE).chain(branches.iter().map(String::as_str)),
             CellFont::Proportional,
             100.0,
+            240.0,
         );
-        let service = column_widths::column_width(
+        let service = column_widths::column_width_clamped(
             ctx,
             std::iter::once(s::COL_SERVICE).chain(services.iter().map(String::as_str)),
             CellFont::Proportional,
@@ -514,6 +517,7 @@ impl SvColumnWidths {
             // for the icon column even when no service text is wider than the
             // header.
             140.0,
+            240.0,
         );
         let state = column_widths::column_width(
             ctx,

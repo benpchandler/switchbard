@@ -349,11 +349,17 @@ impl WtColumnWidths {
             .iter()
             .map(|w| w.branch.clone().unwrap_or_else(|| "(detached)".into()))
             .collect();
-        let branch = column_widths::column_width(
+        // Cap the BRANCH column — long branches like
+        // `dedupe/01-frontend-cross-file` would otherwise blow out the
+        // column and push PATH off the right edge of the panel. The
+        // `branch_label` primitive renders with `.truncate()` so anything
+        // wider than the cap gets ellipsis + full name in the hover.
+        let branch = column_widths::column_width_clamped(
             ctx,
             std::iter::once(s::COL_BRANCH).chain(branch_strs.iter().map(String::as_str)),
             CellFont::Proportional,
             100.0,
+            240.0,
         );
         let head = column_widths::column_width(
             ctx,

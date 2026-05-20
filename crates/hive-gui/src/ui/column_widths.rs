@@ -59,3 +59,26 @@ where
         .fold(0.0_f32, f32::max);
     (widest + COL_PADDING).max(min_px)
 }
+
+/// Same as `column_width` but with both a floor and a ceiling. Use for
+/// columns that show user-provided strings of unbounded length (branch names,
+/// commands, repo names) — without a cap, one long row blows the column
+/// (and total table) out past the panel width and clips other columns.
+/// Content longer than `max_px` should render with `Label::truncate()` so it
+/// elides with ellipsis inside the capped cell.
+pub fn column_width_clamped<'a, I>(
+    ctx: &egui::Context,
+    cells: I,
+    font: CellFont,
+    min_px: f32,
+    max_px: f32,
+) -> f32
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let widest = cells
+        .into_iter()
+        .map(|s| measure(ctx, s, font))
+        .fold(0.0_f32, f32::max);
+    (widest + COL_PADDING).clamp(min_px, max_px)
+}

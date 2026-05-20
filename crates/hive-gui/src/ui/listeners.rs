@@ -363,18 +363,23 @@ fn render_table(
                     ui.label(egui::RichText::new(l.pgid.to_string()).monospace());
                 });
                 r.col(|ui| {
-                    ui.label(&l.command_name);
+                    ui.add(egui::Label::new(&l.command_name).truncate())
+                        .on_hover_text(&l.command_name);
                 });
                 if show_repo_cols {
                     r.col(|ui| match &row.repo_name {
                         Some(n) => {
-                            ui.colored_label(theme::GREEN, n);
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(n).color(theme::GREEN))
+                                    .truncate(),
+                            )
+                            .on_hover_text(n);
                         }
                         None => weak_dash(ui),
                     });
                     r.col(|ui| match &row.worktree_branch {
                         Some(b) => {
-                            ui.label(b);
+                            ui.add(egui::Label::new(b).truncate()).on_hover_text(b);
                         }
                         None => weak_dash(ui),
                     });
@@ -450,23 +455,31 @@ impl LiColumnWidths {
             CellFont::Monospace,
             60.0,
         );
-        let command = column_widths::column_width(
+        // COMMAND / REPO / BRANCH are user-data columns — long values
+        // (e.g. `audio-topology-refactor-experiment` repo names, or
+        // `bpc/long-feature-with-context` branches) otherwise dominate the
+        // table and push CWD off the right edge. Capped here; cells render
+        // with `.truncate()` so anything wider elides with ellipsis.
+        let command = column_widths::column_width_clamped(
             ctx,
             std::iter::once(strings::COL_COMMAND).chain(cmd_strs.iter().map(String::as_str)),
             CellFont::Proportional,
             100.0,
+            220.0,
         );
-        let repo = column_widths::column_width(
+        let repo = column_widths::column_width_clamped(
             ctx,
             std::iter::once(strings::COL_REPO).chain(repo_strs.iter().map(String::as_str)),
             CellFont::Proportional,
             100.0,
+            220.0,
         );
-        let branch = column_widths::column_width(
+        let branch = column_widths::column_width_clamped(
             ctx,
             std::iter::once(strings::COL_BRANCH).chain(branch_strs.iter().map(String::as_str)),
             CellFont::Proportional,
             100.0,
+            240.0,
         );
         let cwd = column_widths::column_width(
             ctx,
