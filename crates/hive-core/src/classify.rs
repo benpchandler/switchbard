@@ -84,9 +84,10 @@ pub fn classify_script_body(body: &str) -> ServerLikelihood {
         ServerLikelihood::Server
     } else if any_notserver_line {
         ServerLikelihood::NotServer
-    } else if any_weak_signal {
-        ServerLikelihood::Maybe
     } else {
+        // `any_weak_signal` is computed above for future use (e.g. a "soft Maybe"
+        // tier) but today both with-and-without-weak-signal land at Maybe.
+        let _ = any_weak_signal;
         ServerLikelihood::Maybe
     }
 }
@@ -176,12 +177,7 @@ const STRONG_POSITIVE_TOKENS: &[&str] = &[
 /// Ambiguous "could be a server" — overridden by negatives. Bare `vite` (no
 /// args) is usually `vite serve` by default but `vite build` is a builder; a
 /// `--reload` flag is server-y but could appear in other contexts.
-const WEAK_POSITIVE_TOKENS: &[&str] = &[
-    "vite",
-    "--reload",
-    "--watch",
-    "--dev",
-];
+const WEAK_POSITIVE_TOKENS: &[&str] = &["vite", "--reload", "--watch", "--dev"];
 
 /// Tokens whose presence implies "this is NOT a server" — overrides weak
 /// positives, overridden by strong positives.
@@ -249,7 +245,10 @@ mod tests {
         assert_eq!(classify_command("bun run dev"), ServerLikelihood::Maybe);
         // Bare `vite` is a weak positive (defaults to `vite serve`) → Server.
         assert_eq!(classify_command("vite"), ServerLikelihood::Server);
-        assert_eq!(classify_command("vite --port 5173"), ServerLikelihood::Server);
+        assert_eq!(
+            classify_command("vite --port 5173"),
+            ServerLikelihood::Server
+        );
         assert_eq!(classify_command("vite serve"), ServerLikelihood::Server);
     }
 
@@ -272,14 +271,8 @@ mod tests {
 
     #[test]
     fn plain_builder_is_not_server() {
-        assert_eq!(
-            classify_command("tsc"),
-            ServerLikelihood::NotServer
-        );
-        assert_eq!(
-            classify_command("vite build"),
-            ServerLikelihood::NotServer
-        );
+        assert_eq!(classify_command("tsc"), ServerLikelihood::NotServer);
+        assert_eq!(classify_command("vite build"), ServerLikelihood::NotServer);
     }
 
     #[test]
@@ -311,10 +304,7 @@ exec uv run uvicorn lyon.server:app --reload --port 8420
     #[test]
     fn word_boundary_avoids_substring_false_positive() {
         // 'pairing' shouldn't match 'air'.
-        assert_eq!(
-            classify_command("pairing socket"),
-            ServerLikelihood::Maybe
-        );
+        assert_eq!(classify_command("pairing socket"), ServerLikelihood::Maybe);
         // 'context' shouldn't match 'next' tokens (we only have 'next dev'/'next start').
         assert_eq!(classify_command("context build"), ServerLikelihood::Maybe);
     }

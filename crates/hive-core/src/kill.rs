@@ -110,7 +110,10 @@ mod tests {
         // To make this robust, we send to the child's own PID as a single-process group.
         // POSIX: if the child's PID happens to also be a PGID leader, `-pid` targets the
         // group. If not, we still validate the SIGTERM path by signaling the PID itself.
-        let mut child = Command::new("sleep").arg("9999").spawn().expect("spawn sleep");
+        let mut child = Command::new("sleep")
+            .arg("9999")
+            .spawn()
+            .expect("spawn sleep");
         let pid = child.id() as i32;
 
         // Give the child a moment to actually exist.
@@ -121,7 +124,10 @@ mod tests {
         let group_targetable = unsafe { libc::kill(-pid, 0) } == 0;
         if group_targetable {
             let outcome = kill_pgid(pid, Duration::from_secs(2)).expect("kill_pgid");
-            assert!(matches!(outcome, KillOutcome::Terminated | KillOutcome::Killed));
+            assert!(matches!(
+                outcome,
+                KillOutcome::Terminated | KillOutcome::Killed
+            ));
         } else {
             // Direct PID kill so we don't leak the sleep process.
             unsafe {
@@ -135,6 +141,9 @@ mod tests {
         // Confirm the PID is gone.
         let rc = unsafe { libc::kill(pid, 0) };
         let errno = io::Error::last_os_error().raw_os_error();
-        assert!(rc != 0 && errno == Some(libc::ESRCH), "process should be gone");
+        assert!(
+            rc != 0 && errno == Some(libc::ESRCH),
+            "process should be gone"
+        );
     }
 }

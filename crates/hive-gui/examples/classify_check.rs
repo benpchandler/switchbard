@@ -10,11 +10,20 @@ fn icon(l: ServerLikelihood) -> &'static str {
 }
 
 fn main() {
-    for p in ["/Users/me/code/alpha", "/Users/me/code/delta", "/Users/me/code/beta"] {
+    for p in [
+        "/Users/me/code/alpha",
+        "/Users/me/code/delta",
+        "/Users/me/code/beta",
+    ] {
         println!("\n=== {p} ===");
         let svcs = detect_services(&PathBuf::from(p));
         for s in &svcs {
-            println!("  [{}] {:32}  src={:?}", icon(s.likelihood), s.name, s.source);
+            println!(
+                "  [{}] {:32}  src={:?}",
+                icon(s.likelihood),
+                s.name,
+                s.source
+            );
         }
     }
 }

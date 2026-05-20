@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -9,7 +10,10 @@ pub struct LocalListener {
     pub cwd: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone)]
+/// A configured top-level repository directory. Used as both the runtime
+/// model and the persisted form in `~/.hive/config.toml` — there is no
+/// separate "entry" type, just this.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Repo {
     pub name: String,
     pub path: PathBuf,

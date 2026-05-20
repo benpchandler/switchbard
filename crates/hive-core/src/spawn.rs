@@ -73,7 +73,10 @@ mod tests {
         std::thread::sleep(Duration::from_millis(150));
         let outcome = kill_pgid(run.pgid, Duration::from_secs(2)).expect("kill");
         assert!(
-            matches!(outcome, KillOutcome::Terminated | KillOutcome::Killed | KillOutcome::NotFound),
+            matches!(
+                outcome,
+                KillOutcome::Terminated | KillOutcome::Killed | KillOutcome::NotFound
+            ),
             "got {outcome:?}",
         );
     }

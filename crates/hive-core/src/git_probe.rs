@@ -19,12 +19,23 @@ pub fn probe_dirty(path: &Path) -> Option<bool> {
 pub fn probe_ahead_behind(path: &Path) -> Option<(u32, u32)> {
     // Resolve upstream first so we can give a clean None when there isn't one,
     // instead of letting `rev-list` error noisily.
-    let upstream = git(path, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])?;
+    let upstream = git(
+        path,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )?;
     let upstream = upstream.trim();
     if upstream.is_empty() {
         return None;
     }
-    let raw = git(path, &["rev-list", "--left-right", "--count", &format!("HEAD...{upstream}")])?;
+    let raw = git(
+        path,
+        &[
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("HEAD...{upstream}"),
+        ],
+    )?;
     let mut parts = raw.split_whitespace();
     let ahead: u32 = parts.next()?.parse().ok()?;
     let behind: u32 = parts.next()?.parse().ok()?;
@@ -85,7 +96,10 @@ mod tests {
     #[test]
     fn humanize_age_buckets() {
         assert_eq!(humanize_age(u64::MAX), "just now");
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         assert!(humanize_age(now - 30).ends_with("s ago"));
         assert!(humanize_age(now - 600).ends_with("m ago"));
         assert!(humanize_age(now - 7200).ends_with("h ago"));

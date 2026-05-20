@@ -52,13 +52,25 @@ fn parse_worktree_porcelain(text: &str) -> Vec<WorktreeEntry> {
 
     for line in text.lines() {
         if line.is_empty() {
-            flush(&mut out, &mut cur_path, &mut cur_branch, &mut cur_head, &mut prunable);
+            flush(
+                &mut out,
+                &mut cur_path,
+                &mut cur_branch,
+                &mut cur_head,
+                &mut prunable,
+            );
             continue;
         }
         if let Some(rest) = line.strip_prefix("worktree ") {
             // a new record starts; flush any pending one first (defensive — porcelain
             // is supposed to always separate with blank lines, but be safe)
-            flush(&mut out, &mut cur_path, &mut cur_branch, &mut cur_head, &mut prunable);
+            flush(
+                &mut out,
+                &mut cur_path,
+                &mut cur_branch,
+                &mut cur_head,
+                &mut prunable,
+            );
             cur_path = Some(PathBuf::from(rest));
         } else if let Some(rest) = line.strip_prefix("HEAD ") {
             cur_head = rest.to_string();
@@ -70,7 +82,13 @@ fn parse_worktree_porcelain(text: &str) -> Vec<WorktreeEntry> {
         // "detached", "locked", "bare" etc. — ignored for now
     }
     // trailing record without blank line
-    flush(&mut out, &mut cur_path, &mut cur_branch, &mut cur_head, &mut prunable);
+    flush(
+        &mut out,
+        &mut cur_path,
+        &mut cur_branch,
+        &mut cur_head,
+        &mut prunable,
+    );
     out
 }
 

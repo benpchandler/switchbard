@@ -19,7 +19,8 @@ fn run_lsof_listen() -> Result<String> {
             "-sTCP:LISTEN",
             "-P", // numeric ports
             "-n", // numeric hosts
-            "-F", "pgcnPL",
+            "-F",
+            "pgcnPL",
         ])
         .output()
         .map_err(|e| anyhow!("failed to spawn lsof: {e}"))?;

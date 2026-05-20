@@ -3,7 +3,9 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 fn main() -> anyhow::Result<()> {
-    let target = std::env::args().nth(1).unwrap_or_else(|| "lyon-bundle".into());
+    let target = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "lyon-bundle".into());
     println!("target command substring: {target:?}");
 
     let listeners = scan_listeners()?;

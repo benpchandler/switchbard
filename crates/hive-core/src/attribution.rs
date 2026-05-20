@@ -4,7 +4,10 @@ use crate::types::{AttributedListener, LocalListener, WorktreeRef};
 /// Worktrees are tried in order of decreasing path length so the most-specific
 /// path wins (e.g. a worktree at `~/Dev/repo/.worktrees/foo` is matched before
 /// the primary at `~/Dev/repo`).
-pub fn attribute(listeners: &[LocalListener], worktrees: &[WorktreeRef]) -> Vec<AttributedListener> {
+pub fn attribute(
+    listeners: &[LocalListener],
+    worktrees: &[WorktreeRef],
+) -> Vec<AttributedListener> {
     let mut sorted: Vec<&WorktreeRef> = worktrees.iter().collect();
     sorted.sort_by_key(|w| std::cmp::Reverse(w.path.as_os_str().len()));
 
@@ -52,7 +55,11 @@ mod tests {
     #[test]
     fn matches_by_cwd_prefix_to_worktree() {
         let worktrees = vec![
-            wt("alpha", "/Users/me/code/alpha", Some("main")),
+            wt(
+                "alpha",
+                "/Users/me/code/alpha",
+                Some("main"),
+            ),
             wt(
                 "alpha",
                 "/Users/me/code/.worktrees/alpha/feat/tracks-tab",
