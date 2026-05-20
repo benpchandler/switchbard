@@ -11,7 +11,6 @@ pub const COL_ACTIVITY: &str = "ACTIVITY";
 pub const COL_LISTENERS: &str = "LISTENERS";
 pub const COL_PATH: &str = "PATH";
 
-pub const COL_WORKTREE: &str = "WORKTREE";
 pub const COL_SERVICE: &str = "SERVICE";
 pub const COL_STATE: &str = "STATE";
 pub const COL_PORTS: &str = "PORTS";

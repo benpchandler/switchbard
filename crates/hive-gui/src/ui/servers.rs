@@ -209,14 +209,14 @@ fn render_repo_section(
         // every per-repo table lines up. COMMAND no longer has its own
         // column — it renders on a second line inside the SERVICE cell so
         // the full text is always visible without claiming horizontal room.
-        .column(Column::initial(widths.worktree).at_least(100.0))
+        .column(Column::initial(widths.branch).at_least(100.0))
         .column(Column::initial(widths.service).at_least(160.0))
         .column(Column::initial(widths.state).at_least(120.0))
         .column(Column::initial(widths.ports).at_least(70.0))
         .column(Column::remainder().at_least(160.0)) // actions
         .header(24.0, |mut h| {
             h.col(|ui| {
-                ui.strong(strings::COL_WORKTREE);
+                ui.strong(strings::COL_BRANCH);
             });
             h.col(|ui| {
                 ui.strong(strings::COL_SERVICE);
@@ -511,7 +511,7 @@ fn uptime_short(started_at: Instant) -> String {
 /// excluded too: it now renders inline under the service name, no column.
 #[derive(Debug, Clone, Copy)]
 struct SvColumnWidths {
-    worktree: f32,
+    branch: f32,
     service: f32,
     state: f32,
     ports: f32,
@@ -546,9 +546,9 @@ impl SvColumnWidths {
             }
         }
 
-        let worktree = column_widths::column_width_clamped(
+        let branch = column_widths::column_width_clamped(
             ctx,
-            std::iter::once(s::COL_WORKTREE).chain(branches.iter().map(String::as_str)),
+            std::iter::once(s::COL_BRANCH).chain(branches.iter().map(String::as_str)),
             CellFont::Proportional,
             100.0,
             240.0,
@@ -577,7 +577,7 @@ impl SvColumnWidths {
         );
 
         Self {
-            worktree,
+            branch,
             service,
             state,
             ports,
