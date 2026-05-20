@@ -150,8 +150,9 @@ fn render_repo_section(
         .column(Column::initial(220.0).at_least(140.0)) // branch
         .column(Column::initial(82.0).at_least(72.0)) // head
         .column(Column::initial(80.0).at_least(60.0)) // status
-        .column(Column::initial(88.0).at_least(68.0)) // ahead/behind
+        .column(Column::initial(88.0).at_least(68.0)) // drift (ahead/behind)
         .column(Column::initial(96.0).at_least(78.0)) // last commit
+        .column(Column::initial(110.0).at_least(80.0)) // activity
         .column(Column::initial(80.0).at_least(60.0)) // listeners
         .column(Column::remainder().at_least(160.0)) // path
         .header(22.0, |mut h| {
@@ -173,6 +174,15 @@ fn render_repo_section(
             });
             h.col(|ui| {
                 ui.strong("LAST COMMIT");
+            });
+            h.col(|ui| {
+                ui.strong("ACTIVITY").on_hover_text(
+                    "Recent commit velocity on this branch. \
+                     Burst = 3+ commits in the last 30min (agent hammering away); \
+                     Active = at least one in the last hour; \
+                     Slow = something in the last 24h; \
+                     Idle = nothing recent. Hover the cell to see the subjects.",
+                );
             });
             h.col(|ui| {
                 ui.strong("LISTENERS");
@@ -198,13 +208,11 @@ fn render_repo_section(
                     r.col(|ui| {
                         render_drift_cell(ui, &m);
                     });
-                    r.col(|ui| match m.head_commit_unix {
-                        Some(t) => {
-                            ui.label(egui::RichText::new(humanize_age(t)).small());
-                        }
-                        None => {
-                            ui.label(egui::RichText::new("…").weak());
-                        }
+                    r.col(|ui| {
+                        render_last_commit_cell(ui, &m);
+                    });
+                    r.col(|ui| {
+                        render_activity_cell(ui, &m);
                     });
                     r.col(|ui| {
                         if listener_n > 0 {
@@ -228,6 +236,104 @@ fn render_branch_cell(ui: &mut egui::Ui, w: &WorktreeRef) {
     } else {
         ui.label(egui::RichText::new(branch_text));
     }
+}
+
+/// LAST COMMIT cell with a hover that lists the most recent commit subjects.
+/// Reuses `recent_commits` so it's free if the activity probe ran.
+fn render_last_commit_cell(ui: &mut egui::Ui, m: &WorktreeMeta) {
+    match m.head_commit_unix {
+        Some(t) => {
+            let resp = ui.label(egui::RichText::new(humanize_age(t)).small());
+            if let Some(commits) = m.recent_commits.as_deref() {
+                if !commits.is_empty() {
+                    resp.on_hover_text(build_recent_commits_tooltip(commits));
+                }
+            }
+        }
+        None => {
+            ui.label(egui::RichText::new("…").weak());
+        }
+    }
+}
+
+/// ACTIVITY cell: colored intensity label (Burst / Active / Slow / Idle) plus
+/// a "+N / 1h" velocity badge when there's been recent work. Hover shows the
+/// last few subjects so you can read what direction the agent is taking.
+fn render_activity_cell(ui: &mut egui::Ui, m: &WorktreeMeta) {
+    let Some(act) = m.activity() else {
+        ui.label(egui::RichText::new("…").weak().small());
+        return;
+    };
+    let (label, color) = match act.level {
+        crate::runtime::ActivityLevel::Burst => ("Burst", theme::GREEN),
+        crate::runtime::ActivityLevel::Active => ("Active", theme::GREEN),
+        crate::runtime::ActivityLevel::Slow => ("Slow", theme::AMBER),
+        crate::runtime::ActivityLevel::Idle => ("Idle", egui::Color32::GRAY),
+    };
+    let velocity = activity_velocity_badge(&act);
+    let cell_text = match velocity {
+        Some(v) => format!("{label} · {v}"),
+        None => label.to_string(),
+    };
+    let resp = ui.label(egui::RichText::new(cell_text).small().color(color));
+    let tooltip = build_activity_tooltip(&act, m.recent_commits.as_deref().unwrap_or(&[]));
+    resp.on_hover_text(tooltip);
+}
+
+fn activity_velocity_badge(act: &crate::runtime::Activity) -> Option<String> {
+    if act.count_1h > 0 {
+        Some(format!("+{} / 1h", act.count_1h))
+    } else if act.count_24h > 0 {
+        Some(format!("+{} / 24h", act.count_24h))
+    } else {
+        None
+    }
+}
+
+fn build_activity_tooltip(
+    act: &crate::runtime::Activity,
+    commits: &[hive_core::CommitSummary],
+) -> String {
+    let mut s = format!(
+        "{} commit{} in the last hour, {} in the last 24h",
+        act.count_1h,
+        if act.count_1h == 1 { "" } else { "s" },
+        act.count_24h,
+    );
+    if let Some(t) = act.newest_unix {
+        s.push_str(&format!("\nNewest: {}", humanize_age(t)));
+    }
+    if !commits.is_empty() {
+        s.push_str("\n\nRecent commits:\n");
+        for c in commits.iter().take(5) {
+            s.push_str(&format!(
+                "  {}  ({})  {}\n",
+                c.short_sha,
+                humanize_age(c.committed_unix),
+                c.subject
+            ));
+        }
+        if commits.len() > 5 {
+            s.push_str(&format!("  … and {} more\n", commits.len() - 5));
+        }
+    }
+    s
+}
+
+fn build_recent_commits_tooltip(commits: &[hive_core::CommitSummary]) -> String {
+    let mut s = String::from("Recent commits:\n");
+    for c in commits.iter().take(5) {
+        s.push_str(&format!(
+            "  {}  ({})  {}\n",
+            c.short_sha,
+            humanize_age(c.committed_unix),
+            c.subject
+        ));
+    }
+    if commits.len() > 5 {
+        s.push_str(&format!("  … and {} more\n", commits.len() - 5));
+    }
+    s
 }
 
 fn render_dirty_cell(ui: &mut egui::Ui, m: &WorktreeMeta) {

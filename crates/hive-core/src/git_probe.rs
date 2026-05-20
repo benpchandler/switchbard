@@ -8,12 +8,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// One commit's summary line. Used to fill the drift tooltip so users can see
-/// *which* commits are out of sync, not just the count.
+/// One commit's summary line. Used to fill the drift tooltip and the
+/// recent-activity column with subjects + timestamps.
 #[derive(Debug, Clone)]
 pub struct CommitSummary {
     pub short_sha: String,
     pub subject: String,
+    /// Commit time in unix epoch seconds. Drift-detail probe ignores this
+    /// (we already have it from elsewhere); recent-commits probe relies on
+    /// it to compute velocity buckets.
+    pub committed_unix: u64,
 }
 
 /// The "why" behind a non-zero drift count: the actual commit lists, capped at
@@ -78,6 +82,17 @@ pub fn probe_drift_detail(path: &Path, limit: usize) -> Option<DriftDetail> {
 pub fn probe_head_commit_time(path: &Path) -> Option<u64> {
     let out = git(path, &["log", "-1", "--format=%ct", "HEAD"])?;
     out.trim().parse().ok()
+}
+
+/// Up to `limit` most recent commits on the current branch, newest first. Each
+/// entry has its short SHA, subject, and unix-seconds commit time so the GUI
+/// can derive both a velocity badge ("+3 commits / 30m") and a hover with
+/// subjects ("fix: foo · feat: bar · …").
+///
+/// Returns `Some(vec)` (possibly empty for a brand-new branch) on success,
+/// `None` on git failure.
+pub fn probe_recent_commits(path: &Path, limit: usize) -> Option<Vec<CommitSummary>> {
+    log_commits(path, "HEAD", limit)
 }
 
 /// Unix epoch seconds of the last `git fetch` against this repo, derived from
@@ -145,12 +160,14 @@ fn upstream_ref(path: &Path) -> Option<String> {
 }
 
 fn log_commits(path: &Path, range: &str, limit: usize) -> Option<Vec<CommitSummary>> {
+    // Format: `<short-sha>\t<unix-time>\t<subject>` — tab-separated so subjects
+    // containing arbitrary characters don't confuse the parser.
     let out = git(
         path,
         &[
             "log",
             &format!("-n{limit}"),
-            "--format=%h%x09%s",
+            "--format=%h%x09%ct%x09%s",
             range,
             "--",
         ],
@@ -158,10 +175,15 @@ fn log_commits(path: &Path, range: &str, limit: usize) -> Option<Vec<CommitSumma
     Some(
         out.lines()
             .filter_map(|l| {
-                let mut parts = l.splitn(2, '\t');
+                let mut parts = l.splitn(3, '\t');
                 let short_sha = parts.next()?.to_string();
+                let committed_unix: u64 = parts.next()?.parse().ok()?;
                 let subject = parts.next().unwrap_or("").to_string();
-                Some(CommitSummary { short_sha, subject })
+                Some(CommitSummary {
+                    short_sha,
+                    subject,
+                    committed_unix,
+                })
             })
             .collect(),
     )

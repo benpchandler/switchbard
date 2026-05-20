@@ -15,13 +15,19 @@ use crate::sync::Kick;
 use eframe::egui;
 use hive_core::{
     attribute, detect_services, probe_ahead_behind, probe_dirty_files, probe_drift_detail,
-    probe_fetch_age, probe_head_commit_time, scan_listeners, DetectedService, Repo, WorktreeRef,
+    probe_fetch_age, probe_head_commit_time, probe_recent_commits, scan_listeners, DetectedService,
+    Repo, WorktreeRef,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
 /// Larger lists overflow the tooltip; the count badge in the cell still
 /// communicates the total.
 const DRIFT_DETAIL_LIMIT: usize = 5;
+
+/// How many recent commits we keep per worktree for the ACTIVITY column. 10
+/// covers the typical "agent-burst over the last hour" hover with room to
+/// spare while still bounding the `git log` cost.
+const RECENT_COMMITS_LIMIT: usize = 10;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -112,6 +118,7 @@ fn spawn_probe(ctx: egui::Context, ch: Channels) {
                 drift_detail,
                 head_commit_unix: probe_head_commit_time(&w.path),
                 fetch_unix: probe_fetch_age(&w.path),
+                recent_commits: probe_recent_commits(&w.path, RECENT_COMMITS_LIMIT),
                 probed_at: Some(Instant::now()),
             };
             ch.meta.lock().unwrap().insert(w.path.clone(), m);

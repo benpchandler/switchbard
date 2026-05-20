@@ -11,10 +11,10 @@
 
 pub mod worktrees;
 
-use hive_core::{AttributedListener, DriftDetail};
+use hive_core::{AttributedListener, CommitSummary, DriftDetail};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Default)]
 pub struct WorktreeMeta {
@@ -30,16 +30,91 @@ pub struct WorktreeMeta {
     /// Unix seconds of the last `git fetch` against this repo. None when the
     /// repo has never been fetched (fresh clone of nothing).
     pub fetch_unix: Option<u64>,
+    /// Newest-first list of recent commits on the current branch (capped).
+    /// Powers the ACTIVITY column (velocity badge + commit-subject hover).
+    pub recent_commits: Option<Vec<CommitSummary>>,
     /// Set when the probe completes; kept for a future "stale data" badge in
     /// the UI. Currently unread.
     #[allow(dead_code)]
     pub probed_at: Option<Instant>,
 }
 
+/// How much an agent has been committing lately. The thresholds are tuned for
+/// the "bazillion agents" workflow — Burst means "rapid-fire commits right
+/// now", Active means "still working", Slow means "yesterday-ish", Idle means
+/// "nothing recent worth surfacing".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivityLevel {
+    /// No commits in the activity window.
+    Idle,
+    /// Commits today but none in the last hour. Probably between bursts.
+    Slow,
+    /// At least one commit in the last hour.
+    Active,
+    /// 3+ commits in the last 30 minutes. The agent is hammering away.
+    Burst,
+}
+
+/// Concrete activity reading for one worktree: the level + the count of
+/// commits in the recent window + the timestamp of the newest commit.
+#[derive(Debug, Clone, Copy)]
+pub struct Activity {
+    pub level: ActivityLevel,
+    /// Commits within the activity window (24h).
+    pub count_24h: usize,
+    /// Commits within the last hour.
+    pub count_1h: usize,
+    /// Newest commit's unix time, if any.
+    pub newest_unix: Option<u64>,
+}
+
 impl WorktreeMeta {
     /// True if the porcelain probe finished and reported at least one file.
     pub fn is_dirty(&self) -> Option<bool> {
         self.dirty_files.as_ref().map(|v| !v.is_empty())
+    }
+
+    /// Bucket recent-commit data into an ActivityLevel. Returns `None` until
+    /// the probe has at least returned (even if the result is empty).
+    pub fn activity(&self) -> Option<Activity> {
+        let commits = self.recent_commits.as_ref()?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let cutoff_24h = now.saturating_sub(86_400);
+        let cutoff_1h = now.saturating_sub(3600);
+        let cutoff_30m = now.saturating_sub(1800);
+
+        let count_24h = commits
+            .iter()
+            .filter(|c| c.committed_unix >= cutoff_24h)
+            .count();
+        let count_1h = commits
+            .iter()
+            .filter(|c| c.committed_unix >= cutoff_1h)
+            .count();
+        let count_30m = commits
+            .iter()
+            .filter(|c| c.committed_unix >= cutoff_30m)
+            .count();
+        let newest_unix = commits.iter().map(|c| c.committed_unix).max();
+
+        let level = if count_30m >= 3 {
+            ActivityLevel::Burst
+        } else if count_1h >= 1 {
+            ActivityLevel::Active
+        } else if count_24h >= 1 {
+            ActivityLevel::Slow
+        } else {
+            ActivityLevel::Idle
+        };
+        Some(Activity {
+            level,
+            count_24h,
+            count_1h,
+            newest_unix,
+        })
     }
 }
 
