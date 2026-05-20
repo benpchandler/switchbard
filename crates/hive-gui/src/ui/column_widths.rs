@@ -1,49 +1,61 @@
-//! Compute shared column widths across all per-repo tables in a tab.
+//! Shared column-width measurement pass.
 //!
-//! Why: each per-repo `TableBuilder` previously used `Column::auto()`, which
-//! sizes itself based on *its own* content. Stacked tables ended up with
-//! visibly different column widths, which made vertical scanning jarring.
-//! The fix is to walk every row once at the start of the render, find the
-//! widest content per column, and pass that as `Column::initial(width)` to
-//! every per-repo table — they all line up.
+//! Why: every table in the app needs columns sized to fit content without
+//! clipping, and stacked sub-tables in the same view need *matching* widths
+//! so vertical scanning lines up. Each view walks every visible row once,
+//! asks egui to measure each cell text, and passes the resulting per-column
+//! max as `Column::initial(width)` to every sub-table.
 //!
-//! Pixel widths are estimated from char counts. egui's `Painter::layout`
-//! could measure exactly but only inside a render callback; we want widths
-//! before the first table opens. Per-glyph constants below were validated
-//! visually against egui 0.29's default Ubuntu-Light and Hack fonts.
+//! Measurement uses `Fonts::layout_no_wrap` — the same engine egui itself
+//! uses to lay out labels, so widths match what the table will actually
+//! render. Memoized, so repeated calls are cheap. No glyph constants, no
+//! fudge factors.
 
-/// Approximate glyph width for proportional body text (Ubuntu-Light, body
-/// font size). Slightly generous so wider glyphs (m, w) don't overflow.
-pub const CHAR_W_PROPORTIONAL: f32 = 7.5;
+use eframe::egui::{self, FontId, TextStyle};
 
-/// Approximate glyph width for monospace body text (Hack, body font size).
-/// Mono glyphs are uniform so this is closer to a true measurement.
-pub const CHAR_W_MONOSPACE: f32 = 8.5;
-
-/// Padding added to every column so the text doesn't sit flush against the
-/// cell border / next column's content.
+/// Padding added to every column so text doesn't sit flush against the cell
+/// border / next column's content.
 pub const COL_PADDING: f32 = 16.0;
 
-/// Estimate the rendered width in pixels of `text` in either proportional or
-/// monospace body font.
-pub fn estimate_text_width(text: &str, monospace: bool) -> f32 {
-    let glyph = if monospace {
-        CHAR_W_MONOSPACE
-    } else {
-        CHAR_W_PROPORTIONAL
-    };
-    text.chars().count() as f32 * glyph
+/// Variant of the body font a cell renders in. Drives which FontId we use to
+/// measure.
+#[derive(Debug, Clone, Copy)]
+pub enum CellFont {
+    /// Default body font (Ubuntu-Light in egui 0.29).
+    Proportional,
+    /// Monospace body font (Hack in egui 0.29).
+    Monospace,
 }
 
-/// Width of a column whose content is `cells`, in `monospace` font, with a
-/// floor of `min_px`. Add COL_PADDING for the gutter.
-pub fn column_width<'a, I>(cells: I, monospace: bool, min_px: f32) -> f32
+impl CellFont {
+    fn font_id(self, style: &egui::Style) -> FontId {
+        match self {
+            Self::Proportional => TextStyle::Body.resolve(style),
+            Self::Monospace => TextStyle::Monospace.resolve(style),
+        }
+    }
+}
+
+/// Measure the rendered width of `text` in the given cell font, using egui's
+/// own layout engine. Result has no padding.
+pub fn measure(ctx: &egui::Context, text: &str, font: CellFont) -> f32 {
+    let font_id = font.font_id(&ctx.style());
+    ctx.fonts(|f| {
+        f.layout_no_wrap(text.to_owned(), font_id, egui::Color32::WHITE)
+            .rect
+            .width()
+    })
+}
+
+/// Width of a column whose content is `cells` in the given cell font, with a
+/// floor of `min_px`. Adds `COL_PADDING` for the gutter.
+pub fn column_width<'a, I>(ctx: &egui::Context, cells: I, font: CellFont, min_px: f32) -> f32
 where
     I: IntoIterator<Item = &'a str>,
 {
     let widest = cells
         .into_iter()
-        .map(|s| estimate_text_width(s, monospace))
+        .map(|s| measure(ctx, s, font))
         .fold(0.0_f32, f32::max);
     (widest + COL_PADDING).max(min_px)
 }

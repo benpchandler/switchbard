@@ -3,6 +3,7 @@
 //! sidebar lives in `ui::sidebar` and is rendered globally from `app::update`.
 
 use crate::app::HiveApp;
+use crate::ui::column_widths::{self, CellFont};
 use crate::ui::components::{path_cell, strings, table_shell, weak_dash};
 use crate::ui::theme;
 use eframe::egui;
@@ -22,7 +23,8 @@ enum Variant {
 pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     let rows = snapshot_filtered(app);
     let unique_pgids = unique_pgids(&rows);
-    render_central(app, ctx, &rows);
+    let widths = LiColumnWidths::compute(ctx, &rows);
+    render_central(app, ctx, &rows, widths);
     render_kill_all_modal(app, ctx, &unique_pgids);
 }
 
@@ -71,13 +73,25 @@ fn matches_listener_filter(l: &AttributedListener, filter_lc: &str) -> bool {
             .unwrap_or(false)
 }
 
-fn render_central(app: &HiveApp, ctx: &egui::Context, rows: &[AttributedListener]) {
+fn render_central(
+    app: &HiveApp,
+    ctx: &egui::Context,
+    rows: &[AttributedListener],
+    widths: LiColumnWidths,
+) {
     egui::CentralPanel::default().show(ctx, |ui| {
         let mut kill_request: Option<i32> = None;
         if app.group_listeners {
-            render_grouped(app, ui, rows, &mut kill_request);
+            render_grouped(app, ui, rows, widths, &mut kill_request);
         } else {
-            render_table(ui, rows, Variant::Flat, &mut kill_request, "flat_table");
+            render_table(
+                ui,
+                rows,
+                Variant::Flat,
+                widths,
+                &mut kill_request,
+                "flat_table",
+            );
         }
         if let Some(pgid) = kill_request {
             app.spawn_kill(pgid, ctx);
@@ -132,6 +146,7 @@ fn render_grouped(
     app: &HiveApp,
     ui: &mut egui::Ui,
     rows: &[AttributedListener],
+    widths: LiColumnWidths,
     kill_request: &mut Option<i32>,
 ) {
     type Bucket = (Option<String>, Option<PathBuf>);
@@ -206,6 +221,7 @@ fn render_grouped(
                                 ui,
                                 rs,
                                 Variant::Grouped,
+                                widths,
                                 kill_request,
                                 &format!("ltable_{}_{}", repo.name, branch),
                             );
@@ -229,6 +245,7 @@ fn render_grouped(
                                 ui,
                                 &repo_only,
                                 Variant::Grouped,
+                                widths,
                                 kill_request,
                                 &format!("ltable_{}_norep", repo.name),
                             );
@@ -260,6 +277,7 @@ fn render_grouped(
                         ui,
                         &unattributed,
                         Variant::Grouped,
+                        widths,
                         kill_request,
                         "ltable_unattributed",
                     );
@@ -280,26 +298,27 @@ fn render_table(
     ui: &mut egui::Ui,
     rows: &[AttributedListener],
     variant: Variant,
+    widths: LiColumnWidths,
     kill_request: &mut Option<i32>,
     id_salt: &str,
 ) {
     let show_repo_cols = matches!(variant, Variant::Flat);
     let mut tb = table_shell(ui, id_salt).vscroll(matches!(variant, Variant::Flat));
     tb = tb
-        .column(Column::initial(70.0).at_least(50.0)) // port
-        .column(Column::initial(70.0).at_least(50.0)) // pid
-        .column(Column::initial(70.0).at_least(50.0)); // pgid
+        .column(Column::initial(widths.port).at_least(50.0))
+        .column(Column::initial(widths.pid).at_least(50.0))
+        .column(Column::initial(widths.pgid).at_least(50.0));
     if show_repo_cols {
         tb = tb
-            .column(Column::initial(130.0).at_least(80.0)) // command
-            .column(Column::initial(130.0).at_least(80.0)) // repo
-            .column(Column::initial(140.0).at_least(80.0)); // branch
+            .column(Column::initial(widths.command).at_least(80.0))
+            .column(Column::initial(widths.repo).at_least(80.0))
+            .column(Column::initial(widths.branch).at_least(80.0));
     } else {
-        tb = tb.column(Column::initial(140.0).at_least(80.0)); // command
+        tb = tb.column(Column::initial(widths.command).at_least(80.0));
     }
     tb = tb
-        .column(Column::remainder().at_least(180.0)) // cwd
-        .column(Column::initial(70.0).at_least(60.0)); // action
+        .column(Column::remainder().at_least(180.0)) // cwd (elided single line)
+        .column(Column::initial(widths.action).at_least(60.0));
 
     tb.header(24.0, |mut h| {
         h.col(|ui| {
@@ -375,4 +394,87 @@ fn render_table(
             });
         }
     });
+}
+
+/// Shared widths for every short column in the Listeners table, pre-measured
+/// once over every visible row so the Grouped sub-tables line up. CWD is
+/// excluded — it elides and claims the Remainder column.
+#[derive(Debug, Clone, Copy)]
+struct LiColumnWidths {
+    port: f32,
+    pid: f32,
+    pgid: f32,
+    command: f32,
+    repo: f32,
+    branch: f32,
+    action: f32,
+}
+
+impl LiColumnWidths {
+    fn compute(ctx: &egui::Context, rows: &[AttributedListener]) -> Self {
+        let port_strs: Vec<String> = rows.iter().map(|r| r.listener.port.to_string()).collect();
+        let pid_strs: Vec<String> = rows.iter().map(|r| r.listener.pid.to_string()).collect();
+        let pgid_strs: Vec<String> = rows.iter().map(|r| r.listener.pgid.to_string()).collect();
+        let cmd_strs: Vec<String> = rows
+            .iter()
+            .map(|r| r.listener.command_name.clone())
+            .collect();
+        let repo_strs: Vec<String> = rows.iter().filter_map(|r| r.repo_name.clone()).collect();
+        let branch_strs: Vec<String> = rows
+            .iter()
+            .filter_map(|r| r.worktree_branch.clone())
+            .collect();
+
+        let port = column_widths::column_width(
+            ctx,
+            std::iter::once(strings::COL_PORT).chain(port_strs.iter().map(String::as_str)),
+            CellFont::Monospace,
+            60.0,
+        );
+        let pid = column_widths::column_width(
+            ctx,
+            std::iter::once(strings::COL_PID).chain(pid_strs.iter().map(String::as_str)),
+            CellFont::Monospace,
+            60.0,
+        );
+        let pgid = column_widths::column_width(
+            ctx,
+            std::iter::once(strings::COL_PGID).chain(pgid_strs.iter().map(String::as_str)),
+            CellFont::Monospace,
+            60.0,
+        );
+        let command = column_widths::column_width(
+            ctx,
+            std::iter::once(strings::COL_COMMAND).chain(cmd_strs.iter().map(String::as_str)),
+            CellFont::Proportional,
+            100.0,
+        );
+        let repo = column_widths::column_width(
+            ctx,
+            std::iter::once(strings::COL_REPO).chain(repo_strs.iter().map(String::as_str)),
+            CellFont::Proportional,
+            100.0,
+        );
+        let branch = column_widths::column_width(
+            ctx,
+            std::iter::once(strings::COL_BRANCH).chain(branch_strs.iter().map(String::as_str)),
+            CellFont::Proportional,
+            100.0,
+        );
+        // Action cell is a single "Kill" button — measured against header.
+        let action_header =
+            column_widths::measure(ctx, strings::COL_ACTION, CellFont::Proportional);
+        let kill_btn = column_widths::measure(ctx, "Kill", CellFont::Proportional) + 16.0;
+        let action = action_header.max(kill_btn).max(60.0) + column_widths::COL_PADDING;
+
+        Self {
+            port,
+            pid,
+            pgid,
+            command,
+            repo,
+            branch,
+            action,
+        }
+    }
 }

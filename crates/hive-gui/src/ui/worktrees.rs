@@ -5,12 +5,13 @@
 
 use crate::app::HiveApp;
 use crate::runtime::WorktreeMeta;
+use crate::ui::column_widths::{self, CellFont};
 use crate::ui::components::{
     self, branch_label, count_badge, mono_label, path_cell, repo_section_header,
     repo_section_separator, short_sha, status_pill, strings, table_shell, weak_dots, Chip,
     StatusKind,
 };
-use crate::ui::{column_widths, theme};
+use crate::ui::theme;
 use eframe::egui;
 use egui_extras::Column;
 use hive_core::{humanize_age, WorktreeRef};
@@ -35,7 +36,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         .iter()
         .filter(|w| matches_filter(w, &wt_filter_lc))
         .collect();
-    let widths = WtColumnWidths::compute(&all_visible, &meta_snapshot, &listener_counts);
+    let widths = WtColumnWidths::compute(ctx, &all_visible, &meta_snapshot, &listener_counts);
 
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.label(
@@ -336,6 +337,7 @@ struct WtColumnWidths {
 
 impl WtColumnWidths {
     fn compute(
+        ctx: &egui::Context,
         rows: &[&WorktreeRef],
         meta: &HashMap<PathBuf, WorktreeMeta>,
         listener_counts: &HashMap<PathBuf, usize>,
@@ -346,18 +348,21 @@ impl WtColumnWidths {
             .map(|w| w.branch.clone().unwrap_or_else(|| "(detached)".into()))
             .collect();
         let branch = column_widths::column_width(
+            ctx,
             std::iter::once(s::COL_BRANCH).chain(branch_strs.iter().map(String::as_str)),
-            false,
+            CellFont::Proportional,
             100.0,
         );
         let head = column_widths::column_width(
+            ctx,
             std::iter::once(s::COL_HEAD).chain(["c46ee9df"]),
-            true,
+            CellFont::Monospace,
             70.0,
         );
         let status = column_widths::column_width(
+            ctx,
             std::iter::once(s::COL_STATUS).chain(["dirty"]),
-            false,
+            CellFont::Proportional,
             60.0,
         );
         let drift_strs: Vec<String> = rows
@@ -371,8 +376,9 @@ impl WtColumnWidths {
             })
             .collect();
         let drift = column_widths::column_width(
+            ctx,
             std::iter::once(s::COL_DRIFT).chain(drift_strs.iter().map(String::as_str)),
-            true,
+            CellFont::Monospace,
             70.0,
         );
         let age_strs: Vec<String> = rows
@@ -385,8 +391,9 @@ impl WtColumnWidths {
             })
             .collect();
         let last_commit = column_widths::column_width(
+            ctx,
             std::iter::once(s::COL_LAST_COMMIT).chain(age_strs.iter().map(String::as_str)),
-            false,
+            CellFont::Proportional,
             90.0,
         );
         let activity_strs: Vec<String> = rows
@@ -399,8 +406,9 @@ impl WtColumnWidths {
             })
             .collect();
         let activity = column_widths::column_width(
+            ctx,
             std::iter::once(s::COL_ACTIVITY).chain(activity_strs.iter().map(String::as_str)),
-            false,
+            CellFont::Proportional,
             90.0,
         );
         let listener_strs: Vec<String> = rows
@@ -415,8 +423,9 @@ impl WtColumnWidths {
             })
             .collect();
         let listeners = column_widths::column_width(
+            ctx,
             std::iter::once(s::COL_LISTENERS).chain(listener_strs.iter().map(String::as_str)),
-            false,
+            CellFont::Proportional,
             70.0,
         );
         Self {

@@ -3,6 +3,7 @@
 
 use crate::app::HiveApp;
 use crate::runtime::{ActiveRun, RowState};
+use crate::ui::column_widths::{self, CellFont};
 use crate::ui::components::{
     mono_label, repo_section_header, repo_section_separator, status_pill, strings, table_shell,
     weak_dash, weak_dots, Chip, StatusKind,
@@ -26,6 +27,7 @@ struct PendingActions {
 
 pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     let snap = Snapshot::collect(app);
+    let widths = SvColumnWidths::compute(ctx, &snap, app.show_non_servers);
     let mut pending = PendingActions::default();
 
     egui::CentralPanel::default().show(ctx, |ui| {
@@ -62,6 +64,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                             wts,
                             &snap,
                             app.show_non_servers,
+                            widths,
                             &mut pending,
                         );
                     });
@@ -148,6 +151,7 @@ fn render_repo_section(
     wts: &[&WorktreeRef],
     snap: &Snapshot,
     show_non_servers: bool,
+    widths: SvColumnWidths,
     pending: &mut PendingActions,
 ) {
     let mut repo_running = 0usize;
@@ -176,13 +180,14 @@ fn render_repo_section(
     repo_section_header(ui, &repo.name, &subtitle, &chips, None);
 
     table_shell(ui, format!("server_table_{}", repo.name))
-        // Short data columns auto-fit; COMMAND is the only multi-line cell so
-        // it claims the Remainder. STATE / PORTS / ACTIONS auto-fit.
-        .column(Column::auto().at_least(120.0)) // worktree (branch)
-        .column(Column::auto().at_least(120.0)) // service
-        .column(Column::auto().at_least(110.0)) // state
-        .column(Column::auto().at_least(70.0)) // ports
-        .column(Column::auto().at_least(160.0)) // actions
+        // Short data columns get widths pre-measured across the whole tab so
+        // every per-repo table lines up. COMMAND wraps; it claims the
+        // Remainder.
+        .column(Column::initial(widths.worktree).at_least(100.0))
+        .column(Column::initial(widths.service).at_least(120.0))
+        .column(Column::initial(widths.state).at_least(120.0))
+        .column(Column::initial(widths.ports).at_least(70.0))
+        .column(Column::initial(widths.actions).at_least(160.0))
         .column(Column::remainder().at_least(200.0)) // command (wraps)
         .header(24.0, |mut h| {
             h.col(|ui| {
@@ -450,6 +455,158 @@ fn uptime_short(started_at: Instant) -> String {
     } else {
         format!("{}h", s / 3600)
     }
+}
+
+/// Shared widths for every short column in the Servers table, pre-measured
+/// once over every visible row in the tab so the per-repo tables line up.
+/// COMMAND is excluded — it wraps and claims the Remainder column.
+#[derive(Debug, Clone, Copy)]
+struct SvColumnWidths {
+    worktree: f32,
+    service: f32,
+    state: f32,
+    ports: f32,
+    actions: f32,
+}
+
+impl SvColumnWidths {
+    fn compute(ctx: &egui::Context, snap: &Snapshot, show_non_servers: bool) -> Self {
+        use crate::ui::components::strings as s;
+
+        let mut branches: Vec<String> = Vec::new();
+        let mut services: Vec<String> = Vec::new();
+        let mut states: Vec<String> = Vec::new();
+        let mut ports_strs: Vec<String> = Vec::new();
+        let mut action_pixels: Vec<f32> = Vec::new();
+
+        for w in &snap.worktrees {
+            let branch = w.branch.clone().unwrap_or_else(|| "(detached)".into());
+            let svcs = snap.services.get(&w.path).cloned().unwrap_or_default();
+            if svcs.is_empty() {
+                branches.push(branch.clone());
+                continue;
+            }
+            for svc in &svcs {
+                if should_skip_service(svc, w, snap, show_non_servers) {
+                    continue;
+                }
+                let run = snap.run_for(&w.path, &svc.name);
+                let row_state = RowState::compute(svc.expected_port, &w.path, run, &snap.by_port);
+                branches.push(branch.clone());
+                services.push(svc.name.clone());
+                states.push(state_display_text(&row_state));
+                ports_strs.push(ports_display_text(&row_state, &snap.ports_by_pgid));
+                action_pixels.push(actions_cell_width(ctx, &row_state, &snap.ports_by_pgid));
+            }
+        }
+
+        let worktree = column_widths::column_width(
+            ctx,
+            std::iter::once(s::COL_WORKTREE).chain(branches.iter().map(String::as_str)),
+            CellFont::Proportional,
+            100.0,
+        );
+        let service = column_widths::column_width(
+            ctx,
+            std::iter::once(s::COL_SERVICE).chain(services.iter().map(String::as_str)),
+            CellFont::Proportional,
+            // service cell starts with a painted dot + small gap → reserve ~16px
+            // for the icon column even when no service text is wider than the
+            // header.
+            140.0,
+        );
+        let state = column_widths::column_width(
+            ctx,
+            std::iter::once(s::COL_STATE).chain(states.iter().map(String::as_str)),
+            CellFont::Proportional,
+            120.0,
+        );
+        let ports = column_widths::column_width(
+            ctx,
+            std::iter::once(s::COL_PORTS).chain(ports_strs.iter().map(String::as_str)),
+            CellFont::Monospace,
+            70.0,
+        );
+        let header_actions = column_widths::measure(ctx, s::COL_ACTIONS, CellFont::Proportional);
+        let widest_action = action_pixels.into_iter().fold(header_actions, f32::max);
+        let actions = (widest_action + column_widths::COL_PADDING).max(160.0);
+
+        Self {
+            worktree,
+            service,
+            state,
+            ports,
+            actions,
+        }
+    }
+}
+
+/// Text representation of `RowState` used for width measurement only — must
+/// match what `render_state_cell` actually renders.
+fn state_display_text(row_state: &RowState) -> String {
+    match row_state {
+        RowState::Running {
+            pid, started_at, ..
+        } => format!("running · pid {pid} · {}", uptime_short(*started_at)),
+        RowState::ExternalLive { port, pid } => format!("live (external) · :{port} · pid {pid}"),
+        RowState::Blocked {
+            port,
+            pid,
+            holder_label,
+        } => format!("blocked · :{port} held by pid {pid} ({holder_label})"),
+        RowState::Idle => "idle".to_string(),
+    }
+}
+
+/// Text representation of the ports cell — must match `render_ports_cell`.
+fn ports_display_text(row_state: &RowState, ports_by_pgid: &HashMap<i32, Vec<u16>>) -> String {
+    match row_state {
+        RowState::Running { pgid, .. } => {
+            let ports = ports_by_pgid.get(pgid).cloned().unwrap_or_default();
+            ports
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+        RowState::ExternalLive { port, .. } => port.to_string(),
+        RowState::Blocked { port, .. } => format!("(want :{port})"),
+        RowState::Idle => "—".to_string(),
+    }
+}
+
+/// Width the ACTIONS cell will take for a given `RowState`: sum of measured
+/// button labels + per-button frame padding + inter-button gaps. Matches what
+/// `render_actions_cell` produces.
+fn actions_cell_width(
+    ctx: &egui::Context,
+    row_state: &RowState,
+    ports_by_pgid: &HashMap<i32, Vec<u16>>,
+) -> f32 {
+    const BUTTON_FRAME_PADDING: f32 = 16.0; // egui button l/r padding combined
+    const INTER_BUTTON_GAP: f32 = 6.0;
+
+    let labels: Vec<String> = match row_state {
+        RowState::Running { pgid, .. } => {
+            let first_port = ports_by_pgid.get(pgid).and_then(|v| v.first().copied());
+            let open_label = match first_port {
+                Some(p) => format!("Open :{p}"),
+                None => "Open".to_string(),
+            };
+            vec!["Stop".to_string(), open_label]
+        }
+        RowState::ExternalLive { port, .. } => vec![format!("Open :{port}")],
+        RowState::Blocked { .. } => vec!["Start".to_string()],
+        RowState::Idle => vec!["Start".to_string()],
+    };
+
+    let text_total: f32 = labels
+        .iter()
+        .map(|l| column_widths::measure(ctx, l, CellFont::Proportional))
+        .sum();
+    let frames = BUTTON_FRAME_PADDING * labels.len() as f32;
+    let gaps = INTER_BUTTON_GAP * (labels.len().saturating_sub(1) as f32);
+    text_total + frames + gaps
 }
 
 /// Estimate the row height needed to display the Servers-table command cell
