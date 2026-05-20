@@ -5,6 +5,7 @@
 use crate::app::HiveApp;
 use crate::ui::column_widths::{self, CellFont};
 use crate::ui::components::{path_cell, strings, table_shell, weak_dash};
+use crate::ui::path_display;
 use crate::ui::theme;
 use eframe::egui;
 use egui_extras::Column;
@@ -317,7 +318,7 @@ fn render_table(
         tb = tb.column(Column::initial(widths.command).at_least(80.0));
     }
     tb = tb
-        .column(Column::remainder().at_least(180.0)) // cwd (elided single line)
+        .column(Column::initial(widths.cwd).at_least(180.0)) // cwd (elided single line)
         .column(Column::initial(widths.action).at_least(60.0));
 
     tb.header(24.0, |mut h| {
@@ -396,9 +397,10 @@ fn render_table(
     });
 }
 
-/// Shared widths for every short column in the Listeners table, pre-measured
-/// once over every visible row so the Grouped sub-tables line up. CWD is
-/// excluded — it elides and claims the Remainder column.
+/// Shared widths for every column in the Listeners table, pre-measured once
+/// over every visible row so the Grouped sub-tables line up. CWD is sized to
+/// the widest *elided* form (`…/parent/leaf`) — no Remainder column, so the
+/// table doesn't balloon to fill the panel width when paths are short.
 #[derive(Debug, Clone, Copy)]
 struct LiColumnWidths {
     port: f32,
@@ -407,6 +409,7 @@ struct LiColumnWidths {
     command: f32,
     repo: f32,
     branch: f32,
+    cwd: f32,
     action: f32,
 }
 
@@ -423,6 +426,10 @@ impl LiColumnWidths {
         let branch_strs: Vec<String> = rows
             .iter()
             .filter_map(|r| r.worktree_branch.clone())
+            .collect();
+        let cwd_strs: Vec<String> = rows
+            .iter()
+            .filter_map(|r| r.listener.cwd.as_deref().map(path_display::shorten))
             .collect();
 
         let port = column_widths::column_width(
@@ -461,6 +468,12 @@ impl LiColumnWidths {
             CellFont::Proportional,
             100.0,
         );
+        let cwd = column_widths::column_width(
+            ctx,
+            std::iter::once(strings::COL_CWD).chain(cwd_strs.iter().map(String::as_str)),
+            CellFont::Proportional,
+            180.0,
+        );
         // Action cell is a single "Kill" button — measured against header.
         let action_header =
             column_widths::measure(ctx, strings::COL_ACTION, CellFont::Proportional);
@@ -474,6 +487,7 @@ impl LiColumnWidths {
             command,
             repo,
             branch,
+            cwd,
             action,
         }
     }

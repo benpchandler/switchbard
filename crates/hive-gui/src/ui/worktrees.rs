@@ -11,6 +11,7 @@ use crate::ui::components::{
     repo_section_separator, short_sha, status_pill, strings, table_shell, weak_dots, Chip,
     StatusKind,
 };
+use crate::ui::path_display;
 use crate::ui::theme;
 use eframe::egui;
 use egui_extras::Column;
@@ -171,7 +172,7 @@ fn render_repo_section(
         .column(Column::initial(widths.last_commit).at_least(90.0))
         .column(Column::initial(widths.activity).at_least(90.0))
         .column(Column::initial(widths.listeners).at_least(70.0))
-        .column(Column::remainder().at_least(180.0)) // path (elided single line)
+        .column(Column::initial(widths.path).at_least(180.0)) // path (elided single line)
         .header(24.0, |mut h| {
             h.col(|ui| {
                 ui.strong(strings::COL_BRANCH);
@@ -333,6 +334,7 @@ struct WtColumnWidths {
     last_commit: f32,
     activity: f32,
     listeners: f32,
+    path: f32,
 }
 
 impl WtColumnWidths {
@@ -428,6 +430,16 @@ impl WtColumnWidths {
             CellFont::Proportional,
             70.0,
         );
+        let path_strs: Vec<String> = rows
+            .iter()
+            .map(|w| path_display::shorten(&w.path))
+            .collect();
+        let path = column_widths::column_width(
+            ctx,
+            std::iter::once(s::COL_PATH).chain(path_strs.iter().map(String::as_str)),
+            CellFont::Proportional,
+            180.0,
+        );
         Self {
             branch,
             head,
@@ -436,6 +448,7 @@ impl WtColumnWidths {
             last_commit,
             activity,
             listeners,
+            path,
         }
     }
 }
