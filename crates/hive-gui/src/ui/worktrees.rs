@@ -161,7 +161,11 @@ fn render_repo_section(
                 ui.strong("STATUS");
             });
             h.col(|ui| {
-                ui.strong("AHEAD/BEHIND");
+                ui.strong("DRIFT").on_hover_text(
+                    "How far this branch has diverged from its upstream remote. \
+                     '+N/-M' means N commits ahead of origin and M behind. \
+                     '—' = in sync (or no upstream set); '…' = probe pending.",
+                );
             });
             h.col(|ui| {
                 ui.strong("LAST COMMIT");
@@ -237,16 +241,29 @@ fn render_dirty_cell(ui: &mut egui::Ui, dirty: Option<bool>) {
 }
 
 fn render_drift_cell(ui: &mut egui::Ui, ahead: Option<u32>, behind: Option<u32>) {
-    let txt = match (ahead, behind) {
-        (Some(0), Some(0)) => "—".to_string(),
-        (Some(a), Some(b)) => format!("+{a}/-{b}"),
-        _ => "…".to_string(),
-    };
-    let weak = matches!(txt.as_str(), "—" | "…");
-    if weak {
-        ui.label(egui::RichText::new(txt).weak().small());
-    } else {
-        ui.label(egui::RichText::new(txt).small().monospace());
+    match (ahead, behind) {
+        (Some(0), Some(0)) => {
+            ui.label(egui::RichText::new("—").weak().small())
+                .on_hover_text("in sync with upstream");
+        }
+        (Some(a), Some(b)) => {
+            // Color matches the "N drifted" chip in the section header so the
+            // visual link is obvious: lavender chip → lavender cell.
+            ui.label(
+                egui::RichText::new(format!("+{a}/-{b}"))
+                    .small()
+                    .monospace()
+                    .color(theme::LAVENDER),
+            )
+            .on_hover_text(format!(
+                "{a} commit{} ahead of upstream, {b} behind",
+                if a == 1 { "" } else { "s" },
+            ));
+        }
+        _ => {
+            ui.label(egui::RichText::new("…").weak().small())
+                .on_hover_text("upstream not set, or probe pending");
+        }
     }
 }
 
