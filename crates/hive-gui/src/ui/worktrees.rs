@@ -25,10 +25,9 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                 worktrees.len(),
                 repos.len()
             ))
-            .weak()
-            .small(),
+            .weak(),
         );
-        ui.add_space(4.0);
+        ui.add_space(8.0);
 
         let mut by_repo: HashMap<&str, Vec<&WorktreeRef>> = HashMap::new();
         for w in &worktrees {
@@ -38,6 +37,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         egui::ScrollArea::vertical()
             .id_salt("worktrees_outer_scroll")
             .show(ui, |ui| {
+                let mut first_rendered = true;
                 for repo in &repos {
                     let Some(wts) = by_repo.get(repo.name.as_str()) else {
                         continue;
@@ -51,13 +51,22 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                         continue;
                     }
 
+                    // Hairline + breathing room between repo sections. The first
+                    // visible repo gets none — the header above already separates it
+                    // from the chrome.
+                    if !first_rendered {
+                        ui.add_space(16.0);
+                        ui.separator();
+                        ui.add_space(12.0);
+                    }
+                    first_rendered = false;
+
                     // Wrap the per-repo section so every widget inside (headers, chips,
                     // and the TableBuilder cells) gets a unique parent ID. Without
                     // this the cell-level widget IDs collide across stacked tables.
                     ui.push_id(format!("repo_section_{}", repo.name), |ui| {
                         render_repo_section(ui, repo, &visible, &meta_snapshot, &listener_counts);
                     });
-                    ui.add_space(12.0);
                 }
             });
     });
@@ -125,12 +134,8 @@ fn render_repo_section(
             ui.colored_label(theme::LAVENDER, format!("{drifted_count} drifted"));
         }
     });
-    ui.label(
-        egui::RichText::new(repo.path.display().to_string())
-            .small()
-            .weak(),
-    );
-    ui.add_space(4.0);
+    ui.label(egui::RichText::new(repo.path.display().to_string()).weak());
+    ui.add_space(6.0);
 
     TableBuilder::new(ui)
         .id_salt(format!("wt_table_{}", repo.name))
@@ -201,11 +206,7 @@ fn render_repo_section(
                         }
                     });
                     r.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(w.path.display().to_string())
-                                .small()
-                                .weak(),
-                        );
+                        ui.label(egui::RichText::new(w.path.display().to_string()).weak());
                     });
                 });
             }

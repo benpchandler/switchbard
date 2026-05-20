@@ -33,10 +33,9 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                 snap.worktrees.len(),
                 snap.active_runs.len(),
             ))
-            .weak()
-            .small(),
+            .weak(),
         );
-        ui.add_space(4.0);
+        ui.add_space(8.0);
 
         let mut wts_by_repo: HashMap<&str, Vec<&WorktreeRef>> = HashMap::new();
         for w in &snap.worktrees {
@@ -46,10 +45,17 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         egui::ScrollArea::vertical()
             .id_salt("servers_outer_scroll")
             .show(ui, |ui| {
+                let mut first_rendered = true;
                 for repo in &snap.repos {
                     let Some(wts) = wts_by_repo.get(repo.name.as_str()) else {
                         continue;
                     };
+                    if !first_rendered {
+                        ui.add_space(16.0);
+                        ui.separator();
+                        ui.add_space(12.0);
+                    }
+                    first_rendered = false;
                     ui.push_id(format!("server_repo_{}", repo.name), |ui| {
                         render_repo_section(
                             ui,
@@ -247,8 +253,6 @@ fn render_repo_section(
                 }
             }
         });
-
-    ui.add_space(10.0);
 }
 
 fn render_empty_worktree_row(
