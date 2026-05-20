@@ -172,7 +172,7 @@ fn render_grouped(
 
                 ui.push_id(format!("listener_repo_section_{}", repo.name), |ui| {
                     ui.horizontal(|ui| {
-                        ui.colored_label(theme::GREEN, theme::DOT_FILLED);
+                        theme::painted_dot(ui, theme::GREEN);
                         ui.heading(&repo.name);
                         ui.label(
                             egui::RichText::new(format!(
@@ -190,7 +190,7 @@ fn render_grouped(
                         ui.push_id(format!("listener_wt_{}_{}", repo.name, branch), |ui| {
                             ui.horizontal(|ui| {
                                 ui.add_space(10.0);
-                                ui.label(egui::RichText::new(format!("▸ {branch}")).strong());
+                                ui.label(egui::RichText::new(branch).strong());
                                 ui.label(
                                     egui::RichText::new(format!(
                                         "· {} listener{}",
@@ -217,7 +217,7 @@ fn render_grouped(
                                 ui.add_space(10.0);
                                 ui.label(
                                     egui::RichText::new(format!(
-                                        "▸ (this repo, no specific worktree · {} listener{})",
+                                        "(this repo, no specific worktree · {} listener{})",
                                         repo_only.len(),
                                         if repo_only.len() == 1 { "" } else { "s" }
                                     ))
@@ -243,7 +243,7 @@ fn render_grouped(
                 rendered_any = true;
                 ui.push_id("listener_unattributed_section", |ui| {
                     ui.horizontal(|ui| {
-                        ui.colored_label(egui::Color32::GRAY, theme::DOT_HOLLOW);
+                        theme::painted_dot_hollow(ui, egui::Color32::GRAY);
                         ui.heading("Unattributed");
                         ui.label(
                             egui::RichText::new(format!(

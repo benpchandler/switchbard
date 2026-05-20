@@ -91,9 +91,15 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                     } else {
                         egui::Color32::GRAY
                     };
-                    ui.colored_label(color, theme::DOT_FILLED);
-                    let arrow = if expanded { "▾" } else { "▸" };
-                    let label = format!("{arrow} {} ({} wt)", repo.name, repo_worktrees.len());
+                    theme::painted_dot(ui, color);
+                    if theme::caret_button(ui, expanded).clicked() {
+                        if expanded {
+                            app.expanded_repos.remove(&repo.name);
+                        } else {
+                            app.expanded_repos.insert(repo.name.clone());
+                        }
+                    }
+                    let label = format!("{} ({} wt)", repo.name, repo_worktrees.len());
                     let resp = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
                     if resp.clicked() {
                         if expanded {
@@ -104,9 +110,12 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Right-to-left layout: items added first end up on the right.
-                        // Visual order: [count] [↑] [↓] [✕]
+                        // Visual order: [count] [▲] [▼] [Remove]
                         if ui
-                            .add(egui::Button::new(egui::RichText::new("✕").small()).frame(false))
+                            .add(
+                                egui::Button::new(egui::RichText::new("Remove").small())
+                                    .frame(false),
+                            )
                             .on_hover_text(format!(
                                 "Remove '{}' from Hive (confirms before removing; \
                                  does not delete the repo on disk)",
@@ -117,22 +126,14 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                             app.confirm_remove_repo = Some((repo.path.clone(), repo.name.clone()));
                         }
                         let can_down = i + 1 < repo_count_total;
-                        if ui
-                            .add_enabled(
-                                can_down,
-                                egui::Button::new(egui::RichText::new("↓").small()).frame(false),
-                            )
+                        if theme::triangle_button(ui, false, can_down)
                             .on_hover_text("Move down")
                             .clicked()
                         {
                             move_request = Some((i, 1));
                         }
                         let can_up = i > 0;
-                        if ui
-                            .add_enabled(
-                                can_up,
-                                egui::Button::new(egui::RichText::new("↑").small()).frame(false),
-                            )
+                        if theme::triangle_button(ui, true, can_up)
                             .on_hover_text("Move up")
                             .clicked()
                         {
@@ -160,7 +161,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                             } else {
                                 egui::Color32::DARK_GRAY
                             };
-                            ui.colored_label(dot_color, theme::DOT_SMALL);
+                            theme::painted_dot_small(ui, dot_color);
                             let branch = w.branch.as_deref().unwrap_or("(detached)");
                             ui.label(egui::RichText::new(branch).small());
                             ui.with_layout(

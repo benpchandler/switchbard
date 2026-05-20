@@ -38,10 +38,109 @@ pub const DANGER: Color32 = Color32::from_rgb(0xB4, 0x3C, 0x3C);
 // other apps, too light here for paths and hint text. (#4A4A4A, 8.4:1)
 pub const WEAK_TEXT: Color32 = Color32::from_rgb(0x4A, 0x4A, 0x4A);
 
-// Glyphs (single source of truth — used in headings, dots, badges).
-pub const DOT_FILLED: &str = "●";
-pub const DOT_HOLLOW: &str = "○";
-pub const DOT_SMALL: &str = "•";
+// Glyph icons — painted directly via `Painter` so they don't depend on which
+// Unicode blocks egui's default fonts (Ubuntu-Light / NotoEmoji / emoji-icon-font)
+// happen to cover. The earlier `●▸▾↑↓✕•○` set rendered as empty squares on a
+// stock install because those geometric/arrow code points are missing from all
+// three default fonts. Painting via convex_polygon / circle_filled has the same
+// visual weight, costs nothing, and works regardless of font configuration.
+
+const ICON_SIZE: f32 = 14.0;
+
+/// Filled circle indicator (active / has-listeners / repo-with-services).
+pub fn painted_dot(ui: &mut egui::Ui, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::hover());
+    ui.painter().circle_filled(rect.center(), 4.5, color);
+}
+
+/// Hollow circle indicator (used for the "Unattributed" listener section).
+pub fn painted_dot_hollow(ui: &mut egui::Ui, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::hover());
+    ui.painter()
+        .circle_stroke(rect.center(), 4.0, egui::Stroke::new(1.5, color));
+}
+
+/// Smaller filled circle for nested rows (worktree leaves in the sidebar tree).
+pub fn painted_dot_small(ui: &mut egui::Ui, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+    ui.painter().circle_filled(rect.center(), 2.5, color);
+}
+
+/// Expand / collapse caret. Triangle points down when `open`, right when not.
+/// Returns the click response so callers can toggle their state on click.
+pub fn caret_button(ui: &mut egui::Ui, open: bool) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
+    let color = ui.visuals().text_color();
+    let c = rect.center();
+    let pts = if open {
+        vec![
+            egui::pos2(c.x - 3.5, c.y - 2.0),
+            egui::pos2(c.x + 3.5, c.y - 2.0),
+            egui::pos2(c.x, c.y + 2.5),
+        ]
+    } else {
+        vec![
+            egui::pos2(c.x - 2.0, c.y - 3.5),
+            egui::pos2(c.x - 2.0, c.y + 3.5),
+            egui::pos2(c.x + 2.5, c.y),
+        ]
+    };
+    ui.painter()
+        .add(egui::Shape::convex_polygon(pts, color, egui::Stroke::NONE));
+    response
+}
+
+/// Compact triangle button (up or down). Disabled state renders weaker
+/// and consumes hover but no clicks.
+pub fn triangle_button(ui: &mut egui::Ui, up: bool, enabled: bool) -> egui::Response {
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), sense);
+    let color = if !enabled {
+        ui.visuals().weak_text_color()
+    } else if response.hovered() {
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().text_color()
+    };
+    let c = rect.center();
+    let pts = if up {
+        vec![
+            egui::pos2(c.x, c.y - 3.0),
+            egui::pos2(c.x - 3.5, c.y + 2.5),
+            egui::pos2(c.x + 3.5, c.y + 2.5),
+        ]
+    } else {
+        vec![
+            egui::pos2(c.x, c.y + 3.0),
+            egui::pos2(c.x - 3.5, c.y - 2.5),
+            egui::pos2(c.x + 3.5, c.y - 2.5),
+        ]
+    };
+    ui.painter()
+        .add(egui::Shape::convex_polygon(pts, color, egui::Stroke::NONE));
+    response
+}
+
+/// X-shape glyph painted as two crossed strokes — used in the Servers view's
+/// "doesn't look like a server" classifier badge.
+pub fn painted_x(ui: &mut egui::Ui, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::hover());
+    let c = rect.center();
+    let stroke = egui::Stroke::new(1.5, color);
+    ui.painter().line_segment(
+        [c + egui::vec2(-3.0, -3.0), c + egui::vec2(3.0, 3.0)],
+        stroke,
+    );
+    ui.painter().line_segment(
+        [c + egui::vec2(3.0, -3.0), c + egui::vec2(-3.0, 3.0)],
+        stroke,
+    );
+}
 
 /// Install Hive's tuned egui visuals on the given context. Called once from
 /// `HiveApp::new`. We start from `Visuals::light()` (egui auto-detects dark

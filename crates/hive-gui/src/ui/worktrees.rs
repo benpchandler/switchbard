@@ -161,7 +161,7 @@ fn render_repo_section(
                 ui.strong("STATUS");
             });
             h.col(|ui| {
-                ui.strong("↑ / ↓");
+                ui.strong("AHEAD/BEHIND");
             });
             h.col(|ui| {
                 ui.strong("LAST COMMIT");
@@ -239,7 +239,7 @@ fn render_dirty_cell(ui: &mut egui::Ui, dirty: Option<bool>) {
 fn render_drift_cell(ui: &mut egui::Ui, ahead: Option<u32>, behind: Option<u32>) {
     let txt = match (ahead, behind) {
         (Some(0), Some(0)) => "—".to_string(),
-        (Some(a), Some(b)) => format!("↑{a} ↓{b}"),
+        (Some(a), Some(b)) => format!("+{a}/-{b}"),
         _ => "…".to_string(),
     };
     let weak = matches!(txt.as_str(), "—" | "…");

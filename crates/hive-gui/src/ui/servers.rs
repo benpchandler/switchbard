@@ -305,16 +305,14 @@ fn render_service_cell(ui: &mut egui::Ui, svc: &DetectedService) {
     ui.horizontal(|ui| {
         match svc.likelihood {
             ServerLikelihood::Server => {
-                ui.colored_label(theme::GREEN, theme::DOT_FILLED)
-                    .on_hover_text("likely a long-running server");
+                theme::painted_dot(ui, theme::GREEN);
             }
             ServerLikelihood::Maybe => {
                 ui.colored_label(theme::AMBER_QUESTION, "?")
                     .on_hover_text("ambiguous — could be a server or one-shot");
             }
             ServerLikelihood::NotServer => {
-                ui.colored_label(egui::Color32::DARK_GRAY, "✕")
-                    .on_hover_text("doesn't look like a server (test/build/lint)");
+                theme::painted_x(ui, egui::Color32::DARK_GRAY);
             }
         }
         ui.label(&svc.name);
@@ -332,19 +330,16 @@ fn render_state_cell(ui: &mut egui::Ui, row_state: &RowState) {
         } => {
             ui.colored_label(
                 theme::GREEN,
-                format!("● running · pid {pid} · {}", uptime_short(*started_at)),
+                format!("running · pid {pid} · {}", uptime_short(*started_at)),
             )
             .on_hover_text("started by Hive");
         }
         RowState::ExternalLive { port, pid } => {
-            ui.colored_label(
-                theme::SKY,
-                format!("● live (external) · :{port} · pid {pid}"),
-            )
-            .on_hover_text(
-                "a process bound to this command's expected port is already running from \
+            ui.colored_label(theme::SKY, format!("live (external) · :{port} · pid {pid}"))
+                .on_hover_text(
+                    "a process bound to this command's expected port is already running from \
                  this worktree (not started by Hive)",
-            );
+                );
         }
         RowState::Blocked {
             port,
@@ -353,7 +348,7 @@ fn render_state_cell(ui: &mut egui::Ui, row_state: &RowState) {
         } => {
             ui.colored_label(
                 theme::WARN_ORANGE,
-                format!("⚠ blocked · :{port} held by pid {pid} ({holder_label})"),
+                format!("blocked · :{port} held by pid {pid} ({holder_label})"),
             )
             .on_hover_text(
                 "another listener is already bound to this command's expected port — \
