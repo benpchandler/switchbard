@@ -181,21 +181,21 @@ fn render_repo_section(
         .striped(true)
         .resizable(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::initial(220.0).at_least(140.0)) // worktree (branch)
-        .column(Column::initial(180.0).at_least(120.0)) // service
-        .column(Column::initial(240.0).at_least(160.0)) // command
-        .column(Column::initial(96.0).at_least(72.0)) // state
-        .column(Column::initial(120.0).at_least(70.0)) // ports
-        .column(Column::remainder().at_least(170.0)) // actions
-        .header(22.0, |mut h| {
+        // Short data columns auto-fit; COMMAND is the only multi-line cell so
+        // it claims the Remainder. STATE / PORTS / ACTIONS auto-fit to their
+        // widest cell.
+        .column(Column::auto().at_least(120.0)) // worktree (branch)
+        .column(Column::auto().at_least(120.0)) // service
+        .column(Column::auto().at_least(110.0)) // state
+        .column(Column::auto().at_least(70.0)) // ports
+        .column(Column::auto().at_least(160.0)) // actions
+        .column(Column::remainder().at_least(200.0)) // command (wraps)
+        .header(24.0, |mut h| {
             h.col(|ui| {
                 ui.strong("WORKTREE");
             });
             h.col(|ui| {
                 ui.strong("SERVICE");
-            });
-            h.col(|ui| {
-                ui.strong("COMMAND");
             });
             h.col(|ui| {
                 ui.strong("STATE");
@@ -205,6 +205,9 @@ fn render_repo_section(
             });
             h.col(|ui| {
                 ui.strong("ACTIONS");
+            });
+            h.col(|ui| {
+                ui.strong("COMMAND");
             });
         })
         .body(|mut body| {
@@ -236,7 +239,6 @@ fn render_repo_section(
                             ui.label(&branch);
                         });
                         r.col(|ui| render_service_cell(ui, svc));
-                        r.col(|ui| render_command_cell(ui, &svc.command));
                         r.col(|ui| render_state_cell(ui, &row_state));
                         r.col(|ui| render_ports_cell(ui, &row_state, &snap.ports_by_pgid));
                         r.col(|ui| {
@@ -249,6 +251,7 @@ fn render_repo_section(
                                 pending,
                             );
                         });
+                        r.col(|ui| render_command_cell(ui, &svc.command));
                     });
                 }
             }
@@ -270,7 +273,8 @@ fn render_empty_worktree_row(
     if !row_text.to_lowercase().contains(filter_lc) {
         return;
     }
-    body.row(20.0, |mut r| {
+    // Six columns: WORKTREE, SERVICE, STATE, PORTS, ACTIONS, COMMAND
+    body.row(24.0, |mut r| {
         r.col(|ui| {
             ui.label(branch);
         });
@@ -320,7 +324,7 @@ fn render_service_cell(ui: &mut egui::Ui, svc: &DetectedService) {
 }
 
 fn render_command_cell(ui: &mut egui::Ui, command: &str) {
-    ui.add(egui::Label::new(egui::RichText::new(command).small().monospace()).wrap());
+    ui.add(egui::Label::new(egui::RichText::new(command).monospace()).wrap());
 }
 
 fn render_state_cell(ui: &mut egui::Ui, row_state: &RowState) {
@@ -377,18 +381,14 @@ fn render_ports_cell(
                     .map(|p| p.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                ui.label(egui::RichText::new(txt).monospace().small());
+                ui.label(egui::RichText::new(txt).monospace());
             }
         }
         RowState::ExternalLive { port, .. } => {
-            ui.label(egui::RichText::new(port.to_string()).monospace().small());
+            ui.label(egui::RichText::new(port.to_string()).monospace());
         }
         RowState::Blocked { port, .. } => {
-            ui.label(
-                egui::RichText::new(format!("(want :{port})"))
-                    .small()
-                    .color(theme::WARN_ORANGE),
-            );
+            ui.label(egui::RichText::new(format!("(want :{port})")).color(theme::WARN_ORANGE));
         }
         RowState::Idle => {
             ui.label(egui::RichText::new("—").weak());
@@ -463,9 +463,19 @@ fn uptime_short(started_at: Instant) -> String {
 /// the column the estimate may be too tall (harmless) or too short (clipped
 /// — a known limitation; live width isn't exposed to the body callback).
 fn estimate_row_height(command: &str) -> f32 {
-    const CHARS_PER_LINE: usize = 32;
-    const LINE_HEIGHT: f32 = 14.0;
-    const MIN_ROW_HEIGHT: f32 = 22.0;
-    let lines = command.chars().count().div_ceil(CHARS_PER_LINE).max(1);
-    (lines as f32 * LINE_HEIGHT + 4.0).max(MIN_ROW_HEIGHT)
+    // COMMAND is now body-size monospace (was `.small()`), so each line is
+    // taller and a wider char-pixel ratio. The remainder column for COMMAND
+    // is at least 200px wide; mono body text is ~8px/char, so ~25 chars/line
+    // is the conservative break point. Cap at 4 lines so a runaway command
+    // doesn't blow up the table row.
+    const CHARS_PER_LINE: usize = 25;
+    const LINE_HEIGHT: f32 = 18.0;
+    const MIN_ROW_HEIGHT: f32 = 24.0;
+    const MAX_LINES: usize = 4;
+    let lines = command
+        .chars()
+        .count()
+        .div_ceil(CHARS_PER_LINE)
+        .clamp(1, MAX_LINES);
+    (lines as f32 * LINE_HEIGHT + 6.0).max(MIN_ROW_HEIGHT)
 }

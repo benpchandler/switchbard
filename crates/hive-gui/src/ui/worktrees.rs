@@ -147,15 +147,17 @@ fn render_repo_section(
         .striped(true)
         .resizable(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::initial(220.0).at_least(140.0)) // branch
-        .column(Column::initial(82.0).at_least(72.0)) // head
-        .column(Column::initial(80.0).at_least(60.0)) // status
-        .column(Column::initial(88.0).at_least(68.0)) // drift (ahead/behind)
-        .column(Column::initial(96.0).at_least(78.0)) // last commit
-        .column(Column::initial(110.0).at_least(80.0)) // activity
-        .column(Column::initial(80.0).at_least(60.0)) // listeners
-        .column(Column::remainder().at_least(160.0)) // path
-        .header(22.0, |mut h| {
+        // Short data columns auto-fit to their longest cell. PATH stays in
+        // Remainder so it claims whatever's left and wraps long paths.
+        .column(Column::auto().at_least(120.0)) // branch
+        .column(Column::auto().at_least(70.0)) // head
+        .column(Column::auto().at_least(60.0)) // status
+        .column(Column::auto().at_least(70.0)) // drift
+        .column(Column::auto().at_least(80.0)) // last commit
+        .column(Column::auto().at_least(90.0)) // activity
+        .column(Column::auto().at_least(60.0)) // listeners
+        .column(Column::remainder().at_least(180.0)) // path (wraps)
+        .header(24.0, |mut h| {
             h.col(|ui| {
                 ui.strong("BRANCH");
             });
@@ -195,12 +197,13 @@ fn render_repo_section(
             for w in visible {
                 let m = meta.get(&w.path).cloned().unwrap_or_default();
                 let listener_n = listener_counts.get(&w.path).copied().unwrap_or(0);
-                body.row(22.0, |mut r| {
+                let row_h = estimate_worktree_row_height(&w.path);
+                body.row(row_h, |mut r| {
                     r.col(|ui| {
                         render_branch_cell(ui, w);
                     });
                     r.col(|ui| {
-                        ui.label(egui::RichText::new(short_head(&w.head)).monospace().small());
+                        ui.label(egui::RichText::new(short_head(&w.head)).monospace());
                     });
                     r.col(|ui| {
                         render_dirty_cell(ui, &m);
@@ -222,11 +225,34 @@ fn render_repo_section(
                         }
                     });
                     r.col(|ui| {
-                        ui.label(egui::RichText::new(w.path.display().to_string()).weak());
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(w.path.display().to_string()).weak(),
+                            )
+                            .wrap(),
+                        );
                     });
                 });
             }
         });
+}
+
+/// Pre-compute the row height for a worktree row, based on how many lines
+/// the wrapped PATH cell will take. The PATH column is the only one that can
+/// span multiple lines; everything else fits in one. Conservative width
+/// estimate of 50 chars per line (works for the default window size).
+fn estimate_worktree_row_height(path: &std::path::Path) -> f32 {
+    const CHARS_PER_LINE: usize = 50;
+    const LINE_HEIGHT: f32 = 18.0;
+    const MIN_ROW_HEIGHT: f32 = 24.0;
+    const MAX_LINES: usize = 3;
+    let lines = path
+        .to_string_lossy()
+        .chars()
+        .count()
+        .div_ceil(CHARS_PER_LINE)
+        .clamp(1, MAX_LINES);
+    (lines as f32 * LINE_HEIGHT + 6.0).max(MIN_ROW_HEIGHT)
 }
 
 fn render_branch_cell(ui: &mut egui::Ui, w: &WorktreeRef) {
@@ -243,7 +269,7 @@ fn render_branch_cell(ui: &mut egui::Ui, w: &WorktreeRef) {
 fn render_last_commit_cell(ui: &mut egui::Ui, m: &WorktreeMeta) {
     match m.head_commit_unix {
         Some(t) => {
-            let resp = ui.label(egui::RichText::new(humanize_age(t)).small());
+            let resp = ui.label(humanize_age(t));
             if let Some(commits) = m.recent_commits.as_deref() {
                 if !commits.is_empty() {
                     resp.on_hover_text(build_recent_commits_tooltip(commits));
@@ -261,7 +287,7 @@ fn render_last_commit_cell(ui: &mut egui::Ui, m: &WorktreeMeta) {
 /// last few subjects so you can read what direction the agent is taking.
 fn render_activity_cell(ui: &mut egui::Ui, m: &WorktreeMeta) {
     let Some(act) = m.activity() else {
-        ui.label(egui::RichText::new("…").weak().small());
+        ui.label(egui::RichText::new("…").weak());
         return;
     };
     let (label, color) = match act.level {
@@ -275,7 +301,7 @@ fn render_activity_cell(ui: &mut egui::Ui, m: &WorktreeMeta) {
         Some(v) => format!("{label} · {v}"),
         None => label.to_string(),
     };
-    let resp = ui.label(egui::RichText::new(cell_text).small().color(color));
+    let resp = ui.colored_label(color, cell_text);
     let tooltip = build_activity_tooltip(&act, m.recent_commits.as_deref().unwrap_or(&[]));
     resp.on_hover_text(tooltip);
 }
@@ -357,7 +383,7 @@ fn render_dirty_cell(ui: &mut egui::Ui, m: &WorktreeMeta) {
 fn render_drift_cell(ui: &mut egui::Ui, m: &WorktreeMeta) {
     match (m.ahead, m.behind) {
         (Some(0), Some(0)) => {
-            ui.label(egui::RichText::new("—").weak().small())
+            ui.label(egui::RichText::new("—").weak())
                 .on_hover_text(build_in_sync_tooltip(m.fetch_unix));
         }
         (Some(a), Some(b)) => {
@@ -365,7 +391,6 @@ fn render_drift_cell(ui: &mut egui::Ui, m: &WorktreeMeta) {
             // visual link is obvious: lavender chip → lavender cell.
             ui.label(
                 egui::RichText::new(format!("+{a}/-{b}"))
-                    .small()
                     .monospace()
                     .color(theme::LAVENDER),
             )
@@ -377,7 +402,7 @@ fn render_drift_cell(ui: &mut egui::Ui, m: &WorktreeMeta) {
             ));
         }
         _ => {
-            ui.label(egui::RichText::new("…").weak().small())
+            ui.label(egui::RichText::new("…").weak())
                 .on_hover_text("upstream not set, or probe pending");
         }
     }
