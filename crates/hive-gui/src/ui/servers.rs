@@ -3,9 +3,13 @@
 
 use crate::app::HiveApp;
 use crate::runtime::{ActiveRun, RowState};
+use crate::ui::components::{
+    mono_label, repo_section_header, repo_section_separator, status_pill, strings, table_shell,
+    weak_dash, weak_dots, Chip, StatusKind,
+};
 use crate::ui::theme;
 use eframe::egui;
-use egui_extras::{Column, TableBuilder};
+use egui_extras::Column;
 use hive_core::{AttributedListener, DetectedService, ServerLikelihood, WorktreeRef};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -45,17 +49,12 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         egui::ScrollArea::vertical()
             .id_salt("servers_outer_scroll")
             .show(ui, |ui| {
-                let mut first_rendered = true;
+                let mut first = true;
                 for repo in &snap.repos {
                     let Some(wts) = wts_by_repo.get(repo.name.as_str()) else {
                         continue;
                     };
-                    if !first_rendered {
-                        ui.add_space(16.0);
-                        ui.separator();
-                        ui.add_space(12.0);
-                    }
-                    first_rendered = false;
+                    first = repo_section_separator(ui, first);
                     ui.push_id(format!("server_repo_{}", repo.name), |ui| {
                         render_repo_section(
                             ui,
@@ -163,27 +162,22 @@ fn render_repo_section(
         }
     }
 
-    ui.horizontal(|ui| {
-        ui.heading(&repo.name);
-        ui.label(
-            egui::RichText::new(format!("({} svc · {} wt)", repo_services_total, wts.len())).weak(),
-        );
-        if repo_running > 0 {
-            ui.separator();
-            ui.colored_label(theme::GREEN, format!("{repo_running} running"));
-        }
-    });
-    ui.add_space(2.0);
+    let subtitle = format!("({} svc · {} wt)", repo_services_total, wts.len());
+    let running_chip_text;
+    let chips: Vec<Chip<'_>> = if repo_running > 0 {
+        running_chip_text = format!("{repo_running} running");
+        vec![Chip {
+            color: theme::GREEN,
+            text: &running_chip_text,
+        }]
+    } else {
+        Vec::new()
+    };
+    repo_section_header(ui, &repo.name, &subtitle, &chips, None);
 
-    TableBuilder::new(ui)
-        .id_salt(format!("server_table_{}", repo.name))
-        .vscroll(false)
-        .striped(true)
-        .resizable(true)
-        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+    table_shell(ui, format!("server_table_{}", repo.name))
         // Short data columns auto-fit; COMMAND is the only multi-line cell so
-        // it claims the Remainder. STATE / PORTS / ACTIONS auto-fit to their
-        // widest cell.
+        // it claims the Remainder. STATE / PORTS / ACTIONS auto-fit.
         .column(Column::auto().at_least(120.0)) // worktree (branch)
         .column(Column::auto().at_least(120.0)) // service
         .column(Column::auto().at_least(110.0)) // state
@@ -192,22 +186,22 @@ fn render_repo_section(
         .column(Column::remainder().at_least(200.0)) // command (wraps)
         .header(24.0, |mut h| {
             h.col(|ui| {
-                ui.strong("WORKTREE");
+                ui.strong(strings::COL_WORKTREE);
             });
             h.col(|ui| {
-                ui.strong("SERVICE");
+                ui.strong(strings::COL_SERVICE);
             });
             h.col(|ui| {
-                ui.strong("STATE");
+                ui.strong(strings::COL_STATE);
             });
             h.col(|ui| {
-                ui.strong("PORTS");
+                ui.strong(strings::COL_PORTS);
             });
             h.col(|ui| {
-                ui.strong("ACTIONS");
+                ui.strong(strings::COL_ACTIONS);
             });
             h.col(|ui| {
-                ui.strong("COMMAND");
+                ui.strong(strings::COL_COMMAND);
             });
         })
         .body(|mut body| {
@@ -332,31 +326,35 @@ fn render_state_cell(ui: &mut egui::Ui, row_state: &RowState) {
         RowState::Running {
             pid, started_at, ..
         } => {
-            ui.colored_label(
-                theme::GREEN,
-                format!("running · pid {pid} · {}", uptime_short(*started_at)),
-            )
-            .on_hover_text("started by Hive");
+            let text = format!("running · pid {pid} · {}", uptime_short(*started_at));
+            status_pill(ui, StatusKind::Good, text, Some("started by Hive"));
         }
         RowState::ExternalLive { port, pid } => {
-            ui.colored_label(theme::SKY, format!("live (external) · :{port} · pid {pid}"))
-                .on_hover_text(
+            let text = format!("live (external) · :{port} · pid {pid}");
+            status_pill(
+                ui,
+                StatusKind::Info,
+                text,
+                Some(
                     "a process bound to this command's expected port is already running from \
-                 this worktree (not started by Hive)",
-                );
+                     this worktree (not started by Hive)",
+                ),
+            );
         }
         RowState::Blocked {
             port,
             pid,
             holder_label,
         } => {
-            ui.colored_label(
-                theme::WARN_ORANGE,
-                format!("blocked · :{port} held by pid {pid} ({holder_label})"),
-            )
-            .on_hover_text(
-                "another listener is already bound to this command's expected port — \
-                 Start would fail with EADDRINUSE",
+            let text = format!("blocked · :{port} held by pid {pid} ({holder_label})");
+            status_pill(
+                ui,
+                StatusKind::Danger,
+                text,
+                Some(
+                    "another listener is already bound to this command's expected port — \
+                     Start would fail with EADDRINUSE",
+                ),
             );
         }
         RowState::Idle => {
@@ -374,25 +372,23 @@ fn render_ports_cell(
         RowState::Running { pgid, .. } => {
             let ports = ports_by_pgid.get(pgid).cloned().unwrap_or_default();
             if ports.is_empty() {
-                ui.label(egui::RichText::new("…").weak());
+                weak_dots(ui);
             } else {
                 let txt = ports
                     .iter()
                     .map(|p| p.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                ui.label(egui::RichText::new(txt).monospace());
+                mono_label(ui, &txt, None);
             }
         }
         RowState::ExternalLive { port, .. } => {
-            ui.label(egui::RichText::new(port.to_string()).monospace());
+            mono_label(ui, &port.to_string(), None);
         }
         RowState::Blocked { port, .. } => {
-            ui.label(egui::RichText::new(format!("(want :{port})")).color(theme::WARN_ORANGE));
+            mono_label(ui, &format!("(want :{port})"), Some(theme::WARN_ORANGE));
         }
-        RowState::Idle => {
-            ui.label(egui::RichText::new("—").weak());
-        }
+        RowState::Idle => weak_dash(ui),
     }
 }
 

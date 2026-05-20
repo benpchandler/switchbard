@@ -2,7 +2,10 @@
 //! (plus, for top_bar, the top panel). `theme` is the single source for all
 //! semantic colors and glyph constants the views consume.
 
+pub mod column_widths;
+pub mod components;
 pub mod listeners;
+pub mod path_display;
 pub mod servers;
 pub mod sidebar;
 pub mod theme;

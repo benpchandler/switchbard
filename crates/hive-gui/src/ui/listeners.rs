@@ -3,9 +3,10 @@
 //! sidebar lives in `ui::sidebar` and is rendered globally from `app::update`.
 
 use crate::app::HiveApp;
+use crate::ui::components::{path_cell, strings, table_shell, weak_dash};
 use crate::ui::theme;
 use eframe::egui;
-use egui_extras::{Column, TableBuilder};
+use egui_extras::Column;
 use hive_core::{AttributedListener, WorktreeRef};
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -283,12 +284,8 @@ fn render_table(
     id_salt: &str,
 ) {
     let show_repo_cols = matches!(variant, Variant::Flat);
-    let mut tb = TableBuilder::new(ui)
-        .id_salt(id_salt)
-        .vscroll(matches!(variant, Variant::Flat))
-        .striped(true)
-        .resizable(true)
-        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+    let mut tb = table_shell(ui, id_salt).vscroll(matches!(variant, Variant::Flat));
+    tb = tb
         .column(Column::initial(70.0).at_least(50.0)) // port
         .column(Column::initial(70.0).at_least(50.0)) // pid
         .column(Column::initial(70.0).at_least(50.0)); // pgid
@@ -301,43 +298,41 @@ fn render_table(
         tb = tb.column(Column::initial(140.0).at_least(80.0)); // command
     }
     tb = tb
-        .column(Column::remainder().at_least(120.0)) // cwd
+        .column(Column::remainder().at_least(180.0)) // cwd
         .column(Column::initial(70.0).at_least(60.0)); // action
 
-    let header_h = if show_repo_cols { 22.0 } else { 20.0 };
-    let row_h = 20.0;
-    tb.header(header_h, |mut h| {
+    tb.header(24.0, |mut h| {
         h.col(|ui| {
-            ui.strong("PORT");
+            ui.strong(strings::COL_PORT);
         });
         h.col(|ui| {
-            ui.strong("PID");
+            ui.strong(strings::COL_PID);
         });
         h.col(|ui| {
-            ui.strong("PGID");
+            ui.strong(strings::COL_PGID);
         });
         h.col(|ui| {
-            ui.strong("COMMAND");
+            ui.strong(strings::COL_COMMAND);
         });
         if show_repo_cols {
             h.col(|ui| {
-                ui.strong("REPO");
+                ui.strong(strings::COL_REPO);
             });
             h.col(|ui| {
-                ui.strong("BRANCH");
+                ui.strong(strings::COL_BRANCH);
             });
         }
         h.col(|ui| {
-            ui.strong("CWD");
+            ui.strong(strings::COL_CWD);
         });
         h.col(|ui| {
-            ui.strong("ACTION");
+            ui.strong(strings::COL_ACTION);
         });
     })
     .body(|mut body| {
         for row in rows {
             let l = &row.listener;
-            body.row(row_h, |mut r| {
+            body.row(24.0, |mut r| {
                 r.col(|ui| {
                     ui.label(egui::RichText::new(l.port.to_string()).monospace().strong());
                 });
@@ -355,26 +350,22 @@ fn render_table(
                         Some(n) => {
                             ui.colored_label(theme::GREEN, n);
                         }
-                        None => {
-                            ui.label(egui::RichText::new("—").weak());
-                        }
+                        None => weak_dash(ui),
                     });
                     r.col(|ui| match &row.worktree_branch {
                         Some(b) => {
-                            ui.label(egui::RichText::new(b).small());
+                            ui.label(b);
                         }
-                        None => {
-                            ui.label(egui::RichText::new("—").weak());
-                        }
+                        None => weak_dash(ui),
                     });
                 }
-                r.col(|ui| {
-                    let text = l
-                        .cwd
-                        .as_ref()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "(unknown)".into());
-                    ui.label(egui::RichText::new(text).small());
+                r.col(|ui| match &l.cwd {
+                    Some(p) => {
+                        path_cell(ui, p);
+                    }
+                    None => {
+                        ui.label(egui::RichText::new("(unknown)").weak());
+                    }
                 });
                 r.col(|ui| {
                     if ui.button("Kill").clicked() {
