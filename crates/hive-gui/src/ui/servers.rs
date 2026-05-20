@@ -12,7 +12,8 @@ use crate::ui::theme;
 use eframe::egui;
 use egui_extras::Column;
 use hive_core::{
-    AttributedListener, DetectedService, ServerLikelihood, ServiceSource, WorktreeRef,
+    resolve, AttributedListener, DetectedService, ResolvedService, ServerLikelihood, ServiceSource,
+    WorktreeRef,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -33,12 +34,14 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     let mut pending = PendingActions::default();
 
     let external_live = snap.count_external_live();
+    let resolved_total: usize = snap.services.values().map(|v| v.len()).sum();
     egui::CentralPanel::default().show(ctx, |ui| {
         let mut summary = format!(
-            "{} services detected across {}/{} worktrees · {} running",
-            snap.detected_total,
+            "{resolved_total} services across {}/{} worktrees ({} raw entry points) · \
+             {} running",
             snap.known_paths,
             snap.worktrees.len(),
+            snap.raw_detected_total,
             snap.active_runs.len(),
         );
         if external_live > 0 {
@@ -90,20 +93,33 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
 /// All inputs the table render needs, locked-snapshotted up front so the
 /// render closures hold no Mutex.
 struct Snapshot {
-    services: HashMap<PathBuf, Vec<DetectedService>>,
+    /// Per-worktree services *after* clustering raw detections into logical
+    /// services (one `make run` + one `Procfile:api` on the same port → one
+    /// `ResolvedService` with two entry points). The Servers view always
+    /// renders from this.
+    services: HashMap<PathBuf, Vec<ResolvedService>>,
     active_runs: HashMap<i32, ActiveRun>,
     by_port: HashMap<u16, AttributedListener>,
     ports_by_pgid: HashMap<i32, Vec<u16>>,
     worktrees: Vec<WorktreeRef>,
     repos: Vec<hive_core::Repo>,
     filter_lc: String,
-    detected_total: usize,
+    /// Raw-detection total (before clustering) — used in the header summary
+    /// so the count reflects what the underlying detectors found, even when
+    /// many entries collapse into a single service row.
+    raw_detected_total: usize,
     known_paths: usize,
 }
 
 impl Snapshot {
     fn collect(app: &HiveApp) -> Self {
-        let services: HashMap<PathBuf, Vec<DetectedService>> = app.services.lock().unwrap().clone();
+        let raw: HashMap<PathBuf, Vec<DetectedService>> = app.services.lock().unwrap().clone();
+        let raw_detected_total: usize = raw.values().map(|v| v.len()).sum();
+        let known_paths = raw.len();
+        let services: HashMap<PathBuf, Vec<ResolvedService>> = raw
+            .into_iter()
+            .map(|(path, detected)| (path, resolve(detected)))
+            .collect();
         let active_runs: HashMap<i32, ActiveRun> = app.active_runs.lock().unwrap().clone();
         let attributed_listeners: Vec<AttributedListener> =
             app.state.lock().unwrap().listeners.clone();
@@ -127,8 +143,6 @@ impl Snapshot {
             v.dedup();
         }
 
-        let detected_total: usize = services.values().map(|v| v.len()).sum();
-        let known_paths = services.len();
         Self {
             services,
             active_runs,
@@ -137,7 +151,7 @@ impl Snapshot {
             worktrees: app.worktrees_snapshot(),
             repos: app.repos_snapshot(),
             filter_lc,
-            detected_total,
+            raw_detected_total,
             known_paths,
         }
     }
@@ -148,19 +162,40 @@ impl Snapshot {
             .find(|r| r.worktree_path == wt_path && r.service_name == service_name)
     }
 
-    /// Count detected services whose expected port is currently bound by a
+    /// `ActiveRun`s are keyed by the *entry-point* name we used to start
+    /// them. For a resolved cluster, an active run for any of its entry
+    /// points counts as the cluster being up.
+    fn run_for_resolved(&self, wt_path: &Path, resolved: &ResolvedService) -> Option<&ActiveRun> {
+        for ep in &resolved.entry_points {
+            if let Some(run) = self.run_for(wt_path, &ep.name) {
+                return Some(run);
+            }
+        }
+        None
+    }
+
+    /// Whether any entry point in this cluster is a docker-compose service.
+    /// Drives the `containerized` flag in `RowState::compute`.
+    fn is_containerized(resolved: &ResolvedService) -> bool {
+        resolved
+            .entry_points
+            .iter()
+            .any(|ep| ep.source == ServiceSource::DockerCompose)
+    }
+
+    /// Count resolved services whose expected port is currently bound by a
     /// process Hive didn't start — these are "live (external)" rows. Useful
     /// for the summary so the header doesn't claim "0 running" when the
     /// table clearly shows live services.
     fn count_external_live(&self) -> usize {
         let mut n = 0usize;
-        for (wt_path, svcs) in &self.services {
-            for svc in svcs {
-                let Some(port) = svc.expected_port else {
+        for (wt_path, resolved_list) in &self.services {
+            for resolved in resolved_list {
+                let Some(port) = resolved.expected_port else {
                     continue;
                 };
-                let run = self.run_for(wt_path, &svc.name);
-                let containerized = svc.source == ServiceSource::DockerCompose;
+                let run = self.run_for_resolved(wt_path, resolved);
+                let containerized = Self::is_containerized(resolved);
                 if matches!(
                     RowState::compute(Some(port), wt_path, run, &self.by_port, containerized),
                     RowState::ExternalLive { .. }
@@ -188,7 +223,7 @@ fn render_repo_section(
         let svcs = snap.services.get(&w.path).cloned().unwrap_or_default();
         repo_services_total += svcs.len();
         for s in &svcs {
-            if snap.run_for(&w.path, &s.name).is_some() {
+            if snap.run_for_resolved(&w.path, s).is_some() {
                 repo_running += 1;
             }
         }
@@ -209,11 +244,11 @@ fn render_repo_section(
 
     table_shell(ui, format!("server_table_{}", repo.name))
         // Short data columns get widths pre-measured across the whole tab so
-        // every per-repo table lines up. COMMAND no longer has its own
-        // column — it renders on a second line inside the SERVICE cell so
-        // the full text is always visible without claiming horizontal room.
+        // every per-repo table lines up. Entry-point commands render on
+        // additional lines inside the SERVICE cell, so the row height grows
+        // with cluster size but no horizontal room is claimed.
         .column(Column::initial(widths.branch).at_least(100.0))
-        .column(Column::initial(widths.service).at_least(160.0))
+        .column(Column::initial(widths.service).at_least(180.0))
         .column(Column::initial(widths.state).at_least(120.0))
         .column(Column::initial(widths.ports).at_least(70.0))
         .column(Column::remainder().at_least(160.0)) // actions
@@ -242,39 +277,50 @@ fn render_repo_section(
                     render_empty_worktree_row(&mut body, w, &branch, &snap.filter_lc);
                     continue;
                 }
-                for svc in &svcs {
-                    if should_skip_service(svc, w, snap, show_non_servers) {
+                for resolved in &svcs {
+                    if should_skip_service(resolved, w, snap, show_non_servers) {
                         continue;
                     }
-                    let row_text =
-                        format!("{} {} {} {}", w.repo_name, branch, svc.name, svc.command);
+                    let row_text = format!(
+                        "{} {} {} {}",
+                        w.repo_name,
+                        branch,
+                        resolved.canonical_name,
+                        resolved
+                            .entry_points
+                            .iter()
+                            .map(|ep| ep.command.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    );
                     if !snap.filter_lc.is_empty()
                         && !row_text.to_lowercase().contains(&snap.filter_lc)
                     {
                         continue;
                     }
-                    let run = snap.run_for(&w.path, &svc.name);
-                    let containerized = svc.source == ServiceSource::DockerCompose;
+                    let run = snap.run_for_resolved(&w.path, resolved);
+                    let containerized = Snapshot::is_containerized(resolved);
                     let row_state = RowState::compute(
-                        svc.expected_port,
+                        resolved.expected_port,
                         &w.path,
                         run,
                         &snap.by_port,
                         containerized,
                     );
+                    let row_h = service_row_height(resolved);
 
-                    body.row(SERVICE_ROW_HEIGHT, |mut r| {
+                    body.row(row_h, |mut r| {
                         r.col(|ui| {
                             ui.add(egui::Label::new(&branch).truncate())
                                 .on_hover_text(&branch);
                         });
-                        r.col(|ui| render_service_cell(ui, svc, &row_state));
+                        r.col(|ui| render_service_cell(ui, resolved, &row_state));
                         r.col(|ui| render_state_cell(ui, &row_state));
                         r.col(|ui| render_ports_cell(ui, &row_state, &snap.ports_by_pgid));
                         r.col(|ui| {
                             render_actions_cell(
                                 ui,
-                                svc,
+                                resolved,
                                 w,
                                 &row_state,
                                 &snap.ports_by_pgid,
@@ -287,9 +333,18 @@ fn render_repo_section(
         });
 }
 
-/// Two-line rows (service name on top, command monospace below) need more
-/// vertical room than the prior 24px single-line cells.
-const SERVICE_ROW_HEIGHT: f32 = 40.0;
+/// Base row height for a single-entry service (name on top, one command
+/// line below).
+const SERVICE_ROW_BASE: f32 = 40.0;
+/// Extra height per additional entry point beyond the first.
+const SERVICE_ROW_PER_EXTRA_ENTRY: f32 = 18.0;
+
+/// A row's height grows with the number of entry points so each command
+/// gets its own line in the SERVICE cell without clipping.
+fn service_row_height(resolved: &ResolvedService) -> f32 {
+    let extras = resolved.entry_points.len().saturating_sub(1) as f32;
+    SERVICE_ROW_BASE + extras * SERVICE_ROW_PER_EXTRA_ENTRY
+}
 
 fn render_empty_worktree_row(
     body: &mut egui_extras::TableBody<'_>,
@@ -321,7 +376,7 @@ fn render_empty_worktree_row(
 }
 
 fn should_skip_service(
-    svc: &DetectedService,
+    resolved: &ResolvedService,
     w: &WorktreeRef,
     snap: &Snapshot,
     show_non_servers: bool,
@@ -331,26 +386,28 @@ fn should_skip_service(
     if show_non_servers {
         return false;
     }
-    if svc.likelihood != ServerLikelihood::NotServer {
+    if resolved.likelihood != ServerLikelihood::NotServer {
         return false;
     }
-    snap.run_for(&w.path, &svc.name).is_none()
+    snap.run_for_resolved(&w.path, resolved).is_none()
 }
 
-fn render_service_cell(ui: &mut egui::Ui, svc: &DetectedService, row_state: &RowState) {
+fn render_service_cell(ui: &mut egui::Ui, resolved: &ResolvedService, row_state: &RowState) {
     ui.vertical(|ui| {
-        // Line 1: state-driven dot + service name (+ small classification
-        // marker if the command isn't a clear server).
+        // Line 1: state-driven dot + canonical service name (+ small
+        // classification marker if the cluster doesn't look like a server).
         ui.horizontal(|ui| {
             theme::painted_dot(ui, state_dot_color(row_state))
                 .on_hover_text(state_dot_legend(row_state));
-            let name_text = match svc.likelihood {
-                ServerLikelihood::NotServer => egui::RichText::new(&svc.name).weak().italics(),
-                _ => egui::RichText::new(&svc.name),
+            let name_text = match resolved.likelihood {
+                ServerLikelihood::NotServer => egui::RichText::new(&resolved.canonical_name)
+                    .weak()
+                    .italics(),
+                _ => egui::RichText::new(&resolved.canonical_name).strong(),
             };
             ui.add(egui::Label::new(name_text).truncate())
-                .on_hover_text(&svc.name);
-            match svc.likelihood {
+                .on_hover_text(&resolved.canonical_name);
+            match resolved.likelihood {
                 ServerLikelihood::Server => {}
                 ServerLikelihood::Maybe => {
                     ui.colored_label(theme::AMBER_QUESTION, "?")
@@ -365,11 +422,27 @@ fn render_service_cell(ui: &mut egui::Ui, svc: &DetectedService, row_state: &Row
                         );
                 }
             }
+            if resolved.entry_points.len() > 1 {
+                ui.label(
+                    egui::RichText::new(format!("· {} entry points", resolved.entry_points.len()))
+                        .small()
+                        .weak(),
+                )
+                .on_hover_text(
+                    "Multiple ways to start this service — Start uses the first listed \
+                     (highest-priority detector). Full list is shown below.",
+                );
+            }
         });
-        // Line 2: full command, monospace, weak — truncates with ellipsis at
-        // the cell's right edge; full text is in the hover.
-        ui.add(egui::Label::new(egui::RichText::new(&svc.command).monospace().weak()).truncate())
-            .on_hover_text(&svc.command);
+        // Each entry-point command on its own line. The first entry is the
+        // one Start will use; subsequent entries are aliases shown so the
+        // user knows about the duplication.
+        for (i, ep) in resolved.entry_points.iter().enumerate() {
+            let prefix = if i == 0 { "▸ " } else { "  " };
+            let line = format!("{prefix}{} — {}", ep.name, ep.command);
+            ui.add(egui::Label::new(egui::RichText::new(&line).monospace().weak()).truncate())
+                .on_hover_text(&line);
+        }
     });
 }
 
@@ -471,19 +544,23 @@ fn render_ports_cell(
 
 fn render_actions_cell(
     ui: &mut egui::Ui,
-    svc: &DetectedService,
+    resolved: &ResolvedService,
     w: &WorktreeRef,
     row_state: &RowState,
     ports_by_pgid: &HashMap<i32, Vec<u16>>,
     pending: &mut PendingActions,
 ) {
+    // Start uses the primary (highest-priority) entry point. Stop uses
+    // whichever entry was actually launched — we match by service_name in
+    // run_for_resolved, so the running entry's name flows through here too.
+    let primary = resolved.primary_entry_point();
     match row_state {
         RowState::Running { pgid, .. } => {
             if ui
                 .add(egui::Button::new("Stop").fill(theme::DANGER))
                 .clicked()
             {
-                pending.stop = Some((*pgid, svc.name.clone()));
+                pending.stop = Some((*pgid, primary.name.clone()));
             }
             let ports = ports_by_pgid.get(pgid).cloned().unwrap_or_default();
             let open_label = match ports.first() {
@@ -512,7 +589,7 @@ fn render_actions_cell(
         }
         RowState::Idle => {
             if ui.button("Start").clicked() {
-                pending.start = Some((w.path.clone(), svc.clone()));
+                pending.start = Some((w.path.clone(), primary.clone()));
             }
         }
     }
@@ -557,21 +634,21 @@ impl SvColumnWidths {
                 branches.push(branch.clone());
                 continue;
             }
-            for svc in &svcs {
-                if should_skip_service(svc, w, snap, show_non_servers) {
+            for resolved in &svcs {
+                if should_skip_service(resolved, w, snap, show_non_servers) {
                     continue;
                 }
-                let run = snap.run_for(&w.path, &svc.name);
-                let containerized = svc.source == ServiceSource::DockerCompose;
+                let run = snap.run_for_resolved(&w.path, resolved);
+                let containerized = Snapshot::is_containerized(resolved);
                 let row_state = RowState::compute(
-                    svc.expected_port,
+                    resolved.expected_port,
                     &w.path,
                     run,
                     &snap.by_port,
                     containerized,
                 );
                 branches.push(branch.clone());
-                services.push(svc.name.clone());
+                services.push(resolved.canonical_name.clone());
                 states.push(state_display_text(&row_state));
                 ports_strs.push(ports_display_text(&row_state, &snap.ports_by_pgid));
             }

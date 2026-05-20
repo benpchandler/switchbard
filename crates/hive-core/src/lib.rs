@@ -5,6 +5,7 @@ pub mod expected_port;
 pub mod git_probe;
 pub mod kill;
 pub mod open_url;
+pub mod resolve;
 pub mod scanner;
 pub mod spawn;
 pub mod types;
@@ -20,6 +21,7 @@ pub use git_probe::{
 };
 pub use kill::{kill_pgid, KillOutcome};
 pub use open_url::{open_url, url_for_port, BROWSER_APP_NAMES};
+pub use resolve::{resolve, ResolvedService};
 pub use scanner::scan_listeners;
 pub use spawn::{spawn_in_session, SpawnedRun};
 pub use types::{AttributedListener, LocalListener, Repo, WorktreeRef};
