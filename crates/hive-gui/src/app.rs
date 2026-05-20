@@ -65,6 +65,10 @@ pub struct HiveApp {
     /// per repo, with worktree sub-headings, instead of a single flat table.
     pub group_listeners: bool,
     pub confirm_kill_all: bool,
+    /// When Some, the sidebar shows a "Remove '{name}'?" confirmation modal
+    /// for the repo at the given path. The ✕ button in the sidebar sets this;
+    /// the modal clears it on Confirm or Cancel.
+    pub confirm_remove_repo: Option<(PathBuf, String)>,
     pub expanded_repos: BTreeSet<String>,
     pub wt_filter: String,
     pub server_filter: String,
@@ -144,6 +148,7 @@ impl HiveApp {
             filter: String::new(),
             group_listeners,
             confirm_kill_all: false,
+            confirm_remove_repo: None,
             expanded_repos: BTreeSet::new(),
             wt_filter: String::new(),
             server_filter: String::new(),
@@ -226,6 +231,20 @@ impl HiveApp {
         self.config_status
             .set(format!("removed '{}'", repo_path.display()));
         self.scanner_kick.notify();
+    }
+
+    /// Move the repo at index `i` up (delta = -1) or down (delta = 1). Saves
+    /// the new order to `~/.hive/config.toml` and refreshes the runtime view
+    /// so the sidebar / per-repo sections re-render in the new order.
+    pub fn move_repo(&mut self, i: usize, delta: isize) {
+        let len = self.config.repos.len();
+        let j = (i as isize + delta).clamp(0, len.saturating_sub(1) as isize) as usize;
+        if i == j {
+            return;
+        }
+        self.config.repos.swap(i, j);
+        self.save_config();
+        self.rebuild_worktrees();
     }
 
     /// Recompute the runtime `repos` + `worktrees` mutexes from

@@ -11,15 +11,17 @@ use crate::runtime::PickerState;
 use crate::ui::theme;
 use eframe::egui;
 use hive_core::WorktreeRef;
-use std::path::PathBuf;
 
 pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     let repos = app.repos_snapshot();
     let worktrees = app.worktrees_snapshot();
     let picker_busy = matches!(*app.picker.lock().unwrap(), PickerState::InFlight);
     let config_msg = app.config_status.snapshot();
-    let mut remove_request: Option<PathBuf> = None;
+
+    // User intents queued during the immediate-mode render; applied after the
+    // SidePanel closure returns so we don't double-borrow `app`.
     let mut want_pick = false;
+    let mut move_request: Option<(usize, isize)> = None;
 
     egui::SidePanel::right("repos")
         .resizable(true)
@@ -69,8 +71,9 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                 return;
             }
 
+            let repo_count_total = repos.len();
             let s = app.state.lock().unwrap();
-            for repo in &repos {
+            for (i, repo) in repos.iter().enumerate() {
                 let repo_count = s
                     .listeners
                     .iter()
@@ -100,15 +103,40 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                         }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Right-to-left layout: items added first end up on the right.
+                        // Visual order: [count] [↑] [↓] [✕]
                         if ui
                             .add(egui::Button::new(egui::RichText::new("✕").small()).frame(false))
                             .on_hover_text(format!(
-                                "Remove '{}' from Hive (does not delete the repo)",
+                                "Remove '{}' from Hive (confirms before removing; \
+                                 does not delete the repo on disk)",
                                 repo.name
                             ))
                             .clicked()
                         {
-                            remove_request = Some(repo.path.clone());
+                            app.confirm_remove_repo = Some((repo.path.clone(), repo.name.clone()));
+                        }
+                        let can_down = i + 1 < repo_count_total;
+                        if ui
+                            .add_enabled(
+                                can_down,
+                                egui::Button::new(egui::RichText::new("↓").small()).frame(false),
+                            )
+                            .on_hover_text("Move down")
+                            .clicked()
+                        {
+                            move_request = Some((i, 1));
+                        }
+                        let can_up = i > 0;
+                        if ui
+                            .add_enabled(
+                                can_up,
+                                egui::Button::new(egui::RichText::new("↑").small()).frame(false),
+                            )
+                            .on_hover_text("Move up")
+                            .clicked()
+                        {
+                            move_request = Some((i, -1));
                         }
                         if repo_count > 0 {
                             ui.label(egui::RichText::new(format!("{repo_count}")).strong());
@@ -155,7 +183,64 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     if want_pick {
         app.open_repo_picker(ctx);
     }
-    if let Some(path) = remove_request {
+    if let Some((i, delta)) = move_request {
+        app.move_repo(i, delta);
+    }
+    render_remove_confirmation(app, ctx);
+}
+
+/// Modal that pops over the whole window when the user clicks the ✕ next to
+/// a repo. Confirm removes the repo (does not touch the repo on disk).
+fn render_remove_confirmation(app: &mut HiveApp, ctx: &egui::Context) {
+    let Some((path, name)) = app.confirm_remove_repo.clone() else {
+        return;
+    };
+    let mut open = true;
+    let mut do_confirm = false;
+    let mut do_cancel = false;
+    egui::Window::new("Remove repo?")
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.label(format!("Stop tracking '{name}' in Hive?"));
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(format!("Path: {}", path.display()))
+                    .weak()
+                    .small(),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(
+                    "This only removes it from Hive — the repository and its \
+                     worktrees stay on disk untouched.",
+                )
+                .weak(),
+            );
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("Remove").color(egui::Color32::WHITE),
+                        )
+                        .fill(theme::DANGER),
+                    )
+                    .clicked()
+                {
+                    do_confirm = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    do_cancel = true;
+                }
+            });
+        });
+    if do_confirm {
         app.remove_repo(path);
+        app.confirm_remove_repo = None;
+    } else if do_cancel || !open {
+        app.confirm_remove_repo = None;
     }
 }
