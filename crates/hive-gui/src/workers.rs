@@ -14,9 +14,14 @@ use crate::runtime::{ActiveRun, WorktreeMeta};
 use crate::sync::Kick;
 use eframe::egui;
 use hive_core::{
-    attribute, detect_services, probe_ahead_behind, probe_dirty, probe_head_commit_time,
-    scan_listeners, DetectedService, Repo, WorktreeRef,
+    attribute, detect_services, probe_ahead_behind, probe_dirty_files, probe_drift_detail,
+    probe_fetch_age, probe_head_commit_time, scan_listeners, DetectedService, Repo, WorktreeRef,
 };
+
+/// How many commits we list per side (ahead / behind) in the drift tooltip.
+/// Larger lists overflow the tooltip; the count badge in the cell still
+/// communicates the total.
+const DRIFT_DETAIL_LIMIT: usize = 5;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -93,11 +98,20 @@ fn spawn_probe(ctx: egui::Context, ch: Channels) {
             let (ahead, behind) = probe_ahead_behind(&w.path)
                 .map(|(a, b)| (Some(a), Some(b)))
                 .unwrap_or((None, None));
+            // Only fetch the per-commit detail when there's actual drift —
+            // saves two `git log` invocations per in-sync worktree per cycle.
+            let drift_detail = if ahead.unwrap_or(0) + behind.unwrap_or(0) > 0 {
+                probe_drift_detail(&w.path, DRIFT_DETAIL_LIMIT)
+            } else {
+                None
+            };
             let m = WorktreeMeta {
-                dirty: probe_dirty(&w.path),
+                dirty_files: probe_dirty_files(&w.path),
                 ahead,
                 behind,
+                drift_detail,
                 head_commit_unix: probe_head_commit_time(&w.path),
+                fetch_unix: probe_fetch_age(&w.path),
                 probed_at: Some(Instant::now()),
             };
             ch.meta.lock().unwrap().insert(w.path.clone(), m);

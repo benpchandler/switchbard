@@ -14,7 +14,10 @@ pub mod worktree;
 pub use attribution::attribute;
 pub use classify::{classify_command, classify_script_body, ServerLikelihood};
 pub use expected_port::expected_port;
-pub use git_probe::{humanize_age, probe_ahead_behind, probe_dirty, probe_head_commit_time};
+pub use git_probe::{
+    humanize_age, probe_ahead_behind, probe_dirty_files, probe_drift_detail, probe_fetch_age,
+    probe_head_commit_time, CommitSummary, DriftDetail,
+};
 pub use kill::{kill_pgid, KillOutcome};
 pub use open_url::{open_url, url_for_port, BROWSER_APP_NAMES};
 pub use scanner::scan_listeners;

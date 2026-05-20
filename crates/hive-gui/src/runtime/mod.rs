@@ -11,21 +11,36 @@
 
 pub mod worktrees;
 
-use hive_core::AttributedListener;
+use hive_core::{AttributedListener, DriftDetail};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Default)]
 pub struct WorktreeMeta {
-    pub dirty: Option<bool>,
+    /// `Some(files)` after the porcelain probe completes — empty means clean.
+    /// `None` while the probe hasn't returned yet (or it failed).
+    pub dirty_files: Option<Vec<String>>,
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
+    /// Commit lists behind the ahead/behind counts (capped). Used to build the
+    /// drift-cell tooltip's "showing N of M" body.
+    pub drift_detail: Option<DriftDetail>,
     pub head_commit_unix: Option<u64>,
+    /// Unix seconds of the last `git fetch` against this repo. None when the
+    /// repo has never been fetched (fresh clone of nothing).
+    pub fetch_unix: Option<u64>,
     /// Set when the probe completes; kept for a future "stale data" badge in
     /// the UI. Currently unread.
     #[allow(dead_code)]
     pub probed_at: Option<Instant>,
+}
+
+impl WorktreeMeta {
+    /// True if the porcelain probe finished and reported at least one file.
+    pub fn is_dirty(&self) -> Option<bool> {
+        self.dirty_files.as_ref().map(|v| !v.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

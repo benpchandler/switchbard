@@ -109,7 +109,11 @@ fn render_repo_section(
         .sum();
     let dirty_count = visible
         .iter()
-        .filter(|w| meta.get(&w.path).and_then(|m| m.dirty).unwrap_or(false))
+        .filter(|w| {
+            meta.get(&w.path)
+                .and_then(|m| m.is_dirty())
+                .unwrap_or(false)
+        })
         .count();
     let drifted_count = visible
         .iter()
@@ -189,10 +193,10 @@ fn render_repo_section(
                         ui.label(egui::RichText::new(short_head(&w.head)).monospace().small());
                     });
                     r.col(|ui| {
-                        render_dirty_cell(ui, m.dirty);
+                        render_dirty_cell(ui, &m);
                     });
                     r.col(|ui| {
-                        render_drift_cell(ui, m.ahead, m.behind);
+                        render_drift_cell(ui, &m);
                     });
                     r.col(|ui| match m.head_commit_unix {
                         Some(t) => {
@@ -226,25 +230,29 @@ fn render_branch_cell(ui: &mut egui::Ui, w: &WorktreeRef) {
     }
 }
 
-fn render_dirty_cell(ui: &mut egui::Ui, dirty: Option<bool>) {
-    match dirty {
+fn render_dirty_cell(ui: &mut egui::Ui, m: &WorktreeMeta) {
+    match m.is_dirty() {
         Some(true) => {
-            ui.colored_label(theme::AMBER, "dirty");
+            let tooltip = build_dirty_tooltip(m.dirty_files.as_deref().unwrap_or(&[]));
+            ui.colored_label(theme::AMBER, "dirty")
+                .on_hover_text(tooltip);
         }
         Some(false) => {
-            ui.colored_label(theme::GREEN, "clean");
+            ui.colored_label(theme::GREEN, "clean")
+                .on_hover_text("no uncommitted changes");
         }
         None => {
-            ui.label(egui::RichText::new("…").weak());
+            ui.label(egui::RichText::new("…").weak())
+                .on_hover_text("probe pending");
         }
     }
 }
 
-fn render_drift_cell(ui: &mut egui::Ui, ahead: Option<u32>, behind: Option<u32>) {
-    match (ahead, behind) {
+fn render_drift_cell(ui: &mut egui::Ui, m: &WorktreeMeta) {
+    match (m.ahead, m.behind) {
         (Some(0), Some(0)) => {
             ui.label(egui::RichText::new("—").weak().small())
-                .on_hover_text("in sync with upstream");
+                .on_hover_text(build_in_sync_tooltip(m.fetch_unix));
         }
         (Some(a), Some(b)) => {
             // Color matches the "N drifted" chip in the section header so the
@@ -255,15 +263,101 @@ fn render_drift_cell(ui: &mut egui::Ui, ahead: Option<u32>, behind: Option<u32>)
                     .monospace()
                     .color(theme::LAVENDER),
             )
-            .on_hover_text(format!(
-                "{a} commit{} ahead of upstream, {b} behind",
-                if a == 1 { "" } else { "s" },
+            .on_hover_text(build_drift_tooltip(
+                a,
+                b,
+                m.drift_detail.as_ref(),
+                m.fetch_unix,
             ));
         }
         _ => {
             ui.label(egui::RichText::new("…").weak().small())
                 .on_hover_text("upstream not set, or probe pending");
         }
+    }
+}
+
+/// Format the dirty-cell tooltip: "12 changed files" header + first ~10
+/// porcelain lines verbatim. Anything past the cap reads "… and N more".
+fn build_dirty_tooltip(files: &[String]) -> String {
+    const SHOW: usize = 10;
+    let mut s = format!(
+        "{} changed file{}:\n",
+        files.len(),
+        if files.len() == 1 { "" } else { "s" }
+    );
+    for line in files.iter().take(SHOW) {
+        s.push_str("  ");
+        s.push_str(line);
+        s.push('\n');
+    }
+    if files.len() > SHOW {
+        s.push_str(&format!("  … and {} more\n", files.len() - SHOW));
+    }
+    s.push_str("\nLegend: 'M ' modified, '??' untracked, 'A ' added, ' D' deleted.");
+    s
+}
+
+/// Drift tooltip: counts on the first line, fetch age on the second, then a
+/// blank line and the (capped) commit lists.
+fn build_drift_tooltip(
+    ahead: u32,
+    behind: u32,
+    detail: Option<&hive_core::DriftDetail>,
+    fetch_unix: Option<u64>,
+) -> String {
+    let mut s = format!(
+        "{ahead} commit{} ahead of upstream, {behind} behind\n",
+        if ahead == 1 { "" } else { "s" }
+    );
+    s.push_str(&fetch_line(fetch_unix));
+    if let Some(d) = detail {
+        if !d.ahead.is_empty() {
+            s.push_str(&format!(
+                "\nAhead{}:\n",
+                truncation_suffix(d.ahead.len(), ahead as usize, d.ahead_truncated)
+            ));
+            for c in &d.ahead {
+                s.push_str(&format!("  {}  {}\n", c.short_sha, c.subject));
+            }
+        }
+        if !d.behind.is_empty() {
+            s.push_str(&format!(
+                "\nBehind{}:\n",
+                truncation_suffix(d.behind.len(), behind as usize, d.behind_truncated)
+            ));
+            for c in &d.behind {
+                s.push_str(&format!("  {}  {}\n", c.short_sha, c.subject));
+            }
+        }
+    }
+    s
+}
+
+fn build_in_sync_tooltip(fetch_unix: Option<u64>) -> String {
+    let mut s = String::from("in sync with upstream\n");
+    s.push_str(&fetch_line(fetch_unix));
+    s.push_str(
+        "\nNote: Hive doesn't run `git fetch` — this reflects your local view \
+         of origin, not what's actually there right now.",
+    );
+    s
+}
+
+fn fetch_line(fetch_unix: Option<u64>) -> String {
+    match fetch_unix {
+        Some(t) => format!("Last `git fetch`: {}", humanize_age(t)),
+        None => "Last `git fetch`: never (or no remote configured)".to_string(),
+    }
+}
+
+fn truncation_suffix(shown: usize, total: usize, truncated: bool) -> String {
+    // We only know `shown` definitely matches if the probe wasn't truncated;
+    // otherwise the rev-list count is authoritative.
+    if truncated && total > shown {
+        format!(" (showing {shown} of {total})")
+    } else {
+        String::new()
     }
 }
 
