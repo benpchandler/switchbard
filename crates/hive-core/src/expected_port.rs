@@ -13,6 +13,7 @@
 /// Recognized:
 ///   - `--port N` / `--port=N`
 ///   - `-port N` / `-port=N`   (Go-style single dash)
+///   - `-p N` / `-p=N`         (short alias — Storybook, ng serve, next)
 ///   - `--bind ...:N` / `--bind=...:N`  (gunicorn)
 ///   - `PORT=N` (Procfile/env style)
 ///
@@ -21,7 +22,7 @@
 pub fn expected_port(cmd: &str) -> Option<u16> {
     let lc = cmd.to_lowercase();
 
-    for flag in &["--port", "-port"] {
+    for flag in &["--port", "-port", "-p"] {
         if let Some(p) = scan_after_flag(&lc, flag) {
             return Some(p);
         }
@@ -55,25 +56,29 @@ pub fn expected_port(cmd: &str) -> Option<u16> {
 }
 
 fn scan_after_flag(haystack: &str, flag: &str) -> Option<u16> {
-    let idx = haystack.find(flag)?;
-    let after = &haystack[idx + flag.len()..];
-    // Must be followed by whitespace, '=' or end — else this is a substring match
-    // like `--portable` (no real-world tool uses that for a server port, but be
-    // safe).
-    let first = after.chars().next();
-    match first {
-        None => return None,
-        Some(c) if c == ' ' || c == '=' => {}
-        _ => return None,
+    let mut start = 0;
+    while let Some(idx) = haystack[start..].find(flag) {
+        let pos = start + idx;
+        // Boundary BEFORE the flag must be start-of-string or whitespace, so
+        // we don't match `-p` inside `--port` or `something-p` (no real flag
+        // looks like that, but be safe given `-p` is so short).
+        let before_ok = pos == 0 || matches!(haystack.as_bytes()[pos - 1], b' ' | b'\t' | b'\n');
+        // Boundary AFTER the flag must be whitespace or '=' — else this is a
+        // substring match like `--portable` or `-pidfile`.
+        let after = &haystack[pos + flag.len()..];
+        let after_ok = matches!(after.chars().next(), Some(' ') | Some('='));
+        if before_ok && after_ok {
+            let rest = after.trim_start_matches([' ', '=']);
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(p) = digits.parse::<u16>() {
+                if p > 0 {
+                    return Some(p);
+                }
+            }
+        }
+        start = pos + flag.len();
     }
-    let rest = after.trim_start_matches([' ', '=']);
-    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-    let p: u16 = digits.parse().ok()?;
-    if p > 0 {
-        Some(p)
-    } else {
-        None
-    }
+    None
 }
 
 fn scan_after_keyword_at_word_boundary(haystack: &str, keyword: &str) -> Option<u16> {
@@ -165,5 +170,21 @@ mod tests {
         );
         // Bare `xport=8000` (no word boundary) should not.
         assert_eq!(expected_port("xport=8000"), None);
+    }
+
+    #[test]
+    fn short_p_flag_for_storybook() {
+        assert_eq!(expected_port("storybook dev -p 6006"), Some(6006));
+        assert_eq!(expected_port("storybook dev -p=6006"), Some(6006));
+    }
+
+    #[test]
+    fn short_p_does_not_match_inside_longer_flag() {
+        // `--port 8420` should NOT trigger the `-p` matcher (which would
+        // otherwise see the `-p` inside `--port` and bail on bad boundary).
+        // We assert it returns the correct port via the `--port` matcher.
+        assert_eq!(expected_port("uvicorn --port 8420"), Some(8420));
+        // And a substring like `--public 6000` doesn't fool `-p`.
+        assert_eq!(expected_port("./myapp --public 6000"), None);
     }
 }

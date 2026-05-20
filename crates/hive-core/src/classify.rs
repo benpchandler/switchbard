@@ -158,6 +158,11 @@ const STRONG_POSITIVE_TOKENS: &[&str] = &[
     "vite preview",
     "vite dev",
     "live-server",
+    // Component-library dev servers
+    "storybook dev",   // Storybook 7+
+    "start-storybook", // Storybook 6 and earlier
+    "ladle serve",
+    "histoire dev",
     // Ruby
     "rails s",
     "rails server",
@@ -212,6 +217,10 @@ const NEGATIVE_TOKENS: &[&str] = &[
     "rspec",
     "phpunit",
     "cypress run",
+    "npm test",
+    "pnpm test",
+    "yarn test",
+    "bun test",
     // Builders / type checkers
     "tsc",
     "cargo build",
@@ -333,6 +342,10 @@ const NEGATIVE_TOKENS: &[&str] = &[
     "jekyll build",
     "hugo build",
     "mdbook build",
+    // Component-library builds
+    "build-storybook",
+    "storybook build",
+    "chromatic", // visual-regression upload, not a server
     // Other one-shots
     "deploy",
     "release",

@@ -32,6 +32,7 @@ pub enum ServiceSource {
     Makefile,
     NodeScript,
     Procfile,
+    DockerCompose,
 }
 
 pub fn detect_services(worktree_path: &Path) -> Vec<DetectedService> {
@@ -40,6 +41,7 @@ pub fn detect_services(worktree_path: &Path) -> Vec<DetectedService> {
     out.extend(detect_makefile(worktree_path));
     out.extend(detect_node_scripts(worktree_path));
     out.extend(detect_procfile(worktree_path));
+    out.extend(detect_docker_compose(worktree_path));
     out
 }
 
@@ -188,23 +190,54 @@ fn detect_node_scripts(root: &Path) -> Vec<DetectedService> {
     };
     let pm = detect_node_pm(root);
     let mut out = Vec::new();
-    for key in ["dev", "start", "serve"] {
-        if let Some(script_value) = pkg.scripts.get(key) {
-            // Classify based on what the script actually runs, not the key.
-            // Port also comes from the *script value*, not the surface
-            // `pnpm run dev` we'll hand to the shell.
-            let likelihood = classify_command(script_value);
-            let expected_port = expected_port(script_value);
-            out.push(DetectedService {
-                name: format!("{pm} {key}"),
-                command: format!("{pm} run {key}"),
-                cwd_rel: PathBuf::from("."),
-                source: ServiceSource::NodeScript,
-                source_file: PathBuf::from("package.json"),
-                likelihood,
-                expected_port,
-            });
+    // Surface a script when EITHER:
+    //   1. its key matches a well-known server-y keyword (dev/start/serve/
+    //      storybook/api/web/frontend/backend/proxy/mock/tunnel/preview),
+    //      including namespaced variants like `app:dev` / `frontend:serve`,
+    //   2. OR its body classifies as Server (catches non-obviously-named
+    //      scripts like `playground: vite` or `e2e:server: webpack-dev-server`).
+    // Then we run the body classifier — Server/Maybe pass through, NotServer
+    // gets filtered (so `lint` / `build` / `test` never appear here).
+    let keywords = [
+        "dev",
+        "start",
+        "serve",
+        "storybook",
+        "api",
+        "web",
+        "frontend",
+        "backend",
+        "proxy",
+        "mock",
+        "tunnel",
+        "preview",
+    ];
+    for (key, script_value) in &pkg.scripts {
+        let key_lc = key.to_lowercase();
+        let name_match = keywords.iter().any(|k| {
+            key_lc == *k
+                || key_lc.ends_with(&format!(":{k}"))
+                || key_lc.starts_with(&format!("{k}:"))
+        });
+        let likelihood = classify_command(script_value);
+        if !name_match && !matches!(likelihood, ServerLikelihood::Server) {
+            continue;
         }
+        if matches!(likelihood, ServerLikelihood::NotServer) {
+            // Even if the key matches a keyword, refuse to call something a
+            // server when its body is clearly a build/test/lint.
+            continue;
+        }
+        let expected_port = expected_port(script_value);
+        out.push(DetectedService {
+            name: format!("{pm} {key}"),
+            command: format!("{pm} run {key}"),
+            cwd_rel: PathBuf::from("."),
+            source: ServiceSource::NodeScript,
+            source_file: PathBuf::from("package.json"),
+            likelihood,
+            expected_port,
+        });
     }
     out
 }
@@ -301,6 +334,124 @@ fn port_from_script_body(body: &str) -> Option<u16> {
 struct NodePackage {
     #[serde(default)]
     scripts: HashMap<String, String>,
+}
+
+/// Detect services declared in a docker-compose / compose file. Each entry in
+/// `services:` becomes its own row — postgres, redis, the API container, etc.
+/// The Start action surfaces as `docker compose up <name>` so users can boot
+/// individual services without spinning up the whole stack.
+fn detect_docker_compose(root: &Path) -> Vec<DetectedService> {
+    for name in [
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml",
+    ] {
+        let path = root.join(name);
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(compose) = serde_yaml::from_str::<ComposeFile>(&text) else {
+            continue;
+        };
+        let mut out = Vec::new();
+        for (svc_name, svc) in compose.services {
+            // Pick the first parseable host port out of the ports list. We
+            // intentionally prefer the host-side port — that's what users
+            // will connect to and what blocker detection cares about.
+            let expected_port = svc
+                .ports
+                .as_ref()
+                .and_then(|ps| ps.iter().find_map(parse_compose_port));
+            // Compose services are server-y by convention (you don't put
+            // one-shots in compose); trust the file as a strong source.
+            // If the inline `command:` looks like a builder, downgrade.
+            let likelihood = match svc.command.as_deref().map(classify_command) {
+                Some(ServerLikelihood::NotServer) => ServerLikelihood::NotServer,
+                _ => ServerLikelihood::Server,
+            };
+            out.push(DetectedService {
+                name: svc_name.clone(),
+                command: format!("docker compose up {svc_name}"),
+                cwd_rel: PathBuf::from("."),
+                source: ServiceSource::DockerCompose,
+                source_file: PathBuf::from(name),
+                likelihood,
+                expected_port,
+            });
+        }
+        if !out.is_empty() {
+            return out;
+        }
+    }
+    vec![]
+}
+
+#[derive(Deserialize)]
+struct ComposeFile {
+    #[serde(default)]
+    services: HashMap<String, ComposeService>,
+}
+
+#[derive(Deserialize)]
+struct ComposeService {
+    #[serde(default)]
+    ports: Option<Vec<ComposePort>>,
+    /// Optional command override; used only for likelihood downgrade if it
+    /// looks like a builder.
+    #[serde(default)]
+    command: Option<String>,
+}
+
+/// Compose ports can be a short string ("8000:80") or a long-form object
+/// (`{ published: 8000, target: 80 }`). Accept both via untagged.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ComposePort {
+    Short(String),
+    Long(ComposePortLong),
+}
+
+#[derive(Deserialize)]
+struct ComposePortLong {
+    #[serde(default)]
+    published: Option<serde_yaml::Value>,
+    #[serde(default)]
+    target: Option<u16>,
+}
+
+/// Pull the host-side port out of a compose ports entry. Short forms:
+///   "8000"                    → 8000 (single port — both sides equal)
+///   "8000:80"                 → 8000 (host:container)
+///   "127.0.0.1:8000:80"       → 8000 (ip:host:container)
+///   "8000-8005:80-85"         → 8000 (range — first only)
+/// Long form: `published` if present, else `target`.
+fn parse_compose_port(p: &ComposePort) -> Option<u16> {
+    match p {
+        ComposePort::Short(s) => {
+            let parts: Vec<&str> = s.split(':').collect();
+            let host = match parts.len() {
+                1 => parts[0],
+                2 => parts[0],
+                3 => parts[1],
+                _ => return None,
+            };
+            let first = host.split('-').next()?;
+            first.parse().ok()
+        }
+        ComposePort::Long(long) => {
+            // `published` may be u16 or string in compose 3+; handle both.
+            if let Some(v) = &long.published {
+                if let Some(n) = v.as_u64() {
+                    return u16::try_from(n).ok();
+                }
+                if let Some(s) = v.as_str() {
+                    return s.split('-').next()?.parse().ok();
+                }
+            }
+            long.target
+        }
+    }
 }
 
 #[cfg(test)]
@@ -508,5 +659,142 @@ exec uv run uvicorn lyon.server:app --reload --port 8420
             .find(|s| s.name == "Procfile:web")
             .expect("web not detected");
         assert_eq!(web.expected_port, None, "no port flag → None");
+    }
+
+    #[test]
+    fn detects_storybook_script() {
+        let d = tmpdir();
+        fs::write(
+            d.path().join("package.json"),
+            r#"{"name":"x","scripts":{
+                "storybook":"storybook dev -p 6006",
+                "build-storybook":"storybook build"
+            }}"#,
+        )
+        .unwrap();
+        let svcs = detect_services(d.path());
+        let sb = svcs
+            .iter()
+            .find(|s| s.command == "npm run storybook")
+            .expect("storybook not detected");
+        assert_eq!(sb.likelihood, ServerLikelihood::Server);
+        assert_eq!(sb.expected_port, Some(6006));
+        // `build-storybook` is a build, must NOT appear
+        assert!(
+            !svcs.iter().any(|s| s.name.contains("build-storybook")),
+            "build-storybook should not surface as a server"
+        );
+    }
+
+    #[test]
+    fn detects_namespaced_node_scripts() {
+        let d = tmpdir();
+        fs::write(
+            d.path().join("package.json"),
+            r#"{"name":"x","scripts":{
+                "app:dev":"vite --port 5173",
+                "api:serve":"uvicorn main:app --port 9000"
+            }}"#,
+        )
+        .unwrap();
+        let svcs = detect_services(d.path());
+        assert!(svcs.iter().any(|s| s.command == "npm run app:dev"));
+        assert!(svcs.iter().any(|s| s.command == "npm run api:serve"));
+    }
+
+    #[test]
+    fn detect_node_scripts_skips_lints_and_builds_even_if_named_dev() {
+        // Hypothetical: a `dev` script that's actually a lint
+        let d = tmpdir();
+        fs::write(
+            d.path().join("package.json"),
+            r#"{"name":"x","scripts":{"dev":"eslint . --watch"}}"#,
+        )
+        .unwrap();
+        let svcs = detect_services(d.path());
+        assert!(
+            svcs.iter().all(|s| s.source != ServiceSource::NodeScript),
+            "linting `dev` should be filtered out by classifier"
+        );
+    }
+
+    #[test]
+    fn detect_docker_compose_short_form_ports() {
+        let d = tmpdir();
+        fs::write(
+            d.path().join("docker-compose.yml"),
+            r#"
+services:
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - "5432:5432"
+  redis:
+    image: redis:7
+    ports:
+      - "6379"
+  api:
+    image: myapi:latest
+    ports:
+      - "127.0.0.1:8000:80"
+"#,
+        )
+        .unwrap();
+        let svcs = detect_services(d.path());
+        let pg = svcs
+            .iter()
+            .find(|s| s.name == "postgres")
+            .expect("postgres not detected");
+        assert_eq!(pg.source, ServiceSource::DockerCompose);
+        assert_eq!(pg.expected_port, Some(5432));
+        assert_eq!(pg.command, "docker compose up postgres");
+        assert_eq!(pg.likelihood, ServerLikelihood::Server);
+
+        let redis = svcs.iter().find(|s| s.name == "redis").unwrap();
+        assert_eq!(redis.expected_port, Some(6379));
+
+        let api = svcs.iter().find(|s| s.name == "api").unwrap();
+        assert_eq!(api.expected_port, Some(8000));
+    }
+
+    #[test]
+    fn detect_docker_compose_long_form_ports() {
+        let d = tmpdir();
+        fs::write(
+            d.path().join("compose.yml"),
+            r#"
+services:
+  postgres:
+    image: postgres:17
+    ports:
+      - target: 5432
+        published: 5432
+        protocol: tcp
+"#,
+        )
+        .unwrap();
+        let svcs = detect_services(d.path());
+        let pg = svcs.iter().find(|s| s.name == "postgres").unwrap();
+        assert_eq!(pg.expected_port, Some(5432));
+    }
+
+    #[test]
+    fn detect_docker_compose_command_override_downgrades_likelihood() {
+        // A compose entry whose `command:` is clearly a build/test should
+        // classify as NotServer, not Server.
+        let d = tmpdir();
+        fs::write(
+            d.path().join("docker-compose.yml"),
+            r#"
+services:
+  test-runner:
+    image: node:20
+    command: npm test
+"#,
+        )
+        .unwrap();
+        let svcs = detect_services(d.path());
+        let svc = svcs.iter().find(|s| s.name == "test-runner").unwrap();
+        assert_eq!(svc.likelihood, ServerLikelihood::NotServer);
     }
 }
