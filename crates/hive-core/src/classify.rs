@@ -137,6 +137,13 @@ const STRONG_POSITIVE_TOKENS: &[&str] = &[
     "gunicorn",
     "hypercorn",
     "daphne",
+    "flask run",
+    "manage.py runserver", // Django
+    "streamlit run",
+    "fastapi run",
+    "fastapi dev",
+    "-m http.server", // Python stdlib http server (`python|python3 -m http.server`)
+    "-m flask",       // `python -m flask run`
     // Node / JS dev servers
     "nodemon",
     "next dev",
@@ -150,6 +157,7 @@ const STRONG_POSITIVE_TOKENS: &[&str] = &[
     "vite serve",
     "vite preview",
     "vite dev",
+    "live-server",
     // Ruby
     "rails s",
     "rails server",
@@ -161,8 +169,11 @@ const STRONG_POSITIVE_TOKENS: &[&str] = &[
     "cargo-watch",
     // PHP
     "artisan serve",
+    "php -s", // built-in webserver (`-S` lowercased)
     // .NET
     "dotnet watch",
+    // Elixir / Phoenix
+    "phx.server",
     // Container orchestration
     "docker compose up",
     "docker-compose up",
@@ -172,6 +183,12 @@ const STRONG_POSITIVE_TOKENS: &[&str] = &[
     "honcho start",
     "hivemind",
     "goreman start",
+    // Documentation dev servers
+    "mkdocs serve",
+    "jekyll serve",
+    "hugo serve",
+    "mdbook serve",
+    "sphinx-autobuild",
 ];
 
 /// Ambiguous "could be a server" — overridden by negatives. Bare `vite` (no
@@ -190,13 +207,17 @@ const NEGATIVE_TOKENS: &[&str] = &[
     "playwright test",
     "go test",
     "cargo test",
+    "cargo nextest",
+    "gotestsum",
     "rspec",
     "phpunit",
+    "cypress run",
     // Builders / type checkers
     "tsc",
     "cargo build",
     "cargo check",
     "cargo clippy",
+    "cargo clean",
     "go build",
     "go vet",
     "vite build",
@@ -204,6 +225,21 @@ const NEGATIVE_TOKENS: &[&str] = &[
     "webpack build",
     "rollup",
     "esbuild",
+    "swc",
+    "tsup",
+    "parcel build",
+    "gradle build",
+    "gradle assemble",
+    "mvn install",
+    "mvn package",
+    "mvn compile",
+    "swift build",
+    "bazel build",
+    "bazel test",
+    "nx build",
+    "turbo build",
+    "lerna build",
+    "sbt compile",
     // Linters / formatters
     "ruff check",
     "ruff format",
@@ -214,12 +250,89 @@ const NEGATIVE_TOKENS: &[&str] = &[
     "gofmt",
     "black",
     "flake8",
-    // Schema / DB ops
+    "pylint",
+    "bandit",
+    "biome check",
+    "biome format",
+    "dprint",
+    "golangci-lint",
+    "staticcheck",
+    "ktlint",
+    "detekt",
+    // Package install / dependency sync (one-shot setup, not a server)
+    "uv sync",
+    "uv pip install",
+    "uv pip sync",
+    "pip install",
+    "pip-sync",
+    "poetry install",
+    "poetry sync",
+    "pipenv install",
+    "pdm install",
+    "conda install",
+    "mamba install",
+    "npm install",
+    "npm i", // word-boundary check excludes `npm install` and `npm init`
+    "npm ci",
+    "pnpm install",
+    "pnpm i", // ditto
+    "bun install",
+    "yarn install",
+    "yarn add",
+    "cargo fetch",
+    "cargo install",
+    "go mod download",
+    "go mod tidy",
+    "go get",
+    "bundle install",
+    "bundle update",
+    "gem install",
+    "composer install",
+    "composer update",
+    "mix deps.get",
+    "mix deps.compile",
+    "rebar3 get-deps",
+    "apt install",
+    "apt-get install",
+    "brew install",
+    "dnf install",
+    "yum install",
+    "apk add",
+    // Container / image builds (`up` is in strong-positives elsewhere)
+    "docker build",
+    "docker compose build",
+    "docker-compose build",
+    "podman build",
+    "nix build",
+    "nix-build",
+    // Schema / DB ops (one-shots)
     "alembic",
     "migrate",
     "db:migrate",
     "db:seed",
     "knex migrate",
+    "prisma migrate",
+    "prisma generate",
+    "prisma db push",
+    "sequelize db:migrate",
+    "flyway migrate",
+    "dbmate up",
+    "dbmate down",
+    "dbmate status",
+    "rake db",
+    "manage.py migrate",
+    "artisan migrate",
+    // Code generators (one-shots)
+    "protoc",
+    "openapi-generator",
+    "swagger-codegen",
+    "cargo generate",
+    // Docs builds (one-shots — `mkdocs serve` etc. are in strong-positives)
+    "mkdocs build",
+    "sphinx-build",
+    "jekyll build",
+    "hugo build",
+    "mdbook build",
     // Other one-shots
     "deploy",
     "release",
@@ -319,5 +432,178 @@ exec uv run uvicorn lyon.server:app --reload --port 8420
             classify_command("cargo test --workspace"),
             ServerLikelihood::NotServer
         );
+    }
+
+    #[test]
+    fn package_install_commands_are_not_servers() {
+        // Python ecosystem
+        assert_eq!(
+            classify_command("uv sync --frozen --all-extras"),
+            ServerLikelihood::NotServer
+        );
+        assert_eq!(
+            classify_command("uv pip install -r requirements.txt"),
+            ServerLikelihood::NotServer
+        );
+        assert_eq!(
+            classify_command("pip install -e ."),
+            ServerLikelihood::NotServer
+        );
+        assert_eq!(
+            classify_command("poetry install --no-dev"),
+            ServerLikelihood::NotServer
+        );
+
+        // JS ecosystem
+        assert_eq!(
+            classify_command("npm install --save-dev typescript"),
+            ServerLikelihood::NotServer
+        );
+        assert_eq!(classify_command("npm ci"), ServerLikelihood::NotServer);
+        assert_eq!(
+            classify_command("pnpm install --frozen-lockfile"),
+            ServerLikelihood::NotServer
+        );
+        assert_eq!(
+            classify_command("yarn add react"),
+            ServerLikelihood::NotServer
+        );
+        assert_eq!(classify_command("bun install"), ServerLikelihood::NotServer);
+
+        // npm i / pnpm i (short form) — must still match
+        assert_eq!(
+            classify_command("npm i lodash"),
+            ServerLikelihood::NotServer
+        );
+
+        // Other ecosystems
+        assert_eq!(
+            classify_command("bundle install"),
+            ServerLikelihood::NotServer
+        );
+        assert_eq!(
+            classify_command("composer install --no-dev"),
+            ServerLikelihood::NotServer
+        );
+        assert_eq!(
+            classify_command("go mod download"),
+            ServerLikelihood::NotServer
+        );
+        assert_eq!(
+            classify_command("mix deps.get"),
+            ServerLikelihood::NotServer
+        );
+    }
+
+    #[test]
+    fn npm_install_word_boundary_does_not_match_installer_or_init() {
+        // `npm i` shouldn't accidentally match `npm init` or other `npm <verb>`s.
+        assert_eq!(classify_command("npm init -y"), ServerLikelihood::Maybe);
+        // `npm install-clean` (older form) — `npm install` matches by boundary
+        // (the `-` is punctuation, so word boundary passes) which is correct
+        // since it's still a one-shot.
+        assert_eq!(
+            classify_command("npm install-clean"),
+            ServerLikelihood::NotServer
+        );
+    }
+
+    #[test]
+    fn flask_django_streamlit_are_servers() {
+        assert_eq!(
+            classify_command("flask run --debug --port 5000"),
+            ServerLikelihood::Server
+        );
+        assert_eq!(
+            classify_command("python manage.py runserver 0.0.0.0:8000"),
+            ServerLikelihood::Server
+        );
+        assert_eq!(
+            classify_command("streamlit run app.py"),
+            ServerLikelihood::Server
+        );
+        assert_eq!(
+            classify_command("fastapi dev main.py"),
+            ServerLikelihood::Server
+        );
+        assert_eq!(
+            classify_command("fastapi run main.py --port 9000"),
+            ServerLikelihood::Server
+        );
+    }
+
+    #[test]
+    fn stdlib_and_php_builtin_servers_classify() {
+        assert_eq!(
+            classify_command("python -m http.server 8000"),
+            ServerLikelihood::Server
+        );
+        assert_eq!(
+            classify_command("python3 -m http.server"),
+            ServerLikelihood::Server
+        );
+        assert_eq!(
+            classify_command("php -S localhost:8000 router.php"),
+            ServerLikelihood::Server
+        );
+    }
+
+    #[test]
+    fn docs_dev_servers_vs_builds() {
+        assert_eq!(
+            classify_command("mkdocs serve --dev-addr 0.0.0.0:8000"),
+            ServerLikelihood::Server
+        );
+        assert_eq!(
+            classify_command("hugo serve --bind 0.0.0.0"),
+            ServerLikelihood::Server
+        );
+        assert_eq!(
+            classify_command("mkdocs build --strict"),
+            ServerLikelihood::NotServer
+        );
+        assert_eq!(classify_command("hugo build"), ServerLikelihood::NotServer);
+    }
+
+    #[test]
+    fn docker_compose_up_vs_build() {
+        assert_eq!(
+            classify_command("docker compose up -d"),
+            ServerLikelihood::Server
+        );
+        assert_eq!(
+            classify_command("docker compose build api"),
+            ServerLikelihood::NotServer
+        );
+        assert_eq!(
+            classify_command("docker build -t myimg ."),
+            ServerLikelihood::NotServer
+        );
+    }
+
+    #[test]
+    fn db_and_codegen_one_shots() {
+        assert_eq!(
+            classify_command("prisma migrate dev"),
+            ServerLikelihood::NotServer
+        );
+        assert_eq!(
+            classify_command("prisma generate"),
+            ServerLikelihood::NotServer
+        );
+        assert_eq!(classify_command("dbmate up"), ServerLikelihood::NotServer);
+        assert_eq!(
+            classify_command("python manage.py migrate"),
+            ServerLikelihood::NotServer
+        );
+    }
+
+    #[test]
+    fn delta_make_dev_classifies_as_not_server() {
+        // Regression test for the user-reported false-positive: delta's
+        // `make dev` recipe is `uv sync --frozen --all-extras` — a package
+        // install, not a server.
+        let body = "uv sync --frozen --all-extras";
+        assert_eq!(classify_script_body(body), ServerLikelihood::NotServer);
     }
 }
