@@ -172,7 +172,7 @@ fn render_grouped(
 
                 ui.push_id(format!("listener_repo_section_{}", repo.name), |ui| {
                     ui.horizontal(|ui| {
-                        theme::painted_dot(ui, theme::GREEN);
+                        theme::painted_dot_pulse(ui, theme::GREEN, total);
                         ui.heading(&repo.name);
                         ui.label(
                             egui::RichText::new(format!(

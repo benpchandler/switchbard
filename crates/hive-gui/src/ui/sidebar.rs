@@ -86,12 +86,11 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                 let expanded = app.expanded_repos.contains(&repo.name);
 
                 ui.horizontal(|ui| {
-                    let color = if repo_count > 0 {
-                        theme::GREEN
+                    if repo_count > 0 {
+                        theme::painted_dot_pulse(ui, theme::GREEN, repo_count);
                     } else {
-                        egui::Color32::GRAY
-                    };
-                    theme::painted_dot(ui, color);
+                        theme::painted_dot(ui, egui::Color32::GRAY);
+                    }
                     if theme::caret_button(ui, expanded).clicked() {
                         if expanded {
                             app.expanded_repos.remove(&repo.name);
@@ -156,12 +155,11 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                             .count();
                         ui.horizontal(|ui| {
                             ui.add_space(18.0);
-                            let dot_color = if n > 0 {
-                                theme::GREEN
+                            if n > 0 {
+                                theme::painted_dot_small_pulse(ui, theme::GREEN, n);
                             } else {
-                                egui::Color32::DARK_GRAY
-                            };
-                            theme::painted_dot_small(ui, dot_color);
+                                theme::painted_dot_small(ui, egui::Color32::DARK_GRAY);
+                            }
                             let branch = w.branch.as_deref().unwrap_or("(detached)");
                             ui.label(egui::RichText::new(branch).small());
                             ui.with_layout(
@@ -205,20 +203,13 @@ fn render_remove_confirmation(app: &mut HiveApp, ctx: &egui::Context) {
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |ui| {
-            ui.label(format!("Stop tracking '{name}' in Hive?"));
+            ui.label(egui::RichText::new(format!("Stop tracking '{name}' in Hive?")).strong());
             ui.add_space(4.0);
+            ui.label(egui::RichText::new(format!("Path: {}", path.display())).weak());
+            ui.add_space(6.0);
             ui.label(
-                egui::RichText::new(format!("Path: {}", path.display()))
-                    .weak()
-                    .small(),
-            );
-            ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new(
-                    "This only removes it from Hive — the repository and its \
-                     worktrees stay on disk untouched.",
-                )
-                .weak(),
+                "This only removes it from Hive — the repository and its \
+                 worktrees stay on disk untouched.",
             );
             ui.add_space(8.0);
             ui.horizontal(|ui| {

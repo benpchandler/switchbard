@@ -46,11 +46,23 @@ pub const WEAK_TEXT: Color32 = Color32::from_rgb(0x4A, 0x4A, 0x4A);
 // visual weight, costs nothing, and works regardless of font configuration.
 
 const ICON_SIZE: f32 = 14.0;
+const DOT_RADIUS: f32 = 4.5;
+const DOT_RADIUS_SMALL: f32 = 2.5;
+/// Pixel gap between layered dots when count > 1.
+const DOT_STACK_OFFSET: f32 = 4.0;
+/// How many dots to render before we just stop adding more (the count badge
+/// to the right of the row carries the exact number).
+const MAX_STACK_DOTS: usize = 3;
+/// Frame interval for the pulse animation. 30 fps is enough for a slow sine
+/// fade and keeps CPU use unnoticeable.
+const PULSE_FRAME_MS: u64 = 33;
+/// Full pulse cycle in seconds (one trip from dim → bright → dim).
+const PULSE_PERIOD_SECS: f64 = 2.0;
 
-/// Filled circle indicator (active / has-listeners / repo-with-services).
+/// Filled circle indicator — static, single dot. For idle / classifier badges.
 pub fn painted_dot(ui: &mut egui::Ui, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::hover());
-    ui.painter().circle_filled(rect.center(), 4.5, color);
+    ui.painter().circle_filled(rect.center(), DOT_RADIUS, color);
 }
 
 /// Hollow circle indicator (used for the "Unattributed" listener section).
@@ -63,7 +75,75 @@ pub fn painted_dot_hollow(ui: &mut egui::Ui, color: Color32) {
 /// Smaller filled circle for nested rows (worktree leaves in the sidebar tree).
 pub fn painted_dot_small(ui: &mut egui::Ui, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
-    ui.painter().circle_filled(rect.center(), 2.5, color);
+    ui.painter()
+        .circle_filled(rect.center(), DOT_RADIUS_SMALL, color);
+}
+
+/// "Live" indicator — pulses alpha on a slow sine wave and stacks up to
+/// `MAX_STACK_DOTS` dots when `count > 1`, with each successive dot rendered
+/// at lower opacity so the depth reads even with similar hues. Callers pass
+/// the *number of listeners* attributed to the row; passing 0 just paints a
+/// static dot (useful when the caller hasn't branched yet).
+pub fn painted_dot_pulse(ui: &mut egui::Ui, color: Color32, count: usize) {
+    paint_pulsing_dots(ui, color, count, DOT_RADIUS, ICON_SIZE);
+}
+
+/// Smaller-radius pulse variant for the sidebar's nested worktree leaves.
+pub fn painted_dot_small_pulse(ui: &mut egui::Ui, color: Color32, count: usize) {
+    paint_pulsing_dots(ui, color, count, DOT_RADIUS_SMALL, 12.0);
+}
+
+fn paint_pulsing_dots(
+    ui: &mut egui::Ui,
+    color: Color32,
+    count: usize,
+    radius: f32,
+    base_size: f32,
+) {
+    let dots = count.clamp(1, MAX_STACK_DOTS);
+    let extra = (dots as f32 - 1.0) * DOT_STACK_OFFSET;
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(base_size + extra, base_size),
+        egui::Sense::hover(),
+    );
+
+    // 2-second sine cycle. `pulse` rides 0..1; we shape it to 0.55..1.0 so the
+    // dot dims but never disappears — a fully-off dot reads as "broken".
+    let t = ui.input(|i| i.time);
+    let raw = (t * std::f64::consts::TAU / PULSE_PERIOD_SECS).sin();
+    let pulse = (raw * 0.5 + 0.5) as f32; // 0..1
+    let intensity = 0.55 + pulse * 0.45; // 0.55..1.0
+
+    let center_y = rect.center().y;
+    let leftmost_x = rect.left() + base_size / 2.0;
+    let painter = ui.painter();
+    // Draw back-to-front so the rightmost dot (frontmost) lands on top.
+    for layer in (0..dots).rev() {
+        // Each layer behind the front is rendered at lower opacity.
+        let layer_alpha = match layer {
+            0 => 1.0,
+            1 => 0.70,
+            _ => 0.50,
+        };
+        let combined = intensity * layer_alpha;
+        let c = scale_alpha(color, combined);
+        painter.circle_filled(
+            egui::pos2(leftmost_x + (layer as f32) * DOT_STACK_OFFSET, center_y),
+            radius,
+            c,
+        );
+    }
+
+    // Drive the next frame so the pulse keeps animating.
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(PULSE_FRAME_MS));
+}
+
+/// Multiply a Color32's alpha channel by `factor` (clamped to 0..=1).
+fn scale_alpha(c: Color32, factor: f32) -> Color32 {
+    let f = factor.clamp(0.0, 1.0);
+    let a = (c.a() as f32 * f).round() as u8;
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
 }
 
 /// Expand / collapse caret. Triangle points down when `open`, right when not.
