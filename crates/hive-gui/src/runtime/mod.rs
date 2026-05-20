@@ -179,11 +179,19 @@ impl RowState {
     /// Build the per-row state from the raw inputs. Single source of truth
     /// for the Servers view: the table renderer must not re-derive any of
     /// these classifications from scratch.
+    ///
+    /// `containerized` flips the semantics for container-defined services
+    /// (docker-compose entries): the listener on the expected port is held
+    /// by the container runtime (Docker / OrbStack / etc.), not by any
+    /// worktree-attributed process — so "held by anything ≠ blocked, it
+    /// means the service is up." For non-containerized rows, a held port
+    /// owned by a different worktree is still Blocked (you'd EADDRINUSE).
     pub fn compute(
         expected_port: Option<u16>,
         wt_path: &std::path::Path,
         run_for_this: Option<&ActiveRun>,
         by_port: &HashMap<u16, AttributedListener>,
+        containerized: bool,
     ) -> Self {
         if let Some(run) = run_for_this {
             return RowState::Running {
@@ -198,6 +206,15 @@ impl RowState {
         let Some(al) = by_port.get(&port) else {
             return RowState::Idle;
         };
+        if containerized {
+            // For compose-defined services, the host-side port forwarder is
+            // owned by the container runtime — no worktree attribution. If
+            // *anything* is on the port, the service is running.
+            return RowState::ExternalLive {
+                port,
+                pid: al.listener.pid,
+            };
+        }
         let same_worktree = al.worktree_path.as_deref() == Some(wt_path);
         if same_worktree {
             RowState::ExternalLive {

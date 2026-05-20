@@ -11,7 +11,9 @@ use crate::ui::components::{
 use crate::ui::theme;
 use eframe::egui;
 use egui_extras::Column;
-use hive_core::{AttributedListener, DetectedService, ServerLikelihood, WorktreeRef};
+use hive_core::{
+    AttributedListener, DetectedService, ServerLikelihood, ServiceSource, WorktreeRef,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -158,8 +160,9 @@ impl Snapshot {
                     continue;
                 };
                 let run = self.run_for(wt_path, &svc.name);
+                let containerized = svc.source == ServiceSource::DockerCompose;
                 if matches!(
-                    RowState::compute(Some(port), wt_path, run, &self.by_port),
+                    RowState::compute(Some(port), wt_path, run, &self.by_port, containerized),
                     RowState::ExternalLive { .. }
                 ) {
                     n += 1;
@@ -251,8 +254,14 @@ fn render_repo_section(
                         continue;
                     }
                     let run = snap.run_for(&w.path, &svc.name);
-                    let row_state =
-                        RowState::compute(svc.expected_port, &w.path, run, &snap.by_port);
+                    let containerized = svc.source == ServiceSource::DockerCompose;
+                    let row_state = RowState::compute(
+                        svc.expected_port,
+                        &w.path,
+                        run,
+                        &snap.by_port,
+                        containerized,
+                    );
 
                     body.row(SERVICE_ROW_HEIGHT, |mut r| {
                         r.col(|ui| {
@@ -333,7 +342,8 @@ fn render_service_cell(ui: &mut egui::Ui, svc: &DetectedService, row_state: &Row
         // Line 1: state-driven dot + service name (+ small classification
         // marker if the command isn't a clear server).
         ui.horizontal(|ui| {
-            theme::painted_dot(ui, state_dot_color(row_state));
+            theme::painted_dot(ui, state_dot_color(row_state))
+                .on_hover_text(state_dot_legend(row_state));
             let name_text = match svc.likelihood {
                 ServerLikelihood::NotServer => egui::RichText::new(&svc.name).weak().italics(),
                 _ => egui::RichText::new(&svc.name),
@@ -371,6 +381,20 @@ fn state_dot_color(row_state: &RowState) -> egui::Color32 {
         RowState::ExternalLive { .. } => theme::SKY,
         RowState::Blocked { .. } => theme::WARN_ORANGE,
         RowState::Idle => egui::Color32::GRAY,
+    }
+}
+
+/// Hover text for the state dot — small key so the color encoding is
+/// discoverable without a separate legend.
+fn state_dot_legend(row_state: &RowState) -> &'static str {
+    match row_state {
+        RowState::Running { .. } => "running — started by Hive",
+        RowState::ExternalLive { .. } => {
+            "live — running, but not started by Hive (existing terminal session, \
+             container runtime, system service, etc.)"
+        }
+        RowState::Blocked { .. } => "blocked — another process holds the port",
+        RowState::Idle => "idle — not running",
     }
 }
 
@@ -538,7 +562,14 @@ impl SvColumnWidths {
                     continue;
                 }
                 let run = snap.run_for(&w.path, &svc.name);
-                let row_state = RowState::compute(svc.expected_port, &w.path, run, &snap.by_port);
+                let containerized = svc.source == ServiceSource::DockerCompose;
+                let row_state = RowState::compute(
+                    svc.expected_port,
+                    &w.path,
+                    run,
+                    &snap.by_port,
+                    containerized,
+                );
                 branches.push(branch.clone());
                 services.push(svc.name.clone());
                 states.push(state_display_text(&row_state));

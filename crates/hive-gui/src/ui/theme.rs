@@ -60,9 +60,12 @@ const PULSE_FRAME_MS: u64 = 33;
 const PULSE_PERIOD_SECS: f64 = 2.0;
 
 /// Filled circle indicator — static, single dot. For idle / classifier badges.
-pub fn painted_dot(ui: &mut egui::Ui, color: Color32) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::hover());
+/// Returns the `Response` so callers can attach `.on_hover_text(...)`.
+pub fn painted_dot(ui: &mut egui::Ui, color: Color32) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), DOT_RADIUS, color);
+    resp
 }
 
 /// Hollow circle indicator (used for the "Unattributed" listener section).
