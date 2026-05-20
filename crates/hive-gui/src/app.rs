@@ -472,6 +472,10 @@ impl eframe::App for HiveApp {
         );
 
         ui::top_bar::render(self, ctx);
+        // Sidebar must render BEFORE the central panel so the SidePanel claims
+        // its docked space first; otherwise the central panel sizes to the full
+        // window and the side panel overlays it.
+        ui::sidebar::render(self, ctx);
         match self.view {
             ViewMode::Listeners => ui::listeners::render(self, ctx),
             ViewMode::Worktrees => ui::worktrees::render(self, ctx),
