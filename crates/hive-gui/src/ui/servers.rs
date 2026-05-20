@@ -30,17 +30,19 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     let widths = SvColumnWidths::compute(ctx, &snap, app.show_non_servers);
     let mut pending = PendingActions::default();
 
+    let external_live = snap.count_external_live();
     egui::CentralPanel::default().show(ctx, |ui| {
-        ui.label(
-            egui::RichText::new(format!(
-                "{} services detected across {}/{} worktrees · {} running",
-                snap.detected_total,
-                snap.known_paths,
-                snap.worktrees.len(),
-                snap.active_runs.len(),
-            ))
-            .weak(),
+        let mut summary = format!(
+            "{} services detected across {}/{} worktrees · {} running",
+            snap.detected_total,
+            snap.known_paths,
+            snap.worktrees.len(),
+            snap.active_runs.len(),
         );
+        if external_live > 0 {
+            summary.push_str(&format!(" · {external_live} external"));
+        }
+        ui.label(egui::RichText::new(summary).weak());
         ui.add_space(8.0);
 
         let mut wts_by_repo: HashMap<&str, Vec<&WorktreeRef>> = HashMap::new();
@@ -143,6 +145,29 @@ impl Snapshot {
             .values()
             .find(|r| r.worktree_path == wt_path && r.service_name == service_name)
     }
+
+    /// Count detected services whose expected port is currently bound by a
+    /// process Hive didn't start — these are "live (external)" rows. Useful
+    /// for the summary so the header doesn't claim "0 running" when the
+    /// table clearly shows live services.
+    fn count_external_live(&self) -> usize {
+        let mut n = 0usize;
+        for (wt_path, svcs) in &self.services {
+            for svc in svcs {
+                let Some(port) = svc.expected_port else {
+                    continue;
+                };
+                let run = self.run_for(wt_path, &svc.name);
+                if matches!(
+                    RowState::compute(Some(port), wt_path, run, &self.by_port),
+                    RowState::ExternalLive { .. }
+                ) {
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
 }
 
 fn render_repo_section(
@@ -181,14 +206,14 @@ fn render_repo_section(
 
     table_shell(ui, format!("server_table_{}", repo.name))
         // Short data columns get widths pre-measured across the whole tab so
-        // every per-repo table lines up. COMMAND wraps; it claims the
-        // Remainder.
+        // every per-repo table lines up. COMMAND no longer has its own
+        // column — it renders on a second line inside the SERVICE cell so
+        // the full text is always visible without claiming horizontal room.
         .column(Column::initial(widths.worktree).at_least(100.0))
-        .column(Column::initial(widths.service).at_least(120.0))
+        .column(Column::initial(widths.service).at_least(160.0))
         .column(Column::initial(widths.state).at_least(120.0))
         .column(Column::initial(widths.ports).at_least(70.0))
-        .column(Column::initial(widths.actions).at_least(160.0))
-        .column(Column::remainder().at_least(200.0)) // command (wraps)
+        .column(Column::remainder().at_least(160.0)) // actions
         .header(24.0, |mut h| {
             h.col(|ui| {
                 ui.strong(strings::COL_WORKTREE);
@@ -204,9 +229,6 @@ fn render_repo_section(
             });
             h.col(|ui| {
                 ui.strong(strings::COL_ACTIONS);
-            });
-            h.col(|ui| {
-                ui.strong(strings::COL_COMMAND);
             });
         })
         .body(|mut body| {
@@ -231,14 +253,13 @@ fn render_repo_section(
                     let run = snap.run_for(&w.path, &svc.name);
                     let row_state =
                         RowState::compute(svc.expected_port, &w.path, run, &snap.by_port);
-                    let row_height = estimate_row_height(&svc.command);
 
-                    body.row(row_height, |mut r| {
+                    body.row(SERVICE_ROW_HEIGHT, |mut r| {
                         r.col(|ui| {
                             ui.add(egui::Label::new(&branch).truncate())
                                 .on_hover_text(&branch);
                         });
-                        r.col(|ui| render_service_cell(ui, svc));
+                        r.col(|ui| render_service_cell(ui, svc, &row_state));
                         r.col(|ui| render_state_cell(ui, &row_state));
                         r.col(|ui| render_ports_cell(ui, &row_state, &snap.ports_by_pgid));
                         r.col(|ui| {
@@ -251,12 +272,15 @@ fn render_repo_section(
                                 pending,
                             );
                         });
-                        r.col(|ui| render_command_cell(ui, &svc.command));
                     });
                 }
             }
         });
 }
+
+/// Two-line rows (service name on top, command monospace below) need more
+/// vertical room than the prior 24px single-line cells.
+const SERVICE_ROW_HEIGHT: f32 = 40.0;
 
 fn render_empty_worktree_row(
     body: &mut egui_extras::TableBody<'_>,
@@ -273,7 +297,7 @@ fn render_empty_worktree_row(
     if !row_text.to_lowercase().contains(filter_lc) {
         return;
     }
-    // Six columns: WORKTREE, SERVICE, STATE, PORTS, ACTIONS, COMMAND
+    // Five columns: WORKTREE, SERVICE, STATE, PORTS, ACTIONS
     body.row(24.0, |mut r| {
         r.col(|ui| {
             ui.label(branch);
@@ -281,7 +305,6 @@ fn render_empty_worktree_row(
         r.col(|ui| {
             ui.label(egui::RichText::new("(none detected)").weak());
         });
-        r.col(|_| {});
         r.col(|_| {});
         r.col(|_| {});
         r.col(|_| {});
@@ -305,27 +328,50 @@ fn should_skip_service(
     snap.run_for(&w.path, &svc.name).is_none()
 }
 
-fn render_service_cell(ui: &mut egui::Ui, svc: &DetectedService) {
-    ui.horizontal(|ui| {
-        match svc.likelihood {
-            ServerLikelihood::Server => {
-                theme::painted_dot(ui, theme::GREEN);
+fn render_service_cell(ui: &mut egui::Ui, svc: &DetectedService, row_state: &RowState) {
+    ui.vertical(|ui| {
+        // Line 1: state-driven dot + service name (+ small classification
+        // marker if the command isn't a clear server).
+        ui.horizontal(|ui| {
+            theme::painted_dot(ui, state_dot_color(row_state));
+            let name_text = match svc.likelihood {
+                ServerLikelihood::NotServer => egui::RichText::new(&svc.name).weak().italics(),
+                _ => egui::RichText::new(&svc.name),
+            };
+            ui.add(egui::Label::new(name_text).truncate())
+                .on_hover_text(&svc.name);
+            match svc.likelihood {
+                ServerLikelihood::Server => {}
+                ServerLikelihood::Maybe => {
+                    ui.colored_label(theme::AMBER_QUESTION, "?")
+                        .on_hover_text("ambiguous — could be a server or a one-shot");
+                }
+                ServerLikelihood::NotServer => {
+                    ui.label(egui::RichText::new("(non-server)").small().weak())
+                        .on_hover_text(
+                            "classified as a one-shot (test / build / lint), not a long-lived \
+                             server — shown because 'Show non-servers' is enabled or it's \
+                             currently running",
+                        );
+                }
             }
-            ServerLikelihood::Maybe => {
-                ui.colored_label(theme::AMBER_QUESTION, "?")
-                    .on_hover_text("ambiguous — could be a server or one-shot");
-            }
-            ServerLikelihood::NotServer => {
-                theme::painted_x(ui, egui::Color32::DARK_GRAY);
-            }
-        }
-        ui.add(egui::Label::new(&svc.name).truncate())
-            .on_hover_text(&svc.name);
+        });
+        // Line 2: full command, monospace, weak — truncates with ellipsis at
+        // the cell's right edge; full text is in the hover.
+        ui.add(egui::Label::new(egui::RichText::new(&svc.command).monospace().weak()).truncate())
+            .on_hover_text(&svc.command);
     });
 }
 
-fn render_command_cell(ui: &mut egui::Ui, command: &str) {
-    ui.add(egui::Label::new(egui::RichText::new(command).monospace()).wrap());
+/// Map a `RowState` to the dot color used in the SERVICE cell — encodes
+/// actual run state so the visual matches the STATE column wording.
+fn state_dot_color(row_state: &RowState) -> egui::Color32 {
+    match row_state {
+        RowState::Running { .. } => theme::GREEN,
+        RowState::ExternalLive { .. } => theme::SKY,
+        RowState::Blocked { .. } => theme::WARN_ORANGE,
+        RowState::Idle => egui::Color32::GRAY,
+    }
 }
 
 fn render_state_cell(ui: &mut egui::Ui, row_state: &RowState) {
@@ -459,16 +505,16 @@ fn uptime_short(started_at: Instant) -> String {
     }
 }
 
-/// Shared widths for every short column in the Servers table, pre-measured
+/// Shared widths for the short columns in the Servers table, pre-measured
 /// once over every visible row in the tab so the per-repo tables line up.
-/// COMMAND is excluded — it wraps and claims the Remainder column.
+/// ACTIONS is excluded — it claims the Remainder column. COMMAND is
+/// excluded too: it now renders inline under the service name, no column.
 #[derive(Debug, Clone, Copy)]
 struct SvColumnWidths {
     worktree: f32,
     service: f32,
     state: f32,
     ports: f32,
-    actions: f32,
 }
 
 impl SvColumnWidths {
@@ -479,7 +525,6 @@ impl SvColumnWidths {
         let mut services: Vec<String> = Vec::new();
         let mut states: Vec<String> = Vec::new();
         let mut ports_strs: Vec<String> = Vec::new();
-        let mut action_pixels: Vec<f32> = Vec::new();
 
         for w in &snap.worktrees {
             let branch = w.branch.clone().unwrap_or_else(|| "(detached)".into());
@@ -498,7 +543,6 @@ impl SvColumnWidths {
                 services.push(svc.name.clone());
                 states.push(state_display_text(&row_state));
                 ports_strs.push(ports_display_text(&row_state, &snap.ports_by_pgid));
-                action_pixels.push(actions_cell_width(ctx, &row_state, &snap.ports_by_pgid));
             }
         }
 
@@ -516,8 +560,8 @@ impl SvColumnWidths {
             // service cell starts with a painted dot + small gap → reserve ~16px
             // for the icon column even when no service text is wider than the
             // header.
-            140.0,
-            240.0,
+            160.0,
+            260.0,
         );
         let state = column_widths::column_width(
             ctx,
@@ -531,16 +575,12 @@ impl SvColumnWidths {
             CellFont::Monospace,
             70.0,
         );
-        let header_actions = column_widths::measure(ctx, s::COL_ACTIONS, CellFont::Proportional);
-        let widest_action = action_pixels.into_iter().fold(header_actions, f32::max);
-        let actions = (widest_action + column_widths::COL_PADDING).max(160.0);
 
         Self {
             worktree,
             service,
             state,
             ports,
-            actions,
         }
     }
 }
@@ -577,62 +617,4 @@ fn ports_display_text(row_state: &RowState, ports_by_pgid: &HashMap<i32, Vec<u16
         RowState::Blocked { port, .. } => format!("(want :{port})"),
         RowState::Idle => "—".to_string(),
     }
-}
-
-/// Width the ACTIONS cell will take for a given `RowState`: sum of measured
-/// button labels + per-button frame padding + inter-button gaps. Matches what
-/// `render_actions_cell` produces.
-fn actions_cell_width(
-    ctx: &egui::Context,
-    row_state: &RowState,
-    ports_by_pgid: &HashMap<i32, Vec<u16>>,
-) -> f32 {
-    const BUTTON_FRAME_PADDING: f32 = 16.0; // egui button l/r padding combined
-    const INTER_BUTTON_GAP: f32 = 6.0;
-
-    let labels: Vec<String> = match row_state {
-        RowState::Running { pgid, .. } => {
-            let first_port = ports_by_pgid.get(pgid).and_then(|v| v.first().copied());
-            let open_label = match first_port {
-                Some(p) => format!("Open :{p}"),
-                None => "Open".to_string(),
-            };
-            vec!["Stop".to_string(), open_label]
-        }
-        RowState::ExternalLive { port, .. } => vec![format!("Open :{port}")],
-        RowState::Blocked { .. } => vec!["Start".to_string()],
-        RowState::Idle => vec!["Start".to_string()],
-    };
-
-    let text_total: f32 = labels
-        .iter()
-        .map(|l| column_widths::measure(ctx, l, CellFont::Proportional))
-        .sum();
-    let frames = BUTTON_FRAME_PADDING * labels.len() as f32;
-    let gaps = INTER_BUTTON_GAP * (labels.len().saturating_sub(1) as f32);
-    text_total + frames + gaps
-}
-
-/// Estimate the row height needed to display the Servers-table command cell
-/// without clipping the wrapped text. egui_extras' TableBuilder needs a fixed
-/// per-row height, but the wrapped label inside wants to grow — so we pre-
-/// compute based on a conservative chars/line estimate. After the user resizes
-/// the column the estimate may be too tall (harmless) or too short (clipped
-/// — a known limitation; live width isn't exposed to the body callback).
-fn estimate_row_height(command: &str) -> f32 {
-    // COMMAND is now body-size monospace (was `.small()`), so each line is
-    // taller and a wider char-pixel ratio. The remainder column for COMMAND
-    // is at least 200px wide; mono body text is ~8px/char, so ~25 chars/line
-    // is the conservative break point. Cap at 4 lines so a runaway command
-    // doesn't blow up the table row.
-    const CHARS_PER_LINE: usize = 25;
-    const LINE_HEIGHT: f32 = 18.0;
-    const MIN_ROW_HEIGHT: f32 = 24.0;
-    const MAX_LINES: usize = 4;
-    let lines = command
-        .chars()
-        .count()
-        .div_ceil(CHARS_PER_LINE)
-        .clamp(1, MAX_LINES);
-    (lines as f32 * LINE_HEIGHT + 6.0).max(MIN_ROW_HEIGHT)
 }

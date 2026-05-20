@@ -206,22 +206,6 @@ pub fn triangle_button(ui: &mut egui::Ui, up: bool, enabled: bool) -> egui::Resp
     response
 }
 
-/// X-shape glyph painted as two crossed strokes — used in the Servers view's
-/// "doesn't look like a server" classifier badge.
-pub fn painted_x(ui: &mut egui::Ui, color: Color32) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::hover());
-    let c = rect.center();
-    let stroke = egui::Stroke::new(1.5, color);
-    ui.painter().line_segment(
-        [c + egui::vec2(-3.0, -3.0), c + egui::vec2(3.0, 3.0)],
-        stroke,
-    );
-    ui.painter().line_segment(
-        [c + egui::vec2(3.0, -3.0), c + egui::vec2(-3.0, 3.0)],
-        stroke,
-    );
-}
-
 /// Install Hive's tuned egui visuals on the given context. Called once from
 /// `HiveApp::new`. We start from `Visuals::light()` (egui auto-detects dark
 /// mode on some systems and the chromatic palette above is tuned for light)
