@@ -38,11 +38,21 @@ pub const DANGER: Color32 = Color32::from_rgb(0xB4, 0x3C, 0x3C);
 // other apps, too light here for paths and hint text. (#4A4A4A, 8.4:1)
 pub const WEAK_TEXT: Color32 = Color32::from_rgb(0x4A, 0x4A, 0x4A);
 
-// Very faint cool-gray tint used to distinguish the primary worktree of a
+// Subtle cool-blue tint used to distinguish the primary worktree of a
 // repo (the directory whose path matches the configured repo path) from
-// linked worktrees. Premultiplied alpha keeps it readable against the
-// card's grouped background.
-pub const PRIMARY_WORKTREE_TINT: Color32 = Color32::from_rgba_premultiplied(60, 95, 145, 16);
+// linked worktrees. Stored in premultiplied form because that's what
+// `Color32::from_rgba_premultiplied` (the const constructor) consumes.
+//
+// Premultiplied = source-RGB × alpha. Conceptually the tint is
+// (60, 95, 145) at alpha 36/255 ≈ 14%; premultiplied that's
+// (60·36/255, 95·36/255, 145·36/255) ≈ (8, 13, 20). Using the
+// premultiplied form lets us define this as a `const`.
+//
+// Alpha 36 is the lowest value where the tint is clearly visible on a
+// light card bg without dominating it. The hue (cool blue, R<G<B)
+// stays out of the green/amber/lavender semantic lanes used by the
+// chip palette.
+pub const PRIMARY_WORKTREE_TINT: Color32 = Color32::from_rgba_premultiplied(8, 13, 20, 36);
 
 // Glyph icons — painted directly via `Painter` so they don't depend on which
 // Unicode blocks egui's default fonts (Ubuntu-Light / NotoEmoji / emoji-icon-font)
