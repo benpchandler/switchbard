@@ -1,13 +1,33 @@
 # Switchbard
 
-A local-first dashboard for the dev servers and git worktrees already running
-on your Mac. See what's listening, where it came from, what's dirty, and what
-needs to be killed.
+Switchbard is a native Mac dashboard for developers running multiple coding
+agents across git worktrees.
+
+When Claude, Codex, or other agents are each hacking in their own worktree,
+your machine quietly fills up with local servers, dirty branches, and mystery
+ports. Switchbard gives you one place to see what is running, which worktree it
+belongs to, and whether it is safe to open, stop, or clean up.
 
 > **Status:** alpha. macOS only. The author dogfoods it daily; expect rough
 > edges around first-run UX and cross-platform support.
 
-## What it does
+![Switchbard showing multiple agent worktrees and local services](docs/assets/switchbard-agent-worktrees.png)
+
+## Why It Exists
+
+Agentic development makes it cheap to spin up parallel work, but expensive to
+remember what each branch is doing. After a few agents, `localhost:3000`,
+`localhost:5173`, and `localhost:8080` all start to blur together.
+
+Switchbard answers the questions that usually send you spelunking through
+terminal tabs:
+
+- **What is listening on my Mac right now?**
+- **Which repo and worktree did this process come from?**
+- **Which agent branch is dirty, active, ahead, or stale?**
+- **Can I open the right service or kill the right process without guessing?**
+
+## What It Does
 
 - **Watches the OS for listening processes.** Scans every few seconds and
   attributes each listener back to a git worktree by walking the process's
@@ -21,6 +41,15 @@ needs to be killed.
 - **One control surface.** Start a service, stop a process group, kill an
   external listener that's holding the port you need, open `:port` in the
   browser of your choice.
+
+## Who It Is For
+
+Switchbard is most useful if you:
+
+- run multiple agents or humans across separate git worktrees
+- keep several local dev servers alive at once
+- lose time asking "what owns this port?"
+- want a local-first tool with no telemetry and no cloud account
 
 ## Install
 
