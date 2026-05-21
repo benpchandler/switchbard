@@ -38,44 +38,36 @@ verification notes.
 
 ### Build From Source
 
-Requires Rust `1.95.0` with `rustfmt` and `clippy`. We use
-[mise](https://mise.jdx.dev/) to pin that toolchain for contributors and CI,
-but you can use any Rust install that matches.
-
-Recommended reproducible path:
+Requires Rust `1.95.0` with `rustfmt` and `clippy`. Any toolchain that
+matches works — `rustup default 1.95.0` if you don't have it.
 
 ```sh
 git clone https://github.com/benpchandler/hive
 cd hive
-mise trust
-mise install
-mise run hooks:install      # enables the tracked pre-push hook
-mise run package            # produces target/dist/Hive-v0.1.0-macos-arm64.dmg
-open target/dist/Hive-v0.1.0-macos-arm64.dmg
-```
-
-Or build only the app bundle:
-
-```sh
-mise run bundle       # produces target/release/Hive.app
-open target/release/Hive.app
-```
-
-Without mise, use your existing Rust `1.95.0` toolchain directly:
-
-```sh
 cargo build --release -p hive-gui
-bash scripts/bundle-mac.sh
+bash scripts/bundle-mac.sh        # produces target/release/Hive.app
 open target/release/Hive.app
 ```
 
-Or, if you just want the binary in your `PATH` and have a compatible Rust
-toolchain:
+To package the same DMG that ships on the Releases page:
+
+```sh
+bash scripts/package-dmg.sh       # produces target/dist/Hive-v0.1.0-macos-arm64.dmg
+```
+
+Or, if you just want the `hive` binary on your `PATH`:
 
 ```sh
 cargo install --git https://github.com/benpchandler/hive --bin hive
 hive
 ```
+
+**Optional — pinned toolchain via [mise](https://mise.jdx.dev/).** Mise is
+not required; it's just how CI and the maintainer pin the exact Rust version.
+If you'd rather not manage that yourself, install mise and run
+`mise install` in the checkout — `mise.toml` pins `1.95.0` and exposes the
+same builds as `mise run bundle` / `mise run package`, plus
+`mise run hooks:install` to opt into the tracked pre-push hook.
 
 A Homebrew tap is on the roadmap.
 
@@ -105,32 +97,23 @@ re-renders only when state changes.
 
 ## Building from source
 
-Use Rust `1.95.0` for parity with CI. Mise is the easiest way to install and
-select it, but the Cargo commands work with any matching toolchain.
-
-```sh
-mise install
-mise exec -- cargo build              # debug build
-mise run test                         # full test suite
-mise run clippy
-mise run fmt
-mise run ci                           # fmt + clippy + test, same as CI
-mise run bundle                       # alpha .app bundle
-mise run package                      # alpha DMG + sha256
-mise exec -- cargo build --release    # ~7 MB optimized binary
-```
-
-Equivalent direct Cargo checks:
+Plain Cargo, on any Rust `1.95.0` toolchain:
 
 ```sh
 cargo fmt --all -- --check
 RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets -- -D warnings
 RUSTFLAGS="-D warnings" cargo test --workspace --all-targets
+cargo build --release                # ~7 MB optimized binary
+bash scripts/bundle-mac.sh           # produces Hive.app
+bash scripts/package-dmg.sh          # produces the DMG
 ```
 
-CI runs the `mise.toml` tasks on every PR to keep the Rust version and commands
-consistent. The tracked pre-push hook also runs `mise run ci`; install it in a
-checkout with `mise run hooks:install` if you use mise locally.
+If you'd rather have the toolchain pinned for you, install
+[mise](https://mise.jdx.dev/) and the same commands are exposed as
+`mise run fmt`, `mise run clippy`, `mise run test`, `mise run ci`,
+`mise run bundle`, and `mise run package`. CI runs the mise tasks for
+version consistency; the tracked pre-push hook (opt in with
+`mise run hooks:install`) runs `mise run ci` before each push.
 
 ## Contributing
 
