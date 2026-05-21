@@ -15,7 +15,7 @@ pub mod worktree;
 
 pub use attribution::attribute;
 pub use classify::{classify_command, classify_script_body, ServerLikelihood};
-pub use discover::{default_scan_roots, discover_repos, DiscoveredRepo};
+pub use discover::{auto_scan_roots, discover_repos, DiscoveredRepo};
 pub use expected_port::{default_port_for_service, expected_port};
 pub use git_probe::{
     humanize_age, probe_ahead_behind, probe_dirty_files, probe_drift_detail, probe_fetch_age,

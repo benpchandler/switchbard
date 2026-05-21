@@ -1,10 +1,23 @@
-//! Auto-discover git repositories under common developer directories.
+//! Auto-discover git repositories under the user's home directory.
 //!
 //! Used by the GUI's first-launch onboarding flow to populate the
 //! "Tracked repos" picker without forcing the user to navigate the file
-//! tree. The scan is shallow on purpose: walking deep would be slow, hit
-//! `node_modules`, and surface dependency repos the user didn't mean to
-//! track.
+//! tree.
+//!
+//! ### Detection model
+//! Rather than hardcode well-known folder names (`Dev`, `code`, `src`, …),
+//! we identify dev-like folders by their *content*: any directory under
+//! `~/` (or `~/Documents/`, since some devs nest there) that is itself a
+//! git repo, or that contains at least one direct-child git repo, is
+//! treated as a scan root. The hardcoded-name approach worked for the
+//! ~50% of macOS devs who use one of the conventional names; this works
+//! for everyone whose code lives anywhere not deeply buried.
+//!
+//! Skipped at the home level: macOS special folders (`Library`, `Music`,
+//! `Pictures`, `Movies`, `Public`, `Downloads`, `Desktop`,
+//! `Applications`) and dotted directories. `Documents` is skipped from
+//! the main pass and processed separately so we don't bring along
+//! receipt PDFs and saved screenshots.
 //!
 //! ### What counts as a repo
 //! A directory whose entry `.git` is itself a *directory* (not a file).
@@ -12,9 +25,9 @@
 //! which case `enumerate_worktrees` will surface it via its parent.
 //!
 //! ### Scan depth
-//! Each search root is walked to depth 2 — `~/Dev/foo`, `~/Dev/work/bar`.
-//! Depth 3+ rarely contains direct repos (it's nested workspace files,
-//! dependencies, etc.) and the walk cost is real on slow disks.
+//! Each chosen scan root is walked to depth 2 — `<root>/foo`,
+//! `<root>/sub/bar`. Depth 3+ rarely contains direct repos and the walk
+//! cost is real on slow disks / network mounts.
 //!
 //! ### Ordering
 //! Returns repos sorted by most-recently-modified first, so the GUI's
@@ -23,24 +36,24 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-/// Roots we'll auto-scan if they exist. macOS conventions plus the
-/// lowercase/uppercase variants people actually use.
-pub const DEFAULT_SCAN_ROOT_NAMES: &[&str] = &[
-    "Dev",
-    "dev",
-    "Code",
-    "code",
-    "Source",
-    "src",
-    "Projects",
-    "projects",
-    "repos",
-    "Repos",
-    "workspace",
-    "Workspace",
-    "work",
-    "Work",
+/// macOS home-level folders that never contain user code. Skipped during
+/// auto-discovery so we don't waste readdirs on receipts and photos.
+const HOME_SPECIAL_FOLDERS: &[&str] = &[
+    "Library",
+    "Music",
+    "Pictures",
+    "Movies",
+    "Public",
+    "Downloads",
+    "Desktop",
+    "Applications",
+    "Documents", // handled separately
 ];
+
+/// When sniffing a directory for "looks like a dev folder", we read at
+/// most this many entries before giving up. A folder with hundreds of
+/// non-repo children isn't worth a longer probe.
+const DEV_LIKE_PROBE_BUDGET: usize = 100;
 
 const MAX_DEPTH: usize = 2;
 const MAX_CANDIDATES: usize = 200;
@@ -54,25 +67,83 @@ pub struct DiscoveredRepo {
     pub modified: SystemTime,
 }
 
-/// Resolve scan roots under `$HOME`. Skips any name that doesn't exist
-/// and collapses paths that resolve to the same inode — APFS is
-/// case-insensitive by default, so on a typical Mac `~/Dev` and `~/dev`
-/// are the same directory. Without canonicalization the walker would
-/// visit the same tree once per spelling and surface every repo twice.
-pub fn default_scan_roots(home: &Path) -> Vec<PathBuf> {
+/// Auto-detect scan roots under `$HOME`. Looks at depth-1 children of
+/// `~/` and of `~/Documents/`, returning any that either *are* a git
+/// repo or *contain* at least one direct-child git repo. macOS special
+/// folders and dotted directories are skipped at the home level.
+///
+/// Canonicalization-based dedup collapses APFS case-equivalent spellings
+/// and symlinks across roots.
+pub fn auto_scan_roots(home: &Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-    for name in DEFAULT_SCAN_ROOT_NAMES {
-        let candidate = home.join(name);
-        if !candidate.is_dir() {
-            continue;
+
+    add_dev_folders_under(home, /*at_home_level=*/ true, &mut out, &mut seen);
+
+    // Documents is a macOS special folder so we skipped it above, but
+    // some devs use ~/Documents/code or ~/Documents/Projects. Recurse
+    // one level explicitly.
+    let docs = home.join("Documents");
+    if docs.is_dir() {
+        add_dev_folders_under(&docs, /*at_home_level=*/ false, &mut out, &mut seen);
+    }
+
+    out
+}
+
+/// Returns true iff `dir` is itself a repo OR contains at least one
+/// direct-child repo. Bounded by `DEV_LIKE_PROBE_BUDGET` so a folder
+/// with hundreds of non-repo children doesn't slow us down.
+fn dir_is_or_contains_repo(dir: &Path) -> bool {
+    if dir.join(".git").is_dir() {
+        return true;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for (i, entry) in entries.flatten().enumerate() {
+        if i >= DEV_LIKE_PROBE_BUDGET {
+            return false;
         }
-        let key = std::fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
-        if seen.insert(key) {
-            out.push(candidate);
+        let p = entry.path();
+        if p.is_dir() && p.join(".git").is_dir() {
+            return true;
         }
     }
-    out
+    false
+}
+
+fn add_dev_folders_under(
+    parent: &Path,
+    at_home_level: bool,
+    out: &mut Vec<PathBuf>,
+    seen: &mut std::collections::HashSet<PathBuf>,
+) {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        if at_home_level && HOME_SPECIAL_FOLDERS.contains(&name) {
+            continue;
+        }
+        if !dir_is_or_contains_repo(&path) {
+            continue;
+        }
+        let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if seen.insert(key) {
+            out.push(path);
+        }
+    }
 }
 
 /// Walk each root and return discovered repos, sorted newest-modified first.
@@ -299,30 +370,23 @@ mod tests {
     }
 
     #[test]
-    fn missing_root_is_silently_dropped_by_default_scan_roots() {
-        // We don't pass missing dirs into `discover_repos`; the caller
-        // filters first via `default_scan_roots`.
+    fn auto_scan_roots_returns_empty_for_empty_home() {
+        // A pristine home dir with no folders should produce no roots —
+        // not a panic, not a "Library/" entry, not a fallback list.
         let tmp = tempfile::tempdir().unwrap();
+        let roots = auto_scan_roots(tmp.path());
+        assert!(roots.is_empty(), "got {roots:?}");
+        // discover_repos on a nonexistent path also no-ops cleanly.
         let nonexistent = tmp.path().join("Nope");
-        let roots = default_scan_roots(tmp.path());
-        // The temp dir has no Dev / code / etc., so roots is empty.
-        assert!(roots.is_empty());
-        // And passing the nonexistent dir directly returns nothing,
-        // doesn't panic.
         let found = discover_repos(&[nonexistent]);
         assert!(found.is_empty());
     }
 
     #[test]
     fn discover_dedupes_repos_reached_via_symlinked_roots() {
-        // The original bug: macOS APFS is case-insensitive by default,
-        // so `~/Dev` and `~/dev` are the same inode. Walking both
-        // surfaces the same repo twice because the path strings differ.
-        // We can't reliably create `Dev` and `dev` on the test
-        // machine's actual filesystem (might be case-insensitive,
-        // making the second mkdir EEXIST), so we simulate the
-        // equivalent: two differently-named roots that resolve to the
-        // same inode via a symlink. Canonicalize must collapse them.
+        // Two roots pointing at the same inode via a symlink should
+        // surface each repo exactly once. Mirrors the macOS APFS case-
+        // insensitive collation behavior in a portable way.
         let tmp = tempfile::tempdir().unwrap();
         let real = tmp.path().join("Dev");
         make_repo(&real.join("alpha"));
@@ -339,43 +403,114 @@ mod tests {
     }
 
     #[test]
-    fn default_scan_roots_dedupes_inodes_reached_via_two_names() {
-        // On real macOS APFS the case-insensitive collation means both
-        // "Dev" and "dev" in DEFAULT_SCAN_ROOT_NAMES match the same
-        // directory and would each get added without inode-level dedup.
-        // Portable test: create `Dev`, symlink one of the OTHER
-        // recognized names (`work`) to it, and assert
-        // default_scan_roots returns exactly one entry.
+    fn auto_scan_roots_finds_any_named_dev_folder() {
+        // The whole point of content-based detection: a folder named
+        // anything at all is included if it contains repos. We test
+        // with a name that isn't in the old hardcoded list (`brainery`)
+        // to prove name-agnosticism.
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir(tmp.path().join("Dev")).unwrap();
-        std::os::unix::fs::symlink(
-            tmp.path().join("Dev"),
-            tmp.path().join("work"),
-        )
-        .unwrap();
-        let roots = default_scan_roots(tmp.path());
-        assert_eq!(
-            roots.len(),
-            1,
-            "expected one canonical entry, got {roots:?}"
-        );
+        let weird = tmp.path().join("brainery");
+        make_repo(&weird.join("project-1"));
+        let roots = auto_scan_roots(tmp.path());
+        let names: Vec<_> = roots
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .collect();
+        assert!(names.contains(&"brainery"), "got {roots:?}");
     }
 
     #[test]
-    fn default_scan_roots_picks_up_existing_dirs() {
+    fn auto_scan_roots_finds_repo_directly_at_home() {
+        // A direct child of home that IS a repo (e.g. `~/dotfiles`)
+        // should be returned as a scan root, so discover_repos picks
+        // it up via repo_at().
         let tmp = tempfile::tempdir().unwrap();
-        fs::create_dir(tmp.path().join("Dev")).unwrap();
-        fs::create_dir(tmp.path().join("projects")).unwrap();
-        let roots = default_scan_roots(tmp.path());
-        // Both directories are distinct inodes so they both should
-        // appear. Don't pin the exact filename spelling — the function
-        // returns the first matching name from DEFAULT_SCAN_ROOT_NAMES,
-        // which on a case-insensitive volume can collate to either
-        // case. Inode count is the load-bearing assertion.
-        let canonical: std::collections::HashSet<PathBuf> = roots
+        make_repo(&tmp.path().join("dotfiles"));
+        let roots = auto_scan_roots(tmp.path());
+        let names: Vec<_> = roots
             .iter()
-            .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()))
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
             .collect();
-        assert_eq!(canonical.len(), 2, "got {roots:?}");
+        assert_eq!(names, vec!["dotfiles"]);
+    }
+
+    #[test]
+    fn auto_scan_roots_skips_folders_with_no_repos() {
+        // A non-dev folder under home (e.g. a notes archive) should be
+        // ignored even if it has subdirectories.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("notes").join("2024")).unwrap();
+        fs::create_dir_all(tmp.path().join("notes").join("2025")).unwrap();
+        make_repo(&tmp.path().join("actual-code").join("project"));
+        let roots = auto_scan_roots(tmp.path());
+        let names: Vec<_> = roots
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .collect();
+        assert_eq!(names, vec!["actual-code"], "got {roots:?}");
+    }
+
+    #[test]
+    fn auto_scan_roots_skips_macos_special_folders() {
+        // Even if Library happened to contain a `.git`-shaped subdir
+        // (e.g. some dependency's vendored repo), we never include
+        // Library as a scan root.
+        let tmp = tempfile::tempdir().unwrap();
+        make_repo(&tmp.path().join("Library").join("evil-vendor-repo"));
+        make_repo(&tmp.path().join("Music").join("hidden-repo"));
+        make_repo(&tmp.path().join("realdev").join("project"));
+        let roots = auto_scan_roots(tmp.path());
+        let names: Vec<_> = roots
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .collect();
+        assert_eq!(names, vec!["realdev"]);
+    }
+
+    #[test]
+    fn auto_scan_roots_recurses_into_documents() {
+        // ~/Documents is a macOS special folder but some devs use
+        // ~/Documents/code. We process Documents children explicitly.
+        let tmp = tempfile::tempdir().unwrap();
+        make_repo(
+            &tmp.path()
+                .join("Documents")
+                .join("code")
+                .join("project"),
+        );
+        let roots = auto_scan_roots(tmp.path());
+        let names: Vec<_> = roots
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .collect();
+        assert_eq!(names, vec!["code"]);
+    }
+
+    #[test]
+    fn auto_scan_roots_skips_dotted_dirs_at_home() {
+        // `~/.config`, `~/.cache`, `~/.cargo` can technically contain
+        // git checkouts (rustup, cargo registry index, etc.). Never
+        // include them.
+        let tmp = tempfile::tempdir().unwrap();
+        make_repo(&tmp.path().join(".cargo").join("registry-mirror"));
+        make_repo(&tmp.path().join("real").join("project"));
+        let roots = auto_scan_roots(tmp.path());
+        let names: Vec<_> = roots
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .collect();
+        assert_eq!(names, vec!["real"]);
+    }
+
+    #[test]
+    fn auto_scan_roots_dedupes_canonicalized() {
+        // Same content reached via two names (via symlink) should
+        // collapse to one entry.
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("RealDev");
+        make_repo(&real.join("project"));
+        std::os::unix::fs::symlink(&real, tmp.path().join("aliased")).unwrap();
+        let roots = auto_scan_roots(tmp.path());
+        assert_eq!(roots.len(), 1, "got {roots:?}");
     }
 }

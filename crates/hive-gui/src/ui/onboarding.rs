@@ -23,7 +23,7 @@
 use crate::app::HiveApp;
 use crate::ui::theme;
 use eframe::egui;
-use hive_core::{default_scan_roots, discover_repos, DiscoveredRepo};
+use hive_core::{auto_scan_roots, discover_repos, DiscoveredRepo};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -77,7 +77,7 @@ pub fn start_discovery(state: Arc<Mutex<DiscoveryState>>, ctx: egui::Context) {
                 return;
             }
         };
-        let roots = default_scan_roots(&home);
+        let roots = auto_scan_roots(&home);
         let discovered = discover_repos(&roots);
         let rows = discovered
             .into_iter()
@@ -209,8 +209,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                     ui.add_space(8.0);
                     ui.label(
                         egui::RichText::new(
-                            "Looking under ~/Dev, ~/code, ~/src, ~/Projects, \
-                             and a few other common spots.",
+                            "Looking under ~/ for folders that contain git repositories.",
                         )
                         .weak(),
                     );
