@@ -1,11 +1,11 @@
 //! Path rendering helpers shared across the table views.
 //!
-//! Why: long worktree paths (`/Users/me/code/.worktrees/alpha/codex/
-//! branch-x`) blow out column widths and force either
-//! wrapping (looks weird, inconsistent row heights) or truncation with
-//! ellipsis. The fix is to compute a tight elided form for the cell — the
-//! tail two components prefixed with "…/" — and put the full path in the
-//! tooltip. Single-line, predictable width, no lost information.
+//! Why: long worktree paths (e.g. `/Users/you/Dev/.worktrees/alpha/feat/
+//! some-long-branch-name`) blow out column widths and force either wrapping
+//! (looks weird, inconsistent row heights) or truncation with ellipsis. The
+//! fix is to compute a tight elided form for the cell — the tail two
+//! components prefixed with "…/" — and put the full path in the tooltip.
+//! Single-line, predictable width, no lost information.
 
 use std::path::Path;
 
@@ -53,16 +53,16 @@ mod tests {
 
     #[test]
     fn short_paths_pass_through() {
-        let p = PathBuf::from("/Users/me/code/delta");
-        assert_eq!(shorten(&p), "/Users/me/code/delta");
+        let p = PathBuf::from("/Users/dev/code/alpha");
+        assert_eq!(shorten(&p), "/Users/dev/code/alpha");
     }
 
     #[test]
     fn long_paths_keep_tail_two() {
         let p = PathBuf::from(
-            "/Users/me/code/.worktrees/alpha/codex/branch-x",
+            "/Users/dev/code/.worktrees/alpha/feat/some-long-branch-name-that-keeps-going",
         );
-        assert_eq!(shorten(&p), "…/codex/branch-x");
+        assert_eq!(shorten(&p), "…/feat/some-long-branch-name-that-keeps-going");
     }
 
     #[test]

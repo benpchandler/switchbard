@@ -1,29 +1,30 @@
+//! Probe example — pass one or more repo paths as args and see how the
+//! scanner attributes the current OS listeners back to them.
+//!
+//! Usage:
+//!   cargo run --example probe -- /path/to/repo-a /path/to/repo-b ...
+
 use hive_core::{attribute, enumerate_worktrees, scan_listeners, Repo, WorktreeRef};
 use std::path::PathBuf;
 
 fn main() {
-    let base_repos = vec![
-        Repo {
-            name: "alpha".into(),
-            path: PathBuf::from("/Users/me/code/alpha"),
-        },
-        Repo {
-            name: "delta".into(),
-            path: PathBuf::from("/Users/me/code/delta"),
-        },
-        Repo {
-            name: "gamma".into(),
-            path: PathBuf::from("/Users/me/code/gamma"),
-        },
-        Repo {
-            name: "beta".into(),
-            path: PathBuf::from("/Users/me/code/beta"),
-        },
-        Repo {
-            name: "hive".into(),
-            path: PathBuf::from("/Users/me/code/hive"),
-        },
-    ];
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.is_empty() {
+        eprintln!("usage: cargo run --example probe -- /path/to/repo [/path/to/repo ...]");
+        std::process::exit(1);
+    }
+    let base_repos: Vec<Repo> = args
+        .into_iter()
+        .map(|s| {
+            let path = PathBuf::from(&s);
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("repo")
+                .to_string();
+            Repo { name, path }
+        })
+        .collect();
 
     let mut worktrees: Vec<WorktreeRef> = vec![];
     for repo in &base_repos {

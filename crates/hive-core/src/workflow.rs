@@ -562,10 +562,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn shell_script_port_pulled_from_body() {
-        // Mirrors the shape of alpha/scripts/start_lyon.sh: build a
-        // Go binary on :8421, then exec uvicorn on :8420. The surface command
-        // Hive runs (`./scripts/start_lyon.sh`) reveals neither port; we need
-        // to peek at the body.
+        // Real-world shape: a `scripts/start_lyon.sh` first builds a sidecar
+        // Go binary on :8421, then execs the main uvicorn server on :8420.
+        // The surface command Hive runs (`./scripts/start_lyon.sh`) reveals
+        // neither port; we need to peek at the script body.
         let d = tmpdir();
         let scripts = d.path().join("scripts");
         fs::create_dir(&scripts).unwrap();

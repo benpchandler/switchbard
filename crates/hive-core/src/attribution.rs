@@ -55,31 +55,27 @@ mod tests {
     #[test]
     fn matches_by_cwd_prefix_to_worktree() {
         let worktrees = vec![
+            wt("alpha", "/Users/dev/code/alpha", Some("main")),
             wt(
                 "alpha",
-                "/Users/me/code/alpha",
-                Some("main"),
-            ),
-            wt(
-                "alpha",
-                "/Users/me/code/.worktrees/alpha/feat/tracks-tab",
+                "/Users/dev/code/.worktrees/alpha/feat/tracks-tab",
                 Some("feat/tracks-tab"),
             ),
-            wt("delta", "/Users/me/code/delta", Some("main")),
+            wt("beta", "/Users/dev/code/beta", Some("main")),
         ];
         let listeners = vec![
-            make_listener(1, 8000, Some("/Users/me/code/delta/scripts")),
-            make_listener(2, 8420, Some("/Users/me/code/alpha/lyon")),
+            make_listener(1, 8000, Some("/Users/dev/code/beta/scripts")),
+            make_listener(2, 8420, Some("/Users/dev/code/alpha/lyon")),
             make_listener(
                 3,
                 8421,
-                Some("/Users/me/code/.worktrees/alpha/feat/tracks-tab/services/bundle"),
+                Some("/Users/dev/code/.worktrees/alpha/feat/tracks-tab/services/bundle"),
             ),
             make_listener(4, 7000, Some("/usr/bin")),
             make_listener(5, 9000, None),
         ];
         let out = attribute(&listeners, &worktrees);
-        assert_eq!(out[0].repo_name.as_deref(), Some("delta"));
+        assert_eq!(out[0].repo_name.as_deref(), Some("beta"));
         assert_eq!(out[0].worktree_branch.as_deref(), Some("main"));
         assert_eq!(out[1].repo_name.as_deref(), Some("alpha"));
         assert_eq!(out[1].worktree_branch.as_deref(), Some("main"));

@@ -5,6 +5,15 @@ members = ["crates/hive-core", "crates/hive-gui"]
 [workspace.package]
 edition = "2021"
 rust-version = "1.80"
+version = "0.1.0"
+authors = ["Ben Chandler"]
+license = "MIT"
+repository = "https://github.com/benpchandler/hive"
+homepage = "https://github.com/benpchandler/hive"
+readme = "README.md"
+description = "Local-first dashboard for dev servers and git worktrees on macOS"
+keywords = ["devtools", "git", "worktree", "macos", "gui"]
+categories = ["development-tools", "gui"]
 
 [workspace.dependencies]
 anyhow = "1"

@@ -1,7 +1,15 @@
 [package]
 name = "hive-gui"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description = "Hive — local-first dashboard for dev servers and git worktrees on macOS. egui app."
+keywords = ["devtools", "git", "worktree", "macos", "egui"]
+categories = ["development-tools", "gui"]
 
 [dependencies]
 hive-core = { path = "../hive-core" }

@@ -1,3 +1,9 @@
+//! Classifier check — pass repo paths and see how each detected entry
+//! point is classified (server / ambiguous / not-server).
+//!
+//! Usage:
+//!   cargo run --example classify_check -- /path/to/repo [/path/to/repo ...]
+
 use hive_core::{detect_services, ServerLikelihood};
 use std::path::PathBuf;
 
@@ -10,13 +16,14 @@ fn icon(l: ServerLikelihood) -> &'static str {
 }
 
 fn main() {
-    for p in [
-        "/Users/me/code/alpha",
-        "/Users/me/code/delta",
-        "/Users/me/code/beta",
-    ] {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.is_empty() {
+        eprintln!("usage: cargo run --example classify_check -- /path/to/repo [/path/to/repo ...]");
+        std::process::exit(1);
+    }
+    for p in args {
         println!("\n=== {p} ===");
-        let svcs = detect_services(&PathBuf::from(p));
+        let svcs = detect_services(&PathBuf::from(&p));
         for s in &svcs {
             println!(
                 "  [{}] {:32}  src={:?}",

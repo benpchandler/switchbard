@@ -612,10 +612,10 @@ exec uv run uvicorn lyon.server:app --reload --port 8420
     }
 
     #[test]
-    fn delta_make_dev_classifies_as_not_server() {
-        // Regression test for the user-reported false-positive: delta's
-        // `make dev` recipe is `uv sync --frozen --all-extras` — a package
-        // install, not a server.
+    fn uv_sync_make_recipe_classifies_as_not_server() {
+        // Regression for a real-world false positive: a `make dev` recipe
+        // whose body is `uv sync --frozen --all-extras` — that's a package
+        // install, not a long-lived server.
         let body = "uv sync --frozen --all-extras";
         assert_eq!(classify_script_body(body), ServerLikelihood::NotServer);
     }
