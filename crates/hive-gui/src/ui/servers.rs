@@ -28,56 +28,52 @@ struct PendingActions {
     open: Option<u16>,
 }
 
-pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
+/// Render the Servers section into the given `ui`. The parent owns the
+/// scroll area + heading.
+pub fn render(app: &mut HiveApp, ui: &mut egui::Ui, ctx: &egui::Context) {
     let snap = Snapshot::collect(app);
     let widths = SvColumnWidths::compute(ctx, &snap, app.show_non_servers);
     let mut pending = PendingActions::default();
 
     let external_live = snap.count_external_live();
     let resolved_total: usize = snap.services.values().map(|v| v.len()).sum();
-    egui::CentralPanel::default().show(ctx, |ui| {
-        let mut summary = format!(
-            "{resolved_total} services across {}/{} worktrees ({} raw entry points) · \
-             {} running",
-            snap.known_paths,
-            snap.worktrees.len(),
-            snap.raw_detected_total,
-            snap.active_runs.len(),
-        );
-        if external_live > 0 {
-            summary.push_str(&format!(" · {external_live} external"));
-        }
-        ui.label(egui::RichText::new(summary).weak());
-        ui.add_space(8.0);
+    let mut summary = format!(
+        "{resolved_total} services across {}/{} worktrees ({} raw entry points) · \
+         {} running",
+        snap.known_paths,
+        snap.worktrees.len(),
+        snap.raw_detected_total,
+        snap.active_runs.len(),
+    );
+    if external_live > 0 {
+        summary.push_str(&format!(" · {external_live} external"));
+    }
+    ui.label(egui::RichText::new(summary).weak());
+    ui.add_space(8.0);
 
-        let mut wts_by_repo: HashMap<&str, Vec<&WorktreeRef>> = HashMap::new();
-        for w in &snap.worktrees {
-            wts_by_repo.entry(w.repo_name.as_str()).or_default().push(w);
-        }
+    let mut wts_by_repo: HashMap<&str, Vec<&WorktreeRef>> = HashMap::new();
+    for w in &snap.worktrees {
+        wts_by_repo.entry(w.repo_name.as_str()).or_default().push(w);
+    }
 
-        egui::ScrollArea::vertical()
-            .id_salt("servers_outer_scroll")
-            .show(ui, |ui| {
-                let mut first = true;
-                for repo in &snap.repos {
-                    let Some(wts) = wts_by_repo.get(repo.name.as_str()) else {
-                        continue;
-                    };
-                    first = repo_section_separator(ui, first);
-                    ui.push_id(format!("server_repo_{}", repo.name), |ui| {
-                        render_repo_section(
-                            ui,
-                            repo,
-                            wts,
-                            &snap,
-                            app.show_non_servers,
-                            widths,
-                            &mut pending,
-                        );
-                    });
-                }
-            });
-    });
+    let mut first = true;
+    for repo in &snap.repos {
+        let Some(wts) = wts_by_repo.get(repo.name.as_str()) else {
+            continue;
+        };
+        first = repo_section_separator(ui, first);
+        ui.push_id(format!("server_repo_{}", repo.name), |ui| {
+            render_repo_section(
+                ui,
+                repo,
+                wts,
+                &snap,
+                app.show_non_servers,
+                widths,
+                &mut pending,
+            );
+        });
+    }
 
     if let Some((path, svc)) = pending.start {
         app.spawn_start(path, svc, ctx);
@@ -123,7 +119,7 @@ impl Snapshot {
         let active_runs: HashMap<i32, ActiveRun> = app.active_runs.lock().unwrap().clone();
         let attributed_listeners: Vec<AttributedListener> =
             app.state.lock().unwrap().listeners.clone();
-        let filter_lc = app.server_filter.to_lowercase();
+        let filter_lc = app.filter.to_lowercase();
 
         // Index listeners two ways: by pgid (Hive-managed runs — we know their
         // pgid) and by port (for blocker / external-live detection).

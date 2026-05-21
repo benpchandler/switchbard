@@ -7,7 +7,9 @@
 //! - `PickerState`  = the rfd file-picker hand-off.
 //! - `RowState`     = the unified verdict for a Servers-view row (drives the
 //!   STATE/PORTS/ACTIONS columns from a single decision).
-//! - `ViewMode`     = which tab the user is on.
+//!
+//! (The previous `ViewMode` enum is gone — the GUI is now a single
+//! workspace panel with collapsible sections, no tabs.)
 
 pub mod worktrees;
 
@@ -116,13 +118,6 @@ impl WorktreeMeta {
             newest_unix,
         })
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ViewMode {
-    Listeners,
-    Worktrees,
-    Servers,
 }
 
 #[derive(Debug, Clone)]

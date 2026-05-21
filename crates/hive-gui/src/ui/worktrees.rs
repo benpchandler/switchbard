@@ -24,70 +24,57 @@ use tooltips::{
     activity_tooltip, dirty_tooltip, drift_tooltip, in_sync_tooltip, recent_commits_tooltip,
 };
 
-pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
+/// Render the Worktrees section into the given `ui`. The parent owns the
+/// scroll area + heading; this fn just stacks per-repo tables.
+pub fn render(app: &HiveApp, ui: &mut egui::Ui, ctx: &egui::Context) {
     let listener_counts = listener_counts_by_path(app);
     let meta_snapshot: HashMap<PathBuf, WorktreeMeta> = app.meta.lock().unwrap().clone();
-    let wt_filter_lc = app.wt_filter.to_lowercase();
+    let filter_lc = app.filter.to_lowercase();
     let repos = app.repos_snapshot();
     let worktrees = app.worktrees_snapshot();
 
     // Pre-compute column widths across every visible row so all per-repo
-    // tables in this tab line up vertically.
+    // tables in this section line up vertically.
     let all_visible: Vec<&WorktreeRef> = worktrees
         .iter()
-        .filter(|w| matches_filter(w, &wt_filter_lc))
+        .filter(|w| matches_filter(w, &filter_lc))
         .collect();
     let widths = WtColumnWidths::compute(ctx, &all_visible, &meta_snapshot, &listener_counts);
 
-    egui::CentralPanel::default().show(ctx, |ui| {
-        ui.label(
-            egui::RichText::new(format!(
-                "{} worktrees across {} repos. Click Refresh to re-enumerate and re-probe.",
-                worktrees.len(),
-                repos.len()
-            ))
-            .weak(),
-        );
-        ui.add_space(8.0);
+    ui.label(
+        egui::RichText::new(format!(
+            "{} worktrees across {} repos",
+            worktrees.len(),
+            repos.len()
+        ))
+        .weak(),
+    );
+    ui.add_space(8.0);
 
-        let mut by_repo: HashMap<&str, Vec<&WorktreeRef>> = HashMap::new();
-        for w in &worktrees {
-            by_repo.entry(w.repo_name.as_str()).or_default().push(w);
+    let mut by_repo: HashMap<&str, Vec<&WorktreeRef>> = HashMap::new();
+    for w in &worktrees {
+        by_repo.entry(w.repo_name.as_str()).or_default().push(w);
+    }
+
+    let mut first = true;
+    for repo in &repos {
+        let Some(wts) = by_repo.get(repo.name.as_str()) else {
+            continue;
+        };
+        let visible: Vec<&WorktreeRef> = wts
+            .iter()
+            .copied()
+            .filter(|w| matches_filter(w, &filter_lc))
+            .collect();
+        if !filter_lc.is_empty() && visible.is_empty() {
+            continue;
         }
+        first = repo_section_separator(ui, first);
 
-        egui::ScrollArea::vertical()
-            .id_salt("worktrees_outer_scroll")
-            .show(ui, |ui| {
-                let mut first = true;
-                for repo in &repos {
-                    let Some(wts) = by_repo.get(repo.name.as_str()) else {
-                        continue;
-                    };
-                    let visible: Vec<&WorktreeRef> = wts
-                        .iter()
-                        .copied()
-                        .filter(|w| matches_filter(w, &wt_filter_lc))
-                        .collect();
-                    if !wt_filter_lc.is_empty() && visible.is_empty() {
-                        continue;
-                    }
-                    first = repo_section_separator(ui, first);
-
-                    // push_id scopes egui widget IDs so cell IDs across stacked
-                    // tables don't collide.
-                    ui.push_id(format!("repo_section_{}", repo.name), |ui| {
-                        render_repo_section(
-                            ui,
-                            repo,
-                            &visible,
-                            &meta_snapshot,
-                            &listener_counts,
-                            widths,
-                        );
-                    });
-                }
-            });
-    });
+        ui.push_id(format!("repo_section_{}", repo.name), |ui| {
+            render_repo_section(ui, repo, &visible, &meta_snapshot, &listener_counts, widths);
+        });
+    }
 }
 
 fn listener_counts_by_path(app: &HiveApp) -> HashMap<PathBuf, usize> {

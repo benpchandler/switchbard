@@ -12,7 +12,7 @@
 //!   panel.
 
 use crate::runtime::worktrees::expand_worktrees;
-use crate::runtime::{ActiveRun, PickerState, ViewMode, WorktreeMeta};
+use crate::runtime::{ActiveRun, PickerState, WorktreeMeta};
 use crate::sync::{Kick, Status};
 use crate::ui;
 use crate::workers::{self, Channels};
@@ -58,11 +58,12 @@ pub struct HiveApp {
     pub config: Config,
 
     // View-only state.
-    pub view: ViewMode,
-    pub show_only_managed: bool,
+    /// Single workspace-wide filter input. Each section's existing match
+    /// function reads this string.
     pub filter: String,
-    /// When true (default), the Listeners central panel renders one section
-    /// per repo, with worktree sub-headings, instead of a single flat table.
+    pub show_only_managed: bool,
+    /// When true (default), the Listeners section renders one block per
+    /// repo with worktree sub-headings; otherwise one flat table.
     pub group_listeners: bool,
     pub confirm_kill_all: bool,
     /// When Some, the sidebar shows a "Remove '{name}'?" confirmation modal
@@ -70,8 +71,6 @@ pub struct HiveApp {
     /// the modal clears it on Confirm or Cancel.
     pub confirm_remove_repo: Option<(PathBuf, String)>,
     pub expanded_repos: BTreeSet<String>,
-    pub wt_filter: String,
-    pub server_filter: String,
     /// When false (default), hide rows whose classifier verdict is NotServer
     /// (test scripts, build wrappers, ship-gate runners, etc.).
     pub show_non_servers: bool,
@@ -143,15 +142,12 @@ impl HiveApp {
             config_status: Status::new(),
             kill_status: Status::new(),
             server_status: Status::new(),
-            view: ViewMode::Listeners,
-            show_only_managed: false,
             filter: String::new(),
+            show_only_managed: false,
             group_listeners,
             confirm_kill_all: false,
             confirm_remove_repo: None,
             expanded_repos: BTreeSet::new(),
-            wt_filter: String::new(),
-            server_filter: String::new(),
             show_non_servers,
             browser_choice,
         }
@@ -495,11 +491,7 @@ impl eframe::App for HiveApp {
         // its docked space first; otherwise the central panel sizes to the full
         // window and the side panel overlays it.
         ui::sidebar::render(self, ctx);
-        match self.view {
-            ViewMode::Listeners => ui::listeners::render(self, ctx),
-            ViewMode::Worktrees => ui::worktrees::render(self, ctx),
-            ViewMode::Servers => ui::servers::render(self, ctx),
-        }
+        ui::workspace::render(self, ctx);
 
         let ui_after = (
             self.browser_choice,
