@@ -1,10 +1,12 @@
-//! Listeners view — flat or grouped-by-repo/worktree central panel for
-//! attributed listeners, plus the confirm-kill-all modal. The "Tracked repos"
-//! sidebar lives in `ui::sidebar` and is rendered globally from `app::update`.
+//! Listeners view — grouped-by-repo/worktree central panel for attributed
+//! listeners, plus the confirm-kill-all modal. Repo + branch live in the
+//! section headings, not as table columns — the table itself shows only
+//! port / pid / pgid / command / cwd / kill. The "Tracked repos" sidebar
+//! lives in `ui::sidebar` and is rendered globally from `app::update`.
 
 use crate::app::HiveApp;
 use crate::ui::column_widths::{self, CellFont};
-use crate::ui::components::{path_cell, strings, table_shell, weak_dash};
+use crate::ui::components::{path_cell, strings, table_shell};
 use crate::ui::path_display;
 use crate::ui::theme;
 use eframe::egui;
@@ -12,14 +14,6 @@ use egui_extras::Column;
 use hive_core::{AttributedListener, WorktreeRef};
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
-
-/// What columns the listener table shows. The grouped variant already implies
-/// repo+branch from the section heading, so it drops those columns.
-#[derive(Clone, Copy)]
-enum Variant {
-    Grouped,
-    Flat,
-}
 
 pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     let rows = snapshot_filtered(app);
@@ -82,18 +76,7 @@ fn render_central(
 ) {
     egui::CentralPanel::default().show(ctx, |ui| {
         let mut kill_request: Option<i32> = None;
-        if app.group_listeners {
-            render_grouped(app, ui, rows, widths, &mut kill_request);
-        } else {
-            render_table(
-                ui,
-                rows,
-                Variant::Flat,
-                widths,
-                &mut kill_request,
-                "flat_table",
-            );
-        }
+        render_grouped(app, ui, rows, widths, &mut kill_request);
         if let Some(pgid) = kill_request {
             app.spawn_kill(pgid, ctx);
         }
@@ -221,7 +204,6 @@ fn render_grouped(
                             render_table(
                                 ui,
                                 rs,
-                                Variant::Grouped,
                                 widths,
                                 kill_request,
                                 &format!("ltable_{}_{}", repo.name, branch),
@@ -245,7 +227,6 @@ fn render_grouped(
                             render_table(
                                 ui,
                                 &repo_only,
-                                Variant::Grouped,
                                 widths,
                                 kill_request,
                                 &format!("ltable_{}_norep", repo.name),
@@ -277,7 +258,6 @@ fn render_grouped(
                     render_table(
                         ui,
                         &unattributed,
-                        Variant::Grouped,
                         widths,
                         kill_request,
                         "ltable_unattributed",
@@ -291,115 +271,76 @@ fn render_grouped(
         });
 }
 
-/// Single parameterized listener table renderer. The two variants differ only
-/// in whether REPO and BRANCH columns are present — everything else is
-/// shared, so a previous duplicate `render_listener_subtable` /
-/// `render_listeners_flat` was 80% the same code.
+/// Single listener-table renderer. Columns: PORT / PID / PGID / COMMAND /
+/// CWD / ACTION. Repo + branch are NOT columns — they live in the section
+/// headings the grouped renderer emits above each table.
 fn render_table(
     ui: &mut egui::Ui,
     rows: &[AttributedListener],
-    variant: Variant,
     widths: LiColumnWidths,
     kill_request: &mut Option<i32>,
     id_salt: &str,
 ) {
-    let show_repo_cols = matches!(variant, Variant::Flat);
-    let mut tb = table_shell(ui, id_salt).vscroll(matches!(variant, Variant::Flat));
-    tb = tb
+    table_shell(ui, id_salt)
         .column(Column::initial(widths.port).at_least(50.0))
         .column(Column::initial(widths.pid).at_least(50.0))
-        .column(Column::initial(widths.pgid).at_least(50.0));
-    if show_repo_cols {
-        tb = tb
-            .column(Column::initial(widths.command).at_least(80.0))
-            .column(Column::initial(widths.repo).at_least(80.0))
-            .column(Column::initial(widths.branch).at_least(80.0));
-    } else {
-        tb = tb.column(Column::initial(widths.command).at_least(80.0));
-    }
-    tb = tb
-        .column(Column::initial(widths.cwd).at_least(180.0)) // cwd (elided single line)
-        .column(Column::initial(widths.action).at_least(60.0));
-
-    tb.header(24.0, |mut h| {
-        h.col(|ui| {
-            ui.strong(strings::COL_PORT);
-        });
-        h.col(|ui| {
-            ui.strong(strings::COL_PID);
-        });
-        h.col(|ui| {
-            ui.strong(strings::COL_PGID);
-        });
-        h.col(|ui| {
-            ui.strong(strings::COL_COMMAND);
-        });
-        if show_repo_cols {
+        .column(Column::initial(widths.pgid).at_least(50.0))
+        .column(Column::initial(widths.command).at_least(80.0))
+        .column(Column::initial(widths.cwd).at_least(180.0))
+        .column(Column::initial(widths.action).at_least(60.0))
+        .header(24.0, |mut h| {
             h.col(|ui| {
-                ui.strong(strings::COL_REPO);
+                ui.strong(strings::COL_PORT);
             });
             h.col(|ui| {
-                ui.strong(strings::COL_BRANCH);
+                ui.strong(strings::COL_PID);
             });
-        }
-        h.col(|ui| {
-            ui.strong(strings::COL_CWD);
-        });
-        h.col(|ui| {
-            ui.strong(strings::COL_ACTION);
-        });
-    })
-    .body(|mut body| {
-        for row in rows {
-            let l = &row.listener;
-            body.row(24.0, |mut r| {
-                r.col(|ui| {
-                    ui.label(egui::RichText::new(l.port.to_string()).monospace().strong());
-                });
-                r.col(|ui| {
-                    ui.label(egui::RichText::new(l.pid.to_string()).monospace());
-                });
-                r.col(|ui| {
-                    ui.label(egui::RichText::new(l.pgid.to_string()).monospace());
-                });
-                r.col(|ui| {
-                    ui.add(egui::Label::new(&l.command_name).truncate())
-                        .on_hover_text(&l.command_name);
-                });
-                if show_repo_cols {
-                    r.col(|ui| match &row.repo_name {
-                        Some(n) => {
-                            ui.add(
-                                egui::Label::new(egui::RichText::new(n).color(theme::GREEN))
-                                    .truncate(),
-                            )
-                            .on_hover_text(n);
-                        }
-                        None => weak_dash(ui),
-                    });
-                    r.col(|ui| match &row.worktree_branch {
-                        Some(b) => {
-                            ui.add(egui::Label::new(b).truncate()).on_hover_text(b);
-                        }
-                        None => weak_dash(ui),
-                    });
-                }
-                r.col(|ui| match &l.cwd {
-                    Some(p) => {
-                        path_cell(ui, p);
-                    }
-                    None => {
-                        ui.label(egui::RichText::new("(unknown)").weak());
-                    }
-                });
-                r.col(|ui| {
-                    if ui.button("Kill").clicked() {
-                        *kill_request = Some(l.pgid);
-                    }
-                });
+            h.col(|ui| {
+                ui.strong(strings::COL_PGID);
             });
-        }
-    });
+            h.col(|ui| {
+                ui.strong(strings::COL_COMMAND);
+            });
+            h.col(|ui| {
+                ui.strong(strings::COL_CWD);
+            });
+            h.col(|ui| {
+                ui.strong(strings::COL_ACTION);
+            });
+        })
+        .body(|mut body| {
+            for row in rows {
+                let l = &row.listener;
+                body.row(24.0, |mut r| {
+                    r.col(|ui| {
+                        ui.label(egui::RichText::new(l.port.to_string()).monospace().strong());
+                    });
+                    r.col(|ui| {
+                        ui.label(egui::RichText::new(l.pid.to_string()).monospace());
+                    });
+                    r.col(|ui| {
+                        ui.label(egui::RichText::new(l.pgid.to_string()).monospace());
+                    });
+                    r.col(|ui| {
+                        ui.add(egui::Label::new(&l.command_name).truncate())
+                            .on_hover_text(&l.command_name);
+                    });
+                    r.col(|ui| match &l.cwd {
+                        Some(p) => {
+                            path_cell(ui, p);
+                        }
+                        None => {
+                            ui.label(egui::RichText::new("(unknown)").weak());
+                        }
+                    });
+                    r.col(|ui| {
+                        if ui.button("Kill").clicked() {
+                            *kill_request = Some(l.pgid);
+                        }
+                    });
+                });
+            }
+        });
 }
 
 /// Shared widths for every column in the Listeners table, pre-measured once
@@ -412,8 +353,6 @@ struct LiColumnWidths {
     pid: f32,
     pgid: f32,
     command: f32,
-    repo: f32,
-    branch: f32,
     cwd: f32,
     action: f32,
 }
@@ -426,11 +365,6 @@ impl LiColumnWidths {
         let cmd_strs: Vec<String> = rows
             .iter()
             .map(|r| r.listener.command_name.clone())
-            .collect();
-        let repo_strs: Vec<String> = rows.iter().filter_map(|r| r.repo_name.clone()).collect();
-        let branch_strs: Vec<String> = rows
-            .iter()
-            .filter_map(|r| r.worktree_branch.clone())
             .collect();
         let cwd_strs: Vec<String> = rows
             .iter()
@@ -455,31 +389,13 @@ impl LiColumnWidths {
             CellFont::Monospace,
             60.0,
         );
-        // COMMAND / REPO / BRANCH are user-data columns — long values
-        // (e.g. `audio-topology-refactor-experiment` repo names, or
-        // `bpc/long-feature-with-context` branches) otherwise dominate the
-        // table and push CWD off the right edge. Capped here; cells render
-        // with `.truncate()` so anything wider elides with ellipsis.
+        // COMMAND can be a long argv[0] — cap and truncate with hover.
         let command = column_widths::column_width_clamped(
             ctx,
             std::iter::once(strings::COL_COMMAND).chain(cmd_strs.iter().map(String::as_str)),
             CellFont::Proportional,
             100.0,
             220.0,
-        );
-        let repo = column_widths::column_width_clamped(
-            ctx,
-            std::iter::once(strings::COL_REPO).chain(repo_strs.iter().map(String::as_str)),
-            CellFont::Proportional,
-            100.0,
-            220.0,
-        );
-        let branch = column_widths::column_width_clamped(
-            ctx,
-            std::iter::once(strings::COL_BRANCH).chain(branch_strs.iter().map(String::as_str)),
-            CellFont::Proportional,
-            100.0,
-            240.0,
         );
         let cwd = column_widths::column_width(
             ctx,
@@ -498,8 +414,6 @@ impl LiColumnWidths {
             pid,
             pgid,
             command,
-            repo,
-            branch,
             cwd,
             action,
         }

@@ -61,9 +61,6 @@ pub struct HiveApp {
     pub view: ViewMode,
     pub show_only_managed: bool,
     pub filter: String,
-    /// When true (default), the Listeners central panel renders one section
-    /// per repo, with worktree sub-headings, instead of a single flat table.
-    pub group_listeners: bool,
     pub confirm_kill_all: bool,
     /// When Some, the sidebar shows a "Remove '{name}'?" confirmation modal
     /// for the repo at the given path. The ✕ button in the sidebar sets this;
@@ -125,7 +122,6 @@ impl HiveApp {
                     .map(|i| i + 1)
             })
             .unwrap_or(0);
-        let group_listeners = cfg.ui.group_listeners;
         let show_non_servers = cfg.ui.show_non_servers;
 
         Self {
@@ -146,7 +142,6 @@ impl HiveApp {
             view: ViewMode::Listeners,
             show_only_managed: false,
             filter: String::new(),
-            group_listeners,
             confirm_kill_all: false,
             confirm_remove_repo: None,
             expanded_repos: BTreeSet::new(),
@@ -188,7 +183,6 @@ impl HiveApp {
                 .get(self.browser_choice - 1)
                 .map(|s| s.to_string())
         };
-        self.config.ui.group_listeners = self.group_listeners;
         self.config.ui.show_non_servers = self.show_non_servers;
         self.save_config();
     }
@@ -484,11 +478,7 @@ impl eframe::App for HiveApp {
 
         // Snapshot persistable UI state so we can save the config if any
         // toggle was flipped this update.
-        let ui_before = (
-            self.browser_choice,
-            self.group_listeners,
-            self.show_non_servers,
-        );
+        let ui_before = (self.browser_choice, self.show_non_servers);
 
         ui::top_bar::render(self, ctx);
         // Sidebar must render BEFORE the central panel so the SidePanel claims
@@ -501,11 +491,7 @@ impl eframe::App for HiveApp {
             ViewMode::Servers => ui::servers::render(self, ctx),
         }
 
-        let ui_after = (
-            self.browser_choice,
-            self.group_listeners,
-            self.show_non_servers,
-        );
+        let ui_after = (self.browser_choice, self.show_non_servers);
         if ui_before != ui_after {
             self.save_ui_to_config();
         }

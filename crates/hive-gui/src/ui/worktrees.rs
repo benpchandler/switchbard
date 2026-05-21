@@ -7,9 +7,8 @@ use crate::app::HiveApp;
 use crate::runtime::WorktreeMeta;
 use crate::ui::column_widths::{self, CellFont};
 use crate::ui::components::{
-    self, branch_label, count_badge, mono_label, path_cell, repo_section_header,
-    repo_section_separator, short_sha, status_pill, strings, table_shell, weak_dots, Chip,
-    StatusKind,
+    self, branch_label, mono_label, path_cell, repo_section_header, repo_section_separator,
+    short_sha, status_pill, strings, table_shell, weak_dots, Chip, StatusKind,
 };
 use crate::ui::path_display;
 use crate::ui::theme;
@@ -37,7 +36,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         .iter()
         .filter(|w| matches_filter(w, &wt_filter_lc))
         .collect();
-    let widths = WtColumnWidths::compute(ctx, &all_visible, &meta_snapshot, &listener_counts);
+    let widths = WtColumnWidths::compute(ctx, &all_visible, &meta_snapshot);
 
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.label(
@@ -164,6 +163,9 @@ fn render_repo_section(
     let path_line = repo.path.display().to_string();
     repo_section_header(ui, &repo.name, &subtitle, &chips, Some(&path_line));
 
+    // LISTENERS column was dropped — the Listeners tab is the canonical home
+    // for that data. The repo-header chip ("N listening") gives at-a-glance
+    // attention; the tab gives detail.
     table_shell(ui, format!("wt_table_{}", repo.name))
         .column(Column::initial(widths.branch).at_least(100.0))
         .column(Column::initial(widths.head).at_least(70.0))
@@ -171,8 +173,7 @@ fn render_repo_section(
         .column(Column::initial(widths.drift).at_least(70.0))
         .column(Column::initial(widths.last_commit).at_least(90.0))
         .column(Column::initial(widths.activity).at_least(90.0))
-        .column(Column::initial(widths.listeners).at_least(70.0))
-        .column(Column::initial(widths.path).at_least(180.0)) // path (elided single line)
+        .column(Column::initial(widths.path).at_least(180.0))
         .header(24.0, |mut h| {
             h.col(|ui| {
                 ui.strong(strings::COL_BRANCH);
@@ -195,16 +196,12 @@ fn render_repo_section(
                     .on_hover_text(strings::HOVER_ACTIVITY_HEADER);
             });
             h.col(|ui| {
-                ui.strong(strings::COL_LISTENERS);
-            });
-            h.col(|ui| {
                 ui.strong(strings::COL_PATH);
             });
         })
         .body(|mut body| {
             for w in visible {
                 let m = meta.get(&w.path).cloned().unwrap_or_default();
-                let listener_n = listener_counts.get(&w.path).copied().unwrap_or(0);
                 body.row(24.0, |mut r| {
                     r.col(|ui| {
                         branch_label(ui, w.branch.as_deref());
@@ -223,9 +220,6 @@ fn render_repo_section(
                     });
                     r.col(|ui| {
                         render_activity(ui, &m);
-                    });
-                    r.col(|ui| {
-                        count_badge(ui, listener_n, theme::GREEN);
                     });
                     r.col(|ui| {
                         path_cell(ui, &w.path);
@@ -333,7 +327,6 @@ struct WtColumnWidths {
     drift: f32,
     last_commit: f32,
     activity: f32,
-    listeners: f32,
     path: f32,
 }
 
@@ -342,7 +335,6 @@ impl WtColumnWidths {
         ctx: &egui::Context,
         rows: &[&WorktreeRef],
         meta: &HashMap<PathBuf, WorktreeMeta>,
-        listener_counts: &HashMap<PathBuf, usize>,
     ) -> Self {
         use components::strings as s;
         let branch_strs: Vec<String> = rows
@@ -419,23 +411,6 @@ impl WtColumnWidths {
             CellFont::Proportional,
             90.0,
         );
-        let listener_strs: Vec<String> = rows
-            .iter()
-            .map(|w| {
-                let n = listener_counts.get(&w.path).copied().unwrap_or(0);
-                if n > 0 {
-                    n.to_string()
-                } else {
-                    "—".into()
-                }
-            })
-            .collect();
-        let listeners = column_widths::column_width(
-            ctx,
-            std::iter::once(s::COL_LISTENERS).chain(listener_strs.iter().map(String::as_str)),
-            CellFont::Proportional,
-            70.0,
-        );
         let path_strs: Vec<String> = rows
             .iter()
             .map(|w| path_display::shorten(&w.path))
@@ -453,7 +428,6 @@ impl WtColumnWidths {
             drift,
             last_commit,
             activity,
-            listeners,
             path,
         }
     }

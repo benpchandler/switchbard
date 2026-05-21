@@ -242,20 +242,56 @@ fn render_repo_section(
     };
     repo_section_header(ui, &repo.name, &subtitle, &chips, None);
 
-    table_shell(ui, format!("server_table_{}", repo.name))
-        // Short data columns get widths pre-measured across the whole tab so
-        // every per-repo table lines up. Entry-point commands render on
-        // additional lines inside the SERVICE cell, so the row height grows
-        // with cluster size but no horizontal room is claimed.
-        .column(Column::initial(widths.branch).at_least(100.0))
+    // BRANCH was a column; now it's a sub-header above each worktree's
+    // services. One mini-table per worktree, all sized to the same shared
+    // widths so columns still line up vertically across the whole tab.
+    for w in wts {
+        let branch = w.branch.clone().unwrap_or_else(|| "(detached)".into());
+        let svcs = snap.services.get(&w.path).cloned().unwrap_or_default();
+        let visible: Vec<&hive_core::ResolvedService> = svcs
+            .iter()
+            .filter(|r| !should_skip_service(r, w, snap, show_non_servers))
+            .filter(|r| service_row_matches_filter(r, w, &branch, &snap.filter_lc))
+            .collect();
+        // Hide a worktree entirely if the filter is active and nothing matches.
+        if !snap.filter_lc.is_empty()
+            && visible.is_empty()
+            && !worktree_matches_filter(w, &branch, &snap.filter_lc)
+        {
+            continue;
+        }
+        ui.push_id(format!("server_wt_{}", w.path.display()), |ui| {
+            render_worktree_subheader(ui, w, &branch);
+            render_worktree_table(ui, w, &visible, snap, widths, pending);
+        });
+        ui.add_space(4.0);
+    }
+}
+
+/// One mini-table per worktree. Columns: SERVICE / STATE / PORTS / ACTIONS.
+/// Branch is in the sub-header above, not a column.
+fn render_worktree_table(
+    ui: &mut egui::Ui,
+    w: &WorktreeRef,
+    visible: &[&hive_core::ResolvedService],
+    snap: &Snapshot,
+    widths: SvColumnWidths,
+    pending: &mut PendingActions,
+) {
+    if visible.is_empty() {
+        if !snap.filter_lc.is_empty() {
+            ui.label(egui::RichText::new("  (no services match)").weak());
+        } else {
+            ui.label(egui::RichText::new("  (none detected)").weak());
+        }
+        return;
+    }
+    table_shell(ui, format!("server_table_{}", w.path.display()))
         .column(Column::initial(widths.service).at_least(180.0))
         .column(Column::initial(widths.state).at_least(120.0))
         .column(Column::initial(widths.ports).at_least(70.0))
         .column(Column::remainder().at_least(160.0)) // actions
         .header(24.0, |mut h| {
-            h.col(|ui| {
-                ui.strong(strings::COL_BRANCH);
-            });
             h.col(|ui| {
                 ui.strong(strings::COL_SERVICE);
             });
@@ -270,67 +306,76 @@ fn render_repo_section(
             });
         })
         .body(|mut body| {
-            for w in wts {
-                let branch = w.branch.clone().unwrap_or_else(|| "(detached)".into());
-                let svcs = snap.services.get(&w.path).cloned().unwrap_or_default();
-                if svcs.is_empty() {
-                    render_empty_worktree_row(&mut body, w, &branch, &snap.filter_lc);
-                    continue;
-                }
-                for resolved in &svcs {
-                    if should_skip_service(resolved, w, snap, show_non_servers) {
-                        continue;
-                    }
-                    let row_text = format!(
-                        "{} {} {} {}",
-                        w.repo_name,
-                        branch,
-                        resolved.canonical_name,
-                        resolved
-                            .entry_points
-                            .iter()
-                            .map(|ep| ep.command.as_str())
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    );
-                    if !snap.filter_lc.is_empty()
-                        && !row_text.to_lowercase().contains(&snap.filter_lc)
-                    {
-                        continue;
-                    }
-                    let run = snap.run_for_resolved(&w.path, resolved);
-                    let containerized = Snapshot::is_containerized(resolved);
-                    let row_state = RowState::compute(
-                        resolved.expected_port,
-                        &w.path,
-                        run,
-                        &snap.by_port,
-                        containerized,
-                    );
-                    let row_h = service_row_height(resolved);
-
-                    body.row(row_h, |mut r| {
-                        r.col(|ui| {
-                            ui.add(egui::Label::new(&branch).truncate())
-                                .on_hover_text(&branch);
-                        });
-                        r.col(|ui| render_service_cell(ui, resolved, &row_state));
-                        r.col(|ui| render_state_cell(ui, &row_state));
-                        r.col(|ui| render_ports_cell(ui, &row_state, &snap.ports_by_pgid));
-                        r.col(|ui| {
-                            render_actions_cell(
-                                ui,
-                                resolved,
-                                w,
-                                &row_state,
-                                &snap.ports_by_pgid,
-                                pending,
-                            );
-                        });
+            for resolved in visible {
+                let run = snap.run_for_resolved(&w.path, resolved);
+                let containerized = Snapshot::is_containerized(resolved);
+                let row_state = RowState::compute(
+                    resolved.expected_port,
+                    &w.path,
+                    run,
+                    &snap.by_port,
+                    containerized,
+                );
+                let row_h = service_row_height(resolved);
+                body.row(row_h, |mut r| {
+                    r.col(|ui| render_service_cell(ui, resolved, &row_state));
+                    r.col(|ui| render_state_cell(ui, &row_state));
+                    r.col(|ui| render_ports_cell(ui, &row_state, &snap.ports_by_pgid));
+                    r.col(|ui| {
+                        render_actions_cell(
+                            ui,
+                            resolved,
+                            w,
+                            &row_state,
+                            &snap.ports_by_pgid,
+                            pending,
+                        );
                     });
-                }
+                });
             }
         });
+}
+
+/// Per-worktree heading inside a repo section: branch label + truncated path.
+fn render_worktree_subheader(ui: &mut egui::Ui, w: &WorktreeRef, branch: &str) {
+    ui.horizontal(|ui| {
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(branch).strong());
+        ui.label(egui::RichText::new(w.path.display().to_string()).weak());
+    });
+}
+
+fn service_row_matches_filter(
+    resolved: &hive_core::ResolvedService,
+    w: &WorktreeRef,
+    branch: &str,
+    filter_lc: &str,
+) -> bool {
+    if filter_lc.is_empty() {
+        return true;
+    }
+    let hay = format!(
+        "{} {} {} {}",
+        w.repo_name,
+        branch,
+        resolved.canonical_name,
+        resolved
+            .entry_points
+            .iter()
+            .map(|e| e.command.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    hay.to_lowercase().contains(filter_lc)
+}
+
+fn worktree_matches_filter(w: &WorktreeRef, branch: &str, filter_lc: &str) -> bool {
+    if filter_lc.is_empty() {
+        return true;
+    }
+    w.repo_name.to_lowercase().contains(filter_lc)
+        || branch.to_lowercase().contains(filter_lc)
+        || w.path.to_string_lossy().to_lowercase().contains(filter_lc)
 }
 
 /// Base row height for a single-entry service (name on top, one command
@@ -344,35 +389,6 @@ const SERVICE_ROW_PER_EXTRA_ENTRY: f32 = 18.0;
 fn service_row_height(resolved: &ResolvedService) -> f32 {
     let extras = resolved.entry_points.len().saturating_sub(1) as f32;
     SERVICE_ROW_BASE + extras * SERVICE_ROW_PER_EXTRA_ENTRY
-}
-
-fn render_empty_worktree_row(
-    body: &mut egui_extras::TableBody<'_>,
-    w: &WorktreeRef,
-    branch: &str,
-    filter_lc: &str,
-) {
-    // Surface "no services detected" only when the user is actually searching —
-    // otherwise it's just noise.
-    if filter_lc.is_empty() {
-        return;
-    }
-    let row_text = format!("{} {} {}", w.repo_name, branch, w.path.display());
-    if !row_text.to_lowercase().contains(filter_lc) {
-        return;
-    }
-    // Five columns: WORKTREE, SERVICE, STATE, PORTS, ACTIONS
-    body.row(24.0, |mut r| {
-        r.col(|ui| {
-            ui.label(branch);
-        });
-        r.col(|ui| {
-            ui.label(egui::RichText::new("(none detected)").weak());
-        });
-        r.col(|_| {});
-        r.col(|_| {});
-        r.col(|_| {});
-    });
 }
 
 fn should_skip_service(
@@ -472,38 +488,36 @@ fn state_dot_legend(row_state: &RowState) -> &'static str {
 }
 
 fn render_state_cell(ui: &mut egui::Ui, row_state: &RowState) {
+    // PID is intentionally omitted — the Listeners tab is the canonical
+    // home for pid / pgid / command-name. The state cell stays short.
     match row_state {
-        RowState::Running {
-            pid, started_at, ..
-        } => {
-            let text = format!("running · pid {pid} · {}", uptime_short(*started_at));
+        RowState::Running { started_at, .. } => {
+            let text = format!("running · {}", uptime_short(*started_at));
             status_pill(ui, StatusKind::Good, text, Some("started by Hive"));
         }
-        RowState::ExternalLive { port, pid } => {
-            let text = format!("live (external) · :{port} · pid {pid}");
+        RowState::ExternalLive { port, .. } => {
+            let text = format!("live (external) · :{port}");
             status_pill(
                 ui,
                 StatusKind::Info,
                 text,
                 Some(
                     "a process bound to this command's expected port is already running from \
-                     this worktree (not started by Hive)",
+                     this worktree (not started by Hive) — see the Listeners tab for pid/cmd",
                 ),
             );
         }
         RowState::Blocked {
-            port,
-            pid,
-            holder_label,
+            port, holder_label, ..
         } => {
-            let text = format!("blocked · :{port} held by pid {pid} ({holder_label})");
+            let text = format!("blocked · :{port} held by {holder_label}");
             status_pill(
                 ui,
                 StatusKind::Danger,
                 text,
                 Some(
                     "another listener is already bound to this command's expected port — \
-                     Start would fail with EADDRINUSE",
+                     Start would fail with EADDRINUSE. See Listeners tab for pid/kill.",
                 ),
             );
         }
@@ -612,7 +626,6 @@ fn uptime_short(started_at: Instant) -> String {
 /// excluded too: it now renders inline under the service name, no column.
 #[derive(Debug, Clone, Copy)]
 struct SvColumnWidths {
-    branch: f32,
     service: f32,
     state: f32,
     ports: f32,
@@ -622,18 +635,12 @@ impl SvColumnWidths {
     fn compute(ctx: &egui::Context, snap: &Snapshot, show_non_servers: bool) -> Self {
         use crate::ui::components::strings as s;
 
-        let mut branches: Vec<String> = Vec::new();
         let mut services: Vec<String> = Vec::new();
         let mut states: Vec<String> = Vec::new();
         let mut ports_strs: Vec<String> = Vec::new();
 
         for w in &snap.worktrees {
-            let branch = w.branch.clone().unwrap_or_else(|| "(detached)".into());
             let svcs = snap.services.get(&w.path).cloned().unwrap_or_default();
-            if svcs.is_empty() {
-                branches.push(branch.clone());
-                continue;
-            }
             for resolved in &svcs {
                 if should_skip_service(resolved, w, snap, show_non_servers) {
                     continue;
@@ -647,20 +654,12 @@ impl SvColumnWidths {
                     &snap.by_port,
                     containerized,
                 );
-                branches.push(branch.clone());
                 services.push(resolved.canonical_name.clone());
                 states.push(state_display_text(&row_state));
                 ports_strs.push(ports_display_text(&row_state, &snap.ports_by_pgid));
             }
         }
 
-        let branch = column_widths::column_width_clamped(
-            ctx,
-            std::iter::once(s::COL_BRANCH).chain(branches.iter().map(String::as_str)),
-            CellFont::Proportional,
-            100.0,
-            240.0,
-        );
         let service = column_widths::column_width_clamped(
             ctx,
             std::iter::once(s::COL_SERVICE).chain(services.iter().map(String::as_str)),
@@ -685,7 +684,6 @@ impl SvColumnWidths {
         );
 
         Self {
-            branch,
             service,
             state,
             ports,
@@ -697,15 +695,13 @@ impl SvColumnWidths {
 /// match what `render_state_cell` actually renders.
 fn state_display_text(row_state: &RowState) -> String {
     match row_state {
-        RowState::Running {
-            pid, started_at, ..
-        } => format!("running · pid {pid} · {}", uptime_short(*started_at)),
-        RowState::ExternalLive { port, pid } => format!("live (external) · :{port} · pid {pid}"),
+        RowState::Running { started_at, .. } => {
+            format!("running · {}", uptime_short(*started_at))
+        }
+        RowState::ExternalLive { port, .. } => format!("live (external) · :{port}"),
         RowState::Blocked {
-            port,
-            pid,
-            holder_label,
-        } => format!("blocked · :{port} held by pid {pid} ({holder_label})"),
+            port, holder_label, ..
+        } => format!("blocked · :{port} held by {holder_label}"),
         RowState::Idle => "idle".to_string(),
     }
 }

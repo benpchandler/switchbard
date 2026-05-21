@@ -37,7 +37,6 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         });
         ui.horizontal(|ui| match app.view {
             ViewMode::Listeners => {
-                ui.checkbox(&mut app.group_listeners, "group by repo / worktree");
                 ui.checkbox(
                     &mut app.show_only_managed,
                     "only attributed to a known repo",
