@@ -35,12 +35,28 @@ The command should print `OK`.
 
 ## Build Your Own Copy
 
+You need Rust `1.95.0` with `rustfmt` and `clippy`. Mise is the recommended
+way to match the CI toolchain, but it is not required if your Rust install
+already matches.
+
 ```sh
 git clone https://github.com/benpchandler/hive
 cd hive
 mise trust
 mise install
 mise run package
+open target/dist/Hive-v0.1.0-macos-arm64.dmg
+```
+
+Without mise:
+
+```sh
+git clone https://github.com/benpchandler/hive
+cd hive
+cargo fmt --all -- --check
+RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets -- -D warnings
+RUSTFLAGS="-D warnings" cargo test --workspace --all-targets
+bash scripts/package-dmg.sh
 open target/dist/Hive-v0.1.0-macos-arm64.dmg
 ```
 

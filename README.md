@@ -38,8 +38,11 @@ verification notes.
 
 ### Build From Source
 
-Requires
-[mise](https://mise.jdx.dev/) for the pinned Rust toolchain.
+Requires Rust `1.95.0` with `rustfmt` and `clippy`. We use
+[mise](https://mise.jdx.dev/) to pin that toolchain for contributors and CI,
+but you can use any Rust install that matches.
+
+Recommended reproducible path:
 
 ```sh
 git clone https://github.com/benpchandler/hive
@@ -58,7 +61,16 @@ mise run bundle       # produces target/release/Hive.app
 open target/release/Hive.app
 ```
 
-Or, if you just want the binary in your `PATH`:
+Without mise, use your existing Rust `1.95.0` toolchain directly:
+
+```sh
+cargo build --release -p hive-gui
+bash scripts/bundle-mac.sh
+open target/release/Hive.app
+```
+
+Or, if you just want the binary in your `PATH` and have a compatible Rust
+toolchain:
 
 ```sh
 cargo install --git https://github.com/benpchandler/hive --bin hive
@@ -93,6 +105,9 @@ re-renders only when state changes.
 
 ## Building from source
 
+Use Rust `1.95.0` for parity with CI. Mise is the easiest way to install and
+select it, but the Cargo commands work with any matching toolchain.
+
 ```sh
 mise install
 mise exec -- cargo build              # debug build
@@ -105,8 +120,17 @@ mise run package                      # alpha DMG + sha256
 mise exec -- cargo build --release    # ~7 MB optimized binary
 ```
 
-CI runs the `mise.toml` tasks on every PR. The tracked pre-push hook also runs
-`mise run ci`; install it in a checkout with `mise run hooks:install`.
+Equivalent direct Cargo checks:
+
+```sh
+cargo fmt --all -- --check
+RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets -- -D warnings
+RUSTFLAGS="-D warnings" cargo test --workspace --all-targets
+```
+
+CI runs the `mise.toml` tasks on every PR to keep the Rust version and commands
+consistent. The tracked pre-push hook also runs `mise run ci`; install it in a
+checkout with `mise run hooks:install` if you use mise locally.
 
 ## Contributing
 
