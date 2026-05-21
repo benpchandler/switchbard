@@ -26,8 +26,8 @@ use crate::ui::components::{
 use crate::ui::theme;
 use eframe::egui::{self, collapsing_header::CollapsingState};
 use hive_core::{
-    humanize_age, resolve, AttributedListener, DetectedService, Repo, ResolvedService,
-    ServerLikelihood, ServiceSource, WorktreeRef,
+    default_port_for_service, humanize_age, resolve, AttributedListener, DetectedService, Repo,
+    ResolvedService, ServerLikelihood, ServiceSource, WorktreeRef,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -700,6 +700,138 @@ fn render_service_state_inline(ui: &mut egui::Ui, row_state: &RowState) {
     }
 }
 
+/// Where the Open-button port came from. The tooltip surfaces this so the
+/// user knows whether we're certain (Pgid) or making an educated guess
+/// (KnownDefault).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OpenPortSource {
+    /// A listener whose pgid equals the run's pgid — best signal.
+    Pgid,
+    /// A listener attributed to this worktree, not claimed by any *other*
+    /// active run. Common for JS dev servers that detach workers into a
+    /// different process group than the one Hive launched.
+    WorktreeClaim,
+    /// The port declared on the command line (e.g. `--port 6006`). The
+    /// process may not have bound it yet.
+    Declared,
+    /// Well-known default for the canonical service name (storybook → 6006,
+    /// vite → 5173, …). Last-resort hint.
+    KnownDefault,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OpenPortHint {
+    port: u16,
+    source: OpenPortSource,
+}
+
+impl OpenPortHint {
+    fn tooltip(&self) -> String {
+        match self.source {
+            OpenPortSource::Pgid => format!("Open :{} in browser", self.port),
+            OpenPortSource::WorktreeClaim => format!(
+                "Open :{} in browser (listener attributed to this worktree)",
+                self.port
+            ),
+            OpenPortSource::Declared => format!(
+                "Open :{} in browser (port declared on the command line — service may not have bound it yet)",
+                self.port
+            ),
+            OpenPortSource::KnownDefault => format!(
+                "Open :{} in browser (well-known default for this service — service may not have bound it yet)",
+                self.port
+            ),
+        }
+    }
+}
+
+/// Tiered resolver for the Open button on a Running row.
+///
+/// Hive launches a service under pgid `run_pgid`, but many dev toolchains
+/// (Storybook, Vite, Webpack-dev-server, Next.js, Django auto-reload, Rails
+/// puma cluster) detach worker processes into a *different* process group
+/// before binding their TCP listener. The exact-pgid match misses those.
+///
+/// Tiers, from highest to lowest confidence:
+///  - **Pgid**: a listener whose pgid equals `run_pgid`.
+///  - **WorktreeClaim**: exactly one listener attributed to this worktree
+///    that isn't claimed by another active run on this worktree.
+///  - **Declared**: `resolved.expected_port` (a `--port` flag on the command).
+///  - **KnownDefault**: conventional default for the canonical name.
+///
+/// Returns `None` only when every tier comes up empty.
+fn open_port_for_running(
+    run_pgid: i32,
+    worktree_path: &Path,
+    resolved: &ResolvedService,
+    snap: &Snapshot,
+) -> Option<OpenPortHint> {
+    if let Some(port) = snap
+        .ports_by_pgid
+        .get(&run_pgid)
+        .and_then(|ports| ports.first().copied())
+    {
+        return Some(OpenPortHint {
+            port,
+            source: OpenPortSource::Pgid,
+        });
+    }
+
+    if let Some(port) = unclaimed_worktree_listener_port(run_pgid, worktree_path, snap) {
+        return Some(OpenPortHint {
+            port,
+            source: OpenPortSource::WorktreeClaim,
+        });
+    }
+
+    if let Some(port) = resolved.expected_port {
+        return Some(OpenPortHint {
+            port,
+            source: OpenPortSource::Declared,
+        });
+    }
+
+    if let Some(port) = default_port_for_service(&resolved.canonical_name) {
+        return Some(OpenPortHint {
+            port,
+            source: OpenPortSource::KnownDefault,
+        });
+    }
+
+    None
+}
+
+/// Listener-by-worktree fallback. Returns a port iff *exactly one* listener
+/// attributed to `worktree_path` has a pgid that's neither this run's pgid
+/// nor any other active run's pgid on this worktree. Single-match is the
+/// only safe call — if two unclaimed listeners are present we can't tell
+/// which one belongs to this run.
+fn unclaimed_worktree_listener_port(
+    run_pgid: i32,
+    worktree_path: &Path,
+    snap: &Snapshot,
+) -> Option<u16> {
+    let listeners = snap.listeners_by_wt.get(worktree_path)?;
+    let other_run_pgids: BTreeSet<i32> = snap
+        .active_runs
+        .values()
+        .filter(|r| r.worktree_path == worktree_path && r.pgid != run_pgid)
+        .map(|r| r.pgid)
+        .collect();
+    let candidates: Vec<u16> = listeners
+        .iter()
+        .filter(|al| {
+            al.listener.pgid != run_pgid && !other_run_pgids.contains(&al.listener.pgid)
+        })
+        .map(|al| al.listener.port)
+        .collect();
+    if candidates.len() == 1 {
+        candidates.first().copied()
+    } else {
+        None
+    }
+}
+
 fn render_service_actions_inline(
     ui: &mut egui::Ui,
     w: &WorktreeRef,
@@ -713,18 +845,24 @@ fn render_service_actions_inline(
     let primary = resolved.primary_entry_point();
     match row_state {
         RowState::Running { pgid, .. } => {
-            let ports = snap.ports_by_pgid.get(pgid).cloned().unwrap_or_default();
-            let port_hover = ports
-                .first()
-                .map(|p| format!("Open :{p} in browser"))
-                .unwrap_or_else(|| "no port bound yet".into());
-            if ui
-                .add_enabled(!ports.is_empty(), egui::Button::new("Open"))
-                .on_hover_text(port_hover)
-                .clicked()
-            {
-                if let Some(p) = ports.first() {
-                    pending.open = Some(*p);
+            let hint = open_port_for_running(*pgid, &w.path, resolved, snap);
+            let (enabled, hover) = match &hint {
+                Some(h) => (true, h.tooltip()),
+                None => (
+                    false,
+                    "no listener observed, no port declared, no default known for this service"
+                        .to_string(),
+                ),
+            };
+            let resp = ui.add_enabled(enabled, egui::Button::new("Open"));
+            let resp = if enabled {
+                resp.on_hover_text(hover)
+            } else {
+                resp.on_disabled_hover_text(hover)
+            };
+            if resp.clicked() {
+                if let Some(h) = hint {
+                    pending.open = Some(h.port);
                 }
             }
             if ui
@@ -980,5 +1118,199 @@ fn render_kill_all_modal(app: &mut HiveApp, ctx: &egui::Context) {
         app.confirm_kill_all = false;
     } else if do_cancel || !open {
         app.confirm_kill_all = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tiered Open-button port resolution. The four tiers — Pgid,
+    //! WorktreeClaim, Declared, KnownDefault — must each be exercised, and
+    //! the "exactly one unclaimed listener" guard on WorktreeClaim must hold
+    //! against multi-candidate ambiguity.
+
+    use super::*;
+    use crate::runtime::ActiveRun;
+    use hive_core::types::LocalListener;
+    use std::time::Instant;
+
+    fn wt_path() -> PathBuf {
+        PathBuf::from("/repo/wt")
+    }
+
+    fn other_wt_path() -> PathBuf {
+        PathBuf::from("/repo/other")
+    }
+
+    fn listener(pid: u32, pgid: i32, port: u16) -> AttributedListener {
+        AttributedListener {
+            repo_name: Some("repo".into()),
+            worktree_path: Some(wt_path()),
+            worktree_branch: Some("main".into()),
+            listener: LocalListener {
+                pid,
+                pgid,
+                port,
+                command_name: "node".into(),
+                cwd: Some(wt_path()),
+            },
+        }
+    }
+
+    fn active_run(service: &str, pgid: i32, worktree: PathBuf) -> ActiveRun {
+        ActiveRun {
+            worktree_path: worktree,
+            service_name: service.into(),
+            command: "cmd".into(),
+            pid: 1,
+            pgid,
+            started_at: Instant::now(),
+            log_path: PathBuf::new(),
+        }
+    }
+
+    fn resolved_service(name: &str, expected_port: Option<u16>) -> ResolvedService {
+        ResolvedService {
+            canonical_name: name.into(),
+            expected_port,
+            likelihood: ServerLikelihood::Server,
+            entry_points: vec![DetectedService {
+                name: name.into(),
+                command: name.into(),
+                cwd_rel: PathBuf::from("."),
+                source: ServiceSource::NodeScript,
+                source_file: PathBuf::from("package.json"),
+                likelihood: ServerLikelihood::Server,
+                expected_port,
+            }],
+        }
+    }
+
+    fn empty_snap() -> Snapshot {
+        Snapshot {
+            repos: Vec::new(),
+            worktrees: Vec::new(),
+            meta: HashMap::new(),
+            services: HashMap::new(),
+            listeners_by_wt: HashMap::new(),
+            unattributed: Vec::new(),
+            active_runs: HashMap::new(),
+            by_port: HashMap::new(),
+            ports_by_pgid: HashMap::new(),
+            filter_lc: String::new(),
+            show_only_managed: false,
+            raw_detected_total: 0,
+        }
+    }
+
+    #[test]
+    fn tier_a_pgid_match_wins() {
+        let mut snap = empty_snap();
+        snap.ports_by_pgid.insert(42, vec![6006]);
+        let hint =
+            open_port_for_running(42, &wt_path(), &resolved_service("storybook", None), &snap)
+                .unwrap();
+        assert_eq!(hint.port, 6006);
+        assert_eq!(hint.source, OpenPortSource::Pgid);
+    }
+
+    #[test]
+    fn tier_b_unclaimed_worktree_listener_when_pgid_misses() {
+        // Storybook scenario: Hive launched the run under pgid 42, but the
+        // actual worker bound :6006 under pgid 99 after detaching.
+        let mut snap = empty_snap();
+        snap.listeners_by_wt
+            .insert(wt_path(), vec![listener(123, 99, 6006)]);
+        let hint =
+            open_port_for_running(42, &wt_path(), &resolved_service("storybook", None), &snap)
+                .unwrap();
+        assert_eq!(hint.port, 6006);
+        assert_eq!(hint.source, OpenPortSource::WorktreeClaim);
+    }
+
+    #[test]
+    fn tier_b_skips_listeners_claimed_by_another_active_run() {
+        // A second service is already running in the same worktree and owns
+        // the only listener. Don't misattribute.
+        let mut snap = empty_snap();
+        snap.listeners_by_wt
+            .insert(wt_path(), vec![listener(123, 50, 5173)]);
+        snap.active_runs
+            .insert(50, active_run("other", 50, wt_path()));
+        // No declared port and no known default → tier should return None.
+        let hint = open_port_for_running(42, &wt_path(), &resolved_service("custom", None), &snap);
+        assert!(hint.is_none());
+    }
+
+    #[test]
+    fn tier_b_requires_exactly_one_unclaimed_candidate() {
+        // Two unclaimed listeners — we can't tell which is ours.
+        let mut snap = empty_snap();
+        snap.listeners_by_wt.insert(
+            wt_path(),
+            vec![listener(123, 99, 6006), listener(124, 100, 5173)],
+        );
+        let hint = open_port_for_running(42, &wt_path(), &resolved_service("custom", None), &snap);
+        assert!(hint.is_none());
+    }
+
+    #[test]
+    fn tier_b_ignores_other_worktrees() {
+        // A listener on a different worktree should not satisfy tier B for ours.
+        let mut snap = empty_snap();
+        snap.listeners_by_wt
+            .insert(other_wt_path(), vec![listener(123, 99, 6006)]);
+        let hint = open_port_for_running(42, &wt_path(), &resolved_service("custom", None), &snap);
+        assert!(hint.is_none());
+    }
+
+    #[test]
+    fn tier_c_declared_port_fallback() {
+        let snap = empty_snap();
+        let hint = open_port_for_running(
+            42,
+            &wt_path(),
+            &resolved_service("custom", Some(7777)),
+            &snap,
+        )
+        .unwrap();
+        assert_eq!(hint.port, 7777);
+        assert_eq!(hint.source, OpenPortSource::Declared);
+    }
+
+    #[test]
+    fn tier_d_known_default_for_canonical_name() {
+        let snap = empty_snap();
+        let hint =
+            open_port_for_running(42, &wt_path(), &resolved_service("storybook", None), &snap)
+                .unwrap();
+        assert_eq!(hint.port, 6006);
+        assert_eq!(hint.source, OpenPortSource::KnownDefault);
+    }
+
+    #[test]
+    fn returns_none_when_no_tier_matches() {
+        let snap = empty_snap();
+        let hint =
+            open_port_for_running(42, &wt_path(), &resolved_service("unknown-tool", None), &snap);
+        assert!(hint.is_none());
+    }
+
+    #[test]
+    fn pgid_match_beats_declared_port() {
+        // If we have a real pgid-matched listener, prefer that over the
+        // command-line declaration — even when they disagree (e.g. user
+        // passed --port 6006 but Storybook bumped to 6007 because 6006 was
+        // taken).
+        let mut snap = empty_snap();
+        snap.ports_by_pgid.insert(42, vec![6007]);
+        let hint = open_port_for_running(
+            42,
+            &wt_path(),
+            &resolved_service("storybook", Some(6006)),
+            &snap,
+        )
+        .unwrap();
+        assert_eq!(hint.port, 6007);
+        assert_eq!(hint.source, OpenPortSource::Pgid);
     }
 }

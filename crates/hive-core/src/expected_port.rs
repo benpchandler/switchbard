@@ -55,6 +55,30 @@ pub fn expected_port(cmd: &str) -> Option<u16> {
     None
 }
 
+/// Conventional default port for a service, looked up by its canonical name
+/// (the `canonical_name` produced by `resolve::resolve`). Used as a last-tier
+/// hint for the Open action when nothing on the command line declares a port
+/// and no listener could be attributed back to the run.
+///
+/// Conservative: only well-known dev-tool defaults that the tool itself uses
+/// when no `--port` flag is passed. We do NOT guess generic stacks ("python
+/// http.server" → 8000) because the user's command might be doing anything.
+pub fn default_port_for_service(canonical_name: &str) -> Option<u16> {
+    match canonical_name.to_ascii_lowercase().as_str() {
+        // JS frontends
+        "storybook" => Some(6006),
+        "vite" | "sveltekit" => Some(5173),
+        "next" | "nuxt" | "react" | "cra" => Some(3000),
+        "astro" => Some(4321),
+        "gatsby" => Some(8000),
+        // Static-site generators
+        "jekyll" => Some(4000),
+        "hugo" => Some(1313),
+        "mkdocs" | "mkdocs-serve" => Some(8000),
+        _ => None,
+    }
+}
+
 fn scan_after_flag(haystack: &str, flag: &str) -> Option<u16> {
     let mut start = 0;
     while let Some(idx) = haystack[start..].find(flag) {
@@ -176,6 +200,24 @@ mod tests {
     fn short_p_flag_for_storybook() {
         assert_eq!(expected_port("storybook dev -p 6006"), Some(6006));
         assert_eq!(expected_port("storybook dev -p=6006"), Some(6006));
+    }
+
+    #[test]
+    fn default_port_for_known_dev_tools() {
+        assert_eq!(default_port_for_service("storybook"), Some(6006));
+        assert_eq!(default_port_for_service("Storybook"), Some(6006));
+        assert_eq!(default_port_for_service("vite"), Some(5173));
+        assert_eq!(default_port_for_service("next"), Some(3000));
+        assert_eq!(default_port_for_service("cra"), Some(3000));
+        assert_eq!(default_port_for_service("astro"), Some(4321));
+        assert_eq!(default_port_for_service("hugo"), Some(1313));
+    }
+
+    #[test]
+    fn default_port_unknown_service_returns_none() {
+        assert_eq!(default_port_for_service("custom"), None);
+        assert_eq!(default_port_for_service("api"), None);
+        assert_eq!(default_port_for_service("worker"), None);
     }
 
     #[test]
