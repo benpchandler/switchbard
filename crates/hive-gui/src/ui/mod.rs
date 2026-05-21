@@ -1,8 +1,6 @@
-//! Everything that talks to egui. `theme` is the single source for all
-//! semantic colors and glyph constants the views consume. `workspace` is the
-//! central panel that hosts the three collapsible sections (Worktrees,
-//! Servers, Listeners) — each section renderer lives in its own module so
-//! the column structure stays scoped to one file.
+//! Everything that talks to egui. Each view module owns one central panel
+//! (plus, for top_bar, the top panel). `theme` is the single source for all
+//! semantic colors and glyph constants the views consume.
 
 pub mod column_widths;
 pub mod components;
@@ -12,5 +10,4 @@ pub mod servers;
 pub mod sidebar;
 pub mod theme;
 pub mod top_bar;
-pub mod workspace;
 pub mod worktrees;

@@ -21,14 +21,11 @@ enum Variant {
     Flat,
 }
 
-/// Render the Listeners section into the given `ui`. The kill-all
-/// confirmation modal is rendered as a top-level Window via `ctx` and
-/// floats over the whole app regardless of which section it came from.
-pub fn render(app: &mut HiveApp, ui: &mut egui::Ui, ctx: &egui::Context) {
+pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     let rows = snapshot_filtered(app);
     let unique_pgids = unique_pgids(&rows);
     let widths = LiColumnWidths::compute(ctx, &rows);
-    render_section(app, ctx, ui, &rows, widths);
+    render_central(app, ctx, &rows, widths);
     render_kill_all_modal(app, ctx, &unique_pgids);
 }
 
@@ -77,29 +74,30 @@ fn matches_listener_filter(l: &AttributedListener, filter_lc: &str) -> bool {
             .unwrap_or(false)
 }
 
-fn render_section(
+fn render_central(
     app: &HiveApp,
     ctx: &egui::Context,
-    ui: &mut egui::Ui,
     rows: &[AttributedListener],
     widths: LiColumnWidths,
 ) {
-    let mut kill_request: Option<i32> = None;
-    if app.group_listeners {
-        render_grouped(app, ui, rows, widths, &mut kill_request);
-    } else {
-        render_table(
-            ui,
-            rows,
-            Variant::Flat,
-            widths,
-            &mut kill_request,
-            "flat_table",
-        );
-    }
-    if let Some(pgid) = kill_request {
-        app.spawn_kill(pgid, ctx);
-    }
+    egui::CentralPanel::default().show(ctx, |ui| {
+        let mut kill_request: Option<i32> = None;
+        if app.group_listeners {
+            render_grouped(app, ui, rows, widths, &mut kill_request);
+        } else {
+            render_table(
+                ui,
+                rows,
+                Variant::Flat,
+                widths,
+                &mut kill_request,
+                "flat_table",
+            );
+        }
+        if let Some(pgid) = kill_request {
+            app.spawn_kill(pgid, ctx);
+        }
+    });
 }
 
 fn render_kill_all_modal(app: &mut HiveApp, ctx: &egui::Context, unique_pgids: &[i32]) {
