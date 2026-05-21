@@ -38,6 +38,12 @@ pub const DANGER: Color32 = Color32::from_rgb(0xB4, 0x3C, 0x3C);
 // other apps, too light here for paths and hint text. (#4A4A4A, 8.4:1)
 pub const WEAK_TEXT: Color32 = Color32::from_rgb(0x4A, 0x4A, 0x4A);
 
+// Very faint cool-gray tint used to distinguish the primary worktree of a
+// repo (the directory whose path matches the configured repo path) from
+// linked worktrees. Premultiplied alpha keeps it readable against the
+// card's grouped background.
+pub const PRIMARY_WORKTREE_TINT: Color32 = Color32::from_rgba_premultiplied(60, 95, 145, 16);
+
 // Glyph icons — painted directly via `Painter` so they don't depend on which
 // Unicode blocks egui's default fonts (Ubuntu-Light / NotoEmoji / emoji-icon-font)
 // happen to cover. The earlier `●▸▾↑↓✕•○` set rendered as empty squares on a

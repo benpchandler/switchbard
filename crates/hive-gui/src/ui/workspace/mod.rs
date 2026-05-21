@@ -326,8 +326,9 @@ fn render_repo_card(
                 if !worktree_matches(w, snap, &snap.filter_lc) {
                     continue;
                 }
+                let is_primary = w.path == repo.path;
                 ui.push_id(format!("wt_{}", w.path.display()), |ui| {
-                    render_worktree_row(ui, w, snap, show_non_servers, pending);
+                    render_worktree_row(ui, w, is_primary, snap, show_non_servers, pending);
                 });
             }
         });
@@ -349,6 +350,7 @@ fn build_chips(dirty: usize, drifted: usize) -> Vec<(egui::Color32, String)> {
 fn render_worktree_row(
     ui: &mut egui::Ui,
     w: &WorktreeRef,
+    is_primary: bool,
     snap: &Snapshot,
     show_non_servers: bool,
     pending: &mut Pending,
@@ -371,27 +373,37 @@ fn render_worktree_row(
     let noteworthy = is_noteworthy(&listeners, &m, any_running_or_external);
     let default_open = noteworthy || !snap.filter_lc.is_empty();
 
-    let id = ui.make_persistent_id(format!("wt_row_{}", w.path.display()));
-    let state = CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
-    state
-        .show_header(ui, |ui| {
-            render_worktree_summary_line(ui, w, &m, listeners.len(), &svcs, snap);
-        })
-        .body(|ui| {
-            ui.add_space(2.0);
-            let service_ports: std::collections::HashSet<u16> =
-                svcs.iter().filter_map(|s| s.expected_port).collect();
-            if !svcs.is_empty() {
-                render_services_strip(ui, w, &svcs, snap, show_non_servers, pending);
-            }
-            if !listeners.is_empty() {
-                render_listeners_strip(ui, &listeners, &service_ports, snap, pending);
-            }
-            if svcs.is_empty() && listeners.is_empty() {
-                ui.label(egui::RichText::new("nothing detected here").weak());
-            }
-            ui.add_space(4.0);
-        });
+    // Both primary and linked worktrees get the same inner margin so
+    // their row heights stay consistent; only the fill differs. This
+    // keeps the swimlane visually rhythmic when scanning down the
+    // list.
+    let mut frame = egui::Frame::none().inner_margin(egui::Margin::symmetric(4.0, 1.0));
+    if is_primary {
+        frame = frame.fill(theme::PRIMARY_WORKTREE_TINT);
+    }
+    frame.show(ui, |ui| {
+        let id = ui.make_persistent_id(format!("wt_row_{}", w.path.display()));
+        let state = CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
+        state
+            .show_header(ui, |ui| {
+                render_worktree_summary_line(ui, w, &m, listeners.len(), &svcs, snap);
+            })
+            .body(|ui| {
+                ui.add_space(2.0);
+                let service_ports: std::collections::HashSet<u16> =
+                    svcs.iter().filter_map(|s| s.expected_port).collect();
+                if !svcs.is_empty() {
+                    render_services_strip(ui, w, &svcs, snap, show_non_servers, pending);
+                }
+                if !listeners.is_empty() {
+                    render_listeners_strip(ui, &listeners, &service_ports, snap, pending);
+                }
+                if svcs.is_empty() && listeners.is_empty() {
+                    ui.label(egui::RichText::new("nothing detected here").weak());
+                }
+                ui.add_space(4.0);
+            });
+    });
 }
 
 /// "Noteworthy" worktree (auto-expand). The rule: anything the user
