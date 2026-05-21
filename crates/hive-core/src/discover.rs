@@ -55,14 +55,24 @@ pub struct DiscoveredRepo {
 }
 
 /// Resolve scan roots under `$HOME`. Skips any name that doesn't exist
-/// so the caller doesn't have to filter. Returns the canonicalized
-/// directory paths.
+/// and collapses paths that resolve to the same inode — APFS is
+/// case-insensitive by default, so on a typical Mac `~/Dev` and `~/dev`
+/// are the same directory. Without canonicalization the walker would
+/// visit the same tree once per spelling and surface every repo twice.
 pub fn default_scan_roots(home: &Path) -> Vec<PathBuf> {
-    DEFAULT_SCAN_ROOT_NAMES
-        .iter()
-        .map(|n| home.join(n))
-        .filter(|p| p.is_dir())
-        .collect()
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for name in DEFAULT_SCAN_ROOT_NAMES {
+        let candidate = home.join(name);
+        if !candidate.is_dir() {
+            continue;
+        }
+        let key = std::fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
+        if seen.insert(key) {
+            out.push(candidate);
+        }
+    }
+    out
 }
 
 /// Walk each root and return discovered repos, sorted newest-modified first.
@@ -79,9 +89,16 @@ pub fn discover_repos(roots: &[PathBuf]) -> Vec<DiscoveredRepo> {
         walk(root, 0, &mut found);
     }
     found.sort_by(|a, b| b.modified.cmp(&a.modified));
-    // Dedup by canonical path — symlinks across roots could double-count.
+    // Dedup by *canonical* path. Without canonicalize, case-insensitive
+    // APFS filesystems and symlinked roots both surface the same repo
+    // under multiple spellings — and dedup'ing on the raw PathBuf
+    // string misses them. Falling back to the raw path on canonicalize
+    // failure keeps test fixtures (tempdirs with `.`s) working.
     let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-    found.retain(|r| seen.insert(r.path.clone()));
+    found.retain(|r| {
+        let key = std::fs::canonicalize(&r.path).unwrap_or_else(|_| r.path.clone());
+        seen.insert(key)
+    });
     found
 }
 
@@ -297,18 +314,68 @@ mod tests {
     }
 
     #[test]
+    fn discover_dedupes_repos_reached_via_symlinked_roots() {
+        // The original bug: macOS APFS is case-insensitive by default,
+        // so `~/Dev` and `~/dev` are the same inode. Walking both
+        // surfaces the same repo twice because the path strings differ.
+        // We can't reliably create `Dev` and `dev` on the test
+        // machine's actual filesystem (might be case-insensitive,
+        // making the second mkdir EEXIST), so we simulate the
+        // equivalent: two differently-named roots that resolve to the
+        // same inode via a symlink. Canonicalize must collapse them.
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("Dev");
+        make_repo(&real.join("alpha"));
+        let alias = tmp.path().join("aliased");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+
+        let found = discover_repos(&[real, alias]);
+        assert_eq!(
+            found.len(),
+            1,
+            "expected dedup across symlinked root spellings, got {found:?}"
+        );
+        assert_eq!(found[0].name, "alpha");
+    }
+
+    #[test]
+    fn default_scan_roots_dedupes_inodes_reached_via_two_names() {
+        // On real macOS APFS the case-insensitive collation means both
+        // "Dev" and "dev" in DEFAULT_SCAN_ROOT_NAMES match the same
+        // directory and would each get added without inode-level dedup.
+        // Portable test: create `Dev`, symlink one of the OTHER
+        // recognized names (`work`) to it, and assert
+        // default_scan_roots returns exactly one entry.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("Dev")).unwrap();
+        std::os::unix::fs::symlink(
+            tmp.path().join("Dev"),
+            tmp.path().join("work"),
+        )
+        .unwrap();
+        let roots = default_scan_roots(tmp.path());
+        assert_eq!(
+            roots.len(),
+            1,
+            "expected one canonical entry, got {roots:?}"
+        );
+    }
+
+    #[test]
     fn default_scan_roots_picks_up_existing_dirs() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir(tmp.path().join("Dev")).unwrap();
-        fs::create_dir(tmp.path().join("code")).unwrap();
+        fs::create_dir(tmp.path().join("projects")).unwrap();
         let roots = default_scan_roots(tmp.path());
-        // Order isn't asserted (depends on DEFAULT_SCAN_ROOT_NAMES
-        // ordering) but both should be in there.
-        let names: Vec<_> = roots
+        // Both directories are distinct inodes so they both should
+        // appear. Don't pin the exact filename spelling — the function
+        // returns the first matching name from DEFAULT_SCAN_ROOT_NAMES,
+        // which on a case-insensitive volume can collate to either
+        // case. Inode count is the load-bearing assertion.
+        let canonical: std::collections::HashSet<PathBuf> = roots
             .iter()
-            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()))
             .collect();
-        assert!(names.contains(&"Dev"));
-        assert!(names.contains(&"code"));
+        assert_eq!(canonical.len(), 2, "got {roots:?}");
     }
 }
