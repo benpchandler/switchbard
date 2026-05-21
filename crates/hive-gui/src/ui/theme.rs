@@ -38,21 +38,24 @@ pub const DANGER: Color32 = Color32::from_rgb(0xB4, 0x3C, 0x3C);
 // other apps, too light here for paths and hint text. (#4A4A4A, 8.4:1)
 pub const WEAK_TEXT: Color32 = Color32::from_rgb(0x4A, 0x4A, 0x4A);
 
-// Subtle cool-blue tint used to distinguish the primary worktree of a
-// repo (the directory whose path matches the configured repo path) from
-// linked worktrees. Stored in premultiplied form because that's what
-// `Color32::from_rgba_premultiplied` (the const constructor) consumes.
+// Soft "highlighter on a page" tint used to distinguish the primary
+// worktree of a repo (the directory whose path matches the configured
+// repo path) from linked worktrees. The vibe is a yellow textbook
+// marker: noticeable when scanning but doesn't compete with the
+// content on the row.
 //
-// Premultiplied = source-RGB × alpha. Conceptually the tint is
-// (60, 95, 145) at alpha 36/255 ≈ 14%; premultiplied that's
-// (60·36/255, 95·36/255, 145·36/255) ≈ (8, 13, 20). Using the
-// premultiplied form lets us define this as a `const`.
+// Yellow is intentional over a cool blue: blue advances visually and
+// the previous attempt overshadowed adjacent rows. Yellow recedes
+// and reads as annotation rather than emphasis.
 //
-// Alpha 36 is the lowest value where the tint is clearly visible on a
-// light card bg without dominating it. The hue (cool blue, R<G<B)
-// stays out of the green/amber/lavender semantic lanes used by the
-// chip palette.
-pub const PRIMARY_WORKTREE_TINT: Color32 = Color32::from_rgba_premultiplied(8, 13, 20, 36);
+// Stored premultiplied because `Color32::from_rgba_premultiplied` is
+// the only `const` constructor. Conceptually the tint is unmultiplied
+// (255, 232, 100) at α = 28/255 ≈ 11%; premultiplied that's
+// (255·28/255, 232·28/255, 100·28/255) ≈ (28, 25, 11). Against a light
+// card bg (~245) this drops the blue channel by ~16 and leaves R/G
+// roughly unchanged — the warm-without-saturated effect of marker on
+// paper.
+pub const PRIMARY_WORKTREE_TINT: Color32 = Color32::from_rgba_premultiplied(28, 25, 11, 28);
 
 // Glyph icons — painted directly via `Painter` so they don't depend on which
 // Unicode blocks egui's default fonts (Ubuntu-Light / NotoEmoji / emoji-icon-font)
