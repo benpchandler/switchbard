@@ -1260,37 +1260,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "hive-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "dirs",
- "libc",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "toml",
-]
-
-[[package]]
-name = "hive-gui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "dirs",
- "eframe",
- "egui_extras",
- "hive-core",
- "libc",
- "rfd",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "iana-time-zone"
 version = "0.1.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2883,6 +2852,37 @@ checksum = "6e44e288cd960318917cbd540340968b90becc8bc81f171345d706e7a89d9d70"
 dependencies = [
  "kurbo",
  "siphasher 0.3.11",
+]
+
+[[package]]
+name = "switchbard-core"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dirs",
+ "libc",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "switchbard-gui"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dirs",
+ "eframe",
+ "egui_extras",
+ "libc",
+ "rfd",
+ "serde",
+ "serde_json",
+ "switchbard-core",
 ]
 
 [[package]]

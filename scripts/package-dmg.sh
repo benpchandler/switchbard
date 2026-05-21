@@ -3,8 +3,8 @@
 # Build an unsigned macOS DMG for alpha distribution.
 #
 # Output:
-#   target/dist/Hive-v<version>-macos-<arch>.dmg
-#   target/dist/Hive-v<version>-macos-<arch>.dmg.sha256
+#   target/dist/Switchbard-v<version>-macos-<arch>.dmg
+#   target/dist/Switchbard-v<version>-macos-<arch>.dmg.sha256
 #
 # This intentionally does not use Developer ID signing or notarize the app. The
 # bundle script still applies an ad-hoc signature so macOS can verify the bundle
@@ -14,7 +14,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-APP_NAME="Hive"
+APP_NAME="Switchbard"
 TARGET_DIR="target/release"
 DIST_DIR="target/dist"
 STAGING_DIR="$TARGET_DIR/dmg-staging"
@@ -70,14 +70,14 @@ mkdir -p "$DIST_DIR"
 cp -R "$APP_BUNDLE" "$STAGING_DIR/${APP_NAME}.app"
 ln -s /Applications "$STAGING_DIR/Applications"
 cat > "$STAGING_DIR/README.txt" <<README
-Hive is currently unnotarized and does not use Developer ID signing.
+Switchbard is currently unnotarized and does not use Developer ID signing.
 
 Install:
-1. Drag Hive.app to Applications.
-2. Right-click Hive.app and choose Open the first time.
+1. Drag Switchbard.app to Applications.
+2. Right-click Switchbard.app and choose Open the first time.
 3. Confirm macOS's unidentified developer prompt.
 
-More detail: https://github.com/benpchandler/hive/blob/main/docs/INSTALL-MAC.md
+More detail: https://github.com/benpchandler/switchbard/blob/main/docs/INSTALL-MAC.md
 README
 
 echo "==> Creating $DMG_PATH"

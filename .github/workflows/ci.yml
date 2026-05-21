@@ -11,7 +11,7 @@ env:
 jobs:
   ci:
     name: mise run ${{ matrix.task }}
-    # Hive is macOS-only. If we ever port to Linux, add ubuntu-latest here.
+    # Switchbard is macOS-only. If we ever port to Linux, add ubuntu-latest here.
     runs-on: macos-latest
     strategy:
       fail-fast: false

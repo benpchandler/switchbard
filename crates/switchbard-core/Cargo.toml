@@ -1,0 +1,25 @@
+[package]
+name = "switchbard-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description = "Domain logic for Switchbard — listener scanning, service detection, git probes, and process supervision. No UI deps."
+keywords = ["devtools", "git", "worktree", "lsof", "supervisor"]
+categories = ["development-tools"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+chrono.workspace = true
+toml.workspace = true
+dirs.workspace = true
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

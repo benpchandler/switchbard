@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Build Hive.app — a real macOS application bundle.
+# Build Switchbard.app — a real macOS application bundle.
 #
-# Output: target/release/Hive.app (drag to /Applications)
+# Output: target/release/Switchbard.app (drag to /Applications)
 #
 # This is the non-Developer-ID/un-notarized path used for alpha distribution.
 # We still ad-hoc sign the completed bundle so macOS sees a coherent app
@@ -13,9 +13,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-BIN_NAME="hive"
-APP_NAME="Hive"
-ASSETS_DIR="crates/hive-gui/assets"
+BIN_NAME="switchbard"
+APP_NAME="Switchbard"
+ASSETS_DIR="crates/switchbard-gui/assets"
 ICNS="$ASSETS_DIR/icon.icns"
 TARGET_DIR="target/release"
 APP_BUNDLE="$TARGET_DIR/${APP_NAME}.app"
@@ -25,8 +25,8 @@ if [[ ! -f "$ICNS" ]]; then
   exit 1
 fi
 
-echo "→ cargo build --release -p hive-gui"
-cargo build --release -p hive-gui
+echo "→ cargo build --release -p switchbard-gui"
+cargo build --release -p switchbard-gui
 
 if [[ ! -x "$TARGET_DIR/$BIN_NAME" ]]; then
   echo "✗ expected binary at $TARGET_DIR/$BIN_NAME" >&2
@@ -55,7 +55,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleName</key>           <string>${APP_NAME}</string>
   <key>CFBundleDisplayName</key>    <string>${APP_NAME}</string>
-  <key>CFBundleIdentifier</key>     <string>com.menanticcreek.hive</string>
+  <key>CFBundleIdentifier</key>     <string>com.menanticcreek.switchbard</string>
   <key>CFBundleVersion</key>        <string>${VERSION}</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleExecutable</key>     <string>${APP_NAME}</string>
