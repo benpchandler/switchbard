@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub mod tooltips;
-use tooltips::{activity_tooltip, dirty_tooltip, drift_tooltip, in_sync_tooltip};
+use tooltips::{activity_tooltip, dirty_tooltip, drift_tooltip};
 
 /// Actions queued during the walk; applied after the central panel
 /// closure exits so we don't double-borrow `app`.
@@ -293,27 +293,34 @@ fn render_repo_card(
                 ui.add_space(2.0);
                 ui.heading(&repo.name);
                 ui.label(egui::RichText::new(format!("{} wt", wts.len())).weak());
-                let chip_storage = build_chips(listening, dirty, drifted);
-                let chips: Vec<Chip<'_>> = chip_storage
-                    .iter()
-                    .map(|(c, t)| Chip {
-                        color: *c,
-                        text: t.as_str(),
-                    })
-                    .collect();
-                if !chips.is_empty() {
-                    ui.separator();
+                // Chips quiet down: dirty/drifted only when the repo has more
+                // worktrees than the eye can summarize at a glance. Listener
+                // count is on the dot's pulse, no chip needed.
+                if wts.len() > 3 {
+                    let chip_storage = build_chips(dirty, drifted);
+                    let chips: Vec<Chip<'_>> = chip_storage
+                        .iter()
+                        .map(|(c, t)| Chip {
+                            color: *c,
+                            text: t.as_str(),
+                        })
+                        .collect();
+                    if !chips.is_empty() {
+                        ui.separator();
+                    }
+                    for c in &chips {
+                        ui.colored_label(c.color, c.text);
+                    }
                 }
-                for c in &chips {
-                    ui.colored_label(c.color, c.text);
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(repo.path.display().to_string())
+                            .weak()
+                            .small(),
+                    );
+                });
             });
-            ui.label(
-                egui::RichText::new(repo.path.display().to_string())
-                    .weak()
-                    .small(),
-            );
-            ui.add_space(6.0);
+            ui.add_space(4.0);
 
             for w in wts {
                 if !worktree_matches(w, snap, &snap.filter_lc) {
@@ -326,11 +333,8 @@ fn render_repo_card(
         });
 }
 
-fn build_chips(listening: usize, dirty: usize, drifted: usize) -> Vec<(egui::Color32, String)> {
+fn build_chips(dirty: usize, drifted: usize) -> Vec<(egui::Color32, String)> {
     let mut chips = Vec::new();
-    if listening > 0 {
-        chips.push((theme::GREEN, format!("{listening} listening")));
-    }
     if dirty > 0 {
         chips.push((theme::AMBER, format!("{dirty} dirty")));
     }
@@ -375,11 +379,13 @@ fn render_worktree_row(
         })
         .body(|ui| {
             ui.add_space(2.0);
+            let service_ports: std::collections::HashSet<u16> =
+                svcs.iter().filter_map(|s| s.expected_port).collect();
             if !svcs.is_empty() {
                 render_services_strip(ui, w, &svcs, snap, show_non_servers, pending);
             }
             if !listeners.is_empty() {
-                render_listeners_strip(ui, &listeners, snap, pending);
+                render_listeners_strip(ui, &listeners, &service_ports, snap, pending);
             }
             if svcs.is_empty() && listeners.is_empty() {
                 ui.label(egui::RichText::new("nothing detected here").weak());
@@ -426,20 +432,11 @@ fn render_worktree_summary_line(
     }
     ui.add_space(2.0);
     branch_label(ui, w.branch.as_deref());
-    ui.separator();
-    render_status_inline(ui, m);
-    render_drift_inline(ui, m);
+    // Health zone: dirty appears only when dirty; drift only when non-zero;
+    // listener count is on the dot tooltip already (no inline tag).
+    render_health_inline(ui, m);
     render_activity_inline(ui, m);
-    if listener_count > 0 {
-        ui.label(
-            egui::RichText::new(format!("· {listener_count} listening"))
-                .small()
-                .color(theme::GREEN),
-        );
-    }
-    // HEAD short-sha hidden by default; available on hover of the branch label
-    // already (branch_label tooltips the full branch name; HEAD is too fiddly
-    // to put inline at this density).
+    let _ = listener_count;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.label(
             egui::RichText::new(w.head.chars().take(8).collect::<String>())
@@ -485,38 +482,32 @@ fn headline_dot(
     (egui::Color32::GRAY, 0)
 }
 
-fn render_status_inline(ui: &mut egui::Ui, m: &WorktreeMeta) {
-    match m.is_dirty() {
-        Some(true) => {
-            let tip = dirty_tooltip(m.dirty_files.as_deref().unwrap_or(&[]));
-            status_pill(ui, StatusKind::Warn, "dirty", Some(&tip));
-        }
-        Some(false) => {
-            status_pill(
-                ui,
-                StatusKind::Good,
-                "clean",
-                Some("no uncommitted changes"),
-            );
-        }
-        None => weak_dots(ui),
+/// One inline "health" zone: dirty + drift on a single line. Both fields
+/// are silently absent when in their default state (clean / in sync) — the
+/// absence of a token IS the "everything fine" signal. An em-dash shows
+/// when both are absent so the eye still has an anchor.
+fn render_health_inline(ui: &mut egui::Ui, m: &WorktreeMeta) {
+    let dirty = matches!(m.is_dirty(), Some(true));
+    let drift = match (m.ahead, m.behind) {
+        (Some(a), Some(b)) if a + b > 0 => Some((a, b)),
+        _ => None,
+    };
+    if !dirty && drift.is_none() {
+        ui.label(egui::RichText::new("—").weak())
+            .on_hover_text("clean · in sync");
+        return;
     }
-}
-
-fn render_drift_inline(ui: &mut egui::Ui, m: &WorktreeMeta) {
-    match (m.ahead, m.behind) {
-        (Some(0), Some(0)) => {
-            ui.label(egui::RichText::new("in sync").weak().small())
-                .on_hover_text(in_sync_tooltip(m.fetch_unix));
-        }
-        (Some(a), Some(b)) if a + b > 0 => {
-            mono_label(ui, &format!("+{a}/-{b}"), Some(theme::LAVENDER))
-                .on_hover_text(drift_tooltip(a, b, m.drift_detail.as_ref(), m.fetch_unix));
-        }
-        _ => {
-            ui.label(egui::RichText::new("…").weak())
-                .on_hover_text("upstream not set, or probe pending");
-        }
+    if dirty {
+        let tip = dirty_tooltip(m.dirty_files.as_deref().unwrap_or(&[]));
+        status_pill(ui, StatusKind::Warn, "dirty", Some(&tip));
+    }
+    if let Some((a, b)) = drift {
+        mono_label(ui, &format!("+{a}/-{b}"), Some(theme::LAVENDER)).on_hover_text(drift_tooltip(
+            a,
+            b,
+            m.drift_detail.as_ref(),
+            m.fetch_unix,
+        ));
     }
 }
 
@@ -566,8 +557,9 @@ fn render_services_strip(
     if visible.is_empty() {
         return;
     }
+    // No sub-label — indent + dot-color + the Start/Stop/Open verbs
+    // identify these as service rows. Keeping the strip silent.
     ui.indent("svc_indent", |ui| {
-        ui.label(egui::RichText::new("services").small().weak());
         for resolved in visible {
             render_service_line(ui, w, resolved, snap, pending);
         }
@@ -632,6 +624,8 @@ fn render_service_line(
     );
 
     ui.horizontal(|ui| {
+        // Likelihood "?" marker dropped — the dot color (and its hover)
+        // already encodes Ambiguous vs Server vs NotServer.
         theme::painted_dot(ui, state_dot_color(&row_state))
             .on_hover_text(state_dot_legend(&row_state));
         ui.add_space(2.0);
@@ -646,10 +640,6 @@ fn render_service_line(
         ui.add(egui::Label::new(name_text).truncate())
             .on_hover_text(&entry_hover);
 
-        if matches!(resolved.likelihood, ServerLikelihood::Maybe) {
-            ui.colored_label(theme::AMBER_QUESTION, "?")
-                .on_hover_text("ambiguous — could be a server or a one-shot");
-        }
         if resolved.entry_points.len() > 1 {
             ui.label(
                 egui::RichText::new(format!("▸{}", resolved.entry_points.len()))
@@ -658,9 +648,7 @@ fn render_service_line(
             )
             .on_hover_text(&entry_hover);
         }
-        if let Some(p) = resolved.expected_port {
-            mono_label(ui, &format!(":{p}"), None);
-        }
+        // Port lives only inside the state pill now — no standalone mono.
         ui.separator();
         render_service_state_inline(ui, &row_state);
 
@@ -720,16 +708,19 @@ fn render_service_actions_inline(
     snap: &Snapshot,
     pending: &mut Pending,
 ) {
+    // Action button labels are short — the port lives in the state pill,
+    // not on every button. Hover gives port + tooltip context.
     let primary = resolved.primary_entry_point();
     match row_state {
         RowState::Running { pgid, .. } => {
             let ports = snap.ports_by_pgid.get(pgid).cloned().unwrap_or_default();
-            let open_label = match ports.first() {
-                Some(p) => format!("Open :{p}"),
-                None => "Open".into(),
-            };
+            let port_hover = ports
+                .first()
+                .map(|p| format!("Open :{p} in browser"))
+                .unwrap_or_else(|| "no port bound yet".into());
             if ui
-                .add_enabled(!ports.is_empty(), egui::Button::new(open_label))
+                .add_enabled(!ports.is_empty(), egui::Button::new("Open"))
+                .on_hover_text(port_hover)
                 .clicked()
             {
                 if let Some(p) = ports.first() {
@@ -744,8 +735,26 @@ fn render_service_actions_inline(
             }
         }
         RowState::ExternalLive { port, .. } => {
-            if ui.button(format!("Open :{port}")).clicked() {
+            // The listener row backing this port is folded into THIS row.
+            // Kill targets the port-holder's pgid via the by_port index.
+            if ui
+                .button("Open")
+                .on_hover_text(format!("Open :{port} in browser"))
+                .clicked()
+            {
                 pending.open = Some(*port);
+            }
+            if let Some(al) = snap.by_port.get(port) {
+                if ui
+                    .add(egui::Button::new("Kill").fill(theme::DANGER))
+                    .on_hover_text(format!(
+                        "Kill the external process holding :{port} (pid {} · {})",
+                        al.listener.pid, al.listener.command_name
+                    ))
+                    .clicked()
+                {
+                    pending.kill = Some(al.listener.pgid);
+                }
             }
         }
         RowState::Blocked { .. } => {
@@ -796,21 +805,28 @@ fn uptime_short(started_at: Instant) -> String {
 
 // ── listeners strip ─────────────────────────────────────────────────────
 
+/// Listener strip — only renders rows that AREN'T already represented by
+/// a service row in this worktree. When a listener's port matches the
+/// `expected_port` of a visible service, that service row already shows
+/// the state pill + (for external) the Kill button — so a separate
+/// listener row would be double-counting.
 fn render_listeners_strip(
     ui: &mut egui::Ui,
     listeners: &[AttributedListener],
+    service_ports: &std::collections::HashSet<u16>,
     snap: &Snapshot,
     pending: &mut Pending,
 ) {
     let visible: Vec<&AttributedListener> = listeners
         .iter()
+        .filter(|l| !service_ports.contains(&l.listener.port))
         .filter(|l| listener_matches(l, &snap.filter_lc))
         .collect();
     if visible.is_empty() {
         return;
     }
+    // No sub-label — the Kill verb identifies the strip.
     ui.indent("lstn_indent", |ui| {
-        ui.label(egui::RichText::new("listeners").small().weak());
         for l in visible {
             render_listener_line(ui, l, pending);
         }
