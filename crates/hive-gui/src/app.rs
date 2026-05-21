@@ -15,6 +15,7 @@ use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{ActiveRun, PickerState, WorktreeMeta};
 use crate::sync::{Kick, Status};
 use crate::ui;
+use crate::ui::onboarding::DiscoveryState;
 use crate::workers::{self, Channels};
 use eframe::egui;
 use hive_core::config::Config;
@@ -73,6 +74,10 @@ pub struct HiveApp {
     pub show_non_servers: bool,
     /// 0 = system default; 1..=BROWSER_APP_NAMES.len() = specific browser.
     pub browser_choice: usize,
+    /// First-launch discovery state. Hidden by default; flips to Scanning
+    /// → Ready while the welcome modal is on screen. After dismissal it
+    /// returns to Hidden permanently for this session.
+    pub onboarding: Arc<Mutex<DiscoveryState>>,
 }
 
 impl HiveApp {
@@ -145,6 +150,7 @@ impl HiveApp {
             expanded_repos: BTreeSet::new(),
             show_non_servers,
             browser_choice,
+            onboarding: Arc::new(Mutex::new(DiscoveryState::default())),
         }
     }
 
@@ -186,6 +192,10 @@ impl HiveApp {
     /// Add a new repo (after the user picked a path). Idempotent: a path
     /// that's already configured returns a "already configured" notice
     /// without touching state.
+    ///
+    /// Side effect: dismisses the first-launch onboarding modal on the
+    /// first real add, so the browse-flow exit path doesn't keep the
+    /// welcome modal hanging around.
     pub fn add_repo_from_path(&mut self, path: PathBuf) {
         if self.config.repos.iter().any(|r| r.path == path) {
             self.config_status
@@ -201,6 +211,10 @@ impl HiveApp {
             name: name.clone(),
             path,
         });
+        if !self.config.ui.onboarding_dismissed {
+            self.config.ui.onboarding_dismissed = true;
+            *self.onboarding.lock().unwrap() = DiscoveryState::Hidden;
+        }
         self.save_config();
         self.rebuild_worktrees();
         self.config_status.set(format!("added '{name}'"));
@@ -482,6 +496,9 @@ impl eframe::App for HiveApp {
         // window and the side panel overlays it.
         ui::sidebar::render(self, ctx);
         ui::workspace::render(self, ctx);
+        // Onboarding overlay paints last so it sits on top of everything
+        // else when shown. It no-ops when already dismissed.
+        ui::onboarding::render(self, ctx);
 
         let ui_after = (self.browser_choice, self.show_non_servers);
         if ui_before != ui_after {

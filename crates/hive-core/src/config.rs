@@ -39,6 +39,11 @@ pub struct UiConfig {
     /// (i.e. hide them).
     #[serde(default)]
     pub show_non_servers: bool,
+    /// True once the user has either accepted or explicitly dismissed the
+    /// first-launch onboarding modal. We never re-open it later (would be
+    /// annoying if they remove all repos), so this is a one-shot flag.
+    #[serde(default)]
+    pub onboarding_dismissed: bool,
 }
 
 fn default_version() -> u32 {
@@ -133,6 +138,7 @@ mod tests {
             ui: UiConfig {
                 browser: Some("Safari".into()),
                 show_non_servers: true,
+                onboarding_dismissed: true,
             },
         };
         save_to(&path, &cfg).unwrap();
