@@ -139,23 +139,20 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                             ui.label(egui::RichText::new("—").weak());
                         }
                         // Remaining space → label (truncates with ellipsis).
-                        ui.with_layout(
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                let resp = ui.add(
-                                    egui::Label::new(label)
-                                        .truncate()
-                                        .sense(egui::Sense::click()),
-                                );
-                                if resp.clicked() {
-                                    if expanded {
-                                        app.expanded_repos.remove(&repo.name);
-                                    } else {
-                                        app.expanded_repos.insert(repo.name.clone());
-                                    }
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            let resp = ui.add(
+                                egui::Label::new(label)
+                                    .truncate()
+                                    .sense(egui::Sense::click()),
+                            );
+                            if resp.clicked() {
+                                if expanded {
+                                    app.expanded_repos.remove(&repo.name);
+                                } else {
+                                    app.expanded_repos.insert(repo.name.clone());
                                 }
-                            },
-                        );
+                            }
+                        });
                     });
                 });
 

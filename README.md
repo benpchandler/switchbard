@@ -25,13 +25,16 @@ needs to be killed.
 ## Install
 
 The recommended way is to build from source — no signed binary, no Gatekeeper
-warnings, no Apple Developer fee. Requires a Rust toolchain
-(`brew install rust` if you don't have one).
+warnings, no Apple Developer fee. Requires
+[mise](https://mise.jdx.dev/) for the pinned Rust toolchain.
 
 ```sh
 git clone https://github.com/benpchandler/hive
 cd hive
-cargo build --release
+mise trust
+mise install
+mise run hooks:install      # enables the tracked pre-push hook
+mise exec -- cargo build --release
 bash scripts/bundle-mac.sh        # produces target/release/Hive.app
 open target/release/Hive.app
 ```
@@ -72,14 +75,17 @@ re-renders only when state changes.
 ## Building from source
 
 ```sh
-cargo build              # debug build
-cargo test               # 71 tests, ~0.1s
-cargo clippy --all-targets -- -D warnings
-cargo fmt --all -- --check
-cargo build --release    # ~7 MB optimized binary
+mise install
+mise exec -- cargo build              # debug build
+mise run test                         # full test suite
+mise run clippy
+mise run fmt
+mise run ci                           # fmt + clippy + test, same as CI
+mise exec -- cargo build --release    # ~7 MB optimized binary
 ```
 
-CI runs the same three checks on every PR.
+CI runs the `mise.toml` tasks on every PR. The tracked pre-push hook also runs
+`mise run ci`; install it in a checkout with `mise run hooks:install`.
 
 ## Contributing
 

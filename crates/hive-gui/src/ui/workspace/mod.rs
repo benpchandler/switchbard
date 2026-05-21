@@ -832,9 +832,7 @@ fn unclaimed_worktree_listener_port(
         .collect();
     let candidates: Vec<u16> = listeners
         .iter()
-        .filter(|al| {
-            al.listener.pgid != run_pgid && !other_run_pgids.contains(&al.listener.pgid)
-        })
+        .filter(|al| al.listener.pgid != run_pgid && !other_run_pgids.contains(&al.listener.pgid))
         .map(|al| al.listener.port)
         .collect();
     if candidates.len() == 1 {
@@ -1288,8 +1286,12 @@ mod tests {
     #[test]
     fn returns_none_when_no_tier_matches() {
         let snap = empty_snap();
-        let hint =
-            open_port_for_running(42, &wt_path(), &resolved_service("unknown-tool", None), &snap);
+        let hint = open_port_for_running(
+            42,
+            &wt_path(),
+            &resolved_service("unknown-tool", None),
+            &snap,
+        );
         assert!(hint.is_none());
     }
 

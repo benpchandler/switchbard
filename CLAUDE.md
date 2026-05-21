@@ -15,16 +15,22 @@ Configuration is persisted at `~/.hive/config.toml`. Service logs land in `$TMPD
 ## Common commands
 
 ```sh
-cargo build                                      # debug
-cargo build --release                            # ~7 MB optimized
-cargo test --workspace --all-targets             # full test suite (~0.1s)
+mise install                                     # install pinned Rust from mise.toml
+mise run ci                                      # fmt + clippy + test, same as CI/pre-push
+mise run hooks:install                           # use .githooks/pre-push in this checkout
+mise exec -- cargo build                         # debug
+mise exec -- cargo build --release               # ~7 MB optimized
+mise run test                                    # full test suite (~0.1s)
 cargo test -p hive-core <pattern>                # single test by name substring
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all -- --check
+mise run clippy
+mise run fmt
 bash scripts/bundle-mac.sh                       # produce target/release/Hive.app
 ```
 
-CI (`.github/workflows/ci.yml`, macos-latest only) runs `cargo test`, `cargo clippy -D warnings`, and `cargo fmt --check` on every PR. RUSTFLAGS=`-D warnings` is set globally in CI, so any warning fails the build.
+CI (`.github/workflows/ci.yml`, macos-latest only) installs tools through mise
+and runs the `test`, `clippy`, and `fmt` tasks from `mise.toml` on every PR.
+The `clippy` and `test` tasks set `RUSTFLAGS=-D warnings`, so any compiler
+warning fails the build. The tracked pre-push hook runs `mise run ci`.
 
 ### Manual probes (examples)
 

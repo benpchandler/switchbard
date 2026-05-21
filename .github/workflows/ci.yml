@@ -7,11 +7,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
 
 jobs:
   ci:
-    name: cargo ${{ matrix.task }}
+    name: mise run ${{ matrix.task }}
     # Hive is macOS-only. If we ever port to Linux, add ubuntu-latest here.
     runs-on: macos-latest
     strategy:
@@ -21,10 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Install mise tools
+        uses: jdx/mise-action@v4
 
       - name: Cache cargo registry + build
         uses: actions/cache@v4
@@ -33,18 +30,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ matrix.task }}-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ matrix.task }}-${{ hashFiles('mise.toml', '**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ matrix.task }}-
 
-      - name: Run task — test
-        if: matrix.task == 'test'
-        run: cargo test --workspace --all-targets
-
-      - name: Run task — clippy
-        if: matrix.task == 'clippy'
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Run task — fmt
-        if: matrix.task == 'fmt'
-        run: cargo fmt --all -- --check
+      - name: Run task — ${{ matrix.task }}
+        run: mise run ${{ matrix.task }}

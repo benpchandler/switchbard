@@ -159,7 +159,7 @@ pub fn discover_repos(roots: &[PathBuf]) -> Vec<DiscoveredRepo> {
         }
         walk(root, 0, &mut found);
     }
-    found.sort_by(|a, b| b.modified.cmp(&a.modified));
+    found.sort_by_key(|r| std::cmp::Reverse(r.modified));
     // Dedup by *canonical* path. Without canonicalize, case-insensitive
     // APFS filesystems and symlinked roots both surface the same repo
     // under multiple spellings — and dedup'ing on the raw PathBuf
@@ -472,12 +472,7 @@ mod tests {
         // ~/Documents is a macOS special folder but some devs use
         // ~/Documents/code. We process Documents children explicitly.
         let tmp = tempfile::tempdir().unwrap();
-        make_repo(
-            &tmp.path()
-                .join("Documents")
-                .join("code")
-                .join("project"),
-        );
+        make_repo(&tmp.path().join("Documents").join("code").join("project"));
         let roots = auto_scan_roots(tmp.path());
         let names: Vec<_> = roots
             .iter()

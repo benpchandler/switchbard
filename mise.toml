@@ -1,0 +1,28 @@
+[tools]
+rust = "1.95.0"
+
+[tasks.fmt]
+description = "Check Rust formatting"
+run = "cargo fmt --all -- --check"
+
+[tasks.clippy]
+description = "Run clippy with CI warning policy"
+env = { RUSTFLAGS = "-D warnings" }
+run = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks.test]
+description = "Run the full workspace test suite"
+env = { RUSTFLAGS = "-D warnings" }
+run = "cargo test --workspace --all-targets"
+
+[tasks.ci]
+description = "Run the same checks as GitHub Actions"
+run = [
+  { task = "fmt" },
+  { task = "clippy" },
+  { task = "test" },
+]
+
+[tasks."hooks:install"]
+description = "Configure this checkout to use the tracked git hooks"
+run = "git config core.hooksPath .githooks"

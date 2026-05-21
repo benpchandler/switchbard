@@ -24,7 +24,7 @@ use crate::app::HiveApp;
 use crate::ui::theme;
 use eframe::egui;
 use hive_core::{auto_scan_roots, discover_repos, DiscoveredRepo};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -32,9 +32,10 @@ use std::time::{Duration, SystemTime};
 /// 90-day recency cutoff for the default-select heuristic.
 const RECENT_CUTOFF_DAYS: u64 = 90;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum DiscoveryState {
     /// Modal is closed (user dismissed or never needed it).
+    #[default]
     Hidden,
     /// Background scan in progress; modal shows a spinner.
     Scanning,
@@ -42,12 +43,6 @@ pub enum DiscoveryState {
     /// state. Empty `rows` is a real outcome (no Dev folder, fresh Mac):
     /// the modal shows a "Nothing found — browse for a folder" pane.
     Ready { rows: Vec<OnboardingRow> },
-}
-
-impl Default for DiscoveryState {
-    fn default() -> Self {
-        Self::Hidden
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -125,7 +120,7 @@ fn recency_hint(repo: &DiscoveredRepo) -> String {
 
 /// Truncate a path to `~/...` for display. Falls back to full display on
 /// any failure.
-fn display_path(path: &PathBuf, home: &PathBuf) -> String {
+fn display_path(path: &Path, home: &Path) -> String {
     if let Ok(rel) = path.strip_prefix(home) {
         format!("~/{}", rel.display())
     } else {
@@ -175,11 +170,8 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         .order(egui::Order::Background)
         .fixed_pos(screen_rect.min)
         .show(ctx, |ui| {
-            ui.painter().rect_filled(
-                screen_rect,
-                0.0,
-                egui::Color32::from_black_alpha(120),
-            );
+            ui.painter()
+                .rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(120));
         });
 
     egui::Window::new("Welcome to Hive")
@@ -188,12 +180,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         .resizable(false)
         .default_width(560.0)
         .show(ctx, |ui| {
-            ui.label(
-                egui::RichText::new(
-                    "Let's set up your workspace.",
-                )
-                .strong(),
-            );
+            ui.label(egui::RichText::new("Let's set up your workspace.").strong());
             ui.add_space(6.0);
 
             match &snapshot {
@@ -224,11 +211,9 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
 
             ui.add_space(10.0);
             ui.label(
-                egui::RichText::new(
-                    "Hive only watches what you add. Nothing leaves your machine.",
-                )
-                .weak()
-                .small(),
+                egui::RichText::new("Hive only watches what you add. Nothing leaves your machine.")
+                    .weak()
+                    .small(),
             );
         });
 
@@ -277,16 +262,10 @@ fn render_picklist(
     // Toggle-all affordance — quietly visible above the list. Saves clicks
     // when the heuristic guessed wrong on which 80% are "recent".
     ui.horizontal(|ui| {
-        if ui
-            .small_button("Select all")
-            .clicked()
-        {
+        if ui.small_button("Select all").clicked() {
             apply_all(&app.onboarding, true);
         }
-        if ui
-            .small_button("Select none")
-            .clicked()
-        {
+        if ui.small_button("Select none").clicked() {
             apply_all(&app.onboarding, false);
         }
     });
@@ -352,18 +331,13 @@ fn render_picklist(
 
 fn render_empty_pane(ui: &mut egui::Ui, pending: &mut Pending) {
     ui.label(
-        egui::RichText::new(
-            "We didn't find any git repositories in the usual places.",
-        )
-        .weak(),
+        egui::RichText::new("We didn't find any git repositories in the usual places.").weak(),
     );
     ui.add_space(6.0);
     ui.label(
-        egui::RichText::new(
-            "Pick a folder containing a git repository to get started.",
-        )
-        .weak()
-        .small(),
+        egui::RichText::new("Pick a folder containing a git repository to get started.")
+            .weak()
+            .small(),
     );
     ui.add_space(10.0);
     ui.horizontal(|ui| {
@@ -426,7 +400,10 @@ mod tests {
 
     #[test]
     fn recency_hint_buckets() {
-        assert_eq!(recency_hint(&repo("a", Duration::from_secs(0))), "touched today");
+        assert_eq!(
+            recency_hint(&repo("a", Duration::from_secs(0))),
+            "touched today"
+        );
         assert_eq!(
             recency_hint(&repo("a", Duration::from_secs(86_400))),
             "touched 1d ago"
