@@ -30,6 +30,8 @@ Then open it this way:
 If macOS still does not show an `Open` button, go to `System Settings` ->
 `Privacy & Security` and use `Open Anyway` for Switchbard.
 
+![macOS Privacy & Security Open Anyway prompt](assets/macos-open-anyway.png)
+
 As a last resort, after verifying the checksum and confirming that the app came
 from the GitHub Release, you can remove the download quarantine marker:
 
