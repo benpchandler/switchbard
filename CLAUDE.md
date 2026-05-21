@@ -18,13 +18,16 @@ Configuration is persisted at `~/.hive/config.toml`. Service logs land in `$TMPD
 mise install                                     # install pinned Rust from mise.toml
 mise run ci                                      # fmt + clippy + test, same as CI/pre-push
 mise run hooks:install                           # use .githooks/pre-push in this checkout
+mise run bundle                                  # alpha .app bundle in target/release
+mise run package                                 # alpha DMG + sha256 in target/dist
 mise exec -- cargo build                         # debug
 mise exec -- cargo build --release               # ~7 MB optimized
 mise run test                                    # full test suite (~0.1s)
 cargo test -p hive-core <pattern>                # single test by name substring
 mise run clippy
 mise run fmt
-bash scripts/bundle-mac.sh                       # produce target/release/Hive.app
+bash scripts/bundle-mac.sh                       # lower-level bundle script
+bash scripts/package-dmg.sh                      # lower-level DMG script
 ```
 
 CI (`.github/workflows/ci.yml`, macos-latest only) installs tools through mise

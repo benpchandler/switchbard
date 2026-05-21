@@ -4,9 +4,10 @@
 #
 # Output: target/release/Hive.app (drag to /Applications)
 #
-# This is the unsigned/un-notarized path used for personal use + dogfooding.
-# Signing + notarization will be a separate script when we're ready to
-# distribute to other Macs.
+# This is the non-Developer-ID/un-notarized path used for alpha distribution.
+# We still ad-hoc sign the completed bundle so macOS sees a coherent app
+# structure with sealed resources. Developer ID signing + notarization will be
+# a separate release path when we're ready for wider distribution.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -40,7 +41,12 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 cp "$TARGET_DIR/$BIN_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 cp "$ICNS"                 "$APP_BUNDLE/Contents/Resources/icon.icns"
 
-VERSION="$(grep -m1 '^version' crates/hive-gui/Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+VERSION="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
+
+if [[ -z "$VERSION" ]]; then
+  echo "✗ could not determine workspace version from Cargo.toml" >&2
+  exit 1
+fi
 
 cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -61,6 +67,9 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+echo "→ ad-hoc signing $APP_BUNDLE"
+codesign --force --deep --sign - "$APP_BUNDLE"
 
 echo "✓ built $APP_BUNDLE"
 echo "  drag to /Applications, or run: open $APP_BUNDLE"

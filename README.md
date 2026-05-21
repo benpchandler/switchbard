@@ -24,8 +24,21 @@ needs to be killed.
 
 ## Install
 
-The recommended way is to build from source — no signed binary, no Gatekeeper
-warnings, no Apple Developer fee. Requires
+### Download The Alpha DMG
+
+Download `Hive-v0.1.0-macos-arm64.dmg` from the
+[latest GitHub Release](https://github.com/benpchandler/hive/releases/latest),
+open it, then drag `Hive.app` to `Applications`.
+
+Hive is currently unnotarized and does not use Developer ID signing. The first
+time you launch it, right-click `Hive.app` and choose `Open`, then confirm
+macOS's unidentified developer prompt. See
+[docs/INSTALL-MAC.md](docs/INSTALL-MAC.md) for the full install and
+verification notes.
+
+### Build From Source
+
+Requires
 [mise](https://mise.jdx.dev/) for the pinned Rust toolchain.
 
 ```sh
@@ -34,8 +47,14 @@ cd hive
 mise trust
 mise install
 mise run hooks:install      # enables the tracked pre-push hook
-mise exec -- cargo build --release
-bash scripts/bundle-mac.sh        # produces target/release/Hive.app
+mise run package            # produces target/dist/Hive-v0.1.0-macos-arm64.dmg
+open target/dist/Hive-v0.1.0-macos-arm64.dmg
+```
+
+Or build only the app bundle:
+
+```sh
+mise run bundle       # produces target/release/Hive.app
 open target/release/Hive.app
 ```
 
@@ -81,6 +100,8 @@ mise run test                         # full test suite
 mise run clippy
 mise run fmt
 mise run ci                           # fmt + clippy + test, same as CI
+mise run bundle                       # alpha .app bundle
+mise run package                      # alpha DMG + sha256
 mise exec -- cargo build --release    # ~7 MB optimized binary
 ```
 
