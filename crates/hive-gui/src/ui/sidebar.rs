@@ -98,18 +98,13 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                             app.expanded_repos.insert(repo.name.clone());
                         }
                     }
+                    // Render right-edge controls first via a right-to-left
+                    // sub-layout, then let a nested left-to-right layout fill
+                    // the remaining space with the (truncating) repo label.
+                    // Without this, the label claims full width and the
+                    // right-side widgets draw on top of it.
                     let label = format!("{} ({} wt)", repo.name, repo_worktrees.len());
-                    let resp = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
-                    if resp.clicked() {
-                        if expanded {
-                            app.expanded_repos.remove(&repo.name);
-                        } else {
-                            app.expanded_repos.insert(repo.name.clone());
-                        }
-                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Right-to-left layout: items added first end up on the right.
-                        // Visual order: [count] [▲] [▼] [Remove]
                         if ui
                             .add(
                                 egui::Button::new(egui::RichText::new("Remove").small())
@@ -143,6 +138,24 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                         } else {
                             ui.label(egui::RichText::new("—").weak());
                         }
+                        // Remaining space → label (truncates with ellipsis).
+                        ui.with_layout(
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                let resp = ui.add(
+                                    egui::Label::new(label)
+                                        .truncate()
+                                        .sense(egui::Sense::click()),
+                                );
+                                if resp.clicked() {
+                                    if expanded {
+                                        app.expanded_repos.remove(&repo.name);
+                                    } else {
+                                        app.expanded_repos.insert(repo.name.clone());
+                                    }
+                                }
+                            },
+                        );
                     });
                 });
 
@@ -213,15 +226,7 @@ fn render_remove_confirmation(app: &mut HiveApp, ctx: &egui::Context) {
             );
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new("Remove").color(egui::Color32::WHITE),
-                        )
-                        .fill(theme::DANGER),
-                    )
-                    .clicked()
-                {
+                if ui.add(theme::danger_button("Remove")).clicked() {
                     do_confirm = true;
                 }
                 if ui.button("Cancel").clicked() {

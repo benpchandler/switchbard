@@ -877,10 +877,7 @@ fn render_service_actions_inline(
                     pending.open = Some(h.port);
                 }
             }
-            if ui
-                .add(egui::Button::new("Stop").fill(theme::DANGER))
-                .clicked()
-            {
+            if ui.add(theme::danger_button("Stop")).clicked() {
                 pending.stop = Some((*pgid, primary.name.clone()));
             }
         }
@@ -896,7 +893,7 @@ fn render_service_actions_inline(
             }
             if let Some(al) = snap.by_port.get(port) {
                 if ui
-                    .add(egui::Button::new("Kill").fill(theme::DANGER))
+                    .add(theme::danger_button("Kill"))
                     .on_hover_text(format!(
                         "Kill the external process holding :{port} (pid {} · {})",
                         al.listener.pid, al.listener.command_name
@@ -1016,10 +1013,7 @@ fn render_listener_line(ui: &mut egui::Ui, l: &AttributedListener, pending: &mut
                 l.listener.command_name, l.listener.pid, l.listener.pgid
             ));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .add(egui::Button::new("Kill").fill(theme::DANGER))
-                .clicked()
-            {
+            if ui.add(theme::danger_button("Kill")).clicked() {
                 pending.kill = Some(l.listener.pgid);
             }
             if let Some(p) = &l.listener.cwd {
@@ -1109,15 +1103,7 @@ fn render_kill_all_modal(app: &mut HiveApp, ctx: &egui::Context) {
             ));
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new("Confirm").color(egui::Color32::WHITE),
-                        )
-                        .fill(theme::DANGER),
-                    )
-                    .clicked()
-                {
+                if ui.add(theme::danger_button("Confirm")).clicked() {
                     do_confirm = true;
                 }
                 if ui.button("Cancel").clicked() {

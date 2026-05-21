@@ -80,6 +80,15 @@ const PULSE_PERIOD_SECS: f64 = 2.0;
 
 /// Filled circle indicator — static, single dot. For idle / classifier badges.
 /// Returns the `Response` so callers can attach `.on_hover_text(...)`.
+/// Destructive button (Kill, Stop, Confirm) — DANGER fill plus
+/// explicit white text. The default button text color is dark, which
+/// only reaches ~2.1:1 contrast against #B43C3C. White text hits
+/// 5.3:1 (WCAG AA). This helper centralizes both decisions so the
+/// three call sites stay consistent.
+pub fn danger_button(text: &str) -> egui::Button<'static> {
+    egui::Button::new(egui::RichText::new(text.to_string()).color(Color32::WHITE)).fill(DANGER)
+}
+
 pub fn painted_dot(ui: &mut egui::Ui, color: Color32) -> egui::Response {
     let (rect, resp) =
         ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::hover());
