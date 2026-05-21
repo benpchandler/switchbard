@@ -12,7 +12,7 @@
 //!   panel.
 
 use crate::runtime::worktrees::expand_worktrees;
-use crate::runtime::{ActiveRun, PickerState, ViewMode, WorktreeMeta};
+use crate::runtime::{ActiveRun, PickerState, WorktreeMeta};
 use crate::sync::{Kick, Status};
 use crate::ui;
 use crate::workers::{self, Channels};
@@ -58,17 +58,16 @@ pub struct HiveApp {
     pub config: Config,
 
     // View-only state.
-    pub view: ViewMode,
-    pub show_only_managed: bool,
+    /// One workspace-wide filter. Each section's match function reads it.
     pub filter: String,
+    /// When on, the workspace hides unattributed listeners.
+    pub show_only_managed: bool,
     pub confirm_kill_all: bool,
     /// When Some, the sidebar shows a "Remove '{name}'?" confirmation modal
     /// for the repo at the given path. The ✕ button in the sidebar sets this;
     /// the modal clears it on Confirm or Cancel.
     pub confirm_remove_repo: Option<(PathBuf, String)>,
     pub expanded_repos: BTreeSet<String>,
-    pub wt_filter: String,
-    pub server_filter: String,
     /// When false (default), hide rows whose classifier verdict is NotServer
     /// (test scripts, build wrappers, ship-gate runners, etc.).
     pub show_non_servers: bool,
@@ -139,14 +138,11 @@ impl HiveApp {
             config_status: Status::new(),
             kill_status: Status::new(),
             server_status: Status::new(),
-            view: ViewMode::Listeners,
-            show_only_managed: false,
             filter: String::new(),
+            show_only_managed: false,
             confirm_kill_all: false,
             confirm_remove_repo: None,
             expanded_repos: BTreeSet::new(),
-            wt_filter: String::new(),
-            server_filter: String::new(),
             show_non_servers,
             browser_choice,
         }
@@ -485,11 +481,7 @@ impl eframe::App for HiveApp {
         // its docked space first; otherwise the central panel sizes to the full
         // window and the side panel overlays it.
         ui::sidebar::render(self, ctx);
-        match self.view {
-            ViewMode::Listeners => ui::listeners::render(self, ctx),
-            ViewMode::Worktrees => ui::worktrees::render(self, ctx),
-            ViewMode::Servers => ui::servers::render(self, ctx),
-        }
+        ui::workspace::render(self, ctx);
 
         let ui_after = (self.browser_choice, self.show_non_servers);
         if ui_before != ui_after {
