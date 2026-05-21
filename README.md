@@ -31,8 +31,9 @@ Download `Switchbard-v0.1.1-macos-arm64.dmg` from the
 open it, then drag `Switchbard.app` to `Applications`.
 
 Switchbard is currently unnotarized and does not use Developer ID signing. The first
-time you launch it, right-click `Switchbard.app` and choose `Open`, then confirm
-macOS's unidentified developer prompt. See
+time you launch it, open it from Finder with Control-click -> `Open`, then confirm
+macOS's unidentified developer prompt. If you see "`Switchbard` Not Opened" with
+only `Move to Trash` / `Done`, click `Done` and use Control-click -> `Open`. See
 [docs/INSTALL-MAC.md](docs/INSTALL-MAC.md) for the full install and
 verification notes.
 

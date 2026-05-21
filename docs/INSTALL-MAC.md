@@ -14,8 +14,29 @@ you open the app.
 
 After the first successful open, Switchbard launches normally.
 
-If macOS does not show an `Open` button, go to `System Settings` -> `Privacy &
-Security` and use `Open Anyway` for Switchbard.
+## If You See "`Switchbard` Not Opened"
+
+If macOS shows a dialog with only `Move to Trash` and `Done`, click `Done`.
+That usually means the app was opened by double-clicking, which macOS blocks for
+unnotarized apps.
+
+Then open it this way:
+
+1. Open `Applications` in Finder.
+2. Control-click or right-click `Switchbard.app`.
+3. Choose `Open`.
+4. Click `Open` again when macOS asks you to confirm.
+
+If macOS still does not show an `Open` button, go to `System Settings` ->
+`Privacy & Security` and use `Open Anyway` for Switchbard.
+
+As a last resort, after verifying the checksum and confirming that the app came
+from the GitHub Release, you can remove the download quarantine marker:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Switchbard.app
+open /Applications/Switchbard.app
+```
 
 ## What To Expect
 
