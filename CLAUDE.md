@@ -8,7 +8,7 @@ A macOS-only local dashboard (single native egui window, no webview) that:
 - Scans the OS every few seconds for listening processes (`lsof`), attributing each back to a git worktree by walking the process `cwd`.
 - Detects what each repo *would* start by reading its own declarations: `Procfile` / `Procfile.dev`, `package.json` scripts, `Makefile`, `docker-compose.yml`, `scripts/*.sh`.
 - Probes git state per worktree (dirty, ahead/behind, commit recency).
-- Lets the user start a service, stop a process group, kill an external port-squatter, and open `:port` in a chosen browser.
+- Lets the user start a service, stop a process group, kill an external port-squatter, open `:port` in a chosen browser, and remove a worktree (via `git worktree remove`, with a confirmation dialog that enumerates uncommitted changes and tracked services).
 
 Configuration is persisted at `~/.switchbard/config.toml`. Service logs land in `$TMPDIR/switchbard-logs/`.
 
@@ -57,6 +57,7 @@ Re-exports are explicit in `src/lib.rs`. Mental map of the modules:
 - `scanner` — `scan_listeners()`: `lsof`-driven snapshot of `LocalListener` rows.
 - `attribution` — joins listeners to `WorktreeRef`s by longest-prefix match on `cwd`.
 - `worktree` — `enumerate_worktrees()` shells out to `git worktree list`.
+- `worktree_remove` — `is_primary_worktree()`, `collect_dirty_files()` (porcelain v1 parse), `remove_worktree()` (shells out `git worktree remove [--force]`, bubbles git's stderr on failure). The only destructive git operation in core.
 - `workflow` — `detect_services()`: parses Procfile/package.json/Makefile/compose/scripts into `DetectedService` rows.
 - `classify` — heuristic verdict (`Server` / `Maybe` / `NotServer`) per detected entry point.
 - `expected_port` — best-effort port inference from a command string.
@@ -79,7 +80,7 @@ Layout:
   - service detection: 30s
   - reaper for spawned runs: 2s
 - `sync/` — `Kick` (wake-from-sleep signal) and `Status` (per-surface user-feedback messages — one per UI surface so concurrent actions don't clobber each other).
-- `runtime/` — plain-data view types (`ActiveRun`, `WorktreeMeta`, `PickerState`) and `expand_worktrees()`.
+- `runtime/` — plain-data view types (`ActiveRun`, `ActiveRunSummary`, `ConfirmRemoveWorktree`, `WorktreeMeta`, `PickerState`) and `expand_worktrees()`.
 - `ui/` — the only module that touches egui. `theme.rs` is the single source for semantic colors and glyphs. `workspace/` is the central panel: per-repo swimlane cards with smart progressive disclosure (worktree rows auto-expand when noteworthy).
 
 ### Threading rules

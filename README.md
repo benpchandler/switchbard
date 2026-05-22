@@ -41,7 +41,7 @@ terminal tabs:
   upstream, commit activity (Burst / Active / Slow / Idle).
 - **One control surface.** Start a service, stop a process group, kill an
   external listener that's holding the port you need, open `:port` in the
-  browser of your choice.
+  browser of your choice, or remove a worktree once you're done with it.
 
 ## Who It Is For
 
@@ -56,7 +56,7 @@ Switchbard is most useful if you:
 
 ### Download The Alpha DMG
 
-Download `Switchbard-v0.1.1-macos-arm64.dmg` from the
+Download `Switchbard-v0.2.0-macos-arm64.dmg` from the
 [latest GitHub Release](https://github.com/benpchandler/switchbard/releases/latest),
 open it, then drag `Switchbard.app` to `Applications`.
 
