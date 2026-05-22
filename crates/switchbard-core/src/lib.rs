@@ -12,6 +12,7 @@ pub mod spawn;
 pub mod types;
 pub mod workflow;
 pub mod worktree;
+pub mod worktree_remove;
 
 pub use attribution::attribute;
 pub use classify::{classify_command, classify_script_body, ServerLikelihood};
@@ -29,3 +30,4 @@ pub use spawn::{spawn_in_session, SpawnedRun};
 pub use types::{AttributedListener, LocalListener, Repo, WorktreeRef};
 pub use workflow::{detect_services, DetectedService, ServiceSource};
 pub use worktree::{enumerate_worktrees, WorktreeEntry};
+pub use worktree_remove::{collect_dirty_files, is_primary_worktree, remove_worktree, DirtyFile};
