@@ -44,6 +44,9 @@ struct Pending {
     stop: Option<(i32, String)>,
     open: Option<u16>,
     kill: Option<i32>,
+    /// (repo_name, worktree_path, branch) — `apply_pending` resolves repo_name
+    /// to a path via `app.config.repos` and opens the confirm dialog.
+    open_remove_worktree: Option<(String, PathBuf, Option<String>)>,
 }
 
 pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
@@ -84,6 +87,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
 
     apply_pending(app, ctx, pending);
     render_kill_all_modal(app, ctx);
+    render_remove_worktree_modal(app, ctx);
 }
 
 fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, p: Pending) {
@@ -98,6 +102,17 @@ fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, p: Pending) {
     }
     if let Some(pgid) = p.kill {
         app.spawn_kill(pgid, ctx);
+    }
+    if let Some((repo_name, wt_path, branch)) = p.open_remove_worktree {
+        if let Some(repo_path) = app
+            .config
+            .repos
+            .iter()
+            .find(|r| r.name == repo_name)
+            .map(|r| r.path.clone())
+        {
+            app.open_remove_worktree_confirm(repo_path, wt_path, branch);
+        }
     }
 }
 
@@ -387,6 +402,7 @@ fn render_worktree_row(
         state
             .show_header(ui, |ui| {
                 render_worktree_summary_line(ui, w, &m, listeners.len(), &svcs, snap);
+                render_worktree_row_trailing(ui, w, is_primary, pending);
             })
             .body(|ui| {
                 ui.add_space(2.0);
@@ -449,6 +465,21 @@ fn render_worktree_summary_line(
     render_health_inline(ui, m);
     render_activity_inline(ui, m);
     let _ = listener_count;
+}
+
+/// Right-aligned cluster on the worktree row header: short SHA on the far
+/// right, plus a small remove-worktree affordance (hidden on the primary
+/// worktree, which can't be removed via `git worktree remove`).
+///
+/// Split from the summary line so each function's arg count stays tame;
+/// also lets us add more right-side affordances later without touching
+/// the left-side layout.
+fn render_worktree_row_trailing(
+    ui: &mut egui::Ui,
+    w: &WorktreeRef,
+    is_primary: bool,
+    pending: &mut Pending,
+) {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.label(
             egui::RichText::new(w.head.chars().take(8).collect::<String>())
@@ -457,6 +488,14 @@ fn render_worktree_summary_line(
                 .small(),
         )
         .on_hover_text(&w.head);
+        if !is_primary {
+            ui.add_space(2.0);
+            let resp = theme::painted_trash_button(ui);
+            if resp.on_hover_text("Remove worktree…").clicked() {
+                pending.open_remove_worktree =
+                    Some((w.repo_name.clone(), w.path.clone(), w.branch.clone()));
+            }
+        }
     });
 }
 
@@ -1077,6 +1116,118 @@ fn worktree_matches(w: &WorktreeRef, snap: &Snapshot, filter_lc: &str) -> bool {
 
 pub fn unique_pgids_in_filter(app: &HiveApp) -> Vec<i32> {
     Snapshot::collect(app).unique_pgids_in_filter()
+}
+
+/// Confirmation dialog for `git worktree remove`. Reads state from the
+/// `Arc<Mutex<>>` once per frame; the worker thread driving the actual
+/// removal can flip `busy`/`error` between frames so the dialog stays
+/// responsive.
+fn render_remove_worktree_modal(app: &mut HiveApp, ctx: &egui::Context) {
+    let state = match app.confirm_remove_worktree.lock().unwrap().clone() {
+        Some(s) => s,
+        None => return,
+    };
+
+    let has_runs = !state.active_runs.is_empty();
+    let is_dirty = !state.dirty_files.is_empty();
+    let action_label = match (has_runs, is_dirty) {
+        (false, false) => "Remove worktree",
+        (true, false) => "Stop services and remove",
+        (false, true) => "Discard changes and remove",
+        (true, true) => "Stop services, discard changes, and remove",
+    };
+
+    let mut do_confirm = false;
+    let mut do_cancel = false;
+
+    egui::Window::new("Remove worktree")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.set_max_width(540.0);
+            ui.label(
+                egui::RichText::new(format!(
+                    "Remove worktree at {} ?",
+                    state.worktree_path.display()
+                ))
+                .strong(),
+            );
+            if let Some(branch) = &state.branch {
+                ui.label(format!("Branch '{branch}' will remain after removal."));
+            }
+
+            if has_runs {
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "⚠ {} service{} running here (started by switchbard):",
+                        state.active_runs.len(),
+                        if state.active_runs.len() == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    ))
+                    .color(theme::AMBER),
+                );
+                for run in &state.active_runs {
+                    ui.label(format!("    {}    (pgid {})", run.service_name, run.pgid));
+                }
+            }
+
+            if is_dirty {
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "⚠ {} uncommitted change{}:",
+                        state.dirty_files.len(),
+                        if state.dirty_files.len() == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    ))
+                    .color(theme::AMBER),
+                );
+                egui::ScrollArea::vertical()
+                    .max_height(160.0)
+                    .id_salt("remove_wt_dirty")
+                    .show(ui, |ui| {
+                        for f in &state.dirty_files {
+                            ui.monospace(format!("    {}  {}", f.status, f.path.display()));
+                        }
+                    });
+            }
+
+            if let Some(err) = &state.error {
+                ui.add_space(6.0);
+                ui.colored_label(theme::DANGER, err);
+            }
+
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(!state.busy, |ui| {
+                    if ui.button("Cancel").clicked() {
+                        do_cancel = true;
+                    }
+                    if ui.add(theme::danger_button(action_label)).clicked() {
+                        do_confirm = true;
+                    }
+                });
+                if state.busy {
+                    ui.add_space(4.0);
+                    ui.spinner();
+                    ui.label("removing…");
+                }
+            });
+        });
+
+    if do_confirm {
+        app.execute_remove_worktree(ctx);
+    } else if do_cancel {
+        app.cancel_remove_worktree_confirm();
+    }
 }
 
 fn render_kill_all_modal(app: &mut HiveApp, ctx: &egui::Context) {

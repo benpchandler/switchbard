@@ -12,21 +12,24 @@
 //!   panel.
 
 use crate::runtime::worktrees::expand_worktrees;
-use crate::runtime::{ActiveRun, PickerState, WorktreeMeta};
+use crate::runtime::{
+    ActiveRun, ActiveRunSummary, ConfirmRemoveWorktree, PickerState, WorktreeMeta,
+};
 use crate::sync::{Kick, Status};
 use crate::ui;
 use crate::ui::onboarding::DiscoveryState;
 use crate::workers::{self, Channels};
 use eframe::egui;
 use std::collections::{BTreeSet, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use switchbard_core::config::Config;
 use switchbard_core::{
-    config, kill_pgid, open_url, spawn_in_session, url_for_port, AttributedListener,
-    DetectedService, KillOutcome, Repo, WorktreeRef, BROWSER_APP_NAMES,
+    collect_dirty_files, config, is_primary_worktree, kill_pgid, open_url, remove_worktree,
+    spawn_in_session, url_for_port, AttributedListener, DetectedService, KillOutcome, Repo,
+    WorktreeRef, BROWSER_APP_NAMES,
 };
 
 #[derive(Default)]
@@ -68,6 +71,9 @@ pub struct HiveApp {
     /// for the repo at the given path. The ✕ button in the sidebar sets this;
     /// the modal clears it on Confirm or Cancel.
     pub confirm_remove_repo: Option<(PathBuf, String)>,
+    /// Modal state for `git worktree remove`. Shared with the worker thread
+    /// so it can flip `busy`/`error` while the dialog is visible.
+    pub confirm_remove_worktree: Arc<Mutex<Option<ConfirmRemoveWorktree>>>,
     pub expanded_repos: BTreeSet<String>,
     /// When false (default), hide rows whose classifier verdict is NotServer
     /// (test scripts, build wrappers, ship-gate runners, etc.).
@@ -147,6 +153,7 @@ impl HiveApp {
             show_only_managed: false,
             confirm_kill_all: false,
             confirm_remove_repo: None,
+            confirm_remove_worktree: Arc::new(Mutex::new(None)),
             expanded_repos: BTreeSet::new(),
             show_non_servers,
             browser_choice,
@@ -235,6 +242,212 @@ impl HiveApp {
         self.config_status
             .set(format!("removed '{}'", repo_path.display()));
         self.scanner_kick.notify();
+    }
+
+    /// Open the "Remove worktree?" confirmation dialog. If the target is the
+    /// repo's primary worktree, refuses outright with a status message — the
+    /// user should use Remove repo instead, and `git worktree remove` would
+    /// fail on a primary anyway. Otherwise collects dirty files + active runs
+    /// synchronously (fast: one `git status` call) and stores the dialog state.
+    pub fn open_remove_worktree_confirm(
+        &self,
+        repo_path: PathBuf,
+        worktree_path: PathBuf,
+        branch: Option<String>,
+    ) {
+        if is_primary_worktree(&repo_path, &worktree_path) {
+            self.config_status.set(format!(
+                "'{}' is the primary worktree — remove the repo to drop it",
+                worktree_path.display()
+            ));
+            return;
+        }
+        // Surface git-status failures rather than treating them as "clean".
+        // A locked index, safe.directory misconfig, or permission error must
+        // never lead the user to confirm a removal believing nothing is dirty.
+        let dirty_files = match collect_dirty_files(&worktree_path) {
+            Ok(files) => files,
+            Err(e) => {
+                self.config_status.set(format!(
+                    "cannot verify worktree state at '{}': {} — fix git state and try again",
+                    worktree_path.display(),
+                    e
+                ));
+                return;
+            }
+        };
+        let active_runs = self.snapshot_runs_for_worktree(&worktree_path);
+        *self.confirm_remove_worktree.lock().unwrap() = Some(ConfirmRemoveWorktree {
+            repo_path,
+            worktree_path,
+            branch,
+            dirty_files,
+            active_runs,
+            busy: false,
+            error: None,
+        });
+    }
+
+    /// Active runs whose `worktree_path` matches, projected to the lightweight
+    /// summary the dialog renders. Used at dialog-open time AND at confirm
+    /// time so the worker thread can detect drift before signaling anything.
+    fn snapshot_runs_for_worktree(&self, worktree_path: &Path) -> Vec<ActiveRunSummary> {
+        self.active_runs
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|r| r.worktree_path == worktree_path)
+            .map(|r| ActiveRunSummary {
+                service_name: r.service_name.clone(),
+                pgid: r.pgid,
+            })
+            .collect()
+    }
+
+    /// Close the dialog without doing anything. The X / Cancel button calls
+    /// this — never call it while `busy` is true (the UI hides Cancel during
+    /// execution, so this is enforced at the call site).
+    pub fn cancel_remove_worktree_confirm(&self) {
+        *self.confirm_remove_worktree.lock().unwrap() = None;
+    }
+
+    /// Run the confirmed removal on a worker thread:
+    ///   0. **Preflight re-snapshot** — re-collect dirty files + active runs.
+    ///      If either drifted from the dialog snapshot (new uncommitted files,
+    ///      new tracked runs), abort and re-populate the dialog with fresh
+    ///      state instead of acting on stale info. Prevents silently
+    ///      discarding changes the user never saw and prevents orphaning a
+    ///      service that wasn't running when the dialog opened.
+    ///   1. SIGTERM (then SIGKILL after grace) every `active_runs` pgid. If
+    ///      a kill returns an error, abort: the run is still alive and we
+    ///      shouldn't pretend we stopped it.
+    ///   2. Drop killed entries from `active_runs` so the UI stops showing them.
+    ///   3. `git worktree remove [--force]` — `--force` iff the worktree was dirty.
+    ///   4. On success: clear the dialog, refresh the worktrees list from disk,
+    ///      kick scanner + probes so the row vanishes immediately.
+    ///   5. On failure: leave the dialog open with `error` populated so the
+    ///      user can read git's complaint and either retry or cancel.
+    pub fn execute_remove_worktree(&self, ctx: &egui::Context) {
+        let snapshot = {
+            let mut guard = self.confirm_remove_worktree.lock().unwrap();
+            let Some(state) = guard.as_mut() else {
+                return;
+            };
+            if state.busy {
+                return;
+            }
+            state.busy = true;
+            state.error = None;
+            state.clone()
+        };
+
+        let confirm = self.confirm_remove_worktree.clone();
+        let active_runs = self.active_runs.clone();
+        let worktrees = self.worktrees.clone();
+        let repos = self.repos.clone();
+        let scanner_kick = self.scanner_kick.clone();
+        let probe_kick = self.probe_kick.clone();
+        let detection_kick = self.detection_kick.clone();
+        let config_status = self.config_status.clone();
+        let ctx = ctx.clone();
+        let fresh_runs = self.snapshot_runs_for_worktree(&snapshot.worktree_path);
+
+        thread::spawn(move || {
+            // 0: preflight re-snapshot. The dialog's view of "what's dirty"
+            //    and "what's running" was captured when the dialog opened,
+            //    possibly seconds ago. Background tooling could have touched
+            //    files, or the user could have started a service. Re-check
+            //    both before we kill anything or invoke --force.
+            let fresh_dirty = match switchbard_core::collect_dirty_files(&snapshot.worktree_path) {
+                Ok(files) => files,
+                Err(e) => {
+                    drift_abort(
+                        &confirm,
+                        format!("cannot verify worktree state: {e} — try again"),
+                    );
+                    ctx.request_repaint();
+                    return;
+                }
+            };
+            if state_drifted(&snapshot.dirty_files, &fresh_dirty)
+                || runs_drifted(&snapshot.active_runs, &fresh_runs)
+            {
+                drift_abort_and_refresh(
+                    &confirm,
+                    fresh_dirty,
+                    fresh_runs,
+                    "state changed since dialog opened — review the updated list and confirm again",
+                );
+                ctx.request_repaint();
+                return;
+            }
+
+            // 1+2: kill running services in this worktree. Honor kill_pgid's
+            //      result — if it errors we are NOT confident the process is
+            //      gone, so abort the whole removal rather than risk
+            //      losing track of a live process.
+            let mut killed = 0usize;
+            for run in &snapshot.active_runs {
+                match kill_pgid(run.pgid, Duration::from_secs(3)) {
+                    Ok(_) => {
+                        active_runs.lock().unwrap().remove(&run.pgid);
+                        killed += 1;
+                    }
+                    Err(e) => {
+                        drift_abort(
+                            &confirm,
+                            format!(
+                                "could not stop '{}' (pgid {}): {} — service may still be running",
+                                run.service_name, run.pgid, e
+                            ),
+                        );
+                        ctx.request_repaint();
+                        return;
+                    }
+                }
+            }
+
+            // 3: shell out to git.
+            let force = !snapshot.dirty_files.is_empty();
+            let result = remove_worktree(&snapshot.repo_path, &snapshot.worktree_path, force);
+
+            match result {
+                Ok(()) => {
+                    // 4: drop the row from the shared worktrees list so the
+                    //    UI stops rendering it before the next probe tick
+                    //    catches up.
+                    worktrees
+                        .lock()
+                        .unwrap()
+                        .retain(|w| w.path != snapshot.worktree_path);
+                    let _ = repos; // kept in scope for parity; rebuild not needed
+                    *confirm.lock().unwrap() = None;
+                    let name = snapshot
+                        .branch
+                        .clone()
+                        .unwrap_or_else(|| snapshot.worktree_path.display().to_string());
+                    let extras = if killed > 0 {
+                        format!(
+                            " (stopped {killed} service{})",
+                            if killed == 1 { "" } else { "s" }
+                        )
+                    } else {
+                        String::new()
+                    };
+                    config_status.set(format!("removed worktree '{name}'{extras}"));
+                    scanner_kick.notify();
+                    probe_kick.notify();
+                    detection_kick.notify();
+                }
+                Err(e) => {
+                    if let Some(state) = confirm.lock().unwrap().as_mut() {
+                        state.busy = false;
+                        state.error = Some(e.to_string());
+                    }
+                }
+            }
+            ctx.request_repaint();
+        });
     }
 
     /// Move the repo at index `i` up (delta = -1) or down (delta = 1). Saves
@@ -470,6 +683,71 @@ impl WorktreeDelta {
                 self.before - self.after
             )
         }
+    }
+}
+
+/// Did the set of dirty files change between the open-time snapshot and the
+/// confirm-time re-scan? Order-independent — `git status --porcelain` doesn't
+/// guarantee order across invocations. Uses (status, path) tuples so an
+/// edit that flips a file from `??` (untracked) to `A ` (staged add) also
+/// trips the drift check.
+fn state_drifted(
+    original: &[switchbard_core::DirtyFile],
+    fresh: &[switchbard_core::DirtyFile],
+) -> bool {
+    if original.len() != fresh.len() {
+        return true;
+    }
+    let mut a: Vec<_> = original
+        .iter()
+        .map(|f| (f.status.clone(), f.path.clone()))
+        .collect();
+    let mut b: Vec<_> = fresh
+        .iter()
+        .map(|f| (f.status.clone(), f.path.clone()))
+        .collect();
+    a.sort();
+    b.sort();
+    a != b
+}
+
+/// Did the set of switchbard-tracked runs in this worktree change? Keys on
+/// pgid since service names can be non-unique across services.
+fn runs_drifted(original: &[ActiveRunSummary], fresh: &[ActiveRunSummary]) -> bool {
+    if original.len() != fresh.len() {
+        return true;
+    }
+    let mut a: Vec<i32> = original.iter().map(|r| r.pgid).collect();
+    let mut b: Vec<i32> = fresh.iter().map(|r| r.pgid).collect();
+    a.sort();
+    b.sort();
+    a != b
+}
+
+/// Bail out of a removal that hasn't actually touched anything yet. Sets the
+/// dialog's `error` so the user sees why, and clears `busy` so the buttons
+/// re-enable.
+fn drift_abort(confirm: &Arc<Mutex<Option<ConfirmRemoveWorktree>>>, message: String) {
+    if let Some(state) = confirm.lock().unwrap().as_mut() {
+        state.busy = false;
+        state.error = Some(message);
+    }
+}
+
+/// Bail out AND re-populate the dialog with fresh dirty/run lists so the user
+/// can re-review and re-confirm. Used when the world changed under us but the
+/// world's new state is something we can show.
+fn drift_abort_and_refresh(
+    confirm: &Arc<Mutex<Option<ConfirmRemoveWorktree>>>,
+    fresh_dirty: Vec<switchbard_core::DirtyFile>,
+    fresh_runs: Vec<ActiveRunSummary>,
+    message: &str,
+) {
+    if let Some(state) = confirm.lock().unwrap().as_mut() {
+        state.dirty_files = fresh_dirty;
+        state.active_runs = fresh_runs;
+        state.busy = false;
+        state.error = Some(message.to_string());
     }
 }
 

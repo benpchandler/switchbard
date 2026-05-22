@@ -16,7 +16,34 @@ pub mod worktrees;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use switchbard_core::{AttributedListener, CommitSummary, DriftDetail};
+use switchbard_core::{AttributedListener, CommitSummary, DirtyFile, DriftDetail};
+
+/// Active-run summary shown in the remove-worktree dialog. Stripped down from
+/// `ActiveRun` because the dialog only needs the user-visible name + the pgid
+/// it'll signal.
+#[derive(Debug, Clone)]
+pub struct ActiveRunSummary {
+    pub service_name: String,
+    pub pgid: i32,
+}
+
+/// State for the modal that confirms `git worktree remove`. Held in an
+/// `Arc<Mutex<Option<…>>>` on `HiveApp` so the worker thread can flip
+/// `busy`/`error` while the UI renders.
+#[derive(Debug, Clone)]
+pub struct ConfirmRemoveWorktree {
+    pub repo_path: PathBuf,
+    pub worktree_path: PathBuf,
+    pub branch: Option<String>,
+    pub dirty_files: Vec<DirtyFile>,
+    pub active_runs: Vec<ActiveRunSummary>,
+    /// True while the worker thread is killing services + running git.
+    /// Disables both buttons and shows a spinner.
+    pub busy: bool,
+    /// If the removal attempt failed, the git stderr (or kill error) lands
+    /// here so the dialog can show it inline without closing.
+    pub error: Option<String>,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct WorktreeMeta {

@@ -177,6 +177,62 @@ fn scale_alpha(c: Color32, factor: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
 }
 
+/// Small trash-can icon used as a destructive row-action affordance (e.g.
+/// "remove worktree"). Painter-drawn for the same reason as the other glyphs
+/// in this file: stock egui fonts don't cover icon code points, so a literal
+/// `🗑` or `✕` renders as a tofu square.
+///
+/// Reads `resp.hovered()` before painting so the icon picks up `DANGER` red
+/// on hover and `WEAK_TEXT` gray at rest — enough visual signal that this is
+/// a destructive action without screaming for attention on every row.
+pub fn painted_trash_button(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
+    let color = if resp.hovered() { DANGER } else { WEAK_TEXT };
+    let stroke = egui::Stroke::new(1.4, color);
+    let painter = ui.painter();
+    let c = rect.center();
+    // Handle (small horizontal cap above the lid).
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 1.5, c.y - 5.0),
+            egui::pos2(c.x + 1.5, c.y - 5.0),
+        ],
+        stroke,
+    );
+    // Lid (wider horizontal line).
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 4.0, c.y - 3.0),
+            egui::pos2(c.x + 4.0, c.y - 3.0),
+        ],
+        stroke,
+    );
+    // Body — slight trapezoid: narrower at the bottom for the classic can shape.
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 3.0, c.y - 2.0),
+            egui::pos2(c.x - 2.5, c.y + 4.0),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(c.x + 3.0, c.y - 2.0),
+            egui::pos2(c.x + 2.5, c.y + 4.0),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 2.5, c.y + 4.0),
+            egui::pos2(c.x + 2.5, c.y + 4.0),
+        ],
+        stroke,
+    );
+    resp
+}
+
 /// Expand / collapse caret. Triangle points down when `open`, right when not.
 /// Returns the click response so callers can toggle their state on click.
 pub fn caret_button(ui: &mut egui::Ui, open: bool) -> egui::Response {
