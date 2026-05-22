@@ -1,6 +1,6 @@
 # Switchbard
 
-Switchbard is a native Mac dashboard for developers running multiple coding
+Switchbard is a native desktop dashboard for developers running multiple coding
 agents across git worktrees.
 
 When Claude, Codex, or other agents are each hacking in their own worktree,
@@ -8,8 +8,9 @@ your machine quietly fills up with local servers, dirty branches, and mystery
 ports. Switchbard gives you one place to see what is running, which worktree it
 belongs to, and whether it is safe to open, stop, or clean up.
 
-> **Status:** alpha. macOS only. The author dogfoods it daily; expect rough
-> edges around first-run UX and cross-platform support.
+> **Status:** alpha. macOS has a downloadable DMG; Linux builds from source.
+> The author dogfoods it daily; expect rough edges around first-run UX and
+> packaging.
 
 ![Switchbard showing multiple agent worktrees and local services](docs/assets/switchbard-agent-worktrees.png)
 
@@ -22,7 +23,7 @@ remember what each branch is doing. After a few agents, `localhost:3000`,
 Switchbard answers the questions that usually send you spelunking through
 terminal tabs:
 
-- **What is listening on my Mac right now?**
+- **What is listening on my machine right now?**
 - **Which repo and worktree did this process come from?**
 - **Which agent branch is dirty, active, ahead, or stale?**
 - **Can I open the right service or kill the right process without guessing?**
@@ -66,7 +67,34 @@ only `Move to Trash` / `Done`, click `Done` and use Control-click -> `Open`. See
 [docs/INSTALL-MAC.md](docs/INSTALL-MAC.md) for the full install and
 verification notes.
 
-### Build From Source
+### Linux From Source
+
+Linux support currently ships as a source build, not a packaged `.deb` /
+`.AppImage` yet.
+
+On Ubuntu/Debian, install the usual Rust GUI build/runtime packages:
+
+```sh
+sudo apt-get install git build-essential pkg-config libxkbcommon-dev \
+  libwayland-dev libx11-dev libxcb1-dev libxcb-render0-dev \
+  libxcb-shape0-dev libxcb-xfixes0-dev libgl1-mesa-dev \
+  xdg-utils xdg-desktop-portal
+```
+
+Then build and run:
+
+```sh
+git clone https://github.com/benpchandler/switchbard
+cd switchbard
+cargo build --release -p switchbard-gui
+./target/release/switchbard
+```
+
+Switchbard scans Linux listeners via `/proc`, so it does not need `lsof` on
+Linux. `xdg-open` is used for opening ports in your default browser. See
+[docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md) for distro package notes.
+
+### macOS From Source
 
 Requires Rust `1.95.0` with `rustfmt` and `clippy`. Any toolchain that
 matches works — `rustup default 1.95.0` if you don't have it.
@@ -97,7 +125,8 @@ not required; it's just how CI and the maintainer pin the exact Rust version.
 If you'd rather not manage that yourself, install mise and run
 `mise install` in the checkout — `mise.toml` pins `1.95.0` and exposes the
 same builds as `mise run bundle` / `mise run package`, plus
-`mise run hooks:install` to opt into the tracked pre-push hook.
+`mise run build` for the plain release binary and `mise run hooks:install` to
+opt into the tracked pre-push hook.
 
 A Homebrew tap is on the roadmap.
 
@@ -121,9 +150,9 @@ Two-crate Cargo workspace:
   [eframe](https://github.com/emilk/egui/tree/master/crates/eframe) app.
   Single window, no webview, native binary.
 
-Worker threads handle long-running probes (`lsof`, `git status`,
-`git log`) so the UI never blocks. The scanner kicks every 3s; the GUI
-re-renders only when state changes.
+Worker threads handle long-running probes (`lsof` on macOS, `/proc` on Linux,
+`git status`, `git log`) so the UI never blocks. The scanner kicks every 3s;
+the GUI re-renders only when state changes.
 
 ## Building from source
 
@@ -133,16 +162,16 @@ Plain Cargo, on any Rust `1.95.0` toolchain:
 cargo fmt --all -- --check
 RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets -- -D warnings
 RUSTFLAGS="-D warnings" cargo test --workspace --all-targets
-cargo build --release                # ~7 MB optimized binary
-bash scripts/bundle-mac.sh           # produces Switchbard.app
-bash scripts/package-dmg.sh          # produces the DMG
+cargo build --release                # optimized binary
+bash scripts/bundle-mac.sh           # macOS: produces Switchbard.app
+bash scripts/package-dmg.sh          # macOS: produces the DMG
 ```
 
 If you'd rather have the toolchain pinned for you, install
 [mise](https://mise.jdx.dev/) and the same commands are exposed as
 `mise run fmt`, `mise run clippy`, `mise run test`, `mise run ci`,
-`mise run bundle`, and `mise run package`. CI runs the mise tasks for
-version consistency; the tracked pre-push hook (opt in with
+`mise run build`, `mise run bundle`, and `mise run package`. CI runs the mise
+tasks for version consistency; the tracked pre-push hook (opt in with
 `mise run hooks:install`) runs `mise run ci` before each push.
 
 ## Contributing

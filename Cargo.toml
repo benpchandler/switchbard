@@ -4,15 +4,15 @@ members = ["crates/switchbard-core", "crates/switchbard-gui"]
 
 [workspace.package]
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.95"
 version = "0.1.1"
 authors = ["Ben Chandler"]
 license = "MIT"
 repository = "https://github.com/benpchandler/switchbard"
 homepage = "https://github.com/benpchandler/switchbard"
 readme = "README.md"
-description = "Local-first dashboard for dev servers and git worktrees on macOS"
-keywords = ["devtools", "git", "worktree", "macos", "gui"]
+description = "Local-first dashboard for dev servers and git worktrees"
+keywords = ["devtools", "git", "worktree", "macos", "linux"]
 categories = ["development-tools", "gui"]
 
 [workspace.dependencies]

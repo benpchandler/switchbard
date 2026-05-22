@@ -11,11 +11,11 @@ env:
 jobs:
   ci:
     name: mise run ${{ matrix.task }}
-    # Switchbard is macOS-only. If we ever port to Linux, add ubuntu-latest here.
-    runs-on: macos-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [macos-latest, ubuntu-latest]
         task: [test, clippy, fmt]
     steps:
       - uses: actions/checkout@v4

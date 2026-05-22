@@ -85,6 +85,7 @@ open target/dist/Switchbard-v0.1.1-macos-arm64.dmg
 
 ## Current Limits
 
-Switchbard is alpha software and macOS-only. The release is not Developer ID signed or
+Switchbard is alpha software. The macOS release is not Developer ID signed or
 notarized yet, so use it only if you are comfortable installing an app directly
-from this repository.
+from this repository. Linux currently builds from source; see
+[INSTALL-LINUX.md](INSTALL-LINUX.md).

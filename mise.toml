@@ -23,6 +23,10 @@ run = [
   { task = "test" },
 ]
 
+[tasks.build]
+description = "Build the release binary"
+run = "cargo build --release -p switchbard-gui"
+
 [tasks.bundle]
 description = "Build the alpha macOS app bundle"
 run = "bash scripts/bundle-mac.sh"
