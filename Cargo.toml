@@ -5,7 +5,7 @@ members = ["crates/switchbard-core", "crates/switchbard-gui"]
 [workspace.package]
 edition = "2021"
 rust-version = "1.95"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Ben Chandler"]
 license = "MIT"
 repository = "https://github.com/benpchandler/switchbard"
