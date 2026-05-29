@@ -110,38 +110,22 @@ impl HiveApp {
     ) -> Self {
         ui::theme::apply(&cc.egui_ctx);
 
-        let state = Arc::new(Mutex::new(ScanState::default()));
-        let scanner_kick = Kick::new();
-        let probe_kick = Kick::new();
-        let detection_kick = Kick::new();
-        let agent_context_kick = Kick::new();
-        let repos_arc = Arc::new(Mutex::new(repos));
-        let worktrees_arc = Arc::new(Mutex::new(worktrees));
-        let meta = Arc::new(Mutex::new(HashMap::new()));
-        let services = Arc::new(Mutex::new(HashMap::new()));
-        let agent_contexts = Arc::new(Mutex::new(cached_agent_contexts(
-            &worktrees_arc.lock().unwrap(),
-        )));
-        let active_runs = Arc::new(Mutex::new(HashMap::new()));
-        let picker = Arc::new(Mutex::new(PickerState::Idle));
+        // Seed the first frame from the on-disk agent-context cache before any
+        // worker scan completes, then start the workers against this state.
+        let cached = cached_agent_contexts(&worktrees);
+        let app = Self::new_headless(cfg, repos, worktrees);
+        *app.agent_contexts.lock().unwrap() = cached;
+        app.spawn_workers(cc.egui_ctx.clone());
+        app
+    }
 
-        workers::spawn_all(
-            cc.egui_ctx.clone(),
-            Channels {
-                state: state.clone(),
-                repos: repos_arc.clone(),
-                worktrees: worktrees_arc.clone(),
-                meta: meta.clone(),
-                services: services.clone(),
-                agent_contexts: agent_contexts.clone(),
-                active_runs: active_runs.clone(),
-                scanner_kick: scanner_kick.clone(),
-                probe_kick: probe_kick.clone(),
-                detection_kick: detection_kick.clone(),
-                agent_context_kick: agent_context_kick.clone(),
-            },
-        );
-
+    /// Assemble `HiveApp` and all of its shared state **without** spawning
+    /// worker threads, touching an egui context, or reading the on-disk cache.
+    /// `new` builds on top of this (theme + cache seed + workers); UI tests and
+    /// headless harnesses use it directly and drive [`render_ui`] by hand.
+    ///
+    /// [`render_ui`]: HiveApp::render_ui
+    pub fn new_headless(cfg: Config, repos: Vec<Repo>, worktrees: Vec<WorktreeRef>) -> Self {
         let browser_choice = cfg
             .ui
             .browser
@@ -156,19 +140,19 @@ impl HiveApp {
         let show_non_servers = cfg.ui.show_non_servers;
 
         Self {
-            repos: repos_arc,
-            worktrees: worktrees_arc,
-            meta,
-            services,
-            agent_contexts,
-            active_runs,
-            state,
-            scanner_kick,
-            probe_kick,
-            detection_kick,
-            agent_context_kick,
+            repos: Arc::new(Mutex::new(repos)),
+            worktrees: Arc::new(Mutex::new(worktrees)),
+            meta: Arc::new(Mutex::new(HashMap::new())),
+            services: Arc::new(Mutex::new(HashMap::new())),
+            agent_contexts: Arc::new(Mutex::new(HashMap::new())),
+            active_runs: Arc::new(Mutex::new(HashMap::new())),
+            state: Arc::new(Mutex::new(ScanState::default())),
+            scanner_kick: Kick::new(),
+            probe_kick: Kick::new(),
+            detection_kick: Kick::new(),
+            agent_context_kick: Kick::new(),
             config: cfg,
-            picker,
+            picker: Arc::new(Mutex::new(PickerState::Idle)),
             config_status: Status::new(),
             kill_status: Status::new(),
             server_status: Status::new(),
@@ -184,6 +168,28 @@ impl HiveApp {
             browser_choice,
             onboarding: Arc::new(Mutex::new(DiscoveryState::default())),
         }
+    }
+
+    /// Spawn the four background workers, wiring them to this app's shared
+    /// state. Separated from `new_headless` so tests can build an app that
+    /// never starts threads.
+    fn spawn_workers(&self, ctx: egui::Context) {
+        workers::spawn_all(
+            ctx,
+            Channels {
+                state: self.state.clone(),
+                repos: self.repos.clone(),
+                worktrees: self.worktrees.clone(),
+                meta: self.meta.clone(),
+                services: self.services.clone(),
+                agent_contexts: self.agent_contexts.clone(),
+                active_runs: self.active_runs.clone(),
+                scanner_kick: self.scanner_kick.clone(),
+                probe_kick: self.probe_kick.clone(),
+                detection_kick: self.detection_kick.clone(),
+                agent_context_kick: self.agent_context_kick.clone(),
+            },
+        );
     }
 
     pub fn repos_snapshot(&self) -> Vec<Repo> {
@@ -795,14 +801,12 @@ fn describe_kill(pgid: i32, result: std::io::Result<KillOutcome>) -> String {
     }
 }
 
-impl eframe::App for HiveApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.drain_picker();
-
-        // Snapshot persistable UI state so we can save the config if any
-        // toggle was flipped this update.
-        let ui_before = (self.browser_choice, self.show_non_servers);
-
+impl HiveApp {
+    /// Render every panel for one frame. The single source of truth for what
+    /// the window shows: `update` wraps this with per-frame bookkeeping
+    /// (picker draining, config persistence) that has no place in a test, and
+    /// the egui_kittest UI harness calls it directly against seeded state.
+    pub fn render_ui(&mut self, ctx: &egui::Context) {
         ui::top_bar::render(self, ctx);
         // Sidebar must render BEFORE the central panel so the SidePanel claims
         // its docked space first; otherwise the central panel sizes to the full
@@ -815,6 +819,18 @@ impl eframe::App for HiveApp {
         // Onboarding overlay paints last so it sits on top of everything
         // else when shown. It no-ops when already dismissed.
         ui::onboarding::render(self, ctx);
+    }
+}
+
+impl eframe::App for HiveApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.drain_picker();
+
+        // Snapshot persistable UI state so we can save the config if any
+        // toggle was flipped this update.
+        let ui_before = (self.browser_choice, self.show_non_servers);
+
+        self.render_ui(ctx);
 
         let ui_after = (self.browser_choice, self.show_non_servers);
         if ui_before != ui_after {
