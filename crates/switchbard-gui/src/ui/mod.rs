@@ -3,6 +3,7 @@
 //! the central panel — per-repo swimlane cards with smart progressive
 //! disclosure (worktree rows auto-expand when noteworthy).
 
+pub mod agent_context;
 pub mod column_widths;
 pub mod components;
 pub mod onboarding;

@@ -1,3 +1,4 @@
+pub mod agent_context;
 pub mod attribution;
 pub mod classify;
 pub mod config;
@@ -14,6 +15,12 @@ pub mod workflow;
 pub mod worktree;
 pub mod worktree_remove;
 
+pub use agent_context::{
+    agent_context_cache_path, agent_context_needs_rescan, load_agent_context_cache,
+    load_agent_context_cache_from, read_context_preview, save_agent_context_cache,
+    save_agent_context_cache_to, scan_agent_context, AgentContextItem, AgentContextMap, AgentKind,
+    ContextKind, ContextScope,
+};
 pub use attribution::attribute;
 pub use classify::{classify_command, classify_script_body, ServerLikelihood};
 pub use discover::{auto_scan_roots, discover_repos, DiscoveredRepo};
