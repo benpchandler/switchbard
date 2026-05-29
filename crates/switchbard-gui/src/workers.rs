@@ -14,8 +14,9 @@ use crate::runtime::{ActiveRun, WorktreeMeta};
 use crate::sync::Kick;
 use eframe::egui;
 use switchbard_core::{
-    attribute, detect_services, probe_ahead_behind, probe_dirty_files, probe_drift_detail,
-    probe_fetch_age, probe_head_commit_time, probe_recent_commits, scan_listeners, DetectedService,
+    agent_context_needs_rescan, attribute, detect_services, probe_ahead_behind, probe_dirty_files,
+    probe_drift_detail, probe_fetch_age, probe_head_commit_time, probe_recent_commits,
+    save_agent_context_cache, scan_agent_context, scan_listeners, AgentContextMap, DetectedService,
     Repo, WorktreeRef,
 };
 
@@ -32,13 +33,15 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::app::ScanState;
 
 const SCAN_PERIOD: Duration = Duration::from_secs(3);
 const PROBE_PERIOD: Duration = Duration::from_secs(60);
 const DETECT_PERIOD: Duration = Duration::from_secs(30);
+const CONTEXT_PERIOD: Duration = Duration::from_secs(30);
+const CONTEXT_CACHE_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24);
 const REAPER_PERIOD: Duration = Duration::from_secs(2);
 
 /// Shared handles that every worker reads from / writes to. Bundling them
@@ -50,16 +53,19 @@ pub struct Channels {
     pub worktrees: Arc<Mutex<Vec<WorktreeRef>>>,
     pub meta: Arc<Mutex<HashMap<PathBuf, WorktreeMeta>>>,
     pub services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>>,
+    pub agent_contexts: Arc<Mutex<HashMap<PathBuf, AgentContextMap>>>,
     pub active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
     pub scanner_kick: Kick,
     pub probe_kick: Kick,
     pub detection_kick: Kick,
+    pub agent_context_kick: Kick,
 }
 
 pub fn spawn_all(ctx: egui::Context, ch: Channels) {
     spawn_scanner(ctx.clone(), ch.clone());
     spawn_probe(ctx.clone(), ch.clone());
     spawn_detection(ctx.clone(), ch.clone());
+    spawn_agent_context(ctx.clone(), ch.clone());
     spawn_reaper(ctx, ch);
 }
 
@@ -145,6 +151,73 @@ fn spawn_detection(ctx: egui::Context, ch: Channels) {
         }
         ch.detection_kick.wait(DETECT_PERIOD);
     });
+}
+
+fn spawn_agent_context(ctx: egui::Context, ch: Channels) {
+    thread::spawn(move || loop {
+        let wts = ch.worktrees.lock().unwrap().clone();
+        let live_paths: std::collections::HashSet<PathBuf> =
+            wts.iter().map(|w| w.path.clone()).collect();
+
+        let (missing, stale, pruned) = {
+            let mut maps = ch.agent_contexts.lock().unwrap();
+            let before = maps.len();
+            maps.retain(|path, _| live_paths.contains(path));
+            let missing: Vec<WorktreeRef> = wts
+                .iter()
+                .filter(|w| !maps.contains_key(&w.path))
+                .cloned()
+                .collect();
+            let now = SystemTime::now();
+            let stale = wts
+                .iter()
+                .find(|w| {
+                    maps.get(&w.path).is_some_and(|map| {
+                        agent_context_needs_rescan(map, now, CONTEXT_CACHE_MAX_AGE)
+                    })
+                })
+                .cloned();
+            (missing, stale, maps.len() != before)
+        };
+
+        let mut refreshed = false;
+        if missing.is_empty() {
+            if let Some(w) = stale {
+                scan_and_publish_agent_context(&ch, &w);
+                refreshed = true;
+            }
+        } else {
+            for w in &missing {
+                scan_and_publish_agent_context(&ch, w);
+            }
+            refreshed = true;
+        }
+
+        if refreshed || pruned {
+            persist_agent_context_cache(&ch);
+            ctx.request_repaint();
+        }
+        ch.agent_context_kick.wait(CONTEXT_PERIOD);
+    });
+}
+
+fn scan_and_publish_agent_context(ch: &Channels, w: &WorktreeRef) {
+    let map = scan_agent_context(&w.path);
+    ch.agent_contexts
+        .lock()
+        .unwrap()
+        .insert(w.path.clone(), map);
+}
+
+fn persist_agent_context_cache(ch: &Channels) {
+    let maps: Vec<AgentContextMap> = ch
+        .agent_contexts
+        .lock()
+        .unwrap()
+        .values()
+        .cloned()
+        .collect();
+    let _ = save_agent_context_cache(&maps);
 }
 
 /// Reaper: every REAPER_PERIOD, sweep `active_runs` for processes whose PGID

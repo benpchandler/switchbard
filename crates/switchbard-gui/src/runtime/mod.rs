@@ -16,7 +16,70 @@ pub mod worktrees;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use switchbard_core::{AttributedListener, CommitSummary, DirtyFile, DriftDetail};
+use switchbard_core::{
+    AgentKind, AttributedListener, CommitSummary, ContextKind, ContextScope, DirtyFile, DriftDetail,
+};
+
+/// Top-level central-panel tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ViewTab {
+    #[default]
+    Servers,
+    AgentContext,
+}
+
+/// Agent target selected in the Agent Context explorer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentContextAgent {
+    Claude,
+    Codex,
+    All,
+}
+
+impl AgentContextAgent {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude",
+            Self::Codex => "Codex",
+            Self::All => "All agents",
+        }
+    }
+
+    pub fn agent_kind(self) -> AgentKind {
+        match self {
+            Self::Claude | Self::All => AgentKind::Claude,
+            Self::Codex => AgentKind::Codex,
+        }
+    }
+}
+
+/// UI-local selection state for the Agent Context explorer.
+#[derive(Debug, Clone)]
+pub struct AgentContextViewState {
+    pub scope: ContextScope,
+    pub kind: Option<ContextKind>,
+    pub selected_id: Option<String>,
+    pub agent: AgentContextAgent,
+    pub global_kind: Option<ContextKind>,
+    pub global_selected_id: Option<String>,
+    pub global_open: bool,
+    pub pinned_repo: Option<String>,
+}
+
+impl Default for AgentContextViewState {
+    fn default() -> Self {
+        Self {
+            scope: ContextScope::Local,
+            kind: None,
+            selected_id: None,
+            agent: AgentContextAgent::Claude,
+            global_kind: None,
+            global_selected_id: None,
+            global_open: false,
+            pinned_repo: None,
+        }
+    }
+}
 
 /// Active-run summary shown in the remove-worktree dialog. Stripped down from
 /// `ActiveRun` because the dialog only needs the user-visible name + the pgid

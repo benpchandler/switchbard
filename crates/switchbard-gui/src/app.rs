@@ -13,7 +13,8 @@
 
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
-    ActiveRun, ActiveRunSummary, ConfirmRemoveWorktree, PickerState, WorktreeMeta,
+    ActiveRun, ActiveRunSummary, AgentContextViewState, ConfirmRemoveWorktree, PickerState,
+    ViewTab, WorktreeMeta,
 };
 use crate::sync::{Kick, Status};
 use crate::ui;
@@ -27,9 +28,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 use switchbard_core::config::Config;
 use switchbard_core::{
-    collect_dirty_files, config, is_primary_worktree, kill_pgid, open_url, remove_worktree,
-    spawn_in_session, url_for_port, AttributedListener, DetectedService, KillOutcome, Repo,
-    WorktreeRef, BROWSER_APP_NAMES,
+    collect_dirty_files, config, is_primary_worktree, kill_pgid, load_agent_context_cache,
+    open_url, remove_worktree, spawn_in_session, url_for_port, AgentContextMap, AttributedListener,
+    DetectedService, KillOutcome, Repo, WorktreeRef, BROWSER_APP_NAMES,
 };
 
 #[derive(Default)]
@@ -45,11 +46,13 @@ pub struct HiveApp {
     pub worktrees: Arc<Mutex<Vec<WorktreeRef>>>,
     pub meta: Arc<Mutex<HashMap<PathBuf, WorktreeMeta>>>,
     pub services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>>,
+    pub agent_contexts: Arc<Mutex<HashMap<PathBuf, AgentContextMap>>>,
     pub active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
     pub state: Arc<Mutex<ScanState>>,
     pub scanner_kick: Kick,
     pub probe_kick: Kick,
     pub detection_kick: Kick,
+    pub agent_context_kick: Kick,
     pub picker: Arc<Mutex<PickerState>>,
 
     // Per-view feedback channels. One per UI surface so messages don't
@@ -78,12 +81,24 @@ pub struct HiveApp {
     /// When false (default), hide rows whose classifier verdict is NotServer
     /// (test scripts, build wrappers, ship-gate runners, etc.).
     pub show_non_servers: bool,
+    pub view_tab: ViewTab,
+    pub agent_context_view: AgentContextViewState,
     /// 0 = system default; 1..=BROWSER_APP_NAMES.len() = specific browser.
     pub browser_choice: usize,
     /// First-launch discovery state. Hidden by default; flips to Scanning
     /// → Ready while the welcome modal is on screen. After dismissal it
     /// returns to Hidden permanently for this session.
     pub onboarding: Arc<Mutex<DiscoveryState>>,
+}
+
+fn cached_agent_contexts(worktrees: &[WorktreeRef]) -> HashMap<PathBuf, AgentContextMap> {
+    let live_paths: BTreeSet<PathBuf> = worktrees.iter().map(|w| w.path.clone()).collect();
+    load_agent_context_cache()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|map| live_paths.contains(&map.worktree))
+        .map(|map| (map.worktree.clone(), map))
+        .collect()
 }
 
 impl HiveApp {
@@ -99,10 +114,14 @@ impl HiveApp {
         let scanner_kick = Kick::new();
         let probe_kick = Kick::new();
         let detection_kick = Kick::new();
+        let agent_context_kick = Kick::new();
         let repos_arc = Arc::new(Mutex::new(repos));
         let worktrees_arc = Arc::new(Mutex::new(worktrees));
         let meta = Arc::new(Mutex::new(HashMap::new()));
         let services = Arc::new(Mutex::new(HashMap::new()));
+        let agent_contexts = Arc::new(Mutex::new(cached_agent_contexts(
+            &worktrees_arc.lock().unwrap(),
+        )));
         let active_runs = Arc::new(Mutex::new(HashMap::new()));
         let picker = Arc::new(Mutex::new(PickerState::Idle));
 
@@ -114,10 +133,12 @@ impl HiveApp {
                 worktrees: worktrees_arc.clone(),
                 meta: meta.clone(),
                 services: services.clone(),
+                agent_contexts: agent_contexts.clone(),
                 active_runs: active_runs.clone(),
                 scanner_kick: scanner_kick.clone(),
                 probe_kick: probe_kick.clone(),
                 detection_kick: detection_kick.clone(),
+                agent_context_kick: agent_context_kick.clone(),
             },
         );
 
@@ -139,11 +160,13 @@ impl HiveApp {
             worktrees: worktrees_arc,
             meta,
             services,
+            agent_contexts,
             active_runs,
             state,
             scanner_kick,
             probe_kick,
             detection_kick,
+            agent_context_kick,
             config: cfg,
             picker,
             config_status: Status::new(),
@@ -156,6 +179,8 @@ impl HiveApp {
             confirm_remove_worktree: Arc::new(Mutex::new(None)),
             expanded_repos: BTreeSet::new(),
             show_non_servers,
+            view_tab: ViewTab::Servers,
+            agent_context_view: AgentContextViewState::default(),
             browser_choice,
             onboarding: Arc::new(Mutex::new(DiscoveryState::default())),
         }
@@ -173,6 +198,14 @@ impl HiveApp {
         self.scanner_kick.notify();
         self.probe_kick.notify();
         self.detection_kick.notify();
+        self.agent_context_kick.notify();
+    }
+
+    pub fn mark_agent_contexts_stale(&self) {
+        for map in self.agent_contexts.lock().unwrap().values_mut() {
+            map.scanned_at = None;
+        }
+        self.agent_context_kick.notify();
     }
 
     /// Save the in-memory config to disk. Reports failures via `config_status`
@@ -348,6 +381,7 @@ impl HiveApp {
         let scanner_kick = self.scanner_kick.clone();
         let probe_kick = self.probe_kick.clone();
         let detection_kick = self.detection_kick.clone();
+        let agent_context_kick = self.agent_context_kick.clone();
         let config_status = self.config_status.clone();
         let ctx = ctx.clone();
         let fresh_runs = self.snapshot_runs_for_worktree(&snapshot.worktree_path);
@@ -438,6 +472,7 @@ impl HiveApp {
                     scanner_kick.notify();
                     probe_kick.notify();
                     detection_kick.notify();
+                    agent_context_kick.notify();
                 }
                 Err(e) => {
                     if let Some(state) = confirm.lock().unwrap().as_mut() {
@@ -773,7 +808,10 @@ impl eframe::App for HiveApp {
         // its docked space first; otherwise the central panel sizes to the full
         // window and the side panel overlays it.
         ui::sidebar::render(self, ctx);
-        ui::workspace::render(self, ctx);
+        match self.view_tab {
+            ViewTab::Servers => ui::workspace::render(self, ctx),
+            ViewTab::AgentContext => ui::agent_context::render(self, ctx),
+        }
         // Onboarding overlay paints last so it sits on top of everything
         // else when shown. It no-ops when already dismissed.
         ui::onboarding::render(self, ctx);

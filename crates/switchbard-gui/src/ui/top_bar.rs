@@ -3,6 +3,7 @@
 //! `workspace` panel below.
 
 use crate::app::HiveApp;
+use crate::runtime::ViewTab;
 use crate::ui::workspace;
 use eframe::egui;
 use switchbard_core::BROWSER_APP_NAMES;
@@ -28,17 +29,30 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
             render_actions(app, ui);
         });
         ui.horizontal(|ui| {
-            ui.label("filter:");
-            ui.text_edit_singleline(&mut app.filter);
-            ui.label(
-                egui::RichText::new("matches repo, branch, service, command, port, listener cwd")
-                    .weak(),
-            );
+            render_view_tabs(app, ui);
             ui.separator();
-            ui.checkbox(&mut app.show_only_managed, "only attributed listeners");
-            ui.checkbox(&mut app.show_non_servers, "show non-server scripts");
+            render_filter_controls(app, ui);
         });
     });
+}
+
+fn render_view_tabs(app: &mut HiveApp, ui: &mut egui::Ui) {
+    ui.label("view:");
+    ui.selectable_value(&mut app.view_tab, ViewTab::Servers, "Servers");
+    ui.selectable_value(&mut app.view_tab, ViewTab::AgentContext, "Agent Context");
+}
+
+fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
+    ui.label("filter:");
+    ui.add(egui::TextEdit::singleline(&mut app.filter).desired_width(420.0));
+    ui.label(
+        egui::RichText::new("matches repo, branch, service, command, port, listener cwd").weak(),
+    );
+    if app.view_tab == ViewTab::Servers {
+        ui.separator();
+        ui.checkbox(&mut app.show_only_managed, "only attributed listeners");
+        ui.checkbox(&mut app.show_non_servers, "show non-server scripts");
+    }
 }
 
 fn scan_summary(app: &HiveApp) -> (Option<std::time::Instant>, Option<String>, usize, usize) {
@@ -63,6 +77,7 @@ fn render_actions(app: &mut HiveApp, ui: &mut egui::Ui) {
         app.probe_kick.notify();
         app.scanner_kick.notify();
         app.detection_kick.notify();
+        app.mark_agent_contexts_stale();
     }
 
     ui.separator();
