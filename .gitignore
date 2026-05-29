@@ -1,1 +1,43 @@
+# Build outputs
 target/
+*.app/
+*.dSYM/
+*.dmg
+*.sha256
+
+# Local planning / scratch space
+docs/plans/
+tmp/
+.cache/
+
+# macOS / Finder noise
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# Editor / IDE local state
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Rust coverage / profiling artifacts
+*.profraw
+*.profdata
+coverage/
+tarpaulin-report.html
+lcov.info
