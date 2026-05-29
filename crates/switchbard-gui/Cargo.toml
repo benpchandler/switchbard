@@ -28,6 +28,15 @@ dirs = "5"
 egui_kittest = { version = "0.30", features = ["snapshot", "wgpu"] }
 kittest = "0.1"
 
+# egui_kittest's `wgpu` feature pulls wgpu with `default-features = false` and
+# only the `wgsl` feature — i.e. with NO GPU backend compiled in. On macOS
+# (Metal-only) that leaves `wgpu_snapshot` with zero adapters ("No adapter
+# found"). Depending on wgpu here with the `metal` feature re-enables the
+# backend via Cargo feature unification. Keep the major version in lock-step
+# with egui_kittest's wgpu (currently 23.x).
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+wgpu = { version = "23", default-features = false, features = ["metal"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 eframe = { version = "0.30", default-features = false, features = ["accesskit", "default_fonts", "glow"] }
 

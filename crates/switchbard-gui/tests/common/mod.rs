@@ -60,7 +60,13 @@ pub fn app_with_items(items: Vec<AgentContextItem>) -> HiveApp {
         branch: Some("main".to_string()),
         head: "abc1234".to_string(),
     }];
-    let app = HiveApp::new_headless(Config::default(), repos, worktrees);
+    // Mark onboarding dismissed: otherwise `should_show` (no config repos +
+    // not dismissed) fires the first-launch modal, which spawns a *real* scan
+    // of `~/` for git repos — non-hermetic and non-deterministic. Suppressing
+    // it keeps the harness driving only the seeded view.
+    let mut cfg = Config::default();
+    cfg.ui.onboarding_dismissed = true;
+    let app = HiveApp::new_headless(cfg, repos, worktrees);
     app.agent_contexts.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         AgentContextMap {
