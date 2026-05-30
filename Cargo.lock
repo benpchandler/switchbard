@@ -3408,6 +3408,7 @@ dependencies = [
  "serde",
  "serde_json",
  "switchbard-core",
+ "wgpu",
 ]
 
 [[package]]
@@ -4138,6 +4139,7 @@ dependencies = [
  "arrayvec",
  "ash",
  "bitflags 2.11.1",
+ "block",
  "bytemuck",
  "cfg_aliases 0.1.1",
  "core-graphics-types",
