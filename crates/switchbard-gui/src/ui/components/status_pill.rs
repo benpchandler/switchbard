@@ -31,7 +31,7 @@ impl StatusKind {
             Self::Warn => theme::AMBER,
             Self::Info => theme::SKY,
             Self::Danger => theme::WARN_ORANGE,
-            Self::Neutral => egui::Color32::GRAY,
+            Self::Neutral => theme::WEAK_TEXT,
         }
     }
 }

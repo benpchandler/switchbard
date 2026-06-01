@@ -29,12 +29,12 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use switchbard_core::{
-    default_port_for_service, humanize_age, resolve, AttributedListener, DetectedService, Repo,
-    ResolvedService, ServerLikelihood, ServiceSource, WorktreeRef,
+    default_port_for_service, humanize_age, resolve, AttributedListener, DetectedService,
+    DriftProbe, Repo, ResolvedService, ServerLikelihood, ServiceSource, WorktreeRef,
 };
 
 pub mod tooltips;
-use tooltips::{activity_tooltip, dirty_tooltip, drift_tooltip};
+use tooltips::{activity_tooltip, dirty_tooltip, ref_drift_tooltip};
 
 /// Actions queued during the walk; applied after the central panel
 /// closure exits so we don't double-borrow `app`.
@@ -264,7 +264,7 @@ fn render_summary(ui: &mut egui::Ui, snap: &Snapshot) {
     if external > 0 {
         s.push_str(&format!(" · {external} external"));
     }
-    ui.label(egui::RichText::new(s).weak());
+    ui.label(egui::RichText::new(s).color(theme::WEAK_TEXT));
 }
 
 // ── repo card ────────────────────────────────────────────────────────────
@@ -279,7 +279,8 @@ fn render_repo_card(
 ) {
     let mut listening = 0usize;
     let mut dirty = 0usize;
-    let mut drifted = 0usize;
+    let mut main_drifted = 0usize;
+    let mut remote_attention = 0usize;
     for w in wts {
         listening += snap
             .listeners_by_wt
@@ -290,8 +291,11 @@ fn render_repo_card(
             if m.is_dirty() == Some(true) {
                 dirty += 1;
             }
-            if m.ahead.unwrap_or(0) + m.behind.unwrap_or(0) > 0 {
-                drifted += 1;
+            if drift_is_drifted(&m.main_drift) {
+                main_drifted += 1;
+            }
+            if drift_needs_attention(&m.remote_drift) {
+                remote_attention += 1;
             }
         }
     }
@@ -307,12 +311,12 @@ fn render_repo_card(
                 }
                 ui.add_space(2.0);
                 ui.heading(&repo.name);
-                ui.label(egui::RichText::new(format!("{} wt", wts.len())).weak());
+                ui.label(egui::RichText::new(format!("{} wt", wts.len())).color(theme::WEAK_TEXT));
                 // Chips quiet down: dirty/drifted only when the repo has more
                 // worktrees than the eye can summarize at a glance. Listener
                 // count is on the dot's pulse, no chip needed.
                 if wts.len() > 3 {
-                    let chip_storage = build_chips(dirty, drifted);
+                    let chip_storage = build_chips(dirty, main_drifted, remote_attention);
                     let chips: Vec<Chip<'_>> = chip_storage
                         .iter()
                         .map(|(c, t)| Chip {
@@ -330,7 +334,7 @@ fn render_repo_card(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         egui::RichText::new(repo.path.display().to_string())
-                            .weak()
+                            .color(theme::WEAK_TEXT)
                             .small(),
                     );
                 });
@@ -349,15 +353,30 @@ fn render_repo_card(
         });
 }
 
-fn build_chips(dirty: usize, drifted: usize) -> Vec<(egui::Color32, String)> {
+fn build_chips(
+    dirty: usize,
+    main_drifted: usize,
+    remote_attention: usize,
+) -> Vec<(egui::Color32, String)> {
     let mut chips = Vec::new();
     if dirty > 0 {
         chips.push((theme::AMBER, format!("{dirty} dirty")));
     }
-    if drifted > 0 {
-        chips.push((theme::LAVENDER, format!("{drifted} drifted")));
+    if main_drifted > 0 {
+        chips.push((theme::LAVENDER, format!("{main_drifted} vs main")));
+    }
+    if remote_attention > 0 {
+        chips.push((theme::SKY, format!("{remote_attention} remote")));
     }
     chips
+}
+
+fn drift_is_drifted(probe: &Option<DriftProbe>) -> bool {
+    probe.as_ref().is_some_and(DriftProbe::is_drifted)
+}
+
+fn drift_needs_attention(probe: &Option<DriftProbe>) -> bool {
+    probe.as_ref().is_some_and(DriftProbe::needs_attention)
 }
 
 // ── worktree row ─────────────────────────────────────────────────────────
@@ -415,7 +434,7 @@ fn render_worktree_row(
                     render_listeners_strip(ui, &listeners, &service_ports, snap, pending);
                 }
                 if svcs.is_empty() && listeners.is_empty() {
-                    ui.label(egui::RichText::new("nothing detected here").weak());
+                    ui.label(egui::RichText::new("nothing detected here").color(theme::WEAK_TEXT));
                 }
                 ui.add_space(4.0);
             });
@@ -435,7 +454,7 @@ fn is_noteworthy(
     if m.is_dirty() == Some(true) {
         return true;
     }
-    if m.ahead.unwrap_or(0) + m.behind.unwrap_or(0) > 0 {
+    if drift_is_drifted(&m.main_drift) || drift_needs_attention(&m.remote_drift) {
         return true;
     }
     if let Some(act) = m.activity() {
@@ -484,7 +503,7 @@ fn render_worktree_row_trailing(
         ui.label(
             egui::RichText::new(w.head.chars().take(8).collect::<String>())
                 .monospace()
-                .weak()
+                .color(theme::WEAK_TEXT)
                 .small(),
         )
         .on_hover_text(&w.head);
@@ -526,39 +545,95 @@ fn headline_dot(
         if m.is_dirty() == Some(true) {
             return (theme::AMBER, 0);
         }
-        if m.ahead.unwrap_or(0) + m.behind.unwrap_or(0) > 0 {
+        if drift_is_drifted(&m.main_drift) {
             return (theme::LAVENDER, 0);
+        }
+        if drift_needs_attention(&m.remote_drift) {
+            return (theme::SKY, 0);
         }
     }
     (egui::Color32::GRAY, 0)
 }
 
 /// One inline "health" zone: dirty + drift on a single line. Both fields
-/// are silently absent when in their default state (clean / in sync) — the
-/// absence of a token IS the "everything fine" signal. An em-dash shows
-/// when both are absent so the eye still has an anchor.
+/// are explicit so a linked worktree never looks unprobed just because it is
+/// clean or in sync.
 fn render_health_inline(ui: &mut egui::Ui, m: &WorktreeMeta) {
-    let dirty = matches!(m.is_dirty(), Some(true));
-    let drift = match (m.ahead, m.behind) {
-        (Some(a), Some(b)) if a + b > 0 => Some((a, b)),
-        _ => None,
-    };
-    if !dirty && drift.is_none() {
-        ui.label(egui::RichText::new("—").weak())
-            .on_hover_text("clean · in sync");
+    render_dirty_inline(ui, m);
+    render_drift_inline(
+        ui,
+        "main",
+        m.main_drift.as_ref(),
+        m.main_drift_detail.as_ref(),
+        None,
+        theme::LAVENDER,
+    );
+    render_drift_inline(
+        ui,
+        "remote",
+        m.remote_drift.as_ref(),
+        m.remote_drift_detail.as_ref(),
+        m.fetch_unix,
+        theme::SKY,
+    );
+}
+
+fn render_dirty_inline(ui: &mut egui::Ui, m: &WorktreeMeta) {
+    match m.is_dirty() {
+        Some(true) => {
+            let tip = dirty_tooltip(m.dirty_files.as_deref().unwrap_or(&[]));
+            status_pill(ui, StatusKind::Warn, "dirty", Some(&tip));
+        }
+        Some(false) => {
+            status_pill(
+                ui,
+                StatusKind::Neutral,
+                "clean",
+                Some("No uncommitted changes"),
+            );
+        }
+        None => {
+            ui.label(egui::RichText::new("dirty ...").color(theme::WEAK_TEXT))
+                .on_hover_text("Dirty probe pending or failed");
+        }
+    }
+}
+
+fn render_drift_inline(
+    ui: &mut egui::Ui,
+    label: &str,
+    probe: Option<&DriftProbe>,
+    detail: Option<&switchbard_core::DriftDetail>,
+    fetch_unix: Option<u64>,
+    drift_color: egui::Color32,
+) {
+    let Some(probe) = probe else {
+        ui.label(egui::RichText::new(format!("{label} ...")).color(theme::WEAK_TEXT))
+            .on_hover_text(format!("{label} comparison pending or failed"));
         return;
-    }
-    if dirty {
-        let tip = dirty_tooltip(m.dirty_files.as_deref().unwrap_or(&[]));
-        status_pill(ui, StatusKind::Warn, "dirty", Some(&tip));
-    }
-    if let Some((a, b)) = drift {
-        mono_label(ui, &format!("+{a}/-{b}"), Some(theme::LAVENDER)).on_hover_text(drift_tooltip(
-            a,
-            b,
-            m.drift_detail.as_ref(),
-            m.fetch_unix,
-        ));
+    };
+
+    let tip = ref_drift_tooltip(label, probe, detail, fetch_unix);
+    match probe {
+        DriftProbe::Ready { ahead, behind, .. } => {
+            let text = format!("{label} +{ahead}/-{behind}");
+            if ahead + behind > 0 {
+                mono_label(ui, &text, Some(drift_color)).on_hover_text(tip);
+            } else {
+                ui.label(
+                    egui::RichText::new(text)
+                        .monospace()
+                        .color(theme::WEAK_TEXT),
+                )
+                .on_hover_text(tip);
+            }
+        }
+        DriftProbe::MissingBase { .. } => {
+            status_pill(ui, StatusKind::Warn, format!("{label} missing"), Some(&tip));
+        }
+        DriftProbe::NoUpstream => {
+            status_pill(ui, StatusKind::Warn, "no upstream", Some(&tip));
+        }
     }
 }
 
@@ -683,7 +758,7 @@ fn render_service_line(
 
         let name_text = match resolved.likelihood {
             ServerLikelihood::NotServer => egui::RichText::new(&resolved.canonical_name)
-                .weak()
+                .color(theme::WEAK_TEXT)
                 .italics(),
             _ => egui::RichText::new(&resolved.canonical_name).strong(),
         };
@@ -695,7 +770,7 @@ fn render_service_line(
             ui.label(
                 egui::RichText::new(format!("▸{}", resolved.entry_points.len()))
                     .small()
-                    .weak(),
+                    .color(theme::WEAK_TEXT),
             )
             .on_hover_text(&entry_hover);
         }
@@ -746,7 +821,7 @@ fn render_service_state_inline(ui: &mut egui::Ui, row_state: &RowState) {
             );
         }
         RowState::Idle => {
-            ui.label(egui::RichText::new("idle").weak());
+            ui.label(egui::RichText::new("idle").color(theme::WEAK_TEXT));
         }
     }
 }
@@ -1073,7 +1148,9 @@ fn render_unattributed_card(ui: &mut egui::Ui, list: &[AttributedListener], pend
                     theme::painted_dot_hollow(ui, egui::Color32::GRAY);
                     ui.add_space(2.0);
                     ui.label(egui::RichText::new("Unattributed listeners").strong());
-                    ui.label(egui::RichText::new(format!("({})", list.len())).weak());
+                    ui.label(
+                        egui::RichText::new(format!("({})", list.len())).color(theme::WEAK_TEXT),
+                    );
                 })
                 .body(|ui| {
                     for l in list {
