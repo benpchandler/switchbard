@@ -681,8 +681,8 @@ fn path_link(ui: &mut egui::Ui, item: &AgentContextItem, max_width: f32, namespa
             if ui
                 .link(
                     egui::RichText::new(path)
-                        .monospace()
                         .small()
+                        .family(egui::FontFamily::Monospace)
                         .color(theme::MUTED_TEXT),
                 )
                 .clicked()
@@ -708,8 +708,8 @@ fn render_detail_drawer(ui: &mut egui::Ui, selected: Option<&AgentContextItem>, 
                 if ui
                     .link(
                         egui::RichText::new(item.path.display().to_string())
-                            .monospace()
-                            .small(),
+                            .small()
+                            .family(egui::FontFamily::Monospace),
                     )
                     .clicked()
                 {
@@ -742,7 +742,11 @@ fn render_detail_drawer(ui: &mut egui::Ui, selected: Option<&AgentContextItem>, 
         .id_salt(format!("preview_{namespace}_{}", item.id))
         .max_height(120.0)
         .show(ui, |ui| {
-            ui.add(egui::Label::new(egui::RichText::new(preview).monospace().small()).wrap());
+            // Body-altitude monospace, not `.small()`: this is the primary
+            // thing the user reads, so it sits a step above the path chrome.
+            // (`.small()` also silently overrode `.monospace()` — same field —
+            // so the preview wasn't even fixed-width before.)
+            ui.add(egui::Label::new(egui::RichText::new(preview).monospace()).wrap());
         });
 }
 
