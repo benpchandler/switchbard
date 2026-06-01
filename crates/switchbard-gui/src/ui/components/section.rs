@@ -7,6 +7,8 @@
 
 use eframe::egui;
 
+use crate::ui::theme;
+
 /// A colored badge in the section header, like "2 listening" or "1 dirty".
 pub struct Chip<'a> {
     pub color: egui::Color32,
@@ -25,7 +27,7 @@ pub fn repo_section_header(
 ) {
     ui.horizontal(|ui| {
         ui.heading(heading);
-        ui.label(egui::RichText::new(subtitle).weak());
+        ui.label(egui::RichText::new(subtitle).color(theme::MUTED_TEXT));
         if !chips.is_empty() {
             ui.separator();
         }
@@ -34,7 +36,7 @@ pub fn repo_section_header(
         }
     });
     if let Some(line) = second_line {
-        ui.label(egui::RichText::new(line).weak());
+        ui.label(egui::RichText::new(line).color(theme::MUTED_TEXT));
     }
     ui.add_space(6.0);
 }
