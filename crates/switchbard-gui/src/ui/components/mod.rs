@@ -1,7 +1,7 @@
 //! Reusable UI components — the design-system layer.
 //!
 //! Every view assembles its tables out of these primitives instead of
-//! hand-rolling `RichText::new(...).small().weak()` chains. The contract:
+//! hand-rolling muted/small `RichText` chains (see `theme::MUTED_TEXT`). The contract:
 //!
 //! - **One source of truth per visual concept.** A "weak dash placeholder"
 //!   means exactly the same thing in every view — so it lives here.

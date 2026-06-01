@@ -9,9 +9,18 @@
 //! previous palette was tuned for a dark theme and washed out on light: GREEN
 //! 120,230,140 measured 1.43:1, LAVENDER 180,180,240 measured 1.80:1.
 //!
-//! `apply(ctx)` also installs a tuned `Visuals` that darkens egui's built-in
-//! `weak_text_color` so `.weak()` labels (paths, hints) reach AA too.
+//! Secondary ("muted") text uses [`MUTED_TEXT`], *not* egui's `.weak()`.
+//! `.weak()` resolves to `gray_out(text_color)`, which blends the text 50%
+//! toward the panel — landing at ~2.4:1 no matter how dark the base color is
+//! (the blend target is the light background, so AA is mathematically
+//! unreachable). The `legibility_audit` test enforces this: every readable run
+//! must clear the size floor and WCAG AA. See [`MIN_FONT_POINTS`] etc. in
+//! `super::legibility`.
+//!
+//! `apply(ctx)` installs the tuned `Visuals` and raises egui's `Small` text
+//! style to the legibility floor (egui ships it at 9pt, below AA-legible).
 
+use super::legibility;
 use eframe::egui::{self, Color32};
 
 // Green ≈ healthy / running / has-listeners. (#117A33, 5.0:1)
@@ -33,10 +42,15 @@ pub const WARN_ORANGE: Color32 = Color32::from_rgb(0xB8, 0x3A, 0x0A);
 // (#B43C3C, 5.3:1 against white text on the button)
 pub const DANGER: Color32 = Color32::from_rgb(0xB4, 0x3C, 0x3C);
 
-// Subdued text used by `.weak()` labels. egui's default is ~gray(128) which
-// only hits 3.0:1 against the panel bg — fine for "decorative" gray text in
-// other apps, too light here for paths and hint text. (#4A4A4A, 8.4:1)
+// Primary body text. Installed as the noninteractive fg in `apply`, so plain
+// labels paint with it. (#4A4A4A, 8.4:1 against the #F8F8F8 panel.)
 pub const WEAK_TEXT: Color32 = Color32::from_rgb(0x4A, 0x4A, 0x4A);
+
+// Secondary / de-emphasized text (paths, hints, counts, separators) — the
+// replacement for egui's `.weak()`, which cannot reach AA on a light panel.
+// Lighter than `WEAK_TEXT` so the hierarchy still reads, but dark enough to
+// clear AA with margin. (#666666, ~5.4:1 against the #F8F8F8 panel.)
+pub const MUTED_TEXT: Color32 = Color32::from_rgb(0x66, 0x66, 0x66);
 
 // Soft "highlighter on a page" tint used to distinguish the primary
 // worktree of a repo (the directory whose path matches the configured
@@ -296,16 +310,25 @@ pub fn triangle_button(ui: &mut egui::Ui, up: bool, enabled: bool) -> egui::Resp
 /// Install Switchbard's tuned egui visuals on the given context. Called once from
 /// `HiveApp::new`. We start from `Visuals::light()` (egui auto-detects dark
 /// mode on some systems and the chromatic palette above is tuned for light)
-/// and bump `weak_text_color` so `.weak()` labels hit AA contrast.
+/// and pin body text + the `Small` style to legible values.
 pub fn apply(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::light();
-    // egui doesn't expose a direct `weak_text_color` setter — it's derived
-    // from `widgets.noninteractive.fg_stroke.color` blended with the bg. The
-    // straightforward path is to set the noninteractive fg color directly so
-    // both `.weak()` (alpha-blended) and plain noninteractive labels darken
-    // together.
+    // Body text. `text_color()` reads `widgets.noninteractive.fg_stroke.color`,
+    // so setting it here makes plain labels paint with WEAK_TEXT (8.4:1).
     visuals.widgets.noninteractive.fg_stroke.color = WEAK_TEXT;
-    // The `override_text_color` lets us set the primary body text explicitly;
-    // leaving it None keeps egui's default near-black which is fine on white.
+    // egui's default link color (#009BFF) is only 2.8:1 on the light panel.
+    // SKY is the same hue family at AA (5.0:1), so links (e.g. the path links
+    // in the Agent Context drawer) stay clearly clickable and readable.
+    visuals.hyperlink_color = SKY;
     ctx.set_visuals(visuals);
+
+    // egui ships `Small` at 9pt — below the legibility floor. Raise it to the
+    // floor so every `.small()` call site clears the size contract in one move,
+    // while staying a step below `Body` (12.5pt) so the hierarchy survives.
+    ctx.style_mut(|style| {
+        style.text_styles.insert(
+            egui::TextStyle::Small,
+            egui::FontId::proportional(legibility::MIN_FONT_POINTS),
+        );
+    });
 }

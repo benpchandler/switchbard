@@ -48,11 +48,11 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                     worktrees.len(),
                     if worktrees.len() == 1 { "" } else { "s" }
                 ))
-                .weak(),
+                .color(theme::MUTED_TEXT),
             );
             if let Some(msg) = &config_msg {
                 ui.add_space(2.0);
-                ui.label(egui::RichText::new(msg).weak());
+                ui.label(egui::RichText::new(msg).color(theme::MUTED_TEXT));
             }
             ui.add_space(6.0);
 
@@ -65,7 +65,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                         egui::RichText::new(
                             "Click ➕ Add above and pick a folder\nthat contains a git repository.",
                         )
-                        .weak(),
+                        .color(theme::MUTED_TEXT),
                     );
                 });
                 return;
@@ -136,7 +136,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                         if repo_count > 0 {
                             ui.label(egui::RichText::new(format!("{repo_count}")).strong());
                         } else {
-                            ui.label(egui::RichText::new("—").weak());
+                            ui.label(egui::RichText::new("—").color(theme::MUTED_TEXT));
                         }
                         // Remaining space → label (truncates with ellipsis).
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -217,7 +217,9 @@ fn render_remove_confirmation(app: &mut HiveApp, ctx: &egui::Context) {
                 egui::RichText::new(format!("Stop tracking '{name}' in Switchbard?")).strong(),
             );
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(format!("Path: {}", path.display())).weak());
+            ui.label(
+                egui::RichText::new(format!("Path: {}", path.display())).color(theme::MUTED_TEXT),
+            );
             ui.add_space(6.0);
             ui.label(
                 "This only removes it from Switchbard — the repository and its \

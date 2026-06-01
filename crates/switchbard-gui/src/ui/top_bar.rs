@@ -4,6 +4,7 @@
 
 use crate::app::HiveApp;
 use crate::runtime::ViewTab;
+use crate::ui::theme;
 use crate::ui::workspace;
 use eframe::egui;
 use switchbard_core::BROWSER_APP_NAMES;
@@ -46,7 +47,8 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
     ui.label("filter:");
     ui.add(egui::TextEdit::singleline(&mut app.filter).desired_width(420.0));
     ui.label(
-        egui::RichText::new("matches repo, branch, service, command, port, listener cwd").weak(),
+        egui::RichText::new("matches repo, branch, service, command, port, listener cwd")
+            .color(theme::MUTED_TEXT),
     );
     if app.view_tab == ViewTab::Servers {
         ui.separator();

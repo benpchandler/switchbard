@@ -6,6 +6,7 @@
 pub mod agent_context;
 pub mod column_widths;
 pub mod components;
+pub mod legibility;
 pub mod onboarding;
 pub mod path_display;
 pub mod sidebar;
