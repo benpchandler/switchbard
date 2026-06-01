@@ -3,7 +3,7 @@
 //! path.
 
 use crate::runtime::Activity;
-use switchbard_core::{humanize_age, CommitSummary, DriftDetail};
+use switchbard_core::{humanize_age, CommitSummary, DriftDetail, DriftProbe};
 
 /// Format the dirty-cell tooltip: "N changed files" header + first ~10 raw
 /// porcelain lines verbatim.
@@ -58,6 +58,38 @@ pub fn drift_tooltip(
         }
     }
     s
+}
+
+pub fn ref_drift_tooltip(
+    label: &str,
+    probe: &DriftProbe,
+    detail: Option<&DriftDetail>,
+    fetch_unix: Option<u64>,
+) -> String {
+    match probe {
+        DriftProbe::Ready {
+            base,
+            ahead,
+            behind,
+        } => {
+            let mut s = format!(
+                "{label} comparison against `{base}`\n{ahead} commit{} ahead, {behind} behind\n",
+                if *ahead == 1 { "" } else { "s" }
+            );
+            if label == "remote" {
+                s.push_str(&fetch_line(fetch_unix));
+                s.push_str(
+                    "\nNote: Switchbard doesn't run `git fetch`; remote state uses local remote-tracking refs.",
+                );
+            }
+            append_drift_detail(&mut s, *ahead, *behind, detail);
+            s
+        }
+        DriftProbe::MissingBase { base } => {
+            format!("Cannot compare {label}: `{base}` does not exist locally.")
+        }
+        DriftProbe::NoUpstream => "No upstream remote is configured for this branch.".to_string(),
+    }
 }
 
 pub fn in_sync_tooltip(fetch_unix: Option<u64>) -> String {
@@ -117,6 +149,29 @@ fn fetch_line(fetch_unix: Option<u64>) -> String {
     match fetch_unix {
         Some(t) => format!("Last `git fetch`: {}", humanize_age(t)),
         None => "Last `git fetch`: never (or no remote configured)".to_string(),
+    }
+}
+
+fn append_drift_detail(s: &mut String, ahead: u32, behind: u32, detail: Option<&DriftDetail>) {
+    if let Some(d) = detail {
+        if !d.ahead.is_empty() {
+            s.push_str(&format!(
+                "\nAhead{}:\n",
+                truncation_suffix(d.ahead.len(), ahead as usize, d.ahead_truncated)
+            ));
+            for c in &d.ahead {
+                s.push_str(&format!("  {}  {}\n", c.short_sha, c.subject));
+            }
+        }
+        if !d.behind.is_empty() {
+            s.push_str(&format!(
+                "\nBehind{}:\n",
+                truncation_suffix(d.behind.len(), behind as usize, d.behind_truncated)
+            ));
+            for c in &d.behind {
+                s.push_str(&format!("  {}  {}\n", c.short_sha, c.subject));
+            }
+        }
     }
 }
 

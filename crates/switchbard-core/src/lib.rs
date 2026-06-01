@@ -27,7 +27,8 @@ pub use discover::{auto_scan_roots, discover_repos, DiscoveredRepo};
 pub use expected_port::{default_port_for_service, expected_port};
 pub use git_probe::{
     humanize_age, probe_ahead_behind, probe_dirty_files, probe_drift_detail, probe_fetch_age,
-    probe_head_commit_time, probe_recent_commits, CommitSummary, DriftDetail,
+    probe_head_commit_time, probe_main_drift, probe_recent_commits, probe_ref_drift,
+    probe_ref_drift_detail, probe_remote_drift, CommitSummary, DriftDetail, DriftProbe,
 };
 pub use kill::{kill_pgid, KillOutcome};
 pub use open_url::{open_url, url_for_port, BROWSER_APP_NAMES};

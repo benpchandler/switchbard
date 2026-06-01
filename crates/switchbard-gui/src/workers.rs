@@ -14,10 +14,10 @@ use crate::runtime::{ActiveRun, WorktreeMeta};
 use crate::sync::Kick;
 use eframe::egui;
 use switchbard_core::{
-    agent_context_needs_rescan, attribute, detect_services, probe_ahead_behind, probe_dirty_files,
-    probe_drift_detail, probe_fetch_age, probe_head_commit_time, probe_recent_commits,
-    save_agent_context_cache, scan_agent_context, scan_listeners, AgentContextMap, DetectedService,
-    Repo, WorktreeRef,
+    agent_context_needs_rescan, attribute, detect_services, probe_dirty_files, probe_fetch_age,
+    probe_head_commit_time, probe_main_drift, probe_recent_commits, probe_ref_drift_detail,
+    probe_remote_drift, save_agent_context_cache, scan_agent_context, scan_listeners,
+    AgentContextMap, DetectedService, DriftProbe, Repo, WorktreeRef,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
@@ -30,7 +30,7 @@ const DRIFT_DETAIL_LIMIT: usize = 5;
 /// spare while still bounding the `git log` cost.
 const RECENT_COMMITS_LIMIT: usize = 10;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
@@ -107,21 +107,16 @@ fn spawn_probe(ctx: egui::Context, ch: Channels) {
         // Step 2: probe each.
         let wts = ch.worktrees.lock().unwrap().clone();
         for w in &wts {
-            let (ahead, behind) = probe_ahead_behind(&w.path)
-                .map(|(a, b)| (Some(a), Some(b)))
-                .unwrap_or((None, None));
-            // Only fetch the per-commit detail when there's actual drift —
-            // saves two `git log` invocations per in-sync worktree per cycle.
-            let drift_detail = if ahead.unwrap_or(0) + behind.unwrap_or(0) > 0 {
-                probe_drift_detail(&w.path, DRIFT_DETAIL_LIMIT)
-            } else {
-                None
-            };
+            let main_drift = probe_main_drift(&w.path);
+            let remote_drift = probe_remote_drift(&w.path);
+            let main_drift_detail = drift_detail_for_probe(&w.path, main_drift.as_ref());
+            let remote_drift_detail = drift_detail_for_probe(&w.path, remote_drift.as_ref());
             let m = WorktreeMeta {
                 dirty_files: probe_dirty_files(&w.path),
-                ahead,
-                behind,
-                drift_detail,
+                main_drift,
+                remote_drift,
+                main_drift_detail,
+                remote_drift_detail,
                 head_commit_unix: probe_head_commit_time(&w.path),
                 fetch_unix: probe_fetch_age(&w.path),
                 recent_commits: probe_recent_commits(&w.path, RECENT_COMMITS_LIMIT),
@@ -132,6 +127,24 @@ fn spawn_probe(ctx: egui::Context, ch: Channels) {
         }
         ch.probe_kick.wait(PROBE_PERIOD);
     });
+}
+
+fn drift_detail_for_probe(
+    path: &Path,
+    probe: Option<&DriftProbe>,
+) -> Option<switchbard_core::DriftDetail> {
+    let Some(DriftProbe::Ready {
+        base,
+        ahead,
+        behind,
+    }) = probe
+    else {
+        return None;
+    };
+    if ahead + behind == 0 {
+        return None;
+    }
+    probe_ref_drift_detail(path, base, DRIFT_DETAIL_LIMIT)
 }
 
 /// Service detection: for each worktree we haven't seen, parse its Procfile /

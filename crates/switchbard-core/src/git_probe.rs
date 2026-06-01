@@ -32,6 +32,52 @@ pub struct DriftDetail {
     pub behind_truncated: bool,
 }
 
+/// Ahead/behind status for `HEAD` against a comparison ref.
+///
+/// `Ready` means the comparison ran and the branch may still be perfectly
+/// in-sync (`ahead = behind = 0`). The non-ready states are intentionally
+/// explicit so the UI does not make "no upstream" look the same as "clean".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DriftProbe {
+    Ready {
+        base: String,
+        ahead: u32,
+        behind: u32,
+    },
+    MissingBase {
+        base: String,
+    },
+    NoUpstream,
+}
+
+impl DriftProbe {
+    pub fn counts(&self) -> Option<(u32, u32)> {
+        match self {
+            Self::Ready { ahead, behind, .. } => Some((*ahead, *behind)),
+            Self::MissingBase { .. } | Self::NoUpstream => None,
+        }
+    }
+
+    pub fn is_drifted(&self) -> bool {
+        self.counts()
+            .is_some_and(|(ahead, behind)| ahead + behind > 0)
+    }
+
+    pub fn needs_attention(&self) -> bool {
+        match self {
+            Self::Ready { ahead, behind, .. } => ahead + behind > 0,
+            Self::MissingBase { .. } | Self::NoUpstream => true,
+        }
+    }
+
+    pub fn base(&self) -> Option<&str> {
+        match self {
+            Self::Ready { base, .. } | Self::MissingBase { base } => Some(base),
+            Self::NoUpstream => None,
+        }
+    }
+}
+
 /// Changed files in the worktree (the `git status --porcelain` output, line by
 /// line). Empty vec = clean; non-empty = dirty.
 pub fn probe_dirty_files(path: &Path) -> Option<Vec<String>> {
@@ -39,23 +85,51 @@ pub fn probe_dirty_files(path: &Path) -> Option<Vec<String>> {
     Some(out.lines().map(|l| l.to_string()).collect())
 }
 
+/// Ahead/behind of `HEAD` relative to the local `main` ref. Returns
+/// `MissingBase` when this repo does not have a local `main` branch.
+pub fn probe_main_drift(path: &Path) -> Option<DriftProbe> {
+    probe_ref_drift(path, "main")
+}
+
+/// Ahead/behind of `HEAD` relative to the current branch's configured upstream.
+/// Returns `NoUpstream` when `@{u}` is not configured.
+pub fn probe_remote_drift(path: &Path) -> Option<DriftProbe> {
+    let Some(upstream) = upstream_ref(path) else {
+        return Some(DriftProbe::NoUpstream);
+    };
+    probe_ref_drift(path, &upstream)
+}
+
 /// (ahead, behind) relative to `<upstream>` if one is configured. None when
 /// there's no upstream or git fails.
 pub fn probe_ahead_behind(path: &Path) -> Option<(u32, u32)> {
-    let upstream = upstream_ref(path)?;
+    probe_remote_drift(path)?.counts()
+}
+
+/// Ahead/behind of `HEAD` relative to an arbitrary comparison ref.
+pub fn probe_ref_drift(path: &Path, base_ref: &str) -> Option<DriftProbe> {
+    if !ref_exists(path, base_ref) {
+        return Some(DriftProbe::MissingBase {
+            base: base_ref.to_string(),
+        });
+    }
     let raw = git(
         path,
         &[
             "rev-list",
             "--left-right",
             "--count",
-            &format!("HEAD...{upstream}"),
+            &format!("HEAD...{base_ref}"),
         ],
     )?;
     let mut parts = raw.split_whitespace();
     let ahead: u32 = parts.next()?.parse().ok()?;
     let behind: u32 = parts.next()?.parse().ok()?;
-    Some((ahead, behind))
+    Some(DriftProbe::Ready {
+        base: base_ref.to_string(),
+        ahead,
+        behind,
+    })
 }
 
 /// Lists of commits the local branch is ahead of and behind its upstream by,
@@ -63,8 +137,14 @@ pub fn probe_ahead_behind(path: &Path) -> Option<(u32, u32)> {
 /// returns an empty Default when in sync (both lists empty).
 pub fn probe_drift_detail(path: &Path, limit: usize) -> Option<DriftDetail> {
     let upstream = upstream_ref(path)?;
-    let ahead = log_commits(path, &format!("{upstream}..HEAD"), limit)?;
-    let behind = log_commits(path, &format!("HEAD..{upstream}"), limit)?;
+    probe_ref_drift_detail(path, &upstream, limit)
+}
+
+/// Lists of commits the local branch is ahead of and behind a named ref by,
+/// each capped at `limit`.
+pub fn probe_ref_drift_detail(path: &Path, base_ref: &str, limit: usize) -> Option<DriftDetail> {
+    let ahead = log_commits(path, &format!("{base_ref}..HEAD"), limit)?;
+    let behind = log_commits(path, &format!("HEAD..{base_ref}"), limit)?;
     // Truncation flags: the rev-list count probe is authoritative, but here we
     // can detect "we filled the bucket" — caller compares against ahead/behind
     // counts to refine.
@@ -159,6 +239,19 @@ fn upstream_ref(path: &Path) -> Option<String> {
     }
 }
 
+fn ref_exists(path: &Path, reference: &str) -> bool {
+    git(
+        path,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{reference}^{{commit}}"),
+        ],
+    )
+    .is_some()
+}
+
 fn log_commits(path: &Path, range: &str, limit: usize) -> Option<Vec<CommitSummary>> {
     // Format: `<short-sha>\t<unix-time>\t<subject>` — tab-separated so subjects
     // containing arbitrary characters don't confuse the parser.
@@ -205,6 +298,8 @@ fn git(path: &Path, args: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn humanize_age_buckets() {
@@ -220,5 +315,112 @@ mod tests {
         assert!(humanize_age(now - 86_400 * 30).ends_with("w ago"));
         assert!(humanize_age(now - 86_400 * 90).ends_with("mo ago"));
         assert!(humanize_age(now - 86_400 * 400).ends_with("y ago"));
+    }
+
+    #[test]
+    fn main_drift_compares_head_to_local_main() {
+        let (_tmp, repo) = setup_repo("main");
+        commit_file(&repo, "base.txt", "base", "base");
+        run_git(&repo, &["checkout", "-b", "feature"]);
+        commit_file(&repo, "feature.txt", "one", "feature one");
+        commit_file(&repo, "feature-2.txt", "two", "feature two");
+
+        assert_eq!(
+            probe_main_drift(&repo),
+            Some(DriftProbe::Ready {
+                base: "main".into(),
+                ahead: 2,
+                behind: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn main_drift_reports_missing_local_main() {
+        let (_tmp, repo) = setup_repo("trunk");
+        commit_file(&repo, "base.txt", "base", "base");
+
+        assert_eq!(
+            probe_main_drift(&repo),
+            Some(DriftProbe::MissingBase {
+                base: "main".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn remote_drift_compares_head_to_upstream() {
+        let tmp = TempDir::new().unwrap();
+        let remote = tmp.path().join("origin.git");
+        let repo = tmp.path().join("repo");
+        run_raw_git(&["init", "--bare", remote.to_str().unwrap()]);
+        fs::create_dir(&repo).unwrap();
+        run_raw_git(&["-C", repo.to_str().unwrap(), "init", "-b", "main"]);
+        configure_identity(&repo);
+        run_git(
+            &repo,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        commit_file(&repo, "base.txt", "base", "base");
+        run_git(&repo, &["push", "-u", "origin", "main"]);
+        run_git(&repo, &["checkout", "-b", "feature"]);
+        commit_file(&repo, "feature.txt", "one", "feature one");
+        run_git(&repo, &["push", "-u", "origin", "feature"]);
+        commit_file(&repo, "feature-2.txt", "two", "feature two");
+
+        assert_eq!(
+            probe_remote_drift(&repo),
+            Some(DriftProbe::Ready {
+                base: "origin/feature".into(),
+                ahead: 1,
+                behind: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn remote_drift_reports_no_upstream() {
+        let (_tmp, repo) = setup_repo("main");
+        commit_file(&repo, "base.txt", "base", "base");
+        run_git(&repo, &["checkout", "-b", "scratch"]);
+
+        assert_eq!(probe_remote_drift(&repo), Some(DriftProbe::NoUpstream));
+    }
+
+    fn setup_repo(initial_branch: &str) -> (TempDir, PathBuf) {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        run_raw_git(&["-C", repo.to_str().unwrap(), "init", "-b", initial_branch]);
+        configure_identity(&repo);
+        (tmp, repo)
+    }
+
+    fn configure_identity(repo: &Path) {
+        run_git(repo, &["config", "user.email", "switchbard@example.test"]);
+        run_git(repo, &["config", "user.name", "Switchbard Tests"]);
+    }
+
+    fn commit_file(repo: &Path, file: &str, body: &str, message: &str) {
+        fs::write(repo.join(file), body).unwrap();
+        run_git(repo, &["add", file]);
+        run_git(repo, &["commit", "-m", message]);
+    }
+
+    fn run_git(repo: &Path, args: &[&str]) {
+        let mut full_args = vec!["-C", repo.to_str().unwrap()];
+        full_args.extend_from_slice(args);
+        run_raw_git(&full_args);
+    }
+
+    fn run_raw_git(args: &[&str]) {
+        let output = Command::new("git").args(args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

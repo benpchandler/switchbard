@@ -17,7 +17,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use switchbard_core::{
-    AgentKind, AttributedListener, CommitSummary, ContextKind, ContextScope, DirtyFile, DriftDetail,
+    AgentKind, AttributedListener, CommitSummary, ContextKind, ContextScope, DirtyFile,
+    DriftDetail, DriftProbe,
 };
 
 /// Top-level central-panel tab.
@@ -113,11 +114,14 @@ pub struct WorktreeMeta {
     /// `Some(files)` after the porcelain probe completes — empty means clean.
     /// `None` while the probe hasn't returned yet (or it failed).
     pub dirty_files: Option<Vec<String>>,
-    pub ahead: Option<u32>,
-    pub behind: Option<u32>,
-    /// Commit lists behind the ahead/behind counts (capped). Used to build the
-    /// drift-cell tooltip's "showing N of M" body.
-    pub drift_detail: Option<DriftDetail>,
+    /// `HEAD` compared with the repo's local `main` branch.
+    pub main_drift: Option<DriftProbe>,
+    /// `HEAD` compared with the current branch's configured upstream remote.
+    pub remote_drift: Option<DriftProbe>,
+    /// Commit lists behind the local-main comparison, capped for tooltip use.
+    pub main_drift_detail: Option<DriftDetail>,
+    /// Commit lists behind the remote-upstream comparison, capped for tooltip use.
+    pub remote_drift_detail: Option<DriftDetail>,
     pub head_commit_unix: Option<u64>,
     /// Unix seconds of the last `git fetch` against this repo. None when the
     /// repo has never been fetched (fresh clone of nothing).
