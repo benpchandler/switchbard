@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 const RELATIVE_PATH: &str = ".switchbard/config.toml";
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     /// Schema version. Reserved — currently always 1. Lets a future load()
     /// fork on shape changes without breaking older files.
@@ -29,7 +29,9 @@ pub struct Config {
     pub ui: UiConfig,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+// Note: not `Eq` — `ui_scale` is an `f32`. `PartialEq` is all the tests (and
+// the change-detection in `update`) need.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UiConfig {
     /// Selected browser. `None` or the empty string means "system default";
     /// otherwise one of the names in `BROWSER_APP_NAMES`.
@@ -44,10 +46,33 @@ pub struct UiConfig {
     /// annoying if they remove all repos), so this is a one-shot flag.
     #[serde(default)]
     pub onboarding_dismissed: bool,
+    /// Global UI zoom applied via egui `set_zoom_factor` (1.0 = the display's
+    /// native scale). Persisted here because eframe isn't built with its
+    /// `persistence` feature, so its own zoom memory doesn't survive a restart.
+    /// Clamped to a legible band on apply (`app::clamp_ui_scale`).
+    #[serde(default = "default_ui_scale")]
+    pub ui_scale: f32,
+}
+
+// Hand-written so the default scale is 1.0, not the f32 `Default` of 0.0 (which
+// would blank the window). Also the value a missing `[ui]` section loads with.
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            browser: None,
+            show_non_servers: false,
+            onboarding_dismissed: false,
+            ui_scale: default_ui_scale(),
+        }
+    }
 }
 
 fn default_version() -> u32 {
     1
+}
+
+fn default_ui_scale() -> f32 {
+    1.0
 }
 
 /// The single canonical config path. Returns `None` only if `dirs::home_dir`
@@ -139,6 +164,7 @@ mod tests {
                 browser: Some("Safari".into()),
                 show_non_servers: true,
                 onboarding_dismissed: true,
+                ui_scale: 1.25,
             },
         };
         save_to(&path, &cfg).unwrap();

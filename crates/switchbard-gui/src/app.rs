@@ -33,6 +33,25 @@ use switchbard_core::{
     DetectedService, KillOutcome, Repo, WorktreeRef, BROWSER_APP_NAMES,
 };
 
+/// Legible band for the persisted UI zoom factor. A hand-edited config or an
+/// enthusiastic ⌘+ can't push the window outside this on load; the top-bar
+/// stepper steps within it. (egui's own keyboard zoom may briefly exceed it at
+/// runtime — `clamp_ui_scale` pulls it back on the next launch.)
+pub const MIN_UI_SCALE: f32 = 0.6;
+pub const MAX_UI_SCALE: f32 = 3.0;
+/// One stepper click; matches the feel of egui's keyboard-zoom granularity.
+pub const UI_SCALE_STEP: f32 = 0.1;
+
+/// Clamp a zoom factor into the legible band, mapping a corrupt NaN/∞ back to
+/// native scale.
+pub fn clamp_ui_scale(scale: f32) -> f32 {
+    if scale.is_finite() {
+        scale.clamp(MIN_UI_SCALE, MAX_UI_SCALE)
+    } else {
+        1.0
+    }
+}
+
 #[derive(Default)]
 pub struct ScanState {
     pub listeners: Vec<AttributedListener>,
@@ -109,6 +128,9 @@ impl HiveApp {
         worktrees: Vec<WorktreeRef>,
     ) -> Self {
         ui::theme::apply(&cc.egui_ctx);
+        // Restore the user's saved zoom before the first frame paints (eframe's
+        // own zoom memory doesn't persist without the `persistence` feature).
+        cc.egui_ctx.set_zoom_factor(clamp_ui_scale(cfg.ui.ui_scale));
 
         // Seed the first frame from the on-disk agent-context cache before any
         // worker scan completes, then start the workers against this state.
@@ -832,8 +854,17 @@ impl eframe::App for HiveApp {
 
         self.render_ui(ctx);
 
+        // Capture the live zoom (top-bar stepper or ⌘+/⌘−/⌘0) so it survives a
+        // restart. egui's keyboard zoom lands one frame late, which the next
+        // frame's read-back picks up — invisible to the user.
+        let zoom = ctx.zoom_factor();
+        let zoom_changed = (zoom - self.config.ui.ui_scale).abs() > f32::EPSILON;
+        if zoom_changed {
+            self.config.ui.ui_scale = zoom;
+        }
+
         let ui_after = (self.browser_choice, self.show_non_servers);
-        if ui_before != ui_after {
+        if ui_before != ui_after || zoom_changed {
             self.save_ui_to_config();
         }
     }

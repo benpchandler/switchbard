@@ -2,7 +2,7 @@
 //! Browser picker) and a single filter input that drives the central
 //! `workspace` panel below.
 
-use crate::app::HiveApp;
+use crate::app::{self, HiveApp};
 use crate::runtime::ViewTab;
 use crate::ui::theme;
 use crate::ui::workspace;
@@ -109,6 +109,9 @@ fn render_actions(app: &mut HiveApp, ui: &mut egui::Ui) {
             }
         });
 
+    ui.separator();
+    render_zoom_stepper(ui);
+
     if let Some(msg) = app.config_status.snapshot() {
         ui.separator();
         ui.label(msg);
@@ -120,5 +123,37 @@ fn render_actions(app: &mut HiveApp, ui: &mut egui::Ui) {
     if let Some(msg) = app.server_status.snapshot() {
         ui.separator();
         ui.label(msg);
+    }
+}
+
+/// A compact `Zoom: A-  120%  A+` control. The percentage button resets to
+/// 100%. Persistence is automatic: `HiveApp::update` reads `ctx.zoom_factor()`
+/// back each frame and writes it to the config, so this stepper and the native
+/// Cmd +/-/0 shortcuts share one durable source of truth.
+fn render_zoom_stepper(ui: &mut egui::Ui) {
+    ui.label("Zoom:");
+    let zoom = ui.ctx().zoom_factor();
+    if ui
+        .add_enabled(zoom > app::MIN_UI_SCALE + 1e-3, egui::Button::new("A-"))
+        .on_hover_text("Smaller text (Cmd -)")
+        .clicked()
+    {
+        ui.ctx()
+            .set_zoom_factor(app::clamp_ui_scale(zoom - app::UI_SCALE_STEP));
+    }
+    if ui
+        .button(format!("{:.0}%", zoom * 100.0))
+        .on_hover_text("Reset to 100% (Cmd 0)")
+        .clicked()
+    {
+        ui.ctx().set_zoom_factor(1.0);
+    }
+    if ui
+        .add_enabled(zoom < app::MAX_UI_SCALE - 1e-3, egui::Button::new("A+"))
+        .on_hover_text("Larger text (Cmd +)")
+        .clicked()
+    {
+        ui.ctx()
+            .set_zoom_factor(app::clamp_ui_scale(zoom + app::UI_SCALE_STEP));
     }
 }
