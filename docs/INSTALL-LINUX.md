@@ -1,9 +1,28 @@
 # Installing Switchbard on Linux
 
-Linux support is source-first for now. There is no `.deb`, `.rpm`, or
-`.AppImage` yet.
+A prebuilt **x86_64** binary tarball is attached to each
+[GitHub Release](https://github.com/benpchandler/switchbard/releases)
+(`switchbard-vX.Y.Z-linux-x86_64.tar.gz`). There is no `.deb`, `.rpm`, or
+`.AppImage` yet, and no prebuilt ARM build — build from source for those.
 
-## Requirements
+## Quick install (x86_64)
+
+Download `switchbard-*-linux-x86_64.tar.gz` from the
+[Releases page](https://github.com/benpchandler/switchbard/releases), then:
+
+```sh
+tar -xzf switchbard-*-linux-x86_64.tar.gz
+cd switchbard-*-linux-x86_64
+sha256sum -c ../switchbard-*-linux-x86_64.tar.gz.sha256   # optional integrity check
+./switchbard
+```
+
+The prebuilt binary still needs the runtime shared libraries listed below
+(libxkbcommon, Wayland/X11, libGL) plus `xdg-utils` — any normal desktop session
+already has them. If launching fails with a missing `.so`, install the packages
+from the next section.
+
+## Requirements (build from source)
 
 - Rust `1.95.0` with `rustfmt` and `clippy`
 - `git`
