@@ -40,8 +40,14 @@ terminal tabs:
 - **Tracks git state per worktree.** Dirty / clean, ahead/behind from
   upstream, commit activity (Burst / Active / Slow / Idle).
 - **One control surface.** Start a service, stop a process group, kill an
-  external listener that's holding the port you need, open `:port` in the
-  browser of your choice, or remove a worktree once you're done with it.
+  external listener that's holding the port you need, or open `:port` in the
+  browser of your choice.
+- **Worktree lifecycle, in-app.** Create a worktree (new or existing branch)
+  without leaving Switchbard, give it a memorable label, and remove it when
+  you're done. The remove dialog enumerates uncommitted changes and running
+  services before you confirm, and can optionally delete the local branch too —
+  with per-check safety (merged into main? checked out elsewhere?) so you never
+  lose unlanded work by accident.
 
 ## Who It Is For
 
@@ -56,7 +62,7 @@ Switchbard is most useful if you:
 
 ### Download The Alpha DMG
 
-Download `Switchbard-v0.2.0-macos-arm64.dmg` from the
+Download `Switchbard-v0.3.0-macos-arm64.dmg` from the
 [latest GitHub Release](https://github.com/benpchandler/switchbard/releases/latest),
 open it, then drag `Switchbard.app` to `Applications`.
 

@@ -10,14 +10,14 @@
 //! "what does this anonymous closure do?" question from recurring.
 
 use crate::runtime::worktrees::expand_worktrees;
-use crate::runtime::{ActiveRun, WorktreeMeta};
+use crate::runtime::{ActiveRun, FileListSummary, WorktreeMeta};
 use crate::sync::Kick;
 use eframe::egui;
 use switchbard_core::{
     agent_context_needs_rescan, attribute, detect_services, probe_dirty_files, probe_fetch_age,
-    probe_head_commit_time, probe_main_drift, probe_recent_commits, probe_ref_drift_detail,
-    probe_remote_drift, save_agent_context_cache, scan_agent_context, scan_listeners,
-    AgentContextMap, DetectedService, DriftProbe, Repo, WorktreeRef,
+    probe_head_commit_time, probe_ignored_files, probe_main_drift, probe_recent_commits,
+    probe_ref_drift_detail, probe_remote_drift, save_agent_context_cache, scan_agent_context,
+    scan_listeners, AgentContextMap, DetectedService, DriftProbe, Repo, WorktreeRef,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
@@ -29,6 +29,9 @@ const DRIFT_DETAIL_LIMIT: usize = 5;
 /// covers the typical "agent-burst over the last hour" hover with room to
 /// spare while still bounding the `git log` cost.
 const RECENT_COMMITS_LIMIT: usize = 10;
+/// Ignored files are tooltip context only; keep a bounded preview so large
+/// dependency trees do not make UI snapshots expensive to clone.
+const IGNORED_FILES_PREVIEW_LIMIT: usize = 8;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -113,6 +116,8 @@ fn spawn_probe(ctx: egui::Context, ch: Channels) {
             let remote_drift_detail = drift_detail_for_probe(&w.path, remote_drift.as_ref());
             let m = WorktreeMeta {
                 dirty_files: probe_dirty_files(&w.path),
+                ignored_files: probe_ignored_files(&w.path)
+                    .map(|files| FileListSummary::from_lines(files, IGNORED_FILES_PREVIEW_LIMIT)),
                 main_drift,
                 remote_drift,
                 main_drift_detail,

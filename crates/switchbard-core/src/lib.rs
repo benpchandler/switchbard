@@ -13,6 +13,7 @@ pub mod spawn;
 pub mod types;
 pub mod workflow;
 pub mod worktree;
+pub mod worktree_create;
 pub mod worktree_remove;
 
 pub use agent_context::{
@@ -27,15 +28,20 @@ pub use discover::{auto_scan_roots, discover_repos, DiscoveredRepo};
 pub use expected_port::{default_port_for_service, expected_port};
 pub use git_probe::{
     humanize_age, probe_ahead_behind, probe_dirty_files, probe_drift_detail, probe_fetch_age,
-    probe_head_commit_time, probe_main_drift, probe_recent_commits, probe_ref_drift,
-    probe_ref_drift_detail, probe_remote_drift, CommitSummary, DriftDetail, DriftProbe,
+    probe_head_commit_time, probe_ignored_files, probe_main_drift, probe_recent_commits,
+    probe_ref_drift, probe_ref_drift_detail, probe_remote_drift, CommitSummary, DriftDetail,
+    DriftProbe,
 };
 pub use kill::{kill_pgid, KillOutcome};
 pub use open_url::{open_url, url_for_port, BROWSER_APP_NAMES};
 pub use resolve::{resolve, ResolvedService};
 pub use scanner::scan_listeners;
 pub use spawn::{spawn_in_session, SpawnedRun};
-pub use types::{AttributedListener, LocalListener, Repo, WorktreeRef};
+pub use types::{AttributedListener, LocalListener, Repo, WorktreeAlias, WorktreeRef};
 pub use workflow::{detect_services, DetectedService, ServiceSource};
 pub use worktree::{enumerate_worktrees, WorktreeEntry};
-pub use worktree_remove::{collect_dirty_files, is_primary_worktree, remove_worktree, DirtyFile};
+pub use worktree_create::{create_worktree, CreateBranchMode, CreateWorktreeOptions};
+pub use worktree_remove::{
+    assess_branch_delete, collect_dirty_files, delete_branch, is_primary_worktree, remove_worktree,
+    BranchDeleteAssessment, DirtyFile,
+};

@@ -81,8 +81,29 @@ impl DriftProbe {
 /// Changed files in the worktree (the `git status --porcelain` output, line by
 /// line). Empty vec = clean; non-empty = dirty.
 pub fn probe_dirty_files(path: &Path) -> Option<Vec<String>> {
-    let out = git(path, &["status", "--porcelain"])?;
+    let out = git(path, &["status", "--porcelain=v1", "--untracked-files=all"])?;
     Some(out.lines().map(|l| l.to_string()).collect())
+}
+
+/// Ignored local files in the worktree, surfaced separately from dirty files
+/// because `git worktree remove` can delete ignored artifacts even when the
+/// tracked tree is otherwise clean.
+pub fn probe_ignored_files(path: &Path) -> Option<Vec<String>> {
+    let out = git(
+        path,
+        &[
+            "status",
+            "--porcelain=v1",
+            "--ignored",
+            "--untracked-files=all",
+        ],
+    )?;
+    Some(
+        out.lines()
+            .filter(|line| line.starts_with("!! "))
+            .map(|line| line.to_string())
+            .collect(),
+    )
 }
 
 /// Ahead/behind of `HEAD` relative to the local `main` ref. Returns
@@ -385,6 +406,44 @@ mod tests {
         run_git(&repo, &["checkout", "-b", "scratch"]);
 
         assert_eq!(probe_remote_drift(&repo), Some(DriftProbe::NoUpstream));
+    }
+
+    #[test]
+    fn dirty_probe_lists_nested_untracked_files() {
+        let (_tmp, repo) = setup_repo("main");
+        commit_file(&repo, "base.txt", "base", "base");
+        fs::create_dir_all(repo.join("scratch/nested")).unwrap();
+        fs::write(repo.join("scratch/nested/local.txt"), "local").unwrap();
+
+        let files = probe_dirty_files(&repo).unwrap();
+
+        assert!(
+            files.iter().any(|f| f == "?? scratch/nested/local.txt"),
+            "expected nested untracked file, got {files:?}"
+        );
+    }
+
+    #[test]
+    fn ignored_probe_lists_ignored_files() {
+        let (_tmp, repo) = setup_repo("main");
+        commit_file(&repo, "base.txt", "base", "base");
+        fs::write(repo.join(".gitignore"), "cache/\n*.local\n").unwrap();
+        run_git(&repo, &["add", ".gitignore"]);
+        run_git(&repo, &["commit", "-m", "ignore local artifacts"]);
+        fs::create_dir(repo.join("cache")).unwrap();
+        fs::write(repo.join("cache/app.log"), "cache").unwrap();
+        fs::write(repo.join("settings.local"), "secret").unwrap();
+
+        let files = probe_ignored_files(&repo).unwrap();
+
+        assert!(
+            files.iter().any(|f| f == "!! cache/app.log"),
+            "expected ignored cache file, got {files:?}"
+        );
+        assert!(
+            files.iter().any(|f| f == "!! settings.local"),
+            "expected ignored local file, got {files:?}"
+        );
     }
 
     fn setup_repo(initial_branch: &str) -> (TempDir, PathBuf) {

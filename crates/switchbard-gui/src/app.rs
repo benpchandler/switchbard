@@ -11,6 +11,9 @@
 //! - `update()` is just dispatch — each view module owns its own central
 //!   panel.
 
+use crate::perf::{PerfSession, PerfSummary};
+use crate::runtime::worktree_create::{CreateWorktreeDialog, CreateWorktreeOutcome};
+use crate::runtime::worktree_rename::RenameWorktreeDialog;
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
     ActiveRun, ActiveRunSummary, AgentContextViewState, ConfirmRemoveWorktree, PickerState,
@@ -28,9 +31,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 use switchbard_core::config::Config;
 use switchbard_core::{
-    collect_dirty_files, config, is_primary_worktree, kill_pgid, load_agent_context_cache,
-    open_url, remove_worktree, spawn_in_session, url_for_port, AgentContextMap, AttributedListener,
-    DetectedService, KillOutcome, Repo, WorktreeRef, BROWSER_APP_NAMES,
+    assess_branch_delete, collect_dirty_files, config, delete_branch, is_primary_worktree,
+    kill_pgid, load_agent_context_cache, open_url, remove_worktree, spawn_in_session, url_for_port,
+    AgentContextMap, AttributedListener, DetectedService, KillOutcome, Repo, WorktreeRef,
+    BROWSER_APP_NAMES,
 };
 
 /// Legible band for the persisted UI zoom factor. A hand-edited config or an
@@ -96,6 +100,13 @@ pub struct HiveApp {
     /// Modal state for `git worktree remove`. Shared with the worker thread
     /// so it can flip `busy`/`error` while the dialog is visible.
     pub confirm_remove_worktree: Arc<Mutex<Option<ConfirmRemoveWorktree>>>,
+    /// Modal state for `git worktree add`.
+    pub create_worktree_dialog: Arc<Mutex<Option<CreateWorktreeDialog>>>,
+    /// Worker-to-UI completion queue for create operations. The worker runs
+    /// git; the UI thread mutates persisted config after success.
+    pub create_worktree_outcomes: Arc<Mutex<Vec<CreateWorktreeOutcome>>>,
+    /// Modal state for renaming the Switchbard-local worktree label.
+    pub rename_worktree_dialog: Option<RenameWorktreeDialog>,
     pub expanded_repos: BTreeSet<String>,
     /// When false (default), hide rows whose classifier verdict is NotServer
     /// (test scripts, build wrappers, ship-gate runners, etc.).
@@ -108,6 +119,8 @@ pub struct HiveApp {
     /// → Ready while the welcome modal is on screen. After dismissal it
     /// returns to Hidden permanently for this session.
     pub onboarding: Arc<Mutex<DiscoveryState>>,
+    /// Optional frame/render telemetry. Enabled with `SWITCHBARD_PERF=1`.
+    perf: Option<PerfSession>,
 }
 
 fn cached_agent_contexts(worktrees: &[WorktreeRef]) -> HashMap<PathBuf, AgentContextMap> {
@@ -183,12 +196,16 @@ impl HiveApp {
             confirm_kill_all: false,
             confirm_remove_repo: None,
             confirm_remove_worktree: Arc::new(Mutex::new(None)),
+            create_worktree_dialog: Arc::new(Mutex::new(None)),
+            create_worktree_outcomes: Arc::new(Mutex::new(Vec::new())),
+            rename_worktree_dialog: None,
             expanded_repos: BTreeSet::new(),
             show_non_servers,
             view_tab: ViewTab::Servers,
             agent_context_view: AgentContextViewState::default(),
             browser_choice,
             onboarding: Arc::new(Mutex::new(DiscoveryState::default())),
+            perf: PerfSession::from_env(),
         }
     }
 
@@ -338,12 +355,20 @@ impl HiveApp {
             }
         };
         let active_runs = self.snapshot_runs_for_worktree(&worktree_path);
+        // Best-effort local assessment of deleting the backing branch. A few
+        // fast git calls (worktree list + rev-list count); same latency budget
+        // as the dirty-file probe above.
+        let branch_assessment = branch
+            .as_ref()
+            .map(|b| assess_branch_delete(&repo_path, b, &worktree_path));
         *self.confirm_remove_worktree.lock().unwrap() = Some(ConfirmRemoveWorktree {
             repo_path,
             worktree_path,
             branch,
             dirty_files,
             active_runs,
+            branch_assessment,
+            delete_branch: false,
             busy: false,
             error: None,
         });
@@ -496,7 +521,15 @@ impl HiveApp {
                     } else {
                         String::new()
                     };
-                    config_status.set(format!("removed worktree '{name}'{extras}"));
+
+                    // 5: opt-in branch cleanup, only now that the worktree is
+                    //    gone (git refuses to delete a checked-out branch). The
+                    //    worktree removal already succeeded and is irreversible,
+                    //    so a branch-delete failure is reported as a non-fatal
+                    //    addendum, never an error that "undoes" the removal.
+                    let branch_note =
+                        delete_branch_after_removal(&snapshot, snapshot.branch.as_deref());
+                    config_status.set(format!("removed worktree '{name}'{extras}{branch_note}"));
                     scanner_kick.notify();
                     probe_kick.notify();
                     detection_kick.notify();
@@ -719,6 +752,12 @@ impl HiveApp {
             Err(e) => self.server_status.set(format!("open failed: {e}")),
         }
     }
+
+    pub fn perf_count_worktree_row(&mut self, expanded: bool, services: usize, listeners: usize) {
+        if let Some(perf) = &mut self.perf {
+            perf.count_worktree_row(expanded, services, listeners);
+        }
+    }
 }
 
 /// Result of a worktree re-enumeration. Surfaces visible "+N / -M" feedback
@@ -787,6 +826,31 @@ fn runs_drifted(original: &[ActiveRunSummary], fresh: &[ActiveRunSummary]) -> bo
     a != b
 }
 
+/// Run the opt-in branch deletion after the worktree has already been removed,
+/// and return a short suffix for the status line describing what happened.
+/// Empty string when the user didn't ask to delete the branch.
+///
+/// Force is taken straight from the dialog's stored assessment: a branch with
+/// unlanded commits gets `git branch -D`, which the dialog made the user opt
+/// into explicitly via the loud force-delete checkbox. Failure is non-fatal —
+/// the worktree is already gone — so we report it inline rather than erroring.
+fn delete_branch_after_removal(snapshot: &ConfirmRemoveWorktree, branch: Option<&str>) -> String {
+    if !snapshot.will_delete_branch() {
+        return String::new();
+    }
+    let Some(branch) = branch else {
+        return String::new();
+    };
+    let force = snapshot
+        .branch_assessment
+        .as_ref()
+        .is_some_and(|a| a.needs_force());
+    match delete_branch(&snapshot.repo_path, branch, force) {
+        Ok(()) => format!(" and deleted branch '{branch}'"),
+        Err(e) => format!(" — branch '{branch}' NOT deleted: {e}"),
+    }
+}
+
 /// Bail out of a removal that hasn't actually touched anything yet. Sets the
 /// dialog's `error` so the user sees why, and clears `busy` so the buttons
 /// re-enable.
@@ -829,19 +893,77 @@ impl HiveApp {
     /// (picker draining, config persistence) that has no place in a test, and
     /// the egui_kittest UI harness calls it directly against seeded state.
     pub fn render_ui(&mut self, ctx: &egui::Context) {
+        let frame_start = Instant::now();
+        if let Some(perf) = &mut self.perf {
+            perf.begin_frame();
+        }
+        self.drain_create_worktree_outcomes();
+
+        let top_start = Instant::now();
         ui::top_bar::render(self, ctx);
+        if let Some(perf) = &mut self.perf {
+            perf.record_top_bar(top_start.elapsed());
+        }
+
         // Sidebar must render BEFORE the central panel so the SidePanel claims
         // its docked space first; otherwise the central panel sizes to the full
         // window and the side panel overlays it.
+        let sidebar_start = Instant::now();
         ui::sidebar::render(self, ctx);
+        if let Some(perf) = &mut self.perf {
+            perf.record_sidebar(sidebar_start.elapsed());
+        }
+
+        let central_start = Instant::now();
         match self.view_tab {
             ViewTab::Servers => ui::workspace::render(self, ctx),
             ViewTab::AgentContext => ui::agent_context::render(self, ctx),
         }
+        let central_elapsed = central_start.elapsed();
+        if let Some(perf) = &mut self.perf {
+            perf.record_central(central_elapsed);
+            if self.view_tab == ViewTab::Servers {
+                perf.record_workspace(central_elapsed);
+            }
+        }
+
         // Onboarding overlay paints last so it sits on top of everything
         // else when shown. It no-ops when already dismissed.
+        let onboarding_start = Instant::now();
         ui::onboarding::render(self, ctx);
+        if let Some(perf) = &mut self.perf {
+            perf.record_onboarding(onboarding_start.elapsed());
+        }
+
+        if let Some(summary) = self.perf.as_ref().and_then(PerfSession::summary) {
+            render_perf_overlay(ctx, &summary);
+        }
+        if let Some(perf) = &mut self.perf {
+            perf.finish_frame(frame_start.elapsed());
+        }
     }
+}
+
+fn render_perf_overlay(ctx: &egui::Context, summary: &PerfSummary) {
+    egui::Area::new(egui::Id::new("switchbard_perf_overlay"))
+        .anchor(egui::Align2::RIGHT_TOP, [-12.0, 64.0])
+        .interactable(false)
+        .show(ctx, |ui| {
+            egui::Frame::default()
+                .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 235))
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    ui.visuals().widgets.noninteractive.bg_stroke.color,
+                ))
+                .inner_margin(egui::Margin::same(8.0))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(summary.overlay_text())
+                            .monospace()
+                            .color(ui.visuals().text_color()),
+                    );
+                });
+        });
 }
 
 impl eframe::App for HiveApp {

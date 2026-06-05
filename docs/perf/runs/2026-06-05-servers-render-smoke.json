@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "Servers render smoke after perf fix",
+  "scenario": "servers-render-smoke",
+  "notes": "Temporary perf-enabled app, no synthetic scroll input.",
+  "source_csv": "/tmp/switchbard-perf-rerun-20260605.csv",
+  "captured_at": "2026-06-05T12:51:16.005771-04:00",
+  "recorded_at": "2026-06-05T13:07:14.323050-04:00",
+  "git": {
+    "branch": "main",
+    "sha": "862a06f4aff0fb953ce941a94bda92d5fb40f5c5",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "servers",
+    "last": null,
+    "source_frames": 129,
+    "matching_frames": 129,
+    "summarized_frames": 129
+  },
+  "counts_max": {
+    "rows": 28,
+    "expanded_rows": 20,
+    "services": 104,
+    "listeners": 6
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 0.623,
+      "p95": 2.975,
+      "p99": 3.268,
+      "max": 3.282
+    },
+    "top_bar": {
+      "p50": 0.044,
+      "p95": 0.189,
+      "p99": 0.248,
+      "max": 0.249
+    },
+    "central": {
+      "p50": 0.532,
+      "p95": 2.575,
+      "p99": 2.78,
+      "max": 2.791
+    },
+    "workspace": {
+      "p50": 0.532,
+      "p95": 2.575,
+      "p99": 2.78,
+      "max": 2.791
+    }
+  }
+}

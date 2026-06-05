@@ -19,7 +19,11 @@
 //! listeners that didn't attribute to any tracked worktree.
 
 use crate::app::HiveApp;
-use crate::runtime::{ActiveRun, ActivityLevel, RowState, WorktreeMeta};
+use crate::runtime::worktree_names::worktree_display_name;
+use crate::runtime::{
+    delete_safety_criteria, ActiveRun, ActivityLevel, ConfirmRemoveWorktree, DeleteSafetyCriterion,
+    DeleteSafetyCriterionKind, RowState, WorktreeMeta,
+};
 use crate::ui::components::{
     branch_label, mono_label, path_cell, status_pill, weak_dots, Chip, StatusKind,
 };
@@ -33,6 +37,8 @@ use switchbard_core::{
     DriftProbe, Repo, ResolvedService, ServerLikelihood, ServiceSource, WorktreeRef,
 };
 
+pub mod create_worktree;
+pub mod rename_worktree;
 pub mod tooltips;
 use tooltips::{activity_tooltip, dirty_tooltip, ref_drift_tooltip};
 
@@ -44,6 +50,8 @@ struct Pending {
     stop: Option<(i32, String)>,
     open: Option<u16>,
     kill: Option<i32>,
+    open_create_worktree: Option<Repo>,
+    open_rename_worktree: Option<(Repo, WorktreeRef)>,
     /// (repo_name, worktree_path, branch) — `apply_pending` resolves repo_name
     /// to a path via `app.config.repos` and opens the confirm dialog.
     open_remove_worktree: Option<(String, PathBuf, Option<String>)>,
@@ -76,7 +84,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                     {
                         continue;
                     }
-                    render_repo_card(ui, repo, &wts, &snap, app.show_non_servers, &mut pending);
+                    render_repo_card(ui, repo, &wts, &snap, app, &mut pending);
                     ui.add_space(8.0);
                 }
                 if !snap.show_only_managed && !snap.unattributed.is_empty() {
@@ -88,6 +96,8 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     apply_pending(app, ctx, pending);
     render_kill_all_modal(app, ctx);
     render_remove_worktree_modal(app, ctx);
+    create_worktree::render_modal(app, ctx);
+    rename_worktree::render_modal(app, ctx);
 }
 
 fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, p: Pending) {
@@ -102,6 +112,12 @@ fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, p: Pending) {
     }
     if let Some(pgid) = p.kill {
         app.spawn_kill(pgid, ctx);
+    }
+    if let Some(repo) = p.open_create_worktree {
+        app.open_create_worktree(repo);
+    }
+    if let Some((repo, worktree)) = p.open_rename_worktree {
+        app.open_rename_worktree(repo, worktree);
     }
     if let Some((repo_name, wt_path, branch)) = p.open_remove_worktree {
         if let Some(repo_path) = app
@@ -195,25 +211,6 @@ impl Snapshot {
             .values()
             .find(|r| r.worktree_path == wt_path && r.service_name == service_name)
     }
-
-    fn unique_pgids_in_filter(&self) -> Vec<i32> {
-        let mut set: BTreeSet<i32> = BTreeSet::new();
-        for v in self.listeners_by_wt.values() {
-            for l in v {
-                if listener_matches(l, &self.filter_lc) {
-                    set.insert(l.listener.pgid);
-                }
-            }
-        }
-        if !self.show_only_managed {
-            for l in &self.unattributed {
-                if listener_matches(l, &self.filter_lc) {
-                    set.insert(l.listener.pgid);
-                }
-            }
-        }
-        set.into_iter().collect()
-    }
 }
 
 fn is_containerized(resolved: &ResolvedService) -> bool {
@@ -274,7 +271,7 @@ fn render_repo_card(
     repo: &Repo,
     wts: &[&WorktreeRef],
     snap: &Snapshot,
-    show_non_servers: bool,
+    app: &mut HiveApp,
     pending: &mut Pending,
 ) {
     let mut listening = 0usize;
@@ -332,6 +329,14 @@ fn render_repo_card(
                     }
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button("+ Worktree")
+                        .on_hover_text("Create worktree")
+                        .clicked()
+                    {
+                        pending.open_create_worktree = Some(repo.clone());
+                    }
+                    ui.add_space(6.0);
                     ui.label(
                         egui::RichText::new(repo.path.display().to_string())
                             .color(theme::WEAK_TEXT)
@@ -347,7 +352,7 @@ fn render_repo_card(
                 }
                 let is_primary = w.path == repo.path;
                 ui.push_id(format!("wt_{}", w.path.display()), |ui| {
-                    render_worktree_row(ui, w, is_primary, snap, show_non_servers, pending);
+                    render_worktree_row(ui, repo, w, is_primary, snap, app, pending);
                 });
             }
         });
@@ -383,19 +388,26 @@ fn drift_needs_attention(probe: &Option<DriftProbe>) -> bool {
 
 fn render_worktree_row(
     ui: &mut egui::Ui,
+    repo: &Repo,
     w: &WorktreeRef,
     is_primary: bool,
     snap: &Snapshot,
-    show_non_servers: bool,
+    app: &mut HiveApp,
     pending: &mut Pending,
 ) {
-    let m = snap.meta.get(&w.path).cloned().unwrap_or_default();
-    let listeners = snap
+    let default_meta;
+    let m = if let Some(meta) = snap.meta.get(&w.path) {
+        meta
+    } else {
+        default_meta = WorktreeMeta::default();
+        &default_meta
+    };
+    let listeners: &[AttributedListener] = snap
         .listeners_by_wt
         .get(&w.path)
-        .cloned()
-        .unwrap_or_default();
-    let svcs = snap.services.get(&w.path).cloned().unwrap_or_default();
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let svcs: &[ResolvedService] = snap.services.get(&w.path).map(Vec::as_slice).unwrap_or(&[]);
     let any_running_or_external = svcs.iter().any(|resolved| {
         let run = snap.run_for_resolved(&w.path, resolved);
         let c = is_containerized(resolved);
@@ -404,7 +416,7 @@ fn render_worktree_row(
             RowState::Running { .. } | RowState::ExternalLive { .. }
         )
     });
-    let noteworthy = is_noteworthy(&listeners, &m, any_running_or_external);
+    let noteworthy = is_noteworthy(listeners, m, any_running_or_external);
     let default_open = noteworthy || !snap.filter_lc.is_empty();
 
     // Both primary and linked worktrees get the same inner margin so
@@ -418,20 +430,31 @@ fn render_worktree_row(
     frame.show(ui, |ui| {
         let id = ui.make_persistent_id(format!("wt_row_{}", w.path.display()));
         let state = CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
+        app.perf_count_worktree_row(state.is_open(), svcs.len(), listeners.len());
         state
             .show_header(ui, |ui| {
-                render_worktree_summary_line(ui, w, &m, listeners.len(), &svcs, snap);
-                render_worktree_row_trailing(ui, w, is_primary, pending);
+                let display_name = worktree_display_name(&app.config, repo, w);
+                let summary = WorktreeSummary {
+                    worktree: w,
+                    display_name: &display_name,
+                    is_primary,
+                    meta: m,
+                    listener_count: listeners.len(),
+                    services: svcs,
+                };
+                render_worktree_summary_line(ui, summary, snap);
+                render_worktree_row_trailing(ui, repo, w, is_primary, pending);
             })
             .body(|ui| {
                 ui.add_space(2.0);
+                render_branch_inline(ui, w);
                 let service_ports: std::collections::HashSet<u16> =
                     svcs.iter().filter_map(|s| s.expected_port).collect();
                 if !svcs.is_empty() {
-                    render_services_strip(ui, w, &svcs, snap, show_non_servers, pending);
+                    render_services_strip(ui, w, svcs, snap, app.show_non_servers, pending);
                 }
                 if !listeners.is_empty() {
-                    render_listeners_strip(ui, &listeners, &service_ports, snap, pending);
+                    render_listeners_strip(ui, listeners, &service_ports, snap, pending);
                 }
                 if svcs.is_empty() && listeners.is_empty() {
                     ui.label(egui::RichText::new("nothing detected here").color(theme::WEAK_TEXT));
@@ -463,27 +486,58 @@ fn is_noteworthy(
     false
 }
 
-fn render_worktree_summary_line(
-    ui: &mut egui::Ui,
-    w: &WorktreeRef,
-    m: &WorktreeMeta,
+struct WorktreeSummary<'a> {
+    worktree: &'a WorktreeRef,
+    display_name: &'a str,
+    is_primary: bool,
+    meta: &'a WorktreeMeta,
     listener_count: usize,
-    svcs: &[ResolvedService],
-    snap: &Snapshot,
-) {
-    let (dot_color, pulse_count) = headline_dot(svcs, w, snap, listener_count);
+    services: &'a [ResolvedService],
+}
+
+fn render_worktree_summary_line(ui: &mut egui::Ui, summary: WorktreeSummary<'_>, snap: &Snapshot) {
+    let (dot_color, pulse_count) = headline_dot(
+        summary.services,
+        summary.worktree,
+        snap,
+        summary.listener_count,
+        summary.meta,
+    );
     if pulse_count > 0 {
         theme::painted_dot_pulse(ui, dot_color, pulse_count);
     } else {
         theme::painted_dot(ui, dot_color);
     }
     ui.add_space(2.0);
-    branch_label(ui, w.branch.as_deref());
+    ui.label(egui::RichText::new(summary.display_name).strong());
+    // Branch name lives in the expanded body (`render_branch_inline`), not
+    // here: long branches pushed the left cluster into the right-aligned
+    // Rename/trash actions and overlapped them.
     // Health zone: dirty appears only when dirty; drift only when non-zero;
     // listener count is on the dot tooltip already (no inline tag).
-    render_health_inline(ui, m);
-    render_activity_inline(ui, m);
-    let _ = listener_count;
+    render_health_inline(ui, summary.meta);
+    render_activity_inline(ui, summary.meta);
+    render_delete_safety_inline(
+        ui,
+        summary.is_primary,
+        summary.meta,
+        summary.listener_count,
+        active_run_count_for_worktree(snap, &summary.worktree.path),
+    );
+}
+
+/// Branch name for the expanded body. Kept off the collapsed header so a long
+/// branch can't crowd the right-aligned Rename/trash actions; here it has the
+/// full row width and truncates with a hover-to-reveal tooltip.
+fn render_branch_inline(ui: &mut egui::Ui, w: &WorktreeRef) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("branch")
+                .small()
+                .color(theme::WEAK_TEXT),
+        );
+        branch_label(ui, w.branch.as_deref());
+    });
 }
 
 /// Right-aligned cluster on the worktree row header: short SHA on the far
@@ -495,6 +549,7 @@ fn render_worktree_summary_line(
 /// the left-side layout.
 fn render_worktree_row_trailing(
     ui: &mut egui::Ui,
+    repo: &Repo,
     w: &WorktreeRef,
     is_primary: bool,
     pending: &mut Pending,
@@ -507,6 +562,14 @@ fn render_worktree_row_trailing(
                 .small(),
         )
         .on_hover_text(&w.head);
+        ui.add_space(2.0);
+        if ui
+            .small_button("Rename")
+            .on_hover_text("Rename Switchbard label")
+            .clicked()
+        {
+            pending.open_rename_worktree = Some((repo.clone(), w.clone()));
+        }
         if !is_primary {
             ui.add_space(2.0);
             let resp = theme::painted_trash_button(ui);
@@ -523,6 +586,7 @@ fn headline_dot(
     w: &WorktreeRef,
     snap: &Snapshot,
     listener_count: usize,
+    m: &WorktreeMeta,
 ) -> (egui::Color32, usize) {
     let mut running = 0usize;
     let mut external = 0usize;
@@ -541,16 +605,14 @@ fn headline_dot(
     if external > 0 {
         return (theme::SKY, 0);
     }
-    if let Some(m) = snap.meta.get(&w.path) {
-        if m.is_dirty() == Some(true) {
-            return (theme::AMBER, 0);
-        }
-        if drift_is_drifted(&m.main_drift) {
-            return (theme::LAVENDER, 0);
-        }
-        if drift_needs_attention(&m.remote_drift) {
-            return (theme::SKY, 0);
-        }
+    if m.is_dirty() == Some(true) {
+        return (theme::AMBER, 0);
+    }
+    if drift_is_drifted(&m.main_drift) {
+        return (theme::LAVENDER, 0);
+    }
+    if drift_needs_attention(&m.remote_drift) {
+        return (theme::SKY, 0);
     }
     (egui::Color32::GRAY, 0)
 }
@@ -663,6 +725,52 @@ fn render_activity_inline(ui: &mut egui::Ui, m: &WorktreeMeta) {
     };
     let tip = activity_tooltip(&act, m.recent_commits.as_deref().unwrap_or(&[]));
     status_pill(ui, kind, full, Some(&tip));
+}
+
+fn render_delete_safety_inline(
+    ui: &mut egui::Ui,
+    is_primary: bool,
+    m: &WorktreeMeta,
+    listener_count: usize,
+    active_run_count: usize,
+) {
+    ui.add_space(4.0);
+    let criteria = delete_safety_criteria(is_primary, m, listener_count, active_run_count);
+    let passed = criteria
+        .iter()
+        .filter(|criterion| criterion.satisfied)
+        .count();
+    let total = criteria.len();
+    let linked = criteria
+        .iter()
+        .find(|criterion| criterion.kind == DeleteSafetyCriterionKind::LinkedWorktree)
+        .is_some_and(|criterion| criterion.satisfied);
+    let (kind, label) = if !linked {
+        (StatusKind::Neutral, "primary".to_string())
+    } else if passed == total {
+        (StatusKind::Good, "remove ok".to_string())
+    } else {
+        (StatusKind::Danger, format!("remove {passed}/{total}"))
+    };
+    let tooltip = delete_safety_tooltip(&criteria);
+    status_pill(ui, kind, label, Some(&tooltip));
+}
+
+fn delete_safety_tooltip(criteria: &[DeleteSafetyCriterion]) -> String {
+    let mut lines = Vec::with_capacity(criteria.len() + 1);
+    lines.push("Safe-delete checks".to_string());
+    for criterion in criteria {
+        let checkbox = if criterion.satisfied { "[x]" } else { "[ ]" };
+        lines.push(format!("{checkbox} {}", criterion.tooltip));
+    }
+    lines.join("\n")
+}
+
+fn active_run_count_for_worktree(snap: &Snapshot, wt_path: &Path) -> usize {
+    snap.active_runs
+        .values()
+        .filter(|run| run.worktree_path == wt_path)
+        .count()
 }
 
 // ── services strip ──────────────────────────────────────────────────────
@@ -1192,7 +1300,19 @@ fn worktree_matches(w: &WorktreeRef, snap: &Snapshot, filter_lc: &str) -> bool {
 // ── kill-all confirm modal + accessor for top bar ───────────────────────
 
 pub fn unique_pgids_in_filter(app: &HiveApp) -> Vec<i32> {
-    Snapshot::collect(app).unique_pgids_in_filter()
+    let filter_lc = app.filter.to_lowercase();
+    let show_only_managed = app.show_only_managed;
+    let listeners = app.state.lock().unwrap().listeners.clone();
+    let mut set: BTreeSet<i32> = BTreeSet::new();
+    for listener in &listeners {
+        if show_only_managed && listener.worktree_path.is_none() {
+            continue;
+        }
+        if listener_matches(listener, &filter_lc) {
+            set.insert(listener.listener.pgid);
+        }
+    }
+    set.into_iter().collect()
 }
 
 /// Confirmation dialog for `git worktree remove`. Reads state from the
@@ -1216,6 +1336,9 @@ fn render_remove_worktree_modal(app: &mut HiveApp, ctx: &egui::Context) {
 
     let mut do_confirm = false;
     let mut do_cancel = false;
+    // Local mirror of the checkbox; written back into the shared dialog state
+    // after the frame so the worker reads the user's choice at confirm time.
+    let mut delete_branch = state.delete_branch;
 
     egui::Window::new("Remove worktree")
         .collapsible(false)
@@ -1230,9 +1353,7 @@ fn render_remove_worktree_modal(app: &mut HiveApp, ctx: &egui::Context) {
                 ))
                 .strong(),
             );
-            if let Some(branch) = &state.branch {
-                ui.label(format!("Branch '{branch}' will remain after removal."));
-            }
+            render_branch_delete_section(ui, &state, &mut delete_branch);
 
             if has_runs {
                 ui.add_space(6.0);
@@ -1288,7 +1409,12 @@ fn render_remove_worktree_modal(app: &mut HiveApp, ctx: &egui::Context) {
                     if ui.button("Cancel").clicked() {
                         do_cancel = true;
                     }
-                    if ui.add(theme::danger_button(action_label)).clicked() {
+                    let confirm_label = if delete_branch {
+                        format!("{action_label} + delete branch")
+                    } else {
+                        action_label.to_string()
+                    };
+                    if ui.add(theme::danger_button(&confirm_label)).clicked() {
                         do_confirm = true;
                     }
                 });
@@ -1300,6 +1426,14 @@ fn render_remove_worktree_modal(app: &mut HiveApp, ctx: &egui::Context) {
             });
         });
 
+    // Persist the checkbox toggle back into the shared dialog state before any
+    // action runs, so the worker thread sees the user's final choice.
+    if delete_branch != state.delete_branch {
+        if let Some(s) = app.confirm_remove_worktree.lock().unwrap().as_mut() {
+            s.delete_branch = delete_branch;
+        }
+    }
+
     if do_confirm {
         app.execute_remove_worktree(ctx);
     } else if do_cancel {
@@ -1307,11 +1441,76 @@ fn render_remove_worktree_modal(app: &mut HiveApp, ctx: &egui::Context) {
     }
 }
 
+/// The branch-cleanup row of the remove-worktree dialog. Mirrors the worktree's
+/// own "safe to remove" reasoning for the branch behind it:
+///   - detached HEAD → nothing to offer;
+///   - checked out elsewhere → git refuses, so show why instead of a checkbox;
+///   - fully landed → a plain opt-in checkbox;
+///   - unlanded commits → a loud, force-delete checkbox that spells out the loss.
+fn render_branch_delete_section(
+    ui: &mut egui::Ui,
+    state: &ConfirmRemoveWorktree,
+    delete_branch: &mut bool,
+) {
+    let Some(branch) = &state.branch else {
+        return; // detached HEAD — no branch to delete
+    };
+    let Some(assessment) = &state.branch_assessment else {
+        ui.label(format!("Branch '{branch}' will remain after removal."));
+        return;
+    };
+
+    ui.add_space(6.0);
+
+    if assessment.is_blocked() {
+        *delete_branch = false;
+        let where_ = assessment
+            .other_checkouts
+            .first()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "another worktree".to_string());
+        ui.colored_label(
+            theme::MUTED_TEXT,
+            format!("Branch '{branch}' is checked out at {where_} — can't delete it here."),
+        );
+        return;
+    }
+
+    if assessment.needs_force() {
+        let base = assessment.compared_against.as_deref().unwrap_or("main");
+        let n = assessment.unmerged_count();
+        let detail = if n > 0 {
+            format!("{n} commit{} not in {base} will be lost", plural_s(n))
+        } else {
+            format!("can't confirm it's merged into {base}")
+        };
+        ui.checkbox(
+            delete_branch,
+            egui::RichText::new(format!("⚠ Force-delete branch '{branch}' ({detail})"))
+                .color(theme::DANGER),
+        );
+    } else {
+        let base = assessment.compared_against.as_deref().unwrap_or("main");
+        ui.checkbox(
+            delete_branch,
+            format!("Also delete branch '{branch}' (merged into {base})"),
+        );
+    }
+}
+
+fn plural_s(n: u32) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
 fn render_kill_all_modal(app: &mut HiveApp, ctx: &egui::Context) {
     if !app.confirm_kill_all {
         return;
     }
-    let pgids = Snapshot::collect(app).unique_pgids_in_filter();
+    let pgids = unique_pgids_in_filter(app);
     let mut open = true;
     let mut do_confirm = false;
     let mut do_cancel = false;
@@ -1407,6 +1606,41 @@ mod tests {
                 expected_port,
             }],
         }
+    }
+
+    #[test]
+    fn ignored_files_alone_are_not_noteworthy() {
+        let meta = WorktreeMeta {
+            dirty_files: Some(Vec::new()),
+            ignored_files: Some(crate::runtime::FileListSummary::from_lines(
+                vec!["!! target/".to_string()],
+                4,
+            )),
+            ..Default::default()
+        };
+
+        assert!(!is_noteworthy(&[], &meta, false));
+    }
+
+    #[test]
+    fn delete_safety_tooltip_uses_checkbox_lines() {
+        let criteria = vec![
+            DeleteSafetyCriterion {
+                kind: DeleteSafetyCriterionKind::LinkedWorktree,
+                satisfied: true,
+                tooltip: "Linked worktree can be removed without dropping the repo".to_string(),
+            },
+            DeleteSafetyCriterion {
+                kind: DeleteSafetyCriterionKind::FilesClear,
+                satisfied: false,
+                tooltip: "2 changed/untracked files need review".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            delete_safety_tooltip(&criteria),
+            "Safe-delete checks\n[x] Linked worktree can be removed without dropping the repo\n[ ] 2 changed/untracked files need review"
+        );
     }
 
     fn empty_snap() -> Snapshot {

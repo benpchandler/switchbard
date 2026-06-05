@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/rebuild-and-reload.sh\"",
+            "timeout": 60,
+            "statusMessage": "Rebuilding DMG + reloading app (if sources changed)"
+          }
+        ]
+      }
+    ]
+  }
+}

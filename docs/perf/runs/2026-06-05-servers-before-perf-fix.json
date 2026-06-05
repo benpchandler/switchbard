@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "Servers before perf fix",
+  "scenario": "servers-before-perf-fix",
+  "notes": "Captured before eliminating top-bar snapshot rebuilds and per-row metadata clones.",
+  "source_csv": "/tmp/switchbard-perf-before.csv",
+  "captured_at": "2026-06-05T12:16:59.782710-04:00",
+  "recorded_at": "2026-06-05T13:07:14.323779-04:00",
+  "git": {
+    "branch": "main",
+    "sha": "862a06f4aff0fb953ce941a94bda92d5fb40f5c5",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "servers",
+    "last": 60,
+    "source_frames": 1013,
+    "matching_frames": 1013,
+    "summarized_frames": 60
+  },
+  "counts_max": {
+    "rows": 29,
+    "expanded_rows": 20,
+    "services": 109,
+    "listeners": 6
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 106.128,
+      "p95": 141.908,
+      "p99": 149.939,
+      "max": 149.939
+    },
+    "top_bar": {
+      "p50": 36.339,
+      "p95": 69.618,
+      "p99": 77.277,
+      "max": 77.277
+    },
+    "central": {
+      "p50": 69.407,
+      "p95": 78.92,
+      "p99": 81.466,
+      "max": 81.466
+    },
+    "workspace": {
+      "p50": 69.407,
+      "p95": 78.92,
+      "p99": 81.466,
+      "max": 81.466
+    }
+  }
+}

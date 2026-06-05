@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "Servers scroll smoke after perf fix",
+  "scenario": "servers-scroll-smoke",
+  "notes": "Temporary perf-enabled app with repeated AppleScript Page Down/Page Up events.",
+  "source_csv": "/tmp/switchbard-perf-scroll-20260605.csv",
+  "captured_at": "2026-06-05T12:52:32.299368-04:00",
+  "recorded_at": "2026-06-05T13:07:21.088654-04:00",
+  "git": {
+    "branch": "main",
+    "sha": "862a06f4aff0fb953ce941a94bda92d5fb40f5c5",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "servers",
+    "last": null,
+    "source_frames": 397,
+    "matching_frames": 397,
+    "summarized_frames": 397
+  },
+  "counts_max": {
+    "rows": 28,
+    "expanded_rows": 20,
+    "services": 104,
+    "listeners": 6
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 0.806,
+      "p95": 2.186,
+      "p99": 3.268,
+      "max": 3.521
+    },
+    "top_bar": {
+      "p50": 0.046,
+      "p95": 0.162,
+      "p99": 0.226,
+      "max": 0.258
+    },
+    "central": {
+      "p50": 0.698,
+      "p95": 1.871,
+      "p99": 2.801,
+      "max": 3.049
+    },
+    "workspace": {
+      "p50": 0.698,
+      "p95": 1.871,
+      "p99": 2.801,
+      "max": 3.049
+    }
+  }
+}
