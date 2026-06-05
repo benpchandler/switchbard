@@ -1,0 +1,95 @@
+name: release-linux
+
+# Builds the Linux x86_64 binary and attaches a tarball + checksum to a GitHub
+# release. The macOS DMG is still produced/uploaded by the maintainer locally
+# (`mise run package` + `gh release create`); this job adds the Linux asset on
+# top so every release carries both platforms.
+#
+# Triggers:
+#   - release: published  → fires automatically when a release is published.
+#   - workflow_dispatch    → manual run against an existing tag (used to backfill
+#                            past releases, e.g. v0.3.0).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to attach the Linux build to (e.g. v0.3.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Build + attach Linux tarball
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve target tag
+        id: meta
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.release.tag_name }}"
+          [ -n "$TAG" ] || TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            echo "::error::no release tag resolved" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      # Build the exact code the tag points at, not whatever is on main.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Install mise tools
+        uses: jdx/mise-action@v4
+
+      - name: Cache cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('mise.toml', '**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+
+      # winit dlopen's libxkbcommon / libwayland / libGL at runtime, so no -dev
+      # packages are needed to *compile* (the ubuntu CI matrix builds the GUI
+      # crate the same way). mise.toml pins the Rust toolchain.
+      - name: Build release binary
+        run: mise run build
+
+      - name: Package tarball + checksum
+        id: pkg
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          ARCH="$(uname -m)"
+          NAME="switchbard-v${VERSION}-linux-${ARCH}"
+          STAGE="dist/${NAME}"
+          mkdir -p "$STAGE"
+          install -m 0755 target/release/switchbard "$STAGE/switchbard"
+          cp LICENSE README.md docs/INSTALL-LINUX.md "$STAGE/"
+          tar -C dist -czf "dist/${NAME}.tar.gz" "$NAME"
+          ( cd dist && sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256" )
+          echo "tarball=dist/${NAME}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "checksum=dist/${NAME}.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ steps.meta.outputs.tag }}" \
+            "${{ steps.pkg.outputs.tarball }}" \
+            "${{ steps.pkg.outputs.checksum }}" \
+            --clobber --repo "${{ github.repository }}"

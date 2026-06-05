@@ -1,109 +1,68 @@
-# Switchbard
+<h1 align="center">Switchbard</h1>
 
-Switchbard is a native desktop dashboard for developers running multiple coding
-agents across git worktrees.
+<p align="center"><em>One window for every agent, worktree, and port on your machine.</em></p>
 
-When Claude, Codex, or other agents are each hacking in their own worktree,
-your machine quietly fills up with local servers, dirty branches, and mystery
-ports. Switchbard gives you one place to see what is running, which worktree it
-belongs to, and whether it is safe to open, stop, or clean up.
+<p align="center">
+  <a href="https://github.com/benpchandler/switchbard/releases"><img src="https://img.shields.io/github/v/release/benpchandler/switchbard?include_prereleases&sort=semver&color=2b8a3e" alt="Latest release"></a>
+  <a href="https://github.com/benpchandler/switchbard/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/benpchandler/switchbard/ci.yml?branch=main&label=CI" alt="CI status"></a>
+  <a href="https://github.com/benpchandler/switchbard/releases"><img src="https://img.shields.io/github/downloads/benpchandler/switchbard/total?color=555&label=downloads" alt="Downloads"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey" alt="Platform: macOS and Linux">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/benpchandler/switchbard?color=blue" alt="License: MIT"></a>
+</p>
 
-> **Status:** alpha. macOS has a downloadable DMG; Linux builds from source.
-> The author dogfoods it daily; expect rough edges around first-run UX and
+<p align="center">
+  <img src="docs/assets/switchbard-agent-worktrees.png" width="860" alt="Switchbard showing several agent worktrees and the local services each one is running">
+</p>
+
+When Claude, Codex, and other agents each hack in their own git worktree, your
+machine quietly fills up with local servers, dirty branches, and mystery ports —
+and `localhost:3000`, `:5173`, and `:8080` all start to blur together.
+
+**Switchbard is a native macOS/Linux dashboard that shows what's listening,
+which worktree it came from, and whether it's safe to open, stop, or clean up —
+all in one window, with no telemetry and no cloud account.**
+
+> **Status: alpha.** macOS ships a downloadable DMG; Linux builds from source.
+> The author dogfoods it daily — expect rough edges around first-run UX and
 > packaging.
 
-![Switchbard showing multiple agent worktrees and local services](docs/assets/switchbard-agent-worktrees.png)
+## Features
 
-## Why It Exists
-
-Agentic development makes it cheap to spin up parallel work, but expensive to
-remember what each branch is doing. After a few agents, `localhost:3000`,
-`localhost:5173`, and `localhost:8080` all start to blur together.
-
-Switchbard answers the questions that usually send you spelunking through
-terminal tabs:
-
-- **What is listening on my machine right now?**
-- **Which repo and worktree did this process come from?**
-- **Which agent branch is dirty, active, ahead, or stale?**
-- **Can I open the right service or kill the right process without guessing?**
-
-## What It Does
-
-- **Watches the OS for listening processes.** Scans every few seconds and
-  attributes each listener back to a git worktree by walking the process's
-  `cwd`.
-- **Detects services from your repos' own declarations.** Reads
-  `Procfile` / `Procfile.dev`, `package.json` scripts, `Makefile` targets,
-  `docker-compose.yml`, and `scripts/*.sh` — surfaces what each one would
-  start and what port it would bind.
-- **Tracks git state per worktree.** Dirty / clean, ahead/behind from
-  upstream, commit activity (Burst / Active / Slow / Idle).
-- **One control surface.** Start a service, stop a process group, kill an
-  external listener that's holding the port you need, or open `:port` in the
-  browser of your choice.
-- **Worktree lifecycle, in-app.** Create a worktree (new or existing branch)
-  without leaving Switchbard, give it a memorable label, and remove it when
-  you're done. The remove dialog enumerates uncommitted changes and running
-  services before you confirm, and can optionally delete the local branch too —
-  with per-check safety (merged into main? checked out elsewhere?) so you never
-  lose unlanded work by accident.
-
-## Who It Is For
-
-Switchbard is most useful if you:
-
-- run multiple agents or humans across separate git worktrees
-- keep several local dev servers alive at once
-- lose time asking "what owns this port?"
-- want a local-first tool with no telemetry and no cloud account
+- 🔍 **Sees every listener, live.** Scans the OS every few seconds for processes
+  bound to a port — no guessing which terminal tab owns `:3000`.
+- 🧭 **Attributes processes to worktrees.** Walks each process's `cwd` to map a
+  listener back to the exact repo and git worktree that started it.
+- 🧩 **Detects services from your repo's own files.** Reads `Procfile` /
+  `Procfile.dev`, `package.json` scripts, `Makefile` targets,
+  `docker-compose.yml`, and `scripts/*.sh`, and surfaces what each would start
+  and which port it would bind.
+- 🌱 **Full worktree lifecycle.** Create a worktree (new or existing branch),
+  give it a memorable label, and remove it when you're done — the remove dialog
+  enumerates uncommitted changes and running services, and can optionally delete
+  the local branch with per-check safety (merged into main? checked out
+  elsewhere?) so you never drop unlanded work by accident.
+- 📊 **Git state at a glance.** Dirty / clean, ahead / behind upstream, and
+  commit activity (Burst / Active / Slow / Idle) per worktree.
+- 🎛️ **One control surface.** Start a service, stop a process group, kill an
+  external squatter holding the port you need, or open `:port` in the browser of
+  your choice.
+- 🔒 **Local-first.** No telemetry, no account, no background daemon. Config is a
+  hand-editable TOML at `~/.switchbard/config.toml`.
 
 ## Install
 
-### Download The Alpha DMG
+### macOS
 
-Download `Switchbard-v0.3.0-macos-arm64.dmg` from the
-[latest GitHub Release](https://github.com/benpchandler/switchbard/releases/latest),
-open it, then drag `Switchbard.app` to `Applications`.
+Download the latest `Switchbard-*-macos-arm64.dmg` from the
+[**Releases page**](https://github.com/benpchandler/switchbard/releases), open
+it, and drag `Switchbard.app` into `Applications`.
 
-Switchbard is currently unnotarized and does not use Developer ID signing. The first
-time you launch it, open it from Finder with Control-click -> `Open`, then confirm
-macOS's unidentified developer prompt. If you see "`Switchbard` Not Opened" with
-only `Move to Trash` / `Done`, click `Done` and use Control-click -> `Open`. See
-[docs/INSTALL-MAC.md](docs/INSTALL-MAC.md) for the full install and
-verification notes.
+> Switchbard is unsigned and unnotarized. On first launch, open it from Finder
+> with **Control-click → Open**, then confirm the unidentified-developer prompt.
+> Full notes: [docs/INSTALL-MAC.md](docs/INSTALL-MAC.md).
 
-### Linux From Source
-
-Linux support currently ships as a source build, not a packaged `.deb` /
-`.AppImage` yet.
-
-On Ubuntu/Debian, install the usual Rust GUI build/runtime packages:
-
-```sh
-sudo apt-get install git build-essential pkg-config libxkbcommon-dev \
-  libwayland-dev libx11-dev libxcb1-dev libxcb-render0-dev \
-  libxcb-shape0-dev libxcb-xfixes0-dev libgl1-mesa-dev \
-  xdg-utils xdg-desktop-portal
-```
-
-Then build and run:
-
-```sh
-git clone https://github.com/benpchandler/switchbard
-cd switchbard
-cargo build --release -p switchbard-gui
-./target/release/switchbard
-```
-
-Switchbard scans Linux listeners via `/proc`, so it does not need `lsof` on
-Linux. `xdg-open` is used for opening ports in your default browser. See
-[docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md) for distro package notes.
-
-### macOS From Source
-
-Requires Rust `1.95.0` with `rustfmt` and `clippy`. Any toolchain that
-matches works — `rustup default 1.95.0` if you don't have it.
+<details>
+<summary>Build from source instead</summary>
 
 ```sh
 git clone https://github.com/benpchandler/switchbard
@@ -113,79 +72,76 @@ bash scripts/bundle-mac.sh        # produces target/release/Switchbard.app
 open target/release/Switchbard.app
 ```
 
-To package the same DMG that ships on the Releases page:
-
-```sh
-bash scripts/package-dmg.sh       # produces target/dist/Switchbard-v0.1.1-macos-arm64.dmg
-```
-
-Or, if you just want the `switchbard` binary on your `PATH`:
+Or put the bare binary on your `PATH`:
 
 ```sh
 cargo install --git https://github.com/benpchandler/switchbard --bin switchbard
-switchbard
 ```
+</details>
 
-**Optional — pinned toolchain via [mise](https://mise.jdx.dev/).** Mise is
-not required; it's just how CI and the maintainer pin the exact Rust version.
-If you'd rather not manage that yourself, install mise and run
-`mise install` in the checkout — `mise.toml` pins `1.95.0` and exposes the
-same builds as `mise run bundle` / `mise run package`, plus
-`mise run build` for the plain release binary and `mise run hooks:install` to
-opt into the tracked pre-push hook.
+### Linux
 
-A Homebrew tap is on the roadmap.
-
-## First run
-
-The app starts with no repos configured. Click **➕ Add** in the right
-sidebar and pick a folder containing a git repository — Switchbard enumerates its
-worktrees and starts probing. Repeat for every repo you care about.
-
-Configuration lives at `~/.switchbard/config.toml` (TOML, hand-editable). Logs of
-services Switchbard started land in `$TMPDIR/switchbard-logs/`.
-
-## How it's built
-
-Two-crate Cargo workspace:
-
-- **`switchbard-core`** — domain logic. No UI deps. Owns the listener scanner,
-  service detectors, git probes, classifier, port-conflict logic, and the
-  `ResolvedService` cluster model. Heavily unit-tested.
-- **`switchbard-gui`** — the [egui](https://github.com/emilk/egui) /
-  [eframe](https://github.com/emilk/egui/tree/master/crates/eframe) app.
-  Single window, no webview, native binary.
-
-Worker threads handle long-running probes (`lsof` on macOS, `/proc` on Linux,
-`git status`, `git log`) so the UI never blocks. The scanner kicks every 3s;
-the GUI re-renders only when state changes.
-
-## Building from source
-
-Plain Cargo, on any Rust `1.95.0` toolchain:
+Download the prebuilt `switchbard-*-linux-x86_64.tar.gz` from the
+[**Releases page**](https://github.com/benpchandler/switchbard/releases), unpack
+it, and run the binary:
 
 ```sh
-cargo fmt --all -- --check
-RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets -- -D warnings
-RUSTFLAGS="-D warnings" cargo test --workspace --all-targets
-cargo build --release                # optimized binary
-bash scripts/bundle-mac.sh           # macOS: produces Switchbard.app
-bash scripts/package-dmg.sh          # macOS: produces the DMG
+tar -xzf switchbard-*-linux-x86_64.tar.gz
+./switchbard-*-linux-x86_64/switchbard
 ```
 
-If you'd rather have the toolchain pinned for you, install
-[mise](https://mise.jdx.dev/) and the same commands are exposed as
-`mise run fmt`, `mise run clippy`, `mise run test`, `mise run ci`,
-`mise run build`, `mise run bundle`, and `mise run package`. CI runs the mise
-tasks for version consistency; the tracked pre-push hook (opt in with
-`mise run hooks:install`) runs `mise run ci` before each push.
+The binary `dlopen`s a few shared libraries at runtime (libxkbcommon,
+libwayland / X11, libGL) and uses `xdg-open` to launch ports — any normal
+desktop session already has them. No `.deb` / `.rpm` / `.AppImage` (or ARM
+build) yet; see [docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md) for those and for
+building from source. Switchbard reads Linux listeners straight from `/proc`, so
+it never needs `lsof`.
+
+## Quick start
+
+1. Launch Switchbard — it opens with no repos configured.
+2. Click **➕ Add** in the right sidebar and pick a folder containing a git
+   repository. Switchbard enumerates its worktrees and starts probing.
+3. Repeat for every repo you care about. Rows light up as services start,
+   branches drift, or ports get held.
+
+Configuration lives at `~/.switchbard/config.toml`. Logs of services Switchbard
+started land in `$TMPDIR/switchbard-logs/`.
+
+## How it works
+
+Switchbard is a two-crate Cargo workspace with no webview — a single native
+[egui](https://github.com/emilk/egui) /
+[eframe](https://github.com/emilk/egui/tree/master/crates/eframe) window:
+
+- **`switchbard-core`** — domain logic, zero UI deps: the listener scanner,
+  service detectors, git probes, port-conflict classifier, and the
+  `ResolvedService` model. Heavily unit-tested.
+- **`switchbard-gui`** — the egui app. Worker threads run the long probes
+  (`lsof` on macOS, `/proc` on Linux, `git status`, `git log`) off the UI
+  thread, so the window never blocks. The scanner kicks every 3s and the GUI
+  re-renders only when state changes.
+
+## Development
+
+```sh
+mise install        # pins Rust 1.95.0 from mise.toml (mise is optional)
+mise run ci         # fmt + clippy (-D warnings) + the full test suite
+mise run bundle     # macOS: Switchbard.app in target/release
+mise run package    # macOS: DMG + sha256 in target/dist
+```
+
+Prefer plain Cargo? Every task above maps to the obvious `cargo fmt` /
+`cargo clippy` / `cargo test` / `cargo build --release` invocation. CI
+(`.github/workflows/ci.yml`, macOS) runs the mise tasks on every PR; the tracked
+pre-push hook (`mise run hooks:install`) runs `mise run ci` before each push.
 
 ## Contributing
 
-PRs welcome. Keep changes scoped, run the local checks before pushing, and
-include a one-line "why" in the commit body. The codebase favors small
-modules and explicit names — read the current source for ground truth.
+PRs welcome. Keep changes scoped, run `mise run ci` before pushing, and include a
+one-line "why" in the commit body. The codebase favors small modules and explicit
+names — read the current source for ground truth.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).

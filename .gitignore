@@ -38,6 +38,11 @@ logs/
 # Python cache noise
 __pycache__/
 
+# Local-only Claude Code hook (rebuild DMG + reload app on change) — personal,
+# not shared. See .claude/settings.local.json for the binding.
+.claude/settings.local.json
+/scripts/rebuild-and-reload.sh
+
 # Perf smoke raw captures; keep durable summaries in docs/perf/runs/.
 docs/perf/raw/
 docs/perf/**/*.csv
