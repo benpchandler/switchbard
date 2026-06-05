@@ -35,6 +35,13 @@ Icon?
 *.log
 logs/
 
+# Python cache noise
+__pycache__/
+
+# Perf smoke raw captures; keep durable summaries in docs/perf/runs/.
+docs/perf/raw/
+docs/perf/**/*.csv
+
 # Rust coverage / profiling artifacts
 *.profraw
 *.profdata

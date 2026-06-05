@@ -8,9 +8,12 @@
 //! - `sync/`    — cross-thread coordination primitives (Kick, Status).
 //! - `app`      — `HiveApp`: ties everything together.
 //! - `workers`  — background threads that feed the GUI.
+//! - `perf`     — opt-in runtime frame/render telemetry.
 
 pub mod app;
+pub mod perf;
 pub mod runtime;
 pub mod sync;
 pub mod ui;
 pub mod workers;
+pub mod worktree_actions;

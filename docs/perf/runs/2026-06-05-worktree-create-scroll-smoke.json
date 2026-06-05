@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "Worktree create UI scroll smoke",
+  "scenario": "worktree-create-scroll-smoke",
+  "notes": "",
+  "source_csv": "/tmp/switchbard-worktree-create-perf.csv",
+  "captured_at": "2026-06-05T14:05:30.204178-04:00",
+  "recorded_at": "2026-06-05T14:05:44.608222-04:00",
+  "git": {
+    "branch": "main",
+    "sha": "862a06f4aff0fb953ce941a94bda92d5fb40f5c5",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "servers",
+    "last": null,
+    "source_frames": 359,
+    "matching_frames": 359,
+    "summarized_frames": 359
+  },
+  "counts_max": {
+    "rows": 29,
+    "expanded_rows": 21,
+    "services": 108,
+    "listeners": 5
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 0.635,
+      "p95": 3.272,
+      "p99": 3.659,
+      "max": 4.024
+    },
+    "top_bar": {
+      "p50": 0.032,
+      "p95": 0.169,
+      "p99": 0.219,
+      "max": 0.256
+    },
+    "central": {
+      "p50": 0.557,
+      "p95": 2.81,
+      "p99": 3.177,
+      "max": 3.621
+    },
+    "workspace": {
+      "p50": 0.557,
+      "p95": 2.81,
+      "p99": 3.177,
+      "max": 3.621
+    }
+  }
+}

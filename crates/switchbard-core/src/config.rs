@@ -9,7 +9,7 @@
 //! There is exactly one canonical path so the GUI doesn't have to thread it
 //! through every call site. Tests use `save_to` / `load_from` with a temp dir.
 
-use crate::types::Repo;
+use crate::types::{Repo, WorktreeAlias};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -25,6 +25,8 @@ pub struct Config {
     pub version: u32,
     #[serde(default)]
     pub repos: Vec<Repo>,
+    #[serde(default)]
+    pub worktrees: Vec<WorktreeAlias>,
     #[serde(default)]
     pub ui: UiConfig,
 }
@@ -160,6 +162,7 @@ mod tests {
                     path: PathBuf::from("/Users/me/bar"),
                 },
             ],
+            worktrees: vec![],
             ui: UiConfig {
                 browser: Some("Safari".into()),
                 show_non_servers: true,
@@ -170,6 +173,55 @@ mod tests {
         save_to(&path, &cfg).unwrap();
         let loaded = load_from(&path).unwrap();
         assert_eq!(loaded, cfg);
+    }
+
+    #[test]
+    fn round_trips_worktree_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let cfg = Config {
+            version: 1,
+            repos: vec![Repo {
+                name: "switchbard".into(),
+                path: PathBuf::from("/Users/me/Dev/switchbard"),
+            }],
+            worktrees: vec![crate::types::WorktreeAlias {
+                repo_path: PathBuf::from("/Users/me/Dev/switchbard"),
+                worktree_path: PathBuf::from("/Users/me/Dev/.worktrees/switchbard/agents"),
+                name: "agents".into(),
+            }],
+            ui: UiConfig::default(),
+        };
+
+        save_to(&path, &cfg).unwrap();
+        let loaded = load_from(&path).unwrap();
+
+        assert_eq!(loaded.worktrees[0].name, "agents");
+        assert_eq!(
+            loaded.worktrees[0].worktree_path,
+            PathBuf::from("/Users/me/Dev/.worktrees/switchbard/agents")
+        );
+    }
+
+    #[test]
+    fn old_configs_load_with_empty_worktree_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+version = 1
+
+[[repos]]
+name = "switchbard"
+path = "/Users/me/Dev/switchbard"
+"#,
+        )
+        .unwrap();
+
+        let loaded = load_from(&path).unwrap();
+
+        assert!(loaded.worktrees.is_empty());
     }
 
     #[test]
