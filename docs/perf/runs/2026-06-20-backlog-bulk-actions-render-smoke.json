@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "Backlog bulk actions render smoke",
+  "scenario": "backlog-bulk-actions-render-smoke",
+  "notes": "Release bundle render smoke after adding Backlog bulk selection and context-menu actions. Servers frames captured with rows present; synthetic scroll input was skipped to avoid interfering with the user-controlled live app window.",
+  "source_csv": "/tmp/switchbard-perf-bulk.csv",
+  "captured_at": "2026-06-20T14:13:44.200161-04:00",
+  "recorded_at": "2026-06-20T14:13:46.455543-04:00",
+  "git": {
+    "branch": "",
+    "sha": "30e12706105ebb87d69608d39a21e5e46dba873e",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "servers",
+    "last": null,
+    "source_frames": 21,
+    "matching_frames": 21,
+    "summarized_frames": 21
+  },
+  "counts_max": {
+    "rows": 31,
+    "expanded_rows": 0,
+    "services": 111,
+    "listeners": 10
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 0.625,
+      "p95": 0.847,
+      "p99": 1.148,
+      "max": 1.148
+    },
+    "top_bar": {
+      "p50": 0.063,
+      "p95": 0.206,
+      "p99": 0.313,
+      "max": 0.313
+    },
+    "central": {
+      "p50": 0.484,
+      "p95": 0.673,
+      "p99": 0.702,
+      "max": 0.702
+    },
+    "workspace": {
+      "p50": 0.484,
+      "p95": 0.673,
+      "p99": 0.702,
+      "max": 0.702
+    }
+  }
+}

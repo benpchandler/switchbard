@@ -41,19 +41,26 @@ fn render_view_tabs(app: &mut HiveApp, ui: &mut egui::Ui) {
     ui.label("view:");
     ui.selectable_value(&mut app.view_tab, ViewTab::Servers, "Servers");
     ui.selectable_value(&mut app.view_tab, ViewTab::AgentContext, "Agent Context");
+    ui.selectable_value(&mut app.view_tab, ViewTab::Backlog, "Backlog");
 }
 
 fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
     ui.label("filter:");
     ui.add(egui::TextEdit::singleline(&mut app.filter).desired_width(420.0));
-    ui.label(
-        egui::RichText::new("matches repo, branch, service, command, port, listener cwd")
-            .color(theme::MUTED_TEXT),
-    );
-    if app.view_tab == ViewTab::Servers {
-        ui.separator();
-        ui.checkbox(&mut app.show_only_managed, "only attributed listeners");
-        ui.checkbox(&mut app.show_non_servers, "show non-server scripts");
+    let hint = match app.view_tab {
+        ViewTab::Servers => "matches repo, branch, service, command, port, listener cwd",
+        ViewTab::AgentContext => "matches repo, path, title, or instruction text",
+        ViewTab::Backlog => "matches task id, title, labels, assignee, or description",
+    };
+    ui.label(egui::RichText::new(hint).color(theme::MUTED_TEXT));
+    match app.view_tab {
+        ViewTab::Servers => {
+            ui.separator();
+            ui.checkbox(&mut app.show_only_managed, "only attributed listeners");
+            ui.checkbox(&mut app.show_non_servers, "show non-server scripts");
+        }
+        ViewTab::Backlog => {}
+        ViewTab::AgentContext => {}
     }
 }
 
@@ -80,6 +87,7 @@ fn render_actions(app: &mut HiveApp, ui: &mut egui::Ui) {
         app.scanner_kick.notify();
         app.detection_kick.notify();
         app.mark_agent_contexts_stale();
+        app.backlog_kick.notify();
     }
 
     ui.separator();
@@ -121,6 +129,10 @@ fn render_actions(app: &mut HiveApp, ui: &mut egui::Ui) {
         ui.label(msg);
     }
     if let Some(msg) = app.server_status.snapshot() {
+        ui.separator();
+        ui.label(msg);
+    }
+    if let Some(msg) = app.backlog_status.snapshot() {
         ui.separator();
         ui.label(msg);
     }

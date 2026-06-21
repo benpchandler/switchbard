@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "Backlog cleaner servers render smoke",
+  "scenario": "backlog-cleaner-servers-render-smoke",
+  "notes": "Release bundle render smoke after Backlog UI cleanup. Servers frames captured with rows present; automated scroll injection was blocked by macOS accessibility/session handling in this run.",
+  "source_csv": "/tmp/switchbard-perf.csv",
+  "captured_at": "2026-06-20T13:27:09.371660-04:00",
+  "recorded_at": "2026-06-20T13:27:35.147575-04:00",
+  "git": {
+    "branch": "",
+    "sha": "30e12706105ebb87d69608d39a21e5e46dba873e",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "servers",
+    "last": null,
+    "source_frames": 2651,
+    "matching_frames": 200,
+    "summarized_frames": 200
+  },
+  "counts_max": {
+    "rows": 29,
+    "expanded_rows": 0,
+    "services": 101,
+    "listeners": 7
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 0.422,
+      "p95": 0.488,
+      "p99": 0.529,
+      "max": 0.742
+    },
+    "top_bar": {
+      "p50": 0.046,
+      "p95": 0.068,
+      "p99": 0.087,
+      "max": 0.226
+    },
+    "central": {
+      "p50": 0.325,
+      "p95": 0.379,
+      "p99": 0.411,
+      "max": 0.44
+    },
+    "workspace": {
+      "p50": 0.325,
+      "p95": 0.379,
+      "p99": 0.411,
+      "max": 0.44
+    }
+  }
+}

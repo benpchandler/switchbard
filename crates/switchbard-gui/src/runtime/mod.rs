@@ -16,7 +16,7 @@ pub mod worktree_names;
 pub mod worktree_rename;
 pub mod worktrees;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use switchbard_core::{
@@ -30,6 +30,123 @@ pub enum ViewTab {
     #[default]
     Servers,
     AgentContext,
+    Backlog,
+}
+
+/// UI-local filters and edit buffers for the Backlog project-management view.
+#[derive(Debug, Clone)]
+pub struct BacklogViewState {
+    pub selected_project: Option<PathBuf>,
+    pub selected_task_id: Option<String>,
+    pub bulk_selected_task_ids: BTreeSet<String>,
+    pub bulk_selection_anchor_task_id: Option<String>,
+    pub project_filter: String,
+    pub status_filter: String,
+    pub priority_filter: String,
+    pub sort_key: BacklogTaskSortKey,
+    pub sort_direction: BacklogTaskSortDirection,
+    pub show_completed: bool,
+    pub show_archived: bool,
+    pub editor: BacklogEditorState,
+    pub new_task: BacklogNewTaskState,
+}
+
+impl Default for BacklogViewState {
+    fn default() -> Self {
+        Self {
+            selected_project: None,
+            selected_task_id: None,
+            bulk_selected_task_ids: BTreeSet::new(),
+            bulk_selection_anchor_task_id: None,
+            project_filter: String::new(),
+            status_filter: "all".to_string(),
+            priority_filter: "all".to_string(),
+            sort_key: BacklogTaskSortKey::default(),
+            sort_direction: BacklogTaskSortDirection::default(),
+            show_completed: false,
+            show_archived: false,
+            editor: BacklogEditorState::default(),
+            new_task: BacklogNewTaskState::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BacklogTaskSortKey {
+    #[default]
+    Task,
+    Status,
+    Priority,
+    AcceptanceCriteria,
+}
+
+impl BacklogTaskSortKey {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Task => "Task",
+            Self::Status => "Status",
+            Self::Priority => "Priority",
+            Self::AcceptanceCriteria => "AC",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BacklogTaskSortDirection {
+    #[default]
+    Ascending,
+    Descending,
+}
+
+impl BacklogTaskSortDirection {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ascending => "Ascending",
+            Self::Descending => "Descending",
+        }
+    }
+
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Ascending => Self::Descending,
+            Self::Descending => Self::Ascending,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct BacklogEditorState {
+    pub loaded_key: Option<String>,
+    pub title: String,
+    pub description: String,
+    pub status: String,
+    pub priority: String,
+    pub labels: String,
+    pub assignees: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct BacklogNewTaskState {
+    pub open: bool,
+    pub title: String,
+    pub description: String,
+    pub status: String,
+    pub priority: String,
+    pub acceptance_criteria: String,
+}
+
+impl Default for BacklogNewTaskState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            title: String::new(),
+            description: String::new(),
+            status: "To Do".to_string(),
+            priority: "medium".to_string(),
+            acceptance_criteria: String::new(),
+        }
+    }
 }
 
 /// Agent target selected in the Agent Context explorer.

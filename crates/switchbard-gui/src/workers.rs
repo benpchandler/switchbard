@@ -14,10 +14,11 @@ use crate::runtime::{ActiveRun, FileListSummary, WorktreeMeta};
 use crate::sync::Kick;
 use eframe::egui;
 use switchbard_core::{
-    agent_context_needs_rescan, attribute, detect_services, probe_dirty_files, probe_fetch_age,
-    probe_head_commit_time, probe_ignored_files, probe_main_drift, probe_recent_commits,
-    probe_ref_drift_detail, probe_remote_drift, save_agent_context_cache, scan_agent_context,
-    scan_listeners, AgentContextMap, DetectedService, DriftProbe, Repo, WorktreeRef,
+    agent_context_needs_rescan, attribute, detect_services, is_backlog_project,
+    load_backlog_project, probe_dirty_files, probe_fetch_age, probe_head_commit_time,
+    probe_ignored_files, probe_main_drift, probe_recent_commits, probe_ref_drift_detail,
+    probe_remote_drift, save_agent_context_cache, scan_agent_context, scan_listeners,
+    AgentContextMap, BacklogProject, DetectedService, DriftProbe, Repo, WorktreeRef,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
@@ -44,6 +45,7 @@ const SCAN_PERIOD: Duration = Duration::from_secs(3);
 const PROBE_PERIOD: Duration = Duration::from_secs(60);
 const DETECT_PERIOD: Duration = Duration::from_secs(30);
 const CONTEXT_PERIOD: Duration = Duration::from_secs(30);
+const BACKLOG_PERIOD: Duration = Duration::from_secs(30);
 const CONTEXT_CACHE_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24);
 const REAPER_PERIOD: Duration = Duration::from_secs(2);
 
@@ -57,11 +59,13 @@ pub struct Channels {
     pub meta: Arc<Mutex<HashMap<PathBuf, WorktreeMeta>>>,
     pub services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>>,
     pub agent_contexts: Arc<Mutex<HashMap<PathBuf, AgentContextMap>>>,
+    pub backlog_projects: Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
     pub active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
     pub scanner_kick: Kick,
     pub probe_kick: Kick,
     pub detection_kick: Kick,
     pub agent_context_kick: Kick,
+    pub backlog_kick: Kick,
 }
 
 pub fn spawn_all(ctx: egui::Context, ch: Channels) {
@@ -69,6 +73,7 @@ pub fn spawn_all(ctx: egui::Context, ch: Channels) {
     spawn_probe(ctx.clone(), ch.clone());
     spawn_detection(ctx.clone(), ch.clone());
     spawn_agent_context(ctx.clone(), ch.clone());
+    spawn_backlog(ctx.clone(), ch.clone());
     spawn_reaper(ctx, ch);
 }
 
@@ -236,6 +241,27 @@ fn persist_agent_context_cache(ch: &Channels) {
         .cloned()
         .collect();
     let _ = save_agent_context_cache(&maps);
+}
+
+fn spawn_backlog(ctx: egui::Context, ch: Channels) {
+    thread::spawn(move || loop {
+        let wts = ch.worktrees.lock().unwrap().clone();
+        let live_paths: std::collections::HashSet<PathBuf> =
+            wts.iter().map(|w| w.path.clone()).collect();
+        let mut projects = HashMap::new();
+        for w in &wts {
+            if !is_backlog_project(&w.path) {
+                continue;
+            }
+            if let Ok(project) = load_backlog_project(&w.path) {
+                projects.insert(w.path.clone(), project);
+            }
+        }
+        projects.retain(|path, _| live_paths.contains(path));
+        *ch.backlog_projects.lock().unwrap() = projects;
+        ctx.request_repaint();
+        ch.backlog_kick.wait(BACKLOG_PERIOD);
+    });
 }
 
 /// Reaper: every REAPER_PERIOD, sweep `active_runs` for processes whose PGID
