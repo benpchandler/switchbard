@@ -3408,6 +3408,7 @@ dependencies = [
  "serde",
  "serde_json",
  "switchbard-core",
+ "tempfile",
  "wgpu",
 ]
 

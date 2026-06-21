@@ -382,6 +382,13 @@ fn apply_one(state: &Arc<Mutex<DiscoveryState>>, path: &PathBuf, selected: bool)
 /// Mark the modal permanently dismissed and persist. Called from every
 /// exit path: Add Selected, Skip, and `add_repo_from_path` once the
 /// browse-flow user picks a repo.
+///
+/// **Intentional cross-module config write:** this UI module mutates
+/// `app.config.ui.onboarding_dismissed` directly and then routes the
+/// persist through `app.save_config()` — the one authoritative save path.
+/// There is no bypass of the normal save mechanism; the slight ownership
+/// blur (a UI module touching `app.config`) is accepted as a pragmatic
+/// trade-off for a single-field UI-only flag that only this module clears.
 pub fn dismiss(app: &mut HiveApp) {
     app.config.ui.onboarding_dismissed = true;
     app.save_config();

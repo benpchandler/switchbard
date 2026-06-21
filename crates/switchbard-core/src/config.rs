@@ -129,7 +129,9 @@ pub fn save_to(path: &Path, config: &Config) -> io::Result<()> {
     }
     let text = toml::to_string_pretty(config)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    fs::write(path, text)
+    let tmp = path.with_extension("toml.tmp");
+    fs::write(&tmp, text)?;
+    fs::rename(tmp, path)
 }
 
 #[cfg(test)]
@@ -241,6 +243,39 @@ path = "/Users/me/Dev/switchbard"
         fs::write(&path, "this is = ][ not toml").unwrap();
         let err = load_from(&path).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn save_over_existing_replaces_content_and_leaves_no_tmp_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let tmp = path.with_extension("toml.tmp");
+
+        // Write an initial config, then overwrite with a different one.
+        let first = Config::default();
+        save_to(&path, &first).unwrap();
+
+        let second = Config {
+            version: 1,
+            repos: vec![Repo {
+                name: "myrepo".into(),
+                path: PathBuf::from("/Users/me/myrepo"),
+            }],
+            worktrees: vec![],
+            ui: UiConfig::default(),
+        };
+        save_to(&path, &second).unwrap();
+
+        // The live file reflects the second write.
+        let loaded = load_from(&path).unwrap();
+        assert_eq!(loaded.repos.len(), 1);
+        assert_eq!(loaded.repos[0].name, "myrepo");
+
+        // The tmp sidecar must not linger after a successful save.
+        assert!(
+            !tmp.exists(),
+            ".toml.tmp sidecar should not remain after successful save"
+        );
     }
 
     #[test]
