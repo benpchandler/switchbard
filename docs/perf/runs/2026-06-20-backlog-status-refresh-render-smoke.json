@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "Backlog status refresh render smoke",
+  "scenario": "backlog-status-refresh-render-smoke",
+  "notes": "Release bundle render smoke after Backlog status refresh. Servers frames captured with rows present; synthetic scroll injection was blocked by macOS accessibility/session handling in this run.",
+  "source_csv": "/tmp/switchbard-perf.csv",
+  "captured_at": "2026-06-20T13:32:39.100312-04:00",
+  "recorded_at": "2026-06-20T13:32:47.339652-04:00",
+  "git": {
+    "branch": "",
+    "sha": "30e12706105ebb87d69608d39a21e5e46dba873e",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "servers",
+    "last": null,
+    "source_frames": 166,
+    "matching_frames": 166,
+    "summarized_frames": 166
+  },
+  "counts_max": {
+    "rows": 29,
+    "expanded_rows": 0,
+    "services": 101,
+    "listeners": 7
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 0.404,
+      "p95": 0.563,
+      "p99": 1.895,
+      "max": 2.559
+    },
+    "top_bar": {
+      "p50": 0.046,
+      "p95": 0.064,
+      "p99": 0.137,
+      "max": 0.192
+    },
+    "central": {
+      "p50": 0.306,
+      "p95": 0.456,
+      "p99": 1.58,
+      "max": 2.244
+    },
+    "workspace": {
+      "p50": 0.306,
+      "p95": 0.456,
+      "p99": 1.58,
+      "max": 2.244
+    }
+  }
+}

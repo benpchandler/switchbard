@@ -16,8 +16,8 @@ use crate::runtime::worktree_create::{CreateWorktreeDialog, CreateWorktreeOutcom
 use crate::runtime::worktree_rename::RenameWorktreeDialog;
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
-    ActiveRun, ActiveRunSummary, AgentContextViewState, ConfirmRemoveWorktree, PickerState,
-    ViewTab, WorktreeMeta,
+    ActiveRun, ActiveRunSummary, AgentContextViewState, BacklogViewState, ConfirmRemoveWorktree,
+    PickerState, ViewTab, WorktreeMeta,
 };
 use crate::sync::{Kick, Status};
 use crate::ui;
@@ -32,8 +32,9 @@ use std::time::{Duration, Instant};
 use switchbard_core::config::Config;
 use switchbard_core::{
     assess_branch_delete, collect_dirty_files, config, delete_branch, is_primary_worktree,
-    kill_pgid, load_agent_context_cache, open_url, remove_worktree, spawn_in_session, url_for_port,
-    AgentContextMap, AttributedListener, DetectedService, KillOutcome, Repo, WorktreeRef,
+    kill_pgid, load_agent_context_cache, load_backlog_project, open_url, remove_worktree,
+    spawn_in_session, url_for_port, AgentContextMap, AttributedListener, BacklogProject,
+    BacklogTaskPatch, DetectedService, KillOutcome, NewBacklogTask, Repo, WorktreeRef,
     BROWSER_APP_NAMES,
 };
 
@@ -70,12 +71,14 @@ pub struct HiveApp {
     pub meta: Arc<Mutex<HashMap<PathBuf, WorktreeMeta>>>,
     pub services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>>,
     pub agent_contexts: Arc<Mutex<HashMap<PathBuf, AgentContextMap>>>,
+    pub backlog_projects: Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
     pub active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
     pub state: Arc<Mutex<ScanState>>,
     pub scanner_kick: Kick,
     pub probe_kick: Kick,
     pub detection_kick: Kick,
     pub agent_context_kick: Kick,
+    pub backlog_kick: Kick,
     pub picker: Arc<Mutex<PickerState>>,
 
     // Per-view feedback channels. One per UI surface so messages don't
@@ -83,6 +86,7 @@ pub struct HiveApp {
     pub config_status: Status,
     pub kill_status: Status,
     pub server_status: Status,
+    pub backlog_status: Status,
 
     // Persisted config (single source of truth for repos + UI defaults).
     pub config: Config,
@@ -113,6 +117,7 @@ pub struct HiveApp {
     pub show_non_servers: bool,
     pub view_tab: ViewTab,
     pub agent_context_view: AgentContextViewState,
+    pub backlog_view: BacklogViewState,
     /// 0 = system default; 1..=BROWSER_APP_NAMES.len() = specific browser.
     pub browser_choice: usize,
     /// First-launch discovery state. Hidden by default; flips to Scanning
@@ -180,17 +185,20 @@ impl HiveApp {
             meta: Arc::new(Mutex::new(HashMap::new())),
             services: Arc::new(Mutex::new(HashMap::new())),
             agent_contexts: Arc::new(Mutex::new(HashMap::new())),
+            backlog_projects: Arc::new(Mutex::new(HashMap::new())),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             state: Arc::new(Mutex::new(ScanState::default())),
             scanner_kick: Kick::new(),
             probe_kick: Kick::new(),
             detection_kick: Kick::new(),
             agent_context_kick: Kick::new(),
+            backlog_kick: Kick::new(),
             config: cfg,
             picker: Arc::new(Mutex::new(PickerState::Idle)),
             config_status: Status::new(),
             kill_status: Status::new(),
             server_status: Status::new(),
+            backlog_status: Status::new(),
             filter: String::new(),
             show_only_managed: false,
             confirm_kill_all: false,
@@ -203,6 +211,7 @@ impl HiveApp {
             show_non_servers,
             view_tab: ViewTab::Servers,
             agent_context_view: AgentContextViewState::default(),
+            backlog_view: BacklogViewState::default(),
             browser_choice,
             onboarding: Arc::new(Mutex::new(DiscoveryState::default())),
             perf: PerfSession::from_env(),
@@ -222,11 +231,13 @@ impl HiveApp {
                 meta: self.meta.clone(),
                 services: self.services.clone(),
                 agent_contexts: self.agent_contexts.clone(),
+                backlog_projects: self.backlog_projects.clone(),
                 active_runs: self.active_runs.clone(),
                 scanner_kick: self.scanner_kick.clone(),
                 probe_kick: self.probe_kick.clone(),
                 detection_kick: self.detection_kick.clone(),
                 agent_context_kick: self.agent_context_kick.clone(),
+                backlog_kick: self.backlog_kick.clone(),
             },
         );
     }
@@ -239,11 +250,16 @@ impl HiveApp {
         self.worktrees.lock().unwrap().clone()
     }
 
+    pub fn backlog_projects_snapshot(&self) -> HashMap<PathBuf, BacklogProject> {
+        self.backlog_projects.lock().unwrap().clone()
+    }
+
     pub fn kick_all(&self) {
         self.scanner_kick.notify();
         self.probe_kick.notify();
         self.detection_kick.notify();
         self.agent_context_kick.notify();
+        self.backlog_kick.notify();
     }
 
     pub fn mark_agent_contexts_stale(&self) {
@@ -753,6 +769,156 @@ impl HiveApp {
         }
     }
 
+    pub fn spawn_backlog_save(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        patch: BacklogTaskPatch,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::edit_backlog_task(&project_root, &task_id, &patch) {
+                Ok(_) => {
+                    refresh_backlog_project_cache(&projects, &project_root);
+                    status.set(format!("saved {task_id}"));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("save {task_id} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn spawn_backlog_bulk_save(
+        &self,
+        project_root: PathBuf,
+        task_ids: Vec<String>,
+        patch: BacklogTaskPatch,
+        action_label: String,
+        ctx: &egui::Context,
+    ) {
+        if task_ids.is_empty() {
+            return;
+        }
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let total = task_ids.len();
+            let mut saved = 0usize;
+            let mut first_error: Option<String> = None;
+            for task_id in &task_ids {
+                match switchbard_core::edit_backlog_task(&project_root, task_id, &patch) {
+                    Ok(_) => saved += 1,
+                    Err(e) => {
+                        if first_error.is_none() {
+                            first_error = Some(format!("{task_id}: {e}"));
+                        }
+                    }
+                }
+            }
+            if saved > 0 {
+                refresh_backlog_project_cache(&projects, &project_root);
+                kick.notify();
+            }
+            match first_error {
+                Some(error) => status.set(format!(
+                    "{action_label}: saved {saved}/{total} tasks; first failure: {error}"
+                )),
+                None => status.set(format!("{action_label}: updated {saved} task(s)")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn spawn_backlog_acceptance_toggle(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        index: usize,
+        checked: bool,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::set_backlog_acceptance_checked(
+                &project_root,
+                &task_id,
+                index,
+                checked,
+            ) {
+                Ok(_) => {
+                    refresh_backlog_project_cache(&projects, &project_root);
+                    let verb = if checked { "checked" } else { "unchecked" };
+                    status.set(format!("{verb} {task_id} AC #{index}"));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("update {task_id} AC #{index} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn spawn_backlog_append_note(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        note: String,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::append_backlog_notes(&project_root, &task_id, &note) {
+                Ok(_) => {
+                    refresh_backlog_project_cache(&projects, &project_root);
+                    status.set(format!("appended note to {task_id}"));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("append note to {task_id} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn spawn_backlog_create(
+        &self,
+        project_root: PathBuf,
+        task: NewBacklogTask,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::create_backlog_task(&project_root, &task) {
+                Ok(output) => {
+                    refresh_backlog_project_cache(&projects, &project_root);
+                    let msg = if output.is_empty() {
+                        "created task".to_string()
+                    } else {
+                        format!("created task: {output}")
+                    };
+                    status.set(msg);
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("create task failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
     pub fn perf_count_worktree_row(&mut self, expanded: bool, services: usize, listeners: usize) {
         if let Some(perf) = &mut self.perf {
             perf.count_worktree_row(expanded, services, listeners);
@@ -918,6 +1084,7 @@ impl HiveApp {
         match self.view_tab {
             ViewTab::Servers => ui::workspace::render(self, ctx),
             ViewTab::AgentContext => ui::agent_context::render(self, ctx),
+            ViewTab::Backlog => ui::backlog::render(self, ctx),
         }
         let central_elapsed = central_start.elapsed();
         if let Some(perf) = &mut self.perf {
@@ -964,6 +1131,18 @@ fn render_perf_overlay(ctx: &egui::Context, summary: &PerfSummary) {
                     );
                 });
         });
+}
+
+fn refresh_backlog_project_cache(
+    projects: &Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
+    project_root: &Path,
+) {
+    if let Ok(project) = load_backlog_project(project_root) {
+        projects
+            .lock()
+            .unwrap()
+            .insert(project_root.to_path_buf(), project);
+    }
 }
 
 impl eframe::App for HiveApp {

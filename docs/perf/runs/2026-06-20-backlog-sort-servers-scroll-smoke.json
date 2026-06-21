@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "Backlog sort controls render smoke",
+  "scenario": "backlog-sort-controls-render-smoke",
+  "notes": "Release bundle render smoke after adding Backlog task sort controls. Servers frames captured with rows present; synthetic scroll injection was blocked by macOS accessibility permissions in this run.",
+  "source_csv": "/tmp/switchbard-perf-sort.csv",
+  "captured_at": "2026-06-20T13:46:11.399010-04:00",
+  "recorded_at": "2026-06-20T13:46:25.374000-04:00",
+  "git": {
+    "branch": "",
+    "sha": "30e12706105ebb87d69608d39a21e5e46dba873e",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "servers",
+    "last": null,
+    "source_frames": 1526,
+    "matching_frames": 259,
+    "summarized_frames": 259
+  },
+  "counts_max": {
+    "rows": 29,
+    "expanded_rows": 0,
+    "services": 101,
+    "listeners": 6
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 0.488,
+      "p95": 0.565,
+      "p99": 0.592,
+      "max": 0.656
+    },
+    "top_bar": {
+      "p50": 0.047,
+      "p95": 0.063,
+      "p99": 0.076,
+      "max": 0.206
+    },
+    "central": {
+      "p50": 0.386,
+      "p95": 0.456,
+      "p99": 0.48,
+      "max": 0.494
+    },
+    "workspace": {
+      "p50": 0.386,
+      "p95": 0.456,
+      "p99": 0.48,
+      "max": 0.494
+    }
+  }
+}

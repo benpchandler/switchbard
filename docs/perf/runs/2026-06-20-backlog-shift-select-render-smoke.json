@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "Backlog shift selection render smoke",
+  "scenario": "backlog-shift-selection-render-smoke",
+  "notes": "Release bundle render smoke after adding Backlog shift-click range selection. Servers frames captured with rows present; synthetic UI input was skipped to avoid interfering with the user-controlled live app window.",
+  "source_csv": "/tmp/switchbard-perf-shift.csv",
+  "captured_at": "2026-06-20T14:23:26.054347-04:00",
+  "recorded_at": "2026-06-20T14:23:27.946480-04:00",
+  "git": {
+    "branch": "",
+    "sha": "30e12706105ebb87d69608d39a21e5e46dba873e",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "servers",
+    "last": null,
+    "source_frames": 53,
+    "matching_frames": 53,
+    "summarized_frames": 53
+  },
+  "counts_max": {
+    "rows": 32,
+    "expanded_rows": 0,
+    "services": 116,
+    "listeners": 12
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 0.415,
+      "p95": 0.501,
+      "p99": 0.735,
+      "max": 0.735
+    },
+    "top_bar": {
+      "p50": 0.047,
+      "p95": 0.066,
+      "p99": 0.221,
+      "max": 0.221
+    },
+    "central": {
+      "p50": 0.327,
+      "p95": 0.389,
+      "p99": 0.431,
+      "max": 0.431
+    },
+    "workspace": {
+      "p50": 0.327,
+      "p95": 0.389,
+      "p99": 0.431,
+      "max": 0.431
+    }
+  }
+}

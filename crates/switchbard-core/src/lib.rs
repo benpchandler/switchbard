@@ -1,5 +1,6 @@
 pub mod agent_context;
 pub mod attribution;
+pub mod backlog;
 pub mod classify;
 pub mod config;
 pub mod discover;
@@ -23,6 +24,12 @@ pub use agent_context::{
     ContextKind, ContextScope,
 };
 pub use attribution::attribute;
+pub use backlog::{
+    append_backlog_notes, backlog_cli_path, create_backlog_task, edit_backlog_task,
+    is_backlog_project, load_backlog_project, set_backlog_acceptance_checked, BacklogChecklistItem,
+    BacklogProject, BacklogTask, BacklogTaskPatch, BacklogTaskSource, NewBacklogTask,
+    BACKLOG_PRIORITIES, BACKLOG_STATUSES,
+};
 pub use classify::{classify_command, classify_script_body, ServerLikelihood};
 pub use discover::{auto_scan_roots, discover_repos, DiscoveredRepo};
 pub use expected_port::{default_port_for_service, expected_port};

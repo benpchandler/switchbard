@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "Backlog view servers scroll smoke",
+  "scenario": "backlog-view-servers-scroll-smoke",
+  "notes": "Release binary with SWITCHBARD_PERF=1, default Servers view, repeated AppleScript Page Down/Page Up. Current row expansion state was collapsed on this run.",
+  "source_csv": "/tmp/switchbard-perf.csv",
+  "captured_at": "2026-06-20T13:00:56.945521-04:00",
+  "recorded_at": "2026-06-20T13:01:17.381507-04:00",
+  "git": {
+    "branch": "",
+    "sha": "30e12706105ebb87d69608d39a21e5e46dba873e",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "servers",
+    "last": null,
+    "source_frames": 194,
+    "matching_frames": 194,
+    "summarized_frames": 194
+  },
+  "counts_max": {
+    "rows": 28,
+    "expanded_rows": 0,
+    "services": 96,
+    "listeners": 9
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 0.526,
+      "p95": 2.675,
+      "p99": 3.511,
+      "max": 3.912
+    },
+    "top_bar": {
+      "p50": 0.053,
+      "p95": 0.16,
+      "p99": 0.29,
+      "max": 1.412
+    },
+    "central": {
+      "p50": 0.423,
+      "p95": 2.009,
+      "p99": 2.975,
+      "max": 3.545
+    },
+    "workspace": {
+      "p50": 0.423,
+      "p95": 2.009,
+      "p99": 2.975,
+      "max": 3.545
+    }
+  }
+}
