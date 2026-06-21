@@ -27,6 +27,7 @@ dirs = "5"
 [dev-dependencies]
 egui_kittest = { version = "0.30", features = ["snapshot", "wgpu"] }
 kittest = "0.1"
+tempfile = "3"
 
 # egui_kittest's `wgpu` feature pulls wgpu with `default-features = false` and
 # only the `wgsl` feature — i.e. with NO GPU backend compiled in. On macOS

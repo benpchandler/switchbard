@@ -10,6 +10,16 @@
 //!   via `rebuild_worktrees` after every mutation.
 //! - `update()` is just dispatch — each view module owns its own central
 //!   panel.
+//!
+//! ## Mutation-method naming convention
+//!
+//! | Prefix | Role | Examples |
+//! |--------|------|---------|
+//! | `open_` | Show a confirmation/creation modal; validates preconditions synchronously; sets dialog state. | `open_remove_worktree_confirm`, `open_create_worktree` |
+//! | `cancel_` | Dismiss a modal without acting. | `cancel_remove_worktree_confirm`, `cancel_create_worktree` |
+//! | `execute_` | Commit a modal action on a **worker thread** (the heavy I/O path). Flips `busy`; result lands back via an outcomes queue or in-place dialog mutation. | `execute_remove_worktree`, `execute_create_worktree` |
+//! | `add_` / `remove_` / `move_` | Synchronous repo-list CRUD; calls `after_repos_mutation` on the UI thread. | `add_repo_from_path`, `remove_repo`, `move_repo` |
+//! | `spawn_` | Fire-and-forget threaded actions with no confirmation modal (start/stop/kill). | `spawn_start`, `spawn_stop_run`, `spawn_kill` |
 
 use crate::perf::{PerfSession, PerfSummary};
 use crate::runtime::worktree_create::{CreateWorktreeDialog, CreateWorktreeOutcome};
@@ -23,6 +33,7 @@ use crate::sync::{Kick, Status};
 use crate::ui;
 use crate::ui::onboarding::DiscoveryState;
 use crate::workers::{self, Channels};
+use crate::worktree_actions::RemovedWorktree;
 use eframe::egui;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -109,6 +120,10 @@ pub struct HiveApp {
     /// Worker-to-UI completion queue for create operations. The worker runs
     /// git; the UI thread mutates persisted config after success.
     pub create_worktree_outcomes: Arc<Mutex<Vec<CreateWorktreeOutcome>>>,
+    /// Worker-to-UI completion queue for remove operations. The worker pushes
+    /// a `RemovedWorktree` on success; the UI thread prunes the alias from
+    /// `config.worktrees` and persists.
+    pub remove_worktree_outcomes: Arc<Mutex<Vec<RemovedWorktree>>>,
     /// Modal state for renaming the Switchbard-local worktree label.
     pub rename_worktree_dialog: Option<RenameWorktreeDialog>,
     pub expanded_repos: BTreeSet<String>,
@@ -206,6 +221,7 @@ impl HiveApp {
             confirm_remove_worktree: Arc::new(Mutex::new(None)),
             create_worktree_dialog: Arc::new(Mutex::new(None)),
             create_worktree_outcomes: Arc::new(Mutex::new(Vec::new())),
+            remove_worktree_outcomes: Arc::new(Mutex::new(Vec::new())),
             rename_worktree_dialog: None,
             expanded_repos: BTreeSet::new(),
             show_non_servers,
@@ -271,6 +287,14 @@ impl HiveApp {
 
     /// Save the in-memory config to disk. Reports failures via `config_status`
     /// so the user sees what happened — we don't swallow the cause.
+    ///
+    /// **Deliberate tradeoff — in-memory-first, no rollback:** callers mutate
+    /// `self.config` directly before calling `save_config`; if the disk write
+    /// fails the in-memory state has already changed and is NOT rolled back.
+    /// For a local single-user app this is acceptable: the next successful save
+    /// (on the next mutation) will persist the current in-memory state, and
+    /// `config_status` surfaces the failure immediately so the user is never
+    /// silently left with a stale file.
     pub fn save_config(&self) {
         if let Err(e) = config::save(&self.config) {
             self.config_status.set(format!("config save failed: {e}"));
@@ -288,6 +312,23 @@ impl HiveApp {
         };
         self.config.ui.show_non_servers = self.show_non_servers;
         self.save_config();
+    }
+
+    /// Common tail for any mutation of `config.repos`: persist, re-derive
+    /// the runtime worktree list, wake all workers, and show a status line.
+    ///
+    /// Intentional deviations from the pre-refactor per-method behaviour:
+    /// - `remove_repo` previously kicked the scanner only; it now does
+    ///   `kick_all()` so probe/detection/agent-context caches are pruned
+    ///   immediately rather than waiting for their next scheduled tick.
+    /// - `move_repo` does NOT call this helper (see its doc-comment) because
+    ///   reordering leaves the worktree *set* unchanged; kicking workers for a
+    ///   purely visual reorder would be noise.
+    fn after_repos_mutation(&self, status: impl Into<String>) {
+        self.save_config();
+        self.rebuild_worktrees();
+        self.kick_all();
+        self.config_status.set(status);
     }
 
     /// Add a new repo (after the user picked a path). Idempotent: a path
@@ -316,10 +357,7 @@ impl HiveApp {
             self.config.ui.onboarding_dismissed = true;
             *self.onboarding.lock().unwrap() = DiscoveryState::Hidden;
         }
-        self.save_config();
-        self.rebuild_worktrees();
-        self.config_status.set(format!("added '{name}'"));
-        self.kick_all();
+        self.after_repos_mutation(format!("added '{name}'"));
     }
 
     /// Remove a configured repo by path. Worktrees for that repo are dropped
@@ -331,11 +369,7 @@ impl HiveApp {
         if self.config.repos.len() == before {
             return;
         }
-        self.save_config();
-        self.rebuild_worktrees();
-        self.config_status
-            .set(format!("removed '{}'", repo_path.display()));
-        self.scanner_kick.notify();
+        self.after_repos_mutation(format!("removed '{}'", repo_path.display()));
     }
 
     /// Open the "Remove worktree?" confirmation dialog. If the target is the
@@ -452,6 +486,7 @@ impl HiveApp {
         let detection_kick = self.detection_kick.clone();
         let agent_context_kick = self.agent_context_kick.clone();
         let config_status = self.config_status.clone();
+        let remove_outcomes = self.remove_worktree_outcomes.clone();
         let ctx = ctx.clone();
         let fresh_runs = self.snapshot_runs_for_worktree(&snapshot.worktree_path);
 
@@ -524,6 +559,16 @@ impl HiveApp {
                         .unwrap()
                         .retain(|w| w.path != snapshot.worktree_path);
                     let _ = repos; // kept in scope for parity; rebuild not needed
+
+                    // Queue the alias prune for the UI thread; config is owned
+                    // directly by HiveApp and cannot be touched from here.
+                    remove_outcomes.lock().unwrap().push(
+                        crate::worktree_actions::RemovedWorktree {
+                            repo_path: snapshot.repo_path.clone(),
+                            worktree_path: snapshot.worktree_path.clone(),
+                        },
+                    );
+
                     *confirm.lock().unwrap() = None;
                     let name = snapshot
                         .branch
@@ -554,7 +599,10 @@ impl HiveApp {
                 Err(e) => {
                     if let Some(state) = confirm.lock().unwrap().as_mut() {
                         state.busy = false;
-                        state.error = Some(e.to_string());
+                        state.error = Some(crate::worktree_actions::removal_error_message(
+                            killed,
+                            &e.to_string(),
+                        ));
                     }
                 }
             }
@@ -565,6 +613,11 @@ impl HiveApp {
     /// Move the repo at index `i` up (delta = -1) or down (delta = 1). Saves
     /// the new order to `~/.switchbard/config.toml` and refreshes the runtime view
     /// so the sidebar / per-repo sections re-render in the new order.
+    ///
+    /// Intentionally does NOT call `after_repos_mutation`: reordering leaves
+    /// the worktree *set* unchanged, so kicking workers would be pure noise.
+    /// `rebuild_worktrees` is still needed to update the runtime order for the
+    /// UI; `save_config` persists the swap; a status note surfaces the change.
     pub fn move_repo(&mut self, i: usize, delta: isize) {
         let len = self.config.repos.len();
         let j = (i as isize + delta).clamp(0, len.saturating_sub(1) as isize) as usize;
@@ -574,6 +627,7 @@ impl HiveApp {
         self.config.repos.swap(i, j);
         self.save_config();
         self.rebuild_worktrees();
+        self.config_status.set("reordered repos");
     }
 
     /// Recompute the runtime `repos` + `worktrees` mutexes from
@@ -959,7 +1013,7 @@ impl WorktreeDelta {
 /// guarantee order across invocations. Uses (status, path) tuples so an
 /// edit that flips a file from `??` (untracked) to `A ` (staged add) also
 /// trips the drift check.
-fn state_drifted(
+pub fn state_drifted(
     original: &[switchbard_core::DirtyFile],
     fresh: &[switchbard_core::DirtyFile],
 ) -> bool {
@@ -981,7 +1035,7 @@ fn state_drifted(
 
 /// Did the set of switchbard-tracked runs in this worktree change? Keys on
 /// pgid since service names can be non-unique across services.
-fn runs_drifted(original: &[ActiveRunSummary], fresh: &[ActiveRunSummary]) -> bool {
+pub fn runs_drifted(original: &[ActiveRunSummary], fresh: &[ActiveRunSummary]) -> bool {
     if original.len() != fresh.len() {
         return true;
     }
@@ -1000,7 +1054,10 @@ fn runs_drifted(original: &[ActiveRunSummary], fresh: &[ActiveRunSummary]) -> bo
 /// unlanded commits gets `git branch -D`, which the dialog made the user opt
 /// into explicitly via the loud force-delete checkbox. Failure is non-fatal —
 /// the worktree is already gone — so we report it inline rather than erroring.
-fn delete_branch_after_removal(snapshot: &ConfirmRemoveWorktree, branch: Option<&str>) -> String {
+pub fn delete_branch_after_removal(
+    snapshot: &ConfirmRemoveWorktree,
+    branch: Option<&str>,
+) -> String {
     if !snapshot.will_delete_branch() {
         return String::new();
     }
@@ -1064,6 +1121,7 @@ impl HiveApp {
             perf.begin_frame();
         }
         self.drain_create_worktree_outcomes();
+        self.drain_remove_worktree_outcomes();
 
         let top_start = Instant::now();
         ui::top_bar::render(self, ctx);

@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use switchbard_core::{config::Config, Repo, WorktreeAlias, WorktreeRef};
 use switchbard_gui::runtime::worktree_names::{
-    default_worktree_location, unique_worktree_name_error, worktree_display_name,
+    default_worktree_location, remove_worktree_alias, unique_worktree_name_error,
+    worktree_display_name,
 };
 
 #[test]
@@ -70,6 +71,43 @@ fn default_location_uses_repo_scoped_worktrees_directory() {
     assert_eq!(
         default_worktree_location(&repo, "agents"),
         PathBuf::from("/Users/me/Dev/.worktrees/switchbard/agents")
+    );
+}
+
+#[test]
+fn remove_worktree_alias_prunes_matching_entry_and_leaves_others() {
+    let repo = repo();
+    let kept_path = PathBuf::from("/Users/me/Dev/.worktrees/switchbard/servers");
+    let removed_path = PathBuf::from("/Users/me/Dev/.worktrees/switchbard/agents");
+    let mut cfg = Config {
+        version: 1,
+        repos: vec![repo.clone()],
+        worktrees: vec![
+            WorktreeAlias {
+                repo_path: repo.path.clone(),
+                worktree_path: removed_path.clone(),
+                name: "agents".into(),
+            },
+            WorktreeAlias {
+                repo_path: repo.path.clone(),
+                worktree_path: kept_path.clone(),
+                name: "servers".into(),
+            },
+        ],
+        ui: Default::default(),
+    };
+
+    remove_worktree_alias(&mut cfg, &repo.path, &removed_path);
+
+    assert!(
+        cfg.worktrees
+            .iter()
+            .all(|a| a.worktree_path != removed_path),
+        "removed path must not remain in config.worktrees"
+    );
+    assert!(
+        cfg.worktrees.iter().any(|a| a.worktree_path == kept_path),
+        "unrelated alias must be preserved"
     );
 }
 
