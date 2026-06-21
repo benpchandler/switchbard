@@ -11,9 +11,8 @@
 /// extracted here cover the decision logic that matters.
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use switchbard_core::{BranchDeleteAssessment, DirtyFile};
+use switchbard_core::{git_cmd, BranchDeleteAssessment, DirtyFile};
 use switchbard_gui::app::{delete_branch_after_removal, runs_drifted, state_drifted};
 use switchbard_gui::runtime::{ActiveRunSummary, ConfirmRemoveWorktree};
 use tempfile::TempDir;
@@ -150,7 +149,7 @@ fn setup_repo_with_worktree() -> (TempDir, PathBuf, PathBuf) {
 }
 
 fn run_git(cwd: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = git_cmd()
         .arg("-C")
         .arg(cwd)
         .args(args)

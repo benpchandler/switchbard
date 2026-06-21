@@ -6,7 +6,8 @@
 
 use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+use crate::git_cmd;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CreateBranchMode {
@@ -27,7 +28,7 @@ pub fn create_worktree(opts: CreateWorktreeOptions) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let mut cmd = Command::new("git");
+    let mut cmd = git_cmd();
     cmd.arg("-C").arg(&opts.repo_path).args(["worktree", "add"]);
     match &opts.branch_mode {
         CreateBranchMode::NewBranch { branch, base } => {

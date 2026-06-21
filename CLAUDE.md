@@ -16,8 +16,7 @@ Configuration is persisted at `~/.switchbard/config.toml`. Service logs land in 
 
 ```sh
 mise install                                     # install pinned Rust from mise.toml
-mise run ci                                      # fmt + clippy + test, same as CI/pre-push
-mise run hooks:install                           # use .githooks/pre-push in this checkout
+mise run ci                                      # fmt + clippy + test, same as CI
 mise run bundle                                  # alpha .app bundle in target/release
 mise run package                                 # alpha DMG + sha256 in target/dist
 mise exec -- cargo build                         # debug
@@ -33,7 +32,7 @@ bash scripts/package-dmg.sh                      # lower-level DMG script
 CI (`.github/workflows/ci.yml`, macos-latest only) installs tools through mise
 and runs the `test`, `clippy`, and `fmt` tasks from `mise.toml` on every PR.
 The `clippy` and `test` tasks set `RUSTFLAGS=-D warnings`, so any compiler
-warning fails the build. The tracked pre-push hook runs `mise run ci`.
+warning fails the build.
 
 ## Render-path perf
 
