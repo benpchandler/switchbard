@@ -14,7 +14,8 @@
 
 use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+use crate::git_cmd;
 
 /// One uncommitted change in the worktree. `status` is the two-character
 /// porcelain code (`" M"`, `"??"`, `"A "`, etc.); `path` is the path the
@@ -53,7 +54,7 @@ pub fn is_primary_worktree(repo_path: &Path, worktree_path: &Path) -> bool {
 /// the confirm dialog can't truthfully say "no uncommitted changes" if the
 /// status call errored.
 pub fn collect_dirty_files(worktree_path: &Path) -> Result<Vec<DirtyFile>> {
-    let output = Command::new("git")
+    let output = git_cmd()
         .arg("-C")
         .arg(worktree_path)
         .args(["status", "--porcelain=v1"])
@@ -71,7 +72,7 @@ pub fn collect_dirty_files(worktree_path: &Path) -> Result<Vec<DirtyFile>> {
 /// the actual reason ("is dirty", "has submodules", "is locked", etc.) rather
 /// than a generic "removal failed".
 pub fn remove_worktree(repo_path: &Path, worktree_path: &Path, force: bool) -> Result<()> {
-    let mut cmd = Command::new("git");
+    let mut cmd = git_cmd();
     cmd.arg("-C").arg(repo_path).args(["worktree", "remove"]);
     if force {
         cmd.arg("--force");
@@ -174,7 +175,7 @@ pub fn assess_branch_delete(
 /// …") rather than a generic failure.
 pub fn delete_branch(repo_path: &Path, branch: &str, force: bool) -> Result<()> {
     let flag = if force { "-D" } else { "-d" };
-    let output = Command::new("git")
+    let output = git_cmd()
         .arg("-C")
         .arg(repo_path)
         .args(["branch", flag, branch])
@@ -222,7 +223,7 @@ fn default_branch(repo_path: &Path) -> Option<String> {
 }
 
 fn branch_exists(repo_path: &Path, branch: &str) -> bool {
-    Command::new("git")
+    git_cmd()
         .arg("-C")
         .arg(repo_path)
         .args([
@@ -239,7 +240,7 @@ fn branch_exists(repo_path: &Path, branch: &str) -> bool {
 /// Number of commits on `branch` not reachable from `base` (`base..branch`).
 /// `None` if the git call fails.
 fn count_commits_ahead(repo_path: &Path, base: &str, branch: &str) -> Option<u32> {
-    let output = Command::new("git")
+    let output = git_cmd()
         .arg("-C")
         .arg(repo_path)
         .args(["rev-list", "--count", &format!("{base}..{branch}")])
@@ -280,7 +281,6 @@ fn parse_porcelain_line(line: &str) -> Option<DirtyFile> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::process::Command;
     use tempfile::TempDir;
 
     /// Set up a real git repo + a linked worktree on a feature branch.
@@ -314,7 +314,7 @@ mod tests {
     }
 
     fn run(cwd: &Path, args: &[&str]) {
-        let status = Command::new("git")
+        let status = git_cmd()
             .arg("-C")
             .arg(cwd)
             .args(args)

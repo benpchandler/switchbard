@@ -1,8 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use switchbard_core::{create_worktree, CreateBranchMode, CreateWorktreeOptions};
+use switchbard_core::{create_worktree, git_cmd, CreateBranchMode, CreateWorktreeOptions};
 use tempfile::TempDir;
 
 fn setup_repo() -> (TempDir, PathBuf) {
@@ -19,7 +18,7 @@ fn setup_repo() -> (TempDir, PathBuf) {
 }
 
 fn run(cwd: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = git_cmd()
         .arg("-C")
         .arg(cwd)
         .args(args)
@@ -44,7 +43,7 @@ fn creates_named_branch_worktree_from_base() {
     .unwrap();
 
     assert!(worktree.join("README.md").exists());
-    let output = Command::new("git")
+    let output = git_cmd()
         .arg("-C")
         .arg(&worktree)
         .args(["branch", "--show-current"])
@@ -90,7 +89,7 @@ fn checks_out_existing_branch_when_available() {
     })
     .unwrap();
 
-    let output = Command::new("git")
+    let output = git_cmd()
         .arg("-C")
         .arg(&worktree)
         .args(["branch", "--show-current"])

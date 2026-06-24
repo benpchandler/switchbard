@@ -5,8 +5,9 @@
 //! unusual git state.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::git_cmd;
 
 /// One commit's summary line. Used to fill the drift tooltip and the
 /// recent-activity column with subjects + timestamps.
@@ -304,7 +305,7 @@ fn log_commits(path: &Path, range: &str, limit: usize) -> Option<Vec<CommitSumma
 }
 
 fn git(path: &Path, args: &[&str]) -> Option<String> {
-    let mut cmd = Command::new("git");
+    let mut cmd = git_cmd();
     cmd.arg("-C").arg(path);
     for a in args {
         cmd.arg(a);
@@ -473,7 +474,7 @@ mod tests {
     }
 
     fn run_raw_git(args: &[&str]) {
-        let output = Command::new("git").args(args).output().unwrap();
+        let output = git_cmd().args(args).output().unwrap();
         assert!(
             output.status.success(),
             "git {:?} failed\nstdout:\n{}\nstderr:\n{}",

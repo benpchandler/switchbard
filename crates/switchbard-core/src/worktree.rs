@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+use crate::git_cmd;
 
 #[derive(Debug, Clone)]
 pub struct WorktreeEntry {
@@ -13,7 +14,7 @@ pub fn enumerate_worktrees(repo_path: &Path) -> Result<Vec<WorktreeEntry>> {
     let Some(path_str) = repo_path.to_str() else {
         return Ok(vec![]);
     };
-    let output = Command::new("git")
+    let output = git_cmd()
         .args(["-C", path_str, "worktree", "list", "--porcelain"])
         .output()?;
     if !output.status.success() {

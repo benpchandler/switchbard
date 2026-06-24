@@ -35,7 +35,3 @@ run = "bash scripts/bundle-mac.sh"
 description = "Build an alpha macOS DMG and checksum"
 depends = ["ci"]
 run = "bash scripts/package-dmg.sh"
-
-[tasks."hooks:install"]
-description = "Configure this checkout to use the tracked git hooks"
-run = "git config core.hooksPath .githooks"
