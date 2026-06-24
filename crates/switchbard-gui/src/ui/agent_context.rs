@@ -217,8 +217,12 @@ fn repo_item_count(app: &HiveApp, map: &AgentContextMap) -> usize {
         .count()
 }
 
-fn visible_context_estimate(app: &HiveApp, map: &AgentContextMap) -> ContextEstimate {
-    estimate_items(map.items.iter().filter(|i| visible_repo_item(app, i)))
+fn effective_context_estimate(
+    map: &AgentContextMap,
+    agent: AgentContextAgent,
+    cwd: &Path,
+) -> ContextEstimate {
+    estimate_items(effective_instruction_items(map, agent, cwd))
 }
 
 fn estimate_items<'a>(items: impl IntoIterator<Item = &'a AgentContextItem>) -> ContextEstimate {
@@ -274,20 +278,30 @@ fn render_repo(
     egui::Frame::group(ui.style())
         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
         .show(ui, |ui| {
+            let selected = selected_worktree(repo, wts, snap);
             ui.horizontal(|ui| {
                 ui.heading(&repo.name);
                 ui.label(egui::RichText::new("Agent Context").color(theme::MUTED_TEXT));
-                let maps = wts.iter().filter_map(|w| snap.maps.get(&w.path));
-                let total = maps.clone().map(|m| repo_item_count(app, m)).sum::<usize>();
-                let estimate = maps.map(|m| visible_context_estimate(app, m)).fold(
-                    ContextEstimate::default(),
-                    |acc, estimate| ContextEstimate {
-                        chars: acc.chars + estimate.chars,
-                        tokens: acc.tokens + estimate.tokens,
-                    },
-                );
+                let selected_map = selected.and_then(|w| snap.maps.get(&w.path));
+                let total = wts
+                    .iter()
+                    .filter_map(|w| snap.maps.get(&w.path))
+                    .map(|m| repo_item_count(app, m))
+                    .sum::<usize>();
                 ui.colored_label(theme::LAVENDER, format!("{total} assets"));
-                ui.label(egui::RichText::new(format_estimate(estimate)).color(theme::MUTED_TEXT));
+                if let (Some(w), Some(map)) = (selected, selected_map) {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "startup {}",
+                            format_estimate(effective_context_estimate(
+                                map,
+                                app.agent_context_view.agent,
+                                &w.path,
+                            ))
+                        ))
+                        .color(theme::MUTED_TEXT),
+                    );
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         egui::RichText::new(repo.path.display().to_string())
@@ -298,7 +312,6 @@ fn render_repo(
             });
             ui.add_space(4.0);
 
-            let selected = selected_worktree(repo, wts, snap);
             let Some(w) = selected else {
                 ui.label(egui::RichText::new("agent context scanning…").color(theme::MUTED_TEXT));
                 return;
@@ -344,8 +357,12 @@ fn render_worktree(ui: &mut egui::Ui, app: &mut HiveApp, w: &WorktreeRef, map: &
         );
         ui.label(
             egui::RichText::new(format!(
-                "visible context {}",
-                format_estimate(visible_context_estimate(app, map))
+                "startup context {}",
+                format_estimate(effective_context_estimate(
+                    map,
+                    app.agent_context_view.agent,
+                    &w.path,
+                ))
             ))
             .color(theme::MUTED_TEXT),
         );
