@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "Agent context estimate Servers scroll smoke",
+  "scenario": "agent-context-estimate-servers-scroll-smoke",
+  "notes": "Release binary with SWITCHBARD_PERF=1 after Agent Context estimate change; default Servers view, repeated AppleScript Page Down/Page Up.",
+  "source_csv": "/tmp/switchbard-perf.csv",
+  "captured_at": "2026-06-24T10:25:25.839996-04:00",
+  "recorded_at": "2026-06-24T10:25:33.921736-04:00",
+  "git": {
+    "branch": "fix/agent-context-effective-estimate",
+    "sha": "71ea77b8c399b648cd30655be3c20dace671403a",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "servers",
+    "last": null,
+    "source_frames": 471,
+    "matching_frames": 206,
+    "summarized_frames": 206
+  },
+  "counts_max": {
+    "rows": 66,
+    "expanded_rows": 16,
+    "services": 263,
+    "listeners": 4
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 0.816,
+      "p95": 0.889,
+      "p99": 0.933,
+      "max": 1.189
+    },
+    "top_bar": {
+      "p50": 0.038,
+      "p95": 0.047,
+      "p99": 0.051,
+      "max": 0.194
+    },
+    "central": {
+      "p50": 0.728,
+      "p95": 0.789,
+      "p99": 0.821,
+      "max": 0.911
+    },
+    "workspace": {
+      "p50": 0.728,
+      "p95": 0.789,
+      "p99": 0.821,
+      "max": 0.911
+    }
+  }
+}

@@ -10,9 +10,12 @@ mod common;
 
 use std::path::PathBuf;
 
-use common::{harness, seeded_app, REPO_NAME, REPO_PATH};
+use common::{app_with_items, harness, item, seeded_app, REPO_NAME, REPO_PATH};
 use kittest::Queryable;
-use switchbard_core::{BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource};
+use switchbard_core::{
+    AgentKind, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource, ContextKind,
+    ContextScope,
+};
 use switchbard_gui::runtime::ViewTab;
 
 #[test]
@@ -80,6 +83,55 @@ fn agent_context_view_surfaces_seeded_assets() {
     assert!(
         harness.query_all_by_label("CLAUDE.md").next().is_some(),
         "seeded CLAUDE.md item should render in the explorer"
+    );
+}
+
+#[test]
+fn agent_context_estimate_uses_effective_instructions_not_all_assets() {
+    let mut instruction = item(
+        "claude-md",
+        AgentKind::Claude,
+        ContextScope::Local,
+        ContextKind::Instruction,
+        "CLAUDE.md",
+    );
+    instruction.size_bytes = 1_000;
+    let mut skill = item(
+        "large-skill",
+        AgentKind::Claude,
+        ContextScope::Local,
+        ContextKind::Skill,
+        "large-skill/SKILL.md",
+    );
+    skill.size_bytes = 8_000;
+    let mut nested_instruction = item(
+        "nested-claude-md",
+        AgentKind::Claude,
+        ContextScope::Directory,
+        ContextKind::Instruction,
+        "apps/web/CLAUDE.md",
+    );
+    nested_instruction.size_bytes = 4_000;
+    nested_instruction.applies_to = Some(PathBuf::from(format!("{REPO_PATH}/apps/web")));
+
+    let mut app = app_with_items(vec![instruction, skill, nested_instruction]);
+    app.view_tab = ViewTab::AgentContext;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness
+            .query_all_by_label("startup context ~1.0k chars / ~250 tokens")
+            .next()
+            .is_some(),
+        "startup estimate should include only instructions effective at the selected worktree root"
+    );
+    assert!(
+        harness
+            .query_all_by_label("startup context ~13.0k chars / ~3.3k tokens")
+            .next()
+            .is_none(),
+        "startup estimate must not sum every context asset in the repo"
     );
 }
 
