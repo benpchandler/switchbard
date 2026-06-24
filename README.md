@@ -133,8 +133,8 @@ mise run package    # macOS: DMG + sha256 in target/dist
 
 Prefer plain Cargo? Every task above maps to the obvious `cargo fmt` /
 `cargo clippy` / `cargo test` / `cargo build --release` invocation. CI
-(`.github/workflows/ci.yml`, macOS) runs the mise tasks on every PR; the tracked
-pre-push hook (`mise run hooks:install`) runs `mise run ci` before each push.
+(`.github/workflows/ci.yml`) runs the mise tasks on macOS and Linux on every PR.
+Run `mise run ci` (or the equivalent Cargo commands) green before pushing.
 
 ## Contributing
 
