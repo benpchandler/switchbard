@@ -1430,6 +1430,61 @@ fn theme_persists_through_save_config_and_reload() {
     );
 }
 
+// ─── TASK-27: collapsible "Tracked repos" sidebar ───────────────────────
+
+#[test]
+fn sidebar_collapse_button_hides_the_repo_list_both_directions() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "First", "To Do")]);
+    assert!(!harness.state().config.ui.sidebar_collapsed);
+    assert!(
+        harness.query_by_label("Tracked repos").is_some(),
+        "expanded by default: the heading should render"
+    );
+
+    harness.get_by_label("▶").click();
+    harness.run();
+    assert!(harness.state().config.ui.sidebar_collapsed);
+    assert!(
+        harness.query_by_label("Tracked repos").is_none(),
+        "collapsed: the repo list content should not render"
+    );
+    assert!(
+        harness.query_by_label("◀").is_some(),
+        "collapsed: the rail should offer the expand toggle"
+    );
+
+    harness.get_by_label("◀").click();
+    harness.run();
+    assert!(!harness.state().config.ui.sidebar_collapsed);
+    assert!(harness.query_by_label("Tracked repos").is_some());
+}
+
+/// Same split as `theme_persists_through_save_config_and_reload`: the click
+/// only mutates `config.ui.sidebar_collapsed` in memory (persistence is
+/// `eframe::App::update`'s before/after diff, which this harness never
+/// drives) — this proves the round trip itself.
+#[test]
+fn sidebar_collapsed_persists_through_save_config_and_reload() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "First", "To Do")]);
+    harness.get_by_label("▶").click();
+    harness.run();
+    assert!(harness.state().config.ui.sidebar_collapsed);
+
+    harness.state_mut().save_config();
+
+    let save_path = harness
+        .state()
+        .config_save_path
+        .clone()
+        .expect("test harness always sets an isolated config_save_path");
+    let reloaded = switchbard_core::config::load_from(&save_path)
+        .expect("reloading the just-saved config should succeed");
+    assert!(
+        reloaded.ui.sidebar_collapsed,
+        "sidebar_collapsed should round-trip through save_config/load_from"
+    );
+}
+
 // ─── Saved views: persistence across restart ────────────────────────────
 
 /// `saved_view_can_be_saved_and_deleted` (`ui_views.rs`) proves the in-memory

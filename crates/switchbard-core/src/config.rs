@@ -66,6 +66,12 @@ pub struct UiConfig {
     /// `Config::ui` single source of truth rather than a new store.
     #[serde(default)]
     pub saved_views: Vec<SavedView>,
+    /// TASK-27 (owner-requested UX): whether the "Tracked repos" side panel
+    /// is collapsed to a thin rail. Additive — defaults to `false`
+    /// (expanded), so an existing config with no `sidebar_collapsed` key
+    /// loads exactly as it did before this field existed.
+    #[serde(default)]
+    pub sidebar_collapsed: bool,
 }
 
 // Hand-written so the default scale is 1.0, not the f32 `Default` of 0.0 (which
@@ -79,6 +85,7 @@ impl Default for UiConfig {
             theme: ThemeChoice::default(),
             ui_scale: default_ui_scale(),
             saved_views: Vec::new(),
+            sidebar_collapsed: false,
         }
     }
 }
@@ -268,6 +275,7 @@ mod tests {
                     show_archived: false,
                     show_drafts: true,
                 }],
+                sidebar_collapsed: true,
             },
         };
         save_to(&path, &cfg).unwrap();

@@ -12,7 +12,18 @@ use crate::ui::theme;
 use eframe::egui;
 use switchbard_core::WorktreeRef;
 
+/// TASK-27 (owner-requested UX): collapsed to a thin, non-resizable rail —
+/// just the toggle button, no repo list — to reclaim horizontal space
+/// without losing the panel's presence entirely (a fully-hidden panel would
+/// need a separate "where did the repo list go" affordance elsewhere).
+const COLLAPSED_WIDTH: f32 = 28.0;
+
 pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
+    if app.config.ui.sidebar_collapsed {
+        render_collapsed(app, ctx);
+        return;
+    }
+
     let repos = app.repos_snapshot();
     let worktrees = app.worktrees_snapshot();
     let picker_busy = matches!(*app.picker.lock().unwrap(), PickerState::InFlight);
@@ -28,6 +39,13 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         .default_width(280.0)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
+                if ui
+                    .small_button("▶")
+                    .on_hover_text("Collapse the tracked-repos panel")
+                    .clicked()
+                {
+                    app.config.ui.sidebar_collapsed = true;
+                }
                 ui.heading("Tracked repos");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let label = if picker_busy { "Picking…" } else { "➕ Add" };
@@ -195,6 +213,30 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     if let Some((i, delta)) = move_request {
         app.move_repo(i, delta);
     }
+    render_remove_confirmation(app, ctx);
+}
+
+/// The collapsed rail (TASK-27): a fixed-width, non-resizable panel with
+/// only the expand toggle. Still renders the remove-confirmation modal
+/// (below) in case a user collapsed the panel with that dialog already
+/// open — the modal is a separate `egui::Window`, not part of the
+/// SidePanel's own content, so collapsing doesn't dismiss it.
+fn render_collapsed(app: &mut HiveApp, ctx: &egui::Context) {
+    egui::SidePanel::right("repos")
+        .resizable(false)
+        .exact_width(COLLAPSED_WIDTH)
+        .show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(4.0);
+                if ui
+                    .small_button("◀")
+                    .on_hover_text("Expand the tracked-repos panel")
+                    .clicked()
+                {
+                    app.config.ui.sidebar_collapsed = false;
+                }
+            });
+        });
     render_remove_confirmation(app, ctx);
 }
 

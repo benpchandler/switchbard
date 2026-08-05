@@ -499,6 +499,15 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     seed_live_listener(&servers_app);
     let servers = harness(servers_app);
 
+    // TASK-27 (owner-requested UX): the collapsed sidebar rail's own text
+    // ("◀", the expand toggle) only ever paints in this state — every other
+    // harness here has the default expanded sidebar, which already covers
+    // the "▶" collapse toggle.
+    let mut sidebar_collapsed_app = seeded_app();
+    sidebar_collapsed_app.config.ui.theme = theme;
+    sidebar_collapsed_app.config.ui.sidebar_collapsed = true;
+    let sidebar_collapsed = harness(sidebar_collapsed_app);
+
     let mut agent_app = seeded_app();
     agent_app.config.ui.theme = theme;
     agent_app.view_tab = ViewTab::AgentContext;
@@ -635,6 +644,10 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
         (
             format!("Servers view (top bar + sidebar + workspace){suffix}"),
             servers,
+        ),
+        (
+            format!("Servers view (sidebar collapsed){suffix}"),
+            sidebar_collapsed,
         ),
         (format!("Agent Context view{suffix}"), agent),
         (

@@ -1434,12 +1434,13 @@ impl eframe::App for HiveApp {
         self.drain_picker();
 
         // Snapshot persistable UI state so we can save the config if any
-        // toggle was flipped this update. `theme` lives directly on
-        // `config.ui` (the top bar's toggle mutates it in place), so it's
-        // tracked the same way `ui_scale` is below rather than mirrored
-        // through `save_ui_to_config`.
+        // toggle was flipped this update. `theme` and `sidebar_collapsed`
+        // (TASK-27) live directly on `config.ui` (their toggles mutate in
+        // place), so they're tracked the same way `ui_scale` is below
+        // rather than mirrored through `save_ui_to_config`.
         let ui_before = (self.browser_choice, self.show_non_servers);
         let theme_before = self.config.ui.theme;
+        let sidebar_collapsed_before = self.config.ui.sidebar_collapsed;
 
         self.render_ui(ctx);
 
@@ -1454,7 +1455,9 @@ impl eframe::App for HiveApp {
 
         let ui_after = (self.browser_choice, self.show_non_servers);
         let theme_changed = self.config.ui.theme != theme_before;
-        if ui_before != ui_after || zoom_changed || theme_changed {
+        let sidebar_collapsed_changed =
+            self.config.ui.sidebar_collapsed != sidebar_collapsed_before;
+        if ui_before != ui_after || zoom_changed || theme_changed || sidebar_collapsed_changed {
             self.save_ui_to_config();
         }
     }
