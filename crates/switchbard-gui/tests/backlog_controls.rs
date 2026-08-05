@@ -510,6 +510,52 @@ fn drafts_filter_checkbox_hides_and_reveals_draft_tasks() {
     assert!(harness.query_by_label("TASK-2  Draft one").is_none());
 }
 
+/// QA parity matrix MEDIUM gap: a dedicated milestone filter (previously
+/// only reachable by switching to the separate Milestones lens). Like the
+/// pre-existing status/priority combos, the ComboBox trigger itself is
+/// UNDRIVABLE by this harness (no accessible label — same confirmed
+/// limitation the QA audit documents for status_filter/priority_filter); the
+/// filter's actual effect is proven directly via `task_visible`'s
+/// milestone_filter branch (sort.rs), same bar those two combos are held to.
+#[test]
+fn milestone_filter_hides_tasks_outside_the_selected_milestone() {
+    let mut v1 = task("TASK-1", "In v1", "To Do");
+    v1.milestone = Some("v1".to_string());
+    let mut v2 = task("TASK-2", "In v2", "To Do");
+    v2.milestone = Some("v2".to_string());
+    let mut harness = list_harness_with_tasks(vec![v1, v2]);
+
+    harness.state_mut().backlog_view.milestone_filter = "v1".to_string();
+    harness.run();
+
+    assert!(harness.query_by_label("TASK-1  In v1").is_some());
+    assert!(
+        harness.query_by_label("TASK-2  In v2").is_none(),
+        "a task outside the selected milestone should be hidden"
+    );
+}
+
+/// QA parity matrix MEDIUM/partial gap: a dedicated label filter (previously
+/// only reachable through the general free-text filter, which matches many
+/// fields at once, not labels specifically).
+#[test]
+fn label_filter_hides_tasks_without_the_selected_label() {
+    let mut frontend = task("TASK-1", "Frontend work", "To Do");
+    frontend.labels = vec!["frontend".to_string()];
+    let mut backend = task("TASK-2", "Backend work", "To Do");
+    backend.labels = vec!["backend".to_string()];
+    let mut harness = list_harness_with_tasks(vec![frontend, backend]);
+
+    harness.state_mut().backlog_view.label_filter = "frontend".to_string();
+    harness.run();
+
+    assert!(harness.query_by_label("TASK-1  Frontend work").is_some());
+    assert!(
+        harness.query_by_label("TASK-2  Backend work").is_none(),
+        "a task without the selected label should be hidden"
+    );
+}
+
 // ─── Global search ───────────────────────────────────────────────────────
 
 #[test]
@@ -1035,6 +1081,13 @@ fn saved_view_persists_across_a_simulated_restart() {
     let mut harness = list_harness_with_tasks(vec![task("TASK-1", "First", "To Do")]);
     harness.state_mut().backlog_view.lens = BacklogLens::Statistics;
     harness.state_mut().backlog_view.priority_filter = "high".to_string();
+    // Milestone/label filters (QA parity matrix gap) round-trip through
+    // SavedView the same way status/priority already did — this is the
+    // regression bar for adding a new filter field: forgetting to wire it
+    // into current_as_saved_view/apply_saved_view would silently reset it
+    // to "all" the next time this view is applied.
+    harness.state_mut().backlog_view.milestone_filter = "v1".to_string();
+    harness.state_mut().backlog_view.label_filter = "frontend".to_string();
     harness.run();
 
     harness.state_mut().backlog_view.saved_view_name_draft = "High priority".to_string();
@@ -1048,6 +1101,8 @@ fn saved_view_persists_across_a_simulated_restart() {
     assert_eq!(reloaded.ui.saved_views.len(), 1);
     assert_eq!(reloaded.ui.saved_views[0].name, "High priority");
     assert_eq!(reloaded.ui.saved_views[0].priority_filter, "high");
+    assert_eq!(reloaded.ui.saved_views[0].milestone_filter, "v1");
+    assert_eq!(reloaded.ui.saved_views[0].label_filter, "frontend");
 }
 
 // ─── A real end-to-end CLI round trip through the GUI's own Save button ──

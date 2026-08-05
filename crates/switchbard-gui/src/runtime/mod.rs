@@ -71,6 +71,11 @@ pub struct BacklogViewState {
     pub project_filter: String,
     pub status_filter: String,
     pub priority_filter: String,
+    /// QA parity matrix gap: milestone browsing previously required
+    /// switching to the separate Milestones lens; this filters the List
+    /// lens's own row set instead, same "all" sentinel as status/priority.
+    pub milestone_filter: String,
+    pub label_filter: String,
     pub sort_key: BacklogTaskSortKey,
     pub sort_direction: BacklogTaskSortDirection,
     pub show_completed: bool,
@@ -121,6 +126,8 @@ impl Default for BacklogViewState {
             project_filter: String::new(),
             status_filter: "all".to_string(),
             priority_filter: "all".to_string(),
+            milestone_filter: "all".to_string(),
+            label_filter: "all".to_string(),
             sort_key: BacklogTaskSortKey::default(),
             sort_direction: BacklogTaskSortDirection::default(),
             show_completed: false,

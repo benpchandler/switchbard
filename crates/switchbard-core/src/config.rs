@@ -105,6 +105,10 @@ pub struct SavedView {
     pub status_filter: String,
     #[serde(default = "default_filter_all")]
     pub priority_filter: String,
+    #[serde(default = "default_filter_all")]
+    pub milestone_filter: String,
+    #[serde(default = "default_filter_all")]
+    pub label_filter: String,
     #[serde(default)]
     pub sort_key: String,
     #[serde(default)]
@@ -255,6 +259,8 @@ mod tests {
                     selected_project: None,
                     status_filter: "all".into(),
                     priority_filter: "high".into(),
+                    milestone_filter: "all".into(),
+                    label_filter: "all".into(),
                     sort_key: "triage".into(),
                     sort_direction: "ascending".into(),
                     lens: "list".into(),

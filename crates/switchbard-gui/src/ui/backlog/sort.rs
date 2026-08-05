@@ -187,6 +187,19 @@ pub(super) fn task_visible(task: &BacklogTask, app: &HiveApp, filter_lc: &str) -
     {
         return false;
     }
+    if app.backlog_view.milestone_filter != "all"
+        && task.milestone.as_deref() != Some(app.backlog_view.milestone_filter.as_str())
+    {
+        return false;
+    }
+    if app.backlog_view.label_filter != "all"
+        && !task
+            .labels
+            .iter()
+            .any(|label| label.eq_ignore_ascii_case(&app.backlog_view.label_filter))
+    {
+        return false;
+    }
     if filter_lc.is_empty() {
         return true;
     }
@@ -231,6 +244,37 @@ pub(super) fn status_options(scoped: &[&ProjectRow]) -> Vec<String> {
     for project in scoped {
         for task in &project.project.tasks {
             set.insert(task.status.clone());
+        }
+    }
+    set.into_iter().collect()
+}
+
+/// Every distinct milestone value in the current scope, alphabetical.
+/// Unlike `status_options` there's no fixed baseline set — milestones are
+/// entirely project-defined — so an empty scope just offers no milestones
+/// beyond "All".
+pub(super) fn milestone_options(scoped: &[&ProjectRow]) -> Vec<String> {
+    let mut set = BTreeSet::new();
+    for project in scoped {
+        for task in &project.project.tasks {
+            if let Some(milestone) = &task.milestone {
+                set.insert(milestone.clone());
+            }
+        }
+    }
+    set.into_iter().collect()
+}
+
+/// Every distinct label across every task in scope, alphabetical — QA
+/// parity matrix gap: the webview offers a dedicated label filter; before
+/// this, a label was only reachable through the free-text filter.
+pub(super) fn label_options(scoped: &[&ProjectRow]) -> Vec<String> {
+    let mut set = BTreeSet::new();
+    for project in scoped {
+        for task in &project.project.tasks {
+            for label in &task.labels {
+                set.insert(label.clone());
+            }
         }
     }
     set.into_iter().collect()

@@ -164,7 +164,7 @@ pub(super) fn render_project_toolbar(
         ui.label(egui::RichText::new("Status").color(theme::muted_text()));
         let statuses = sort::status_options(&super::scoped_projects(app, snap));
         egui::ComboBox::from_id_salt("backlog_status_filter")
-            .selected_text(format::status_filter_label(&app.backlog_view.status_filter))
+            .selected_text(format::value_filter_label(&app.backlog_view.status_filter))
             .show_ui(ui, |ui| {
                 ui.selectable_value(
                     &mut app.backlog_view.status_filter,
@@ -197,6 +197,38 @@ pub(super) fn render_project_toolbar(
                         (*priority).to_string(),
                         format::priority_title(priority),
                     );
+                }
+            });
+
+        ui.label(egui::RichText::new("Milestone").color(theme::muted_text()));
+        let milestones = sort::milestone_options(&super::scoped_projects(app, snap));
+        egui::ComboBox::from_id_salt("backlog_milestone_filter")
+            .selected_text(format::value_filter_label(
+                &app.backlog_view.milestone_filter,
+            ))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut app.backlog_view.milestone_filter,
+                    "all".to_string(),
+                    "All",
+                );
+                for milestone in milestones {
+                    ui.selectable_value(
+                        &mut app.backlog_view.milestone_filter,
+                        milestone.clone(),
+                        milestone,
+                    );
+                }
+            });
+
+        ui.label(egui::RichText::new("Label").color(theme::muted_text()));
+        let labels = sort::label_options(&super::scoped_projects(app, snap));
+        egui::ComboBox::from_id_salt("backlog_label_filter")
+            .selected_text(format::value_filter_label(&app.backlog_view.label_filter))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut app.backlog_view.label_filter, "all".to_string(), "All");
+                for label in labels {
+                    ui.selectable_value(&mut app.backlog_view.label_filter, label.clone(), label);
                 }
             });
 

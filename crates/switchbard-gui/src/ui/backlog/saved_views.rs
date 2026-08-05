@@ -78,6 +78,8 @@ fn current_as_saved_view(app: &HiveApp, name: String) -> SavedView {
         selected_project: app.backlog_view.selected_project.clone(),
         status_filter: app.backlog_view.status_filter.clone(),
         priority_filter: app.backlog_view.priority_filter.clone(),
+        milestone_filter: app.backlog_view.milestone_filter.clone(),
+        label_filter: app.backlog_view.label_filter.clone(),
         sort_key: app.backlog_view.sort_key.as_saved_id().to_string(),
         sort_direction: app.backlog_view.sort_direction.as_saved_id().to_string(),
         lens: app.backlog_view.lens.as_saved_id().to_string(),
@@ -91,6 +93,8 @@ fn apply_saved_view(app: &mut HiveApp, view: &SavedView) {
     app.backlog_view.selected_project = view.selected_project.clone();
     app.backlog_view.status_filter = view.status_filter.clone();
     app.backlog_view.priority_filter = view.priority_filter.clone();
+    app.backlog_view.milestone_filter = view.milestone_filter.clone();
+    app.backlog_view.label_filter = view.label_filter.clone();
     app.backlog_view.sort_key = BacklogTaskSortKey::from_saved_id(&view.sort_key);
     app.backlog_view.sort_direction = BacklogTaskSortDirection::from_saved_id(&view.sort_direction);
     app.backlog_view.lens = BacklogLens::from_saved_id(&view.lens);

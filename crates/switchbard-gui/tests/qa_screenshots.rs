@@ -248,6 +248,8 @@ fn shots_for_theme(theme: ThemeChoice) {
                 selected_project: None,
                 status_filter: "all".to_string(),
                 priority_filter: "high".to_string(),
+                milestone_filter: "all".to_string(),
+                label_filter: "all".to_string(),
                 sort_key: String::new(),
                 sort_direction: String::new(),
                 lens: "statistics".to_string(),

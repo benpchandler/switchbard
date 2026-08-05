@@ -35,11 +35,14 @@ pub(super) fn priority_color(priority: &str) -> egui::Color32 {
     }
 }
 
-pub(super) fn status_filter_label(status: &str) -> String {
-    if status == "all" {
+/// "all" -> "All"; any other value displayed as-is. Generic across every
+/// `"all"`-sentinel filter combo (status, milestone, labels) — priority gets
+/// its own `priority_filter_label` because it also title-cases the value.
+pub(super) fn value_filter_label(value: &str) -> String {
+    if value == "all" {
         "All".to_string()
     } else {
-        status.to_string()
+        value.to_string()
     }
 }
 
