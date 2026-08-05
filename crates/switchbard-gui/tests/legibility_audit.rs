@@ -373,13 +373,28 @@ fn legibility_backlog_task() -> BacklogTask {
     }
 }
 
+/// TASK-1's open dependency (task-18) — gives `legibility_backlog_task`'s
+/// `dependencies: ["TASK-2"]` something real to resolve against, so the
+/// "blocked" marker (List row, Board strip, detail header) actually renders
+/// during the audit instead of silently no-oping on an unresolved id.
+fn legibility_blocking_task() -> BacklogTask {
+    let mut task = legibility_backlog_task();
+    task.id = "TASK-2".to_string();
+    task.title = "Blocking dependency".to_string();
+    task.status = "To Do".to_string();
+    task.dependencies = vec![];
+    task.parent = None;
+    task.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-2.md"));
+    task
+}
+
 fn seed_backlog_project(app: &HiveApp) {
     app.backlog_projects.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
             cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
-            tasks: vec![legibility_backlog_task()],
+            tasks: vec![legibility_backlog_task(), legibility_blocking_task()],
             warnings: vec![],
             loaded_at_unix: 0,
         },

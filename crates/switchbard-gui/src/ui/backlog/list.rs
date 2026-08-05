@@ -8,7 +8,9 @@ use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
 use std::path::PathBuf;
-use switchbard_core::{BacklogTaskPatch, BacklogTaskSource, BACKLOG_PRIORITIES, BACKLOG_STATUSES};
+use switchbard_core::{
+    is_blocked, BacklogTaskPatch, BacklogTaskSource, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
+};
 
 /// Width of the trailing checkbox + status + priority + AC columns (i.e.
 /// everything to the right of the title). The repo badge column, present
@@ -303,6 +305,17 @@ fn render_task_list_row(
                 egui::RichText::new(task.source.label())
                     .small()
                     .color(theme::muted_text()),
+            );
+        }
+        // task-18: a lamp-language marker (StatusKind::Danger → warn_orange,
+        // the same "hot" tone Operator's Console uses for line/due alerts)
+        // for tasks with at least one open dependency.
+        if !task.is_done() && is_blocked(task, &row.project.project) {
+            status_pill(
+                ui,
+                StatusKind::Danger,
+                "blocked",
+                Some("Blocked by one or more open dependencies"),
             );
         }
     });

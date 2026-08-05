@@ -473,3 +473,58 @@ fn portfolio_lens_renders_per_repo_health() {
         "the last-activity column header should render"
     );
 }
+
+/// Dependency/blocked visibility (task-18): a task with an open dependency
+/// should show a "blocked" marker in the List lens row and a per-dependency
+/// status in the detail pane's Dependencies section; the dependency itself
+/// should list this task under "Blocks".
+#[test]
+fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+
+    let mut blocker = seeded_backlog_task();
+    blocker.id = "TASK-1".to_string();
+    blocker.title = "Blocking task".to_string();
+    blocker.status = "To Do".to_string();
+
+    let mut dependent = seeded_backlog_task();
+    dependent.id = "TASK-2".to_string();
+    dependent.title = "Dependent task".to_string();
+    dependent.status = "To Do".to_string();
+    dependent.dependencies = vec!["TASK-1".to_string()];
+    dependent.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-2.md"));
+
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![blocker, dependent],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-2".to_string()));
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_all_by_label("blocked").next().is_some(),
+        "the dependent task's row should show a blocked marker"
+    );
+    assert!(
+        harness.query_by_label("TASK-1 Blocking task").is_some(),
+        "the detail pane's Dependencies section should name the open dependency"
+    );
+
+    harness.state_mut().backlog_view.selected_task =
+        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+    harness.run();
+    assert!(
+        harness.query_by_label("TASK-2 Dependent task").is_some(),
+        "the blocking task's detail pane should list what it Blocks"
+    );
+}
