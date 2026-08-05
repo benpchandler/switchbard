@@ -328,6 +328,10 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
     let mut cfg = Config::default();
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
+    // See `common::app_with_items` doc comment: every test-constructed
+    // `HiveApp` must redirect `save_config` away from the real
+    // `~/.switchbard/config.toml` (TASK-22).
+    app.config_save_path = Some(common::isolated_config_save_path());
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
 

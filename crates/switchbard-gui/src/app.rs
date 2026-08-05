@@ -103,6 +103,16 @@ pub struct HiveApp {
 
     // Persisted config (single source of truth for repos + UI defaults).
     pub config: Config,
+    /// Overrides where `save_config` writes. Always `None` in production
+    /// (`HiveApp::new`) — `save_config` falls back to the real
+    /// `~/.switchbard/config.toml` in that case, same as always. Tests that
+    /// exercise a real save/delete path (e.g. saved_views' Save/Delete
+    /// buttons) MUST set this to an isolated temp path first; skipping it
+    /// silently writes to the developer's actual config file on every test
+    /// run — this is exactly how TASK-22 happened. `HiveApp::new_headless`
+    /// leaves it `None`, so tests opt in explicitly rather than relying on
+    /// a default that could quietly regress back to the same bug.
+    pub config_save_path: Option<PathBuf>,
 
     // View-only state.
     /// One workspace-wide filter. Each section's match function reads it.
@@ -221,6 +231,7 @@ impl HiveApp {
             agent_context_kick: Kick::new(),
             backlog_kick: Kick::new(),
             config: cfg,
+            config_save_path: None,
             picker: Arc::new(Mutex::new(PickerState::Idle)),
             config_status: Status::new(),
             kill_status: Status::new(),
@@ -314,7 +325,11 @@ impl HiveApp {
     /// `config_status` surfaces the failure immediately so the user is never
     /// silently left with a stale file.
     pub fn save_config(&self) {
-        if let Err(e) = config::save(&self.config) {
+        let result = match &self.config_save_path {
+            Some(path) => config::save_to(path, &self.config),
+            None => config::save(&self.config),
+        };
+        if let Err(e) = result {
             self.config_status.set(format!("config save failed: {e}"));
         }
     }
