@@ -48,6 +48,12 @@ pub struct UiConfig {
     /// annoying if they remove all repos), so this is a one-shot flag.
     #[serde(default)]
     pub onboarding_dismissed: bool,
+    /// Which of the two named palettes (task-14) the GUI paints with: Flight
+    /// Strips (light) or Operator's Console (dark). Plain data — no egui
+    /// dependency here, matching this crate's zero-UI-deps rule; `ui::theme`
+    /// is the only place that turns this into actual `Color32`s.
+    #[serde(default)]
+    pub theme: ThemeChoice,
     /// Global UI zoom applied via egui `set_zoom_factor` (1.0 = the display's
     /// native scale). Persisted here because eframe isn't built with its
     /// `persistence` feature, so its own zoom memory doesn't survive a restart.
@@ -64,7 +70,29 @@ impl Default for UiConfig {
             browser: None,
             show_non_servers: false,
             onboarding_dismissed: false,
+            theme: ThemeChoice::default(),
             ui_scale: default_ui_scale(),
+        }
+    }
+}
+
+/// The two named palettes from the task-14 design-directions artifact:
+/// direction B ("Flight Strips") for light, direction A's lamp language
+/// ("Operator's Console") for dark — the owner-confirmed pairing recorded on
+/// task-15's Implementation Notes.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeChoice {
+    #[default]
+    Light,
+    Dark,
+}
+
+impl ThemeChoice {
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Light => Self::Dark,
+            Self::Dark => Self::Light,
         }
     }
 }
@@ -169,6 +197,7 @@ mod tests {
                 browser: Some("Safari".into()),
                 show_non_servers: true,
                 onboarding_dismissed: true,
+                theme: ThemeChoice::Dark,
                 ui_scale: 1.25,
             },
         };

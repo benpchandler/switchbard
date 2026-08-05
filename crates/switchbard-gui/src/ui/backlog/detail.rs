@@ -79,7 +79,7 @@ fn render_detail_header(
         ui.label(
             egui::RichText::new(&task.id)
                 .monospace()
-                .color(theme::MUTED_TEXT),
+                .color(theme::muted_text()),
         );
         status_pill(ui, format::status_kind(&task.status), &task.status, None);
         ui.label(
@@ -102,7 +102,7 @@ fn render_detail_header(
             project.repo_name, project.worktree_label
         ))
         .small()
-        .color(theme::MUTED_TEXT),
+        .color(theme::muted_text()),
     )
     .on_hover_text(task.path.display().to_string());
     ui.horizontal(|ui| {
@@ -112,7 +112,7 @@ fn render_detail_header(
                 task.created_date.as_deref().unwrap_or("unknown")
             ))
             .small()
-            .color(theme::MUTED_TEXT),
+            .color(theme::muted_text()),
         );
         ui.separator();
         ui.label(
@@ -121,12 +121,12 @@ fn render_detail_header(
                 task.updated_date.as_deref().unwrap_or("unknown")
             ))
             .small()
-            .color(theme::MUTED_TEXT),
+            .color(theme::muted_text()),
         );
     });
     if !project.project.warnings.is_empty() {
         for warning in &project.project.warnings {
-            ui.colored_label(theme::AMBER, warning);
+            ui.colored_label(theme::amber(), warning);
         }
     }
 }
@@ -237,7 +237,7 @@ fn render_editor(
         if !editable {
             ui.label(
                 egui::RichText::new("Backlog CLI edits are enabled for active tasks only.")
-                    .color(theme::MUTED_TEXT),
+                    .color(theme::muted_text()),
             );
         }
     });
@@ -265,7 +265,7 @@ fn render_description_editor(app: &mut HiveApp, ui: &mut egui::Ui) {
                 .desired_width(f32::INFINITY),
         );
     } else if app.backlog_view.editor.description.trim().is_empty() {
-        ui.label(egui::RichText::new("No description").color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new("No description").color(theme::muted_text()));
     } else {
         egui::Frame::group(ui.style()).show(ui, |ui| {
             CommonMarkViewer::new().show(

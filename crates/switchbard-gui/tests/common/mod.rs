@@ -108,11 +108,12 @@ pub fn harness(app: HiveApp) -> Harness<'static, HiveApp> {
         .with_size(egui::vec2(1280.0, 860.0))
         .build_state(
             |ctx, app| {
-                // Match the real window: `HiveApp::new` applies the theme via
-                // the CreationContext, which the headless path skips. Cheap and
-                // idempotent (sets visuals only), so re-applying each frame is
-                // fine and keeps snapshots faithful to production.
-                switchbard_gui::ui::theme::apply(ctx);
+                // `render_ui` itself calls `theme::apply(ctx, self.config.ui.theme)`
+                // every frame now (needed in production for the live toggle), so
+                // the headless path — which skips `HiveApp::new`'s one-time font
+                // install — gets correct visuals for free; embedded fonts aren't
+                // needed for these tests (legibility_audit measures requested
+                // point size and color, not glyph shapes).
                 app.render_ui(ctx);
             },
             app,

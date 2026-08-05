@@ -102,7 +102,7 @@ fn render_row(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_repo
             None,
         );
         if row.task.is_done() {
-            ui.label(egui::RichText::new("done").small().color(theme::GREEN));
+            ui.label(egui::RichText::new("done").small().color(theme::green()));
         }
     });
 }

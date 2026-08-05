@@ -289,7 +289,7 @@ fn render_empty(ui: &mut egui::Ui) {
             egui::RichText::new(
                 "No tracked worktrees have a backlog/config.yml or backlog/tasks directory.",
             )
-            .color(theme::MUTED_TEXT),
+            .color(theme::muted_text()),
         );
     });
 }

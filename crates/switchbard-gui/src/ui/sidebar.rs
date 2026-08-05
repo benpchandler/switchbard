@@ -48,11 +48,11 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                     worktrees.len(),
                     if worktrees.len() == 1 { "" } else { "s" }
                 ))
-                .color(theme::MUTED_TEXT),
+                .color(theme::muted_text()),
             );
             if let Some(msg) = &config_msg {
                 ui.add_space(2.0);
-                ui.label(egui::RichText::new(msg).color(theme::MUTED_TEXT));
+                ui.label(egui::RichText::new(msg).color(theme::muted_text()));
             }
             ui.add_space(6.0);
 
@@ -65,7 +65,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                         egui::RichText::new(
                             "Click ➕ Add above and pick a folder\nthat contains a git repository.",
                         )
-                        .color(theme::MUTED_TEXT),
+                        .color(theme::muted_text()),
                     );
                 });
                 return;
@@ -87,7 +87,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
 
                 ui.horizontal(|ui| {
                     if repo_count > 0 {
-                        theme::painted_dot_pulse(ui, theme::GREEN, repo_count);
+                        theme::painted_dot_pulse(ui, theme::green(), repo_count);
                     } else {
                         theme::painted_dot(ui, egui::Color32::GRAY);
                     }
@@ -136,7 +136,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                         if repo_count > 0 {
                             ui.label(egui::RichText::new(format!("{repo_count}")).strong());
                         } else {
-                            ui.label(egui::RichText::new("—").color(theme::MUTED_TEXT));
+                            ui.label(egui::RichText::new("—").color(theme::muted_text()));
                         }
                         // Remaining space → label (truncates with ellipsis).
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -166,7 +166,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                         ui.horizontal(|ui| {
                             ui.add_space(18.0);
                             if n > 0 {
-                                theme::painted_dot_small_pulse(ui, theme::GREEN, n);
+                                theme::painted_dot_small_pulse(ui, theme::green(), n);
                             } else {
                                 theme::painted_dot_small(ui, egui::Color32::DARK_GRAY);
                             }
@@ -218,7 +218,7 @@ fn render_remove_confirmation(app: &mut HiveApp, ctx: &egui::Context) {
             );
             ui.add_space(4.0);
             ui.label(
-                egui::RichText::new(format!("Path: {}", path.display())).color(theme::MUTED_TEXT),
+                egui::RichText::new(format!("Path: {}", path.display())).color(theme::muted_text()),
             );
             ui.add_space(6.0);
             ui.label(

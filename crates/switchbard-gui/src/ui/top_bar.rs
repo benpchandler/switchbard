@@ -5,6 +5,7 @@
 use crate::app::{self, HiveApp};
 use crate::runtime::ViewTab;
 use crate::ui::theme;
+use crate::ui::theme::ThemeChoice;
 use crate::ui::workspace;
 use eframe::egui;
 use switchbard_core::BROWSER_APP_NAMES;
@@ -52,7 +53,7 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
         ViewTab::AgentContext => "matches repo, path, title, or instruction text",
         ViewTab::Backlog => "matches task id, title, labels, assignee, or description",
     };
-    ui.label(egui::RichText::new(hint).color(theme::MUTED_TEXT));
+    ui.label(egui::RichText::new(hint).color(theme::muted_text()));
     match app.view_tab {
         ViewTab::Servers => {
             ui.separator();
@@ -118,6 +119,9 @@ fn render_actions(app: &mut HiveApp, ui: &mut egui::Ui) {
         });
 
     ui.separator();
+    render_theme_toggle(app, ui);
+
+    ui.separator();
     render_zoom_stepper(ui);
 
     if let Some(msg) = app.config_status.snapshot() {
@@ -135,6 +139,23 @@ fn render_actions(app: &mut HiveApp, ui: &mut egui::Ui) {
     if let Some(msg) = app.backlog_status.snapshot() {
         ui.separator();
         ui.label(msg);
+    }
+}
+
+/// Toggle between Flight Strips (light) and Operator's Console (dark),
+/// task-14/task-15 AC #5. Mutates `config.ui.theme` in place; `HiveApp::
+/// update` detects the change and persists it the same way it does the
+/// zoom factor.
+fn render_theme_toggle(app: &mut HiveApp, ui: &mut egui::Ui) {
+    // Plain text, not an emoji glyph: the repo's other icons are all
+    // painter-drawn (see `theme::painted_trash_button` etc.) specifically
+    // because stock/embedded fonts don't reliably cover emoji code points.
+    let (label, hover) = match app.config.ui.theme {
+        ThemeChoice::Light => ("Dark theme", "Switch to Operator's Console (dark)"),
+        ThemeChoice::Dark => ("Light theme", "Switch to Flight Strips (light)"),
+    };
+    if ui.button(label).on_hover_text(hover).clicked() {
+        app.config.ui.theme = app.config.ui.theme.toggled();
     }
 }
 

@@ -58,7 +58,11 @@ fn gauge(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.vertical(|ui| {
         ui.set_min_width(90.0);
         ui.label(egui::RichText::new(value).monospace().heading().strong());
-        ui.label(egui::RichText::new(label).small().color(theme::MUTED_TEXT));
+        ui.label(
+            egui::RichText::new(label)
+                .small()
+                .color(theme::muted_text()),
+        );
     });
     ui.separator();
 }
@@ -78,11 +82,11 @@ fn render_distribution(
                 egui::vec2(160.0 * frac.max(0.02), 12.0),
                 egui::Sense::hover(),
             );
-            ui.painter().rect_filled(rect, 2.0, theme::SKY);
+            ui.painter().rect_filled(rect, 2.0, theme::sky());
             ui.label(
                 egui::RichText::new(count.to_string())
                     .small()
-                    .color(theme::MUTED_TEXT),
+                    .color(theme::muted_text()),
             );
         });
     }
@@ -94,17 +98,25 @@ fn render_repo_table(ui: &mut egui::Ui, stats: &switchbard_core::CrossRepoStats)
         .striped(true)
         .num_columns(4)
         .show(ui, |ui| {
-            ui.label(egui::RichText::new("Repo").small().color(theme::MUTED_TEXT));
+            ui.label(
+                egui::RichText::new("Repo")
+                    .small()
+                    .color(theme::muted_text()),
+            );
             ui.label(
                 egui::RichText::new("Total")
                     .small()
-                    .color(theme::MUTED_TEXT),
+                    .color(theme::muted_text()),
             );
-            ui.label(egui::RichText::new("Done").small().color(theme::MUTED_TEXT));
+            ui.label(
+                egui::RichText::new("Done")
+                    .small()
+                    .color(theme::muted_text()),
+            );
             ui.label(
                 egui::RichText::new("Completion")
                     .small()
-                    .color(theme::MUTED_TEXT),
+                    .color(theme::muted_text()),
             );
             ui.end_row();
             for repo in &stats.per_repo {
@@ -138,7 +150,7 @@ fn render_burndown_section(_app: &mut HiveApp, ui: &mut egui::Ui, scoped: &[&sup
         ui.label(
             egui::RichText::new("No milestone-assigned tasks with a parseable created date yet.")
                 .small()
-                .color(theme::MUTED_TEXT),
+                .color(theme::muted_text()),
         );
     }
 }
@@ -152,7 +164,7 @@ fn render_series(ui: &mut egui::Ui, label: &str, series: &BurndownSeries) {
         ui.label(
             egui::RichText::new("Not enough dated tasks yet to chart a trend.")
                 .small()
-                .color(theme::MUTED_TEXT),
+                .color(theme::muted_text()),
         );
         return;
     }
@@ -187,16 +199,16 @@ fn render_series(ui: &mut egui::Ui, label: &str, series: &BurndownSeries) {
 
     painter.add(egui::Shape::line(
         remaining_line,
-        egui::Stroke::new(2.0, theme::AMBER),
+        egui::Stroke::new(2.0, theme::amber()),
     ));
     painter.add(egui::Shape::line(
         completed_line,
-        egui::Stroke::new(2.0, theme::GREEN),
+        egui::Stroke::new(2.0, theme::green()),
     ));
 
     ui.horizontal(|ui| {
-        ui.colored_label(theme::AMBER, "— remaining");
-        ui.colored_label(theme::GREEN, "— completed");
+        ui.colored_label(theme::amber(), "— remaining");
+        ui.colored_label(theme::green(), "— completed");
         let last = series.points.last().expect("checked len >= 2 above");
         ui.label(
             egui::RichText::new(format!(
@@ -204,7 +216,7 @@ fn render_series(ui: &mut egui::Ui, label: &str, series: &BurndownSeries) {
                 last.remaining, last.completed_cumulative
             ))
             .small()
-            .color(theme::MUTED_TEXT),
+            .color(theme::muted_text()),
         );
     });
 }

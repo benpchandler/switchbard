@@ -50,7 +50,7 @@ pub(super) fn render_summary(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapsh
         } else {
             format!("{open_count} open · {task_count} total")
         };
-        ui.label(egui::RichText::new(count_label).color(theme::WEAK_TEXT));
+        ui.label(egui::RichText::new(count_label).color(theme::weak_text()));
         if warning_count > 0 {
             ui.separator();
             status_pill(
@@ -100,7 +100,7 @@ pub(super) fn render_project_toolbar(
     visible_count: usize,
 ) {
     ui.horizontal_wrapped(|ui| {
-        ui.label(egui::RichText::new("Project").color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new("Project").color(theme::muted_text()));
         ui.add(
             egui::TextEdit::singleline(&mut app.backlog_view.project_filter)
                 .hint_text("Filter projects")
@@ -152,12 +152,14 @@ pub(super) fn render_project_toolbar(
                     }
                 }
                 if shown == 0 {
-                    ui.label(egui::RichText::new("No matching projects").color(theme::MUTED_TEXT));
+                    ui.label(
+                        egui::RichText::new("No matching projects").color(theme::muted_text()),
+                    );
                 }
             });
 
         ui.separator();
-        ui.label(egui::RichText::new("Status").color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new("Status").color(theme::muted_text()));
         let statuses = sort::status_options(&super::scoped_projects(app, snap));
         egui::ComboBox::from_id_salt("backlog_status_filter")
             .selected_text(format::status_filter_label(&app.backlog_view.status_filter))
@@ -176,7 +178,7 @@ pub(super) fn render_project_toolbar(
                 }
             });
 
-        ui.label(egui::RichText::new("Priority").color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new("Priority").color(theme::muted_text()));
         egui::ComboBox::from_id_salt("backlog_priority_filter")
             .selected_text(format::priority_filter_label(
                 &app.backlog_view.priority_filter,
@@ -200,6 +202,8 @@ pub(super) fn render_project_toolbar(
         ui.checkbox(&mut app.backlog_view.show_archived, "Archived");
         ui.checkbox(&mut app.backlog_view.show_drafts, "Drafts");
         ui.separator();
-        ui.label(egui::RichText::new(format!("{visible_count} visible")).color(theme::MUTED_TEXT));
+        ui.label(
+            egui::RichText::new(format!("{visible_count} visible")).color(theme::muted_text()),
+        );
     });
 }

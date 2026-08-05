@@ -73,14 +73,21 @@ fn render_column(
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(column_status).strong());
             ui.label(
-                egui::RichText::new(format!("{}", column_tasks.len())).color(theme::MUTED_TEXT),
+                egui::RichText::new(format!("{}", column_tasks.len())).color(theme::muted_text()),
             );
         });
         ui.separator();
 
-        let frame = egui::Frame::default()
-            .inner_margin(4.0)
-            .fill(ui.visuals().faint_bg_color);
+        // `dnd_drop_zone` ignores the fill on the `Frame` it's handed and
+        // always paints `visuals().widgets.{inactive,active}.bg_fill`
+        // instead (see its source — it overwrites `frame.frame.fill` right
+        // before painting). Overriding those two fields on this column's
+        // child `Ui` is the only way to actually land our tuned `faint_bg`
+        // instead of stock egui's default widget gray, which is what a
+        // "No tasks" label would otherwise render against.
+        ui.visuals_mut().widgets.inactive.bg_fill = theme::faint_bg();
+        ui.visuals_mut().widgets.active.bg_fill = theme::faint_bg();
+        let frame = egui::Frame::default().inner_margin(4.0);
         let (_, dropped) = ui.dnd_drop_zone::<BacklogTaskKey, ()>(frame, |ui| {
             ui.set_min_height(120.0);
             egui::ScrollArea::vertical()
@@ -92,7 +99,7 @@ fn render_column(
                         ui.add_space(4.0);
                     }
                     if column_tasks.is_empty() {
-                        ui.label(egui::RichText::new("No tasks").color(theme::MUTED_TEXT));
+                        ui.label(egui::RichText::new("No tasks").color(theme::muted_text()));
                     }
                 });
         });
@@ -143,13 +150,21 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_re
     let selected = app.backlog_view.selected_task.as_ref() == Some(&key);
 
     let paint_strip = |ui: &mut egui::Ui, app: &mut HiveApp| {
+        // The fill is always `extreme_bg_color` — every text color rendered
+        // inside a strip is tuned against that exact card color (see
+        // `theme.rs`'s palette doc). Selection is a border color change
+        // instead of a translucent overlay: layering `visuals().selection.
+        // bg_fill` (untuned, stock egui) at partial alpha over the card
+        // produced a muddy composite that failed WCAG AA on the dark
+        // theme — a stroke can't create that problem since the audit only
+        // measures fills and text, never strokes.
         let frame = egui::Frame::default()
-            .fill(if selected {
-                ui.visuals().selection.bg_fill.linear_multiply(0.25)
+            .fill(ui.visuals().extreme_bg_color)
+            .stroke(if selected {
+                egui::Stroke::new(2.0, theme::sky())
             } else {
-                ui.visuals().extreme_bg_color
+                ui.visuals().widgets.noninteractive.bg_stroke
             })
-            .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
             .rounding(3.0)
             .inner_margin(egui::Margin::symmetric(8.0, 6.0));
         let resp = frame
@@ -162,14 +177,14 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_re
                             ui.label(
                                 egui::RichText::new(&row.project.repo_name)
                                     .small()
-                                    .color(theme::MUTED_TEXT),
+                                    .color(theme::muted_text()),
                             );
                         }
                         ui.label(
                             egui::RichText::new(&row.task.id)
                                 .monospace()
                                 .small()
-                                .color(theme::MUTED_TEXT),
+                                .color(theme::muted_text()),
                         );
                         ui.label(egui::RichText::new(&row.task.title).strong().small());
                         ui.horizontal(|ui| {
@@ -186,7 +201,7 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_re
                                         row.task.acceptance_criteria.len()
                                     ))
                                     .small()
-                                    .color(theme::MUTED_TEXT),
+                                    .color(theme::muted_text()),
                                 );
                             }
                         });

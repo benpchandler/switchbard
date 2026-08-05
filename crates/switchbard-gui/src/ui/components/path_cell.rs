@@ -16,7 +16,7 @@ use std::path::Path;
 pub fn path_cell(ui: &mut egui::Ui, path: &Path) -> egui::Response {
     let shown = path_display::shorten(path);
     let full = path.display().to_string();
-    let resp = ui.label(egui::RichText::new(shown).color(theme::MUTED_TEXT));
+    let resp = ui.label(egui::RichText::new(shown).color(theme::muted_text()));
     // Only attach a tooltip when we actually elided. If the shown text IS
     // the full path, the tooltip would duplicate what the user is reading.
     if path_display::shorten(path) != full {

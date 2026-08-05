@@ -41,10 +41,10 @@ pub(super) fn render_create_modal(
                         "{} / {}",
                         project.repo_name, project.worktree_label
                     ))
-                    .color(theme::MUTED_TEXT),
+                    .color(theme::muted_text()),
                 );
             } else {
-                ui.label(egui::RichText::new("Project").color(theme::MUTED_TEXT));
+                ui.label(egui::RichText::new("Project").color(theme::muted_text()));
                 egui::ComboBox::from_id_salt("backlog_new_task_project")
                     .selected_text(project.label())
                     .width(320.0)
@@ -129,7 +129,7 @@ pub(super) fn render_create_modal(
                 }
                 if !project.project.cli_available() {
                     ui.label(
-                        egui::RichText::new("Backlog CLI is not available").color(theme::AMBER),
+                        egui::RichText::new("Backlog CLI is not available").color(theme::amber()),
                     );
                 }
             });

@@ -166,7 +166,12 @@ impl HiveApp {
         repos: Vec<Repo>,
         worktrees: Vec<WorktreeRef>,
     ) -> Self {
-        ui::theme::apply(&cc.egui_ctx);
+        // Fonts are expensive to install (atlas rebuild) so this happens once,
+        // here, rather than every frame; the theme's Visuals are cheap and get
+        // reapplied every frame in `render_ui` so a live toggle takes effect
+        // immediately.
+        ui::theme::install_fonts(&cc.egui_ctx);
+        ui::theme::apply(&cc.egui_ctx, cfg.ui.theme);
         // Restore the user's saved zoom before the first frame paints (eframe's
         // own zoom memory doesn't persist without the `persistence` feature).
         cc.egui_ctx.set_zoom_factor(clamp_ui_scale(cfg.ui.ui_scale));
@@ -1183,6 +1188,9 @@ impl HiveApp {
         if let Some(perf) = &mut self.perf {
             perf.begin_frame();
         }
+        // Cheap (Visuals swap only, no font-atlas work) — reapplied every
+        // frame so the theme toggle in the top bar takes effect immediately.
+        ui::theme::apply(ctx, self.config.ui.theme);
         self.drain_create_worktree_outcomes();
         self.drain_remove_worktree_outcomes();
 
@@ -1271,8 +1279,12 @@ impl eframe::App for HiveApp {
         self.drain_picker();
 
         // Snapshot persistable UI state so we can save the config if any
-        // toggle was flipped this update.
+        // toggle was flipped this update. `theme` lives directly on
+        // `config.ui` (the top bar's toggle mutates it in place), so it's
+        // tracked the same way `ui_scale` is below rather than mirrored
+        // through `save_ui_to_config`.
         let ui_before = (self.browser_choice, self.show_non_servers);
+        let theme_before = self.config.ui.theme;
 
         self.render_ui(ctx);
 
@@ -1286,7 +1298,8 @@ impl eframe::App for HiveApp {
         }
 
         let ui_after = (self.browser_choice, self.show_non_servers);
-        if ui_before != ui_after || zoom_changed {
+        let theme_changed = self.config.ui.theme != theme_before;
+        if ui_before != ui_after || zoom_changed || theme_changed {
             self.save_ui_to_config();
         }
     }

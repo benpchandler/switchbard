@@ -69,7 +69,7 @@ fn render_contents(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
     if query_lc.is_empty() {
         ui.label(
             egui::RichText::new("Type to search across every tracked repo.")
-                .color(theme::MUTED_TEXT),
+                .color(theme::muted_text()),
         );
         return;
     }
@@ -90,7 +90,7 @@ fn render_contents(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
     }
 
     if matches.is_empty() {
-        ui.label(egui::RichText::new("No matches").color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new("No matches").color(theme::muted_text()));
         return;
     }
 

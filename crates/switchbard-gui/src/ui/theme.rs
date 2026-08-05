@@ -1,82 +1,194 @@
-//! All semantic colors and a handful of glyph constants used across the GUI.
+//! All semantic colors, embedded fonts, and a handful of glyph constants
+//! used across the GUI — the single source of truth `theme.rs` has always
+//! been, now serving **two** named palettes (task-14):
 //!
-//! Centralizing these means a future palette change is a one-file diff, and
-//! it stops "what does Color32::from_rgb(120, 230, 140) mean?" from being a
-//! recurring "grep the call sites" exercise.
+//! - **Flight Strips** (light, direction B) — the default. Board `#DFE3E6`,
+//!   strip/card `#FBFBF9`, ink `#20262B`, overdue `#B3391F`.
+//! - **Operator's Console** (dark, direction A's lamp language) — chassis
+//!   `#221F1B`, lamp amber `#E8B04B`, jade `#57C26A`, hot `#E06C4F`.
 //!
-//! Contrast targets — every chromatic constant below hits **WCAG AA (≥4.5:1)**
-//! against egui's default light panel background (≈ #F8F8F8, L ≈ 0.91). The
-//! previous palette was tuned for a dark theme and washed out on light: GREEN
-//! 120,230,140 measured 1.43:1, LAVENDER 180,180,240 measured 1.80:1.
+//! `ThemeChoice` (persisted on `Config::ui.theme`) selects which one is
+//! active; [`apply`] installs it into egui's `Visuals` and a thread-local so
+//! every `theme::green()`-style accessor below resolves to the right
+//! palette without threading a parameter through every render function.
+//! The thread-local is safe because all rendering happens on egui's single
+//! UI thread — the same assumption `HiveApp`'s per-view `Status`/`Kick`
+//! wiring already makes.
 //!
-//! Secondary ("muted") text uses [`MUTED_TEXT`], *not* egui's `.weak()`.
+//! Contrast targets — every chromatic accessor below hits **WCAG AA
+//! (≥4.5:1)** against its own theme's panel background. `legibility_audit`
+//! (in `tests/`) proves this by rendering real views under both themes and
+//! walking the actual painted draw list, not by trusting the doc comments.
+//!
+//! Secondary ("muted") text uses [`muted_text`], *not* egui's `.weak()`.
 //! `.weak()` resolves to `gray_out(text_color)`, which blends the text 50%
 //! toward the panel — landing at ~2.4:1 no matter how dark the base color is
-//! (the blend target is the light background, so AA is mathematically
-//! unreachable). The `legibility_audit` test enforces this: every readable run
-//! must clear the size floor and WCAG AA. See [`MIN_FONT_POINTS`] etc. in
-//! `super::legibility`.
+//! (the blend target is the panel, so AA is mathematically unreachable).
 //!
-//! `apply(ctx)` installs the tuned `Visuals` and raises egui's `Small` text
-//! style to the legibility floor (egui ships it at 9pt, below AA-legible).
+//! `apply(ctx, choice)` is cheap (a `Visuals` struct swap + one style entry)
+//! and safe to call every frame — production does, so a live toggle takes
+//! effect immediately. Embedded fonts are the expensive part (font-atlas
+//! rebuild); [`install_fonts`] is separate and called exactly once, from
+//! `HiveApp::new`.
 
 use super::legibility;
 use eframe::egui::{self, Color32};
+use std::cell::Cell;
+pub use switchbard_core::config::ThemeChoice;
 
-// Green ≈ healthy / running / has-listeners. (#117A33, 5.0:1)
-pub const GREEN: Color32 = Color32::from_rgb(0x11, 0x7A, 0x33);
-// Amber ≈ dirty / ambiguous classifier verdict. (#946000, 4.9:1)
-pub const AMBER: Color32 = Color32::from_rgb(0x94, 0x60, 0x00);
-// Soft amber used for the Servers classifier "Maybe" dot. Slightly warmer hue
-// than AMBER but same luminance band so it still reads as a question, not a
-// warning. (#A65A00, 4.5:1)
-pub const AMBER_QUESTION: Color32 = Color32::from_rgb(0xA6, 0x5A, 0x00);
-// Indigo ≈ ahead/behind drifted from origin. Replaces the unreadable pastel
-// lavender. (#3F3FB0, 5.6:1)
-pub const LAVENDER: Color32 = Color32::from_rgb(0x3F, 0x3F, 0xB0);
-// Blue ≈ external-live: bound but not by us. (#1A6BB3, 5.0:1)
-pub const SKY: Color32 = Color32::from_rgb(0x1A, 0x6B, 0xB3);
-// Orange-red ≈ blocked / port-conflict warning. (#B83A0A, 5.3:1)
-pub const WARN_ORANGE: Color32 = Color32::from_rgb(0xB8, 0x3A, 0x0A);
-// Red used for the destructive "Kill all" / "Stop" / "Confirm" buttons.
-// (#B43C3C, 5.3:1 against white text on the button)
-pub const DANGER: Color32 = Color32::from_rgb(0xB4, 0x3C, 0x3C);
+/// One theme's full set of semantic colors. Every field has a light
+/// ([`LIGHT`]) and dark ([`DARK`]) value below; nothing in the rest of the
+/// GUI ever constructs a `Color32` for these roles directly.
+struct Palette {
+    /// Healthy / running / has-listeners.
+    green: Color32,
+    /// Dirty / ambiguous classifier verdict.
+    amber: Color32,
+    /// Soft amber for the Servers classifier "Maybe" dot — same luminance
+    /// band as `amber` but a warmer hue, so it reads as a question.
+    amber_question: Color32,
+    /// Ahead/behind drifted from origin.
+    lavender: Color32,
+    /// External-live: bound but not by us. Also the hyperlink color.
+    sky: Color32,
+    /// Blocked / port-conflict warning; the design mock's "hot" line color.
+    warn_orange: Color32,
+    /// Destructive-action **text** color (validation errors, inline warnings
+    /// via `.colored_label`). Deliberately a separate role from the danger
+    /// **button fill** in [`danger_button`]: a text color on a themed panel
+    /// needs to be legible *against that panel*, while a button fill with
+    /// white text on top needs to stay dark enough for *that* contrast pair
+    /// — on a dark chassis those two constraints point in opposite
+    /// directions (bright red reads on `#221F1B`; white-on-bright-red does
+    /// not clear AA). `danger_button` uses the theme-independent
+    /// `danger_fill()` instead of this field for exactly that reason.
+    danger: Color32,
+    /// Primary body text.
+    weak_text: Color32,
+    /// Secondary / de-emphasized text (paths, hints, counts, separators).
+    muted_text: Color32,
+    /// The "highlighter on a page" tint marking a repo's primary worktree.
+    primary_worktree_tint: Color32,
+    /// The window/central-panel background — Flight Strips' "board" /
+    /// Operator's Console's "chassis".
+    panel_fill: Color32,
+    /// Recessed background (kanban column bodies, code/notes blocks).
+    faint_bg: Color32,
+    /// Raised background (flight-strip cards, the markdown description
+    /// frame) — Flight Strips' "strip" / Operator's Console's lit panel.
+    extreme_bg: Color32,
+}
 
-// Primary body text. Installed as the noninteractive fg in `apply`, so plain
-// labels paint with it. (#4A4A4A, 8.4:1 against the #F8F8F8 panel.)
-pub const WEAK_TEXT: Color32 = Color32::from_rgb(0x4A, 0x4A, 0x4A);
+// Flight Strips (light, direction B) — board #DFE3E6, strip #FBFBF9,
+// overdue #B3391F. The board panel (L≈0.76) is *darker* than egui's stock
+// light panel (L≈0.91) the pre-task-14 palette was tuned against, so most
+// chromatic constants needed re-darkening to hold WCAG AA on the new ground
+// — exactly the "retune the AA constants per ground" task-14 called for.
+// Ratios below are against `panel_fill`, computed via `legibility::contrast_
+// ratio`/`relative_luminance` and confirmed green by `legibility_audit`.
+const LIGHT: Palette = Palette {
+    green: Color32::from_rgb(0x0E, 0x66, 0x2B), // ~5.5:1
+    amber: Color32::from_rgb(0x7A, 0x50, 0x00), // ~5.5:1
+    amber_question: Color32::from_rgb(0x8A, 0x52, 0x00), // ~5.0:1
+    lavender: Color32::from_rgb(0x3F, 0x3F, 0xB0), // ~6.4:1 (unchanged, already ample)
+    sky: Color32::from_rgb(0x15, 0x5A, 0x8A),   // ~5.7:1; matches the mock's dispatch blue
+    warn_orange: Color32::from_rgb(0xB3, 0x39, 0x1F), // design's "overdue" red, ~4.6:1
+    danger: Color32::from_rgb(0xA8, 0x36, 0x36), // text role, ~5.0:1 (button fill is danger_fill())
+    weak_text: Color32::from_rgb(0x20, 0x26, 0x2B), // design's "ink"
+    muted_text: Color32::from_rgb(0x50, 0x5A, 0x63), // ~5.5:1
+    primary_worktree_tint: Color32::from_rgba_premultiplied(28, 25, 11, 28),
+    panel_fill: Color32::from_rgb(0xDF, 0xE3, 0xE6), // "board"
+    faint_bg: Color32::from_rgb(0xE7, 0xEA, 0xEC),   // column recess, between board/strip
+    extreme_bg: Color32::from_rgb(0xFB, 0xFB, 0xF9), // "strip"
+};
 
-// Secondary / de-emphasized text (paths, hints, counts, separators) — the
-// replacement for egui's `.weak()`, which cannot reach AA on a light panel.
-// Lighter than `WEAK_TEXT` so the hierarchy still reads, but dark enough to
-// clear AA with margin. (#666666, ~5.4:1 against the #F8F8F8 panel.)
-pub const MUTED_TEXT: Color32 = Color32::from_rgb(0x66, 0x66, 0x66);
+// Operator's Console (dark, direction A) — chassis #221F1B, lamp amber
+// #E8B04B, jade #57C26A, hot #E06C4F, faceplate text #D8D2C6. Light-on-dark
+// text needs the *opposite* tuning direction from the light theme (bright
+// enough, not dark enough); `warn_orange` is brightened past the mock's
+// literal #E06C4F because that exact hex clears AA only against the darker
+// `panel_fill`, not the slightly lighter `extreme_bg` cards it also renders
+// on. `danger` here is a bright hot-orange for the same reason `danger` in
+// LIGHT isn't reused for `danger_button`'s fill — see the field doc.
+const DARK: Palette = Palette {
+    green: Color32::from_rgb(0x57, 0xC2, 0x6A), // lamp jade, ~6.6:1
+    amber: Color32::from_rgb(0xE8, 0xB0, 0x4B), // lamp amber, ~7.6:1
+    amber_question: Color32::from_rgb(0xE8, 0xB0, 0x4B), // one lamp amber, dark side
+    lavender: Color32::from_rgb(0x9E, 0x9E, 0xFF), // ~6.2:1
+    sky: Color32::from_rgb(0x6F, 0xB8, 0xE8),   // ~6.9:1
+    warn_orange: Color32::from_rgb(0xE8, 0x7A, 0x5A), // brightened "line hot", ~5.2:1
+    danger: Color32::from_rgb(0xE8, 0x7A, 0x5A), // text role; button fill is danger_fill()
+    weak_text: Color32::from_rgb(0xD8, 0xD2, 0xC6), // faceplate text, ~9.9:1
+    muted_text: Color32::from_rgb(0xAD, 0xA6, 0x97), // ~6.1:1
+    primary_worktree_tint: Color32::from_rgba_premultiplied(28, 25, 11, 28),
+    panel_fill: Color32::from_rgb(0x22, 0x1F, 0x1B), // chassis
+    faint_bg: Color32::from_rgb(0x1C, 0x1A, 0x17),   // recessed
+    extreme_bg: Color32::from_rgb(0x2B, 0x27, 0x21), // lit panel / selected row
+};
 
-// Soft "highlighter on a page" tint used to distinguish the primary
-// worktree of a repo (the directory whose path matches the configured
-// repo path) from linked worktrees. The vibe is a yellow textbook
-// marker: noticeable when scanning but doesn't compete with the
-// content on the row.
-//
-// Yellow is intentional over a cool blue: blue advances visually and
-// the previous attempt overshadowed adjacent rows. Yellow recedes
-// and reads as annotation rather than emphasis.
-//
-// Stored premultiplied because `Color32::from_rgba_premultiplied` is
-// the only `const` constructor. Conceptually the tint is unmultiplied
-// (255, 232, 100) at α = 28/255 ≈ 11%; premultiplied that's
-// (255·28/255, 232·28/255, 100·28/255) ≈ (28, 25, 11). Against a light
-// card bg (~245) this drops the blue channel by ~16 and leaves R/G
-// roughly unchanged — the warm-without-saturated effect of marker on
-// paper.
-pub const PRIMARY_WORKTREE_TINT: Color32 = Color32::from_rgba_premultiplied(28, 25, 11, 28);
+fn palette_for(choice: ThemeChoice) -> &'static Palette {
+    match choice {
+        ThemeChoice::Light => &LIGHT,
+        ThemeChoice::Dark => &DARK,
+    }
+}
+
+thread_local! {
+    /// The theme every `theme::xxx()` accessor below resolves against for
+    /// the current frame. All egui rendering happens on one UI thread, so a
+    /// thread-local (rather than threading a `Palette` parameter through
+    /// every render function in `ui/**`) is sound and keeps every existing
+    /// `theme::green()`-style call site a plain zero-argument call.
+    static ACTIVE: Cell<ThemeChoice> = const { Cell::new(ThemeChoice::Light) };
+}
+
+fn active_palette() -> &'static Palette {
+    palette_for(ACTIVE.with(Cell::get))
+}
+
+pub fn green() -> Color32 {
+    active_palette().green
+}
+pub fn amber() -> Color32 {
+    active_palette().amber
+}
+pub fn amber_question() -> Color32 {
+    active_palette().amber_question
+}
+pub fn lavender() -> Color32 {
+    active_palette().lavender
+}
+pub fn sky() -> Color32 {
+    active_palette().sky
+}
+pub fn warn_orange() -> Color32 {
+    active_palette().warn_orange
+}
+pub fn danger() -> Color32 {
+    active_palette().danger
+}
+pub fn weak_text() -> Color32 {
+    active_palette().weak_text
+}
+pub fn muted_text() -> Color32 {
+    active_palette().muted_text
+}
+pub fn primary_worktree_tint() -> Color32 {
+    active_palette().primary_worktree_tint
+}
+/// Recessed background (kanban column bodies, code/notes blocks). See
+/// `board::render_column` for why the Board lens can't just rely on
+/// `ui.visuals().faint_bg_color` at its call site.
+pub fn faint_bg() -> Color32 {
+    active_palette().faint_bg
+}
 
 // Glyph icons — painted directly via `Painter` so they don't depend on which
-// Unicode blocks egui's default fonts (Ubuntu-Light / NotoEmoji / emoji-icon-font)
-// happen to cover. The earlier `●▸▾↑↓✕•○` set rendered as empty squares on a
-// stock install because those geometric/arrow code points are missing from all
-// three default fonts. Painting via convex_polygon / circle_filled has the same
-// visual weight, costs nothing, and works regardless of font configuration.
+// Unicode blocks the installed fonts happen to cover. The earlier
+// `●▸▾↑↓✕•○` set rendered as empty squares on a stock install because those
+// geometric/arrow code points are missing from all three default fonts.
+// Painting via convex_polygon / circle_filled has the same visual weight,
+// costs nothing, and works regardless of font configuration.
 
 const ICON_SIZE: f32 = 14.0;
 const DOT_RADIUS: f32 = 4.5;
@@ -92,17 +204,27 @@ const PULSE_FRAME_MS: u64 = 500;
 /// Full pulse cycle in seconds (one trip from dim → bright → dim).
 const PULSE_PERIOD_SECS: f64 = 2.0;
 
-/// Filled circle indicator — static, single dot. For idle / classifier badges.
-/// Returns the `Response` so callers can attach `.on_hover_text(...)`.
-/// Destructive button (Kill, Stop, Confirm) — DANGER fill plus
-/// explicit white text. The default button text color is dark, which
-/// only reaches ~2.1:1 contrast against #B43C3C. White text hits
-/// 5.3:1 (WCAG AA). This helper centralizes both decisions so the
-/// three call sites stay consistent.
-pub fn danger_button(text: &str) -> egui::Button<'static> {
-    egui::Button::new(egui::RichText::new(text.to_string()).color(Color32::WHITE)).fill(DANGER)
+/// The destructive-button fill (Kill, Stop, Confirm, Archive) paired with
+/// explicit white text — deliberately **not** theme-switched like every
+/// other color in this file. White-on-fill contrast only depends on the fill
+/// itself, never on the surrounding panel, so one dark red clears AA in both
+/// themes; see [`danger`][fn@danger]'s doc for why that same red can't also
+/// serve as dark theme's *text*-colored danger.
+fn danger_fill() -> Color32 {
+    Color32::from_rgb(0xB4, 0x3C, 0x3C) // ~5.7:1 with white text
 }
 
+/// Destructive button (Kill, Stop, Confirm, Archive) — `danger_fill()` plus
+/// explicit white text. The default button text color is dark, which only
+/// reaches ~2.1:1 contrast against that fill. This helper centralizes both
+/// decisions so every call site stays consistent.
+pub fn danger_button(text: &str) -> egui::Button<'static> {
+    egui::Button::new(egui::RichText::new(text.to_string()).color(Color32::WHITE))
+        .fill(danger_fill())
+}
+
+/// Filled circle indicator — static, single dot. For idle / classifier badges.
+/// Returns the `Response` so callers can attach `.on_hover_text(...)`.
 pub fn painted_dot(ui: &mut egui::Ui, color: Color32) -> egui::Response {
     let (rect, resp) =
         ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::hover());
@@ -189,7 +311,8 @@ fn paint_pulsing_dots(
 /// palette indexed by a stable hash reads more consistently frame-to-frame
 /// than deriving hue from an arbitrary HSV wheel. Not used for text, so the
 /// WCAG-AA text contract in this module's header doc doesn't apply — these
-/// only ever paint a dot or a rail, never a glyph.
+/// only ever paint a dot or a rail, never a glyph. Same seven hues in both
+/// themes (they read fine on both a light board and a dark chassis).
 const REPO_RAIL_COLORS: [Color32; 7] = [
     Color32::from_rgb(0x15, 0x5A, 0x8A), // budget-style blue
     Color32::from_rgb(0x7A, 0x4A, 0x9E), // music-style violet
@@ -222,16 +345,20 @@ fn scale_alpha(c: Color32, factor: f32) -> Color32 {
 
 /// Small trash-can icon used as a destructive row-action affordance (e.g.
 /// "remove worktree"). Painter-drawn for the same reason as the other glyphs
-/// in this file: stock egui fonts don't cover icon code points, so a literal
+/// in this file: stock fonts don't cover icon code points, so a literal
 /// `🗑` or `✕` renders as a tofu square.
 ///
-/// Reads `resp.hovered()` before painting so the icon picks up `DANGER` red
-/// on hover and `WEAK_TEXT` gray at rest — enough visual signal that this is
-/// a destructive action without screaming for attention on every row.
+/// Reads `resp.hovered()` before painting so the icon picks up `danger()`
+/// on hover and `weak_text()` at rest — enough visual signal that this is a
+/// destructive action without screaming for attention on every row.
 pub fn painted_trash_button(ui: &mut egui::Ui) -> egui::Response {
     let (rect, resp) =
         ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
-    let color = if resp.hovered() { DANGER } else { WEAK_TEXT };
+    let color = if resp.hovered() {
+        danger()
+    } else {
+        weak_text()
+    };
     let stroke = egui::Stroke::new(1.4, color);
     let painter = ui.painter();
     let c = rect.center();
@@ -336,19 +463,74 @@ pub fn triangle_button(ui: &mut egui::Ui, up: bool, enabled: bool) -> egui::Resp
     response
 }
 
-/// Install Switchbard's tuned egui visuals on the given context. Called once from
-/// `HiveApp::new`. We start from `Visuals::light()` (egui auto-detects dark
-/// mode on some systems and the chromatic palette above is tuned for light)
-/// and pin body text + the `Small` style to legible values.
-pub fn apply(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::light();
+// Embedded OFL fonts (task-14): Barlow Semi Condensed for labels (DIN/
+// aviation lineage, matching Flight Strips' ATC metaphor), JetBrains Mono
+// for ids/numerics. License text ships alongside in `assets/fonts/*/OFL.txt`.
+// Registered ahead of egui's bundled defaults, which remain as fallbacks for
+// any glyph these two don't cover (emoji, non-Latin scripts).
+const BARLOW_SEMI_CONDENSED: &[u8] =
+    include_bytes!("../../assets/fonts/barlow-semi-condensed/BarlowSemiCondensed-Regular.ttf");
+const JETBRAINS_MONO: &[u8] = include_bytes!("../../assets/fonts/jetbrains-mono/JetBrainsMono.ttf");
+
+/// Install the embedded fonts into `ctx`'s font atlas. Expensive (rebuilds
+/// the atlas), so call exactly once — from `HiveApp::new` — never per frame.
+pub fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "barlow_semi_condensed".to_owned(),
+        egui::FontData::from_static(BARLOW_SEMI_CONDENSED).into(),
+    );
+    fonts.font_data.insert(
+        "jetbrains_mono".to_owned(),
+        egui::FontData::from_static(JETBRAINS_MONO).into(),
+    );
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, "barlow_semi_condensed".to_owned());
+    fonts
+        .families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .insert(0, "jetbrains_mono".to_owned());
+    ctx.set_fonts(fonts);
+}
+
+/// Install Switchbard's tuned egui visuals for `choice` on the given
+/// context, and make every `theme::xxx()` accessor in this module resolve
+/// against it for the rest of this frame. Cheap (`Visuals` swap + one style
+/// entry) — safe, and necessary, to call every frame so a live theme toggle
+/// takes effect immediately.
+pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
+    ACTIVE.with(|cell| cell.set(choice));
+    let palette = palette_for(choice);
+
+    let mut visuals = match choice {
+        ThemeChoice::Light => egui::Visuals::light(),
+        ThemeChoice::Dark => egui::Visuals::dark(),
+    };
     // Body text. `text_color()` reads `widgets.noninteractive.fg_stroke.color`,
-    // so setting it here makes plain labels paint with WEAK_TEXT (8.4:1).
-    visuals.widgets.noninteractive.fg_stroke.color = WEAK_TEXT;
-    // egui's default link color (#009BFF) is only 2.8:1 on the light panel.
-    // SKY is the same hue family at AA (5.0:1), so links (e.g. the path links
-    // in the Agent Context drawer) stay clearly clickable and readable.
-    visuals.hyperlink_color = SKY;
+    // so setting it here makes plain labels paint with `weak_text()`.
+    visuals.widgets.noninteractive.fg_stroke.color = palette.weak_text;
+    // `sky()` doubles as the hyperlink color in both themes — egui's own
+    // default (light theme: #009BFF, 2.8:1) doesn't clear AA on a light panel.
+    visuals.hyperlink_color = palette.sky;
+    visuals.panel_fill = palette.panel_fill;
+    visuals.window_fill = palette.panel_fill;
+    visuals.faint_bg_color = palette.faint_bg;
+    visuals.extreme_bg_color = palette.extreme_bg;
+    // `TextEdit` hint text and `Ui::disable()` both fade a color 50% toward
+    // `Visuals::fade_out_to_color()`, which reads exactly this one field
+    // (`widgets.noninteractive.weak_bg_fill` — no other visible widget uses
+    // it, so this is a safe, narrowly-scoped override). Left at egui's
+    // stock default it blends toward a near-panel gray, which is how the
+    // stock light theme's `.weak()`/hint-text path this file's own header
+    // already documents as "AA mathematically unreachable" happens. Blending
+    // toward `muted_text` instead of a panel-ish gray keeps hint text (which
+    // — unlike `Ui::disable()`'s targets, exempt under WCAG 1.4.3 — the user
+    // is meant to read) inside the same tuned, AA-safe tonal range.
+    visuals.widgets.noninteractive.weak_bg_fill = palette.muted_text;
     ctx.set_visuals(visuals);
 
     // egui ships `Small` at 9pt — below the legibility floor. Raise it to the

@@ -22,13 +22,17 @@ pub(super) fn render_dependencies(
 ) {
     ui.label(egui::RichText::new("Dependencies").strong());
     if task.dependencies.is_empty() {
-        ui.label(egui::RichText::new("No dependencies").color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new("No dependencies").color(theme::muted_text()));
     } else {
         ui.label(task.dependencies.join(", "));
     }
     ui.add_enabled_ui(editable, |ui| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("edit").small().color(theme::MUTED_TEXT));
+            ui.label(
+                egui::RichText::new("edit")
+                    .small()
+                    .color(theme::muted_text()),
+            );
             ui.add(
                 egui::TextEdit::singleline(&mut app.backlog_view.editor.dependencies)
                     .hint_text("TASK-1, TASK-2")
@@ -64,7 +68,7 @@ pub(super) fn render_references(
 ) {
     ui.label(egui::RichText::new("References").strong());
     if task.references.is_empty() {
-        ui.label(egui::RichText::new("No references").color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new("No references").color(theme::muted_text()));
     } else {
         for reference in &task.references {
             ui.hyperlink_to(reference, reference);
@@ -108,7 +112,7 @@ pub(super) fn render_acceptance(
 ) {
     ui.label(egui::RichText::new("Acceptance Criteria").strong());
     if task.acceptance_criteria.is_empty() {
-        ui.label(egui::RichText::new("No acceptance criteria").color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new("No acceptance criteria").color(theme::muted_text()));
         return;
     }
     for item in &task.acceptance_criteria {
@@ -141,7 +145,7 @@ pub(super) fn render_definition_of_done(
 ) {
     ui.label(egui::RichText::new("Definition of Done").strong());
     if task.definition_of_done.is_empty() {
-        ui.label(egui::RichText::new("No Definition of Done items").color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new("No Definition of Done items").color(theme::muted_text()));
         return;
     }
     for item in &task.definition_of_done {
@@ -174,7 +178,7 @@ pub(super) fn render_notes(
 ) {
     ui.label(egui::RichText::new("Implementation Notes").strong());
     if task.implementation_notes.trim().is_empty() {
-        ui.label(egui::RichText::new("No notes yet").color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new("No notes yet").color(theme::muted_text()));
     } else {
         egui::ScrollArea::vertical()
             .id_salt(format!("notes_{}", task.id))
@@ -230,7 +234,7 @@ pub(super) fn render_archive(
     ui.separator();
     if app.backlog_view.archive_confirm {
         ui.horizontal(|ui| {
-            ui.colored_label(theme::AMBER, format!("Archive {}?", task.id));
+            ui.colored_label(theme::amber(), format!("Archive {}?", task.id));
             if ui.add(theme::danger_button("Confirm archive")).clicked() {
                 pending.archive = Some((project_root.to_path_buf(), task.id.clone()));
                 app.backlog_view.archive_confirm = false;
