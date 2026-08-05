@@ -374,7 +374,11 @@ pub(super) fn render_task_list_row(
     ui.separator();
 }
 
-fn render_task_context_menu(
+/// TASK-26 (owner-requested UX): also called from `board::render_strip`'s
+/// card context menu — the Move/Priority actions and the Board lens's own
+/// selection state (`bulk_selected_tasks`, shared across both lenses) are
+/// identical, so Board reuses this rather than a parallel implementation.
+pub(super) fn render_task_context_menu(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
     clicked: &TaskRow<'_>,

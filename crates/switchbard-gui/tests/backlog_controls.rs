@@ -974,6 +974,68 @@ fn board_does_not_show_icebox_when_no_project_declares_it() {
     );
 }
 
+// TASK-26 (owner-requested UX): Board bulk select + bulk-edit — UNDRIVABLE-
+// BY-KITTEST for the *click* on either the per-card checkbox or the
+// right-click context menu, discovered while adding this coverage.
+//
+// The card checkbox is a native `egui::Checkbox` — not the retroactively-
+// `.interact()`ed `egui::Frame` response TASK-24's own UNDRIVABLE note is
+// about — so it was a reasonable hope this one *would* click-drive even
+// though the card itself doesn't. It doesn't: `unlabeled_checkbox(&harness,
+// 1).simulate_click()` (the exact method `row_bulk_checkbox_click_selects_
+// the_task` below already proves works for List's structurally-identical
+// checkbox) leaves `bulk_selected_tasks` empty on Board. This rules out
+// "retroactive Frame interact specifically" as the root cause and points at
+// something common to *every* interactive element inside a column: each
+// column is both a `dnd_drop_zone` and its own vertical `ScrollArea`,
+// nested inside the board's own outer horizontal `ScrollArea` — the same
+// nesting the original QA audit already flagged as UNDRIVABLE for column
+// scrolling itself. The right-click context menu shares the List lens's own
+// already-documented UNDRIVABLE status for bare-interact context menus
+// (see the "List lens: right-click bulk context menu" note above), reused
+// unmodified rather than reimplemented.
+//
+// Verification instead rests on:
+//   1. Code review — the checkbox's click handler and the context menu call
+//      are both under ten lines, non-branching, and route through the
+//      exact same `selection::set_bulk_task_selected`/`select_bulk_task_
+//      range`/`focus_context_selection` and `list::render_task_context_
+//      menu` functions List's own proven-working bulk UI uses — see
+//      `row_bulk_checkbox_click_selects_the_task` and
+//      `shift_click_on_a_second_row_checkbox_selects_the_contiguous_range`
+//      below for that proof, at the function level shared by both lenses.
+//   2. The render (read) side is directly testable without a click —
+//      `board_card_checkbox_reflects_bulk_selection_state` below sets
+//      `bulk_selected_tasks` directly and confirms the card's own checkbox
+//      renders checked, proving the binding is wired correctly in the one
+//      direction that doesn't require simulating a click.
+#[test]
+fn board_card_checkbox_reflects_bulk_selection_state() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Selectable card", "To Do")]);
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.run();
+
+    let key = (PathBuf::from(REPO_PATH), "TASK-1".to_string());
+    assert_eq!(
+        unlabeled_checkbox(&harness, 0).toggled(),
+        Some(egui::accesskit::Toggled::False),
+        "unselected by default"
+    );
+
+    harness
+        .state_mut()
+        .backlog_view
+        .bulk_selected_tasks
+        .insert(key);
+    harness.run();
+
+    assert_eq!(
+        unlabeled_checkbox(&harness, 0).toggled(),
+        Some(egui::accesskit::Toggled::True),
+        "the card's own checkbox should render checked once the task is bulk-selected"
+    );
+}
+
 /// QA parity matrix, "Kanban card: labels"/"Kanban card: age" (was a LOW
 /// gap): the strip should show both, matching the webview's card.
 #[test]

@@ -14,7 +14,9 @@
 //! available) are wrapped as drag sources — draft/completed/archived cards
 //! render as plain, non-draggable strips.
 
-use super::{dispatch_ui, format, scoped_projects, sort, Pending, Snapshot, TaskRow};
+use super::{
+    dispatch_ui, format, list, scoped_projects, selection, sort, Pending, Snapshot, TaskRow,
+};
 use crate::app::HiveApp;
 use crate::runtime::{BacklogLens, BacklogTaskKey};
 use crate::ui::theme;
@@ -80,6 +82,12 @@ pub(super) fn render_board(
     tasks: Vec<TaskRow<'_>>,
     pending: &mut Pending,
 ) {
+    // TASK-26: keeps bulk_selected_tasks consistent with whatever's
+    // currently visible — same per-frame call `list::render_task_workspace`
+    // already makes, since the two lenses share `bulk_selected_tasks`.
+    selection::retain_visible_bulk_selection(app, &tasks);
+    render_bulk_selection_bar(app, ui);
+
     let columns = column_order(app, snap);
     let show_repo = app.backlog_view.selected_project.is_none();
 
@@ -95,17 +103,47 @@ pub(super) fn render_board(
         });
 }
 
+/// TASK-26 (owner-requested UX): the same "N selected · Clear" indicator
+/// `list::render_task_sort_controls` shows, since Board shares the identical
+/// `bulk_selected_tasks` state. Its own row rather than folded into an
+/// existing one — Board has no sort/toolbar row of its own to attach to.
+fn render_bulk_selection_bar(app: &mut HiveApp, ui: &mut egui::Ui) {
+    let selected_count = app.backlog_view.bulk_selected_tasks.len();
+    if selected_count == 0 {
+        return;
+    }
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(format!("{selected_count} selected")).color(theme::weak_text()),
+        );
+        ui.label(
+            egui::RichText::new("· right-click a card for bulk actions")
+                .small()
+                .color(theme::muted_text()),
+        );
+        if ui
+            .small_button("Clear")
+            .on_hover_text("Clear selected tasks")
+            .clicked()
+        {
+            app.backlog_view.bulk_selected_tasks.clear();
+            app.backlog_view.bulk_selection_anchor = None;
+        }
+    });
+    ui.add_space(4.0);
+}
+
 const COLUMN_WIDTH: f32 = 260.0;
 
 fn render_column(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
-    tasks: &[TaskRow<'_>],
+    all_visible: &[TaskRow<'_>],
     column_status: &str,
     show_repo: bool,
     pending: &mut Pending,
 ) {
-    let column_tasks: Vec<&TaskRow<'_>> = tasks
+    let column_tasks: Vec<&TaskRow<'_>> = all_visible
         .iter()
         .filter(|row| row.task.status.eq_ignore_ascii_case(column_status))
         .collect();
@@ -137,7 +175,7 @@ fn render_column(
                 .max_height(ui.available_height().max(200.0))
                 .show(ui, |ui| {
                     for row in &column_tasks {
-                        render_strip(app, ui, row, show_repo);
+                        render_strip(app, ui, row, all_visible, show_repo, pending);
                         ui.add_space(4.0);
                     }
                     if column_tasks.is_empty() {
@@ -147,7 +185,7 @@ fn render_column(
         });
 
         if let Some(dropped_key) = dropped {
-            apply_drop(app, tasks, &dropped_key, column_status, pending);
+            apply_drop(app, all_visible, &dropped_key, column_status, pending);
         }
     });
 }
@@ -186,12 +224,24 @@ fn apply_drop(
 /// progress. Draggable when the task is CLI-editable; otherwise a plain,
 /// non-interactive frame with the same layout so the board doesn't jump
 /// around depending on editability.
-fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_repo: bool) {
+fn render_strip(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    row: &TaskRow<'_>,
+    all_visible: &[TaskRow<'_>],
+    show_repo: bool,
+    pending: &mut Pending,
+) {
     let key = row.key();
     let editable = row.task.editable() && row.project.project.cli_available();
-    let selected = app.backlog_view.selected_task.as_ref() == Some(&key);
+    let bulk_selected = app.backlog_view.bulk_selected_tasks.contains(&key);
+    let selected = app.backlog_view.selected_task.as_ref() == Some(&key) || bulk_selected;
+    // TASK-26: shift-range select needs the full visible order, same
+    // "flatten once, reuse per click" shape list.rs's own row rendering
+    // uses for its `visible_keys` parameter.
+    let visible_keys: Vec<BacklogTaskKey> = all_visible.iter().map(TaskRow::key).collect();
 
-    let paint_strip = |ui: &mut egui::Ui, app: &mut HiveApp| {
+    let mut paint_strip = |ui: &mut egui::Ui, app: &mut HiveApp| {
         // The fill is always `extreme_bg_color` — every text color rendered
         // inside a strip is tuned against that exact card color (see
         // `theme.rs`'s palette doc). Selection is a border color change
@@ -213,6 +263,24 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_re
             .show(ui, |ui| {
                 ui.set_width(COLUMN_WIDTH - 16.0);
                 ui.horizontal(|ui| {
+                    // TASK-26 (owner-requested UX): bulk-select checkbox,
+                    // reusing the exact same `selection` state machine
+                    // list.rs's row checkbox drives (`bulk_selected_tasks`/
+                    // `bulk_selection_anchor` are shared across lenses, not
+                    // per-lens state) — shift toggles range-select the same
+                    // way.
+                    let mut checked = bulk_selected;
+                    let checkbox = ui
+                        .add_sized([20.0, 18.0], egui::Checkbox::without_text(&mut checked))
+                        .on_hover_text("Select task for bulk actions");
+                    if checkbox.changed() {
+                        let shift = ui.input(|input| input.modifiers.shift);
+                        if shift {
+                            selection::select_bulk_task_range(app, &visible_keys, key.clone());
+                        } else {
+                            selection::set_bulk_task_selected(app, key.clone(), checked);
+                        }
+                    }
                     let _ = theme::painted_dot(ui, theme::repo_rail_color(&row.project.repo_name));
                     ui.vertical(|ui| {
                         if show_repo {
@@ -268,11 +336,10 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_re
                 });
             })
             .response;
-        if resp
+        let interacted = resp
             .interact(egui::Sense::click())
-            .on_hover_text("Open in the List lens")
-            .clicked()
-        {
+            .on_hover_text("Open in the List lens");
+        if interacted.clicked() {
             // TASK-24 (owner-requested UX): a Board card click used to only
             // select the task — invisible, since the Board lens has no
             // detail pane of its own. Jump to the List lens the same way
@@ -286,6 +353,18 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_re
             app.backlog_view.editor.loaded_key = None;
             app.backlog_view.lens = BacklogLens::List;
         }
+        // TASK-26: right-click bulk actions, reusing list::
+        // render_task_context_menu exactly as list.rs's own row does —
+        // same UNDRIVABLE-BY-KITTEST status as that menu (see
+        // backlog_controls.rs's "List lens: right-click bulk context menu"
+        // note); verified by code review, since the reused function is
+        // already proven at the List level.
+        if interacted.secondary_clicked() {
+            selection::focus_context_selection(app, key.clone());
+        }
+        interacted.context_menu(|ui| {
+            list::render_task_context_menu(app, ui, row, all_visible, pending);
+        });
     };
 
     if editable {

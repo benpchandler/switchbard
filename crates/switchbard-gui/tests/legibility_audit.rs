@@ -606,6 +606,15 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     board_app.backlog_view.lens = BacklogLens::Board;
     board_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
     seed_backlog_project(&board_app);
+    // TASK-26 (owner-requested UX): bulk-select a task directly on state —
+    // the checkbox click itself is UNDRIVABLE-BY-KITTEST for this lens (see
+    // backlog_controls.rs's note near board_card_checkbox_reflects_bulk_
+    // selection_state) — so the "N selected · Clear" bar's text is only
+    // ever painted this way in this audit.
+    board_app
+        .backlog_view
+        .bulk_selected_tasks
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
     let board = harness(board_app);
 
     let mut milestones_app = seeded_app();
