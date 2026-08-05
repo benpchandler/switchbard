@@ -129,15 +129,21 @@ pub fn triage_entry_from_task(
         age_unix: task
             .created_date
             .as_deref()
-            .and_then(parse_created_date_unix)
+            .and_then(parse_backlog_datetime_unix)
             .unwrap_or(u64::MAX),
     }
 }
 
-/// Backlog.md stores `created_date` as `"YYYY-MM-DD HH:MM"` (see
-/// `backlog::parse_task_file` / the frontmatter in any `backlog/tasks/*.md`).
-/// Returns `None` for anything else rather than guessing.
-fn parse_created_date_unix(value: &str) -> Option<u64> {
+/// Backlog.md stores `created_date`/`updated_date` as `"YYYY-MM-DD HH:MM"`
+/// (see `backlog::parse_task_file` / the frontmatter in any
+/// `backlog/tasks/*.md`). Returns `None` for anything else rather than
+/// guessing. Seconds precision, unlike `backlog::parse_backlog_day`'s day
+/// granularity (burndown/relations only need "which day"); this module's own
+/// age tiebreak needs finer resolution, and the Board lens's per-card age
+/// label (task-15 parity gap) reuses it via `humanize_age` for the same
+/// reason — a card updated an hour ago shouldn't look as stale as one from
+/// yesterday.
+pub fn parse_backlog_datetime_unix(value: &str) -> Option<u64> {
     chrono::NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%d %H:%M")
         .ok()
         .map(|dt| dt.and_utc().timestamp())

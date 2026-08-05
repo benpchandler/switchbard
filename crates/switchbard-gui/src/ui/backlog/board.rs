@@ -17,7 +17,9 @@ use crate::app::HiveApp;
 use crate::runtime::BacklogTaskKey;
 use crate::ui::theme;
 use eframe::egui;
-use switchbard_core::{BacklogTaskPatch, BACKLOG_STATUSES};
+use switchbard_core::{
+    humanize_age, parse_backlog_datetime_unix, BacklogTask, BacklogTaskPatch, BACKLOG_STATUSES,
+};
 
 /// Column order: the standard statuses in their natural kanban order, then
 /// any nonstandard status found in the current scope, alphabetically.
@@ -221,6 +223,7 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_re
                                 &dispatch_ui::dispatch_state(row.task),
                             );
                         });
+                        render_labels_and_age(ui, row.task);
                     });
                 });
             })
@@ -242,4 +245,40 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_re
     } else {
         paint_strip(ui, app);
     }
+}
+
+/// Labels and a humanized age (webview kanban card parity, QA parity matrix
+/// row "Kanban card: labels"/"Kanban card: age" — previously a LOW gap).
+/// Skips the whole line when there's nothing to show, same convention as
+/// `dispatch_ui::render_dispatch_pill`'s `NotFlagged` no-op, so an
+/// unlabeled/undated card doesn't paint an empty row.
+fn render_labels_and_age(ui: &mut egui::Ui, task: &BacklogTask) {
+    let age = card_age(task);
+    if task.labels.is_empty() && age.is_none() {
+        return;
+    }
+    ui.horizontal(|ui| {
+        if !task.labels.is_empty() {
+            ui.label(
+                egui::RichText::new(task.labels.join(", "))
+                    .small()
+                    .color(theme::muted_text()),
+            );
+        }
+        if let Some(age) = age {
+            ui.label(egui::RichText::new(age).small().color(theme::muted_text()));
+        }
+    });
+}
+
+/// Prefers `updated_date` (the webview's card age reflects last activity,
+/// not creation) and falls back to `created_date` for a task never edited
+/// since creation. `None` for a task with neither date parseable — the card
+/// just omits the age rather than showing a placeholder.
+fn card_age(task: &BacklogTask) -> Option<String> {
+    task.updated_date
+        .as_deref()
+        .or(task.created_date.as_deref())
+        .and_then(parse_backlog_datetime_unix)
+        .map(humanize_age)
 }

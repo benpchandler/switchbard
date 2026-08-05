@@ -45,8 +45,8 @@ pub use backlog_stats::{
     BurndownSeries, CrossRepoStats, RepoStats,
 };
 pub use backlog_triage::{
-    find_hub_repo, load_ordering_overlay, triage_entry_from_task, triage_rank, OrderingOverlay,
-    TriageDue, TriageEntry, TriagePriority,
+    find_hub_repo, load_ordering_overlay, parse_backlog_datetime_unix, triage_entry_from_task,
+    triage_rank, OrderingOverlay, TriageDue, TriageEntry, TriagePriority,
 };
 pub use classify::{classify_command, classify_script_body, ServerLikelihood};
 pub use discover::{auto_scan_roots, discover_repos, DiscoveredRepo};

@@ -674,6 +674,55 @@ fn board_card_click_selects_the_task() {
     );
 }
 
+/// QA parity matrix, "Kanban card: labels"/"Kanban card: age" (was a LOW
+/// gap): the strip should show both, matching the webview's card.
+#[test]
+fn board_card_shows_labels_and_a_humanized_age() {
+    let mut labeled = task("TASK-1", "Labeled task", "To Do");
+    labeled.labels = vec!["frontend".to_string(), "urgent".to_string()];
+    // Fixed, well-in-the-past date: `humanize_age`'s exact bucket depends on
+    // wall-clock "now", so assert on the "... ago" suffix kittest's
+    // substring query supports, not a specific "3d ago" string.
+    labeled.updated_date = Some("2026-06-01 09:00".to_string());
+
+    let mut app = list_app_with_tasks(vec![labeled]);
+    app.backlog_view.lens = BacklogLens::Board;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness
+            .query_all_by_label("frontend, urgent")
+            .next()
+            .is_some(),
+        "the card should show its labels, comma-joined"
+    );
+    assert!(
+        harness.query_all_by_label_contains("ago").next().is_some(),
+        "the card should show a humanized age derived from updated_date"
+    );
+}
+
+/// The unlabeled/undated fixture tasks used throughout this file (see
+/// `task()`'s fixed `updated_date`) always have an age, so this covers the
+/// no-labels half specifically: a card with no labels shouldn't render an
+/// empty label line.
+#[test]
+fn board_card_omits_the_label_line_when_there_are_no_labels() {
+    let plain = task("TASK-1", "Plain task", "To Do");
+    assert!(plain.labels.is_empty(), "fixture should start unlabeled");
+
+    let mut app = list_app_with_tasks(vec![plain]);
+    app.backlog_view.lens = BacklogLens::Board;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_all_by_label_contains("ago").next().is_some(),
+        "age should still render from the fixture's updated_date"
+    );
+}
+
 // ─── Milestones lens ─────────────────────────────────────────────────────
 
 #[test]
