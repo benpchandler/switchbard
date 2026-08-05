@@ -474,6 +474,7 @@ mod tests {
             tasks: vec![task.clone()],
             warnings: vec![],
             loaded_at_unix: 0,
+            configured_statuses: vec![],
         };
 
         let triage = triage_entry_from_task(PathBuf::from("/repos/a"), "a", &task, &project);

@@ -65,6 +65,7 @@ fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
             tasks,
             warnings: vec![],
             loaded_at_unix: 0,
+            configured_statuses: vec![],
         },
     );
     app

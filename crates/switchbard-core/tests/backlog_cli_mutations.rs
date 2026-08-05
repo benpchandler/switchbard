@@ -118,6 +118,42 @@ fn reload(root: &Path) -> switchbard_core::BacklogProject {
     load_backlog_project(root).expect("reparsing the fixture project should succeed")
 }
 
+/// TASK-25 (owner-requested UX): `load_backlog_project` reads
+/// `BacklogProject::configured_statuses` off a real `backlog init`-created
+/// project's `backlog/config.yml`. `backlog config set` has no key for the
+/// statuses list (confirmed against `backlog config set --help`, which
+/// enumerates every settable key and statuses isn't one of them), so a
+/// custom list can only ever get there by hand-editing config.yml — the
+/// same thing this test does — never through a CLI call this suite could
+/// instead exercise.
+#[test]
+fn load_backlog_project_reads_configured_statuses_from_a_real_init() {
+    let fixture = fixture_repo();
+    let root = fixture.path();
+
+    // A real `backlog init --defaults` project (via fixture_repo()) starts
+    // with the standard three; overwrite with budget's own real Icebox set
+    // to prove the pipeline against a config shape actually seen in a
+    // tracked repo, not an invented one.
+    let config_path = root.join("backlog/config.yml");
+    let original = std::fs::read_to_string(&config_path).expect("read the real generated config");
+    assert!(
+        original.contains("statuses: [\"To Do\", \"In Progress\", \"Done\"]"),
+        "expected backlog init --defaults' known statuses line, got: {original}"
+    );
+    let with_icebox = original.replace(
+        "statuses: [\"To Do\", \"In Progress\", \"Done\"]",
+        "statuses: [\"Icebox\", \"To Do\", \"In Progress\", \"In Review\", \"Done\"]",
+    );
+    std::fs::write(&config_path, with_icebox).expect("write the customized config");
+
+    let project = reload(root);
+    assert_eq!(
+        project.configured_statuses,
+        vec!["Icebox", "To Do", "In Progress", "In Review", "Done"]
+    );
+}
+
 #[test]
 fn edit_backlog_task_persists_every_field_the_detail_pane_editor_exposes() {
     let fixture = fixture_repo();
@@ -601,6 +637,7 @@ fn cli_unavailable_project_reports_not_available() {
         tasks: vec![],
         warnings: vec!["Backlog CLI not found on PATH".to_string()],
         loaded_at_unix: 0,
+        configured_statuses: vec![],
     };
     assert!(!project.cli_available());
 }

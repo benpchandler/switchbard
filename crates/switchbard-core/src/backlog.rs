@@ -17,6 +17,18 @@ pub struct BacklogProject {
     pub tasks: Vec<BacklogTask>,
     pub warnings: Vec<String>,
     pub loaded_at_unix: u64,
+    /// This project's own configured status list (`backlog/config.yml`'s
+    /// `statuses:` array), in the order the project itself declares —
+    /// e.g. budget's own config declares `["Icebox", "To Do", "In
+    /// Progress", "In Review", "Done"]`. TASK-25 (owner-requested UX): the
+    /// Board lens's column set is the union of every tracked project's own
+    /// list, not just statuses a task happens to carry right now, so a
+    /// repo-specific status like Icebox shows even with zero Icebox tasks
+    /// in the current scope. Empty if `config.yml` is missing or its
+    /// `statuses` key is absent/malformed — never fatal, since every
+    /// existing behavior (BACKLOG_STATUSES + statuses actually present on a
+    /// task) is unaffected either way.
+    pub configured_statuses: Vec<String>,
 }
 
 impl BacklogProject {
@@ -239,7 +251,27 @@ pub fn load_backlog_project(root: &Path) -> Result<BacklogProject> {
         tasks,
         warnings,
         loaded_at_unix: unix_now(),
+        configured_statuses: parse_config_statuses(root),
     })
+}
+
+/// Read `backlog/config.yml`'s `statuses:` array — see `BacklogProject::
+/// configured_statuses`'s doc for why this is worth a second read alongside
+/// the task files themselves. Never fails the whole project load: a
+/// missing/unreadable/malformed config just yields an empty list, same as
+/// if this function didn't exist.
+fn parse_config_statuses(root: &Path) -> Vec<String> {
+    let path = root.join("backlog/config.yml");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_yaml::from_str::<Value>(&text) else {
+        return Vec::new();
+    };
+    let Some(mapping) = value.as_mapping() else {
+        return Vec::new();
+    };
+    yaml_string_list(mapping, "statuses")
 }
 
 pub fn edit_backlog_task(
@@ -786,6 +818,43 @@ pub fn parse_backlog_day(value: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TASK-25 (owner-requested UX): `configured_statuses` reads
+    /// `backlog/config.yml`'s `statuses:` array — budget's own config
+    /// declares exactly this set.
+    #[test]
+    fn parses_config_statuses_from_config_yml() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("backlog")).unwrap();
+        fs::write(
+            dir.path().join("backlog/config.yml"),
+            "project_name: \"Ledger\"\ndefault_status: \"To Do\"\nstatuses: [\"Icebox\", \"To Do\", \"In Progress\", \"In Review\", \"Done\"]\n",
+        )
+        .unwrap();
+
+        let statuses = parse_config_statuses(dir.path());
+        assert_eq!(
+            statuses,
+            vec!["Icebox", "To Do", "In Progress", "In Review", "Done"]
+        );
+    }
+
+    /// Missing/malformed config is never fatal — `configured_statuses` just
+    /// comes back empty, same as if the function didn't exist. Confirms
+    /// both a fully-missing file and a config.yml with no `statuses` key.
+    #[test]
+    fn missing_or_statusless_config_yields_an_empty_list() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(parse_config_statuses(dir.path()), Vec::<String>::new());
+
+        fs::create_dir_all(dir.path().join("backlog")).unwrap();
+        fs::write(
+            dir.path().join("backlog/config.yml"),
+            "project_name: \"No statuses key\"\n",
+        )
+        .unwrap();
+        assert_eq!(parse_config_statuses(dir.path()), Vec::<String>::new());
+    }
 
     #[test]
     fn parses_backlog_task_markdown() {

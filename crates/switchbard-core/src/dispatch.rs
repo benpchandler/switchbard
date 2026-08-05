@@ -583,6 +583,7 @@ mod tests {
             ],
             warnings: vec![],
             loaded_at_unix: 0,
+            configured_statuses: vec![],
         };
 
         let queue = list_dispatch_queue(&project);
@@ -605,6 +606,7 @@ mod tests {
             tasks: vec![done],
             warnings: vec![],
             loaded_at_unix: 0,
+            configured_statuses: vec![],
         };
 
         assert!(list_dispatch_queue(&project).is_empty());

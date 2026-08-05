@@ -76,6 +76,7 @@ fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
             tasks,
             warnings: vec![],
             loaded_at_unix: 0,
+            configured_statuses: vec![],
         },
     );
     app
@@ -777,6 +778,7 @@ fn digest_harness_with(tasks: Vec<BacklogTask>) -> Harness<'static, HiveApp> {
             tasks,
             warnings: vec![],
             loaded_at_unix: 0,
+            configured_statuses: vec![],
         },
     );
     let mut harness = harness(app);
@@ -911,6 +913,66 @@ fn click_at_node_center(harness: &mut Harness<'_, HiveApp>, label: &str) {
 //      `board_card_omits_the_label_line_when_there_are_no_labels` below
 //      already prove the card itself (the click's own target) renders and
 //      is queryable.
+
+/// TASK-25 (owner-requested UX): a project's `config.yml`-declared status
+/// (Icebox, matching budget's real config) should show as a Board column
+/// even with zero tasks in it right now — declaring it is enough, per
+/// `column_order`'s doc (board.rs). No CLI call decides this outcome (the
+/// `backlog` CLI has no way to set the statuses list at all — see
+/// `load_backlog_project_reads_configured_statuses_from_a_real_init`,
+/// backlog_cli_mutations.rs, for that finding and the real-fixture proof of
+/// the parsing itself), so an in-memory fixture with `configured_statuses`
+/// set directly is the right level for exercising the *render* path.
+#[test]
+fn board_shows_the_icebox_column_even_with_zero_icebox_tasks() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::Board;
+    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![task("TASK-1", "Ordinary task", "To Do")],
+            warnings: vec![],
+            loaded_at_unix: 0,
+            configured_statuses: vec![
+                "Icebox".to_string(),
+                "To Do".to_string(),
+                "In Progress".to_string(),
+                "In Review".to_string(),
+                "Done".to_string(),
+            ],
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_all_by_label("Icebox").next().is_some(),
+        "Icebox should render as a column even though no task is in it"
+    );
+    assert!(
+        harness.query_all_by_label("In Review").next().is_some(),
+        "In Review (also config-declared, also zero tasks) should render too"
+    );
+}
+
+/// Without a declared statuses list at all (the default `Vec::new()`),
+/// nothing should change from before TASK-25 — no phantom columns beyond
+/// the standard three plus whatever a task actually carries.
+#[test]
+fn board_does_not_show_icebox_when_no_project_declares_it() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Ordinary task", "To Do")]);
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.run();
+
+    assert!(
+        harness.query_all_by_label("Icebox").next().is_none(),
+        "no project declared Icebox, so it should not appear as a column"
+    );
+}
 
 /// QA parity matrix, "Kanban card: labels"/"Kanban card: age" (was a LOW
 /// gap): the strip should show both, matching the webview's card.

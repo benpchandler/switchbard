@@ -356,6 +356,7 @@ mod tests {
             ],
             warnings: vec![],
             loaded_at_unix: 0,
+            configured_statuses: vec![],
         };
 
         assert_eq!(open_task_count(&project), 2);

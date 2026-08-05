@@ -475,6 +475,7 @@ fn seed_backlog_project(app: &HiveApp) {
             ],
             warnings: vec![],
             loaded_at_unix: 0,
+            configured_statuses: vec![],
         },
     );
 }
