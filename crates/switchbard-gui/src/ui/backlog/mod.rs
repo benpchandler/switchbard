@@ -21,6 +21,7 @@
 //! - `toolbar`    — summary line + project/status/priority filter bar + lens tabs.
 //! - `sort`       — task filtering, sorting (incl. triage ranking), status options.
 //! - `selection`  — bulk multi-select state machine (shift/ctrl-click, context menu targets).
+//! - `detail_lists` — detail-pane checklist/list sections split out of `detail`.
 //! - `list`       — the List lens: task list column + row rendering.
 //! - `board`      — the Board lens: per-status kanban columns with drag-to-change-status.
 //! - `milestones` — the Milestones lens: tasks grouped by milestone, cross-repo.
@@ -40,6 +41,7 @@
 mod board;
 mod create;
 mod detail;
+mod detail_lists;
 mod format;
 mod list;
 mod milestones;
