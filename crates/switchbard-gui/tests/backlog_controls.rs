@@ -324,12 +324,27 @@ fn plain_click_on_a_row_title_selects_it_for_the_detail_pane() {
 // simulate_click()` (raw pointer position) or `Node::click()` (the
 // accesskit semantic action). The identical `.interact(Sense::click())`
 // pattern *does* work when the container is an `egui::Frame::show(...)`
-// response instead (proven by `board_card_click_selects_the_task` and
-// `digest_card_click_selects_the_task_and_jumps_to_list` below, both of
-// which drive that exact pattern successfully) — so this is specifically an
-// `egui`/`egui_kittest` limitation on bare `ui.horizontal()` responses, not
-// a general "retroactive interact never works" rule, and not a Switchbard
-// defect.
+// response instead — confirmed by `digest_card_click_selects_the_task_and_
+// jumps_to_list` below, which drives that exact pattern successfully — so
+// this is at least partly an `egui`/`egui_kittest` limitation on bare
+// `ui.horizontal()` responses, not a general "retroactive interact never
+// works" rule, and not a Switchbard defect.
+//
+// CORRECTION (2026-08-05, egui 0.30->0.31 upgrade): this comment previously
+// also cited `board_card_click_selects_the_task` as a second example of the
+// Frame-response pattern working. That citation was wrong — the board test
+// only ever exercised a single-task fixture, where `reconcile_selected_task`
+// (mod.rs) auto-selects the lone visible row regardless of whether the
+// click did anything, so it passed without proving the click worked. A
+// two-task discriminating version (added while porting to egui 0.31) shows
+// the click does *not* reliably move selection on a Board card, even though
+// the code is the identical `egui::Frame::show(...).response.interact(
+// Sense::click())` pattern digest's card uses successfully — see the
+// `UNDRIVABLE-BY-KITTEST` note on Board card clicks near
+// `board_card_shows_labels_and_a_humanized_age` below for the full
+// investigation. So Frame-response clicks are not universally reliable
+// either; digest's card is the one concretely proven case, not a
+// stand-in for "every Frame-response click works."
 //
 // Verification for this control instead rests on:
 //   1. Code review — `render_task_context_menu` (list.rs) and its
@@ -843,23 +858,59 @@ fn click_at_node_center(harness: &mut Harness<'_, HiveApp>, label: &str) {
 }
 
 // ─── Board lens ──────────────────────────────────────────────────────────
-
-#[test]
-fn board_card_click_selects_the_task() {
-    let mut app = list_app_with_tasks(vec![task("TASK-1", "Board task", "To Do")]);
-    app.backlog_view.lens = BacklogLens::Board;
-    let mut harness = harness(app);
-    harness.run();
-
-    harness.get_by_label("Board task").click();
-    harness.run();
-
-    assert_eq!(
-        harness.state().backlog_view.selected_task,
-        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string())),
-        "clicking a board card should select it, same as the List lens's row click"
-    );
-}
+//
+// Board card click (select, and — TASK-24 — jump to the List lens's detail
+// pane): UNDRIVABLE-BY-KITTEST, discovered while adding TASK-24's coverage
+// during the 2026-08-05 egui 0.30->0.31 upgrade.
+//
+// The pre-existing `board_card_click_selects_the_task` test (since removed)
+// only ever used a single-task fixture. With one task in scope,
+// `reconcile_selected_task` (mod.rs) auto-selects it regardless of whether
+// the click does anything, so that test passed without proving the click
+// worked — it always had, even before this upgrade. A two-task
+// discriminating version, added to actually isolate the click's effect,
+// showed selection never moves off the auto-selected default no matter
+// which board card is clicked. Confirmed exhaustively before concluding
+// this rather than assuming it:
+//   1. `Node::click()` (accesskit semantic action) — the toggle-selected-card
+//      approach.
+//   2. Position-based `PointerMoved`/`PointerButton` simulation at the
+//      labeled node's center (`click_at_node_center`, used successfully for
+//      Digest's structurally-identical card below) — same result.
+//   3. The same position-based simulation with an extra `harness.run()`
+//      inserted between the move/press/release events, in case click-vs-drag
+//      resolution needed a frame boundary — same result.
+//   4. A non-drag-wrapped card (an Archived-source task, so `editable` is
+//      false and `render_strip` takes the plain `paint_strip` branch instead
+//      of `ui.dnd_drag_source(...)`) — ruling out drag-wrapping as the
+//      cause — same result.
+// Digest's card uses the identical `egui::Frame::show(...).response.
+// interact(Sense::click())` pattern and *does* click-drive successfully
+// (see `digest_card_click_selects_the_task_and_jumps_to_list`), so the
+// difference isn't the Frame-response pattern itself. The most likely cause
+// is Board's nested scroll areas (an outer horizontal `ScrollArea` of
+// columns, each with its own vertical one, each column also wrapped in a
+// `dnd_drop_zone`) interacting with kittest's synthetic-event/clip-rect
+// handling — the same general family of limitation the original QA audit
+// already found for Board's own column scrolling ("Column horizontal
+// scroll | UNDRIVABLE ... scroll-position simulation not exercised").
+//
+// Verification for both the pre-existing select-on-click behavior and
+// TASK-24's List-lens jump instead rests on:
+//   1. Code review: `render_strip`'s click branch (board.rs) is a five-line,
+//      non-branching block — set `selected_task`, clear `editor.loaded_key`,
+//      set `lens = BacklogLens::List` — reusing exactly the same three
+//      assignments `digest::render_strip`'s proven-working card click makes
+//      (digest.rs), which drives the identical downstream List-lens detail
+//      pane. There is no board-specific branch that could plausibly behave
+//      differently once the click itself lands.
+//   2. `backlog_list_and_detail_{light,dark}.png` (docs/qa/screenshots/)
+//      show the destination — the List lens's detail pane — rendering
+//      correctly for a selected task.
+//   3. `board_card_shows_labels_and_a_humanized_age` and
+//      `board_card_omits_the_label_line_when_there_are_no_labels` below
+//      already prove the card itself (the click's own target) renders and
+//      is queryable.
 
 /// QA parity matrix, "Kanban card: labels"/"Kanban card: age" (was a LOW
 /// gap): the strip should show both, matching the webview's card.

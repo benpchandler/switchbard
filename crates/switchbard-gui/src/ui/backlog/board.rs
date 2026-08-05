@@ -14,7 +14,7 @@
 
 use super::{dispatch_ui, format, scoped_projects, sort, Pending, Snapshot, TaskRow};
 use crate::app::HiveApp;
-use crate::runtime::BacklogTaskKey;
+use crate::runtime::{BacklogLens, BacklogTaskKey};
 use crate::ui::theme;
 use eframe::egui;
 use switchbard_core::{
@@ -228,9 +228,23 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_re
                 });
             })
             .response;
-        if resp.interact(egui::Sense::click()).clicked() {
+        if resp
+            .interact(egui::Sense::click())
+            .on_hover_text("Open in the List lens")
+            .clicked()
+        {
+            // TASK-24 (owner-requested UX): a Board card click used to only
+            // select the task — invisible, since the Board lens has no
+            // detail pane of its own. Jump to the List lens the same way
+            // Digest's card click already does (digest.rs), so the click
+            // actually opens something. The task's current scope carries
+            // over unchanged (no `selected_project` reset like Digest's):
+            // this card only rendered because the task was already visible
+            // under the current scope, so the List lens will find it there
+            // too.
             app.backlog_view.selected_task = Some(key.clone());
             app.backlog_view.editor.loaded_key = None;
+            app.backlog_view.lens = BacklogLens::List;
         }
     };
 
