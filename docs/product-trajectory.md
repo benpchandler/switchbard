@@ -40,12 +40,28 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 - Worktree-first model (one repo → many worktrees) remains foundational; never collapse.
 - Per-surface `Status` feedback and progressive-disclosure workspace cards continue as
   the UI direction.
+- **Unified task hub (owner-approved 2026-08-04).** Switchbard becomes the single pane
+  of glass for every tracked repo's Backlog.md tasks. Repos stay the system of record
+  (all mutations still write through the `backlog` CLI); Switchbard is the system of
+  engagement. Three slices, in order:
+  1. *Unified view + global triage queue* — merge all repos into one ranked list
+     (`backlog_projects_snapshot()` already aggregates); triage order overdue →
+     priority → age → repo, overridable by the `ordering.yml` overlay in the
+     `~/Dev/hub` repo (which also hosts repo-less tasks as a normal Backlog project).
+  2. *Dispatch worker* — a fifth worker thread: user flags a task for dispatch → create
+     worktree (existing lifecycle) → `spawn_in_session` headless `claude -p` → on
+     success `gh pr create` → append PR link to the task's notes.
+  3. *Headless dispatcher binary* — thin `switchbard-dispatch` bin reusing
+     `switchbard-core`, run by launchd, drains the dispatch queue with the GUI closed.
 
 ## Speculative (do NOT pre-build)
 
 - Windows support. (No `cfg` branches, no CI, no demand recorded.)
 - Signed/notarized macOS distribution.
 - Any daemon, account, sync, or telemetry — explicitly against the local-first stance.
+  Owner-scoped exception (2026-08-04): the launchd-run `switchbard-dispatch` binary
+  (Planned, slice 3) is a scheduled local process, not a resident daemon, account, or
+  network sync — the local-first boundary otherwise stands unchanged.
 - Plugin/extension surface for custom service detectors.
 
 Flag any of these the moment a task seems to assume it, and confirm with the owner

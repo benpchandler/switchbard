@@ -1,6 +1,7 @@
 pub mod agent_context;
 pub mod attribution;
 pub mod backlog;
+pub mod backlog_triage;
 pub mod classify;
 pub mod config;
 pub mod discover;
@@ -30,6 +31,10 @@ pub use backlog::{
     is_backlog_project, load_backlog_project, set_backlog_acceptance_checked, BacklogChecklistItem,
     BacklogProject, BacklogTask, BacklogTaskPatch, BacklogTaskSource, NewBacklogTask,
     BACKLOG_PRIORITIES, BACKLOG_STATUSES,
+};
+pub use backlog_triage::{
+    find_hub_repo, load_ordering_overlay, triage_entry_from_task, triage_rank, OrderingOverlay,
+    TriageDue, TriageEntry, TriagePriority,
 };
 pub use classify::{classify_command, classify_script_body, ServerLikelihood};
 pub use discover::{auto_scan_roots, discover_repos, DiscoveredRepo};
