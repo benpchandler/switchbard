@@ -103,14 +103,24 @@ pub(super) fn render_summary(
     });
 }
 
-/// "Clean Up Old Tasks" (QA parity matrix LOW gap): bulk-archive every
-/// Done, active, CLI-editable task across every tracked project — a
+/// "Clean Up Old Tasks" (QA parity matrix LOW gap): complete every Done,
+/// active, CLI-editable task across every tracked project — a
 /// workspace-wide housekeeping action, so it lives in the always-visible
 /// summary line rather than the List lens's own toolbar, and always spans
 /// every project regardless of the current filter/scope ("cross-repo
-/// aware" per the mission's own framing). Mirrors Archive's inline-confirm
-/// pattern: bulk-archiving is consequential enough to confirm the same way
-/// a single Archive click is.
+/// aware" per the mission's own framing). Confirm-gated the same way
+/// Archive/Complete is on a single task: bulk-completing is consequential
+/// enough to confirm.
+///
+/// "Complete", not "Archive" — Backlog.md semantics (verified against a
+/// real fixture repo, both `backlog task complete --help` and the CLI's own
+/// refusal message): a Done task is *completed* into `backlog/completed/`,
+/// not archived into `backlog/archive/`; the real CLI rejects `task
+/// archive` on a Done task outright. The button keeps the "Clean Up Old
+/// Tasks" name (still an accurate description of the outcome — these tasks
+/// leave the active view) even though the underlying CLI verb and
+/// resulting `BacklogTaskSource` are Complete/`Completed`, not
+/// Archive/`Archived`.
 fn render_cleanup_button(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
@@ -121,7 +131,7 @@ fn render_cleanup_button(
     let total: usize = candidates.iter().map(|(_, ids)| ids.len()).sum();
 
     if app.backlog_view.cleanup_confirm {
-        ui.colored_label(theme::amber(), format!("Archive {total} Done tasks?"));
+        ui.colored_label(theme::amber(), format!("Complete {total} Done tasks?"));
         if ui.add(theme::danger_button("Confirm cleanup")).clicked() {
             pending.cleanup = Some(candidates);
             app.backlog_view.cleanup_confirm = false;
@@ -133,7 +143,7 @@ fn render_cleanup_button(
         }
     } else if ui
         .add_enabled(total > 0, egui::Button::new("Clean Up Old Tasks"))
-        .on_hover_text("Archive every Done task across all tracked projects")
+        .on_hover_text("Complete every Done task across all tracked projects")
         .clicked()
     {
         app.backlog_view.cleanup_confirm = true;
@@ -141,10 +151,10 @@ fn render_cleanup_button(
 }
 
 /// Every project's Done, still-active, CLI-editable task ids — the
-/// candidate set `render_cleanup_button` archives. A `Completed`-sourced
-/// task (already moved to `backlog/completed/` by the CLI's own age-based
-/// `backlog cleanup`) or an already-`Archived`/`Draft` one is excluded the
-/// same way a single task's Archive button already requires `editable()`.
+/// candidate set `render_cleanup_button` completes. A `Completed`-sourced
+/// task (already moved to `backlog/completed/`) or an already-
+/// `Archived`/`Draft` one is excluded the same way a single task's
+/// Archive/Complete button already requires `editable()`.
 fn cleanup_candidates(snap: &Snapshot) -> Vec<(PathBuf, Vec<String>)> {
     snap.projects
         .iter()

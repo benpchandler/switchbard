@@ -569,6 +569,29 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     seed_backlog_project(&dispatch_failed_app);
     let dispatch_failed = harness(dispatch_failed_app);
 
+    // A Done task selected in the detail pane (2026-08-05 fix-wave 2):
+    // Backlog.md semantics route a Done task through Complete, not Archive
+    // (the real CLI refuses `task archive` on one) — `render_archive` shows
+    // a "Complete" button instead, with `archive_confirm` seeded directly
+    // (same technique the dispatch states above use) so the "Complete
+    // TASK-9?" confirm prompt is audited too, not just the button's resting
+    // state.
+    let mut done_app = seeded_app();
+    done_app.config.ui.theme = theme;
+    done_app.view_tab = ViewTab::Backlog;
+    done_app.backlog_view.lens = BacklogLens::List;
+    done_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    done_app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-9".to_string()));
+    done_app.backlog_view.archive_confirm = true;
+    // `reconcile_selected_task` (mod.rs) clears a selection outside the
+    // currently visible rows, and Done tasks are hidden by default — without
+    // this, TASK-9 above would silently fall back to no selection at all,
+    // and the "Complete"/confirm text this harness exists to audit would
+    // never actually render.
+    done_app.backlog_view.show_completed = true;
+    seed_backlog_project(&done_app);
+    let done = harness(done_app);
+
     let mut portfolio_app = seeded_app();
     portfolio_app.config.ui.theme = theme;
     portfolio_app.view_tab = ViewTab::Backlog;
@@ -617,6 +640,10 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
         (
             format!("Backlog · List lens (dispatch-failed task detail){suffix}"),
             dispatch_failed,
+        ),
+        (
+            format!("Backlog · List lens (Done task, Complete confirm){suffix}"),
+            done,
         ),
         (format!("Backlog · Board lens{suffix}"), board),
         (format!("Backlog · Milestones lens{suffix}"), milestones),

@@ -485,30 +485,23 @@ fn clean_up_old_tasks_cancel_leaves_both_repos_untouched() {
     }
 }
 
-/// DEFECT (found during 2026-08-05 fix-wave re-verification, not part of
-/// the original six items — a new finding): the real `backlog` CLI v1.47.1
-/// **refuses** `backlog task archive` on a Done-status task:
+/// FIXED (was a defect found during 2026-08-05 fix-wave re-verification,
+/// not part of the original six items — a new finding): the real `backlog`
+/// CLI v1.47.1 **refuses** `backlog task archive` on a Done-status task:
 /// `Task TASK-1 is Done. Done tasks should be completed, not archived. Use:
 /// backlog task complete TASK-1` (confirmed empirically, see this file's
 /// commit). "Clean Up Old Tasks" exclusively targets Done tasks
-/// (`toolbar::cleanup_candidates` filters on `task.is_done()`), so **every
-/// archive call it makes fails** — the feature cannot succeed even once
-/// against a real Backlog.md project. The status message does surface the
-/// failure (not silent — `"cleaned up 0/N Done tasks ...; first failure:
-/// ..."`), but the feature's stated purpose is entirely unreachable. The
-/// same latent issue affects the pre-existing single-task Archive button
-/// whenever a user archives a Done task (see the companion test below) —
-/// previously untested because no prior test exercised Archive against a
-/// real Done-status task.
-///
-/// This test pins the *intended* behavior and is `#[ignore]`d so CI stays
-/// green until `HiveApp::spawn_backlog_cleanup` (or `cleanup_candidates`)
-/// is fixed — most likely by calling `backlog task complete` instead of
-/// `archive_backlog_task` for Done tasks, which would also change the
-/// resulting `BacklogTaskSource` from `Archived` to `Completed` and require
-/// updating this test's own assertion accordingly once that's decided.
+/// (`toolbar::cleanup_candidates` filters on `task.is_done()`), so it
+/// previously failed on every real invocation. Fixed by routing through the
+/// new `complete_backlog_task` (core) instead of `archive_backlog_task` —
+/// `HiveApp::spawn_backlog_cleanup` now calls it directly, and the
+/// resulting `BacklogTaskSource` is `Completed`, not `Archived` (this
+/// test's own assertion below is updated accordingly, as the doc comment
+/// this replaced anticipated). The same fix covers the pre-existing
+/// single-task Archive button, which now shows "Complete" instead of
+/// "Archive" whenever the selected task is Done
+/// (`detail_lists::render_archive`).
 #[test]
-#[ignore = "DEFECT: the real CLI refuses `task archive` on a Done task (\"...should be completed, not archived. Use: backlog task complete\") — Clean Up Old Tasks always fails; see this test's doc comment"]
 fn clean_up_old_tasks_confirm_archives_the_done_task_in_both_real_repos() {
     let repo_a = init_fixture_repo();
     let repo_b = init_fixture_repo();
@@ -559,8 +552,8 @@ fn clean_up_old_tasks_confirm_archives_the_done_task_in_both_real_repos() {
             .unwrap_or_else(|| panic!("TASK-1 missing after reload in {}", root.display()));
         assert_eq!(
             done_task.source,
-            BacklogTaskSource::Archived,
-            "the Done task in {} should be archived by the real CLI",
+            BacklogTaskSource::Completed,
+            "the Done task in {} should be completed by the real CLI, not archived",
             root.display()
         );
         let open_task = project.tasks.iter().find(|t| t.id == "TASK-2").unwrap();

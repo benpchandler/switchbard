@@ -328,6 +328,10 @@ pub(in crate::ui::backlog) struct Pending {
     pub append_note: Option<(PathBuf, String, String)>,
     pub create: Option<(PathBuf, NewBacklogTask)>,
     pub archive: Option<(PathBuf, String)>,
+    /// The Done-task counterpart to `archive` — `detail_lists::
+    /// render_archive` routes here instead when `task.is_done()`, since the
+    /// real CLI refuses `task archive` on a Done task.
+    pub complete: Option<(PathBuf, String)>,
     /// `(project_root, task_id, enabled)` — the per-task Dispatch opt-in
     /// toggle (task-11 GUI wiring).
     pub dispatch_toggle: Option<(PathBuf, String, bool)>,
@@ -360,6 +364,9 @@ fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, pending: Pending) {
     }
     if let Some((project_root, task_id)) = pending.archive {
         app.spawn_backlog_archive(project_root, task_id, ctx);
+    }
+    if let Some((project_root, task_id)) = pending.complete {
+        app.spawn_backlog_complete(project_root, task_id, ctx);
     }
     if let Some((project_root, task_id, enabled)) = pending.dispatch_toggle {
         app.spawn_backlog_dispatch_toggle(project_root, task_id, enabled, ctx);

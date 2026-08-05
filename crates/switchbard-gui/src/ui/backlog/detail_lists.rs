@@ -322,6 +322,15 @@ pub(super) fn render_readonly_sections(ui: &mut egui::Ui, task: &BacklogTask) {
     }
 }
 
+/// Archive for a non-Done task's abandonment; Complete for a Done one —
+/// Backlog.md semantics (verified against a real fixture repo, 2026-08-05
+/// re-verification: the real CLI refuses `task archive` on a Done task,
+/// "should be completed, not archived. Use: backlog task complete"). The
+/// detail pane must not offer an action the CLI will reject, so the
+/// affordance switches label, destination, and status wording based on
+/// `task.is_done()` rather than always showing Archive. Both share
+/// `archive_confirm` — they're mutually exclusive per task (only one ever
+/// renders), so a second confirm flag would just duplicate this one.
 pub(super) fn render_archive(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
@@ -334,23 +343,40 @@ pub(super) fn render_archive(
         return;
     }
     ui.separator();
+    let done = task.is_done();
+    let (button_label, hover, confirm_label, status_verb) = if done {
+        (
+            "Complete",
+            "Move this task into backlog/completed/tasks",
+            "Confirm complete",
+            "completing",
+        )
+    } else {
+        (
+            "Archive",
+            "Move this task into backlog/archive/tasks",
+            "Confirm archive",
+            "archiving",
+        )
+    };
+
     if app.backlog_view.archive_confirm {
         ui.horizontal(|ui| {
-            ui.colored_label(theme::amber(), format!("Archive {}?", task.id));
-            if ui.add(theme::danger_button("Confirm archive")).clicked() {
-                pending.archive = Some((project_root.to_path_buf(), task.id.clone()));
+            ui.colored_label(theme::amber(), format!("{button_label} {}?", task.id));
+            if ui.add(theme::danger_button(confirm_label)).clicked() {
+                if done {
+                    pending.complete = Some((project_root.to_path_buf(), task.id.clone()));
+                } else {
+                    pending.archive = Some((project_root.to_path_buf(), task.id.clone()));
+                }
                 app.backlog_view.archive_confirm = false;
-                app.backlog_status.set(format!("archiving {}", task.id));
+                app.backlog_status.set(format!("{status_verb} {}", task.id));
             }
             if ui.button("Cancel").clicked() {
                 app.backlog_view.archive_confirm = false;
             }
         });
-    } else if ui
-        .button("Archive")
-        .on_hover_text("Move this task into backlog/archive/tasks")
-        .clicked()
-    {
+    } else if ui.button(button_label).on_hover_text(hover).clicked() {
         app.backlog_view.archive_confirm = true;
     }
 }

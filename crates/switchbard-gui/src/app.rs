@@ -1052,9 +1052,37 @@ impl HiveApp {
         });
     }
 
-    /// "Clean Up Old Tasks" (QA parity matrix LOW gap): archive every Done
-    /// task in `per_project` — one `archive_backlog_task` call per task,
-    /// across however many projects the caller found Done tasks in. Mirrors
+    /// The Done-task counterpart to `spawn_backlog_archive` — `detail_lists::
+    /// render_archive` routes here instead of `spawn_backlog_archive` when
+    /// the task is Done, since the real CLI refuses `task archive` on one.
+    pub fn spawn_backlog_complete(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::complete_backlog_task(&project_root, &task_id) {
+                Ok(_) => {
+                    refresh_backlog_project_cache(&projects, &project_root);
+                    status.set(format!("completed {task_id}"));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("complete {task_id} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    /// "Clean Up Old Tasks" (QA parity matrix LOW gap): complete every Done
+    /// task in `per_project` — one `complete_backlog_task` call per task
+    /// (not `archive_backlog_task`; the real CLI refuses `task archive` on
+    /// a Done task, a defect the 2026-08-05 re-verification caught), across
+    /// however many projects the caller found Done tasks in. Mirrors
     /// `spawn_backlog_bulk_save`'s per-project loop shape; the difference is
     /// this always spans every tracked project rather than one bulk
     /// selection, since "clean up" is a workspace-wide housekeeping action,
@@ -1074,14 +1102,20 @@ impl HiveApp {
         thread::spawn(move || {
             let project_count = per_project.len();
             let total: usize = per_project.iter().map(|(_, ids)| ids.len()).sum();
-            let mut archived = 0usize;
+            let mut completed = 0usize;
             let mut first_error: Option<String> = None;
             for (project_root, task_ids) in &per_project {
                 let mut touched = false;
                 for task_id in task_ids {
-                    match switchbard_core::archive_backlog_task(project_root, task_id) {
+                    // Every candidate here is Done (`cleanup_candidates`
+                    // filters on `task.is_done()`) — `complete_backlog_task`,
+                    // not `archive_backlog_task`: the real CLI refuses
+                    // `task archive` on a Done task ("should be completed,
+                    // not archived"). See detail_lists::render_archive's doc
+                    // comment for the single-task equivalent.
+                    match switchbard_core::complete_backlog_task(project_root, task_id) {
                         Ok(_) => {
-                            archived += 1;
+                            completed += 1;
                             touched = true;
                         }
                         Err(e) => {
@@ -1095,15 +1129,15 @@ impl HiveApp {
                     refresh_backlog_project_cache(&projects, project_root);
                 }
             }
-            if archived > 0 {
+            if completed > 0 {
                 kick.notify();
             }
             match first_error {
                 Some(error) => status.set(format!(
-                    "cleaned up {archived}/{total} Done tasks across {project_count} projects; first failure: {error}"
+                    "cleaned up {completed}/{total} Done tasks across {project_count} projects; first failure: {error}"
                 )),
                 None => status.set(format!(
-                    "cleaned up {archived}/{total} Done tasks across {project_count} projects"
+                    "cleaned up {completed}/{total} Done tasks across {project_count} projects"
                 )),
             }
             ctx.request_repaint();

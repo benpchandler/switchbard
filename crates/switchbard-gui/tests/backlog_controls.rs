@@ -399,8 +399,10 @@ fn cleanup_button_confirms_then_cancel_reverts_to_the_plain_button() {
     harness.get_by_label("Clean Up Old Tasks").click();
     harness.run();
     assert!(
-        harness.query_by_label("Archive 1 Done tasks?").is_some(),
-        "clicking should show the confirm prompt naming the candidate count"
+        harness.query_by_label("Complete 1 Done tasks?").is_some(),
+        "clicking should show the confirm prompt naming the candidate count \
+         (\"Complete\", not \"Archive\" — the real CLI refuses `task \
+         archive` on a Done task, see complete_backlog_task's doc comment)"
     );
 
     harness.get_by_label("Cancel").click();
@@ -1154,6 +1156,50 @@ fn archive_confirm_sets_the_synchronous_archiving_status() {
     assert_eq!(
         harness.state().backlog_status.snapshot().as_deref(),
         Some("archiving TASK-1")
+    );
+}
+
+/// 2026-08-05 fix-wave 2, a new HIGH-class defect the re-verification found:
+/// the real CLI refuses `task archive` on a Done task. The detail pane must
+/// not offer an action the CLI will reject, so a Done task's affordance
+/// switches to "Complete" instead of "Archive" (Backlog.md semantics: Done
+/// -> completed into backlog/completed/, non-Done -> archived into
+/// backlog/archive/ — verified against a real fixture repo). See
+/// switchbard-core's archiving_a_done_task_is_rejected_by_the_real_cli for
+/// the real-CLI proof of the underlying refusal + complete_backlog_task's
+/// success.
+#[test]
+fn done_task_offers_complete_instead_of_archive() {
+    let mut done_task = detail_task_with_checklists();
+    done_task.status = "Done".to_string();
+    let mut harness = detail_harness_on(done_task);
+    // `reconcile_selected_task` (mod.rs) clears a selection that falls
+    // outside the currently *visible* rows, and Done tasks are hidden by
+    // default (`show_completed` defaults false) — without this, the
+    // explicit `selected_task` above gets reset to nothing the first frame.
+    harness.state_mut().backlog_view.show_completed = true;
+    harness.run();
+
+    assert!(
+        harness.query_by_label("Complete").is_some(),
+        "a Done task's detail pane should offer Complete"
+    );
+    assert!(
+        harness.query_by_label("Archive").is_none(),
+        "a Done task's detail pane should not offer Archive — the CLI refuses it"
+    );
+
+    harness.get_by_label("Complete").click();
+    harness.run();
+    assert!(harness.state().backlog_view.archive_confirm);
+    assert!(harness.query_by_label("Complete TASK-1?").is_some());
+
+    harness.get_by_label("Confirm complete").click();
+    harness.run();
+    assert!(!harness.state().backlog_view.archive_confirm);
+    assert_eq!(
+        harness.state().backlog_status.snapshot().as_deref(),
+        Some("completing TASK-1")
     );
 }
 
