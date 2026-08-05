@@ -204,6 +204,45 @@ fn shots_for_theme(theme: ThemeChoice) {
         snapshot(&h, &format!("backlog_statistics{suffix}"));
     }
 
+    // Done task detail pane, offering "Complete" instead of "Archive"
+    // (2026-08-05 fix wave 2 — Backlog.md semantics: a Done task is
+    // completed into backlog/completed/, not archived).
+    {
+        let mut app = app_with(
+            theme,
+            BacklogLens::List,
+            vec![sample_task("TASK-1", "Finished task", "Done")],
+        );
+        // Done tasks are hidden by default; without this the selection
+        // reconciles away and the detail pane shows nothing (the exact
+        // gotcha the fix wave's own tests document).
+        app.backlog_view.show_completed = true;
+        app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+        app.backlog_view.archive_confirm = true;
+        let mut h = harness(app);
+        h.run();
+        snapshot(&h, &format!("backlog_done_task_offers_complete{suffix}"));
+    }
+
+    // "Clean Up Old Tasks" confirm state, showing "Complete N Done tasks?"
+    // (fix wave 2 — was "Archive N Done tasks?" before the real CLI's
+    // refusal of `task archive` on a Done task was discovered and fixed).
+    {
+        let app = app_with(
+            theme,
+            BacklogLens::List,
+            vec![sample_task("TASK-1", "Finished task", "Done")],
+        );
+        let mut h = harness(app);
+        h.run();
+        h.state_mut().backlog_view.cleanup_confirm = true;
+        h.run();
+        snapshot(
+            &h,
+            &format!("backlog_cleanup_confirm_complete_wording{suffix}"),
+        );
+    }
+
     // Create modal, open.
     {
         let mut app = app_with(
