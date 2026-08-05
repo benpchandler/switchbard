@@ -177,7 +177,7 @@ pub struct HiveApp {
 /// unwritable `~/.switchbard`) fails *open*: the guard is a safety net
 /// against racing config saves, not a precondition for launching at all, so
 /// we log and return `None` rather than block startup over it.
-fn acquire_instance_lock_or_warn() -> Option<InstanceLock> {
+pub fn acquire_instance_lock_or_warn() -> Option<InstanceLock> {
     let path = instance_lock::default_path()?;
     match instance_lock::acquire(&path) {
         Ok(lock) => Some(lock),
@@ -213,21 +213,21 @@ fn cached_agent_contexts(worktrees: &[WorktreeRef]) -> HashMap<PathBuf, AgentCon
 }
 
 impl HiveApp {
+    /// `instance_lock` is acquired by `main` (via
+    /// [`acquire_instance_lock_or_warn`]) *before* eframe opens the window,
+    /// so a refused second instance exits without a window flash. `new` just
+    /// holds it for its `Drop`.
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         cfg: Config,
         repos: Vec<Repo>,
         worktrees: Vec<WorktreeRef>,
+        instance_lock: Option<InstanceLock>,
     ) -> Self {
         // Fonts are expensive to install (atlas rebuild) so this happens once,
         // here, rather than every frame; the theme's Visuals are cheap and get
         // reapplied every frame in `render_ui` so a live toggle takes effect
         // immediately.
-        // Refuse to start a second live instance before touching anything
-        // else — a concurrent instance racing config saves is exactly the
-        // class of bug TASK-22 flagged as an open follow-up.
-        let instance_lock = acquire_instance_lock_or_warn();
-
         ui::theme::install_fonts(&cc.egui_ctx);
         ui::theme::apply(&cc.egui_ctx, cfg.ui.theme);
         // Restore the user's saved zoom before the first frame paints (eframe's

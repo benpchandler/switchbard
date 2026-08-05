@@ -45,9 +45,23 @@ fn main() -> eframe::Result<()> {
         viewport,
         ..Default::default()
     };
+    // Refuse a second live instance BEFORE eframe opens a window — a
+    // concurrent instance racing config saves is the bug class TASK-22
+    // flagged, and acquiring here (not in `HiveApp::new`) means the refusal
+    // path never flashes a window.
+    let instance_lock = switchbard_gui::app::acquire_instance_lock_or_warn();
+
     eframe::run_native(
         "Switchbard",
         opts,
-        Box::new(|cc| Ok(Box::new(HiveApp::new(cc, cfg, repos, worktrees)))),
+        Box::new(|cc| {
+            Ok(Box::new(HiveApp::new(
+                cc,
+                cfg,
+                repos,
+                worktrees,
+                instance_lock,
+            )))
+        }),
     )
 }
