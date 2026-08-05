@@ -338,6 +338,27 @@ pub fn archive_backlog_task(project_root: &Path, task_id: &str) -> Result<String
     )
 }
 
+/// Backlog.md's terminal disposition for a *Done* task (verified against a
+/// real fixture repo: `backlog task complete --help` and the CLI's own
+/// refusal of `task archive` on a Done task — "Done tasks should be
+/// completed, not archived. Use: backlog task complete"). Moves the task
+/// into `backlog/completed/`, reparsed as `BacklogTaskSource::Completed`,
+/// not `Archived`. `archive_backlog_task` (above) is for a non-Done task's
+/// abandonment and stays unchanged; the two are mutually exclusive
+/// destinations for a task, chosen by status, not interchangeable options.
+/// No `--plain` flag — same as `archive_backlog_task`, confirmed via
+/// `backlog task complete --help`, which lists none.
+pub fn complete_backlog_task(project_root: &Path, task_id: &str) -> Result<String> {
+    run_backlog(
+        project_root,
+        [
+            OsString::from("task"),
+            OsString::from("complete"),
+            OsString::from(task_id),
+        ],
+    )
+}
+
 pub fn set_backlog_acceptance_checked(
     project_root: &Path,
     task_id: &str,

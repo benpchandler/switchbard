@@ -24,10 +24,10 @@ use std::path::Path;
 use std::process::Command;
 
 use switchbard_core::{
-    append_backlog_notes, archive_backlog_task, create_backlog_task, edit_backlog_task,
-    load_backlog_project, set_backlog_acceptance_checked, set_backlog_dod_checked,
-    set_backlog_label, swap_backlog_label, BacklogProject, BacklogTaskPatch, BacklogTaskSource,
-    NewBacklogTask,
+    append_backlog_notes, archive_backlog_task, complete_backlog_task, create_backlog_task,
+    edit_backlog_task, load_backlog_project, set_backlog_acceptance_checked,
+    set_backlog_dod_checked, set_backlog_label, swap_backlog_label, BacklogProject,
+    BacklogTaskPatch, BacklogTaskSource, NewBacklogTask,
 };
 use tempfile::TempDir;
 
@@ -285,25 +285,30 @@ fn archive_moves_the_task_out_of_the_active_set() {
     );
 }
 
-/// DEFECT (found during 2026-08-05 fix-wave re-verification of "Clean Up Old
-/// Tasks", a new finding, not one of the original six): the real `backlog`
-/// CLI v1.47.1 refuses `task archive` on a Done-status task — confirmed
-/// empirically: `Task TASK-1 is Done. Done tasks should be completed, not
-/// archived. Use: backlog task complete TASK-1`. `archive_moves_the_task_
-/// out_of_the_active_set` (above) never caught this because
-/// `create_fixture_task`'s task defaults to "To Do" — every prior Archive
-/// test (this file and `switchbard-gui`'s `archive_confirm_sets_the_
-/// synchronous_archiving_status`) exercised a non-Done task. The GUI's
-/// single-task Archive button (`detail_lists::render_archive`) has no
-/// status check before calling `archive_backlog_task`, so a real user
-/// archiving a Done task hits this same CLI rejection — surfaced through
-/// `backlog_status` as a failure message, not silently. This is the same
-/// root cause that makes "Clean Up Old Tasks" (which exclusively targets
-/// Done tasks) always fail; see
-/// `switchbard-gui/tests/qa_reverify_2026_08_05.rs`'s equivalent `#[ignore]`d
-/// test for that feature.
+/// FIXED (was a defect found during 2026-08-05 fix-wave re-verification of
+/// "Clean Up Old Tasks", a new finding, not one of the original six): the
+/// real `backlog` CLI v1.47.1 refuses `task archive` on a Done-status task —
+/// confirmed empirically: `Task TASK-1 is Done. Done tasks should be
+/// completed, not archived. Use: backlog task complete TASK-1`.
+/// `archive_moves_the_task_out_of_the_active_set` (above) never caught this
+/// because `create_fixture_task`'s task defaults to "To Do" — every prior
+/// Archive test (this file and `switchbard-gui`'s `archive_confirm_sets_the_
+/// synchronous_archiving_status`) exercised a non-Done task. This is a real
+/// Backlog.md semantic, not a bug to route around: a Done task is
+/// *completed* (`backlog task complete`, lands in `backlog/completed/`), a
+/// non-Done task is *archived* (`backlog task archive`, `backlog/archive/`)
+/// — the two are mutually exclusive dispositions chosen by status. Fixed by
+/// adding `complete_backlog_task` and routing both the GUI's single-task
+/// Archive button (`detail_lists::render_archive`, which now shows
+/// "Complete" instead of "Archive" when `task.is_done()`) and "Clean Up Old
+/// Tasks" (`HiveApp::spawn_backlog_cleanup`, which exclusively targets Done
+/// tasks) through it instead of `archive_backlog_task`. This test now pins
+/// both halves: the CLI's permanent refusal of `archive` on a Done task
+/// (still true, not something to "fix"), and `complete_backlog_task`
+/// succeeding and landing the task as `BacklogTaskSource::Completed`. See
+/// `switchbard-gui/tests/qa_reverify_2026_08_05.rs`'s companion test for
+/// "Clean Up Old Tasks" itself.
 #[test]
-#[ignore = "DEFECT: the real CLI refuses `task archive` on a Done task — see this test's doc comment"]
 fn archiving_a_done_task_is_rejected_by_the_real_cli() {
     let fixture = fixture_repo();
     let root = fixture.path();
@@ -318,16 +323,26 @@ fn archiving_a_done_task_is_rejected_by_the_real_cli() {
     )
     .expect("marking the task Done should succeed");
 
-    archive_backlog_task(root, &task_id)
-        .expect("archive_backlog_task should succeed even for a Done task");
+    let archive_err = archive_backlog_task(root, &task_id)
+        .expect_err("the real CLI should still refuse `task archive` on a Done task");
+    assert!(
+        archive_err.to_string().contains("complete"),
+        "the refusal message should point at `task complete`: {archive_err}"
+    );
+
+    complete_backlog_task(root, &task_id).expect("complete_backlog_task should succeed");
 
     let project = reload(root);
     let task = project
         .tasks
         .iter()
         .find(|t| t.id == task_id)
-        .expect("archived task should still be reparsed");
-    assert_eq!(task.source, BacklogTaskSource::Archived);
+        .expect("completed task should still be reparsed, just from backlog/completed/");
+    assert_eq!(
+        task.source,
+        BacklogTaskSource::Completed,
+        "a Done task should land as Completed, not Archived"
+    );
 }
 
 #[test]
