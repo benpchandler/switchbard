@@ -255,6 +255,34 @@ pub fn set_backlog_acceptance_checked(
     )
 }
 
+/// Atomically swap one label for another via the CLI's own `--remove-label`/
+/// `--add-label` flags (a single `task edit` invocation), rather than
+/// round-tripping the full label list through `-l` — that would race with any
+/// other label a human or another process added between our read and write.
+/// This is the in-flight guard the dispatch queue depends on: a task moves
+/// `dispatch` → `dispatching` before work starts, so a queue reload never
+/// sees it as eligible twice.
+pub fn swap_backlog_label(
+    project_root: &Path,
+    task_id: &str,
+    from: &str,
+    to: &str,
+) -> Result<String> {
+    run_backlog(
+        project_root,
+        [
+            OsString::from("task"),
+            OsString::from("edit"),
+            OsString::from(task_id),
+            OsString::from("--plain"),
+            OsString::from("--remove-label"),
+            OsString::from(from),
+            OsString::from("--add-label"),
+            OsString::from(to),
+        ],
+    )
+}
+
 pub fn append_backlog_notes(project_root: &Path, task_id: &str, note: &str) -> Result<String> {
     if note.trim().is_empty() {
         bail!("note is empty");
