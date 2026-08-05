@@ -1933,6 +1933,132 @@ fn create_modal_reports_a_compact_created_message_against_a_real_fixture_repo() 
     }
 }
 
+/// Owner report (2026-08-05): a task created through the Create modal
+/// didn't appear on the Board afterward. Investigated per the mission's
+/// three sub-questions — (a) the CLI's default status ("To Do") IS a
+/// standard Board column, confirmed against a real `backlog task create`
+/// call; (b) `column_order`'s status union (TASK-25) always includes
+/// `BACKLOG_STATUSES` regardless of a project's own `config.yml`, so it
+/// can't exclude "To Do"; (c) `spawn_backlog_create`'s own
+/// `refresh_backlog_project_cache` call (app.rs, TASK-28) correctly
+/// updates the SAME shared `backlog_projects` cache both List and Board
+/// read from every frame (`Snapshot::collect`, mod.rs) — there's no
+/// separate, Board-only stale cache. None of the three reproduced the
+/// symptom with a real fixture (this test).
+///
+/// The actual root cause turned out to be a fourth thing, found by reading
+/// `workers.rs`'s periodic backlog-scan worker: `spawn_backlog`'s loop did
+/// a wholesale `*ch.backlog_projects.lock().unwrap() = projects` every
+/// `BACKLOG_PERIOD` (30s, or sooner if kicked). Since `collect_backlog_
+/// projects` scans every tracked repo's disk state *sequentially* (real
+/// multi-repo wall time, not an instant), a periodic scan that started
+/// reading a project *before* a create finished, but finishes applying its
+/// (stale) result *after* `refresh_backlog_project_cache`'s fresher
+/// single-project insert, would silently revert that project back to its
+/// pre-create state — clobbering the newly created task out of the shared
+/// cache entirely, in EVERY lens, not just Board. This isn't reproducible
+/// with a single-threaded kittest harness (there's no periodic worker
+/// thread racing anything here); it's covered instead by
+/// `workers::tests::merge_keeps_a_newer_cached_snapshot_over_a_stale_scan_
+/// result`, which deterministically proves the exact interleaving via
+/// `merge_backlog_projects` (the fix: per-project `loaded_at_unix`
+/// timestamp comparison instead of a blind overwrite) without depending on
+/// real thread timing.
+///
+/// This test instead proves the ordinary, non-racing path end to end
+/// against a real fixture repo and the real CLI, in both lenses — the
+/// baseline the race-condition fix protects.
+#[test]
+fn create_modal_task_is_visible_in_both_list_and_board_against_a_real_fixture_repo() {
+    let fixture = tempfile::tempdir().expect("create temp dir");
+    let root = fixture.path();
+    run_cmd(root, "git", &["init", "-q"]);
+    run_cmd(root, "git", &["config", "user.email", "qa@example.com"]);
+    run_cmd(root, "git", &["config", "user.name", "QA Fixture"]);
+    run_cmd(
+        root,
+        "backlog",
+        &["init", "--defaults", "--agent-instructions", "none", "qa"],
+    );
+
+    let repos = vec![Repo {
+        name: "MusicProduction".to_string(),
+        path: root.to_path_buf(),
+    }];
+    let worktrees = vec![WorktreeRef {
+        repo_name: "MusicProduction".to_string(),
+        path: root.to_path_buf(),
+        branch: Some("main".to_string()),
+        head: "abc1234".to_string(),
+    }];
+    let mut cfg = Config::default();
+    cfg.ui.onboarding_dismissed = true;
+    let mut app = HiveApp::new_headless(cfg, repos, worktrees);
+    app.config_save_path = Some(isolated_config_save_path());
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.selected_project = Some(root.to_path_buf());
+    app.backlog_projects.lock().unwrap().insert(
+        root.to_path_buf(),
+        switchbard_core::load_backlog_project(root).expect("load the real fixture project"),
+    );
+
+    let mut harness = harness(app);
+    harness.run();
+
+    harness.get_by_label("+ Task").click();
+    harness.run();
+    let modal = harness.get_by_label("New Backlog Task");
+    let title_field = modal
+        .query_all(kittest::by().role(egui::accesskit::Role::TextInput))
+        .next()
+        .expect("create modal's title field");
+    title_field.focus();
+    title_field.type_text("Freshly created task");
+    harness.run();
+    harness.get_by_label("Create").click();
+    harness.run();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        harness.run();
+        if harness
+            .state()
+            .backlog_status
+            .snapshot()
+            .as_deref()
+            .is_some_and(|s| s.starts_with("Created "))
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "create's background thread did not report completion in time"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    harness.run();
+
+    assert!(
+        harness
+            .query_all_by_label_contains("Freshly created task")
+            .next()
+            .is_some(),
+        "the newly created task should be visible in the List lens"
+    );
+
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.run();
+    assert!(
+        harness
+            .query_all_by_label_contains("Freshly created task")
+            .next()
+            .is_some(),
+        "the newly created task should be visible in the Board lens too, \
+         under its default \"To Do\" column"
+    );
+}
+
 /// Independent re-verification (2026-08-05 fix-wave audit) of the HIGH
 /// defect's fix: `create_backlog_task_wires_a_subtask_parent` and
 /// `subtask_ids_are_decimal_children_of_the_parent_id`

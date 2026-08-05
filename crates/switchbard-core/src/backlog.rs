@@ -16,6 +16,14 @@ pub struct BacklogProject {
     pub cli_path: Option<PathBuf>,
     pub tasks: Vec<BacklogTask>,
     pub warnings: Vec<String>,
+    /// Milliseconds since the Unix epoch when this snapshot was read from
+    /// disk (`unix_now`) — millisecond, not second, precision specifically
+    /// so `workers::merge_backlog_projects` can use it to detect a stale
+    /// scan racing a fresher single-project refresh (TASK-29 fix wave):
+    /// two loads of the same project easily land in the same *second*
+    /// (a periodic multi-repo scan and a just-completed mutation's own
+    /// targeted reload), which would make a second-granularity timestamp
+    /// tie exactly in the case that matters most.
     pub loaded_at_unix: u64,
     /// This project's own configured status list (`backlog/config.yml`'s
     /// `statuses:` array), in the order the project itself declares —
@@ -824,10 +832,12 @@ fn task_id_key(id: &str) -> Vec<u32> {
         .collect()
 }
 
+/// Milliseconds, not seconds — see `BacklogProject::loaded_at_unix`'s doc
+/// for why the finer precision matters.
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
+        .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
 }
 

@@ -294,11 +294,60 @@ pub(crate) fn collect_backlog_projects(roots: &[PathBuf]) -> HashMap<PathBuf, Ba
     projects
 }
 
+/// TASK-29 fix wave (owner-reported: a task created via the Create modal
+/// sometimes didn't appear on Board — reproduced as a stale-write race, not
+/// a Board-specific rendering bug): applies a freshly-scanned
+/// `HashMap<PathBuf, BacklogProject>` onto the *existing* shared cache
+/// per-entry, keeping whichever snapshot of each project is actually newer,
+/// rather than the caller doing a wholesale `*cache = fresh` swap or a
+/// blind per-key overwrite (`HashMap::extend`, which is just as vulnerable
+/// — "last write wins" regardless of which write is *older* data).
+///
+/// `collect_backlog_projects` scans every tracked root's disk state
+/// sequentially — for a handful of real repos that's real, multi-repo wall
+/// time, not an instant. `HiveApp::spawn_backlog_create` (app.rs, TASK-28)
+/// does its own single-project `refresh_backlog_project_cache` insert
+/// immediately after a create succeeds, so the periodic scan and a
+/// mutation's targeted refresh can legitimately interleave: if this
+/// worker's scan had *already read* a repo's pre-create state earlier in
+/// its own loop, applying that stale snapshot after the mutation's fresher
+/// one lands would silently revert it — the newly created task "vanishes"
+/// until the next periodic cycle corrects it. Comparing each project's own
+/// `loaded_at_unix` (millisecond precision — see its doc, core/backlog.rs)
+/// before overwriting closes the race outright rather than merely
+/// shrinking its window: a scan's stale read of a project can never
+/// overwrite a genuinely newer one, whichever order the two locks happen
+/// to land in.
+///
+/// Repo removal still works correctly: `roots` is this scan's authoritative
+/// set of *currently tracked* repos, so any cache entry outside it (an
+/// untracked repo) is dropped rather than lingering forever.
+pub(crate) fn merge_backlog_projects(
+    cache: &mut HashMap<PathBuf, BacklogProject>,
+    roots: &[PathBuf],
+    fresh: HashMap<PathBuf, BacklogProject>,
+) {
+    cache.retain(|root, _| roots.contains(root));
+    for (root, project) in fresh {
+        match cache.get(&root) {
+            Some(existing) if existing.loaded_at_unix > project.loaded_at_unix => {
+                // A newer snapshot (e.g. a mutation's own targeted refresh)
+                // is already cached — this scan's read of the same project
+                // was taken earlier and would revert it. Keep the newer one.
+            }
+            _ => {
+                cache.insert(root, project);
+            }
+        }
+    }
+}
+
 fn spawn_backlog(ctx: egui::Context, ch: Channels) {
     thread::spawn(move || loop {
         let repos = ch.repos.lock().unwrap().clone();
-        let projects = collect_backlog_projects(&backlog_project_roots(&repos));
-        *ch.backlog_projects.lock().unwrap() = projects;
+        let roots = backlog_project_roots(&repos);
+        let projects = collect_backlog_projects(&roots);
+        merge_backlog_projects(&mut ch.backlog_projects.lock().unwrap(), &roots, projects);
 
         // The unified triage overlay lives in whichever tracked repo hosts
         // `ordering.yml` (the "hub" repo — see backlog_triage module doc).
@@ -383,6 +432,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::process::Command;
+    use switchbard_core::BacklogTask;
 
     fn git(dir: &std::path::Path, args: &[&str]) {
         let out = Command::new("git")
@@ -459,5 +509,132 @@ mod tests {
         assert_eq!(projects.len(), 1, "one project despite the linked worktree");
         assert!(projects.contains_key(&primary));
         assert_eq!(projects[&primary].tasks.len(), 1);
+    }
+
+    /// `task_titles` stands in for "what this snapshot of the project
+    /// looked like" — the merge tests below only care about which
+    /// snapshot (stale vs. fresh) survives, not task content specifics.
+    fn fixture_project(root: &Path, loaded_at_unix: u64, task_titles: &[&str]) -> BacklogProject {
+        BacklogProject {
+            root: root.to_path_buf(),
+            cli_path: None,
+            tasks: task_titles
+                .iter()
+                .enumerate()
+                .map(|(i, title)| BacklogTask {
+                    id: format!("TASK-{}", i + 1),
+                    title: title.to_string(),
+                    status: "To Do".to_string(),
+                    priority: "medium".to_string(),
+                    assignees: vec![],
+                    labels: vec![],
+                    dependencies: vec![],
+                    references: vec![],
+                    milestone: None,
+                    parent: None,
+                    created_date: None,
+                    updated_date: None,
+                    description: String::new(),
+                    implementation_plan: String::new(),
+                    implementation_notes: String::new(),
+                    final_summary: String::new(),
+                    acceptance_criteria: vec![],
+                    definition_of_done: vec![],
+                    source: switchbard_core::BacklogTaskSource::Active,
+                    path: root.join("backlog/tasks/fixture.md"),
+                })
+                .collect(),
+            warnings: vec![],
+            loaded_at_unix,
+            configured_statuses: vec![],
+        }
+    }
+
+    /// TASK-29 fix wave: the exact race the owner reported. A periodic
+    /// scan's own read of a project (taken *before* a task was created,
+    /// hence no `"New task"` in its task list, hence an *older*
+    /// `loaded_at_unix`) must not overwrite a mutation's fresher targeted
+    /// refresh of the same project once both land in the shared cache —
+    /// regardless of which of the two `merge_backlog_projects` calls
+    /// happens to run second. Before this fix, a plain `HashMap::extend`
+    /// (or a wholesale `*cache = fresh` replace) would have reverted the
+    /// cache to the stale, task-less snapshot here.
+    #[test]
+    fn merge_keeps_a_newer_cached_snapshot_over_a_stale_scan_result() {
+        let root = PathBuf::from("/fixture/repo");
+        let mut cache = HashMap::new();
+        // The mutation's own refresh_backlog_project_cache-style insert
+        // landed first, with the new task and a later timestamp.
+        cache.insert(
+            root.clone(),
+            fixture_project(&root, 200, &["Existing task", "New task"]),
+        );
+
+        // The periodic worker's own scan started earlier (lower
+        // timestamp) and never saw the new task, but its results only
+        // reach the shared cache now.
+        let mut stale_scan = HashMap::new();
+        stale_scan.insert(
+            root.clone(),
+            fixture_project(&root, 100, &["Existing task"]),
+        );
+
+        merge_backlog_projects(&mut cache, std::slice::from_ref(&root), stale_scan);
+
+        assert_eq!(
+            cache[&root].tasks.len(),
+            2,
+            "the newer cached snapshot (with the new task) must survive a stale scan's merge"
+        );
+        assert_eq!(cache[&root].loaded_at_unix, 200);
+    }
+
+    /// The normal, non-racing case: a scan whose own timestamp is newer
+    /// than what's cached should still update it — the fix must not make
+    /// the cache "stuck" on old data once a genuinely fresher scan lands.
+    #[test]
+    fn merge_applies_a_genuinely_newer_scan_result() {
+        let root = PathBuf::from("/fixture/repo");
+        let mut cache = HashMap::new();
+        cache.insert(
+            root.clone(),
+            fixture_project(&root, 100, &["Existing task"]),
+        );
+
+        let mut newer_scan = HashMap::new();
+        newer_scan.insert(
+            root.clone(),
+            fixture_project(&root, 200, &["Existing task", "Another new task"]),
+        );
+
+        merge_backlog_projects(&mut cache, std::slice::from_ref(&root), newer_scan);
+
+        assert_eq!(cache[&root].tasks.len(), 2);
+        assert_eq!(cache[&root].loaded_at_unix, 200);
+    }
+
+    /// A repo that's no longer tracked (removed from `roots`) should drop
+    /// out of the cache, not linger forever — the merge isn't allowed to
+    /// trade "never clobber a fresher write" for "never remove anything."
+    #[test]
+    fn merge_drops_cache_entries_for_repos_no_longer_tracked() {
+        let tracked = PathBuf::from("/fixture/tracked");
+        let removed = PathBuf::from("/fixture/removed");
+        let mut cache = HashMap::new();
+        cache.insert(tracked.clone(), fixture_project(&tracked, 100, &[]));
+        cache.insert(removed.clone(), fixture_project(&removed, 100, &[]));
+
+        let mut fresh = HashMap::new();
+        fresh.insert(tracked.clone(), fixture_project(&tracked, 200, &[]));
+        // `removed` is absent from both `roots` and this scan's own
+        // results — it was untracked before this cycle ran.
+
+        merge_backlog_projects(&mut cache, std::slice::from_ref(&tracked), fresh);
+
+        assert!(cache.contains_key(&tracked));
+        assert!(
+            !cache.contains_key(&removed),
+            "an untracked repo's stale entry should be dropped, not linger"
+        );
     }
 }
