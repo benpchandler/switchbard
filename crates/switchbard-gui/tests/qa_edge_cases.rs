@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use common::{harness, seeded_app, REPO_PATH};
+use egui_kittest::kittest::Queryable;
 use egui_kittest::SnapshotOptions;
-use kittest::Queryable;
 use switchbard_core::{BacklogProject, BacklogTaskSource, OrderingOverlay};
 use switchbard_gui::runtime::{BacklogLens, OrderingState, ViewTab};
 
@@ -80,7 +80,7 @@ fn real_455_task_repo_loads_and_renders_the_list_lens_within_a_render_path_budge
     );
 
     let options = SnapshotOptions::new().output_path(output_dir());
-    let _ = h.try_wgpu_snapshot_options("backlog_scale_455_tasks", &options);
+    let _ = h.try_snapshot_options("backlog_scale_455_tasks", &options);
 }
 
 /// Real, empty (zero-task) Backlog.md project — confirmed via `find
@@ -119,7 +119,7 @@ fn real_empty_repo_loads_with_zero_tasks_and_no_warnings() {
     );
 
     let options = SnapshotOptions::new().output_path(output_dir());
-    let _ = h.try_wgpu_snapshot_options("backlog_empty_tracked_repo", &options);
+    let _ = h.try_snapshot_options("backlog_empty_tracked_repo", &options);
 }
 
 /// Malformed `ordering.yml` — real parse (`OrderingOverlay::parse`, already
@@ -244,9 +244,9 @@ fn generate_edge_case_screenshots() {
 
     let mut h = harness(malformed_ordering_yaml_app());
     h.run();
-    let _ = h.try_wgpu_snapshot_options("backlog_malformed_ordering_yaml_warning", &options);
+    let _ = h.try_snapshot_options("backlog_malformed_ordering_yaml_warning", &options);
 
     let mut h = harness(missing_cli_app());
     h.run();
-    let _ = h.try_wgpu_snapshot_options("backlog_missing_cli_read_only", &options);
+    let _ = h.try_snapshot_options("backlog_missing_cli_read_only", &options);
 }

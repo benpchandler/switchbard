@@ -11,8 +11,8 @@ mod common;
 use std::path::PathBuf;
 
 use common::{app_with_items, harness, item, seeded_app, REPO_NAME, REPO_PATH};
+use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
-use kittest::Queryable;
 use switchbard_core::config::Config;
 use switchbard_core::{
     AgentKind, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource, ContextKind,

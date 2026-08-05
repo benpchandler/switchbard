@@ -1406,7 +1406,7 @@ fn render_perf_overlay(ctx: &egui::Context, summary: &PerfSummary) {
                     1.0,
                     ui.visuals().widgets.noninteractive.bg_stroke.color,
                 ))
-                .inner_margin(egui::Margin::same(8.0))
+                .inner_margin(egui::Margin::same(8))
                 .show(ui, |ui| {
                     ui.label(
                         egui::RichText::new(summary.overlay_text())

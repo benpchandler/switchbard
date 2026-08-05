@@ -167,8 +167,8 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &DigestRow<'_>) {
     let frame = egui::Frame::default()
         .fill(ui.visuals().extreme_bg_color)
         .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
-        .rounding(3.0)
-        .inner_margin(egui::Margin::symmetric(10.0, 6.0));
+        .corner_radius(3.0)
+        .inner_margin(egui::Margin::symmetric(10, 6));
     let resp = frame
         .show(ui, |ui| {
             ui.horizontal(|ui| {

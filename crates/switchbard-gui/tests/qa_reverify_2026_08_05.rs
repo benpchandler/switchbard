@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use common::{harness, isolated_config_save_path, seeded_app, REPO_PATH};
-use kittest::Queryable;
+use egui_kittest::kittest::{self, Queryable};
 use switchbard_core::config::Config;
 use switchbard_core::{BacklogProject, BacklogTask, BacklogTaskSource, Repo, WorktreeRef};
 use switchbard_gui::app::HiveApp;

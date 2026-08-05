@@ -42,8 +42,8 @@ use std::path::PathBuf;
 
 use common::{harness, seeded_app, REPO_NAME, REPO_PATH};
 use eframe::egui::{epaint::Shape, Color32, Pos2, Rect};
+use egui_kittest::kittest::{by, Queryable};
 use egui_kittest::Harness;
-use kittest::{by, Queryable};
 use switchbard_core::config::ThemeChoice;
 use switchbard_core::{
     AttributedListener, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource,

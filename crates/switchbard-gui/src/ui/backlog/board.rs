@@ -167,8 +167,8 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_re
             } else {
                 ui.visuals().widgets.noninteractive.bg_stroke
             })
-            .rounding(3.0)
-            .inner_margin(egui::Margin::symmetric(8.0, 6.0));
+            .corner_radius(3.0)
+            .inner_margin(egui::Margin::symmetric(8, 6));
         let resp = frame
             .show(ui, |ui| {
                 ui.set_width(COLUMN_WIDTH - 16.0);

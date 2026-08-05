@@ -23,7 +23,7 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{harness, isolated_config_save_path};
-use kittest::Queryable;
+use egui_kittest::kittest::Queryable;
 use switchbard_core::config::Config;
 use switchbard_core::{BacklogTaskSource, Repo, WorktreeRef};
 use switchbard_gui::app::HiveApp;

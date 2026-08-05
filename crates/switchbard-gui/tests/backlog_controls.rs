@@ -23,8 +23,8 @@ mod common;
 use std::path::PathBuf;
 
 use common::{harness, isolated_config_save_path, seeded_app, REPO_NAME, REPO_PATH};
+use egui_kittest::kittest::{self, Queryable};
 use egui_kittest::Harness;
-use kittest::Queryable;
 use switchbard_core::config::Config;
 use switchbard_core::{
     BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource, Repo, WorktreeRef,

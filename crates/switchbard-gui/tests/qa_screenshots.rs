@@ -37,12 +37,12 @@ fn output_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/qa/screenshots")
 }
 
-fn snapshot(harness: &Harness<'_, HiveApp>, name: &str) {
+fn snapshot(harness: &mut Harness<'_, HiveApp>, name: &str) {
     let options = SnapshotOptions::new().output_path(output_dir());
     // Intentionally ignore the Result — see the module doc. The `.png` this
     // writes (not `.new.png`/`.diff.png`, both gitignored-equivalent scratch
     // files this repo doesn't track) is the artifact we want.
-    let _ = harness.try_wgpu_snapshot_options(name, &options);
+    let _ = harness.try_snapshot_options(name, &options);
 }
 
 fn sample_task(id: &str, title: &str, status: &str) -> BacklogTask {
@@ -115,7 +115,7 @@ fn shots_for_theme(theme: ThemeChoice) {
         app.config.ui.theme = theme;
         let mut h = harness(app);
         h.run();
-        snapshot(&h, &format!("servers_top_bar_theme_toggle{suffix}"));
+        snapshot(&mut h, &format!("servers_top_bar_theme_toggle{suffix}"));
     }
 
     // Digest (default landing lens) — every section populated.
@@ -134,7 +134,7 @@ fn shots_for_theme(theme: ThemeChoice) {
         let app = app_with(theme, BacklogLens::Digest, vec![overdue, in_progress, done]);
         let mut h = harness(app);
         h.run();
-        snapshot(&h, &format!("backlog_digest{suffix}"));
+        snapshot(&mut h, &format!("backlog_digest{suffix}"));
     }
 
     // List lens with a fully-populated task selected in the detail pane.
@@ -147,7 +147,7 @@ fn shots_for_theme(theme: ThemeChoice) {
         app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
         let mut h = harness(app);
         h.run();
-        snapshot(&h, &format!("backlog_list_and_detail{suffix}"));
+        snapshot(&mut h, &format!("backlog_list_and_detail{suffix}"));
     }
 
     // Board lens.
@@ -162,7 +162,7 @@ fn shots_for_theme(theme: ThemeChoice) {
         );
         let mut h = harness(app);
         h.run();
-        snapshot(&h, &format!("backlog_board{suffix}"));
+        snapshot(&mut h, &format!("backlog_board{suffix}"));
     }
 
     // Milestones lens.
@@ -174,7 +174,7 @@ fn shots_for_theme(theme: ThemeChoice) {
         );
         let mut h = harness(app);
         h.run();
-        snapshot(&h, &format!("backlog_milestones{suffix}"));
+        snapshot(&mut h, &format!("backlog_milestones{suffix}"));
     }
 
     // Portfolio lens.
@@ -186,7 +186,7 @@ fn shots_for_theme(theme: ThemeChoice) {
         );
         let mut h = harness(app);
         h.run();
-        snapshot(&h, &format!("backlog_portfolio{suffix}"));
+        snapshot(&mut h, &format!("backlog_portfolio{suffix}"));
     }
 
     // Statistics lens.
@@ -201,7 +201,7 @@ fn shots_for_theme(theme: ThemeChoice) {
         );
         let mut h = harness(app);
         h.run();
-        snapshot(&h, &format!("backlog_statistics{suffix}"));
+        snapshot(&mut h, &format!("backlog_statistics{suffix}"));
     }
 
     // Done task detail pane, offering "Complete" instead of "Archive"
@@ -221,7 +221,10 @@ fn shots_for_theme(theme: ThemeChoice) {
         app.backlog_view.archive_confirm = true;
         let mut h = harness(app);
         h.run();
-        snapshot(&h, &format!("backlog_done_task_offers_complete{suffix}"));
+        snapshot(
+            &mut h,
+            &format!("backlog_done_task_offers_complete{suffix}"),
+        );
     }
 
     // "Clean Up Old Tasks" confirm state, showing "Complete N Done tasks?"
@@ -238,7 +241,7 @@ fn shots_for_theme(theme: ThemeChoice) {
         h.state_mut().backlog_view.cleanup_confirm = true;
         h.run();
         snapshot(
-            &h,
+            &mut h,
             &format!("backlog_cleanup_confirm_complete_wording{suffix}"),
         );
     }
@@ -254,7 +257,7 @@ fn shots_for_theme(theme: ThemeChoice) {
         app.backlog_view.new_task.target_project = Some(PathBuf::from(REPO_PATH));
         let mut h = harness(app);
         h.run();
-        snapshot(&h, &format!("backlog_create_modal{suffix}"));
+        snapshot(&mut h, &format!("backlog_create_modal{suffix}"));
     }
 
     // Global search overlay, with a live query and a match.
@@ -268,7 +271,7 @@ fn shots_for_theme(theme: ThemeChoice) {
         app.backlog_view.search.query = "Searchable".to_string();
         let mut h = harness(app);
         h.run();
-        snapshot(&h, &format!("backlog_search_overlay{suffix}"));
+        snapshot(&mut h, &format!("backlog_search_overlay{suffix}"));
     }
 
     // Saved views bar with a saved view active (Statistics lens, matching
@@ -299,7 +302,7 @@ fn shots_for_theme(theme: ThemeChoice) {
         app.backlog_view.active_saved_view = Some("High priority".to_string());
         let mut h = harness(app);
         h.run();
-        snapshot(&h, &format!("backlog_saved_views_bar{suffix}"));
+        snapshot(&mut h, &format!("backlog_saved_views_bar{suffix}"));
     }
 
     // Dispatch affordances: one screenshot per state, each as the selected
@@ -330,7 +333,7 @@ fn shots_for_theme(theme: ThemeChoice) {
         app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
         let mut h = harness(app);
         h.run();
-        snapshot(&h, &format!("backlog_dispatch_{state_name}{suffix}"));
+        snapshot(&mut h, &format!("backlog_dispatch_{state_name}{suffix}"));
     }
 }
 

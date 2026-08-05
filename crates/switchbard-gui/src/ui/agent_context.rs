@@ -148,7 +148,7 @@ fn render_global_card(ui: &mut egui::Ui, app: &mut HiveApp, snap: &Snapshot) {
     }
     let warnings = items.iter().filter(|i| i.warning.is_some()).count();
     egui::Frame::group(ui.style())
-        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+        .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 theme::painted_dot(ui, theme::lavender());
@@ -277,7 +277,7 @@ fn render_repo(
     snap: &Snapshot,
 ) -> egui::Response {
     egui::Frame::group(ui.style())
-        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+        .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             let selected = selected_worktree(repo, wts, snap);
             ui.horizontal(|ui| {
@@ -439,9 +439,9 @@ fn render_effective_stack(
 ) {
     let stack = effective_instruction_items(map, agent, cwd);
     let estimate = estimate_items(stack.iter().copied());
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(ui.visuals().faint_bg_color)
-        .inner_margin(egui::Margin::symmetric(6.0, 4.0))
+        .inner_margin(egui::Margin::symmetric(6, 4))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(

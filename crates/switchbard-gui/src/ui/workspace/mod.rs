@@ -298,7 +298,7 @@ fn render_repo_card(
     }
 
     egui::Frame::group(ui.style())
-        .inner_margin(egui::Margin::same(10.0))
+        .inner_margin(egui::Margin::same(10))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 if listening > 0 {
@@ -425,7 +425,7 @@ fn render_worktree_row(
     // their row heights stay consistent; only the fill differs. This
     // keeps the swimlane visually rhythmic when scanning down the
     // list.
-    let mut frame = egui::Frame::none().inner_margin(egui::Margin::symmetric(4.0, 1.0));
+    let mut frame = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(4, 1));
     if is_primary {
         frame = frame.fill(theme::primary_worktree_tint());
     }
@@ -1253,7 +1253,7 @@ fn render_unattributed_card(ui: &mut egui::Ui, list: &[AttributedListener], pend
     let id = ui.make_persistent_id("unattr_card");
     let state = CollapsingState::load_with_default_open(ui.ctx(), id, false);
     egui::Frame::group(ui.style())
-        .inner_margin(egui::Margin::same(10.0))
+        .inner_margin(egui::Margin::same(10))
         .show(ui, |ui| {
             state
                 .show_header(ui, |ui| {
