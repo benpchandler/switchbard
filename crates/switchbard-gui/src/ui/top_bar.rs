@@ -4,6 +4,7 @@
 
 use crate::app::{self, HiveApp};
 use crate::runtime::ViewTab;
+use crate::ui::components::action_status_label;
 use crate::ui::theme;
 use crate::ui::theme::ThemeChoice;
 use crate::ui::workspace;
@@ -124,21 +125,25 @@ fn render_actions(app: &mut HiveApp, ui: &mut egui::Ui) {
     ui.separator();
     render_zoom_stepper(ui);
 
+    // TASK-28 (owner-found bug): every status message goes through the
+    // same clamped label, not a bare `ui.label` — see
+    // `action_status_label`'s doc for why this is defense in depth, not
+    // just the fix for the one function that triggered it.
     if let Some(msg) = app.config_status.snapshot() {
         ui.separator();
-        ui.label(msg);
+        action_status_label(ui, &msg, None);
     }
     if let Some(msg) = app.kill_status.snapshot() {
         ui.separator();
-        ui.label(msg);
+        action_status_label(ui, &msg, None);
     }
     if let Some(msg) = app.server_status.snapshot() {
         ui.separator();
-        ui.label(msg);
+        action_status_label(ui, &msg, None);
     }
     if let Some(msg) = app.backlog_status.snapshot() {
         ui.separator();
-        ui.label(msg);
+        action_status_label(ui, &msg, None);
     }
 }
 

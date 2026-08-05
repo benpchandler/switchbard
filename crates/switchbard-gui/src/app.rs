@@ -1168,6 +1168,17 @@ impl HiveApp {
         });
     }
 
+    /// TASK-28 (owner-found bug): `create_backlog_task`'s raw stdout is the
+    /// *entire* newly-created task's rendered form — file path, a `====`
+    /// underline, every section header, even when empty — not a one-line
+    /// confirmation like `task archive`'s. That used to land verbatim in
+    /// `backlog_status`, stretching the top bar into a many-line void.
+    /// Builds a compact "Created {repo}:{id}" instead, the same way every
+    /// other mutation status in this file already discards raw CLI stdout
+    /// (see `spawn_backlog_save`'s `Ok(_) => ...`) — this was the one
+    /// exception. `ui::components::action_status_label` is the defense in
+    /// depth for whatever future case still slips through: no status
+    /// message renders unbounded, regardless of what built it.
     pub fn spawn_backlog_create(
         &self,
         project_root: PathBuf,
@@ -1176,16 +1187,23 @@ impl HiveApp {
     ) {
         let status = self.backlog_status.clone();
         let projects = self.backlog_projects.clone();
+        let repos = self.repos.clone();
         let kick = self.backlog_kick.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             match switchbard_core::create_backlog_task(&project_root, &task) {
                 Ok(output) => {
                     refresh_backlog_project_cache(&projects, &project_root);
-                    let msg = if output.is_empty() {
-                        "created task".to_string()
-                    } else {
-                        format!("created task: {output}")
+                    let repo_label = repos
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .find(|repo| repo.path == project_root)
+                        .map(|repo| repo.name.clone())
+                        .unwrap_or_else(|| project_root.display().to_string());
+                    let msg = match switchbard_core::parse_created_task_id(&output) {
+                        Some(task_id) => format!("Created {repo_label}:{task_id}"),
+                        None => format!("created task in {repo_label}"),
                     };
                     status.set(msg);
                     kick.notify();

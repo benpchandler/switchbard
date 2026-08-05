@@ -70,7 +70,10 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
             );
             if let Some(msg) = &config_msg {
                 ui.add_space(2.0);
-                ui.label(egui::RichText::new(msg).color(theme::muted_text()));
+                // TASK-28: same clamped label top_bar.rs's status messages
+                // use — defense in depth against unbounded multi-line text,
+                // regardless of which surface a Status ends up painted on.
+                crate::ui::components::action_status_label(ui, msg, Some(theme::muted_text()));
             }
             ui.add_space(6.0);
 

@@ -397,6 +397,14 @@ fn create_modal_fields_typed_via_kittest_persist_through_a_real_cli_create() {
     h.get_by_label("Create").click();
     h.run();
 
+    // TASK-28 (2026-08-05 fix wave, post-dates this test): the status
+    // message this polls for changed from "created task: <raw multi-line
+    // CLI stdout>" (the owner-found bug — that raw stdout blew up the top
+    // bar's layout) to a compact "Created {repo}:{id}" — see
+    // spawn_backlog_create's own doc comment (app.rs) and
+    // create_modal_reports_a_compact_created_message_against_a_real_
+    // fixture_repo (backlog_controls.rs) for the dedicated proof of the new
+    // format. Updated the prefix this loop waits for accordingly.
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         h.run();
@@ -404,7 +412,7 @@ fn create_modal_fields_typed_via_kittest_persist_through_a_real_cli_create() {
             .backlog_status
             .snapshot()
             .as_deref()
-            .is_some_and(|s| s.starts_with("created task"))
+            .is_some_and(|s| s.starts_with("Created "))
         {
             break;
         }

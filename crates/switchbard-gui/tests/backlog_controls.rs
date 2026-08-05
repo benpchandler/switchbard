@@ -1485,6 +1485,69 @@ fn sidebar_collapsed_persists_through_save_config_and_reload() {
     );
 }
 
+// ─── TASK-28: status surface never renders unbounded multi-line text ────
+
+/// Owner-found bug: `backlog task create --plain` writes the entire newly
+/// created task's rendered form to stdout (confirmed empirically against a
+/// real fixture — `parse_created_task_id_extracts_the_id_from_a_real_
+/// create_call`, backlog_cli_mutations.rs), which used to land verbatim in
+/// `backlog_status` and stretch the top bar into a many-line void. This is
+/// the defense-in-depth half: even a status message that somehow still
+/// contains newlines/very long text must render as a single clamped line,
+/// with the full text on hover — regardless of which function produced it.
+#[test]
+fn action_status_label_clamps_a_multiline_message_to_one_line() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "First", "To Do")]);
+    let multiline = "File: /tmp/x/backlog/tasks/task-1 - Title.md\n\n\
+                      Task TASK-1 - Title\n\
+                      ==================================================\n\
+                      \n\
+                      Status: \u{25cb} To Do\n";
+    harness.state_mut().backlog_status.set(multiline);
+    harness.run();
+
+    // The rendered label's own value is the clamped, single-line form —
+    // never the raw multi-line message. The Label node and its inner
+    // TextRun child both carry the same value, hence query_all rather than
+    // the exactly-one query.
+    let clamped = harness
+        .query_all_by_value("File: /tmp/x/backlog/tasks/task-1 - Title.md …")
+        .next()
+        .expect("the clamped single-line label should render");
+    assert!(
+        clamped.value().as_deref() != Some(multiline),
+        "the painted label must not be the raw multi-line message"
+    );
+    assert!(
+        harness.query_all_by_value(multiline).next().is_none(),
+        "the raw multi-line message must not appear anywhere in the tree"
+    );
+    // `action_status_label`'s own `.on_hover_text(msg)` call (the full
+    // original message reachable on hover, not deleted) is a single,
+    // unconditional line — verified by code review rather than a hover
+    // simulation here; egui's tooltip only materializes after a real hover
+    // delay this harness has no way to advance, and accesskit's node
+    // `description()` came back `None` in practice even after a simulated
+    // `Node::hover()`, so asserting on it would be testing kittest's
+    // tooltip-timing support, not this function.
+}
+
+/// A single-line message (the normal case — "saved TASK-1", "archived
+/// TASK-1", etc.) renders unchanged, with no trailing ellipsis marker
+/// invented for text that was never actually truncated.
+#[test]
+fn action_status_label_leaves_a_single_line_message_unchanged() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "First", "To Do")]);
+    harness.state_mut().backlog_status.set("saved TASK-1");
+    harness.run();
+
+    assert!(harness.query_all_by_value("saved TASK-1").next().is_some());
+    assert!(harness
+        .query_all_by_value("saved TASK-1 …")
+        .next()
+        .is_none());
+}
+
 // ─── Saved views: persistence across restart ────────────────────────────
 
 /// `saved_view_can_be_saved_and_deleted` (`ui_views.rs`) proves the in-memory
@@ -1614,6 +1677,91 @@ fn save_button_completes_a_real_cli_round_trip_against_a_real_fixture_repo() {
         "the real backlog CLI should have persisted the edited title, got {:?}",
         saved_task.title
     );
+}
+
+/// TASK-28 (owner-found bug): the compact "Created {repo}:{id}" status
+/// message end to end against a real fixture repo and the real CLI — a CLI
+/// call decides the id half of this message
+/// (`parse_created_task_id`/`create_backlog_task`'s actual output), so an
+/// in-memory fixture couldn't prove this the way it proves the click/
+/// buffer-reset half (see `create_modal_labels_assignee_milestone_and_
+/// dependencies_fields_reset_after_create`, which already covers that half).
+#[test]
+fn create_modal_reports_a_compact_created_message_against_a_real_fixture_repo() {
+    let fixture = tempfile::tempdir().expect("create temp dir");
+    let root = fixture.path();
+    run_cmd(root, "git", &["init", "-q"]);
+    run_cmd(root, "git", &["config", "user.email", "qa@example.com"]);
+    run_cmd(root, "git", &["config", "user.name", "QA Fixture"]);
+    run_cmd(
+        root,
+        "backlog",
+        &["init", "--defaults", "--agent-instructions", "none", "qa"],
+    );
+
+    let repos = vec![Repo {
+        name: "MusicProduction".to_string(),
+        path: root.to_path_buf(),
+    }];
+    let worktrees = vec![WorktreeRef {
+        repo_name: "MusicProduction".to_string(),
+        path: root.to_path_buf(),
+        branch: Some("main".to_string()),
+        head: "abc1234".to_string(),
+    }];
+    let mut cfg = Config::default();
+    cfg.ui.onboarding_dismissed = true;
+    let mut app = HiveApp::new_headless(cfg, repos, worktrees);
+    app.config_save_path = Some(isolated_config_save_path());
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.selected_project = Some(root.to_path_buf());
+    app.backlog_projects.lock().unwrap().insert(
+        root.to_path_buf(),
+        switchbard_core::load_backlog_project(root).expect("load the real fixture project"),
+    );
+
+    let mut harness = harness(app);
+    harness.run();
+
+    harness.get_by_label("+ Task").click();
+    harness.run();
+
+    let modal = harness.get_by_label("New Backlog Task");
+    let title_field = modal
+        .query_all(kittest::by().role(egui::accesskit::Role::TextInput))
+        .next()
+        .expect("create modal's title field");
+    title_field.focus();
+    title_field.type_text("Real create status message task");
+    harness.run();
+
+    harness.get_by_label("Create").click();
+    harness.run();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        harness.run();
+        if let Some(msg) = harness.state().backlog_status.snapshot() {
+            if msg.starts_with("Created ") {
+                assert_eq!(
+                    msg, "Created MusicProduction:TASK-1",
+                    "expected the compact repo:id form, not raw CLI stdout"
+                );
+                assert!(
+                    !msg.contains('\n'),
+                    "the status message must be a single line, got {msg:?}"
+                );
+                return;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "create's background thread did not report completion in time; last status: {:?}",
+            harness.state().backlog_status.snapshot()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
 }
 
 /// Independent re-verification (2026-08-05 fix-wave audit) of the HIGH

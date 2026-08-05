@@ -118,6 +118,37 @@ fn reload(root: &Path) -> switchbard_core::BacklogProject {
     load_backlog_project(root).expect("reparsing the fixture project should succeed")
 }
 
+/// TASK-28 (owner-found bug): `parse_created_task_id` against `create_
+/// backlog_task`'s real return value, not the pinned string the core unit
+/// test uses — proves the parser matches what the real CLI actually
+/// outputs today, not just what it output when that string was captured.
+#[test]
+fn parse_created_task_id_extracts_the_id_from_a_real_create_call() {
+    let fixture = fixture_repo();
+    let root = fixture.path();
+    let output = create_backlog_task(
+        root,
+        &NewBacklogTask {
+            title: "Real create output task".to_string(),
+            description: String::new(),
+            status: "To Do".to_string(),
+            priority: "medium".to_string(),
+            acceptance_criteria: vec![],
+            parent: None,
+            labels: vec![],
+            assignees: vec![],
+            milestone: None,
+            dependencies: vec![],
+        },
+    )
+    .expect("create should succeed");
+
+    assert_eq!(
+        switchbard_core::parse_created_task_id(&output),
+        Some("TASK-1".to_string())
+    );
+}
+
 /// TASK-25 (owner-requested UX): `load_backlog_project` reads
 /// `BacklogProject::configured_statuses` off a real `backlog init`-created
 /// project's `backlog/config.yml`. `backlog config set` has no key for the

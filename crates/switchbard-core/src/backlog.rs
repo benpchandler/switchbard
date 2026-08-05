@@ -541,6 +541,33 @@ pub fn create_backlog_task(project_root: &Path, task: &NewBacklogTask) -> Result
     run_backlog(project_root, args)
 }
 
+/// TASK-28 (owner-found bug): even with `--plain`, `backlog task create`
+/// (unlike `task archive`'s one-line `"Archived task TASK-1"`) writes the
+/// *entire* newly-created task's rendered form to stdout — file path, a
+/// `====` underline, Status/Ordinal/Created, empty Description/Acceptance
+/// Criteria/Definition of Done sections. `create_backlog_task`'s caller
+/// used to surface that raw multi-line blob as the GUI's action-status
+/// message, stretching the top bar into a many-line void. Every other
+/// mutation function in this module already discards its own raw stdout
+/// and lets the caller build a compact message instead (see
+/// `edit_backlog_task`'s callers); this is the one exception, so rather
+/// than have the GUI parse a format it doesn't own, this pulls the id out
+/// of the one line worth reading — `"Task TASK-1 - Title"` — so the caller
+/// can build `"Created {repo}:{id}"` without touching the rest.
+/// Empirically confirmed against a real `backlog init` fixture before
+/// writing this parser, not guessed. Returns `None` if that line isn't
+/// found (a future CLI output-format change) — callers must fall back to a
+/// generic message, not panic.
+pub fn parse_created_task_id(output: &str) -> Option<String> {
+    output
+        .lines()
+        .find_map(|line| line.strip_prefix("Task "))
+        .and_then(|rest| rest.split(" - ").next())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 fn run_backlog<I, S>(project_root: &Path, args: I) -> Result<String>
 where
     I: IntoIterator<Item = S>,
@@ -854,6 +881,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!(parse_config_statuses(dir.path()), Vec::<String>::new());
+    }
+
+    /// TASK-28: pins the real `backlog task create --plain` output shape
+    /// (captured empirically against a real fixture repo) so the parser
+    /// stays correct even without a CLI round trip for every test.
+    #[test]
+    fn parses_created_task_id_from_real_cli_output_shape() {
+        let output = "File: /tmp/x/backlog/tasks/task-1 - Test task for stdout inspection.md\n\
+                       \n\
+                       Task TASK-1 - Test task for stdout inspection\n\
+                       ==================================================\n\
+                       \n\
+                       Status: \u{25cb} To Do\n\
+                       Ordinal: 1000\n\
+                       Created: 2026-08-05 14:59\n\
+                       \n\
+                       Description:\n\
+                       --------------------------------------------------\n\
+                       No description provided\n";
+        assert_eq!(parse_created_task_id(output), Some("TASK-1".to_string()));
+    }
+
+    #[test]
+    fn parse_created_task_id_returns_none_on_unrecognized_output() {
+        assert_eq!(parse_created_task_id("some unexpected future format"), None);
+        assert_eq!(parse_created_task_id(""), None);
     }
 
     #[test]
