@@ -24,6 +24,7 @@
 //! - `detail_lists` — detail-pane checklist/list sections split out of `detail`.
 //! - `digest`     — the Digest lens: "what should I do today" landing screen (task-21).
 //! - `list`       — the List lens: task list column + row rendering.
+//! - `tree`        — the List lens's sub-task tree walk, split out of `list` (task-17).
 //! - `board`      — the Board lens: per-status kanban columns with drag-to-change-status.
 //! - `milestones` — the Milestones lens: tasks grouped by milestone, cross-repo.
 //! - `portfolio`  — the Portfolio lens: read-only per-repo health (task-19).
@@ -58,6 +59,7 @@ mod selection;
 mod sort;
 mod stats;
 mod toolbar;
+mod tree;
 
 use crate::app::HiveApp;
 use crate::runtime::worktree_names::worktree_display_name;

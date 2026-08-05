@@ -388,13 +388,30 @@ fn legibility_blocking_task() -> BacklogTask {
     task
 }
 
+/// A direct child of `legibility_backlog_task` (task-17) — exercises the
+/// List lens's roll-up badge and, once expanded, its nested child row.
+fn legibility_subtask() -> BacklogTask {
+    let mut task = legibility_backlog_task();
+    task.id = "TASK-3".to_string();
+    task.title = "Subtask".to_string();
+    task.status = "To Do".to_string();
+    task.dependencies = vec![];
+    task.parent = Some("TASK-1".to_string());
+    task.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-3.md"));
+    task
+}
+
 fn seed_backlog_project(app: &HiveApp) {
     app.backlog_projects.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
             cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
-            tasks: vec![legibility_backlog_task(), legibility_blocking_task()],
+            tasks: vec![
+                legibility_backlog_task(),
+                legibility_blocking_task(),
+                legibility_subtask(),
+            ],
             warnings: vec![],
             loaded_at_unix: 0,
         },
@@ -450,6 +467,12 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     // twice and never touch the List lens's detail pane at all.
     list_app.backlog_view.lens = BacklogLens::List;
     list_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    // Expanded so the sub-task tree's nested child row (task-17) is part of
+    // what gets audited, not just the collapsed parent's roll-up badge.
+    list_app
+        .backlog_view
+        .expanded_parents
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
     seed_backlog_project(&list_app);
     let list = harness(list_app);
 

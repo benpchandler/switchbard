@@ -92,6 +92,11 @@ pub struct BacklogViewState {
     /// an inline "Archive this task?" confirmation until they confirm or
     /// cancel. Cleared whenever the detail selection changes.
     pub archive_confirm: bool,
+    /// Which parent rows the List lens's sub-task tree (task-17) currently
+    /// shows expanded. Session-only UI state — not persisted, same as
+    /// `bulk_selected_tasks`; a collapsed-by-default tree on next launch is
+    /// the expected, unsurprising behavior.
+    pub expanded_parents: BTreeSet<BacklogTaskKey>,
 }
 
 impl Default for BacklogViewState {
@@ -114,6 +119,7 @@ impl Default for BacklogViewState {
             new_task: BacklogNewTaskState::default(),
             search: BacklogSearchState::default(),
             archive_confirm: false,
+            expanded_parents: BTreeSet::new(),
         }
     }
 }
@@ -301,6 +307,12 @@ pub struct BacklogNewTaskState {
     /// and stores the choice here instead of forcing the user out of the
     /// unified scope just to file a task.
     pub target_project: Option<PathBuf>,
+    /// Set when the modal was opened via "+ Subtask" on a task's detail pane
+    /// (task-17) — the parent task id, passed through as `-p` on create.
+    /// `Some` also pins `target_project` to the parent's own project; a
+    /// subtask can't be filed in a different repo than its parent, since
+    /// Backlog.md's `parent` field is a bare, project-scoped id.
+    pub parent: Option<String>,
     pub title: String,
     pub description: String,
     pub status: String,
@@ -313,6 +325,7 @@ impl Default for BacklogNewTaskState {
         Self {
             open: false,
             target_project: None,
+            parent: None,
             title: String::new(),
             description: String::new(),
             status: "To Do".to_string(),

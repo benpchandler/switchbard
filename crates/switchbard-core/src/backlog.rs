@@ -163,6 +163,8 @@ pub struct NewBacklogTask {
     pub status: String,
     pub priority: String,
     pub acceptance_criteria: Vec<String>,
+    /// Parent task id (task-17's create-subtask), passed as `-p`/`--parent`.
+    pub parent: Option<String>,
 }
 
 pub fn is_backlog_project(root: &Path) -> bool {
@@ -392,6 +394,10 @@ pub fn create_backlog_task(project_root: &Path, task: &NewBacklogTask) -> Result
         }
         args.push("--ac".into());
         args.push(criterion.clone().into());
+    }
+    if let Some(parent) = &task.parent {
+        args.push("-p".into());
+        args.push(parent.clone().into());
     }
     run_backlog(project_root, args)
 }

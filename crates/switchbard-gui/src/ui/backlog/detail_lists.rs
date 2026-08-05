@@ -5,7 +5,7 @@
 //! action. `split_csv` is a small shared helper `detail.rs` also uses for
 //! its labels/assignees fields.
 
-use super::Pending;
+use super::{format, Pending};
 use crate::app::HiveApp;
 use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
@@ -87,6 +87,54 @@ pub(super) fn render_dependencies(
             }
         });
     });
+}
+
+/// Sub-tasks (task-17): direct children with a roll-up progress line, plus a
+/// "+ Subtask" button that opens the "New Backlog Task" modal pre-filled
+/// with this task as parent (`create::render_create_modal` reads `new_task.
+/// parent`). Mutation (the actual create) goes through the same `backlog
+/// task create -p` path every other creation uses — this section itself
+/// only sets up the modal's pre-fill, mirroring how the List lens's tree
+/// expand/collapse toggle works without a direct CLI call.
+pub(super) fn render_subtasks(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    project_root: &Path,
+    task: &BacklogTask,
+    project: &BacklogProject,
+    editable: bool,
+) {
+    let kids = switchbard_core::children(task, project);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Sub-tasks").strong());
+        if !kids.is_empty() {
+            let done = kids.iter().filter(|k| k.is_done()).count();
+            ui.label(
+                egui::RichText::new(format!("{done}/{} done", kids.len()))
+                    .color(theme::muted_text()),
+            );
+        }
+        if editable
+            && ui
+                .small_button("+ Subtask")
+                .on_hover_text("Create a subtask through backlog task create -p")
+                .clicked()
+        {
+            app.backlog_view.new_task.target_project = Some(project_root.to_path_buf());
+            app.backlog_view.new_task.parent = Some(task.id.clone());
+            app.backlog_view.new_task.open = true;
+        }
+    });
+    if kids.is_empty() {
+        ui.label(egui::RichText::new("No sub-tasks").color(theme::muted_text()));
+        return;
+    }
+    for child in kids {
+        ui.horizontal(|ui| {
+            ui.label(format!("{} {}", child.id, child.title));
+            status_pill(ui, format::status_kind(&child.status), &child.status, None);
+        });
+    }
 }
 
 /// "Blocks" (task-18's reverse direction): every task in `project` that

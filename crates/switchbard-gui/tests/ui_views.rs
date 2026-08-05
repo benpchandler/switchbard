@@ -528,3 +528,88 @@ fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
         "the blocking task's detail pane should list what it Blocks"
     );
 }
+
+/// Sub-task hierarchy (task-17): a parent with children collapses to a
+/// single row with a roll-up badge; expanding it reveals the children
+/// nested underneath, and the parent's detail pane offers "+ Subtask".
+#[test]
+fn parent_task_shows_rollup_and_expands_to_reveal_children() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+
+    let mut parent = seeded_backlog_task();
+    parent.id = "TASK-1".to_string();
+    parent.title = "Parent task".to_string();
+
+    let mut done_child = seeded_backlog_task();
+    done_child.id = "TASK-1.1".to_string();
+    done_child.title = "Done child".to_string();
+    done_child.status = "Done".to_string();
+    done_child.parent = Some("TASK-1".to_string());
+    done_child.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-1.1.md"));
+
+    let mut open_child = seeded_backlog_task();
+    open_child.id = "TASK-1.2".to_string();
+    open_child.title = "Open child".to_string();
+    open_child.parent = Some("TASK-1".to_string());
+    open_child.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-1.2.md"));
+
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![parent, done_child, open_child],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness
+            .query_by_label("TASK-1  Parent task  [1/2]")
+            .is_some(),
+        "the parent row should show a 1/2 roll-up badge"
+    );
+    assert!(
+        harness.query_by_label("TASK-1.2  Open child").is_none(),
+        "children stay collapsed until the parent is expanded"
+    );
+    assert!(
+        harness.query_by_label("+ Subtask").is_some(),
+        "the parent's detail pane should offer to create a subtask"
+    );
+
+    // The caret is the only unlabeled clickable control at the head of the
+    // parent's row; toggle expansion directly via view state instead of
+    // hunting for it by position, since it has no accessible label.
+    harness
+        .state_mut()
+        .backlog_view
+        .expanded_parents
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+    harness.run();
+
+    assert!(
+        harness.query_by_label("TASK-1.2  Open child").is_some(),
+        "expanding the parent should reveal its children nested underneath"
+    );
+    assert!(
+        harness.query_by_label("TASK-1.1  Done child").is_some(),
+        "the done child should also render once expanded"
+    );
+
+    harness.get_by_label("+ Subtask").click();
+    harness.run();
+    assert_eq!(
+        harness.state().backlog_view.new_task.parent.as_deref(),
+        Some("TASK-1"),
+        "+ Subtask should pre-fill the new-task modal's parent"
+    );
+    assert!(harness.state().backlog_view.new_task.open);
+}

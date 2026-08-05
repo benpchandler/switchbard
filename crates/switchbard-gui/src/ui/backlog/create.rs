@@ -25,11 +25,23 @@ pub(super) fn render_create_modal(
         app.backlog_view.new_task.open = false;
         return;
     };
-    let fixed_target = app.backlog_view.selected_project.is_some();
+    // A subtask (task-17) can't move to a different repo than its parent —
+    // Backlog.md's `parent` field is a bare, project-scoped id — so the
+    // project picker is fixed whenever this modal was opened via "+ Subtask"
+    // even in the otherwise-unified All-projects scope.
+    let fixed_target =
+        app.backlog_view.selected_project.is_some() || app.backlog_view.new_task.parent.is_some();
 
     let mut open = true;
     let mut close = false;
-    egui::Window::new("New Backlog Task")
+    let title = match &app.backlog_view.new_task.parent {
+        Some(parent) => format!("New Subtask of {parent}"),
+        None => "New Backlog Task".to_string(),
+    };
+    egui::Window::new(title)
+        // Stable id independent of the title (which varies with `parent`) so
+        // this modal keeps one identity — position, focus — across opens.
+        .id(egui::Id::new("backlog_new_task_modal"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -119,6 +131,7 @@ pub(super) fn render_create_modal(
                             status: app.backlog_view.new_task.status.clone(),
                             priority: app.backlog_view.new_task.priority.clone(),
                             acceptance_criteria: criteria,
+                            parent: app.backlog_view.new_task.parent.clone(),
                         },
                     ));
                     app.backlog_view.new_task = Default::default();

@@ -54,6 +54,8 @@ pub(super) fn render_task_detail(
             ui.add_space(8.0);
             render_editor(app, ui, &project.key, task, editable, pending);
             ui.add_space(10.0);
+            detail_lists::render_subtasks(app, ui, &project.key, task, &project.project, editable);
+            ui.add_space(10.0);
             detail_lists::render_dependencies(
                 app,
                 ui,
