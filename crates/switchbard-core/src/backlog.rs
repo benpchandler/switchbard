@@ -520,7 +520,12 @@ fn parse_task_file(path: &Path, source: BacklogTaskSource) -> Result<BacklogTask
         dependencies: yaml_string_list(&frontmatter, "dependencies"),
         references: yaml_string_list(&frontmatter, "references"),
         milestone: yaml_string(&frontmatter, "milestone"),
-        parent: yaml_string(&frontmatter, "parent"),
+        // The real `backlog` CLI (v1.47.1) writes `parent_task_id:`, not
+        // `parent:` — confirmed empirically in the 2026-08-05 QA audit
+        // (docs/qa/2026-08-05-parity-qa.md, Defect 1). Fall back to the old
+        // key so fixtures/tasks written before this fix still parse.
+        parent: yaml_string(&frontmatter, "parent_task_id")
+            .or_else(|| yaml_string(&frontmatter, "parent")),
         created_date: yaml_string(&frontmatter, "created_date"),
         updated_date: yaml_string(&frontmatter, "updated_date"),
         description,
@@ -784,6 +789,35 @@ Existing note.
         assert_eq!(task.acceptance_criteria[0].index, 1);
         assert!(!task.acceptance_criteria[0].checked);
         assert!(task.acceptance_criteria[1].checked);
+    }
+
+    /// Regression for the 2026-08-05 QA audit's HIGH defect: the real
+    /// `backlog` CLI writes `parent_task_id:`, not `parent:`. This is the
+    /// fast, in-process complement to `backlog_cli_mutations.rs`'s real-CLI
+    /// round trip — it pins the parser's key preference directly, plus the
+    /// fallback for `parent:`-only fixtures written before this fix.
+    #[test]
+    fn parses_parent_task_id_and_falls_back_to_the_old_parent_key() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let real_cli_path = dir.path().join("task-2 - Subtask.md");
+        fs::write(
+            &real_cli_path,
+            "---\nid: TASK-2\ntitle: Subtask\nparent_task_id: TASK-1\n---\n",
+        )
+        .unwrap();
+        let real_cli_task = parse_task_file(&real_cli_path, BacklogTaskSource::Active).unwrap();
+        assert_eq!(real_cli_task.parent.as_deref(), Some("TASK-1"));
+
+        let old_fixture_path = dir.path().join("task-3 - Old fixture.md");
+        fs::write(
+            &old_fixture_path,
+            "---\nid: TASK-3\ntitle: Old fixture\nparent: TASK-1\n---\n",
+        )
+        .unwrap();
+        let old_fixture_task =
+            parse_task_file(&old_fixture_path, BacklogTaskSource::Active).unwrap();
+        assert_eq!(old_fixture_task.parent.as_deref(), Some("TASK-1"));
     }
 
     #[test]

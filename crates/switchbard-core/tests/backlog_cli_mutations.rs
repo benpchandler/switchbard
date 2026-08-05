@@ -331,22 +331,20 @@ fn swap_backlog_label_atomically_replaces_one_label_with_another() {
     assert!(task.labels.contains(&"dispatching".to_string()));
 }
 
-/// DEFECT (filed in the 2026-08-05 QA parity audit, see
-/// `docs/qa/2026-08-05-parity-qa.md`, severity HIGH): the real `backlog` CLI
-/// (v1.47.1, confirmed empirically) writes a subtask's parent as
-/// `parent_task_id:` in frontmatter, but `parse_task_file`
-/// (`switchbard-core/src/backlog.rs`) reads the key `"parent"`. The two never
-/// match, so `BacklogTask::parent` is silently `None` for every real subtask
-/// — the entire task-17 sub-task hierarchy feature (roll-up badges, tree
-/// expand/collapse, "+ Subtask") is unreachable against a real Backlog.md
-/// project. It only appears to work in `switchbard-gui`'s tests because
-/// those construct `BacklogTask { parent: Some(...), .. }` directly in Rust,
-/// bypassing the parser entirely. This test pins the *intended* behavior and
-/// is `#[ignore]`d so CI stays green until `switchbard-core/src/backlog.rs`
-/// is fixed to read `parent_task_id` (or the CLI is confirmed to have
-/// changed key names) — remove the `#[ignore]` once that lands.
+/// FIXED (was HIGH DEFECT, filed in the 2026-08-05 QA parity audit, see
+/// `docs/qa/2026-08-05-parity-qa.md`): the real `backlog` CLI (v1.47.1,
+/// confirmed empirically) writes a subtask's parent as `parent_task_id:` in
+/// frontmatter, but `parse_task_file` (`switchbard-core/src/backlog.rs`) read
+/// the key `"parent"`. The two never matched, so `BacklogTask::parent` was
+/// silently `None` for every real subtask — the entire task-17 sub-task
+/// hierarchy feature (roll-up badges, tree expand/collapse, "+ Subtask") was
+/// unreachable against a real Backlog.md project. It only appeared to work in
+/// `switchbard-gui`'s tests because those construct
+/// `BacklogTask { parent: Some(...), .. }` directly in Rust, bypassing the
+/// parser entirely. `parse_task_file` now reads `parent_task_id` first,
+/// falling back to `parent` for fixtures/tasks written before this fix. This
+/// test pins that behavior end to end against a real fixture repo.
 #[test]
-#[ignore = "DEFECT: parser reads frontmatter key \"parent\" but the real CLI writes \"parent_task_id\" — see docs/qa/2026-08-05-parity-qa.md"]
 fn create_backlog_task_wires_a_subtask_parent() {
     let fixture = fixture_repo();
     let root = fixture.path();
@@ -376,8 +374,9 @@ fn create_backlog_task_wires_a_subtask_parent() {
 /// `sorts_task_id_decimals_numerically` (backlog.rs's own unit test) already
 /// proves the parser orders those correctly; this proves the *id shape*
 /// itself end to end against the real CLI, not just a hand-built fixture.
+/// Previously blocked on the same `parent`/`parent_task_id` defect as the
+/// test above — see `docs/qa/2026-08-05-parity-qa.md`.
 #[test]
-#[ignore = "DEFECT: depends on BacklogTask::parent, broken by the same parent/parent_task_id key mismatch — see docs/qa/2026-08-05-parity-qa.md"]
 fn subtask_ids_are_decimal_children_of_the_parent_id() {
     let fixture = fixture_repo();
     let root = fixture.path();
