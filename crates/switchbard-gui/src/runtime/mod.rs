@@ -355,6 +355,15 @@ pub struct BacklogNewTaskState {
     pub status: String,
     pub priority: String,
     pub acceptance_criteria: String,
+    /// QA parity matrix LOW gap: labels/assignee/milestone/dependencies were
+    /// only settable after creation, via the detail pane's own editors. Same
+    /// comma-separated draft-text shape as `BacklogEditorState`'s
+    /// labels/assignees/dependencies fields (`detail_lists::split_csv`
+    /// parses both).
+    pub labels: String,
+    pub assignees: String,
+    pub milestone: String,
+    pub dependencies: String,
 }
 
 impl Default for BacklogNewTaskState {
@@ -368,6 +377,10 @@ impl Default for BacklogNewTaskState {
             status: "To Do".to_string(),
             priority: "medium".to_string(),
             acceptance_criteria: String::new(),
+            labels: String::new(),
+            assignees: String::new(),
+            milestone: String::new(),
+            dependencies: String::new(),
         }
     }
 }

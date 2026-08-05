@@ -90,6 +90,10 @@ fn create_fixture_task(root: &Path) -> String {
         priority: "medium".to_string(),
         acceptance_criteria: vec!["First criterion".to_string()],
         parent: None,
+        labels: vec![],
+        assignees: vec![],
+        milestone: None,
+        dependencies: vec![],
     };
     let output = create_backlog_task(root, &task).expect("create_backlog_task should succeed");
     assert!(
@@ -130,6 +134,10 @@ fn edit_backlog_task_persists_every_field_the_detail_pane_editor_exposes() {
             priority: "medium".to_string(),
             acceptance_criteria: vec![],
             parent: None,
+            labels: vec![],
+            assignees: vec![],
+            milestone: None,
+            dependencies: vec![],
         },
     )
     .expect("create second fixture task");
@@ -331,6 +339,46 @@ fn swap_backlog_label_atomically_replaces_one_label_with_another() {
     assert!(task.labels.contains(&"dispatching".to_string()));
 }
 
+/// QA parity matrix LOW gap: labels/assignee/milestone/dependencies are now
+/// settable at `NewBacklogTask` creation time, not just afterward via
+/// `edit_backlog_task`. Proves the flags `create_backlog_task` now builds
+/// (`-l`, `-a`, `-m`, `--depends-on` — verified against a real `backlog task
+/// create --help` before implementing, not guessed) actually persist.
+#[test]
+fn create_backlog_task_wires_labels_assignee_milestone_and_dependencies() {
+    let fixture = fixture_repo();
+    let root = fixture.path();
+    let dependency_id = create_fixture_task(root);
+
+    let output = create_backlog_task(
+        root,
+        &NewBacklogTask {
+            title: "Fully specified task".to_string(),
+            description: String::new(),
+            status: "To Do".to_string(),
+            priority: "medium".to_string(),
+            acceptance_criteria: vec![],
+            parent: None,
+            labels: vec!["frontend".to_string(), "urgent".to_string()],
+            assignees: vec!["ben".to_string()],
+            milestone: Some("v1".to_string()),
+            dependencies: vec![dependency_id.clone()],
+        },
+    )
+    .expect("create with labels/assignee/milestone/dependencies should succeed");
+
+    let project = reload(root);
+    let task = project
+        .tasks
+        .iter()
+        .find(|t| t.title == "Fully specified task")
+        .unwrap_or_else(|| panic!("created task should be present: {output}"));
+    assert_eq!(task.labels, vec!["frontend", "urgent"]);
+    assert_eq!(task.assignees, vec!["ben"]);
+    assert_eq!(task.milestone.as_deref(), Some("v1"));
+    assert_eq!(task.dependencies, vec![dependency_id]);
+}
+
 /// FIXED (was HIGH DEFECT, filed in the 2026-08-05 QA parity audit, see
 /// `docs/qa/2026-08-05-parity-qa.md`): the real `backlog` CLI (v1.47.1,
 /// confirmed empirically) writes a subtask's parent as `parent_task_id:` in
@@ -357,6 +405,10 @@ fn create_backlog_task_wires_a_subtask_parent() {
         priority: "medium".to_string(),
         acceptance_criteria: vec![],
         parent: Some(parent_id.clone()),
+        labels: vec![],
+        assignees: vec![],
+        milestone: None,
+        dependencies: vec![],
     };
     create_backlog_task(root, &subtask).expect("subtask create should succeed");
 
@@ -392,6 +444,10 @@ fn subtask_ids_are_decimal_children_of_the_parent_id() {
                 priority: "medium".to_string(),
                 acceptance_criteria: vec![],
                 parent: Some(parent_id.clone()),
+                labels: vec![],
+                assignees: vec![],
+                milestone: None,
+                dependencies: vec![],
             },
         )
         .expect("subtask create should succeed");

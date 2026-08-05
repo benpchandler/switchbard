@@ -165,6 +165,19 @@ pub struct NewBacklogTask {
     pub acceptance_criteria: Vec<String>,
     /// Parent task id (task-17's create-subtask), passed as `-p`/`--parent`.
     pub parent: Option<String>,
+    /// QA parity matrix LOW gap: set at creation time via `-l`, same
+    /// comma-joined shape `BacklogTaskPatch::labels` uses for edit.
+    pub labels: Vec<String>,
+    /// Passed as `-a`, comma-joined (verified against `backlog task create
+    /// --help`, same flag `edit_backlog_task` already uses for
+    /// `BacklogTaskPatch::assignees`).
+    pub assignees: Vec<String>,
+    /// Passed as `-m` (verified against `backlog task create --help`).
+    pub milestone: Option<String>,
+    /// Passed as `--depends-on`, comma-joined (verified against `backlog
+    /// task create --help`; same flag `edit_backlog_task` uses for
+    /// `BacklogTaskPatch::dependencies`).
+    pub dependencies: Vec<String>,
 }
 
 pub fn is_backlog_project(root: &Path) -> bool {
@@ -455,6 +468,22 @@ pub fn create_backlog_task(project_root: &Path, task: &NewBacklogTask) -> Result
     if let Some(parent) = &task.parent {
         args.push("-p".into());
         args.push(parent.clone().into());
+    }
+    if !task.labels.is_empty() {
+        args.push("-l".into());
+        args.push(task.labels.join(",").into());
+    }
+    if !task.assignees.is_empty() {
+        args.push("-a".into());
+        args.push(task.assignees.join(",").into());
+    }
+    if let Some(milestone) = &task.milestone {
+        args.push("-m".into());
+        args.push(milestone.clone().into());
+    }
+    if !task.dependencies.is_empty() {
+        args.push("--depends-on".into());
+        args.push(task.dependencies.join(",").into());
     }
     run_backlog(project_root, args)
 }
