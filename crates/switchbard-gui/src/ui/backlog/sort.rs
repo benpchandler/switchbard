@@ -246,6 +246,7 @@ mod tests {
             assignees: vec![],
             labels: vec![],
             dependencies: vec![],
+            references: vec![],
             milestone: None,
             parent: None,
             created_date: None,
