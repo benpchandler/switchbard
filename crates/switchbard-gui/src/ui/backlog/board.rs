@@ -316,16 +316,18 @@ fn paint_card(
     selected: bool,
     bulk_selected: bool,
 ) -> (egui::Response, bool, egui::Rect) {
-    // The fill is always `extreme_bg_color` — every text color rendered
+    // The fill is always `theme::card_bg()` — every text color rendered
     // inside a strip is tuned against that exact card color (see
-    // `theme.rs`'s palette doc). Selection is a border color change
-    // instead of a translucent overlay: layering `visuals().selection.
-    // bg_fill` (untuned, stock egui) at partial alpha over the card
-    // produced a muddy composite that failed WCAG AA on the dark
-    // theme — a stroke can't create that problem since the audit only
-    // measures fills and text, never strokes.
+    // `theme.rs`'s palette doc). Not `ui.visuals().extreme_bg_color`: the
+    // owner UX pass repointed that egui slot to input fields instead, so
+    // reading it here would give cards the wrong (recessed, not raised)
+    // tone. Selection is a border color change instead of a translucent
+    // overlay: layering `visuals().selection.bg_fill` (untuned, stock egui)
+    // at partial alpha over the card produced a muddy composite that
+    // failed WCAG AA on the dark theme — a stroke can't create that
+    // problem since the audit only measures fills and text, never strokes.
     let frame = egui::Frame::default()
-        .fill(ui.visuals().extreme_bg_color)
+        .fill(theme::card_bg())
         .stroke(if selected {
             egui::Stroke::new(2.0, theme::sky())
         } else {

@@ -304,7 +304,7 @@ fn render_repo_card(
                 if listening > 0 {
                     theme::painted_dot_pulse(ui, theme::green(), listening);
                 } else {
-                    theme::painted_dot(ui, egui::Color32::GRAY);
+                    theme::painted_dot(ui, theme::idle_dot());
                 }
                 ui.add_space(2.0);
                 ui.heading(&repo.name);
@@ -618,7 +618,7 @@ fn headline_dot(
     if drift_needs_attention(&m.remote_drift) {
         return (theme::sky(), 0);
     }
-    (egui::Color32::GRAY, 0)
+    (theme::idle_dot(), 0)
 }
 
 /// One inline "health" zone: dirty + drift on a single line. Both fields
@@ -1147,7 +1147,7 @@ fn state_dot_color(row_state: &RowState) -> egui::Color32 {
         RowState::Running { .. } => theme::green(),
         RowState::ExternalLive { .. } => theme::sky(),
         RowState::Blocked { .. } => theme::warn_orange(),
-        RowState::Idle => egui::Color32::GRAY,
+        RowState::Idle => theme::idle_dot(),
     }
 }
 
@@ -1257,7 +1257,7 @@ fn render_unattributed_card(ui: &mut egui::Ui, list: &[AttributedListener], pend
         .show(ui, |ui| {
             state
                 .show_header(ui, |ui| {
-                    theme::painted_dot_hollow(ui, egui::Color32::GRAY);
+                    theme::painted_dot_hollow(ui, theme::idle_dot());
                     ui.add_space(2.0);
                     ui.label(egui::RichText::new("Unattributed listeners").strong());
                     ui.label(

@@ -111,7 +111,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                     if repo_count > 0 {
                         theme::painted_dot_pulse(ui, theme::green(), repo_count);
                     } else {
-                        theme::painted_dot(ui, egui::Color32::GRAY);
+                        theme::painted_dot(ui, theme::idle_dot());
                     }
                     if theme::caret_button(ui, expanded).clicked() {
                         if expanded {
@@ -190,7 +190,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                             if n > 0 {
                                 theme::painted_dot_small_pulse(ui, theme::green(), n);
                             } else {
-                                theme::painted_dot_small(ui, egui::Color32::DARK_GRAY);
+                                theme::painted_dot_small(ui, theme::idle_dot());
                             }
                             let branch = w.branch.as_deref().unwrap_or("(detached)");
                             ui.label(egui::RichText::new(branch).small());

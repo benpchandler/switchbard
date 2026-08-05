@@ -14,6 +14,7 @@
 
 use super::{Pending, Snapshot};
 use crate::app::HiveApp;
+use crate::ui::theme;
 use eframe::egui;
 
 const MIN_WIDTH: f32 = 320.0;
@@ -32,10 +33,16 @@ pub(super) fn render_detail_rail(
     snap: &Snapshot,
     pending: &mut Pending,
 ) {
+    // Owner UX pass: `theme::rail_bg()` instead of the default panel fill
+    // (`ctx.style()`'s own `side_top_panel` frame would otherwise match the
+    // board's own `panel_fill`), so the rail reads as its own persistent
+    // workspace tier rather than "more board."
+    let frame = egui::Frame::side_top_panel(&ctx.style()).fill(theme::rail_bg());
     egui::SidePanel::right("backlog_detail_rail")
         .resizable(true)
         .default_width(DEFAULT_WIDTH)
         .width_range(MIN_WIDTH..=MAX_WIDTH)
+        .frame(frame)
         .show(ctx, |ui| {
             super::detail::render_task_detail(app, ui, snap, pending);
         });

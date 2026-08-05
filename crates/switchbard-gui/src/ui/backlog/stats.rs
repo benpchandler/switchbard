@@ -201,7 +201,9 @@ fn render_series(ui: &mut egui::Ui, label: &str, series: &BurndownSeries) {
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(CHART_WIDTH, CHART_HEIGHT), egui::Sense::hover());
     let painter = ui.painter();
-    painter.rect_filled(rect, 3.0, ui.visuals().extreme_bg_color);
+    // `theme::card_bg()`, not `ui.visuals().extreme_bg_color` — the owner UX
+    // pass repointed that egui slot to input fields (see theme.rs's doc).
+    painter.rect_filled(rect, 3.0, theme::card_bg());
 
     let max_remaining = series
         .points

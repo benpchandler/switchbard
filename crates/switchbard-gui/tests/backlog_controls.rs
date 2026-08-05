@@ -1342,6 +1342,14 @@ fn board_drag_and_drop_between_columns_queues_a_status_change() {
 
 #[test]
 fn board_card_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
+    // TASK-35 (independent verifier finding on the first version of this
+    // test, c7e6624): a Board card renders its own task-id label
+    // unconditionally (`paint_card`, board.rs) — `query_all_by_label(
+    // "TASK-2").next().is_some()` after the click would pass even if the
+    // rail never updated at all, since the CARD alone already satisfies it.
+    // Counting exact-match "TASK-2" labels before vs. after the click (1,
+    // the card only -> 2, card + rail) is the differential that actually
+    // requires the rail to have changed.
     let mut harness = list_harness_with_tasks(vec![
         task("TASK-1", "First card", "To Do"),
         task("TASK-2", "Second card", "To Do"),
@@ -1353,19 +1361,32 @@ fn board_card_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
         harness.query_all_by_label("TASK-1").next().is_some(),
         "sanity: the rail starts on the auto-selected first task"
     );
+    assert_eq!(
+        harness.query_all_by_label("TASK-2").count(),
+        1,
+        "before the click, TASK-2's id should appear exactly once (its \
+         board card only — not yet in the rail)"
+    );
 
     click_at_node_center(&mut harness, "Second card");
     harness.run();
 
-    assert!(
-        harness.query_all_by_label("TASK-2").next().is_some(),
-        "the rail should now show TASK-2's detail (its id label, unique to \
-         the rail's header)"
+    assert_eq!(
+        harness.query_all_by_label("TASK-2").count(),
+        2,
+        "after the click, TASK-2's id should appear twice: its board card \
+         plus the rail's own header, proving the rail actually updated"
     );
 }
 
 #[test]
 fn list_row_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
+    // Unlike Board/Digest cards, a List row never renders a bare task-id
+    // label of its own (it's always "{id}  {title}" combined — see list.rs)
+    // — confirmed empirically (0 exact "TASK-2" matches before the click)
+    // rather than assumed, so this one was never vulnerable to TASK-35's
+    // finding. Still asserts the same 0-before/1-after differential for
+    // consistency with the Board/Digest versions of this test.
     let mut harness = list_harness_with_tasks(vec![
         task("TASK-1", "First", "To Do"),
         task("TASK-2", "Second", "To Do"),
@@ -1373,18 +1394,24 @@ fn list_row_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
     harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
     harness.run();
     assert!(harness.query_all_by_label("TASK-1").next().is_some());
+    assert_eq!(harness.query_all_by_label("TASK-2").count(), 0);
 
     harness.get_by_label("TASK-2  Second").click();
     harness.run();
 
-    assert!(
-        harness.query_all_by_label("TASK-2").next().is_some(),
+    assert_eq!(
+        harness.query_all_by_label("TASK-2").count(),
+        1,
         "the rail should show TASK-2's detail after selecting its row"
     );
 }
 
 #[test]
 fn digest_card_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
+    // TASK-35's fix applies equally here: a Digest card also renders its
+    // own task-id label unconditionally (`render_strip`, digest.rs), so
+    // this counts exact-match occurrences before/after the click rather
+    // than just checking presence — see the Board test's comment above.
     let boring = task("TASK-0", "Boring backlog item", "To Do");
     let mut in_progress = task("TASK-1", "Active work", "In Progress");
     in_progress.updated_date = Some("2026-08-01 12:00".to_string());
@@ -1395,13 +1422,21 @@ fn digest_card_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
         harness.query_all_by_label("TASK-0").next().is_some(),
         "sanity: the rail starts on the auto-selected first task"
     );
+    assert_eq!(
+        harness.query_all_by_label("TASK-1").count(),
+        1,
+        "before the click, TASK-1's id should appear exactly once (its \
+         digest card only — not yet in the rail)"
+    );
 
     click_at_node_center(&mut harness, "Active work");
     harness.run();
 
-    assert!(
-        harness.query_all_by_label("TASK-1").next().is_some(),
-        "the rail should now show TASK-1's ('Active work') detail"
+    assert_eq!(
+        harness.query_all_by_label("TASK-1").count(),
+        2,
+        "after the click, TASK-1's id should appear twice: its digest card \
+         plus the rail's own header, proving the rail actually updated"
     );
 }
 

@@ -13,25 +13,34 @@ use switchbard_core::{ordered_status_vocabulary, BACKLOG_PRIORITIES};
 
 /// The lens tab strip shown under the summary line: List / Board /
 /// Milestones / Statistics. Switching lenses does not clear the current
-/// filters or selection — every lens reads the same `Snapshot`.
+/// filters or selection — every lens reads the same `Snapshot`. Owner UX
+/// pass (2026-08-05): wrapped in its own `nav_bg()` band, matching the
+/// top bar's view-tab strip, so navigation reads as its own zone rather
+/// than blending into the toolbar/content around it.
 pub(super) fn render_lens_tabs(app: &mut HiveApp, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        for lens in [
-            BacklogLens::Digest,
-            BacklogLens::List,
-            BacklogLens::Board,
-            BacklogLens::Milestones,
-            BacklogLens::Portfolio,
-            BacklogLens::Statistics,
-        ] {
-            if ui
-                .selectable_label(app.backlog_view.lens == lens, lens.label())
-                .clicked()
-            {
-                app.backlog_view.lens = lens;
-            }
-        }
-    });
+    egui::Frame::default()
+        .fill(theme::nav_bg())
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(8, 3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for lens in [
+                    BacklogLens::Digest,
+                    BacklogLens::List,
+                    BacklogLens::Board,
+                    BacklogLens::Milestones,
+                    BacklogLens::Portfolio,
+                    BacklogLens::Statistics,
+                ] {
+                    if ui
+                        .selectable_label(app.backlog_view.lens == lens, lens.label())
+                        .clicked()
+                    {
+                        app.backlog_view.lens = lens;
+                    }
+                }
+            });
+        });
 }
 
 pub(super) fn render_summary(

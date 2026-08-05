@@ -25,7 +25,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
             // label right after it.
             let (last_error, total, attributed) = scan_summary(app);
             if let Some(err) = &last_error {
-                ui.colored_label(egui::Color32::RED, format!("error: {err}"));
+                ui.colored_label(theme::danger(), format!("error: {err}"));
             }
             ui.separator();
             ui.label(format!("{total} listeners"));
@@ -41,11 +41,23 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     });
 }
 
+/// Owner UX pass (2026-08-05): the view switcher gets its own `nav_bg()`
+/// band, distinct from the plain panel background the filter row sits on
+/// right next to it — navigation should read as its own zone, not blend
+/// into the content controls beside it.
 fn render_view_tabs(app: &mut HiveApp, ui: &mut egui::Ui) {
-    ui.label("view:");
-    ui.selectable_value(&mut app.view_tab, ViewTab::Servers, "Servers");
-    ui.selectable_value(&mut app.view_tab, ViewTab::AgentContext, "Agent Context");
-    ui.selectable_value(&mut app.view_tab, ViewTab::Backlog, "Backlog");
+    egui::Frame::default()
+        .fill(theme::nav_bg())
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(8, 3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("view:");
+                ui.selectable_value(&mut app.view_tab, ViewTab::Servers, "Servers");
+                ui.selectable_value(&mut app.view_tab, ViewTab::AgentContext, "Agent Context");
+                ui.selectable_value(&mut app.view_tab, ViewTab::Backlog, "Backlog");
+            });
+        });
 }
 
 fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {

@@ -901,7 +901,7 @@ fn headline_color(map: &AgentContextMap) -> egui::Color32 {
     if map.items.iter().any(|i| i.warning.is_some()) {
         theme::amber()
     } else if map.items.is_empty() {
-        egui::Color32::GRAY
+        theme::idle_dot()
     } else {
         theme::lavender()
     }

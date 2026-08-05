@@ -640,6 +640,39 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     seed_backlog_project(&stats_app);
     let stats = harness(stats_app);
 
+    // Owner UX pass (2026-08-05): the onboarding modal's two "success"
+    // buttons (`theme::success_button`) were never in any fixture before
+    // this pass — the gap that let their white-on-`theme::green()` fill
+    // silently fail AA in dark mode (~2.25:1) for who knows how long.
+    // `app.onboarding` is pre-seeded to `Ready` (bypassing `render`'s own
+    // lazy-init `start_discovery` call) so this harness never kicks off a
+    // real filesystem scan of `$HOME` — the same hermeticity concern
+    // `app_with_items`'s own doc comment already flags.
+    let mut onboarding_empty_app = seeded_app();
+    onboarding_empty_app.config.ui.theme = theme;
+    onboarding_empty_app.config.ui.onboarding_dismissed = false;
+    onboarding_empty_app.config.repos.clear();
+    *onboarding_empty_app.onboarding.lock().unwrap() =
+        switchbard_gui::ui::onboarding::DiscoveryState::Ready { rows: vec![] };
+    let onboarding_empty = harness(onboarding_empty_app);
+
+    let mut onboarding_picker_app = seeded_app();
+    onboarding_picker_app.config.ui.theme = theme;
+    onboarding_picker_app.config.ui.onboarding_dismissed = false;
+    onboarding_picker_app.config.repos.clear();
+    *onboarding_picker_app.onboarding.lock().unwrap() =
+        switchbard_gui::ui::onboarding::DiscoveryState::Ready {
+            rows: vec![switchbard_gui::ui::onboarding::OnboardingRow {
+                repo: switchbard_core::discover::DiscoveredRepo {
+                    path: PathBuf::from(REPO_PATH),
+                    name: REPO_NAME.to_string(),
+                    modified: std::time::SystemTime::UNIX_EPOCH,
+                },
+                selected: true,
+            }],
+        };
+    let onboarding_picker = harness(onboarding_picker_app);
+
     // Owner UX pass (2026-08-05): the Settings window (repo add/remove,
     // reachable from any view now that "Tracked repos" itself is
     // Servers-only) only ever renders with `settings_open` set — none of
@@ -657,6 +690,14 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
         (
             format!("Servers view (sidebar collapsed){suffix}"),
             sidebar_collapsed,
+        ),
+        (
+            format!("Onboarding · no repos found{suffix}"),
+            onboarding_empty,
+        ),
+        (
+            format!("Onboarding · repo picker (one selected){suffix}"),
+            onboarding_picker,
         ),
         (format!("Agent Context view{suffix}"), agent),
         (

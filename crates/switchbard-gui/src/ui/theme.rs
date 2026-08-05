@@ -79,13 +79,33 @@ struct Palette {
     /// The "highlighter on a page" tint marking a repo's primary worktree.
     primary_worktree_tint: Color32,
     /// The window/central-panel background — Flight Strips' "board" /
-    /// Operator's Console's "chassis".
+    /// Operator's Console's "chassis". The nav strip (`nav_bg`) and rail
+    /// (`rail_bg`) sit visually *above* this; recessed surfaces (`faint_bg`,
+    /// and — via `apply()`'s `visuals.extreme_bg_color` — every text input)
+    /// sit *below* it; cards (`card_bg`) sit *above* both.
     panel_fill: Color32,
-    /// Recessed background (kanban column bodies, code/notes blocks).
+    /// Recessed background: kanban column bodies, code/notes blocks, and
+    /// (owner UX pass, 2026-08-05) every text input's fill — a sunken field
+    /// you type *into*, the opposite metaphor from a raised card you read.
     faint_bg: Color32,
-    /// Raised background (flight-strip cards, the markdown description
-    /// frame) — Flight Strips' "strip" / Operator's Console's lit panel.
-    extreme_bg: Color32,
+    /// Raised background — flight-strip/digest cards, the markdown
+    /// description frame, the Statistics burndown chart: Flight Strips'
+    /// "strip" / Operator's Console's lit panel. Named `card_bg` (not
+    /// `extreme_bg`, egui's own field name for this slot) because the owner
+    /// UX pass split it from input fields, which used to share this exact
+    /// value via `visuals.extreme_bg_color` — the "everything feels
+    /// dominated by gray" complaint traced in part to a card and a text
+    /// input being visually identical. See `card_bg()`'s doc.
+    card_bg: Color32,
+    /// The top-bar view-tabs / lens-tabs strip's own background band —
+    /// distinct from `panel_fill` so navigation reads as its own zone
+    /// rather than blending into the content below it (owner UX pass).
+    nav_bg: Color32,
+    /// The Backlog view's persistent detail rail's own background (owner UX
+    /// pass, TASK-34) — a third workspace tier alongside the board
+    /// (`panel_fill`) and its cards (`card_bg`), so the rail reads as its
+    /// own persistent zone rather than "more board."
+    rail_bg: Color32,
 }
 
 // Flight Strips (light, direction B) — board #DFE3E6, strip #FBFBF9,
@@ -108,8 +128,10 @@ const LIGHT: Palette = Palette {
     muted_text: Color32::from_rgb(0x50, 0x5A, 0x63), // ~5.5:1
     primary_worktree_tint: Color32::from_rgba_premultiplied(28, 25, 11, 28),
     panel_fill: Color32::from_rgb(0xDF, 0xE3, 0xE6), // "board"
-    faint_bg: Color32::from_rgb(0xE7, 0xEA, 0xEC),   // column recess, between board/strip
-    extreme_bg: Color32::from_rgb(0xFB, 0xFB, 0xF9), // "strip"
+    faint_bg: Color32::from_rgb(0xE2, 0xE6, 0xE8),   // recess + input fields, between board/strip
+    card_bg: Color32::from_rgb(0xFB, 0xFB, 0xF9),    // "strip"
+    nav_bg: Color32::from_rgb(0xED, 0xF0, 0xF1),     // raised tab strip, near strip brightness
+    rail_bg: Color32::from_rgb(0xE3, 0xE7, 0xE9),    // detail rail, a shade off the board
 };
 
 // Operator's Console (dark, direction A) — chassis #221F1B, lamp amber
@@ -117,9 +139,19 @@ const LIGHT: Palette = Palette {
 // text needs the *opposite* tuning direction from the light theme (bright
 // enough, not dark enough); `warn_orange` is brightened past the mock's
 // literal #E06C4F because that exact hex clears AA only against the darker
-// `panel_fill`, not the slightly lighter `extreme_bg` cards it also renders
-// on. `danger` here is a bright hot-orange for the same reason `danger` in
+// `panel_fill`, not the slightly lighter `card_bg` cards it also renders on.
+// `danger` here is a bright hot-orange for the same reason `danger` in
 // LIGHT isn't reused for `danger_button`'s fill — see the field doc.
+//
+// Owner UX pass (2026-08-05): the original `faint_bg`/`panel_fill`/
+// `extreme_bg` trio spanned only #1C1A17 -> #221F1B -> #2B2721 — a ~9-value
+// swing per channel on a 0-255 scale, barely perceptible, and the root
+// cause underneath "everything feels dominated by gray" for this theme
+// specifically (Flight Strips' equivalent spread is ~3x wider). Widened to
+// four visually distinct tiers — recessed/input (`faint_bg`), ground
+// (`panel_fill`), rail, and raised/card (`card_bg`, brightest) — each
+// re-verified by `legibility_audit` against whatever it actually sits
+// behind, not assumed.
 const DARK: Palette = Palette {
     green: Color32::from_rgb(0x57, 0xC2, 0x6A), // lamp jade, ~6.6:1
     amber: Color32::from_rgb(0xE8, 0xB0, 0x4B), // lamp amber, ~7.6:1
@@ -133,8 +165,10 @@ const DARK: Palette = Palette {
     muted_text: Color32::from_rgb(0xAD, 0xA6, 0x97), // ~6.1:1
     primary_worktree_tint: Color32::from_rgba_premultiplied(28, 25, 11, 28),
     panel_fill: Color32::from_rgb(0x22, 0x1F, 0x1B), // chassis
-    faint_bg: Color32::from_rgb(0x1C, 0x1A, 0x17),   // recessed
-    extreme_bg: Color32::from_rgb(0x2B, 0x27, 0x21), // lit panel / selected row
+    faint_bg: Color32::from_rgb(0x17, 0x15, 0x12),   // recessed + input fields, darker
+    card_bg: Color32::from_rgb(0x37, 0x31, 0x2A),    // lit panel / selected row, brighter
+    nav_bg: Color32::from_rgb(0x2C, 0x28, 0x22),     // raised tab strip
+    rail_bg: Color32::from_rgb(0x1E, 0x1B, 0x18),    // detail rail, a shade off the chassis
 };
 
 fn palette_for(choice: ThemeChoice) -> &'static Palette {
@@ -190,11 +224,43 @@ pub fn muted_text() -> Color32 {
 pub fn primary_worktree_tint() -> Color32 {
     active_palette().primary_worktree_tint
 }
-/// Recessed background (kanban column bodies, code/notes blocks). See
+/// Recessed background (kanban column bodies, code/notes blocks, and every
+/// text input's fill via `apply()`'s `visuals.extreme_bg_color`). See
 /// `board::render_column` for why the Board lens can't just rely on
 /// `ui.visuals().faint_bg_color` at its call site.
 pub fn faint_bg() -> Color32 {
     active_palette().faint_bg
+}
+/// Raised card surface (flight-strip/digest cards, the Statistics burndown
+/// chart) — deliberately its own accessor, not `ui.visuals().extreme_bg_
+/// color`, since the owner UX pass repointed that egui slot to `faint_bg`
+/// for input fields instead. Call sites that painted a card via `ui.visuals
+/// ().extreme_bg_color` before this pass should read this instead.
+pub fn card_bg() -> Color32 {
+    active_palette().card_bg
+}
+/// The top-bar view-tabs / lens-tabs strip's own background band (owner UX
+/// pass) — wrap that row in a `Frame::default().fill(theme::nav_bg())` so
+/// navigation reads as its own zone.
+pub fn nav_bg() -> Color32 {
+    active_palette().nav_bg
+}
+/// The Backlog view's persistent detail rail's own background (owner UX
+/// pass, TASK-34's rail) — a third workspace tier alongside the board and
+/// its cards.
+pub fn rail_bg() -> Color32 {
+    active_palette().rail_bg
+}
+/// "Idle" / "no activity" indicator dot — owner UX pass (2026-08-05):
+/// centralizes what was six duplicated `egui::Color32::GRAY` call sites
+/// (sidebar.rs, workspace/mod.rs, agent_context.rs). A flat, untethered
+/// gray doesn't shift with the active theme the way every other semantic
+/// color in this file does, which is part of what "everything feels
+/// dominated by gray" was naming — this reuses `muted_text()`, already
+/// AA-tuned per theme, since "idle" and "de-emphasized" are the same
+/// semantic here.
+pub fn idle_dot() -> Color32 {
+    muted_text()
 }
 
 // Glyph icons — painted directly via `Painter` so they don't depend on which
@@ -228,6 +294,20 @@ fn danger_fill() -> Color32 {
     Color32::from_rgb(0xB4, 0x3C, 0x3C) // ~5.7:1 with white text
 }
 
+/// The affirmative-button fill (onboarding's "Add selected" / "Browse for a
+/// folder…"), theme-independent for the same reason as `danger_fill()`:
+/// white-on-fill contrast depends only on the fill. Found *while* writing
+/// `success_button()` (owner UX pass, 2026-08-05), not before: the
+/// call sites this replaces used `theme::green()` directly as a button
+/// fill — Operator's Console's `green()` is a bright lamp-jade (~6.6:1 as
+/// *text* against the dark chassis), which does not clear AA with *white
+/// text on top of it*, the same theme-vs-button-fill conflict `danger`
+/// already had to solve. No fixture exercised the onboarding overlay to
+/// catch this before now — one added below.
+fn success_fill() -> Color32 {
+    Color32::from_rgb(0x0E, 0x66, 0x2B) // Flight Strips' own green(), ~5.5:1 with white text
+}
+
 /// Destructive button (Kill, Stop, Confirm, Archive) — `danger_fill()` plus
 /// explicit white text. The default button text color is dark, which only
 /// reaches ~2.1:1 contrast against that fill. This helper centralizes both
@@ -235,6 +315,19 @@ fn danger_fill() -> Color32 {
 pub fn danger_button(text: &str) -> egui::Button<'static> {
     egui::Button::new(egui::RichText::new(text.to_string()).color(Color32::WHITE))
         .fill(danger_fill())
+}
+
+/// Affirmative/primary-action button (onboarding's "Add selected", "Browse
+/// for a folder…") — `success_fill()` plus explicit white text, the same
+/// "white text needs a fill dark enough for *that* pair, independent of
+/// theme" reasoning `danger_button` documents. Owner UX pass (2026-08-05):
+/// centralizes what was two duplicated `Button::new(...).fill(theme::green
+/// ())` call sites in onboarding.rs — which, per `success_fill()`'s own
+/// doc, were an actual (previously untested) AA failure in dark mode, not
+/// just a DRY nit.
+pub fn success_button(text: &str) -> egui::Button<'static> {
+    egui::Button::new(egui::RichText::new(text.to_string()).color(Color32::WHITE))
+        .fill(success_fill())
 }
 
 /// Filled circle indicator — static, single dot. For idle / classifier badges.
@@ -533,7 +626,26 @@ pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
     visuals.panel_fill = palette.panel_fill;
     visuals.window_fill = palette.panel_fill;
     visuals.faint_bg_color = palette.faint_bg;
-    visuals.extreme_bg_color = palette.extreme_bg;
+    // Owner UX pass (2026-08-05): `extreme_bg_color` is egui's own name for
+    // "TextEdit background" (see `TextEdit::background_color`'s doc) — this
+    // codebase had repurposed that exact slot for *card* surfaces instead,
+    // so every text input shared a fill with every flight-strip card,
+    // undifferentiated. Pointing it at `faint_bg` (recessed — a field you
+    // type *into*, the opposite metaphor from a raised card you read) fixes
+    // that; cards now read `theme::card_bg()` explicitly instead of this
+    // egui slot (board.rs, digest.rs, stats.rs).
+    visuals.extreme_bg_color = palette.faint_bg;
+    // Distinct focus ring: at rest, an input's border reads as `weak_text`
+    // at low opacity (bringing back the "pop" egui's own TextEdit code
+    // comments admit stock visuals lack — see `interact()`'s call site in
+    // egui's text_edit/builder.rs); focused/hovered, it switches to a
+    // visible `sky()` ring, the same accent color links and the active
+    // theme toggle already use, so "this field has focus" reads
+    // unambiguously in both themes.
+    visuals.widgets.inactive.bg_stroke =
+        egui::Stroke::new(1.0, scale_alpha(palette.weak_text, 0.35));
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.5, palette.sky);
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.5, palette.sky);
     // `TextEdit` hint text and `Ui::disable()` both fade a color 50% toward
     // `Visuals::fade_out_to_color()`, which reads exactly this one field
     // (`widgets.noninteractive.weak_bg_fill` — no other visible widget uses

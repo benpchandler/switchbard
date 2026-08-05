@@ -311,11 +311,7 @@ fn render_picklist(
             format!("Add {selected_count} selected")
         };
         if ui
-            .add_enabled(
-                selected_count > 0,
-                egui::Button::new(egui::RichText::new(add_label).color(egui::Color32::WHITE))
-                    .fill(theme::green()),
-            )
+            .add_enabled(selected_count > 0, theme::success_button(&add_label))
             .clicked()
         {
             for row in rows.iter().filter(|r| r.selected) {
@@ -345,12 +341,7 @@ fn render_empty_pane(ui: &mut egui::Ui, pending: &mut Pending) {
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         if ui
-            .add(
-                egui::Button::new(
-                    egui::RichText::new("Browse for a folder…").color(egui::Color32::WHITE),
-                )
-                .fill(theme::green()),
-            )
+            .add(theme::success_button("Browse for a folder…"))
             .clicked()
         {
             pending.browse = true;
