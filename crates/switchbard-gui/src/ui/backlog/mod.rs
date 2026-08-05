@@ -224,7 +224,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
             render_empty(ui);
             return;
         }
-        toolbar::render_summary(app, ui, &snap);
+        toolbar::render_summary(app, ui, &snap, &mut pending);
         ui.add_space(6.0);
         toolbar::render_lens_tabs(app, ui);
         saved_views::render_saved_views_bar(app, ui);
@@ -331,6 +331,12 @@ pub(in crate::ui::backlog) struct Pending {
     /// `(project_root, task_id, enabled)` — the per-task Dispatch opt-in
     /// toggle (task-11 GUI wiring).
     pub dispatch_toggle: Option<(PathBuf, String, bool)>,
+    /// "Clean Up Old Tasks" (QA parity matrix LOW gap): one entry per
+    /// project with Done tasks to archive, same cross-repo shape as
+    /// `bulk_save` — a bulk archive still needs one `backlog` CLI
+    /// invocation per task, and those are scattered across every tracked
+    /// project, not just one.
+    pub cleanup: Option<Vec<(PathBuf, Vec<String>)>>,
 }
 
 fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, pending: Pending) {
@@ -357,5 +363,8 @@ fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, pending: Pending) {
     }
     if let Some((project_root, task_id, enabled)) = pending.dispatch_toggle {
         app.spawn_backlog_dispatch_toggle(project_root, task_id, enabled, ctx);
+    }
+    if let Some(per_project) = pending.cleanup {
+        app.spawn_backlog_cleanup(per_project, ctx);
     }
 }

@@ -114,6 +114,11 @@ pub struct BacklogViewState {
     /// headless agent run, consequential enough to confirm the same way
     /// Archive does. Cleared whenever the detail selection changes.
     pub dispatch_confirm: bool,
+    /// Mirrors `archive_confirm` for "Clean Up Old Tasks" (QA parity matrix
+    /// LOW gap) — a workspace-global bulk action, not tied to any one
+    /// task's selection, so unlike the per-task confirms above it's cleared
+    /// by its own Confirm/Cancel buttons only, not by selection changes.
+    pub cleanup_confirm: bool,
 }
 
 impl Default for BacklogViewState {
@@ -142,6 +147,7 @@ impl Default for BacklogViewState {
             active_saved_view: None,
             saved_view_name_draft: String::new(),
             dispatch_confirm: false,
+            cleanup_confirm: false,
         }
     }
 }

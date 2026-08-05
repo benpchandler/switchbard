@@ -376,6 +376,79 @@ fn sort_direction_button_toggles_between_ascending_and_descending() {
 
 // ─── Toolbar ─────────────────────────────────────────────────────────────
 
+/// QA parity matrix LOW gap: "Clean Up Old Tasks" (bulk archive of Done
+/// tasks, cross-repo). Disabled with nothing to clean up — mirrors how the
+/// Create modal's own "Create" button gates on `can_create`
+/// (`editing_the_title_enables_the_save_button`'s Save-button pattern).
+#[test]
+fn cleanup_button_is_disabled_when_there_are_no_done_tasks() {
+    let harness = list_harness_with_tasks(vec![task("TASK-1", "Open one", "To Do")]);
+    assert!(
+        harness.get_by_label("Clean Up Old Tasks").is_disabled(),
+        "nothing to archive should leave the button disabled"
+    );
+}
+
+#[test]
+fn cleanup_button_confirms_then_cancel_reverts_to_the_plain_button() {
+    let mut done = task("TASK-1", "Stale one", "Done");
+    done.status = "Done".to_string();
+    let mut harness = list_harness_with_tasks(vec![task("TASK-2", "Open one", "To Do"), done]);
+    assert!(!harness.get_by_label("Clean Up Old Tasks").is_disabled());
+
+    harness.get_by_label("Clean Up Old Tasks").click();
+    harness.run();
+    assert!(
+        harness.query_by_label("Archive 1 Done tasks?").is_some(),
+        "clicking should show the confirm prompt naming the candidate count"
+    );
+
+    harness.get_by_label("Cancel").click();
+    harness.run();
+    assert!(
+        harness.query_by_label("Clean Up Old Tasks").is_some(),
+        "Cancel should revert to the plain button"
+    );
+    assert!(!harness.state().backlog_view.cleanup_confirm);
+}
+
+#[test]
+fn cleanup_confirm_sets_the_synchronous_status_before_the_spawned_archive_calls() {
+    let mut done = task("TASK-1", "Stale one", "Done");
+    done.status = "Done".to_string();
+    let mut harness = list_harness_with_tasks(vec![task("TASK-2", "Open one", "To Do"), done]);
+
+    harness.get_by_label("Clean Up Old Tasks").click();
+    harness.run();
+    harness.get_by_label("Confirm cleanup").click();
+    harness.run();
+
+    assert_eq!(
+        harness.state().backlog_status.snapshot().as_deref(),
+        Some("cleaning up 1 Done tasks"),
+        "confirming should set the synchronous status before the spawned \
+         per-task archive calls run — same split real_backlog_cli_
+         mutations.rs proves the per-task Archive path with"
+    );
+    assert!(!harness.state().backlog_view.cleanup_confirm);
+}
+
+/// A `Completed`-sourced task (already moved to `backlog/completed/` by the
+/// CLI's own `backlog cleanup`) isn't a cleanup candidate — only a Done task
+/// still sitting in `backlog/tasks/` is, matching a single task's Archive
+/// button requiring `editable()`.
+#[test]
+fn cleanup_button_ignores_already_completed_sourced_tasks() {
+    let mut already_completed = task("TASK-1", "Already moved", "Done");
+    already_completed.source = BacklogTaskSource::Completed;
+    let harness =
+        list_harness_with_tasks(vec![task("TASK-2", "Open one", "To Do"), already_completed]);
+    assert!(
+        harness.get_by_label("Clean Up Old Tasks").is_disabled(),
+        "a Completed-sourced task should not count as a cleanup candidate"
+    );
+}
+
 #[test]
 fn refresh_backlog_button_kicks_a_reload_and_sets_status() {
     let mut harness = list_harness_with_tasks(vec![task("TASK-1", "First", "To Do")]);

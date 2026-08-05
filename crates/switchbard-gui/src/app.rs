@@ -1052,6 +1052,64 @@ impl HiveApp {
         });
     }
 
+    /// "Clean Up Old Tasks" (QA parity matrix LOW gap): archive every Done
+    /// task in `per_project` — one `archive_backlog_task` call per task,
+    /// across however many projects the caller found Done tasks in. Mirrors
+    /// `spawn_backlog_bulk_save`'s per-project loop shape; the difference is
+    /// this always spans every tracked project rather than one bulk
+    /// selection, since "clean up" is a workspace-wide housekeeping action,
+    /// not scoped to whatever the user happens to be filtering by.
+    pub fn spawn_backlog_cleanup(
+        &self,
+        per_project: Vec<(PathBuf, Vec<String>)>,
+        ctx: &egui::Context,
+    ) {
+        if per_project.is_empty() {
+            return;
+        }
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let project_count = per_project.len();
+            let total: usize = per_project.iter().map(|(_, ids)| ids.len()).sum();
+            let mut archived = 0usize;
+            let mut first_error: Option<String> = None;
+            for (project_root, task_ids) in &per_project {
+                let mut touched = false;
+                for task_id in task_ids {
+                    match switchbard_core::archive_backlog_task(project_root, task_id) {
+                        Ok(_) => {
+                            archived += 1;
+                            touched = true;
+                        }
+                        Err(e) => {
+                            if first_error.is_none() {
+                                first_error = Some(format!("{task_id}: {e}"));
+                            }
+                        }
+                    }
+                }
+                if touched {
+                    refresh_backlog_project_cache(&projects, project_root);
+                }
+            }
+            if archived > 0 {
+                kick.notify();
+            }
+            match first_error {
+                Some(error) => status.set(format!(
+                    "cleaned up {archived}/{total} Done tasks across {project_count} projects; first failure: {error}"
+                )),
+                None => status.set(format!(
+                    "cleaned up {archived}/{total} Done tasks across {project_count} projects"
+                )),
+            }
+            ctx.request_repaint();
+        });
+    }
+
     pub fn spawn_backlog_append_note(
         &self,
         project_root: PathBuf,

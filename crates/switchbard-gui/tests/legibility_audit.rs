@@ -443,6 +443,21 @@ fn legibility_dispatch_failed_task() -> BacklogTask {
     task
 }
 
+/// A Done, active, CLI-editable task — without one, "Clean Up Old Tasks"
+/// stays disabled in every harness below and its text (and the "Archive N
+/// Done tasks?" confirm prompt, seeded onto one harness in `views()`) would
+/// be WCAG 1.4.3-exempt and silently skip the audit entirely.
+fn legibility_done_task() -> BacklogTask {
+    let mut task = legibility_backlog_task();
+    task.id = "TASK-9".to_string();
+    task.title = "Stale done task".to_string();
+    task.status = "Done".to_string();
+    task.labels = vec![];
+    task.dependencies = vec![];
+    task.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-9.md"));
+    task
+}
+
 fn seed_backlog_project(app: &HiveApp) {
     app.backlog_projects.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
@@ -456,6 +471,7 @@ fn seed_backlog_project(app: &HiveApp) {
                 legibility_dispatch_inflight_task(),
                 legibility_dispatch_dispatched_task(),
                 legibility_dispatch_failed_task(),
+                legibility_done_task(),
             ],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -502,6 +518,13 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     // `lens` unset deliberately — it's exercising the default a real launch
     // sees, not just picking the enum's first variant.
     seed_backlog_project(&digest_app);
+    // "Clean Up Old Tasks" (QA parity matrix LOW gap) is disabled without a
+    // Done task and its confirm prompt only ever renders after a click —
+    // neither of which the audit's harnesses otherwise trigger. Seeding
+    // `cleanup_confirm` directly (same technique the dispatch-state fixtures
+    // above use to reach a click-only state) gets its "Archive N Done
+    // tasks?" text and Confirm/Cancel buttons into this audit.
+    digest_app.backlog_view.cleanup_confirm = true;
     let digest = harness(digest_app);
 
     let mut list_app = seeded_app();
