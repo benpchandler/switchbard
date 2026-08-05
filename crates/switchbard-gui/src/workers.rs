@@ -18,6 +18,33 @@
 //!
 //! Centralizing the spawning here keeps `HiveApp::new` short and stops the
 //! "what does this anonymous closure do?" question from recurring.
+//!
+//! ## Cadence policy (owner audit, 2026-08-05 real machine: 6 repos, 84
+//! worktrees via `~/.switchbard/config.toml` — see `examples/
+//! scan_cadence_audit.rs`, a read-only instrument you can re-run to get
+//! fresh before/after numbers)
+//!
+//! | Worker | Period | Measured per-tick cost (84 worktrees) | Why |
+//! |---|---|---|---|
+//! | scanner | 3s | ~0.2s, 1 subprocess, independent of worktree count | UX-critical: the Servers view's whole point is "what's listening right now." Kept snappy. |
+//! | git probe | 120s (was 60s) | ~6-8s once `probe_ignored_files` is decoupled (was ~37-40s every tick — see below) | Real git-subprocess cost (~10/worktree) that scales with worktree count; drift/dirty/recent-commits data is useful within a couple minutes' staleness, not seconds. |
+//! | — ignored-files sub-probe | every 5th probe tick (~10 min) | ~32s of the ~37s pre-fix tick (measured in isolation) — `git status --ignored` can't prune subtrees the way plain status does | Tooltip-only cosmetic data (see `IGNORED_FILES_PREVIEW_LIMIT`'s own doc); by far the single most expensive call in this module. Decoupling it from the main probe cadence is the highest-leverage fix found by this audit. |
+//! | detection | 60s (was 30s) | ~0.15s cold, ~0 steady-state (idempotent — skips worktrees already in `services`) | No urgency: a newly tracked worktree still gets detected within a minute. |
+//! | agent-context | 60s (was 30s), capped at `AGENT_CONTEXT_MAX_MISSING_PER_TICK` new worktrees per tick | ~47s in one unbroken burst pre-fix (cold scan of all 84 at once) | Recursive per-worktree filesystem walk; cheap in steady state (only rescans missing/>24h-stale entries) but a cold launch or adding several repos at once used to stall the thread for tens of seconds in a single tick. Capping the batch turns that into several bounded, interleaved ticks instead. |
+//! | backlog | 30s (unchanged) | ~0.15-0.2s over 6 repo *roots*, not per-worktree | Already cheap at this scale (one load per tracked repo, not per worktree) and users watch task state change in near-real-time — no evidence to slow this down. |
+//! | dispatch | 90s (unchanged) | negligible when the queue is empty (the common case) | Opt-in and rare by design — see its own doc. Unaffected by worktree count. |
+//! | reaper | 2s (unchanged) | negligible, in-memory PGID check only | Not part of the worktree-count scaling problem this audit targets. |
+//!
+//! Two cross-cutting mechanisms apply on top of the table above:
+//! - **Startup stagger** (`stagger_offset`): each worker's *first* tick is
+//!   offset by `WORKER_STAGGER_SPACING`, so `spawn_all` doesn't fire every
+//!   worker's cold (most expensive) pass in the same instant.
+//! - **Focus-aware backoff** (`effective_period`): every worker multiplies
+//!   its period by `UNFOCUSED_BACKOFF_MULTIPLIER` while the OS window
+//!   doesn't have focus (`ctx.input(|i| i.focused)` — read directly off the
+//!   `egui::Context` handle already threaded into every worker, so this
+//!   needs no new plumbing through `HiveApp`/`Channels`). A backgrounded
+//!   Switchbard alt-tabbed away doesn't need second-by-second freshness.
 
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{ActiveRun, FileListSummary, OrderingState, WorktreeMeta};
@@ -53,9 +80,23 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::app::ScanState;
 
 const SCAN_PERIOD: Duration = Duration::from_secs(3);
-const PROBE_PERIOD: Duration = Duration::from_secs(60);
-const DETECT_PERIOD: Duration = Duration::from_secs(30);
-const CONTEXT_PERIOD: Duration = Duration::from_secs(30);
+/// Raised from 60s after the 2026-08-05 cadence audit measured a full
+/// per-worktree probe pass at ~37-40s wall time on an 84-worktree machine —
+/// see this module's doc table. Even with `probe_ignored_files` decoupled
+/// (below), a ~6-8s real cost every 60s was still a needlessly tight duty
+/// cycle for data that's fine a couple minutes stale.
+const PROBE_PERIOD: Duration = Duration::from_secs(120);
+/// Raised from 30s: detection is idempotent (skips any worktree already in
+/// `services`), so there is no per-tick cost to amortize past "a newly
+/// tracked worktree gets detected within about a minute."
+const DETECT_PERIOD: Duration = Duration::from_secs(60);
+/// Raised from 30s: only rescans worktrees missing from the cache or older
+/// than `CONTEXT_CACHE_MAX_AGE` (24h), so — same reasoning as detection —
+/// there's no steady-state cost to trade off against faster polling.
+const CONTEXT_PERIOD: Duration = Duration::from_secs(60);
+/// Unchanged: measured at ~0.15-0.2s over 6 repo *roots* (not per-worktree)
+/// on the real audit machine — already cheap at this scale, and users watch
+/// task/status changes close to real time.
 const BACKLOG_PERIOD: Duration = Duration::from_secs(30);
 /// Longer than the other periods on purpose: dispatch is opt-in and rare
 /// (a task only enters the queue via an explicit user action), and one
@@ -65,6 +106,63 @@ const BACKLOG_PERIOD: Duration = Duration::from_secs(30);
 const DISPATCH_PERIOD: Duration = Duration::from_secs(90);
 const CONTEXT_CACHE_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24);
 const REAPER_PERIOD: Duration = Duration::from_secs(2);
+
+/// Every Nth git-probe tick recomputes `probe_ignored_files`; other ticks
+/// carry forward the previously cached value. The 2026-08-05 cadence audit
+/// isolated this one call at ~32s of a ~37s tick over 84 real worktrees —
+/// `git status --ignored` cannot prune ignored subtrees the way a plain
+/// status can, so it dominates every other probe combined by roughly 5x.
+/// The data itself is tooltip-only context (see `IGNORED_FILES_PREVIEW_LIMIT`'s
+/// doc), so decoupling its cadence from the rest of the probe (which stays
+/// fresh every `PROBE_PERIOD`) trades cosmetic staleness — bounded at
+/// `IGNORED_FILES_REFRESH_EVERY_N_PROBES * PROBE_PERIOD`, ~10 minutes at the
+/// current settings — for the single biggest win this audit found.
+const IGNORED_FILES_REFRESH_EVERY_N_PROBES: u64 = 5;
+
+/// Cap on how many never-scanned worktrees `spawn_agent_context` processes
+/// per tick. Without this cap, a cold launch (or tracking several new repos
+/// at once) scans every missing worktree in one unbroken burst — measured
+/// at ~47s over 84 worktrees in the same audit. When more than this many
+/// are still missing after a tick, the worker loops again immediately
+/// (skipping the sleep) rather than waiting a full `CONTEXT_PERIOD`, so a
+/// large backlog still drains promptly — just as several bounded,
+/// interleaved ticks (each followed by its own `ctx.request_repaint()`)
+/// instead of one long stall with no visible progress.
+const AGENT_CONTEXT_MAX_MISSING_PER_TICK: usize = 10;
+
+/// Multiply a worker's period by this factor while the OS window doesn't
+/// have focus. See `effective_period`.
+const UNFOCUSED_BACKOFF_MULTIPLIER: u32 = 8;
+
+/// Spacing between each worker's first tick (see `stagger_offset`), so
+/// `spawn_all` doesn't fire every worker's cold, most-expensive pass in the
+/// same instant.
+const WORKER_STAGGER_SPACING: Duration = Duration::from_secs(2);
+
+/// The period a worker should actually sleep for, given its nominal
+/// `period` and whether the window currently has OS focus. Pure so it's
+/// unit-testable without a real `egui::Context`.
+fn effective_period(period: Duration, focused: bool) -> Duration {
+    if focused {
+        period
+    } else {
+        period * UNFOCUSED_BACKOFF_MULTIPLIER
+    }
+}
+
+/// `true` on the probe tick that should recompute `probe_ignored_files`.
+/// Ticks are 0-indexed so the very first probe of a freshly launched app
+/// still gets an accurate ignored-files list instead of starting from
+/// `None` and waiting `IGNORED_FILES_REFRESH_EVERY_N_PROBES` ticks for one.
+fn should_refresh_ignored_files(tick: u64) -> bool {
+    tick.is_multiple_of(IGNORED_FILES_REFRESH_EVERY_N_PROBES)
+}
+
+/// Stagger offset for the `index`-th worker `spawn_all` starts (0-indexed),
+/// so their first ticks land spread out rather than simultaneous.
+fn stagger_offset(index: u32) -> Duration {
+    WORKER_STAGGER_SPACING * index
+}
 
 /// Shared handles that every worker reads from / writes to. Bundling them
 /// lets `spawn_all` take one argument instead of nine.
@@ -88,74 +186,100 @@ pub struct Channels {
 }
 
 pub fn spawn_all(ctx: egui::Context, ch: Channels) {
-    spawn_scanner(ctx.clone(), ch.clone());
-    spawn_probe(ctx.clone(), ch.clone());
-    spawn_detection(ctx.clone(), ch.clone());
-    spawn_agent_context(ctx.clone(), ch.clone());
-    spawn_backlog(ctx.clone(), ch.clone());
-    spawn_dispatch(ctx.clone(), ch.clone());
+    spawn_scanner(ctx.clone(), ch.clone(), stagger_offset(0));
+    spawn_probe(ctx.clone(), ch.clone(), stagger_offset(1));
+    spawn_detection(ctx.clone(), ch.clone(), stagger_offset(2));
+    spawn_agent_context(ctx.clone(), ch.clone(), stagger_offset(3));
+    spawn_backlog(ctx.clone(), ch.clone(), stagger_offset(4));
+    spawn_dispatch(ctx.clone(), ch.clone(), stagger_offset(5));
     spawn_reaper(ctx, ch);
 }
 
 /// Scanner: re-runs `lsof` every SCAN_PERIOD (or sooner if kicked), attributes
 /// each listener to a worktree, publishes the result to `state.listeners`.
-fn spawn_scanner(ctx: egui::Context, ch: Channels) {
-    thread::spawn(move || loop {
-        let result = scan_listeners();
-        let now = Instant::now();
-        let wts = ch.worktrees.lock().unwrap().clone();
-        {
-            let mut s = ch.state.lock().unwrap();
-            match result {
-                Ok(listeners) => {
-                    s.listeners = attribute(&listeners, &wts);
-                    s.last_error = None;
+fn spawn_scanner(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
+    thread::spawn(move || {
+        ch.scanner_kick.wait(initial_delay);
+        loop {
+            let result = scan_listeners();
+            let now = Instant::now();
+            let wts = ch.worktrees.lock().unwrap().clone();
+            {
+                let mut s = ch.state.lock().unwrap();
+                match result {
+                    Ok(listeners) => {
+                        s.listeners = attribute(&listeners, &wts);
+                        s.last_error = None;
+                    }
+                    Err(e) => s.last_error = Some(e.to_string()),
                 }
-                Err(e) => s.last_error = Some(e.to_string()),
+                s.last_scan = Some(now);
             }
-            s.last_scan = Some(now);
+            ctx.request_repaint();
+            let focused = ctx.input(|i| i.focused);
+            ch.scanner_kick.wait(effective_period(SCAN_PERIOD, focused));
         }
-        ctx.request_repaint();
-        ch.scanner_kick.wait(SCAN_PERIOD);
     });
 }
 
 /// Git probe: each iteration re-enumerates worktrees from `git worktree list`
 /// (so external `git worktree prune` / `add` get picked up), then walks the
 /// fresh list running dirty/ahead/behind/last-commit probes.
-fn spawn_probe(ctx: egui::Context, ch: Channels) {
-    thread::spawn(move || loop {
-        // Step 1: re-enumerate worktrees from disk and publish.
-        {
-            let repos = ch.repos.lock().unwrap().clone();
-            let fresh = expand_worktrees(&repos);
-            *ch.worktrees.lock().unwrap() = fresh;
-            ctx.request_repaint();
+///
+/// `probe_ignored_files` — by far the most expensive single call here (see
+/// this module's cadence-policy doc table) — only actually re-runs every
+/// `IGNORED_FILES_REFRESH_EVERY_N_PROBES`th tick; other ticks carry forward
+/// whatever was last cached for that worktree in `ch.meta`.
+fn spawn_probe(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
+    thread::spawn(move || {
+        ch.probe_kick.wait(initial_delay);
+        let mut tick: u64 = 0;
+        loop {
+            // Step 1: re-enumerate worktrees from disk and publish.
+            {
+                let repos = ch.repos.lock().unwrap().clone();
+                let fresh = expand_worktrees(&repos);
+                *ch.worktrees.lock().unwrap() = fresh;
+                ctx.request_repaint();
+            }
+            // Step 2: probe each.
+            let wts = ch.worktrees.lock().unwrap().clone();
+            let refresh_ignored = should_refresh_ignored_files(tick);
+            for w in &wts {
+                let main_drift = probe_main_drift(&w.path);
+                let remote_drift = probe_remote_drift(&w.path);
+                let main_drift_detail = drift_detail_for_probe(&w.path, main_drift.as_ref());
+                let remote_drift_detail = drift_detail_for_probe(&w.path, remote_drift.as_ref());
+                let ignored_files = if refresh_ignored {
+                    probe_ignored_files(&w.path).map(|files| {
+                        FileListSummary::from_lines(files, IGNORED_FILES_PREVIEW_LIMIT)
+                    })
+                } else {
+                    ch.meta
+                        .lock()
+                        .unwrap()
+                        .get(&w.path)
+                        .and_then(|m| m.ignored_files.clone())
+                };
+                let m = WorktreeMeta {
+                    dirty_files: probe_dirty_files(&w.path),
+                    ignored_files,
+                    main_drift,
+                    remote_drift,
+                    main_drift_detail,
+                    remote_drift_detail,
+                    head_commit_unix: probe_head_commit_time(&w.path),
+                    fetch_unix: probe_fetch_age(&w.path),
+                    recent_commits: probe_recent_commits(&w.path, RECENT_COMMITS_LIMIT),
+                    probed_at: Some(Instant::now()),
+                };
+                ch.meta.lock().unwrap().insert(w.path.clone(), m);
+                ctx.request_repaint();
+            }
+            tick = tick.wrapping_add(1);
+            let focused = ctx.input(|i| i.focused);
+            ch.probe_kick.wait(effective_period(PROBE_PERIOD, focused));
         }
-        // Step 2: probe each.
-        let wts = ch.worktrees.lock().unwrap().clone();
-        for w in &wts {
-            let main_drift = probe_main_drift(&w.path);
-            let remote_drift = probe_remote_drift(&w.path);
-            let main_drift_detail = drift_detail_for_probe(&w.path, main_drift.as_ref());
-            let remote_drift_detail = drift_detail_for_probe(&w.path, remote_drift.as_ref());
-            let m = WorktreeMeta {
-                dirty_files: probe_dirty_files(&w.path),
-                ignored_files: probe_ignored_files(&w.path)
-                    .map(|files| FileListSummary::from_lines(files, IGNORED_FILES_PREVIEW_LIMIT)),
-                main_drift,
-                remote_drift,
-                main_drift_detail,
-                remote_drift_detail,
-                head_commit_unix: probe_head_commit_time(&w.path),
-                fetch_unix: probe_fetch_age(&w.path),
-                recent_commits: probe_recent_commits(&w.path, RECENT_COMMITS_LIMIT),
-                probed_at: Some(Instant::now()),
-            };
-            ch.meta.lock().unwrap().insert(w.path.clone(), m);
-            ctx.request_repaint();
-        }
-        ch.probe_kick.wait(PROBE_PERIOD);
     });
 }
 
@@ -180,67 +304,93 @@ fn drift_detail_for_probe(
 /// Service detection: for each worktree we haven't seen, parse its Procfile /
 /// package.json / Makefile / scripts/ and cache the result. Idempotent — once
 /// detected, a worktree is skipped on subsequent passes.
-fn spawn_detection(ctx: egui::Context, ch: Channels) {
-    thread::spawn(move || loop {
-        let wts = ch.worktrees.lock().unwrap().clone();
-        for w in &wts {
-            let already = ch.services.lock().unwrap().contains_key(&w.path);
-            if already {
-                continue;
+fn spawn_detection(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
+    thread::spawn(move || {
+        ch.detection_kick.wait(initial_delay);
+        loop {
+            let wts = ch.worktrees.lock().unwrap().clone();
+            for w in &wts {
+                let already = ch.services.lock().unwrap().contains_key(&w.path);
+                if already {
+                    continue;
+                }
+                let detected = detect_services(&w.path);
+                ch.services.lock().unwrap().insert(w.path.clone(), detected);
+                ctx.request_repaint();
             }
-            let detected = detect_services(&w.path);
-            ch.services.lock().unwrap().insert(w.path.clone(), detected);
-            ctx.request_repaint();
+            let focused = ctx.input(|i| i.focused);
+            ch.detection_kick
+                .wait(effective_period(DETECT_PERIOD, focused));
         }
-        ch.detection_kick.wait(DETECT_PERIOD);
     });
 }
 
-fn spawn_agent_context(ctx: egui::Context, ch: Channels) {
-    thread::spawn(move || loop {
-        let wts = ch.worktrees.lock().unwrap().clone();
-        let live_paths: std::collections::HashSet<PathBuf> =
-            wts.iter().map(|w| w.path.clone()).collect();
+/// Agent-context: scans any worktree missing from the cache, or the single
+/// stalest entry older than `CONTEXT_CACHE_MAX_AGE`. Missing worktrees are
+/// processed in bounded batches of `AGENT_CONTEXT_MAX_MISSING_PER_TICK` —
+/// see that constant's doc for why: an unbounded single-tick sweep measured
+/// ~47s over 84 worktrees on a cold cache. When more missing worktrees
+/// remain after a batch, the loop continues immediately (no sleep) so a
+/// large backlog still drains promptly, just as several bounded ticks.
+fn spawn_agent_context(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
+    thread::spawn(move || {
+        ch.agent_context_kick.wait(initial_delay);
+        loop {
+            let wts = ch.worktrees.lock().unwrap().clone();
+            let live_paths: std::collections::HashSet<PathBuf> =
+                wts.iter().map(|w| w.path.clone()).collect();
 
-        let (missing, stale, pruned) = {
-            let mut maps = ch.agent_contexts.lock().unwrap();
-            let before = maps.len();
-            maps.retain(|path, _| live_paths.contains(path));
-            let missing: Vec<WorktreeRef> = wts
-                .iter()
-                .filter(|w| !maps.contains_key(&w.path))
-                .cloned()
-                .collect();
-            let now = SystemTime::now();
-            let stale = wts
-                .iter()
-                .find(|w| {
-                    maps.get(&w.path).is_some_and(|map| {
-                        agent_context_needs_rescan(map, now, CONTEXT_CACHE_MAX_AGE)
+            let (batch, more_missing, stale, pruned) = {
+                let mut maps = ch.agent_contexts.lock().unwrap();
+                let before = maps.len();
+                maps.retain(|path, _| live_paths.contains(path));
+                let missing: Vec<WorktreeRef> = wts
+                    .iter()
+                    .filter(|w| !maps.contains_key(&w.path))
+                    .cloned()
+                    .collect();
+                let now = SystemTime::now();
+                let stale = wts
+                    .iter()
+                    .find(|w| {
+                        maps.get(&w.path).is_some_and(|map| {
+                            agent_context_needs_rescan(map, now, CONTEXT_CACHE_MAX_AGE)
+                        })
                     })
-                })
-                .cloned();
-            (missing, stale, maps.len() != before)
-        };
+                    .cloned();
+                let batch: Vec<WorktreeRef> = missing
+                    .iter()
+                    .take(AGENT_CONTEXT_MAX_MISSING_PER_TICK)
+                    .cloned()
+                    .collect();
+                let more_missing = missing.len() > batch.len();
+                (batch, more_missing, stale, maps.len() != before)
+            };
 
-        let mut refreshed = false;
-        if missing.is_empty() {
-            if let Some(w) = stale {
-                scan_and_publish_agent_context(&ch, &w);
+            let mut refreshed = false;
+            if batch.is_empty() {
+                if let Some(w) = stale {
+                    scan_and_publish_agent_context(&ch, &w);
+                    refreshed = true;
+                }
+            } else {
+                for w in &batch {
+                    scan_and_publish_agent_context(&ch, w);
+                }
                 refreshed = true;
             }
-        } else {
-            for w in &missing {
-                scan_and_publish_agent_context(&ch, w);
-            }
-            refreshed = true;
-        }
 
-        if refreshed || pruned {
-            persist_agent_context_cache(&ch);
-            ctx.request_repaint();
+            if refreshed || pruned {
+                persist_agent_context_cache(&ch);
+                ctx.request_repaint();
+            }
+            if more_missing {
+                continue;
+            }
+            let focused = ctx.input(|i| i.focused);
+            ch.agent_context_kick
+                .wait(effective_period(CONTEXT_PERIOD, focused));
         }
-        ch.agent_context_kick.wait(CONTEXT_PERIOD);
     });
 }
 
@@ -342,26 +492,31 @@ pub(crate) fn merge_backlog_projects(
     }
 }
 
-fn spawn_backlog(ctx: egui::Context, ch: Channels) {
-    thread::spawn(move || loop {
-        let repos = ch.repos.lock().unwrap().clone();
-        let roots = backlog_project_roots(&repos);
-        let projects = collect_backlog_projects(&roots);
-        merge_backlog_projects(&mut ch.backlog_projects.lock().unwrap(), &roots, projects);
+fn spawn_backlog(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
+    thread::spawn(move || {
+        ch.backlog_kick.wait(initial_delay);
+        loop {
+            let repos = ch.repos.lock().unwrap().clone();
+            let roots = backlog_project_roots(&repos);
+            let projects = collect_backlog_projects(&roots);
+            merge_backlog_projects(&mut ch.backlog_projects.lock().unwrap(), &roots, projects);
 
-        // The unified triage overlay lives in whichever tracked repo hosts
-        // `ordering.yml` (the "hub" repo — see backlog_triage module doc).
-        // No tracked repo having one is the expected steady state and yields
-        // an empty overlay with no warning.
-        let hub_repo = find_hub_repo(repos.iter().map(|r| r.path.as_path()));
-        let (overlay, warning) = match &hub_repo {
-            Some(hub_root) => load_ordering_overlay(hub_root),
-            None => Default::default(),
-        };
-        *ch.ordering.lock().unwrap() = OrderingState { overlay, warning };
+            // The unified triage overlay lives in whichever tracked repo hosts
+            // `ordering.yml` (the "hub" repo — see backlog_triage module doc).
+            // No tracked repo having one is the expected steady state and yields
+            // an empty overlay with no warning.
+            let hub_repo = find_hub_repo(repos.iter().map(|r| r.path.as_path()));
+            let (overlay, warning) = match &hub_repo {
+                Some(hub_root) => load_ordering_overlay(hub_root),
+                None => Default::default(),
+            };
+            *ch.ordering.lock().unwrap() = OrderingState { overlay, warning };
 
-        ctx.request_repaint();
-        ch.backlog_kick.wait(BACKLOG_PERIOD);
+            ctx.request_repaint();
+            let focused = ctx.input(|i| i.focused);
+            ch.backlog_kick
+                .wait(effective_period(BACKLOG_PERIOD, focused));
+        }
     });
 }
 
@@ -374,27 +529,32 @@ fn spawn_backlog(ctx: egui::Context, ch: Channels) {
 /// dispatch run itself takes. Skips a project entirely when its queue is
 /// empty, which is the common case: dispatch is opt-in, so most polls do
 /// nothing.
-fn spawn_dispatch(ctx: egui::Context, ch: Channels) {
+fn spawn_dispatch(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
     let opts = DispatchOptions::default();
-    thread::spawn(move || loop {
-        // Iterate the (repo-primary-keyed) projects map directly: one drain
-        // per repo. Iterating worktrees here would drain the same logical
-        // queue once per sibling checkout — a real double-dispatch, since
-        // each checkout carries its own copy of the task files.
-        let projects = ch.backlog_projects.lock().unwrap().clone();
-        for (root, project) in &projects {
-            if list_dispatch_queue(project).is_empty() {
-                continue;
+    thread::spawn(move || {
+        ch.dispatch_kick.wait(initial_delay);
+        loop {
+            // Iterate the (repo-primary-keyed) projects map directly: one drain
+            // per repo. Iterating worktrees here would drain the same logical
+            // queue once per sibling checkout — a real double-dispatch, since
+            // each checkout carries its own copy of the task files.
+            let projects = ch.backlog_projects.lock().unwrap().clone();
+            for (root, project) in &projects {
+                if list_dispatch_queue(project).is_empty() {
+                    continue;
+                }
+                drain_dispatch_queue(root, project, &opts);
+                // The pipeline mutates task labels/notes straight through the
+                // backlog CLI, bypassing this app's cache entirely — kick the
+                // backlog worker so the GUI reflects the outcome immediately
+                // instead of waiting up to BACKLOG_PERIOD for its own poll.
+                ch.backlog_kick.notify();
+                ctx.request_repaint();
             }
-            drain_dispatch_queue(root, project, &opts);
-            // The pipeline mutates task labels/notes straight through the
-            // backlog CLI, bypassing this app's cache entirely — kick the
-            // backlog worker so the GUI reflects the outcome immediately
-            // instead of waiting up to BACKLOG_PERIOD for its own poll.
-            ch.backlog_kick.notify();
-            ctx.request_repaint();
+            let focused = ctx.input(|i| i.focused);
+            ch.dispatch_kick
+                .wait(effective_period(DISPATCH_PERIOD, focused));
         }
-        ch.dispatch_kick.wait(DISPATCH_PERIOD);
     });
 }
 
@@ -433,6 +593,60 @@ mod tests {
     use std::fs;
     use std::process::Command;
     use switchbard_core::BacklogTask;
+
+    #[test]
+    fn effective_period_passes_through_unchanged_when_focused() {
+        assert_eq!(
+            effective_period(Duration::from_secs(60), true),
+            Duration::from_secs(60)
+        );
+    }
+
+    #[test]
+    fn effective_period_backs_off_when_unfocused() {
+        assert_eq!(
+            effective_period(Duration::from_secs(60), false),
+            Duration::from_secs(60) * UNFOCUSED_BACKOFF_MULTIPLIER
+        );
+    }
+
+    #[test]
+    fn should_refresh_ignored_files_on_the_very_first_tick() {
+        // Tick 0 must refresh — a freshly launched app shouldn't wait
+        // `IGNORED_FILES_REFRESH_EVERY_N_PROBES` ticks for its first
+        // ignored-files data.
+        assert!(should_refresh_ignored_files(0));
+    }
+
+    #[test]
+    fn should_refresh_ignored_files_only_every_nth_tick() {
+        let refreshed: Vec<u64> = (0..IGNORED_FILES_REFRESH_EVERY_N_PROBES * 3)
+            .filter(|&tick| should_refresh_ignored_files(tick))
+            .collect();
+        let expected: Vec<u64> = (0..3)
+            .map(|n| n * IGNORED_FILES_REFRESH_EVERY_N_PROBES)
+            .collect();
+        assert_eq!(refreshed, expected);
+    }
+
+    #[test]
+    fn stagger_offset_is_zero_for_the_first_worker() {
+        // The scanner is UX-critical (SCAN_PERIOD doc) and must not be
+        // delayed on startup.
+        assert_eq!(stagger_offset(0), Duration::ZERO);
+    }
+
+    #[test]
+    fn stagger_offset_increases_linearly_and_stays_distinct() {
+        let offsets: Vec<Duration> = (0..6).map(stagger_offset).collect();
+        for pair in offsets.windows(2) {
+            assert!(
+                pair[1] > pair[0],
+                "each worker's stagger offset must exceed the previous one: {offsets:?}"
+            );
+        }
+        assert_eq!(offsets[1] - offsets[0], WORKER_STAGGER_SPACING);
+    }
 
     fn git(dir: &std::path::Path, args: &[&str]) {
         let out = Command::new("git")
