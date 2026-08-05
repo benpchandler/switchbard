@@ -12,10 +12,12 @@ use std::path::PathBuf;
 
 use common::{app_with_items, harness, item, seeded_app, REPO_NAME, REPO_PATH};
 use kittest::Queryable;
+use switchbard_core::config::Config;
 use switchbard_core::{
     AgentKind, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource, ContextKind,
-    ContextScope,
+    ContextScope, Repo, WorktreeRef,
 };
+use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::ViewTab;
 
 #[test]
@@ -174,8 +176,8 @@ fn backlog_view_surfaces_seeded_task() {
         },
     );
     app.backlog_view
-        .bulk_selected_task_ids
-        .insert("TASK-1".to_string());
+        .bulk_selected_tasks
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
     app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
     let mut harness = harness(app);
     harness.run();
@@ -201,5 +203,94 @@ fn backlog_view_surfaces_seeded_task() {
     assert!(
         harness.query_by_label("#1 Criterion renders").is_some(),
         "acceptance criterion should render in the detail pane"
+    );
+}
+
+/// One task from each of two tracked repos, both numbered "TASK-1" — the
+/// unified All-projects scope must merge them without id collisions, prefix
+/// each row's id with its repo, and render a repo badge per row.
+#[test]
+fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
+    let repo_path = |name: &str| PathBuf::from(format!("/tmp/switchbard-ui-test/{name}"));
+    let repos = vec![
+        Repo {
+            name: "alpha".to_string(),
+            path: repo_path("alpha"),
+        },
+        Repo {
+            name: "beta".to_string(),
+            path: repo_path("beta"),
+        },
+    ];
+    let worktrees = repos
+        .iter()
+        .map(|repo| WorktreeRef {
+            repo_name: repo.name.clone(),
+            path: repo.path.clone(),
+            branch: Some("main".to_string()),
+            head: "abc1234".to_string(),
+        })
+        .collect();
+    let mut cfg = Config::default();
+    cfg.ui.onboarding_dismissed = true;
+    let mut app = HiveApp::new_headless(cfg, repos, worktrees);
+    app.view_tab = ViewTab::Backlog;
+
+    for (repo_name, title) in [("alpha", "Alpha task"), ("beta", "Beta task")] {
+        app.backlog_projects.lock().unwrap().insert(
+            repo_path(repo_name),
+            BacklogProject {
+                root: repo_path(repo_name),
+                cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+                tasks: vec![BacklogTask {
+                    id: "TASK-1".to_string(),
+                    title: title.to_string(),
+                    status: "To Do".to_string(),
+                    priority: "medium".to_string(),
+                    assignees: vec![],
+                    labels: vec![],
+                    dependencies: vec![],
+                    milestone: None,
+                    parent: None,
+                    created_date: None,
+                    updated_date: None,
+                    description: String::new(),
+                    implementation_plan: String::new(),
+                    implementation_notes: String::new(),
+                    final_summary: String::new(),
+                    acceptance_criteria: vec![],
+                    definition_of_done: vec![],
+                    source: BacklogTaskSource::Active,
+                    path: repo_path(repo_name).join("backlog/tasks/task-1.md"),
+                }],
+                warnings: vec![],
+                loaded_at_unix: 0,
+            },
+        );
+    }
+
+    let mut harness = harness(app);
+    harness.run();
+
+    assert_eq!(
+        harness.state().backlog_view.selected_project,
+        None,
+        "the Backlog view defaults to the All-projects scope"
+    );
+    assert!(
+        harness.query_by_label("alpha:TASK-1  Alpha task").is_some(),
+        "row id is repo-prefixed in the All-projects scope"
+    );
+    assert!(
+        harness.query_by_label("beta:TASK-1  Beta task").is_some(),
+        "a same-numbered task from a different repo renders as a distinct row"
+    );
+    assert!(
+        harness.query_all_by_label("alpha").next().is_some(),
+        "repo badge should render on the alpha row"
+    );
+    assert!(
+        harness.query_all_by_label("beta").next().is_some(),
+        "repo badge should render on the beta row"
     );
 }

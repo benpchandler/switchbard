@@ -10,15 +10,16 @@
 //! "what does this anonymous closure do?" question from recurring.
 
 use crate::runtime::worktrees::expand_worktrees;
-use crate::runtime::{ActiveRun, FileListSummary, WorktreeMeta};
+use crate::runtime::{ActiveRun, FileListSummary, OrderingState, WorktreeMeta};
 use crate::sync::Kick;
 use eframe::egui;
 use switchbard_core::{
-    agent_context_needs_rescan, attribute, detect_services, is_backlog_project,
-    load_backlog_project, probe_dirty_files, probe_fetch_age, probe_head_commit_time,
-    probe_ignored_files, probe_main_drift, probe_recent_commits, probe_ref_drift_detail,
-    probe_remote_drift, save_agent_context_cache, scan_agent_context, scan_listeners,
-    AgentContextMap, BacklogProject, DetectedService, DriftProbe, Repo, WorktreeRef,
+    agent_context_needs_rescan, attribute, detect_services, find_hub_repo, is_backlog_project,
+    load_backlog_project, load_ordering_overlay, probe_dirty_files, probe_fetch_age,
+    probe_head_commit_time, probe_ignored_files, probe_main_drift, probe_recent_commits,
+    probe_ref_drift_detail, probe_remote_drift, save_agent_context_cache, scan_agent_context,
+    scan_listeners, AgentContextMap, BacklogProject, DetectedService, DriftProbe, Repo,
+    WorktreeRef,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
@@ -60,6 +61,7 @@ pub struct Channels {
     pub services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>>,
     pub agent_contexts: Arc<Mutex<HashMap<PathBuf, AgentContextMap>>>,
     pub backlog_projects: Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
+    pub ordering: Arc<Mutex<OrderingState>>,
     pub active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
     pub scanner_kick: Kick,
     pub probe_kick: Kick,
@@ -259,6 +261,19 @@ fn spawn_backlog(ctx: egui::Context, ch: Channels) {
         }
         projects.retain(|path, _| live_paths.contains(path));
         *ch.backlog_projects.lock().unwrap() = projects;
+
+        // The unified triage overlay lives in whichever tracked repo hosts
+        // `ordering.yml` (the "hub" repo — see backlog_triage module doc).
+        // No tracked repo having one is the expected steady state and yields
+        // an empty overlay with no warning.
+        let repos = ch.repos.lock().unwrap().clone();
+        let hub_repo = find_hub_repo(repos.iter().map(|r| r.path.as_path()));
+        let (overlay, warning) = match &hub_repo {
+            Some(hub_root) => load_ordering_overlay(hub_root),
+            None => Default::default(),
+        };
+        *ch.ordering.lock().unwrap() = OrderingState { overlay, warning };
+
         ctx.request_repaint();
         ch.backlog_kick.wait(BACKLOG_PERIOD);
     });
