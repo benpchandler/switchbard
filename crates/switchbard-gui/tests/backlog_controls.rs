@@ -1340,6 +1340,135 @@ fn save_button_completes_a_real_cli_round_trip_against_a_real_fixture_repo() {
     );
 }
 
+/// Independent re-verification (2026-08-05 fix-wave audit) of the HIGH
+/// defect's fix: `create_backlog_task_wires_a_subtask_parent` and
+/// `subtask_ids_are_decimal_children_of_the_parent_id`
+/// (backlog_cli_mutations.rs) prove the *parser* now reads real subtasks
+/// correctly; neither exercises the GUI render path the original defect
+/// actually broke (roll-up badge, tree expand/collapse, "+ Subtask"). Every
+/// pre-existing GUI test for that feature
+/// (`parent_task_shows_rollup_and_expands_to_reveal_children`, ui_views.rs)
+/// constructs `BacklogTask { parent: Some(...), .. }` directly in Rust —
+/// exactly the blind spot that let the original `parent`/`parent_task_id`
+/// mismatch go undetected. This test closes that blind spot: a real parent
+/// and two real subtasks created via the real `backlog` CLI, one child
+/// marked Done via the real CLI, loaded through the real parser
+/// (`load_backlog_project`, not a struct literal), then driven through the
+/// actual List-lens render path.
+#[test]
+fn sub_task_hierarchy_renders_correctly_from_a_real_cli_created_subtask() {
+    let fixture = tempfile::tempdir().expect("create temp dir");
+    let root = fixture.path();
+    run_cmd(root, "git", &["init", "-q"]);
+    run_cmd(root, "git", &["config", "user.email", "qa@example.com"]);
+    run_cmd(root, "git", &["config", "user.name", "QA Fixture"]);
+    run_cmd(
+        root,
+        "backlog",
+        &["init", "--defaults", "--agent-instructions", "none", "qa"],
+    );
+    run_cmd(root, "backlog", &["task", "create", "Parent task"]);
+    run_cmd(
+        root,
+        "backlog",
+        &["task", "create", "Done child", "-p", "TASK-1"],
+    );
+    run_cmd(
+        root,
+        "backlog",
+        &["task", "create", "Open child", "-p", "TASK-1"],
+    );
+    run_cmd(root, "backlog", &["task", "edit", "TASK-1.1", "-s", "Done"]);
+
+    // Sanity: prove the real CLI really did write `parent_task_id:`, not
+    // `parent:` — if a future CLI version changes the key again, this test
+    // should fail loudly here rather than silently passing for the wrong
+    // reason.
+    let child_file = std::fs::read_to_string(root.join("backlog/tasks/task-1.1 - Done-child.md"))
+        .expect("read the real CLI's generated subtask file");
+    assert!(
+        child_file.contains("parent_task_id: TASK-1"),
+        "expected the real CLI to write parent_task_id:, got:\n{child_file}"
+    );
+
+    let repos = vec![Repo {
+        name: "qa-fixture".to_string(),
+        path: root.to_path_buf(),
+    }];
+    let worktrees = vec![WorktreeRef {
+        repo_name: "qa-fixture".to_string(),
+        path: root.to_path_buf(),
+        branch: Some("main".to_string()),
+        head: "abc1234".to_string(),
+    }];
+    let mut cfg = Config::default();
+    cfg.ui.onboarding_dismissed = true;
+    let mut app = HiveApp::new_headless(cfg, repos, worktrees);
+    app.config_save_path = Some(isolated_config_save_path());
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.selected_project = Some(root.to_path_buf());
+    let real_project =
+        switchbard_core::load_backlog_project(root).expect("load the real fixture project");
+    // Independently confirm the parser itself resolved parentage before
+    // even reaching the GUI — if this fails, the GUI assertions below would
+    // fail for an uninteresting reason (no roll-up data to show at all).
+    let parsed_child = real_project
+        .tasks
+        .iter()
+        .find(|t| t.id == "TASK-1.1")
+        .expect("subtask should have parsed");
+    assert_eq!(
+        parsed_child.parent.as_deref(),
+        Some("TASK-1"),
+        "the real parser should resolve the real CLI's parent_task_id key"
+    );
+    app.backlog_projects
+        .lock()
+        .unwrap()
+        .insert(root.to_path_buf(), real_project);
+    app.backlog_view.selected_task = Some((root.to_path_buf(), "TASK-1".to_string()));
+
+    let mut h = harness(app);
+    h.run();
+
+    assert!(
+        h.query_by_label("TASK-1  Parent task  [1/2]").is_some(),
+        "the parent row should show a real 1/2 roll-up badge computed from real CLI data"
+    );
+    assert!(
+        h.query_by_label("TASK-1.2  Open child").is_none(),
+        "children should stay collapsed until the parent is expanded"
+    );
+
+    // The tree caret has no accessible label (documented, UNDRIVABLE-BY-KITTEST
+    // elsewhere in this audit); toggle expansion via view state directly, same
+    // precedent as ui_views.rs's own struct-constructed version of this test.
+    h.state_mut()
+        .backlog_view
+        .expanded_parents
+        .insert((root.to_path_buf(), "TASK-1".to_string()));
+    h.run();
+
+    assert!(
+        h.query_by_label("TASK-1.2  Open child").is_some(),
+        "expanding the parent should reveal the real open child"
+    );
+    assert!(
+        h.query_by_label("TASK-1.1  Done child").is_some(),
+        "expanding the parent should reveal the real done child"
+    );
+
+    h.get_by_label("+ Subtask").click();
+    h.run();
+    assert_eq!(
+        h.state().backlog_view.new_task.parent.as_deref(),
+        Some("TASK-1"),
+        "+ Subtask should pre-fill the new-task modal's parent from the real task id"
+    );
+    assert!(h.state().backlog_view.new_task.open);
+}
+
 fn run_cmd(cwd: &std::path::Path, cmd: &str, args: &[&str]) {
     let output = std::process::Command::new(cmd)
         .current_dir(cwd)

@@ -285,6 +285,51 @@ fn archive_moves_the_task_out_of_the_active_set() {
     );
 }
 
+/// DEFECT (found during 2026-08-05 fix-wave re-verification of "Clean Up Old
+/// Tasks", a new finding, not one of the original six): the real `backlog`
+/// CLI v1.47.1 refuses `task archive` on a Done-status task — confirmed
+/// empirically: `Task TASK-1 is Done. Done tasks should be completed, not
+/// archived. Use: backlog task complete TASK-1`. `archive_moves_the_task_
+/// out_of_the_active_set` (above) never caught this because
+/// `create_fixture_task`'s task defaults to "To Do" — every prior Archive
+/// test (this file and `switchbard-gui`'s `archive_confirm_sets_the_
+/// synchronous_archiving_status`) exercised a non-Done task. The GUI's
+/// single-task Archive button (`detail_lists::render_archive`) has no
+/// status check before calling `archive_backlog_task`, so a real user
+/// archiving a Done task hits this same CLI rejection — surfaced through
+/// `backlog_status` as a failure message, not silently. This is the same
+/// root cause that makes "Clean Up Old Tasks" (which exclusively targets
+/// Done tasks) always fail; see
+/// `switchbard-gui/tests/qa_reverify_2026_08_05.rs`'s equivalent `#[ignore]`d
+/// test for that feature.
+#[test]
+#[ignore = "DEFECT: the real CLI refuses `task archive` on a Done task — see this test's doc comment"]
+fn archiving_a_done_task_is_rejected_by_the_real_cli() {
+    let fixture = fixture_repo();
+    let root = fixture.path();
+    let task_id = create_fixture_task(root);
+    edit_backlog_task(
+        root,
+        &task_id,
+        &BacklogTaskPatch {
+            status: Some("Done".to_string()),
+            ..Default::default()
+        },
+    )
+    .expect("marking the task Done should succeed");
+
+    archive_backlog_task(root, &task_id)
+        .expect("archive_backlog_task should succeed even for a Done task");
+
+    let project = reload(root);
+    let task = project
+        .tasks
+        .iter()
+        .find(|t| t.id == task_id)
+        .expect("archived task should still be reparsed");
+    assert_eq!(task.source, BacklogTaskSource::Archived);
+}
+
 #[test]
 fn set_backlog_label_adds_and_removes_a_single_label_without_touching_others() {
     let fixture = fixture_repo();
