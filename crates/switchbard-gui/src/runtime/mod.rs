@@ -119,23 +119,61 @@ impl Default for BacklogViewState {
 }
 
 /// The Backlog view's central-panel lens. `List` is the pre-existing
-/// triage/status list; the rest are task-15/16 additions.
+/// triage/status list; `Board`/`Milestones`/`Statistics` are task-15/16
+/// additions; `Digest`/`Portfolio` are task-21/19. `Digest` is the default —
+/// task-21 makes the "what should I do today" landing screen the Backlog
+/// tab's default lens (not the whole app's default *tab*, which stays
+/// `ViewTab::Servers`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BacklogLens {
     #[default]
+    Digest,
     List,
     Board,
     Milestones,
+    Portfolio,
     Statistics,
 }
 
 impl BacklogLens {
     pub fn label(self) -> &'static str {
         match self {
+            Self::Digest => "Digest",
             Self::List => "List",
             Self::Board => "Board",
             Self::Milestones => "Milestones",
+            Self::Portfolio => "Portfolio",
             Self::Statistics => "Statistics",
+        }
+    }
+
+    /// Stable identifier persisted in `SavedView::lens` (task-20). Not the
+    /// same string as `label()` on principle — `label()` is UI copy, free to
+    /// reword; this one is a serialization format that must stay stable
+    /// across renames.
+    pub fn as_saved_id(self) -> &'static str {
+        match self {
+            Self::Digest => "digest",
+            Self::List => "list",
+            Self::Board => "board",
+            Self::Milestones => "milestones",
+            Self::Portfolio => "portfolio",
+            Self::Statistics => "statistics",
+        }
+    }
+
+    /// Inverse of [`as_saved_id`][Self::as_saved_id]. Falls back to the
+    /// default lens for anything unrecognized (a saved view from an older
+    /// build naming a lens this version doesn't have) rather than erroring —
+    /// see `SavedView`'s doc in `switchbard_core::config`.
+    pub fn from_saved_id(id: &str) -> Self {
+        match id {
+            "list" => Self::List,
+            "board" => Self::Board,
+            "milestones" => Self::Milestones,
+            "portfolio" => Self::Portfolio,
+            "statistics" => Self::Statistics,
+            _ => Self::Digest,
         }
     }
 }
@@ -171,6 +209,27 @@ impl BacklogTaskSortKey {
             Self::AcceptanceCriteria => "AC",
         }
     }
+
+    /// See `BacklogLens::as_saved_id` — same rationale (task-20 saved views).
+    pub fn as_saved_id(self) -> &'static str {
+        match self {
+            Self::Triage => "triage",
+            Self::Task => "task",
+            Self::Status => "status",
+            Self::Priority => "priority",
+            Self::AcceptanceCriteria => "acceptance_criteria",
+        }
+    }
+
+    pub fn from_saved_id(id: &str) -> Self {
+        match id {
+            "task" => Self::Task,
+            "status" => Self::Status,
+            "priority" => Self::Priority,
+            "acceptance_criteria" => Self::AcceptanceCriteria,
+            _ => Self::Triage,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -192,6 +251,21 @@ impl BacklogTaskSortDirection {
         match self {
             Self::Ascending => Self::Descending,
             Self::Descending => Self::Ascending,
+        }
+    }
+
+    /// See `BacklogLens::as_saved_id` (task-20 saved views).
+    pub fn as_saved_id(self) -> &'static str {
+        match self {
+            Self::Ascending => "ascending",
+            Self::Descending => "descending",
+        }
+    }
+
+    pub fn from_saved_id(id: &str) -> Self {
+        match id {
+            "descending" => Self::Descending,
+            _ => Self::Ascending,
         }
     }
 }

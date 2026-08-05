@@ -418,12 +418,32 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     seed_live_listener(&drawer_app);
     let drawer = harness(drawer_app);
 
+    let mut digest_app = seeded_app();
+    digest_app.config.ui.theme = theme;
+    digest_app.view_tab = ViewTab::Backlog;
+    // Digest is `BacklogLens::default()` (task-21), so this fixture leaves
+    // `lens` unset deliberately — it's exercising the default a real launch
+    // sees, not just picking the enum's first variant.
+    seed_backlog_project(&digest_app);
+    let digest = harness(digest_app);
+
     let mut list_app = seeded_app();
     list_app.config.ui.theme = theme;
     list_app.view_tab = ViewTab::Backlog;
+    // Explicit: `BacklogLens::default()` is `Digest`, not `List`, since
+    // task-21 — without this, this fixture would silently audit Digest
+    // twice and never touch the List lens's detail pane at all.
+    list_app.backlog_view.lens = BacklogLens::List;
     list_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
     seed_backlog_project(&list_app);
     let list = harness(list_app);
+
+    let mut portfolio_app = seeded_app();
+    portfolio_app.config.ui.theme = theme;
+    portfolio_app.view_tab = ViewTab::Backlog;
+    portfolio_app.backlog_view.lens = BacklogLens::Portfolio;
+    seed_backlog_project(&portfolio_app);
+    let portfolio = harness(portfolio_app);
 
     let mut board_app = seeded_app();
     board_app.config.ui.theme = theme;
@@ -457,9 +477,11 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
             format!("Agent Context · file selected (path + preview){suffix}"),
             drawer,
         ),
+        (format!("Backlog · Digest lens (default){suffix}"), digest),
         (format!("Backlog · List lens (task detail){suffix}"), list),
         (format!("Backlog · Board lens{suffix}"), board),
         (format!("Backlog · Milestones lens{suffix}"), milestones),
+        (format!("Backlog · Portfolio lens{suffix}"), portfolio),
         (format!("Backlog · Statistics lens{suffix}"), stats),
     ]
 }

@@ -96,6 +96,10 @@ fn board_lens_renders_kanban_columns_with_the_seeded_task() {
 fn global_search_overlay_finds_the_matching_task_across_repos() {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
+    // The List lens's own row renders the same "repo:id  title" label the
+    // search result does (see the assertion below); the Digest lens
+    // (task-21's default) doesn't render that format at all.
+    app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.search.open = true;
     app.backlog_view.search.query = "Seeded".to_string();
     app.backlog_projects.lock().unwrap().insert(
@@ -254,6 +258,7 @@ fn agent_context_estimate_uses_effective_instructions_not_all_assets() {
 fn backlog_view_surfaces_seeded_task() {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::List;
     app.backlog_projects.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogProject {
@@ -324,6 +329,7 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::List;
 
     for (repo_name, title) in [("alpha", "Alpha task"), ("beta", "Beta task")] {
         app.backlog_projects.lock().unwrap().insert(
@@ -382,5 +388,88 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
     assert!(
         harness.query_all_by_label("beta").next().is_some(),
         "repo badge should render on the beta row"
+    );
+}
+
+/// Digest lens (task-21): the Backlog tab's default landing screen should
+/// surface an in-progress task under its "In progress" section.
+#[test]
+fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    let mut in_progress_task = seeded_backlog_task();
+    in_progress_task.status = "In Progress".to_string();
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![in_progress_task],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+
+    assert_eq!(
+        harness.state().backlog_view.lens,
+        BacklogLens::Digest,
+        "Digest is the Backlog tab's default lens"
+    );
+    assert!(
+        harness.query_all_by_label("In progress").next().is_some(),
+        "the In progress section header should render"
+    );
+    assert!(
+        harness.query_by_label("Seeded Backlog Task").is_some(),
+        "the in-progress task should render as a digest strip"
+    );
+
+    // Sections render Overdue, Newly unblocked, In progress, Recently done in
+    // that order, each with its own "View all" button.
+    harness
+        .get_all_by_label("View all")
+        .nth(2)
+        .expect("the In progress section's View all button")
+        .click();
+    harness.run();
+    assert_eq!(
+        harness.state().backlog_view.lens,
+        BacklogLens::List,
+        "View all on a digest section should jump to the List lens"
+    );
+}
+
+/// Portfolio lens (task-19): a read-only per-repo health table.
+#[test]
+fn portfolio_lens_renders_per_repo_health() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::Portfolio;
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![seeded_backlog_task()],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_all_by_label(REPO_NAME).next().is_some(),
+        "the repo name should render as a portfolio row"
+    );
+    assert!(
+        harness.query_by_label("Oldest open").is_some(),
+        "the oldest-open column header should render"
+    );
+    assert!(
+        harness.query_by_label("Last activity").is_some(),
+        "the last-activity column header should render"
     );
 }
