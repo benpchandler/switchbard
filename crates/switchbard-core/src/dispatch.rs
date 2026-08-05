@@ -36,14 +36,19 @@
 //! 5. Release the claim with the outcome (dispatched + PR link in the task's
 //!    notes, or dispatch-failed + a note describing why).
 //!
-//! `claude -p` runs with `--dangerously-skip-permissions`: this is the one
-//! deliberate deviation from "never skip permissions" advice, made because
-//! the whole point of a *headless* dispatch worker is that nobody is at the
-//! keyboard to approve tool calls. The blast radius is bounded by running in
-//! a disposable worktree under a cost-of-failure-LOW repo (no money/PII/
-//! irreversible ops — see `power-of-10-overrides.md`); a bad run costs a
-//! `dispatch-failed` label and a worktree to inspect or discard, not data
-//! loss.
+//! `claude -p` runs with `--permission-mode acceptEdits`, not
+//! `--dangerously-skip-permissions`. Headless automation needs *some* way to
+//! avoid hanging on a permission prompt nobody is at the keyboard to answer,
+//! but `--dangerously-skip-permissions` is denied outright by Claude Code's
+//! own auto-mode classifier in at least one real environment this pipeline
+//! runs in (confirmed while building this module — a bare `claude -p
+//! --dangerously-skip-permissions` was blocked at the classifier, while the
+//! same prompt under `--permission-mode acceptEdits` wrote files and ran
+//! `git commit` via Bash without hanging). `acceptEdits` auto-accepts file
+//! edits and the Bash calls this pipeline's prompt asks for (add, commit,
+//! test/build gate) while still being a supported, non-bypass permission
+//! mode — a better fit for a worker meant to actually run than a flag that
+//! may simply refuse to execute.
 //!
 //! ## Why `drain_dispatch_queue` is serial, not parallel
 //!
@@ -373,7 +378,7 @@ fn prepare_dispatch(
 /// long; `Ok(Some(code))` is its real exit code.
 fn run_claude_headless(paths: &DispatchPaths, opts: &DispatchOptions) -> Result<Option<i32>> {
     let command = format!(
-        "cat {} | {} -p --dangerously-skip-permissions --output-format text",
+        "cat {} | {} -p --permission-mode acceptEdits --output-format text",
         shell_quote(&paths.prompt_path),
         opts.claude_binary,
     );
