@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "Baseline (feature/unified-backlog-view) - Servers idle smoke",
+  "scenario": "servers-idle-smoke-baseline",
+  "notes": "",
+  "source_csv": "/tmp/switchbard-perf-baseline.csv",
+  "captured_at": "2026-08-05T00:16:38.822523-04:00",
+  "recorded_at": "2026-08-05T00:16:49.353480-04:00",
+  "git": {
+    "branch": "feature/backlog-parity-design",
+    "sha": "e6ff834f3e982bf9021c89df4350e9bd1873d107",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "servers",
+    "last": null,
+    "source_frames": 84,
+    "matching_frames": 84,
+    "summarized_frames": 84
+  },
+  "counts_max": {
+    "rows": 84,
+    "expanded_rows": 0,
+    "services": 348,
+    "listeners": 61
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 0.868,
+      "p95": 1.026,
+      "p99": 1.162,
+      "max": 1.162
+    },
+    "top_bar": {
+      "p50": 0.061,
+      "p95": 0.072,
+      "p99": 0.244,
+      "max": 0.244
+    },
+    "central": {
+      "p50": 0.764,
+      "p95": 0.894,
+      "p99": 0.938,
+      "max": 0.938
+    },
+    "workspace": {
+      "p50": 0.764,
+      "p95": 0.894,
+      "p99": 0.938,
+      "max": 0.938
+    }
+  }
+}

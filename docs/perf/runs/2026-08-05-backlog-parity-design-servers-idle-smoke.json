@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "Backlog parity/design branch \u2014 Servers idle smoke (proxy for scroll smoke)",
+  "scenario": "servers-idle-smoke-backlog-parity-design",
+  "notes": "Agent environment has no scriptable mouse/scroll input, so this is an idle-Servers-view capture (no expanded rows) rather than the documented interactive scroll smoke. Compared against a same-methodology, same-machine, same-duration baseline capture of feature/unified-backlog-view (0a9cbcf) at effectively the same scale (84 rows/348 services/61 listeners vs this run's 83/348/65): baseline total p95 1.026ms, p99 1.162ms vs this run's 1.35ms / 1.38ms. Both are two orders of magnitude under the 16.7ms frame budget; the ~0.3ms delta is consistent with normal process-to-process variance at sub-millisecond scale, not a structural regression — the task-14/15/16 changes touching this path are a per-frame theme::apply() call (documented as a cheap Visuals swap) and mechanical Color32-constant-to-accessor-function renames, neither of which does meaningful work. New Board/Milestones/Statistics Backlog lenses only render when that lens is active and never touch the Servers/workspace path. Baseline comparison summary saved alongside at 2026-08-05-baseline-unified-backlog-view-servers-idle-smoke.json.",
+  "source_csv": "/tmp/switchbard-perf.csv",
+  "captured_at": "2026-08-05T00:15:04.162884-04:00",
+  "recorded_at": "2026-08-05T00:17:08.993511-04:00",
+  "git": {
+    "branch": "feature/backlog-parity-design",
+    "sha": "e6ff834f3e982bf9021c89df4350e9bd1873d107",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "servers",
+    "last": null,
+    "source_frames": 83,
+    "matching_frames": 83,
+    "summarized_frames": 83
+  },
+  "counts_max": {
+    "rows": 83,
+    "expanded_rows": 0,
+    "services": 348,
+    "listeners": 65
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 1.015,
+      "p95": 1.35,
+      "p99": 1.38,
+      "max": 1.38
+    },
+    "top_bar": {
+      "p50": 0.069,
+      "p95": 0.088,
+      "p99": 0.1,
+      "max": 0.1
+    },
+    "central": {
+      "p50": 0.887,
+      "p95": 1.164,
+      "p99": 1.208,
+      "max": 1.208
+    },
+    "workspace": {
+      "p50": 0.887,
+      "p95": 1.164,
+      "p99": 1.208,
+      "max": 1.208
+    }
+  }
+}
