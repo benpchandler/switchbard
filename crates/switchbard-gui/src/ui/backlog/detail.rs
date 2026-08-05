@@ -1,6 +1,11 @@
-//! The selected-task detail pane: header, editable fields, acceptance
-//! criteria, implementation notes, and the read-only plan/DoD/summary
-//! sections.
+//! The selected-task detail pane: header, editable fields, rendered
+//! description, dependencies/references, acceptance criteria + Definition of
+//! Done checklists, implementation plan, notes, archive, and the read-only
+//! final summary.
+//!
+//! Task-15 AC #3 parity note: the description renders as CommonMark by
+//! default (`egui_commonmark`) with a raw-editor toggle, rather than always
+//! showing a plain multiline `TextEdit` — matching the Backlog.md webview.
 
 use super::{format, Pending, ProjectRow, Snapshot};
 use crate::app::HiveApp;
@@ -8,6 +13,7 @@ use crate::runtime::BacklogEditorState;
 use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
+use egui_commonmark::CommonMarkViewer;
 use std::path::Path;
 use switchbard_core::{BacklogTask, BacklogTaskPatch, BACKLOG_PRIORITIES, BACKLOG_STATUSES};
 
@@ -46,10 +52,18 @@ pub(super) fn render_task_detail(
             ui.add_space(8.0);
             render_editor(app, ui, &project.key, task, editable, pending);
             ui.add_space(10.0);
+            render_dependencies(app, ui, &project.key, task, editable, pending);
+            ui.add_space(10.0);
+            render_references(app, ui, &project.key, task, editable, pending);
+            ui.add_space(10.0);
             render_acceptance(app, ui, &project.key, task, editable, pending);
+            ui.add_space(10.0);
+            render_definition_of_done(app, ui, &project.key, task, editable, pending);
             ui.add_space(10.0);
             render_notes(app, ui, &project.key, task, editable, pending);
             render_readonly_sections(ui, task);
+            ui.add_space(10.0);
+            render_archive(app, ui, &project.key, task, editable, pending);
         });
 }
 
@@ -89,6 +103,25 @@ fn render_detail_header(
         .color(theme::MUTED_TEXT),
     )
     .on_hover_text(task.path.display().to_string());
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(format!(
+                "created {}",
+                task.created_date.as_deref().unwrap_or("unknown")
+            ))
+            .small()
+            .color(theme::MUTED_TEXT),
+        );
+        ui.separator();
+        ui.label(
+            egui::RichText::new(format!(
+                "updated {}",
+                task.updated_date.as_deref().unwrap_or("unknown")
+            ))
+            .small()
+            .color(theme::MUTED_TEXT),
+        );
+    });
     if !project.project.warnings.is_empty() {
         for warning in &project.project.warnings {
             ui.colored_label(theme::AMBER, warning);
@@ -147,10 +180,29 @@ fn render_editor(
             );
         });
 
-        ui.label("description");
+        ui.horizontal(|ui| {
+            ui.label("milestone");
+            ui.add(
+                egui::TextEdit::singleline(&mut app.backlog_view.editor.milestone)
+                    .hint_text("none")
+                    .desired_width(200.0),
+            );
+            if !app.backlog_view.editor.milestone.trim().is_empty()
+                && ui
+                    .small_button("Clear")
+                    .on_hover_text("Clear the milestone assignment")
+                    .clicked()
+            {
+                app.backlog_view.editor.milestone.clear();
+            }
+        });
+
+        render_description_editor(app, ui);
+
+        ui.label("implementation plan");
         ui.add(
-            egui::TextEdit::multiline(&mut app.backlog_view.editor.description)
-                .desired_rows(5)
+            egui::TextEdit::multiline(&mut app.backlog_view.editor.plan)
+                .desired_rows(4)
                 .desired_width(f32::INFINITY),
         );
     });
@@ -189,6 +241,126 @@ fn render_editor(
     });
 }
 
+/// The description field: rendered CommonMark by default, with an Edit
+/// toggle that swaps in the raw multiline editor bound to the same buffer.
+fn render_description_editor(app: &mut HiveApp, ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        ui.label("description");
+        let toggle_label = if app.backlog_view.editor.description_editing {
+            "View rendered"
+        } else {
+            "Edit raw"
+        };
+        if ui.small_button(toggle_label).clicked() {
+            app.backlog_view.editor.description_editing =
+                !app.backlog_view.editor.description_editing;
+        }
+    });
+    if app.backlog_view.editor.description_editing {
+        ui.add(
+            egui::TextEdit::multiline(&mut app.backlog_view.editor.description)
+                .desired_rows(6)
+                .desired_width(f32::INFINITY),
+        );
+    } else if app.backlog_view.editor.description.trim().is_empty() {
+        ui.label(egui::RichText::new("No description").color(theme::MUTED_TEXT));
+    } else {
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            CommonMarkViewer::new().show(
+                ui,
+                &mut app.commonmark_cache,
+                &app.backlog_view.editor.description,
+            );
+        });
+    }
+}
+
+fn render_dependencies(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    project_root: &Path,
+    task: &BacklogTask,
+    editable: bool,
+    pending: &mut Pending,
+) {
+    ui.label(egui::RichText::new("Dependencies").strong());
+    if task.dependencies.is_empty() {
+        ui.label(egui::RichText::new("No dependencies").color(theme::MUTED_TEXT));
+    } else {
+        ui.label(task.dependencies.join(", "));
+    }
+    ui.add_enabled_ui(editable, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("edit").small().color(theme::MUTED_TEXT));
+            ui.add(
+                egui::TextEdit::singleline(&mut app.backlog_view.editor.dependencies)
+                    .hint_text("TASK-1, TASK-2")
+                    .desired_width(220.0),
+            );
+            let new_deps = split_csv(&app.backlog_view.editor.dependencies);
+            let changed = new_deps != task.dependencies;
+            if ui
+                .add_enabled(changed, egui::Button::new("Save"))
+                .on_hover_text("Set dependencies through backlog task edit --depends-on")
+                .clicked()
+            {
+                pending.save = Some((
+                    project_root.to_path_buf(),
+                    task.id.clone(),
+                    BacklogTaskPatch {
+                        dependencies: Some(new_deps),
+                        ..Default::default()
+                    },
+                ));
+            }
+        });
+    });
+}
+
+fn render_references(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    project_root: &Path,
+    task: &BacklogTask,
+    editable: bool,
+    pending: &mut Pending,
+) {
+    ui.label(egui::RichText::new("References").strong());
+    if task.references.is_empty() {
+        ui.label(egui::RichText::new("No references").color(theme::MUTED_TEXT));
+    } else {
+        for reference in &task.references {
+            ui.hyperlink_to(reference, reference);
+        }
+    }
+    ui.add_enabled_ui(editable, |ui| {
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut app.backlog_view.editor.new_reference)
+                    .hint_text("Add a reference (URL or note)")
+                    .desired_width(260.0),
+            );
+            let candidate = app.backlog_view.editor.new_reference.trim().to_string();
+            if ui
+                .add_enabled(!candidate.is_empty(), egui::Button::new("Add"))
+                .clicked()
+            {
+                let mut references = task.references.clone();
+                references.push(candidate);
+                pending.save = Some((
+                    project_root.to_path_buf(),
+                    task.id.clone(),
+                    BacklogTaskPatch {
+                        references: Some(references),
+                        ..Default::default()
+                    },
+                ));
+                app.backlog_view.editor.new_reference.clear();
+            }
+        });
+    });
+}
+
 fn render_acceptance(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
@@ -218,6 +390,39 @@ fn render_acceptance(
             ));
             app.backlog_status
                 .set(format!("updating {} AC #{}", task.id, item.index));
+        }
+    }
+}
+
+fn render_definition_of_done(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    project_root: &Path,
+    task: &BacklogTask,
+    editable: bool,
+    pending: &mut Pending,
+) {
+    ui.label(egui::RichText::new("Definition of Done").strong());
+    if task.definition_of_done.is_empty() {
+        ui.label(egui::RichText::new("No Definition of Done items").color(theme::MUTED_TEXT));
+        return;
+    }
+    for item in &task.definition_of_done {
+        let mut checked = item.checked;
+        let response = ui
+            .add_enabled_ui(editable, |ui| {
+                ui.checkbox(&mut checked, format!("#{} {}", item.index, item.text))
+            })
+            .inner;
+        if response.changed() {
+            pending.toggle_dod = Some((
+                project_root.to_path_buf(),
+                task.id.clone(),
+                item.index,
+                checked,
+            ));
+            app.backlog_status
+                .set(format!("updating {} DoD #{}", task.id, item.index));
         }
     }
 }
@@ -265,29 +470,45 @@ fn render_notes(
 }
 
 fn render_readonly_sections(ui: &mut egui::Ui, task: &BacklogTask) {
-    if !task.implementation_plan.trim().is_empty() {
-        egui::CollapsingHeader::new("Implementation Plan")
-            .default_open(false)
-            .show(ui, |ui| {
-                ui.label(&task.implementation_plan);
-            });
-    }
-    if !task.definition_of_done.is_empty() {
-        egui::CollapsingHeader::new("Definition of Done")
-            .default_open(false)
-            .show(ui, |ui| {
-                for item in &task.definition_of_done {
-                    let mark = if item.checked { "[x]" } else { "[ ]" };
-                    ui.label(format!("{mark} #{} {}", item.index, item.text));
-                }
-            });
-    }
     if !task.final_summary.trim().is_empty() {
         egui::CollapsingHeader::new("Final Summary")
             .default_open(false)
             .show(ui, |ui| {
                 ui.label(&task.final_summary);
             });
+    }
+}
+
+fn render_archive(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    project_root: &Path,
+    task: &BacklogTask,
+    editable: bool,
+    pending: &mut Pending,
+) {
+    if !editable {
+        return;
+    }
+    ui.separator();
+    if app.backlog_view.archive_confirm {
+        ui.horizontal(|ui| {
+            ui.colored_label(theme::AMBER, format!("Archive {}?", task.id));
+            if ui.add(theme::danger_button("Confirm archive")).clicked() {
+                pending.archive = Some((project_root.to_path_buf(), task.id.clone()));
+                app.backlog_view.archive_confirm = false;
+                app.backlog_status.set(format!("archiving {}", task.id));
+            }
+            if ui.button("Cancel").clicked() {
+                app.backlog_view.archive_confirm = false;
+            }
+        });
+    } else if ui
+        .button("Archive")
+        .on_hover_text("Move this task into backlog/archive/tasks")
+        .clicked()
+    {
+        app.backlog_view.archive_confirm = true;
     }
 }
 
@@ -308,7 +529,13 @@ fn sync_editor(app: &mut HiveApp, project_root: &Path, task: &BacklogTask) {
     app.backlog_view.editor.priority = task.priority.clone();
     app.backlog_view.editor.labels = task.labels.join(", ");
     app.backlog_view.editor.assignees = task.assignees.join(", ");
+    app.backlog_view.editor.dependencies = task.dependencies.join(", ");
+    app.backlog_view.editor.plan = task.implementation_plan.clone();
+    app.backlog_view.editor.milestone = task.milestone.clone().unwrap_or_default();
     app.backlog_view.editor.note.clear();
+    app.backlog_view.editor.description_editing = false;
+    app.backlog_view.editor.new_reference.clear();
+    app.backlog_view.archive_confirm = false;
 }
 
 fn patch_from_editor(task: &BacklogTask, editor: &BacklogEditorState) -> BacklogTaskPatch {
@@ -342,6 +569,19 @@ fn patch_from_editor(task: &BacklogTask, editor: &BacklogEditorState) -> Backlog
     let assignees = split_csv(&editor.assignees);
     if assignees != task.assignees {
         patch.assignees = Some(assignees);
+    }
+    let plan = editor.plan.trim().to_string();
+    if plan != task.implementation_plan {
+        patch.implementation_plan = Some(plan);
+    }
+    let milestone = editor.milestone.trim();
+    let current_milestone = task.milestone.as_deref().unwrap_or("");
+    if milestone != current_milestone {
+        if milestone.is_empty() {
+            patch.clear_milestone = true;
+        } else {
+            patch.milestone = Some(milestone.to_string());
+        }
     }
     patch
 }

@@ -184,6 +184,35 @@ fn paint_pulsing_dots(
         .request_repaint_after(std::time::Duration::from_millis(PULSE_FRAME_MS));
 }
 
+/// Seven distinguishable hues for the Board lens's repo rails / badges — a
+/// tracked worktree's fleet is small (task-15 targets ~7 repos), so a fixed
+/// palette indexed by a stable hash reads more consistently frame-to-frame
+/// than deriving hue from an arbitrary HSV wheel. Not used for text, so the
+/// WCAG-AA text contract in this module's header doc doesn't apply — these
+/// only ever paint a dot or a rail, never a glyph.
+const REPO_RAIL_COLORS: [Color32; 7] = [
+    Color32::from_rgb(0x15, 0x5A, 0x8A), // budget-style blue
+    Color32::from_rgb(0x7A, 0x4A, 0x9E), // music-style violet
+    Color32::from_rgb(0x0F, 0x7A, 0x4D), // kitchen-style green
+    Color32::from_rgb(0xB3, 0x65, 0x1F), // builtin-style amber
+    Color32::from_rgb(0x8A, 0x2F, 0x5D), // onramp-style magenta
+    Color32::from_rgb(0x40, 0x47, 0x4D), // hub-style slate
+    Color32::from_rgb(0x1F, 0x8A, 0x8A), // teal, the 7th distinguishable hue
+];
+
+/// Stable repo → rail-color mapping. Same repo name always paints the same
+/// hue across rows, columns, and frames (a `str` hash, not an index into
+/// discovery order, so adding/removing a tracked repo doesn't reshuffle
+/// everyone else's color).
+pub fn repo_rail_color(repo_name: &str) -> Color32 {
+    let mut hash: u64 = 0xcbf29ce484222325; // FNV-1a offset basis
+    for byte in repo_name.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    REPO_RAIL_COLORS[(hash as usize) % REPO_RAIL_COLORS.len()]
+}
+
 /// Multiply a Color32's alpha channel by `factor` (clamped to 0..=1).
 fn scale_alpha(c: Color32, factor: f32) -> Color32 {
     let f = factor.clamp(0.0, 1.0);

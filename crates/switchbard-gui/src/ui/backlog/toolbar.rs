@@ -4,10 +4,32 @@
 
 use super::{format, reset_task_selection, sort, Snapshot};
 use crate::app::HiveApp;
+use crate::runtime::BacklogLens;
 use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
 use switchbard_core::BACKLOG_PRIORITIES;
+
+/// The lens tab strip shown under the summary line: List / Board /
+/// Milestones / Statistics. Switching lenses does not clear the current
+/// filters or selection — every lens reads the same `Snapshot`.
+pub(super) fn render_lens_tabs(app: &mut HiveApp, ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        for lens in [
+            BacklogLens::List,
+            BacklogLens::Board,
+            BacklogLens::Milestones,
+            BacklogLens::Statistics,
+        ] {
+            if ui
+                .selectable_label(app.backlog_view.lens == lens, lens.label())
+                .clicked()
+            {
+                app.backlog_view.lens = lens;
+            }
+        }
+    });
+}
 
 pub(super) fn render_summary(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
     let scoped = super::scoped_projects(app, snap);
@@ -176,6 +198,7 @@ pub(super) fn render_project_toolbar(
 
         ui.checkbox(&mut app.backlog_view.show_completed, "Done");
         ui.checkbox(&mut app.backlog_view.show_archived, "Archived");
+        ui.checkbox(&mut app.backlog_view.show_drafts, "Drafts");
         ui.separator();
         ui.label(egui::RichText::new(format!("{visible_count} visible")).color(theme::MUTED_TEXT));
     });

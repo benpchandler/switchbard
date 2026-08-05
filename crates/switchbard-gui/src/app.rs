@@ -135,6 +135,10 @@ pub struct HiveApp {
     pub view_tab: ViewTab,
     pub agent_context_view: AgentContextViewState,
     pub backlog_view: BacklogViewState,
+    /// Shared render cache for the task detail pane's markdown description
+    /// (task-15 AC #3). `egui_commonmark` recommends one long-lived cache
+    /// rather than rebuilding it every frame.
+    pub commonmark_cache: egui_commonmark::CommonMarkCache,
     /// 0 = system default; 1..=BROWSER_APP_NAMES.len() = specific browser.
     pub browser_choice: usize,
     /// First-launch discovery state. Hidden by default; flips to Scanning
@@ -231,6 +235,7 @@ impl HiveApp {
             view_tab: ViewTab::Servers,
             agent_context_view: AgentContextViewState::default(),
             backlog_view: BacklogViewState::default(),
+            commonmark_cache: egui_commonmark::CommonMarkCache::default(),
             browser_choice,
             onboarding: Arc::new(Mutex::new(DiscoveryState::default())),
             perf: PerfSession::from_env(),
@@ -924,6 +929,56 @@ impl HiveApp {
                     kick.notify();
                 }
                 Err(e) => status.set(format!("update {task_id} AC #{index} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn spawn_backlog_dod_toggle(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        index: usize,
+        checked: bool,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::set_backlog_dod_checked(&project_root, &task_id, index, checked)
+            {
+                Ok(_) => {
+                    refresh_backlog_project_cache(&projects, &project_root);
+                    let verb = if checked { "checked" } else { "unchecked" };
+                    status.set(format!("{verb} {task_id} DoD #{index}"));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("update {task_id} DoD #{index} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn spawn_backlog_archive(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::archive_backlog_task(&project_root, &task_id) {
+                Ok(_) => {
+                    refresh_backlog_project_cache(&projects, &project_root);
+                    status.set(format!("archived {task_id}"));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("archive {task_id} failed: {e}")),
             }
             ctx.request_repaint();
         });
