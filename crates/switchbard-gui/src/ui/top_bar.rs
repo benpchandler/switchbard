@@ -16,12 +16,14 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             ui.heading("Switchbard");
             ui.separator();
-            let (last_scan, last_error, total, attributed) = scan_summary(app);
-            if let Some(at) = last_scan {
-                ui.label(format!("{}s since last scan", at.elapsed().as_secs()));
-            } else {
-                ui.label("scanning…");
-            }
+            // Owner UX pass (2026-08-05): the "Ns since last scan" label is
+            // gone — staleness isn't actionable information on its own (the
+            // Refresh button next to it is), and the owner found it just
+            // added visual noise. If staleness ever needs to surface again,
+            // do it as a subtle indicator (e.g. dimming Refresh's icon),
+            // not a ticking counter competing for attention with the error
+            // label right after it.
+            let (last_error, total, attributed) = scan_summary(app);
             if let Some(err) = &last_error {
                 ui.colored_label(egui::Color32::RED, format!("error: {err}"));
             }
@@ -66,15 +68,10 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
     }
 }
 
-fn scan_summary(app: &HiveApp) -> (Option<std::time::Instant>, Option<String>, usize, usize) {
+fn scan_summary(app: &HiveApp) -> (Option<String>, usize, usize) {
     let s = app.state.lock().unwrap();
     let attributed = s.listeners.iter().filter(|l| l.repo_name.is_some()).count();
-    (
-        s.last_scan,
-        s.last_error.clone(),
-        s.listeners.len(),
-        attributed,
-    )
+    (s.last_error.clone(), s.listeners.len(), attributed)
 }
 
 fn render_actions(app: &mut HiveApp, ui: &mut egui::Ui) {
