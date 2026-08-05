@@ -218,6 +218,12 @@ pub enum BacklogTaskSortKey {
     Status,
     Priority,
     AcceptanceCriteria,
+    /// QA parity matrix MEDIUM gap: the webview's All Tasks table sorts by
+    /// labels/assignee/milestone; `compare_tasks` (sort.rs) had no such
+    /// keys.
+    Labels,
+    Assignee,
+    Milestone,
 }
 
 impl BacklogTaskSortKey {
@@ -228,6 +234,9 @@ impl BacklogTaskSortKey {
             Self::Status => "Status",
             Self::Priority => "Priority",
             Self::AcceptanceCriteria => "AC",
+            Self::Labels => "Labels",
+            Self::Assignee => "Assignee",
+            Self::Milestone => "Milestone",
         }
     }
 
@@ -239,6 +248,9 @@ impl BacklogTaskSortKey {
             Self::Status => "status",
             Self::Priority => "priority",
             Self::AcceptanceCriteria => "acceptance_criteria",
+            Self::Labels => "labels",
+            Self::Assignee => "assignee",
+            Self::Milestone => "milestone",
         }
     }
 
@@ -248,6 +260,9 @@ impl BacklogTaskSortKey {
             "status" => Self::Status,
             "priority" => Self::Priority,
             "acceptance_criteria" => Self::AcceptanceCriteria,
+            "labels" => Self::Labels,
+            "assignee" => Self::Assignee,
+            "milestone" => Self::Milestone,
             _ => Self::Triage,
         }
     }

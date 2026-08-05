@@ -100,6 +100,19 @@ pub(super) fn compare_tasks(
                     .len()
                     .cmp(&b.acceptance_criteria.len())
             }),
+        // Comma-joined, same string a reader sees on the row/card (list.rs's
+        // detail pane, board.rs's strip) — an unlabeled/unassigned/
+        // unmilestoned task joins to "", which sorts first ascending.
+        BacklogTaskSortKey::Labels => {
+            cmp_ascii_case_insensitive(&a.labels.join(", "), &b.labels.join(", "))
+        }
+        BacklogTaskSortKey::Assignee => {
+            cmp_ascii_case_insensitive(&a.assignees.join(", "), &b.assignees.join(", "))
+        }
+        BacklogTaskSortKey::Milestone => cmp_ascii_case_insensitive(
+            a.milestone.as_deref().unwrap_or(""),
+            b.milestone.as_deref().unwrap_or(""),
+        ),
     };
     let primary = match sort_direction {
         BacklogTaskSortDirection::Ascending => primary,
@@ -341,6 +354,94 @@ mod tests {
                 .map(|task| task.id.as_str())
                 .collect::<Vec<_>>(),
             vec!["TASK-3", "TASK-2", "TASK-1"]
+        );
+    }
+
+    fn task_with_labels_assignee_milestone(
+        id: &str,
+        labels: &[&str],
+        assignee: Option<&str>,
+        milestone: Option<&str>,
+    ) -> BacklogTask {
+        let mut task = task_with_fields(id, id, "To Do", "medium", 0, 0);
+        task.labels = labels.iter().map(|l| l.to_string()).collect();
+        task.assignees = assignee.into_iter().map(|a| a.to_string()).collect();
+        task.milestone = milestone.map(|m| m.to_string());
+        task
+    }
+
+    /// QA parity matrix MEDIUM gap: labels/assignee/milestone sort keys.
+    #[test]
+    fn labels_sort_orders_by_the_comma_joined_label_string() {
+        let none = task_with_labels_assignee_milestone("TASK-1", &[], None, None);
+        let alpha = task_with_labels_assignee_milestone("TASK-2", &["alpha"], None, None);
+        let zeta = task_with_labels_assignee_milestone("TASK-3", &["zeta"], None, None);
+        let mut tasks = [&zeta, &none, &alpha];
+
+        tasks.sort_by(|a, b| {
+            compare_tasks(
+                a,
+                b,
+                BacklogTaskSortKey::Labels,
+                BacklogTaskSortDirection::Ascending,
+            )
+        });
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["TASK-1", "TASK-2", "TASK-3"],
+            "unlabeled should sort first ascending (joins to an empty string)"
+        );
+    }
+
+    #[test]
+    fn assignee_sort_is_case_insensitive() {
+        let ben = task_with_labels_assignee_milestone("TASK-1", &[], Some("ben"), None);
+        let alice = task_with_labels_assignee_milestone("TASK-2", &[], Some("Alice"), None);
+        let mut tasks = [&ben, &alice];
+
+        tasks.sort_by(|a, b| {
+            compare_tasks(
+                a,
+                b,
+                BacklogTaskSortKey::Assignee,
+                BacklogTaskSortDirection::Ascending,
+            )
+        });
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["TASK-2", "TASK-1"],
+            "\"Alice\" should sort before \"ben\" case-insensitively"
+        );
+    }
+
+    #[test]
+    fn milestone_sort_groups_unmilestoned_tasks_together() {
+        let v2 = task_with_labels_assignee_milestone("TASK-1", &[], None, Some("v2"));
+        let none = task_with_labels_assignee_milestone("TASK-2", &[], None, None);
+        let v1 = task_with_labels_assignee_milestone("TASK-3", &[], None, Some("v1"));
+        let mut tasks = [&v2, &none, &v1];
+
+        tasks.sort_by(|a, b| {
+            compare_tasks(
+                a,
+                b,
+                BacklogTaskSortKey::Milestone,
+                BacklogTaskSortDirection::Ascending,
+            )
+        });
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["TASK-2", "TASK-3", "TASK-1"],
+            "unmilestoned (empty string) sorts first, then v1, then v2"
         );
     }
 

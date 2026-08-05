@@ -179,6 +179,9 @@ fn render_task_sort_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
                     BacklogTaskSortKey::Status,
                     BacklogTaskSortKey::Priority,
                     BacklogTaskSortKey::AcceptanceCriteria,
+                    BacklogTaskSortKey::Labels,
+                    BacklogTaskSortKey::Assignee,
+                    BacklogTaskSortKey::Milestone,
                 ] {
                     ui.selectable_value(&mut app.backlog_view.sort_key, key, key.label());
                 }
