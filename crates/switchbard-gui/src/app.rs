@@ -92,6 +92,10 @@ pub struct HiveApp {
     pub detection_kick: Kick,
     pub agent_context_kick: Kick,
     pub backlog_kick: Kick,
+    /// Wakes the dispatch worker (`workers::spawn_dispatch`) early — used by
+    /// the per-task "Dispatch" toggle so flagging a task doesn't wait out
+    /// the worker's normal poll period before the queue is drained.
+    pub dispatch_kick: Kick,
     pub picker: Arc<Mutex<PickerState>>,
 
     // Per-view feedback channels. One per UI surface so messages don't
@@ -230,6 +234,7 @@ impl HiveApp {
             detection_kick: Kick::new(),
             agent_context_kick: Kick::new(),
             backlog_kick: Kick::new(),
+            dispatch_kick: Kick::new(),
             config: cfg,
             config_save_path: None,
             picker: Arc::new(Mutex::new(PickerState::Idle)),
@@ -258,7 +263,7 @@ impl HiveApp {
         }
     }
 
-    /// Spawn the four background workers, wiring them to this app's shared
+    /// Spawn the five background workers, wiring them to this app's shared
     /// state. Separated from `new_headless` so tests can build an app that
     /// never starts threads.
     fn spawn_workers(&self, ctx: egui::Context) {
@@ -279,6 +284,7 @@ impl HiveApp {
                 detection_kick: self.detection_kick.clone(),
                 agent_context_kick: self.agent_context_kick.clone(),
                 backlog_kick: self.backlog_kick.clone(),
+                dispatch_kick: self.dispatch_kick.clone(),
             },
         );
     }
@@ -918,6 +924,48 @@ impl HiveApp {
                     "{action_label}: saved {saved}/{total} tasks; first failure: {error}"
                 )),
                 None => status.set(format!("{action_label}: updated {saved} task(s)")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    /// Per-task opt-in for the dispatch pipeline: adds or removes
+    /// `dispatch::DISPATCH_LABEL` via `set_backlog_label` (a targeted
+    /// add/remove, not a full labels replace — see that function's doc).
+    /// Also wakes the dispatch worker on enable, so flagging a task doesn't
+    /// sit waiting out the worker's normal poll period before it's picked
+    /// up. Strictly opt-in: this only ever touches the one label the user
+    /// clicked; the worker (`workers::spawn_dispatch`) owns everything after
+    /// that (claim, worktree, headless run, PR).
+    pub fn spawn_backlog_dispatch_toggle(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        enabled: bool,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let backlog_kick = self.backlog_kick.clone();
+        let dispatch_kick = self.dispatch_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::set_backlog_label(
+                &project_root,
+                &task_id,
+                switchbard_core::DISPATCH_LABEL,
+                enabled,
+            ) {
+                Ok(_) => {
+                    refresh_backlog_project_cache(&projects, &project_root);
+                    let verb = if enabled { "flagged" } else { "unflagged" };
+                    status.set(format!("{verb} {task_id} for dispatch"));
+                    backlog_kick.notify();
+                    if enabled {
+                        dispatch_kick.notify();
+                    }
+                }
+                Err(e) => status.set(format!("dispatch flag for {task_id} failed: {e}")),
             }
             ctx.request_repaint();
         });

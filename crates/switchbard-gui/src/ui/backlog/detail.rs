@@ -77,6 +77,8 @@ pub(super) fn render_task_detail(
             detail_lists::render_notes(app, ui, &project.key, task, editable, pending);
             detail_lists::render_readonly_sections(ui, task);
             ui.add_space(10.0);
+            detail_lists::render_dispatch(app, ui, &project.key, task, editable, pending);
+            ui.add_space(10.0);
             detail_lists::render_archive(app, ui, &project.key, task, editable, pending);
         });
 }
@@ -321,6 +323,7 @@ fn sync_editor(app: &mut HiveApp, project_root: &Path, task: &BacklogTask) {
     app.backlog_view.editor.description_editing = false;
     app.backlog_view.editor.new_reference.clear();
     app.backlog_view.archive_confirm = false;
+    app.backlog_view.dispatch_confirm = false;
 }
 
 fn patch_from_editor(task: &BacklogTask, editor: &BacklogEditorState) -> BacklogTaskPatch {

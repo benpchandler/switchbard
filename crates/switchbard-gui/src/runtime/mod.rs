@@ -104,6 +104,11 @@ pub struct BacklogViewState {
     pub active_saved_view: Option<String>,
     /// Draft text for the "Save current as…" field.
     pub saved_view_name_draft: String,
+    /// Mirrors `archive_confirm`'s inline-confirm pattern for the "Dispatch
+    /// this task" opt-in — flagging a task hands it to an autonomous
+    /// headless agent run, consequential enough to confirm the same way
+    /// Archive does. Cleared whenever the detail selection changes.
+    pub dispatch_confirm: bool,
 }
 
 impl Default for BacklogViewState {
@@ -129,6 +134,7 @@ impl Default for BacklogViewState {
             expanded_parents: BTreeSet::new(),
             active_saved_view: None,
             saved_view_name_draft: String::new(),
+            dispatch_confirm: false,
         }
     }
 }

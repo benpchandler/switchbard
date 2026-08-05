@@ -1,10 +1,20 @@
 //! Background threads that feed the GUI.
 //!
-//! All four workers follow the same shape:
+//! The first four workers follow the same shape:
 //!   1. Take a snapshot of whatever inputs they need (under a brief lock).
 //!   2. Do work outside any lock.
 //!   3. Write results back into the shared `Mutex`, then `ctx.request_repaint()`.
 //!   4. Sleep via `kick.wait(period)`.
+//!
+//! The fifth (`spawn_dispatch`) is the odd one out: it has no `Mutex` of its
+//! own to write into, because a dispatched task's state — `dispatch` /
+//! `dispatching` / `dispatched` / `dispatch-failed` — already lives on the
+//! task itself (its label) via `switchbard_core::dispatch`. It publishes
+//! nothing new; it just runs the pipeline and kicks `backlog_kick` so the
+//! *existing* backlog worker's next (or forced) reload picks up the label
+//! and notes change. See its own doc for why one iteration can block far
+//! longer than the other workers' — this reuses `drain_dispatch_queue`'s
+//! serial-by-design batching rather than reimplementing it.
 //!
 //! Centralizing the spawning here keeps `HiveApp::new` short and stops the
 //! "what does this anonymous closure do?" question from recurring.
@@ -14,12 +24,12 @@ use crate::runtime::{ActiveRun, FileListSummary, OrderingState, WorktreeMeta};
 use crate::sync::Kick;
 use eframe::egui;
 use switchbard_core::{
-    agent_context_needs_rescan, attribute, detect_services, find_hub_repo, is_backlog_project,
-    load_backlog_project, load_ordering_overlay, probe_dirty_files, probe_fetch_age,
-    probe_head_commit_time, probe_ignored_files, probe_main_drift, probe_recent_commits,
-    probe_ref_drift_detail, probe_remote_drift, save_agent_context_cache, scan_agent_context,
-    scan_listeners, AgentContextMap, BacklogProject, DetectedService, DriftProbe, Repo,
-    WorktreeRef,
+    agent_context_needs_rescan, attribute, detect_services, drain_dispatch_queue, find_hub_repo,
+    is_backlog_project, list_dispatch_queue, load_backlog_project, load_ordering_overlay,
+    probe_dirty_files, probe_fetch_age, probe_head_commit_time, probe_ignored_files,
+    probe_main_drift, probe_recent_commits, probe_ref_drift_detail, probe_remote_drift,
+    save_agent_context_cache, scan_agent_context, scan_listeners, AgentContextMap, BacklogProject,
+    DetectedService, DispatchOptions, DriftProbe, Repo, WorktreeRef,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
@@ -47,6 +57,12 @@ const PROBE_PERIOD: Duration = Duration::from_secs(60);
 const DETECT_PERIOD: Duration = Duration::from_secs(30);
 const CONTEXT_PERIOD: Duration = Duration::from_secs(30);
 const BACKLOG_PERIOD: Duration = Duration::from_secs(30);
+/// Longer than the other periods on purpose: dispatch is opt-in and rare
+/// (a task only enters the queue via an explicit user action), and one
+/// iteration can itself take many minutes (a full headless `claude -p` run
+/// per queued task) — a short poll period would just mean more overlapping
+/// wakeups against a worker that's usually idle-checking an empty queue.
+const DISPATCH_PERIOD: Duration = Duration::from_secs(90);
 const CONTEXT_CACHE_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24);
 const REAPER_PERIOD: Duration = Duration::from_secs(2);
 
@@ -68,6 +84,7 @@ pub struct Channels {
     pub detection_kick: Kick,
     pub agent_context_kick: Kick,
     pub backlog_kick: Kick,
+    pub dispatch_kick: Kick,
 }
 
 pub fn spawn_all(ctx: egui::Context, ch: Channels) {
@@ -76,6 +93,7 @@ pub fn spawn_all(ctx: egui::Context, ch: Channels) {
     spawn_detection(ctx.clone(), ch.clone());
     spawn_agent_context(ctx.clone(), ch.clone());
     spawn_backlog(ctx.clone(), ch.clone());
+    spawn_dispatch(ctx.clone(), ch.clone());
     spawn_reaper(ctx, ch);
 }
 
@@ -276,6 +294,39 @@ fn spawn_backlog(ctx: egui::Context, ch: Channels) {
 
         ctx.request_repaint();
         ch.backlog_kick.wait(BACKLOG_PERIOD);
+    });
+}
+
+/// Dispatch: for every tracked Backlog project with at least one task
+/// labeled `dispatch`, drain up to `DispatchOptions::default().max_concurrent`
+/// of them (claim → worktree → headless `claude -p` → PR → notes — see
+/// `switchbard_core::dispatch`'s module doc). Reads the already-cached
+/// `backlog_projects` snapshot rather than reloading from disk — it's at
+/// most `BACKLOG_PERIOD` stale, which is nothing next to how long a single
+/// dispatch run itself takes. Skips a project entirely when its queue is
+/// empty, which is the common case: dispatch is opt-in, so most polls do
+/// nothing.
+fn spawn_dispatch(ctx: egui::Context, ch: Channels) {
+    let opts = DispatchOptions::default();
+    thread::spawn(move || loop {
+        let wts = ch.worktrees.lock().unwrap().clone();
+        let projects = ch.backlog_projects.lock().unwrap().clone();
+        for w in &wts {
+            let Some(project) = projects.get(&w.path) else {
+                continue;
+            };
+            if list_dispatch_queue(project).is_empty() {
+                continue;
+            }
+            drain_dispatch_queue(&w.path, project, &opts);
+            // The pipeline mutates task labels/notes straight through the
+            // backlog CLI, bypassing this app's cache entirely — kick the
+            // backlog worker so the GUI reflects the outcome immediately
+            // instead of waiting up to BACKLOG_PERIOD for its own poll.
+            ch.backlog_kick.notify();
+            ctx.request_repaint();
+        }
+        ch.dispatch_kick.wait(DISPATCH_PERIOD);
     });
 }
 

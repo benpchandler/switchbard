@@ -53,6 +53,15 @@ struct Palette {
     sky: Color32,
     /// Blocked / port-conflict warning; the design mock's "hot" line color.
     warn_orange: Color32,
+    /// Dispatch affordance/state ("PATCH ▸" / "DISPATCH ▸" in the design
+    /// mock). Unlike every other role, the two themes deliberately use
+    /// *different* hues here rather than a light/dark shade of the same
+    /// one: Flight Strips' dispatch action is the mock's own "send" blue
+    /// (identical to `sky` — kept as its own field for the semantic name,
+    /// not because the hex differs); Operator's Console borrows its lamp
+    /// amber (identical to `amber`) for the same "patching a line through"
+    /// language the mock uses for agent/dispatch state.
+    dispatch_accent: Color32,
     /// Destructive-action **text** color (validation errors, inline warnings
     /// via `.colored_label`). Deliberately a separate role from the danger
     /// **button fill** in [`danger_button`]: a text color on a themed panel
@@ -92,6 +101,7 @@ const LIGHT: Palette = Palette {
     amber_question: Color32::from_rgb(0x8A, 0x52, 0x00), // ~5.0:1
     lavender: Color32::from_rgb(0x3F, 0x3F, 0xB0), // ~6.4:1 (unchanged, already ample)
     sky: Color32::from_rgb(0x15, 0x5A, 0x8A),   // ~5.7:1; matches the mock's dispatch blue
+    dispatch_accent: Color32::from_rgb(0x15, 0x5A, 0x8A), // same as sky, ~5.7:1
     warn_orange: Color32::from_rgb(0xB3, 0x39, 0x1F), // design's "overdue" red, ~4.6:1
     danger: Color32::from_rgb(0xA8, 0x36, 0x36), // text role, ~5.0:1 (button fill is danger_fill())
     weak_text: Color32::from_rgb(0x20, 0x26, 0x2B), // design's "ink"
@@ -116,6 +126,7 @@ const DARK: Palette = Palette {
     amber_question: Color32::from_rgb(0xE8, 0xB0, 0x4B), // one lamp amber, dark side
     lavender: Color32::from_rgb(0x9E, 0x9E, 0xFF), // ~6.2:1
     sky: Color32::from_rgb(0x6F, 0xB8, 0xE8),   // ~6.9:1
+    dispatch_accent: Color32::from_rgb(0xE8, 0xB0, 0x4B), // same as lamp amber, ~7.6:1
     warn_orange: Color32::from_rgb(0xE8, 0x7A, 0x5A), // brightened "line hot", ~5.2:1
     danger: Color32::from_rgb(0xE8, 0x7A, 0x5A), // text role; button fill is danger_fill()
     weak_text: Color32::from_rgb(0xD8, 0xD2, 0xC6), // faceplate text, ~9.9:1
@@ -163,6 +174,9 @@ pub fn sky() -> Color32 {
 }
 pub fn warn_orange() -> Color32 {
     active_palette().warn_orange
+}
+pub fn dispatch_accent() -> Color32 {
+    active_palette().dispatch_accent
 }
 pub fn danger() -> Color32 {
     active_palette().danger

@@ -12,7 +12,7 @@
 //! available) are wrapped as drag sources — draft/completed/archived cards
 //! render as plain, non-draggable strips.
 
-use super::{format, scoped_projects, sort, Pending, Snapshot, TaskRow};
+use super::{dispatch_ui, format, scoped_projects, sort, Pending, Snapshot, TaskRow};
 use crate::app::HiveApp;
 use crate::runtime::BacklogTaskKey;
 use crate::ui::theme;
@@ -216,6 +216,10 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_re
                                         .color(theme::warn_orange()),
                                 );
                             }
+                            dispatch_ui::render_dispatch_pill(
+                                ui,
+                                &dispatch_ui::dispatch_state(row.task),
+                            );
                         });
                     });
                 });

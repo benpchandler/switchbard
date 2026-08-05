@@ -3,7 +3,7 @@
 //! into a sub-task tree (task-17) — see `tree.rs` for how that's decided and
 //! walked; this file owns rendering one row's actual columns.
 
-use super::{format, selection, tree, Pending, Snapshot, TaskRow};
+use super::{dispatch_ui, format, selection, tree, Pending, Snapshot, TaskRow};
 use crate::app::HiveApp;
 use crate::runtime::{BacklogTaskKey, BacklogTaskSortKey};
 use crate::ui::components::{status_pill, StatusKind};
@@ -360,6 +360,7 @@ pub(super) fn render_task_list_row(
                 Some("Blocked by one or more open dependencies"),
             );
         }
+        dispatch_ui::render_dispatch_pill(ui, &dispatch_ui::dispatch_state(task));
     });
     if row_response.response.secondary_clicked() {
         selection::focus_context_selection(app, key.clone());

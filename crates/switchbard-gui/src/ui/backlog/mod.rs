@@ -23,6 +23,7 @@
 //! - `selection`  — bulk multi-select state machine (shift/ctrl-click, context menu targets).
 //! - `detail_lists` — detail-pane checklist/list sections split out of `detail`.
 //! - `digest`     — the Digest lens: "what should I do today" landing screen (task-21).
+//! - `dispatch_ui` — dispatch state derivation + pill, shared by detail/list/board.
 //! - `list`       — the List lens: task list column + row rendering.
 //! - `tree`        — the List lens's sub-task tree walk, split out of `list` (task-17).
 //! - `board`      — the Board lens: per-status kanban columns with drag-to-change-status.
@@ -51,6 +52,7 @@ mod create;
 mod detail;
 mod detail_lists;
 mod digest;
+mod dispatch_ui;
 mod format;
 mod list;
 mod milestones;
@@ -326,6 +328,9 @@ pub(in crate::ui::backlog) struct Pending {
     pub append_note: Option<(PathBuf, String, String)>,
     pub create: Option<(PathBuf, NewBacklogTask)>,
     pub archive: Option<(PathBuf, String)>,
+    /// `(project_root, task_id, enabled)` — the per-task Dispatch opt-in
+    /// toggle (task-11 GUI wiring).
+    pub dispatch_toggle: Option<(PathBuf, String, bool)>,
 }
 
 fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, pending: Pending) {
@@ -349,5 +354,8 @@ fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, pending: Pending) {
     }
     if let Some((project_root, task_id)) = pending.archive {
         app.spawn_backlog_archive(project_root, task_id, ctx);
+    }
+    if let Some((project_root, task_id, enabled)) = pending.dispatch_toggle {
+        app.spawn_backlog_dispatch_toggle(project_root, task_id, enabled, ctx);
     }
 }

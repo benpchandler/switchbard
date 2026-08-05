@@ -5,6 +5,7 @@
 //! action. `split_csv` is a small shared helper `detail.rs` also uses for
 //! its labels/assignees fields.
 
+use super::dispatch_ui::{self, DispatchState};
 use super::{format, Pending};
 use crate::app::HiveApp;
 use crate::ui::components::{status_pill, StatusKind};
@@ -351,6 +352,136 @@ pub(super) fn render_archive(
         .clicked()
     {
         app.backlog_view.archive_confirm = true;
+    }
+}
+
+/// Dispatch (task-11 GUI wiring): a per-task, strictly opt-in affordance.
+/// Flagging a task only sets its `dispatch` label through the CLI
+/// (`Pending::dispatch_toggle` → `HiveApp::spawn_backlog_dispatch_toggle`);
+/// everything after that — claiming it, the worktree, the headless `claude
+/// -p` run, opening the PR — runs on `workers::spawn_dispatch`'s own
+/// schedule, not from this click. State (queued/in-flight/dispatched/
+/// failed) is read straight off the task's label + notes via `dispatch_ui`
+/// — this function never invents its own status.
+pub(super) fn render_dispatch(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    project_root: &Path,
+    task: &BacklogTask,
+    editable: bool,
+    pending: &mut Pending,
+) {
+    if !editable {
+        return;
+    }
+    ui.label(egui::RichText::new("Dispatch").strong());
+    let state = dispatch_ui::dispatch_state(task);
+    match &state {
+        DispatchState::NotFlagged => render_dispatch_toggle(app, ui, project_root, task, pending),
+        DispatchState::Queued => {
+            ui.horizontal(|ui| {
+                dispatch_ui::render_dispatch_pill(ui, &state);
+                ui.label(
+                    egui::RichText::new("Waiting for the dispatch worker to pick this up.")
+                        .color(theme::muted_text()),
+                );
+            });
+            render_unflag_button(app, ui, project_root, task, pending);
+        }
+        DispatchState::InFlight => {
+            ui.horizontal(|ui| {
+                dispatch_ui::render_dispatch_pill(ui, &state);
+                ui.label(
+                    egui::RichText::new(
+                        "A headless agent run is in progress in an isolated worktree.",
+                    )
+                    .color(theme::muted_text()),
+                );
+            });
+        }
+        DispatchState::Dispatched { pr_url } => {
+            ui.horizontal(|ui| {
+                dispatch_ui::render_dispatch_pill(ui, &state);
+                match pr_url {
+                    Some(url) => {
+                        ui.hyperlink_to(url, url);
+                    }
+                    None => {
+                        ui.label(
+                            egui::RichText::new("(PR link not found in notes)")
+                                .color(theme::muted_text()),
+                        );
+                    }
+                }
+            });
+        }
+        DispatchState::Failed { reason } => {
+            ui.horizontal(|ui| {
+                dispatch_ui::render_dispatch_pill(ui, &state);
+                ui.label(
+                    egui::RichText::new(reason.as_deref().unwrap_or("(no reason recorded)"))
+                        .color(theme::danger()),
+                );
+            });
+            render_dispatch_toggle(app, ui, project_root, task, pending);
+        }
+    }
+}
+
+fn render_dispatch_toggle(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    project_root: &Path,
+    task: &BacklogTask,
+    pending: &mut Pending,
+) {
+    if app.backlog_view.dispatch_confirm {
+        ui.horizontal(|ui| {
+            ui.colored_label(
+                theme::amber(),
+                format!(
+                    "Hand {} to a headless agent run in an isolated worktree?",
+                    task.id
+                ),
+            );
+            if ui
+                .button("Confirm dispatch")
+                .on_hover_text("Flags this task for the dispatch worker via backlog task edit")
+                .clicked()
+            {
+                pending.dispatch_toggle = Some((project_root.to_path_buf(), task.id.clone(), true));
+                app.backlog_view.dispatch_confirm = false;
+                app.backlog_status
+                    .set(format!("flagged {} for dispatch", task.id));
+            }
+            if ui.button("Cancel").clicked() {
+                app.backlog_view.dispatch_confirm = false;
+            }
+        });
+    } else if ui
+        .button("Dispatch")
+        .on_hover_text("Flag this task for an autonomous headless agent run")
+        .clicked()
+    {
+        app.backlog_view.dispatch_confirm = true;
+    }
+}
+
+fn render_unflag_button(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    project_root: &Path,
+    task: &BacklogTask,
+    pending: &mut Pending,
+) {
+    if ui
+        .small_button("Unflag")
+        .on_hover_text("Remove the dispatch label before the worker claims it")
+        .clicked()
+    {
+        pending.dispatch_toggle = Some((project_root.to_path_buf(), task.id.clone(), false));
+        app.backlog_status
+            .set(format!("unflagged {} for dispatch", task.id));
     }
 }
 
