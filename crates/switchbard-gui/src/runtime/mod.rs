@@ -97,6 +97,13 @@ pub struct BacklogViewState {
     /// `bulk_selected_tasks`; a collapsed-by-default tree on next launch is
     /// the expected, unsurprising behavior.
     pub expanded_parents: BTreeSet<BacklogTaskKey>,
+    /// Name of the `SavedView` (task-20, `Config::ui.saved_views`) currently
+    /// applied, if the filters/sort/lens still match what was saved under
+    /// it. `None` means "unsaved" — the normal state while just filtering
+    /// around. Session-only; not itself persisted.
+    pub active_saved_view: Option<String>,
+    /// Draft text for the "Save current as…" field.
+    pub saved_view_name_draft: String,
 }
 
 impl Default for BacklogViewState {
@@ -120,6 +127,8 @@ impl Default for BacklogViewState {
             search: BacklogSearchState::default(),
             archive_confirm: false,
             expanded_parents: BTreeSet::new(),
+            active_saved_view: None,
+            saved_view_name_draft: String::new(),
         }
     }
 }

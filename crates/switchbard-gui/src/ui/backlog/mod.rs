@@ -30,6 +30,7 @@
 //! - `portfolio`  — the Portfolio lens: read-only per-repo health (task-19).
 //! - `stats`      — the Statistics lens: cross-repo totals + burndown (task-16).
 //! - `search`     — the Cmd+K / Ctrl+K global free-text search overlay.
+//! - `saved_views` — named filter+sort+lens combinations, persisted on `Config::ui` (task-20).
 //! - `detail`     — the selected-task detail pane (editor, acceptance, notes).
 //! - `create`     — the "New Backlog Task" modal.
 //!
@@ -54,6 +55,7 @@ mod format;
 mod list;
 mod milestones;
 mod portfolio;
+mod saved_views;
 mod search;
 mod selection;
 mod sort;
@@ -223,6 +225,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         toolbar::render_summary(app, ui, &snap);
         ui.add_space(6.0);
         toolbar::render_lens_tabs(app, ui);
+        saved_views::render_saved_views_bar(app, ui);
         match app.backlog_view.lens {
             BacklogLens::Digest => {
                 ui.separator();

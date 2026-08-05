@@ -95,8 +95,12 @@ impl Default for UiConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SavedView {
     pub name: String,
+    /// `None` means the All-projects scope. Named to match the GUI's own
+    /// `BacklogViewState::selected_project` — deliberately *not*
+    /// `project_filter`, which is a different, unrelated field there (the
+    /// project picker's free-text search string).
     #[serde(default)]
-    pub project_filter: Option<PathBuf>,
+    pub selected_project: Option<PathBuf>,
     #[serde(default = "default_filter_all")]
     pub status_filter: String,
     #[serde(default = "default_filter_all")]
@@ -248,7 +252,7 @@ mod tests {
                 ui_scale: 1.25,
                 saved_views: vec![SavedView {
                     name: "My high-priority queue".into(),
-                    project_filter: None,
+                    selected_project: None,
                     status_filter: "all".into(),
                     priority_filter: "high".into(),
                     sort_key: "triage".into(),

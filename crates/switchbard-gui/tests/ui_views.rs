@@ -613,3 +613,62 @@ fn parent_task_shows_rollup_and_expands_to_reveal_children() {
     );
     assert!(harness.state().backlog_view.new_task.open);
 }
+
+/// Saved views (task-20): saving the current filter/lens combination under a
+/// name persists it to `Config::ui.saved_views` and marks it active;
+/// deleting it removes it from config. Uses the Statistics lens (no detail
+/// pane, so no ambiguous second "Save" button) to isolate the saved-views
+/// bar's own controls.
+#[test]
+fn saved_view_can_be_saved_and_deleted() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::Statistics;
+    app.backlog_view.priority_filter = "high".to_string();
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![seeded_backlog_task()],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+
+    harness.state_mut().backlog_view.saved_view_name_draft = "High priority".to_string();
+    harness.get_by_label("Save").click();
+    harness.run();
+
+    assert_eq!(
+        harness.state().config.ui.saved_views.len(),
+        1,
+        "saving should persist one SavedView"
+    );
+    assert_eq!(
+        harness.state().config.ui.saved_views[0].priority_filter,
+        "high"
+    );
+    assert_eq!(harness.state().config.ui.saved_views[0].lens, "statistics");
+    assert_eq!(
+        harness.state().backlog_view.active_saved_view.as_deref(),
+        Some("High priority")
+    );
+
+    // Re-applying via the combo isn't exercised here: egui's ComboBox
+    // trigger has no accessible label in this harness (confirmed — it's
+    // absent from the accesskit tree entirely, not just unqueried), and its
+    // popup items only render once the trigger has been clicked open, which
+    // that same limitation blocks. `saved_views::apply_saved_view` itself is
+    // a handful of direct field assignments with no CLI call and no
+    // branching, unlike save/delete's config-mutation paths this test does
+    // cover end to end.
+    harness.get_by_label("Delete").click();
+    harness.run();
+    assert!(
+        harness.state().config.ui.saved_views.is_empty(),
+        "deleting the active saved view should remove it from config"
+    );
+}
