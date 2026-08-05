@@ -374,7 +374,11 @@ pub(super) fn render_dispatch(
     if !editable {
         return;
     }
-    ui.label(egui::RichText::new("Dispatch").strong());
+    // No redundant "Dispatch" section header — matches `render_archive`'s
+    // convention of letting the pill/button speak for the section, since a
+    // header here would collide with the "Dispatch" button's own label in
+    // the accessibility tree.
+    ui.separator();
     let state = dispatch_ui::dispatch_state(task);
     match &state {
         DispatchState::NotFlagged => render_dispatch_toggle(app, ui, project_root, task, pending),

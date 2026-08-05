@@ -47,7 +47,7 @@ use kittest::{by, Queryable};
 use switchbard_core::config::ThemeChoice;
 use switchbard_core::{
     AttributedListener, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource,
-    LocalListener,
+    LocalListener, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{BacklogLens, ViewTab};
@@ -347,7 +347,11 @@ fn legibility_backlog_task() -> BacklogTask {
         status: "In Progress".to_string(),
         priority: "high".to_string(),
         assignees: vec!["ben".to_string()],
-        labels: vec!["demo".to_string()],
+        // `DISPATCH_LABEL` puts this task — the one selected by default in
+        // every List/Board harness below — in the Queued dispatch state, so
+        // the detail pane's dispatch section (pill + button + confirm) is
+        // part of the audited surface, not just the List/Board row pill.
+        labels: vec!["demo".to_string(), DISPATCH_LABEL.to_string()],
         dependencies: vec!["TASK-2".to_string()],
         references: vec!["https://example.com/spec".to_string()],
         milestone: Some("v1".to_string()),
@@ -401,6 +405,44 @@ fn legibility_subtask() -> BacklogTask {
     task
 }
 
+/// TASK-1 (above) covers the Queued dispatch state. The other three label
+/// states each get their own standalone task here so every pill text
+/// ("DISPATCHING" / "DISPATCHED" / "DISPATCH FAILED") and, for the two with
+/// distinct detail-pane messages, the PR link / failure reason text are part
+/// of the audited draw list.
+fn legibility_dispatch_inflight_task() -> BacklogTask {
+    let mut task = legibility_backlog_task();
+    task.id = "TASK-6".to_string();
+    task.title = "Dispatch in flight".to_string();
+    task.labels = vec![DISPATCHING_LABEL.to_string()];
+    task.dependencies = vec![];
+    task.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-6.md"));
+    task
+}
+
+fn legibility_dispatch_dispatched_task() -> BacklogTask {
+    let mut task = legibility_backlog_task();
+    task.id = "TASK-7".to_string();
+    task.title = "Dispatch succeeded".to_string();
+    task.labels = vec![DISPATCHED_LABEL.to_string()];
+    task.dependencies = vec![];
+    task.implementation_notes =
+        "Dispatch PR: https://github.com/example/switchbard/pull/42".to_string();
+    task.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-7.md"));
+    task
+}
+
+fn legibility_dispatch_failed_task() -> BacklogTask {
+    let mut task = legibility_backlog_task();
+    task.id = "TASK-8".to_string();
+    task.title = "Dispatch failed".to_string();
+    task.labels = vec![DISPATCH_FAILED_LABEL.to_string()];
+    task.dependencies = vec![];
+    task.implementation_notes = "Dispatch failed: headless run exited with status 1".to_string();
+    task.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-8.md"));
+    task
+}
+
 fn seed_backlog_project(app: &HiveApp) {
     app.backlog_projects.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
@@ -411,6 +453,9 @@ fn seed_backlog_project(app: &HiveApp) {
                 legibility_backlog_task(),
                 legibility_blocking_task(),
                 legibility_subtask(),
+                legibility_dispatch_inflight_task(),
+                legibility_dispatch_dispatched_task(),
+                legibility_dispatch_failed_task(),
             ],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -476,6 +521,31 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     seed_backlog_project(&list_app);
     let list = harness(list_app);
 
+    // Two more List-lens harnesses, each explicitly selecting a task the
+    // default first-visible-row selection wouldn't reach, so the detail
+    // pane's Dispatched (PR link) and Failed (failure reason) messages —
+    // each distinct text, not just a differently-colored pill — are part of
+    // the audited draw list too.
+    let mut dispatched_app = seeded_app();
+    dispatched_app.config.ui.theme = theme;
+    dispatched_app.view_tab = ViewTab::Backlog;
+    dispatched_app.backlog_view.lens = BacklogLens::List;
+    dispatched_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    dispatched_app.backlog_view.selected_task =
+        Some((PathBuf::from(REPO_PATH), "TASK-7".to_string()));
+    seed_backlog_project(&dispatched_app);
+    let dispatched = harness(dispatched_app);
+
+    let mut dispatch_failed_app = seeded_app();
+    dispatch_failed_app.config.ui.theme = theme;
+    dispatch_failed_app.view_tab = ViewTab::Backlog;
+    dispatch_failed_app.backlog_view.lens = BacklogLens::List;
+    dispatch_failed_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    dispatch_failed_app.backlog_view.selected_task =
+        Some((PathBuf::from(REPO_PATH), "TASK-8".to_string()));
+    seed_backlog_project(&dispatch_failed_app);
+    let dispatch_failed = harness(dispatch_failed_app);
+
     let mut portfolio_app = seeded_app();
     portfolio_app.config.ui.theme = theme;
     portfolio_app.view_tab = ViewTab::Backlog;
@@ -517,6 +587,14 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
         ),
         (format!("Backlog · Digest lens (default){suffix}"), digest),
         (format!("Backlog · List lens (task detail){suffix}"), list),
+        (
+            format!("Backlog · List lens (dispatched task detail){suffix}"),
+            dispatched,
+        ),
+        (
+            format!("Backlog · List lens (dispatch-failed task detail){suffix}"),
+            dispatch_failed,
+        ),
         (format!("Backlog · Board lens{suffix}"), board),
         (format!("Backlog · Milestones lens{suffix}"), milestones),
         (format!("Backlog · Portfolio lens{suffix}"), portfolio),

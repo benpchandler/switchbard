@@ -11,11 +11,13 @@ mod common;
 use std::path::PathBuf;
 
 use common::{app_with_items, harness, item, seeded_app, REPO_NAME, REPO_PATH};
+use egui_kittest::Harness;
 use kittest::Queryable;
 use switchbard_core::config::Config;
 use switchbard_core::{
     AgentKind, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource, ContextKind,
-    ContextScope, Repo, WorktreeRef,
+    ContextScope, Repo, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL,
+    DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{BacklogLens, ViewTab};
@@ -674,5 +676,213 @@ fn saved_view_can_be_saved_and_deleted() {
     assert!(
         harness.state().config.ui.saved_views.is_empty(),
         "deleting the active saved view should remove it from config"
+    );
+}
+
+/// Mount the List lens on one task's detail pane — the shape every dispatch
+/// state test below shares, varying only the seeded task's labels/notes.
+fn harness_on_task(task: BacklogTask) -> Harness<'static, HiveApp> {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), task.id.clone()));
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![task],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+    harness
+}
+
+/// Dispatch (task-11 GUI wiring): a task with no dispatch label offers the
+/// opt-in "Dispatch" button and shows no state pill anywhere.
+#[test]
+fn not_flagged_task_offers_a_dispatch_button_and_no_pill() {
+    let harness = harness_on_task(seeded_backlog_task());
+    assert!(
+        harness.query_by_label("Dispatch").is_some(),
+        "an unflagged task should offer the Dispatch button"
+    );
+    for pill in ["QUEUED", "DISPATCHING", "DISPATCHED", "DISPATCH FAILED"] {
+        assert!(
+            harness.query_by_label(pill).is_none(),
+            "no dispatch pill should render for an unflagged task, saw {pill}"
+        );
+    }
+}
+
+/// Clicking "Dispatch" asks for confirmation before touching the label —
+/// flagging a task hands it to an autonomous run, so it gets the same
+/// inline-confirm treatment as Archive. Confirming sets the synchronous
+/// status message (the CLI call itself runs on a spawned thread against
+/// this test's fixture path, same as the saved_views Save/Delete flow).
+#[test]
+fn dispatch_button_confirms_before_flagging() {
+    let mut harness = harness_on_task(seeded_backlog_task());
+
+    harness.get_by_label("Dispatch").click();
+    harness.run();
+    assert!(
+        harness
+            .query_by_label("Hand TASK-1 to a headless agent run in an isolated worktree?")
+            .is_some(),
+        "clicking Dispatch should show the confirm prompt"
+    );
+
+    harness.get_by_label("Cancel").click();
+    harness.run();
+    assert!(
+        harness.query_by_label("Dispatch").is_some(),
+        "Cancel should revert to the plain Dispatch button"
+    );
+    assert!(!harness.state().backlog_view.dispatch_confirm);
+
+    harness.get_by_label("Dispatch").click();
+    harness.run();
+    harness.get_by_label("Confirm dispatch").click();
+    harness.run();
+    assert_eq!(
+        harness.state().backlog_status.snapshot().as_deref(),
+        Some("flagged TASK-1 for dispatch"),
+        "confirming should set the flagged-for-dispatch status synchronously"
+    );
+    assert!(!harness.state().backlog_view.dispatch_confirm);
+}
+
+/// A task labeled `dispatch` (queued, not yet claimed) shows the QUEUED pill,
+/// a waiting message, and an Unflag escape hatch instead of the Dispatch
+/// button.
+#[test]
+fn queued_task_shows_pill_and_offers_unflag() {
+    let mut task = seeded_backlog_task();
+    task.labels = vec![DISPATCH_LABEL.to_string()];
+    let mut harness = harness_on_task(task);
+
+    // The pill renders in both the List row and the detail pane for the
+    // selected task, so query_all rather than the exactly-one query.
+    assert!(harness.query_all_by_label("QUEUED").next().is_some());
+    assert!(
+        harness.query_by_label("Dispatch").is_none(),
+        "a queued task should not re-offer the initial Dispatch button"
+    );
+    harness.get_by_label("Unflag").click();
+    harness.run();
+    assert_eq!(
+        harness.state().backlog_status.snapshot().as_deref(),
+        Some("unflagged TASK-1 for dispatch"),
+        "Unflag should set its status synchronously"
+    );
+}
+
+/// A task labeled `dispatching` (claimed by the worker) shows the
+/// DISPATCHING pill and an in-progress message, with no user action
+/// available — the worker owns the task until it lands or fails.
+#[test]
+fn in_flight_task_shows_dispatching_pill_with_no_actions() {
+    let mut task = seeded_backlog_task();
+    task.labels = vec![DISPATCHING_LABEL.to_string()];
+    let harness = harness_on_task(task);
+
+    assert!(harness.query_all_by_label("DISPATCHING").next().is_some());
+    assert!(harness.query_by_label("Dispatch").is_none());
+    assert!(harness.query_by_label("Unflag").is_none());
+}
+
+/// A task labeled `dispatched` with a "Dispatch PR: <url>" note surfaces the
+/// DISPATCHED pill and the PR link itself, read straight out of notes.
+#[test]
+fn dispatched_task_surfaces_the_pr_link() {
+    let mut task = seeded_backlog_task();
+    task.labels = vec![DISPATCHED_LABEL.to_string()];
+    task.implementation_notes =
+        "Dispatch PR: https://github.com/example/switchbard/pull/7".to_string();
+    let harness = harness_on_task(task);
+
+    assert!(harness.query_all_by_label("DISPATCHED").next().is_some());
+    assert!(harness
+        .query_by_label("https://github.com/example/switchbard/pull/7")
+        .is_some());
+}
+
+/// A task labeled `dispatched` with no matching note falls back to an
+/// explicit "not found" message rather than silently showing nothing.
+#[test]
+fn dispatched_task_without_a_pr_note_shows_the_fallback_message() {
+    let mut task = seeded_backlog_task();
+    task.labels = vec![DISPATCHED_LABEL.to_string()];
+    task.implementation_notes = "Existing note".to_string();
+    let harness = harness_on_task(task);
+
+    assert!(harness.query_all_by_label("DISPATCHED").next().is_some());
+    assert!(harness
+        .query_by_label("(PR link not found in notes)")
+        .is_some());
+}
+
+/// A task labeled `dispatch-failed` surfaces the failure reason and offers
+/// the Dispatch button again — a failed run is retryable, unlike a
+/// dispatched (already-landed) one.
+#[test]
+fn failed_task_shows_the_reason_and_offers_a_retry() {
+    let mut task = seeded_backlog_task();
+    task.labels = vec![DISPATCH_FAILED_LABEL.to_string()];
+    task.implementation_notes = "Dispatch failed: headless run exited with status 1".to_string();
+    let harness = harness_on_task(task);
+
+    assert!(harness
+        .query_all_by_label("DISPATCH FAILED")
+        .next()
+        .is_some());
+    assert!(harness
+        .query_by_label("headless run exited with status 1")
+        .is_some());
+    assert!(
+        harness.query_by_label("Dispatch").is_some(),
+        "a failed task should offer to retry via the same Dispatch button"
+    );
+}
+
+/// The List row's compact pill (task-11 GUI wiring's List/Board surface, not
+/// just the detail pane) renders for a queued task and stays absent for an
+/// unflagged sibling in the same row list.
+#[test]
+fn list_row_shows_the_dispatch_pill_for_a_queued_task() {
+    let mut queued = seeded_backlog_task();
+    queued.id = "TASK-1".to_string();
+    queued.labels = vec![DISPATCH_LABEL.to_string()];
+
+    let mut plain = seeded_backlog_task();
+    plain.id = "TASK-2".to_string();
+    plain.title = "Plain task".to_string();
+    plain.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-2.md"));
+
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![queued, plain],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_all_by_label("QUEUED").next().is_some(),
+        "the queued task's row should show the QUEUED pill"
     );
 }
