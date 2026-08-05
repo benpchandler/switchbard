@@ -41,6 +41,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use switchbard_core::config::Config;
+use switchbard_core::instance_lock::{self, AcquireError, InstanceLock};
 use switchbard_core::{
     assess_branch_delete, collect_dirty_files, config, delete_branch, is_primary_worktree,
     kill_pgid, load_agent_context_cache, load_backlog_project, open_url, remove_worktree,
@@ -117,6 +118,14 @@ pub struct HiveApp {
     /// leaves it `None`, so tests opt in explicitly rather than relying on
     /// a default that could quietly regress back to the same bug.
     pub config_save_path: Option<PathBuf>,
+    /// RAII guard for the single-instance lock (`switchbard_core::
+    /// instance_lock`), held only so its `Drop` removes `~/.switchbard/
+    /// switchbard.lock` on exit — never read otherwise. `None` in
+    /// `new_headless` (tests never take the lock) and in `new` when the
+    /// lock file itself was unavailable (fails open — see
+    /// `acquire_instance_lock_or_warn`). A second *live* instance is
+    /// refused outright before `HiveApp` is constructed at all.
+    _instance_lock: Option<InstanceLock>,
 
     // View-only state.
     /// One workspace-wide filter. Each section's match function reads it.
@@ -163,6 +172,36 @@ pub struct HiveApp {
     perf: Option<PerfSession>,
 }
 
+/// Acquire the single-instance lock, or warn and terminate the process if a
+/// live instance already holds it. A lock-file I/O error (e.g. an
+/// unwritable `~/.switchbard`) fails *open*: the guard is a safety net
+/// against racing config saves, not a precondition for launching at all, so
+/// we log and return `None` rather than block startup over it.
+fn acquire_instance_lock_or_warn() -> Option<InstanceLock> {
+    let path = instance_lock::default_path()?;
+    match instance_lock::acquire(&path) {
+        Ok(lock) => Some(lock),
+        Err(AcquireError::AlreadyRunning(pid)) => {
+            let message = format!(
+                "Switchbard is already running (pid {pid}). Only one instance may run \
+                 at a time — a second instance would race the first one's config saves."
+            );
+            eprintln!("Switchbard: {message}");
+            rfd::MessageDialog::new()
+                .set_title("Switchbard is already running")
+                .set_description(&message)
+                .set_level(rfd::MessageLevel::Warning)
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+            std::process::exit(1);
+        }
+        Err(AcquireError::Io(e)) => {
+            eprintln!("Switchbard: instance lock unavailable ({e}); continuing without it");
+            None
+        }
+    }
+}
+
 fn cached_agent_contexts(worktrees: &[WorktreeRef]) -> HashMap<PathBuf, AgentContextMap> {
     let live_paths: BTreeSet<PathBuf> = worktrees.iter().map(|w| w.path.clone()).collect();
     load_agent_context_cache()
@@ -184,6 +223,11 @@ impl HiveApp {
         // here, rather than every frame; the theme's Visuals are cheap and get
         // reapplied every frame in `render_ui` so a live toggle takes effect
         // immediately.
+        // Refuse to start a second live instance before touching anything
+        // else — a concurrent instance racing config saves is exactly the
+        // class of bug TASK-22 flagged as an open follow-up.
+        let instance_lock = acquire_instance_lock_or_warn();
+
         ui::theme::install_fonts(&cc.egui_ctx);
         ui::theme::apply(&cc.egui_ctx, cfg.ui.theme);
         // Restore the user's saved zoom before the first frame paints (eframe's
@@ -193,7 +237,8 @@ impl HiveApp {
         // Seed the first frame from the on-disk agent-context cache before any
         // worker scan completes, then start the workers against this state.
         let cached = cached_agent_contexts(&worktrees);
-        let app = Self::new_headless(cfg, repos, worktrees);
+        let mut app = Self::new_headless(cfg, repos, worktrees);
+        app._instance_lock = instance_lock;
         *app.agent_contexts.lock().unwrap() = cached;
         app.spawn_workers(cc.egui_ctx.clone());
         app
@@ -237,6 +282,7 @@ impl HiveApp {
             dispatch_kick: Kick::new(),
             config: cfg,
             config_save_path: None,
+            _instance_lock: None,
             picker: Arc::new(Mutex::new(PickerState::Idle)),
             config_status: Status::new(),
             kill_status: Status::new(),
