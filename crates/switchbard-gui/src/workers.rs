@@ -263,28 +263,47 @@ fn persist_agent_context_cache(ch: &Channels) {
     let _ = save_agent_context_cache(&maps);
 }
 
+/// One Backlog scan root per configured repo — the primary checkout, NOT
+/// every worktree. Sibling worktrees each carry a full copy of the same
+/// logical backlog, so scanning `ch.worktrees` (as this worker originally
+/// did) multiplied every task by the repo's worktree count: with 42 budget
+/// worktrees the unified List lens showed 42 copies of each budget task
+/// (~48k phantom rows) and the dispatch worker saw 42 drainable queues.
+/// The repo's primary checkout is the system-of-record view of its backlog.
+pub(crate) fn backlog_project_roots(repos: &[Repo]) -> Vec<PathBuf> {
+    let mut seen = std::collections::HashSet::new();
+    repos
+        .iter()
+        .map(|r| r.path.clone())
+        .filter(|p| seen.insert(p.clone()))
+        .collect()
+}
+
+/// Load every root that actually is a Backlog project. Split from the worker
+/// loop so the root-set semantics above are testable without threads.
+pub(crate) fn collect_backlog_projects(roots: &[PathBuf]) -> HashMap<PathBuf, BacklogProject> {
+    let mut projects = HashMap::new();
+    for root in roots {
+        if !is_backlog_project(root) {
+            continue;
+        }
+        if let Ok(project) = load_backlog_project(root) {
+            projects.insert(root.clone(), project);
+        }
+    }
+    projects
+}
+
 fn spawn_backlog(ctx: egui::Context, ch: Channels) {
     thread::spawn(move || loop {
-        let wts = ch.worktrees.lock().unwrap().clone();
-        let live_paths: std::collections::HashSet<PathBuf> =
-            wts.iter().map(|w| w.path.clone()).collect();
-        let mut projects = HashMap::new();
-        for w in &wts {
-            if !is_backlog_project(&w.path) {
-                continue;
-            }
-            if let Ok(project) = load_backlog_project(&w.path) {
-                projects.insert(w.path.clone(), project);
-            }
-        }
-        projects.retain(|path, _| live_paths.contains(path));
+        let repos = ch.repos.lock().unwrap().clone();
+        let projects = collect_backlog_projects(&backlog_project_roots(&repos));
         *ch.backlog_projects.lock().unwrap() = projects;
 
         // The unified triage overlay lives in whichever tracked repo hosts
         // `ordering.yml` (the "hub" repo — see backlog_triage module doc).
         // No tracked repo having one is the expected steady state and yields
         // an empty overlay with no warning.
-        let repos = ch.repos.lock().unwrap().clone();
         let hub_repo = find_hub_repo(repos.iter().map(|r| r.path.as_path()));
         let (overlay, warning) = match &hub_repo {
             Some(hub_root) => load_ordering_overlay(hub_root),
@@ -309,16 +328,16 @@ fn spawn_backlog(ctx: egui::Context, ch: Channels) {
 fn spawn_dispatch(ctx: egui::Context, ch: Channels) {
     let opts = DispatchOptions::default();
     thread::spawn(move || loop {
-        let wts = ch.worktrees.lock().unwrap().clone();
+        // Iterate the (repo-primary-keyed) projects map directly: one drain
+        // per repo. Iterating worktrees here would drain the same logical
+        // queue once per sibling checkout — a real double-dispatch, since
+        // each checkout carries its own copy of the task files.
         let projects = ch.backlog_projects.lock().unwrap().clone();
-        for w in &wts {
-            let Some(project) = projects.get(&w.path) else {
-                continue;
-            };
+        for (root, project) in &projects {
             if list_dispatch_queue(project).is_empty() {
                 continue;
             }
-            drain_dispatch_queue(&w.path, project, &opts);
+            drain_dispatch_queue(root, project, &opts);
             // The pipeline mutates task labels/notes straight through the
             // backlog CLI, bypassing this app's cache entirely — kick the
             // backlog worker so the GUI reflects the outcome immediately
@@ -357,4 +376,88 @@ fn spawn_reaper(ctx: egui::Context, ch: Channels) {
             ctx.request_repaint();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::process::Command;
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .expect("git spawns");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Regression for the 2026-08-05 duplicate-rows defect: a repo with a
+    /// linked worktree must yield exactly ONE backlog project (the primary
+    /// checkout), even though the linked worktree is itself a full Backlog
+    /// project on disk. Scanning per-worktree multiplied every task by the
+    /// repo's worktree count (42x for budget) in the unified lenses and gave
+    /// the dispatch worker one drainable queue per checkout.
+    #[test]
+    fn linked_worktrees_do_not_duplicate_backlog_projects() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let primary = tmp.path().join("repo");
+        fs::create_dir_all(primary.join("backlog").join("tasks")).expect("mkdir");
+        fs::write(
+            primary.join("backlog").join("config.yml"),
+            "projectName: fixture\n",
+        )
+        .expect("config.yml");
+        fs::write(
+            primary
+                .join("backlog")
+                .join("tasks")
+                .join("task-1 - Fixture.md"),
+            "---\nid: task-1\ntitle: Fixture\nstatus: To Do\n---\n\n## Description\n\nfixture\n",
+        )
+        .expect("task file");
+        git(&primary, &["init", "-q", "-b", "main"]);
+        git(&primary, &["add", "-A"]);
+        git(
+            &primary,
+            &[
+                "-c",
+                "user.email=fixture@test",
+                "-c",
+                "user.name=fixture",
+                "commit",
+                "-qm",
+                "init",
+            ],
+        );
+        let linked = tmp.path().join("linked");
+        git(
+            &primary,
+            &["worktree", "add", "-q", linked.to_str().expect("utf8 path")],
+        );
+        // Sanity: the linked worktree really is a Backlog project on disk —
+        // the exact condition that used to duplicate every task.
+        assert!(is_backlog_project(&linked));
+
+        let repos = vec![Repo {
+            name: "fixture".to_string(),
+            path: primary.clone(),
+        }];
+        let roots = backlog_project_roots(&repos);
+        assert_eq!(
+            roots,
+            vec![primary.clone()],
+            "one root per repo, primary only"
+        );
+        let projects = collect_backlog_projects(&roots);
+        assert_eq!(projects.len(), 1, "one project despite the linked worktree");
+        assert!(projects.contains_key(&primary));
+        assert_eq!(projects[&primary].tasks.len(), 1);
+    }
 }
