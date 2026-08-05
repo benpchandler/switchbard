@@ -3,10 +3,79 @@
 //! `super::parse` for turning task markdown into these, and
 //! `super::mutations` for CLI calls that change them on disk.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 pub const BACKLOG_STATUSES: &[&str] = &["To Do", "In Progress", "Done"];
 pub const BACKLOG_PRIORITIES: &[&str] = &["high", "medium", "low"];
+
+/// The owner's preferred kanban ordering for any status name this app has
+/// ever seen, whether or not it's one of `BACKLOG_STATUSES` — a leading
+/// "Backlog"/"Icebox" pair for pre-triage work, then the standard flow,
+/// ending in "Done". Anything outside this list sorts alphabetically after
+/// it (see `ordered_status_vocabulary`), so a repo's genuinely nonstandard
+/// status still gets a stable, deterministic position rather than being
+/// dropped.
+pub const CANONICAL_STATUS_ORDER: &[&str] = &[
+    "Backlog",
+    "Icebox",
+    "To Do",
+    "In Progress",
+    "In Review",
+    "Done",
+];
+
+/// Owner-requested UX (2026-08-05): "all projects should share a common set
+/// of statuses across every view" — this is the single source of truth
+/// every status-listing UI surface (Board columns, the List status filter,
+/// the detail-pane status editor, the Create modal, Statistics
+/// distributions) must consume instead of hardcoding or locally re-deriving
+/// its own list. Before this, Board's own local union (TASK-25) included a
+/// project's declared-but-currently-empty statuses (e.g. "Icebox") while
+/// List's filter dropdown didn't, so the two lenses silently disagreed on
+/// what statuses existed.
+///
+/// Union of `BACKLOG_STATUSES` (always present, even for a project that
+/// hasn't customized anything), every given project's own
+/// `configured_statuses` (`backlog/config.yml`'s declared list), and any
+/// status actually carried by a task in scope (covers a repo with genuinely
+/// ad hoc values outside both of the above) — ordered per
+/// `CANONICAL_STATUS_ORDER` first, anything else alphabetically after.
+pub fn ordered_status_vocabulary<'a>(
+    projects: impl IntoIterator<Item = &'a BacklogProject>,
+) -> Vec<String> {
+    let mut set: BTreeSet<String> = BACKLOG_STATUSES.iter().map(|s| (*s).to_string()).collect();
+    for project in projects {
+        for status in &project.configured_statuses {
+            set.insert(status.clone());
+        }
+        for task in &project.tasks {
+            set.insert(task.status.clone());
+        }
+    }
+
+    let mut canonical: Vec<String> = Vec::new();
+    let mut extra: Vec<String> = Vec::new();
+    for status in set {
+        if CANONICAL_STATUS_ORDER
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case(&status))
+        {
+            canonical.push(status);
+        } else {
+            extra.push(status);
+        }
+    }
+    canonical.sort_by_key(|status| {
+        CANONICAL_STATUS_ORDER
+            .iter()
+            .position(|c| c.eq_ignore_ascii_case(status))
+            .unwrap_or(CANONICAL_STATUS_ORDER.len())
+    });
+    extra.sort();
+    canonical.extend(extra);
+    canonical
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BacklogProject {
@@ -196,4 +265,98 @@ pub struct NewBacklogTask {
     /// task create --help`; same flag `edit_backlog_task` uses for
     /// `BacklogTaskPatch::dependencies`).
     pub dependencies: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn project(configured_statuses: &[&str], task_statuses: &[&str]) -> BacklogProject {
+        BacklogProject {
+            root: PathBuf::from("/fixture"),
+            cli_path: None,
+            tasks: task_statuses
+                .iter()
+                .enumerate()
+                .map(|(i, status)| BacklogTask {
+                    id: format!("TASK-{}", i + 1),
+                    title: "fixture".to_string(),
+                    status: (*status).to_string(),
+                    priority: "medium".to_string(),
+                    assignees: vec![],
+                    labels: vec![],
+                    dependencies: vec![],
+                    references: vec![],
+                    milestone: None,
+                    parent: None,
+                    created_date: None,
+                    updated_date: None,
+                    description: String::new(),
+                    implementation_plan: String::new(),
+                    implementation_notes: String::new(),
+                    final_summary: String::new(),
+                    acceptance_criteria: vec![],
+                    definition_of_done: vec![],
+                    source: BacklogTaskSource::Active,
+                    path: PathBuf::from("/fixture/backlog/tasks/fixture.md"),
+                })
+                .collect(),
+            warnings: vec![],
+            loaded_at_unix: 0,
+            configured_statuses: configured_statuses.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn always_includes_backlog_statuses_even_with_no_projects() {
+        let vocab = ordered_status_vocabulary(std::iter::empty());
+        assert_eq!(vocab, vec!["To Do", "In Progress", "Done"]);
+    }
+
+    #[test]
+    fn includes_a_projects_configured_statuses_even_with_zero_matching_tasks() {
+        let p = project(
+            &["Icebox", "To Do", "In Progress", "In Review", "Done"],
+            &[],
+        );
+        let vocab = ordered_status_vocabulary([&p]);
+        assert_eq!(
+            vocab,
+            vec!["Icebox", "To Do", "In Progress", "In Review", "Done"],
+            "Icebox and In Review should appear even though no task carries them"
+        );
+    }
+
+    #[test]
+    fn includes_a_nonstandard_status_actually_present_on_a_task() {
+        let p = project(&[], &["Blocked"]);
+        let vocab = ordered_status_vocabulary([&p]);
+        assert_eq!(
+            vocab,
+            vec!["To Do", "In Progress", "Done", "Blocked"],
+            "a genuinely ad hoc task status should still be offered, sorted after the canonical set"
+        );
+    }
+
+    #[test]
+    fn orders_canonically_regardless_of_which_project_declared_what() {
+        // "Backlog" and "Icebox" only ever appear if something declares
+        // them; they aren't in BACKLOG_STATUSES, so this also proves the
+        // canonical order applies to non-base statuses, not just the
+        // hardcoded three.
+        let a = project(&["Backlog"], &[]);
+        let b = project(&["In Review"], &[]);
+        let vocab = ordered_status_vocabulary([&a, &b]);
+        assert_eq!(
+            vocab,
+            vec!["Backlog", "To Do", "In Progress", "In Review", "Done"]
+        );
+    }
+
+    #[test]
+    fn extra_nonstandard_statuses_sort_alphabetically_after_the_canonical_set() {
+        let p = project(&[], &["Zeta", "Alpha"]);
+        let vocab = ordered_status_vocabulary([&p]);
+        assert_eq!(vocab, vec!["To Do", "In Progress", "Done", "Alpha", "Zeta"]);
+    }
 }

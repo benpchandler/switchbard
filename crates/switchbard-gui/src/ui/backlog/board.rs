@@ -1,78 +1,38 @@
 //! The Board lens: per-status kanban columns, cross-repo, with drag-to-change
 //! status writing through the `backlog` CLI (task-15 AC #1).
 //!
-//! Columns come from `column_order`: the standard `BACKLOG_STATUSES`, every
-//! scoped project's own `config.yml`-declared statuses (TASK-25 — e.g.
-//! budget's Icebox, shown even with zero Icebox tasks right now), and any
-//! nonstandard status actually present on a task in scope, so a repo with
-//! custom Backlog.md statuses still gets a home for those tasks rather than
-//! silently dropping them.
+//! Columns come from `switchbard_core::ordered_status_vocabulary` (owner
+//! UX pass, 2026-08-05: "all projects should share a common set of statuses
+//! across every view") — the same status list every other status-listing
+//! surface (List's filter, the detail-pane editor, Statistics) now consumes
+//! too, so Board can no longer show a column List's filter doesn't offer or
+//! vice versa.
 //!
-//! Drag-and-drop uses egui's native `dnd_drag_source` / `dnd_drop_zone`
-//! (payload = `BacklogTaskKey`, the same `(project_root, task_id)` pair used
-//! for selection elsewhere). Only editable tasks (active source, CLI
-//! available) are wrapped as drag sources — draft/completed/archived cards
-//! render as plain, non-draggable strips.
+//! Drag-and-drop uses egui's native `dnd_drop_zone` on the receiving side
+//! and a hand-rolled `Sense::click_and_drag()` source per card (TASK-29 —
+//! see `render_strip`'s doc for why `Ui::dnd_drag_source` couldn't be used
+//! once cards needed a nested, independently-clickable checkbox). Only
+//! editable tasks (active source, CLI available) are drag sources —
+//! draft/completed/archived cards render as plain, non-draggable strips.
 
-use super::{
-    dispatch_ui, format, list, scoped_projects, selection, sort, Pending, Snapshot, TaskRow,
-};
+use super::{dispatch_ui, format, list, scoped_projects, selection, Pending, Snapshot, TaskRow};
 use crate::app::HiveApp;
 use crate::runtime::{BacklogLens, BacklogTaskKey};
 use crate::ui::theme;
 use eframe::egui;
-use std::collections::BTreeSet;
 use switchbard_core::{
-    humanize_age, parse_backlog_datetime_unix, BacklogTask, BacklogTaskPatch, BACKLOG_STATUSES,
+    humanize_age, ordered_status_vocabulary, parse_backlog_datetime_unix, BacklogTask,
+    BacklogTaskPatch,
 };
 
-/// TASK-25 (owner-requested UX): the canonical kanban order for the
-/// statuses a Backlog.md `config.yml` is likely to declare — budget's own
-/// config declares exactly this set, `["Icebox", "To Do", "In Progress",
-/// "In Review", "Done"]`. Any status outside this list (nonstandard,
-/// project-specific) sorts after it, alphabetically.
-const CANONICAL_STATUS_ORDER: &[&str] = &["Icebox", "To Do", "In Progress", "In Review", "Done"];
-
-/// Column order: every status any *scoped* project either declares in its
-/// own `backlog/config.yml` (`BacklogProject::configured_statuses` —
-/// TASK-25) or has a task currently carrying, deduped case-insensitively,
-/// in `CANONICAL_STATUS_ORDER` first and anything else alphabetical after.
-/// Declaring a status in `config.yml` is enough to earn it a column even
-/// with zero tasks in it right now — a repo-specific column like Icebox
-/// shouldn't only appear once someone happens to file something there.
+/// Column order: the shared status vocabulary (owner UX pass, 2026-08-05),
+/// scoped to whichever projects are currently in view. Declaring a status
+/// in a project's `config.yml` is enough to earn it a column even with zero
+/// tasks in it right now — a repo-specific column like Icebox shouldn't
+/// only appear once someone happens to file something there.
 fn column_order(app: &HiveApp, snap: &Snapshot) -> Vec<String> {
     let scoped = scoped_projects(app, snap);
-    let mut set: BTreeSet<String> = BACKLOG_STATUSES.iter().map(|s| (*s).to_string()).collect();
-    for project in &scoped {
-        for status in &project.project.configured_statuses {
-            set.insert(status.clone());
-        }
-    }
-    for status in sort::status_options(&scoped) {
-        set.insert(status);
-    }
-
-    let mut canonical: Vec<String> = Vec::new();
-    let mut extra: Vec<String> = Vec::new();
-    for status in set {
-        if CANONICAL_STATUS_ORDER
-            .iter()
-            .any(|c| c.eq_ignore_ascii_case(&status))
-        {
-            canonical.push(status);
-        } else {
-            extra.push(status);
-        }
-    }
-    canonical.sort_by_key(|status| {
-        CANONICAL_STATUS_ORDER
-            .iter()
-            .position(|c| c.eq_ignore_ascii_case(status))
-            .unwrap_or(CANONICAL_STATUS_ORDER.len())
-    });
-    extra.sort();
-    canonical.extend(extra);
-    canonical
+    ordered_status_vocabulary(scoped.iter().map(|row| &row.project))
 }
 
 pub(super) fn render_board(

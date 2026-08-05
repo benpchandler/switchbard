@@ -14,6 +14,7 @@ use crate::ui::theme;
 use eframe::egui;
 use switchbard_core::{
     compute_burndown, compute_burndown_by_milestone, compute_cross_repo_stats, BurndownSeries,
+    CANONICAL_STATUS_ORDER,
 };
 
 pub(super) fn render_statistics(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
@@ -30,9 +31,17 @@ pub(super) fn render_statistics(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Sna
         .show(ui, |ui| {
             render_gauges(ui, &stats);
             ui.add_space(12.0);
-            render_distribution(ui, "Status", &stats.by_status);
+            render_distribution(ui, "Status", &canonical_status_order(&stats.by_status));
             ui.add_space(8.0);
-            render_distribution(ui, "Priority", &stats.by_priority);
+            render_distribution(
+                ui,
+                "Priority",
+                &stats
+                    .by_priority
+                    .iter()
+                    .map(|(k, v)| (k.clone(), *v))
+                    .collect::<Vec<_>>(),
+            );
             ui.add_space(12.0);
             render_repo_table(ui, &stats);
             ui.add_space(16.0);
@@ -67,13 +76,34 @@ fn gauge(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.separator();
 }
 
-fn render_distribution(
-    ui: &mut egui::Ui,
-    title: &str,
-    by_key: &std::collections::BTreeMap<String, usize>,
-) {
+/// Owner UX pass (2026-08-05): the Status distribution renders in the same
+/// shared canonical order every other status surface uses (Board columns,
+/// List's filter, the detail-pane editor) instead of `BTreeMap`'s
+/// alphabetical iteration order, which put "Done" before "In Progress"
+/// before "To Do" — technically correct, but inconsistent with the rest of
+/// the app and not the order a kanban flow reads in.
+fn canonical_status_order(
+    by_status: &std::collections::BTreeMap<String, usize>,
+) -> Vec<(String, usize)> {
+    let mut ordered: Vec<(String, usize)> =
+        by_status.iter().map(|(k, v)| (k.clone(), *v)).collect();
+    ordered.sort_by_key(|(status, _)| {
+        CANONICAL_STATUS_ORDER
+            .iter()
+            .position(|c| c.eq_ignore_ascii_case(status))
+            .unwrap_or(CANONICAL_STATUS_ORDER.len())
+    });
+    ordered
+}
+
+fn render_distribution(ui: &mut egui::Ui, title: &str, by_key: &[(String, usize)]) {
     ui.label(egui::RichText::new(title).strong());
-    let max = by_key.values().copied().max().unwrap_or(0).max(1);
+    let max = by_key
+        .iter()
+        .map(|(_, count)| *count)
+        .max()
+        .unwrap_or(0)
+        .max(1);
     for (key, count) in by_key {
         ui.horizontal(|ui| {
             ui.add_sized([90.0, 16.0], egui::Label::new(key));

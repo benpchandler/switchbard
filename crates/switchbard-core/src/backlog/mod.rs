@@ -20,6 +20,7 @@ pub use parse::{
     parse_created_task_id,
 };
 pub use types::{
-    BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskPatch, BacklogTaskSource,
-    NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
+    ordered_status_vocabulary, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskPatch,
+    BacklogTaskSource, NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
+    CANONICAL_STATUS_ORDER,
 };

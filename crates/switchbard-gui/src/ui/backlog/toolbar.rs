@@ -9,7 +9,7 @@ use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
 use std::path::PathBuf;
-use switchbard_core::BACKLOG_PRIORITIES;
+use switchbard_core::{ordered_status_vocabulary, BACKLOG_PRIORITIES};
 
 /// The lens tab strip shown under the summary line: List / Board /
 /// Milestones / Statistics. Switching lenses does not clear the current
@@ -239,7 +239,13 @@ pub(super) fn render_project_toolbar(
 
         ui.separator();
         ui.label(egui::RichText::new("Status").color(theme::muted_text()));
-        let statuses = sort::status_options(&super::scoped_projects(app, snap));
+        // Owner UX pass (2026-08-05): the same shared vocabulary Board's
+        // columns, the detail-pane editor, and Statistics all consume now,
+        // so this dropdown can no longer offer a different status set than
+        // what Board actually shows (previously this used a local union
+        // that omitted a project's declared-but-currently-empty statuses).
+        let scoped = super::scoped_projects(app, snap);
+        let statuses = ordered_status_vocabulary(scoped.iter().map(|row| &row.project));
         egui::ComboBox::from_id_salt("backlog_status_filter")
             .selected_text(format::value_filter_label(&app.backlog_view.status_filter))
             .show_ui(ui, |ui| {

@@ -978,6 +978,27 @@ fn board_shows_the_icebox_column_even_with_zero_icebox_tasks() {
     );
 }
 
+// Status filter combo, priority filter combo, detail-pane status/priority
+// combos, Create modal's status/priority combos: all `egui::ComboBox`es —
+// UNDRIVABLE, same standing limitation this codebase's other ComboBoxes
+// have (confirmed here too, not assumed: `harness.get_all_by_label(
+// "Status").next().unwrap().click()` followed by a `Button`-role node dump
+// showed no "Icebox" node reachable, since the ComboBox trigger itself has
+// no accessible label separate from the adjacent static "Status" text
+// label, and `.click()` on that static label doesn't open the popup it
+// isn't attached to). Verification for the owner UX pass's unified
+// vocabulary rests on:
+//   1. `switchbard_core::backlog::types::tests` (backlog/types.rs) —
+//      5 unit tests exhaustively proving `ordered_status_vocabulary`'s
+//      union/ordering logic, the actual behavior change.
+//   2. Code review — every call site (board.rs, toolbar.rs, detail.rs,
+//      create.rs, stats.rs) is a one-line, non-branching call into that
+//      single, already-proven function; none re-derives its own logic.
+//   3. `board_shows_the_icebox_column_even_with_zero_icebox_tasks` above
+//      proves the identical union/render pattern end-to-end for Board's
+//      column headers, which — unlike a ComboBox's popup — are plain,
+//      always-rendered labels and so are directly queryable.
+
 /// Without a declared statuses list at all (the default `Vec::new()`),
 /// nothing should change from before TASK-25 — no phantom columns beyond
 /// the standard three plus whatever a task actually carries.

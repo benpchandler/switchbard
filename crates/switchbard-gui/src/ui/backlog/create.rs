@@ -6,7 +6,7 @@ use super::{detail_lists, format, Pending, Snapshot};
 use crate::app::HiveApp;
 use crate::ui::theme;
 use eframe::egui;
-use switchbard_core::{NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES};
+use switchbard_core::{ordered_status_vocabulary, NewBacklogTask};
 
 pub(super) fn render_create_modal(
     app: &mut HiveApp,
@@ -83,11 +83,16 @@ pub(super) fn render_create_modal(
             );
             ui.horizontal(|ui| {
                 ui.label("status");
+                // Owner UX pass (2026-08-05): scoped to the target
+                // project's own vocabulary, not a fixed 3-entry list —
+                // e.g. a project declaring Icebox in config.yml can file a
+                // new task straight into it.
+                let statuses = ordered_status_vocabulary(std::iter::once(&project.project));
                 format::render_value_combo(
                     ui,
                     "backlog_new_status",
                     &mut app.backlog_view.new_task.status,
-                    BACKLOG_STATUSES,
+                    &statuses,
                     format::title_case_value,
                 );
                 ui.label("priority");
@@ -95,7 +100,7 @@ pub(super) fn render_create_modal(
                     ui,
                     "backlog_new_priority",
                     &mut app.backlog_view.new_task.priority,
-                    BACKLOG_PRIORITIES,
+                    &format::priority_options(),
                     format::priority_title,
                 );
             });

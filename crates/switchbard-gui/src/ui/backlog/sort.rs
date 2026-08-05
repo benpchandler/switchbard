@@ -14,7 +14,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 use switchbard_core::{
     triage_entry_from_task, triage_rank, BacklogProject, BacklogTask, BacklogTaskSource,
-    BACKLOG_PRIORITIES, BACKLOG_STATUSES,
+    BACKLOG_PRIORITIES, CANONICAL_STATUS_ORDER,
 };
 
 /// Filter + order every visible task across the current scope. The single
@@ -123,11 +123,16 @@ pub(super) fn compare_tasks(
         .then_with(|| cmp_ascii_case_insensitive(&a.title, &b.title))
 }
 
+/// Owner UX pass (2026-08-05): sorts by the same shared canonical order
+/// every other status surface uses (`ordered_status_vocabulary`'s
+/// `CANONICAL_STATUS_ORDER`), not the old 3-entry `BACKLOG_STATUSES` — a
+/// task in a repo-specific status like "Icebox" or "In Review" now sorts
+/// into its correct kanban position instead of falling to the end.
 fn status_rank(status: &str) -> usize {
-    BACKLOG_STATUSES
+    CANONICAL_STATUS_ORDER
         .iter()
         .position(|option| option.eq_ignore_ascii_case(status))
-        .unwrap_or(BACKLOG_STATUSES.len())
+        .unwrap_or(CANONICAL_STATUS_ORDER.len())
 }
 
 fn priority_rank(priority: &str) -> usize {
@@ -232,27 +237,10 @@ pub(super) fn task_is_completed(task: &BacklogTask) -> bool {
     task.is_done()
 }
 
-/// The set of status values worth offering in the filter combo box: the
-/// standard `BACKLOG_STATUSES` plus any nonstandard value actually present
-/// on a task in the current scope (so a hand-edited task's odd status is
-/// still filterable).
-pub(super) fn status_options(scoped: &[&ProjectRow]) -> Vec<String> {
-    let mut set = BTreeSet::new();
-    for status in BACKLOG_STATUSES {
-        set.insert((*status).to_string());
-    }
-    for project in scoped {
-        for task in &project.project.tasks {
-            set.insert(task.status.clone());
-        }
-    }
-    set.into_iter().collect()
-}
-
 /// Every distinct milestone value in the current scope, alphabetical.
-/// Unlike `status_options` there's no fixed baseline set — milestones are
-/// entirely project-defined — so an empty scope just offers no milestones
-/// beyond "All".
+/// Unlike `switchbard_core::ordered_status_vocabulary` there's no fixed
+/// baseline set — milestones are entirely project-defined — so an empty
+/// scope just offers no milestones beyond "All".
 pub(super) fn milestone_options(scoped: &[&ProjectRow]) -> Vec<String> {
     let mut set = BTreeSet::new();
     for project in scoped {
