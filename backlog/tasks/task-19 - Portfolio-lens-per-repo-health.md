@@ -1,9 +1,10 @@
 ---
 id: TASK-19
 title: 'Portfolio lens: per-repo health'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-05 03:55'
+updated_date: '2026-08-05 04:24'
 labels:
   - hub
   - beyond-parity

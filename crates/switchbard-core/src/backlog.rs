@@ -654,6 +654,17 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
+/// Parse a Backlog `"YYYY-MM-DD HH:MM"` timestamp (`created_date`/
+/// `updated_date`) into a day count since the Unix epoch. Shared by
+/// `backlog_stats` (burndown, portfolio) and `backlog_relations` ("newly
+/// unblocked") — both only need day granularity, unlike `backlog_triage`'s
+/// age-based tiebreak, which keeps its own seconds-precision parser.
+pub fn parse_backlog_day(value: &str) -> Option<i64> {
+    chrono::NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%d %H:%M")
+        .ok()
+        .map(|dt| dt.and_utc().timestamp().div_euclid(86_400))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

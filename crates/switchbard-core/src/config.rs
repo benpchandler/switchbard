@@ -60,6 +60,12 @@ pub struct UiConfig {
     /// Clamped to a legible band on apply (`app::clamp_ui_scale`).
     #[serde(default = "default_ui_scale")]
     pub ui_scale: f32,
+    /// Named Backlog filter+sort+lens combinations (task-20). Engagement
+    /// state only — repos stay the system of record for task data, this is
+    /// just "how I like to look at it" — so it's additive on the existing
+    /// `Config::ui` single source of truth rather than a new store.
+    #[serde(default)]
+    pub saved_views: Vec<SavedView>,
 }
 
 // Hand-written so the default scale is 1.0, not the f32 `Default` of 0.0 (which
@@ -72,8 +78,49 @@ impl Default for UiConfig {
             onboarding_dismissed: false,
             theme: ThemeChoice::default(),
             ui_scale: default_ui_scale(),
+            saved_views: Vec::new(),
         }
     }
+}
+
+/// One named Backlog view: the filter/sort/lens combination task-20 lets a
+/// user save and restore. `lens`, `sort_key`, and `sort_direction` are
+/// stored as plain strings rather than referencing the GUI crate's
+/// `BacklogLens`/`BacklogTaskSortKey`/`BacklogTaskSortDirection` enums —
+/// this crate has zero UI dependencies by design (see the crate doc), so a
+/// config type can't name a `switchbard-gui` type. The GUI layer owns
+/// matching these strings back to its own enums (unrecognized values fall
+/// back to that enum's default rather than erroring — a saved view from an
+/// older Switchbard build should degrade gracefully, not corrupt the file).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SavedView {
+    pub name: String,
+    #[serde(default)]
+    pub project_filter: Option<PathBuf>,
+    #[serde(default = "default_filter_all")]
+    pub status_filter: String,
+    #[serde(default = "default_filter_all")]
+    pub priority_filter: String,
+    #[serde(default)]
+    pub sort_key: String,
+    #[serde(default)]
+    pub sort_direction: String,
+    #[serde(default)]
+    pub lens: String,
+    #[serde(default)]
+    pub show_completed: bool,
+    #[serde(default)]
+    pub show_archived: bool,
+    #[serde(default = "default_true")]
+    pub show_drafts: bool,
+}
+
+fn default_filter_all() -> String {
+    "all".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// The two named palettes from the task-14 design-directions artifact:
@@ -199,6 +246,18 @@ mod tests {
                 onboarding_dismissed: true,
                 theme: ThemeChoice::Dark,
                 ui_scale: 1.25,
+                saved_views: vec![SavedView {
+                    name: "My high-priority queue".into(),
+                    project_filter: None,
+                    status_filter: "all".into(),
+                    priority_filter: "high".into(),
+                    sort_key: "triage".into(),
+                    sort_direction: "ascending".into(),
+                    lens: "list".into(),
+                    show_completed: false,
+                    show_archived: false,
+                    show_drafts: true,
+                }],
             },
         };
         save_to(&path, &cfg).unwrap();

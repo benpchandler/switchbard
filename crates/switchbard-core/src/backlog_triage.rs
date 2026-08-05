@@ -10,15 +10,26 @@
 //! ## Due dates
 //!
 //! The ranking contract is overlay-rank → overdue → due-today → priority →
-//! age → repo name. As of Backlog CLI v1.47 (`backlog task edit --help`),
-//! Backlog.md's task schema has **no due-date field** — nothing in a task's
-//! frontmatter or sections carries one. [`TriageDue`] and the overdue/
-//! due-today tiers are still implemented and unit-tested here because the
-//! ranking contract names them explicitly (task-10 AC #2); every entry built
-//! from a real [`BacklogTask`] via [`triage_entry_from_task`] currently
-//! passes [`TriageDue::None`], so those tiers are inert in production until
-//! the CLI/schema grows a due-date concept. Wiring real due dates is future
-//! work, not scope of this module.
+//! blocked → age → repo name. As of Backlog CLI v1.47 (`backlog task edit
+//! --help`), Backlog.md's task schema has **no due-date field** — nothing in
+//! a task's frontmatter or sections carries one. [`TriageDue`] and the
+//! overdue/due-today tiers are still implemented and unit-tested here
+//! because the ranking contract names them explicitly (task-10 AC #2); every
+//! entry built from a real [`BacklogTask`] via [`triage_entry_from_task`]
+//! currently passes [`TriageDue::None`], so those tiers are inert in
+//! production until the CLI/schema grows a due-date concept. Wiring real due
+//! dates is future work, not scope of this module.
+//!
+//! ## Blocked (task-18)
+//!
+//! `blocked` (from `backlog_relations::is_blocked`) sits *after* priority
+//! and *before* age: it's a fine-grained tiebreaker within a priority tier
+//! ("you can't act on this one right now, so the otherwise-equal task you
+//! *can* act on goes first"), not a tier that overrides priority itself — an
+//! overdue high-priority blocked task still outranks a due-today low-
+//! priority unblocked one. The overlay and due/priority tiers are about how
+//! important a task is; blocked is about whether it's actionable *today*,
+//! which only matters once importance is already tied.
 
 use crate::backlog::BacklogTask;
 use std::cmp::Ordering;
@@ -41,6 +52,9 @@ pub struct TriageEntry {
     pub task_id: String,
     pub priority: TriagePriority,
     pub due: TriageDue,
+    /// From `backlog_relations::is_blocked` — see the module doc's "Blocked"
+    /// section for where this sits in the ranking chain.
+    pub blocked: bool,
     /// Unix seconds the task was created. Unknown/unparseable dates use
     /// `u64::MAX` (see [`triage_entry_from_task`]) so an unknown age sinks to
     /// the back of its tier rather than wrongly dominating the front.
@@ -96,14 +110,22 @@ impl TriageDue {
 
 /// Build a [`TriageEntry`] from a real task. `repo` is the tracked `Repo`'s
 /// `name` (the ordering.yml / badge identity); `project_key` is the
-/// project's worktree-root path as used in `HiveApp::backlog_projects`.
-pub fn triage_entry_from_task(project_key: PathBuf, repo: &str, task: &BacklogTask) -> TriageEntry {
+/// project's worktree-root path as used in `HiveApp::backlog_projects`;
+/// `project` is `task`'s own project, needed to resolve its dependencies'
+/// statuses for the blocked computation.
+pub fn triage_entry_from_task(
+    project_key: PathBuf,
+    repo: &str,
+    task: &BacklogTask,
+    project: &crate::backlog::BacklogProject,
+) -> TriageEntry {
     TriageEntry {
         project_key,
         repo: repo.to_string(),
         task_id: task.id.clone(),
         priority: TriagePriority::from_str_loose(&task.priority),
         due: TriageDue::None,
+        blocked: crate::backlog_relations::is_blocked(task, project),
         age_unix: task
             .created_date
             .as_deref()
@@ -193,9 +215,9 @@ pub fn load_ordering_overlay(hub_root: &Path) -> (OrderingOverlay, Option<String
 }
 
 /// Sort `entries` by the triage contract: explicit overlay rank first, then
-/// overdue > due-today > priority > age (older first) > repo name > task id.
-/// Pure — no IO, no locking, safe to unit test exhaustively and to call from
-/// the UI thread on every frame.
+/// overdue > due-today > priority > unblocked-before-blocked > age (older
+/// first) > repo name > task id. Pure — no IO, no locking, safe to unit test
+/// exhaustively and to call from the UI thread on every frame.
 pub fn triage_rank(entries: &[TriageEntry], overlay: &OrderingOverlay) -> Vec<TriageEntry> {
     let mut ranked = entries.to_vec();
     ranked.sort_by(|a, b| compare_entries(a, b, overlay));
@@ -217,6 +239,7 @@ fn compare_entries(a: &TriageEntry, b: &TriageEntry, overlay: &OrderingOverlay) 
         .rank()
         .cmp(&b.due.rank())
         .then_with(|| a.priority.rank().cmp(&b.priority.rank()))
+        .then_with(|| a.blocked.cmp(&b.blocked)) // false (unblocked) < true (blocked)
         .then_with(|| a.age_unix.cmp(&b.age_unix))
         .then_with(|| a.repo.cmp(&b.repo))
         .then_with(|| a.task_id.cmp(&b.task_id))
@@ -233,6 +256,7 @@ mod tests {
             task_id: task_id.to_string(),
             priority: TriagePriority::Medium,
             due: TriageDue::None,
+            blocked: false,
             age_unix: 1_000,
         }
     }
@@ -284,6 +308,32 @@ mod tests {
         let ranked = triage_rank(&[no_due, due_today, overdue], &OrderingOverlay::empty());
 
         assert_eq!(ids(&ranked), vec!["TASK-1", "TASK-2", "TASK-3"]);
+    }
+
+    #[test]
+    fn blocked_sinks_below_unblocked_within_the_same_priority_tier() {
+        let mut blocked = entry("repo-a", "TASK-1");
+        blocked.blocked = true;
+        let unblocked = entry("repo-a", "TASK-2");
+
+        let ranked = triage_rank(&[blocked, unblocked], &OrderingOverlay::empty());
+
+        assert_eq!(ids(&ranked), vec!["TASK-2", "TASK-1"]);
+    }
+
+    #[test]
+    fn blocked_does_not_override_a_higher_priority_tier() {
+        let mut high_blocked = entry("repo-a", "TASK-1");
+        high_blocked.priority = TriagePriority::High;
+        high_blocked.blocked = true;
+        let mut low_unblocked = entry("repo-a", "TASK-2");
+        low_unblocked.priority = TriagePriority::Low;
+
+        // Priority is checked before blocked, so a higher-priority blocked
+        // task still outranks a lower-priority unblocked one.
+        let ranked = triage_rank(&[low_unblocked, high_blocked], &OrderingOverlay::empty());
+
+        assert_eq!(ids(&ranked), vec!["TASK-1", "TASK-2"]);
     }
 
     #[test]
@@ -412,11 +462,19 @@ mod tests {
             source: crate::backlog::BacklogTaskSource::Active,
             path: PathBuf::from("/repos/a/backlog/tasks/task-1.md"),
         };
+        let project = crate::backlog::BacklogProject {
+            root: PathBuf::from("/repos/a"),
+            cli_path: None,
+            tasks: vec![task.clone()],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        };
 
-        let triage = triage_entry_from_task(PathBuf::from("/repos/a"), "a", &task);
+        let triage = triage_entry_from_task(PathBuf::from("/repos/a"), "a", &task, &project);
 
         assert_eq!(triage.age_unix, u64::MAX);
         assert_eq!(triage.priority, TriagePriority::High);
         assert_eq!(triage.due, TriageDue::None);
+        assert!(!triage.blocked);
     }
 }

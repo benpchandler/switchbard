@@ -18,7 +18,8 @@
 //! `created_date` are excluded from the timeline; they still count in the
 //! snapshot totals in [`CrossRepoStats`].
 
-use crate::backlog::{BacklogProject, BacklogTask};
+use crate::backlog::{parse_backlog_day as parse_day, BacklogProject, BacklogTask};
+use crate::backlog_relations::is_blocked;
 use std::collections::BTreeMap;
 
 /// Loop bound for the burndown day-by-day walk (Power-of-10 rule 2: every
@@ -27,7 +28,8 @@ use std::collections::BTreeMap;
 /// never on legitimate data.
 const MAX_BURNDOWN_DAYS: i64 = 4_000;
 
-/// One repo's slice of the cross-repo snapshot.
+/// One repo's slice of the cross-repo snapshot — also the row shape for the
+/// task-19 Portfolio lens (per-repo health).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoStats {
     pub repo: String,
@@ -35,6 +37,17 @@ pub struct RepoStats {
     pub done: usize,
     pub by_status: BTreeMap<String, usize>,
     pub by_priority: BTreeMap<String, usize>,
+    /// How many in-scope, not-done tasks are currently blocked
+    /// (`backlog_relations::is_blocked`) — task-19's "blocked count".
+    pub blocked: usize,
+    /// `created_date` of the oldest not-done task, as Backlog stores it
+    /// (`"YYYY-MM-DD HH:MM"`) — task-19's "oldest open age". `None` when
+    /// every not-done task's `created_date` is missing/unparseable, or there
+    /// are no open tasks.
+    pub oldest_open_created_date: Option<String>,
+    /// The most recent `updated_date` across every in-scope task — task-19's
+    /// "last activity". `None` when nothing in scope has a parseable date.
+    pub last_activity_updated_date: Option<String>,
 }
 
 impl RepoStats {
@@ -43,6 +56,10 @@ impl RepoStats {
             return 0.0;
         }
         (self.done as f64 / self.total as f64) * 100.0
+    }
+
+    pub fn open(&self) -> usize {
+        self.total - self.done
     }
 }
 
@@ -83,14 +100,36 @@ pub fn compute_cross_repo_stats(projects: &[(String, &BacklogProject)]) -> Cross
     for (repo, project) in projects {
         let mut repo_total = 0usize;
         let mut repo_done = 0usize;
+        let mut repo_blocked = 0usize;
         let mut repo_status = BTreeMap::new();
         let mut repo_priority = BTreeMap::new();
+        let mut oldest_open: Option<(i64, &str)> = None;
+        let mut last_activity: Option<(i64, &str)> = None;
         for task in in_scope_tasks(project) {
             repo_total += 1;
             *repo_status.entry(task.status.clone()).or_insert(0usize) += 1;
             *repo_priority.entry(task.priority.clone()).or_insert(0usize) += 1;
-            if task.is_done() {
+            let done = task.is_done();
+            if done {
                 repo_done += 1;
+            } else if is_blocked(task, project) {
+                repo_blocked += 1;
+            }
+            if !done {
+                if let Some(created) = task.created_date.as_deref() {
+                    if let Some(day) = parse_day(created) {
+                        if oldest_open.is_none_or(|(best, _)| day < best) {
+                            oldest_open = Some((day, created));
+                        }
+                    }
+                }
+            }
+            if let Some(updated) = task.updated_date.as_deref() {
+                if let Some(day) = parse_day(updated) {
+                    if last_activity.is_none_or(|(best, _)| day > best) {
+                        last_activity = Some((day, updated));
+                    }
+                }
             }
         }
         for (status, count) in &repo_status {
@@ -107,6 +146,9 @@ pub fn compute_cross_repo_stats(projects: &[(String, &BacklogProject)]) -> Cross
             done: repo_done,
             by_status: repo_status,
             by_priority: repo_priority,
+            blocked: repo_blocked,
+            oldest_open_created_date: oldest_open.map(|(_, s)| s.to_string()),
+            last_activity_updated_date: last_activity.map(|(_, s)| s.to_string()),
         });
     }
 
@@ -238,15 +280,6 @@ fn burndown_points(tasks: &[&BacklogTask], today_unix_day: i64) -> Vec<BurndownP
     points
 }
 
-/// Parse Backlog's `"YYYY-MM-DD HH:MM"` timestamp into a day count since the
-/// Unix epoch. Mirrors `backlog_triage::parse_created_date_unix` but at day
-/// granularity, which is all a burndown chart needs.
-fn parse_day(value: &str) -> Option<i64> {
-    chrono::NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%d %H:%M")
-        .ok()
-        .map(|dt| dt.and_utc().timestamp().div_euclid(86_400))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,6 +345,34 @@ mod tests {
         assert_eq!(stats.by_priority.get("high"), Some(&2));
         assert_eq!(stats.per_repo.len(), 2);
         assert!((stats.completion_pct() - 200.0 / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn repo_stats_report_blocked_count_oldest_open_and_last_activity() {
+        let mut old_open = task("TASK-1", "To Do", "high", BacklogTaskSource::Active);
+        old_open.created_date = Some("2026-01-01 00:00".to_string());
+        old_open.updated_date = Some("2026-01-01 00:00".to_string());
+
+        let mut newer_open_and_blocked =
+            task("TASK-2", "To Do", "medium", BacklogTaskSource::Active);
+        newer_open_and_blocked.created_date = Some("2026-02-01 00:00".to_string());
+        newer_open_and_blocked.updated_date = Some("2026-03-01 00:00".to_string());
+        newer_open_and_blocked.dependencies = vec!["TASK-1".to_string()];
+
+        let repo = project("/a", vec![old_open, newer_open_and_blocked]);
+        let stats = compute_cross_repo_stats(&[("a".to_string(), &repo)]);
+
+        let repo_stats = &stats.per_repo[0];
+        assert_eq!(repo_stats.blocked, 1, "TASK-2 depends on open TASK-1");
+        assert_eq!(repo_stats.open(), 2);
+        assert_eq!(
+            repo_stats.oldest_open_created_date.as_deref(),
+            Some("2026-01-01 00:00")
+        );
+        assert_eq!(
+            repo_stats.last_activity_updated_date.as_deref(),
+            Some("2026-03-01 00:00")
+        );
     }
 
     #[test]
