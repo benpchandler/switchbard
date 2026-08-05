@@ -377,6 +377,35 @@ pub fn swap_backlog_label(
     )
 }
 
+/// Add or remove one label without touching a task's other labels — the
+/// per-task "Dispatch" opt-in affordance uses this to flag/unflag
+/// `dispatch::DISPATCH_LABEL` rather than a full `BacklogTaskPatch::labels`
+/// replace, which would race a concurrent edit of some other label (e.g. the
+/// dispatch worker's own `swap_backlog_label` running at the same moment).
+pub fn set_backlog_label(
+    project_root: &Path,
+    task_id: &str,
+    label: &str,
+    enabled: bool,
+) -> Result<String> {
+    let flag = if enabled {
+        "--add-label"
+    } else {
+        "--remove-label"
+    };
+    run_backlog(
+        project_root,
+        [
+            OsString::from("task"),
+            OsString::from("edit"),
+            OsString::from(task_id),
+            OsString::from("--plain"),
+            OsString::from(flag),
+            OsString::from(label),
+        ],
+    )
+}
+
 pub fn append_backlog_notes(project_root: &Path, task_id: &str, note: &str) -> Result<String> {
     if note.trim().is_empty() {
         bail!("note is empty");

@@ -32,7 +32,7 @@ pub use attribution::attribute;
 pub use backlog::{
     append_backlog_notes, archive_backlog_task, backlog_cli_path, create_backlog_task,
     edit_backlog_task, is_backlog_project, load_backlog_project, parse_backlog_day,
-    set_backlog_acceptance_checked, set_backlog_dod_checked, swap_backlog_label,
+    set_backlog_acceptance_checked, set_backlog_dod_checked, set_backlog_label, swap_backlog_label,
     BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskPatch, BacklogTaskSource,
     NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
 };
