@@ -224,6 +224,52 @@ fn apply_drop(
 /// progress. Draggable when the task is CLI-editable; otherwise a plain,
 /// non-interactive frame with the same layout so the board doesn't jump
 /// around depending on editability.
+///
+/// TASK-29 (owner-reported live regression, 2026-08-05): card clicks and
+/// the bulk-select checkbox never registered in the real app — this was a
+/// genuine defect, not a kittest harness limitation as TASK-24/26 first
+/// concluded (owner confirmed dead clicks against the live 0.31 build).
+/// Root cause, confirmed by reading egui 0.31.1's own source
+/// (`hit_test.rs::hit_test_on_close`): a retroactive `resp.interact(..)`
+/// call — or `Ui::dnd_drag_source`'s own internal `Sense::drag()`-only
+/// wrapper widget — registered *after* a card's content already painted
+/// its own smaller widgets (the checkbox), and covering (containing)
+/// their rect, always wins egui's hit-test tie-break for anything inside
+/// it (`should_prioritize_hits_on_back` explicitly declines to protect a
+/// widget that's "fully occluded" by a larger one registered on top). And
+/// when that winning widget senses *only* drag — exactly what
+/// `dnd_drag_source` auto-generates — egui explicitly discards any click
+/// underneath it: "ignore the click-widget, because it would be confusing
+/// if clicking a drag-widget would actually click something else below
+/// it" (hit_test.rs's own comment). That's what silently ate every card
+/// click *and* the checkbox's own click sense, on editable (drag-wrapped)
+/// cards; non-editable cards had the milder version of the same bug (the
+/// checkbox lost ties to the card-wide click interact for the same
+/// "larger widget registered after, containing a smaller one" reason,
+/// just without the drag-only widget's harsher "discard the click
+/// entirely" rule on top).
+///
+/// Fix, two structural changes:
+/// 1. The bulk-select checkbox is a **sibling** of the "click to open,
+///    drag to move" region (`content_rect`, captured from its own
+///    `ui.scope`), not nested inside it — their rects never overlap, so
+///    there is no tie for egui to resolve either way.
+/// 2. "Click to open" and "drag to reorder" are **one** widget
+///    (`Sense::click_and_drag()`), not two competing ones. A single widget
+///    sensing both lets egui's own press/release-without-movement vs.
+///    movement-past-threshold logic (`PointerState::is_decidedly_dragging`)
+///    disambiguate which happened, instead of a drag-only layer shadowing
+///    everything below it. This rules out `Ui::dnd_drag_source` — it
+///    always creates that second, drag-only widget — so the drag payload
+///    is set manually via `Response::dnd_set_drag_payload`, and the
+///    floating "ghost" card shown mid-drag is reimplemented by hand in
+///    `render_drag_ghost`, mirroring `dnd_drag_source`'s own dragging
+///    branch line-for-line (still safe to mirror — only the *non*-dragging
+///    branch, which layers the extra drag-only widget, is the culprit).
+///
+/// Trade-off: a drag can only be started by pressing on the card body, not
+/// directly on the checkbox — acceptable, since a checkbox that also
+/// drag-initiates would be surprising UX regardless.
 fn render_strip(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
@@ -240,143 +286,201 @@ fn render_strip(
     // "flatten once, reuse per click" shape list.rs's own row rendering
     // uses for its `visible_keys` parameter.
     let visible_keys: Vec<BacklogTaskKey> = all_visible.iter().map(TaskRow::key).collect();
+    let card_id = egui::Id::new(("backlog_board_strip", &key));
 
-    let mut paint_strip = |ui: &mut egui::Ui, app: &mut HiveApp| {
-        // The fill is always `extreme_bg_color` — every text color rendered
-        // inside a strip is tuned against that exact card color (see
-        // `theme.rs`'s palette doc). Selection is a border color change
-        // instead of a translucent overlay: layering `visuals().selection.
-        // bg_fill` (untuned, stock egui) at partial alpha over the card
-        // produced a muddy composite that failed WCAG AA on the dark
-        // theme — a stroke can't create that problem since the audit only
-        // measures fills and text, never strokes.
-        let frame = egui::Frame::default()
-            .fill(ui.visuals().extreme_bg_color)
-            .stroke(if selected {
-                egui::Stroke::new(2.0, theme::sky())
-            } else {
-                ui.visuals().widgets.noninteractive.bg_stroke
-            })
-            .corner_radius(3.0)
-            .inner_margin(egui::Margin::symmetric(8, 6));
-        let resp = frame
-            .show(ui, |ui| {
-                ui.set_width(COLUMN_WIDTH - 16.0);
-                ui.horizontal(|ui| {
-                    // TASK-26 (owner-requested UX): bulk-select checkbox,
-                    // reusing the exact same `selection` state machine
-                    // list.rs's row checkbox drives (`bulk_selected_tasks`/
-                    // `bulk_selection_anchor` are shared across lenses, not
-                    // per-lens state) — shift toggles range-select the same
-                    // way.
-                    let mut checked = bulk_selected;
-                    let checkbox = ui
-                        .add_sized([20.0, 18.0], egui::Checkbox::without_text(&mut checked))
-                        .on_hover_text("Select task for bulk actions");
-                    if checkbox.changed() {
-                        let shift = ui.input(|input| input.modifiers.shift);
-                        if shift {
-                            selection::select_bulk_task_range(app, &visible_keys, key.clone());
-                        } else {
-                            selection::set_bulk_task_selected(app, key.clone(), checked);
-                        }
-                    }
-                    let _ = theme::painted_dot(ui, theme::repo_rail_color(&row.project.repo_name));
-                    ui.vertical(|ui| {
-                        if show_repo {
-                            ui.label(
-                                egui::RichText::new(&row.project.repo_name)
-                                    .small()
-                                    .color(theme::muted_text()),
-                            );
-                        }
-                        ui.label(
-                            egui::RichText::new(&row.task.id)
-                                .monospace()
-                                .small()
-                                .color(theme::muted_text()),
-                        );
-                        ui.label(egui::RichText::new(&row.task.title).strong().small());
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(format::priority_title(&row.task.priority))
-                                    .small()
-                                    .color(format::priority_color(&row.task.priority)),
-                            );
-                            if !row.task.acceptance_criteria.is_empty() {
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "{}/{}",
-                                        row.task.acceptance_done_count(),
-                                        row.task.acceptance_criteria.len()
-                                    ))
-                                    .small()
-                                    .color(theme::muted_text()),
-                                );
-                            }
-                            // task-18 lamp-language marker — same rationale
-                            // as the List lens's blocked pill.
-                            if !row.task.is_done()
-                                && switchbard_core::is_blocked(row.task, &row.project.project)
-                            {
-                                ui.label(
-                                    egui::RichText::new("blocked")
-                                        .small()
-                                        .strong()
-                                        .color(theme::warn_orange()),
-                                );
-                            }
-                            dispatch_ui::render_dispatch_pill(
-                                ui,
-                                &dispatch_ui::dispatch_state(row.task),
-                            );
-                        });
-                        render_labels_and_age(ui, row.task);
-                    });
-                });
-            })
-            .response;
-        let interacted = resp
-            .interact(egui::Sense::click())
-            .on_hover_text("Open in the List lens");
-        if interacted.clicked() {
-            // TASK-24 (owner-requested UX): a Board card click used to only
-            // select the task — invisible, since the Board lens has no
-            // detail pane of its own. Jump to the List lens the same way
-            // Digest's card click already does (digest.rs), so the click
-            // actually opens something. The task's current scope carries
-            // over unchanged (no `selected_project` reset like Digest's):
-            // this card only rendered because the task was already visible
-            // under the current scope, so the List lens will find it there
-            // too.
-            app.backlog_view.selected_task = Some(key.clone());
-            app.backlog_view.editor.loaded_key = None;
-            app.backlog_view.lens = BacklogLens::List;
-        }
-        // TASK-26: right-click bulk actions, reusing list::
-        // render_task_context_menu exactly as list.rs's own row does —
-        // same UNDRIVABLE-BY-KITTEST status as that menu (see
-        // backlog_controls.rs's "List lens: right-click bulk context menu"
-        // note); verified by code review, since the reused function is
-        // already proven at the List level.
-        if interacted.secondary_clicked() {
-            selection::focus_context_selection(app, key.clone());
-        }
-        interacted.context_menu(|ui| {
-            list::render_task_context_menu(app, ui, row, all_visible, pending);
-        });
-    };
+    if editable && ui.ctx().is_being_dragged(card_id) {
+        render_drag_ghost(ui, card_id, row, show_repo, selected, bulk_selected);
+        return;
+    }
 
-    if editable {
-        ui.dnd_drag_source(
-            egui::Id::new(("backlog_board_strip", &key)),
-            key.clone(),
-            |ui| {
-                paint_strip(ui, app);
-            },
-        );
+    let (checkbox_resp, checked_now, content_rect) =
+        paint_card(ui, row, show_repo, selected, bulk_selected);
+    if checkbox_resp.changed() {
+        // TASK-26 (owner-requested UX): bulk-select checkbox, reusing the
+        // exact same `selection` state machine list.rs's row checkbox
+        // drives (`bulk_selected_tasks`/`bulk_selection_anchor` are shared
+        // across lenses, not per-lens state) — shift toggles range-select
+        // the same way.
+        let shift = ui.input(|input| input.modifiers.shift);
+        if shift {
+            selection::select_bulk_task_range(app, &visible_keys, key.clone());
+        } else {
+            selection::set_bulk_task_selected(app, key.clone(), checked_now);
+        }
+    }
+
+    let sense = if editable {
+        egui::Sense::click_and_drag()
     } else {
-        paint_strip(ui, app);
+        egui::Sense::click()
+    };
+    let mut interacted = ui
+        .interact(content_rect, card_id, sense)
+        .on_hover_text("Open in the List lens");
+    if editable {
+        interacted = interacted.on_hover_cursor(egui::CursorIcon::Grab);
+        interacted.dnd_set_drag_payload(key.clone());
+    }
+    if interacted.clicked() {
+        // TASK-24 (owner-requested UX): a Board card click used to only
+        // select the task — invisible, since the Board lens has no
+        // detail pane of its own. Jump to the List lens the same way
+        // Digest's card click already does (digest.rs), so the click
+        // actually opens something. The task's current scope carries
+        // over unchanged (no `selected_project` reset like Digest's):
+        // this card only rendered because the task was already visible
+        // under the current scope, so the List lens will find it there
+        // too.
+        app.backlog_view.selected_task = Some(key.clone());
+        app.backlog_view.editor.loaded_key = None;
+        app.backlog_view.lens = BacklogLens::List;
+    }
+    // TASK-26: right-click bulk actions, reusing list::
+    // render_task_context_menu exactly as list.rs's own row does — same
+    // pattern as the List lens's own right-click menu.
+    if interacted.secondary_clicked() {
+        selection::focus_context_selection(app, key.clone());
+    }
+    interacted.context_menu(|ui| {
+        list::render_task_context_menu(app, ui, row, all_visible, pending);
+    });
+}
+
+/// Paints one card's frame, checkbox, and content — pure function of its
+/// input, no `HiveApp` access, so it can be reused unchanged for both the
+/// normal in-place render and the mid-drag floating ghost
+/// (`render_drag_ghost`). Returns `(checkbox_response,
+/// checkbox_checked_after_paint, content_rect)`: `content_rect` is
+/// deliberately the "dot + vertical" sub-area only, excluding the
+/// checkbox, so the caller's click/drag interact call never overlaps the
+/// checkbox's own (see `render_strip`'s doc for why that matters).
+fn paint_card(
+    ui: &mut egui::Ui,
+    row: &TaskRow<'_>,
+    show_repo: bool,
+    selected: bool,
+    bulk_selected: bool,
+) -> (egui::Response, bool, egui::Rect) {
+    // The fill is always `extreme_bg_color` — every text color rendered
+    // inside a strip is tuned against that exact card color (see
+    // `theme.rs`'s palette doc). Selection is a border color change
+    // instead of a translucent overlay: layering `visuals().selection.
+    // bg_fill` (untuned, stock egui) at partial alpha over the card
+    // produced a muddy composite that failed WCAG AA on the dark
+    // theme — a stroke can't create that problem since the audit only
+    // measures fills and text, never strokes.
+    let frame = egui::Frame::default()
+        .fill(ui.visuals().extreme_bg_color)
+        .stroke(if selected {
+            egui::Stroke::new(2.0, theme::sky())
+        } else {
+            ui.visuals().widgets.noninteractive.bg_stroke
+        })
+        .corner_radius(3.0)
+        .inner_margin(egui::Margin::symmetric(8, 6));
+    let mut checked = bulk_selected;
+    let mut content_rect = egui::Rect::NOTHING;
+    let checkbox_resp = frame
+        .show(ui, |ui| {
+            ui.set_width(COLUMN_WIDTH - 16.0);
+            ui.horizontal(|ui| {
+                let checkbox = ui
+                    .add_sized([20.0, 18.0], egui::Checkbox::without_text(&mut checked))
+                    .on_hover_text("Select task for bulk actions");
+                let content_resp = ui
+                    .scope(|ui| {
+                        let _ =
+                            theme::painted_dot(ui, theme::repo_rail_color(&row.project.repo_name));
+                        ui.vertical(|ui| {
+                            if show_repo {
+                                ui.label(
+                                    egui::RichText::new(&row.project.repo_name)
+                                        .small()
+                                        .color(theme::muted_text()),
+                                );
+                            }
+                            ui.label(
+                                egui::RichText::new(&row.task.id)
+                                    .monospace()
+                                    .small()
+                                    .color(theme::muted_text()),
+                            );
+                            ui.label(egui::RichText::new(&row.task.title).strong().small());
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(format::priority_title(&row.task.priority))
+                                        .small()
+                                        .color(format::priority_color(&row.task.priority)),
+                                );
+                                if !row.task.acceptance_criteria.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "{}/{}",
+                                            row.task.acceptance_done_count(),
+                                            row.task.acceptance_criteria.len()
+                                        ))
+                                        .small()
+                                        .color(theme::muted_text()),
+                                    );
+                                }
+                                // task-18 lamp-language marker — same
+                                // rationale as the List lens's blocked pill.
+                                if !row.task.is_done()
+                                    && switchbard_core::is_blocked(row.task, &row.project.project)
+                                {
+                                    ui.label(
+                                        egui::RichText::new("blocked")
+                                            .small()
+                                            .strong()
+                                            .color(theme::warn_orange()),
+                                    );
+                                }
+                                dispatch_ui::render_dispatch_pill(
+                                    ui,
+                                    &dispatch_ui::dispatch_state(row.task),
+                                );
+                            });
+                            render_labels_and_age(ui, row.task);
+                        });
+                    })
+                    .response;
+                content_rect = content_resp.rect;
+                checkbox
+            })
+            .inner
+        })
+        .inner;
+    (checkbox_resp, checked, content_rect)
+}
+
+/// The floating "ghost" shown while a card is mid-drag — repaints the same
+/// visual content onto an `Order::Tooltip` layer near the pointer,
+/// mirroring `Ui::dnd_drag_source`'s own dragging branch (not reused
+/// directly — see `render_strip`'s doc for why `dnd_drag_source` itself
+/// can't be used for the non-dragging path). `Order::Tooltip` responses
+/// are always inert ("anything with `Order::Tooltip` always gets an empty
+/// Response" — egui's own doc comment), so painting the checkbox here is
+/// purely cosmetic; it can't receive input mid-drag, which is fine since
+/// nothing needs to change on the ghost itself.
+fn render_drag_ghost(
+    ui: &mut egui::Ui,
+    card_id: egui::Id,
+    row: &TaskRow<'_>,
+    show_repo: bool,
+    selected: bool,
+    bulk_selected: bool,
+) {
+    egui::DragAndDrop::set_payload(ui.ctx(), row.key());
+    let layer_id = egui::LayerId::new(egui::Order::Tooltip, card_id);
+    let response = ui
+        .scope_builder(egui::UiBuilder::new().layer_id(layer_id), |ui| {
+            paint_card(ui, row, show_repo, selected, bulk_selected);
+        })
+        .response;
+    if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
+        let delta = pointer_pos - response.rect.center();
+        ui.ctx()
+            .transform_layer_shapes(layer_id, egui::emath::TSTransform::from_translation(delta));
     }
 }
 

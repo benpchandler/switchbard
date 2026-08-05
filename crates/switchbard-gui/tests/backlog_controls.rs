@@ -861,58 +861,77 @@ fn click_at_node_center(harness: &mut Harness<'_, HiveApp>, label: &str) {
 
 // ─── Board lens ──────────────────────────────────────────────────────────
 //
-// Board card click (select, and — TASK-24 — jump to the List lens's detail
-// pane): UNDRIVABLE-BY-KITTEST, discovered while adding TASK-24's coverage
-// during the 2026-08-05 egui 0.30->0.31 upgrade.
-//
-// The pre-existing `board_card_click_selects_the_task` test (since removed)
-// only ever used a single-task fixture. With one task in scope,
-// `reconcile_selected_task` (mod.rs) auto-selects it regardless of whether
-// the click does anything, so that test passed without proving the click
-// worked — it always had, even before this upgrade. A two-task
-// discriminating version, added to actually isolate the click's effect,
-// showed selection never moves off the auto-selected default no matter
-// which board card is clicked. Confirmed exhaustively before concluding
-// this rather than assuming it:
-//   1. `Node::click()` (accesskit semantic action) — the toggle-selected-card
-//      approach.
-//   2. Position-based `PointerMoved`/`PointerButton` simulation at the
-//      labeled node's center (`click_at_node_center`, used successfully for
-//      Digest's structurally-identical card below) — same result.
-//   3. The same position-based simulation with an extra `harness.run()`
-//      inserted between the move/press/release events, in case click-vs-drag
-//      resolution needed a frame boundary — same result.
-//   4. A non-drag-wrapped card (an Archived-source task, so `editable` is
-//      false and `render_strip` takes the plain `paint_strip` branch instead
-//      of `ui.dnd_drag_source(...)`) — ruling out drag-wrapping as the
-//      cause — same result.
-// Digest's card uses the identical `egui::Frame::show(...).response.
-// interact(Sense::click())` pattern and *does* click-drive successfully
-// (see `digest_card_click_selects_the_task_and_jumps_to_list`), so the
-// difference isn't the Frame-response pattern itself. The most likely cause
-// is Board's nested scroll areas (an outer horizontal `ScrollArea` of
-// columns, each with its own vertical one, each column also wrapped in a
-// `dnd_drop_zone`) interacting with kittest's synthetic-event/clip-rect
-// handling — the same general family of limitation the original QA audit
-// already found for Board's own column scrolling ("Column horizontal
-// scroll | UNDRIVABLE ... scroll-position simulation not exercised").
-//
-// Verification for both the pre-existing select-on-click behavior and
-// TASK-24's List-lens jump instead rests on:
-//   1. Code review: `render_strip`'s click branch (board.rs) is a five-line,
-//      non-branching block — set `selected_task`, clear `editor.loaded_key`,
-//      set `lens = BacklogLens::List` — reusing exactly the same three
-//      assignments `digest::render_strip`'s proven-working card click makes
-//      (digest.rs), which drives the identical downstream List-lens detail
-//      pane. There is no board-specific branch that could plausibly behave
-//      differently once the click itself lands.
-//   2. `backlog_list_and_detail_{light,dark}.png` (docs/qa/screenshots/)
-//      show the destination — the List lens's detail pane — rendering
-//      correctly for a selected task.
-//   3. `board_card_shows_labels_and_a_humanized_age` and
-//      `board_card_omits_the_label_line_when_there_are_no_labels` below
-//      already prove the card itself (the click's own target) renders and
-//      is queryable.
+// TASK-29 (owner-reported live regression, 2026-08-05): board card click,
+// checkbox click, and drag were all silently dead in the real app — not
+// just a kittest limitation as the TASK-24/26 notes formerly here
+// concluded. Root cause (confirmed by reading egui 0.31.1's own
+// `hit_test.rs`, not guessed): `Ui::dnd_drag_source` registers the
+// draggable region as a *second*, `Sense::drag()`-only widget, layered on
+// top of (registered after, so topmost) whatever the card's own content
+// already registered — and egui's hit-test explicitly discards any click
+// underneath a topmost pure-drag widget. See `board.rs`'s `render_strip`
+// doc comment for the full trace through `hit_test_on_close`. The fix
+// (also in board.rs) makes the bulk-select checkbox a non-overlapping
+// sibling of a single `Sense::click_and_drag()` widget instead of a
+// retroactive whole-card interact fighting a separate drag-only one — and
+// with that structural change, card click and checkbox click are now
+// both cleanly kittest-drivable, proven below instead of documented as
+// undrivable.
+
+/// TASK-24/TASK-29: a two-task fixture, same discriminating shape the old
+/// (now-removed) UNDRIVABLE note describes needing — with two tasks,
+/// `reconcile_selected_task`'s auto-select-first-row default can't produce
+/// a false positive, so clicking the *second* card and landing on it
+/// specifically proves the click itself is what moved selection.
+#[test]
+fn board_card_click_selects_the_task_and_jumps_to_list() {
+    let mut harness = list_harness_with_tasks(vec![
+        task("TASK-1", "First card", "To Do"),
+        task("TASK-2", "Second card", "To Do"),
+    ]);
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.run();
+
+    click_at_node_center(&mut harness, "Second card");
+    harness.run();
+
+    assert_eq!(
+        harness.state().backlog_view.lens,
+        BacklogLens::List,
+        "TASK-24: a board card click should jump to the List lens"
+    );
+    assert_eq!(
+        harness.state().backlog_view.selected_task,
+        Some((PathBuf::from(REPO_PATH), "TASK-2".to_string())),
+        "clicking the second card should select it specifically, not just \
+         leave the auto-selected default (TASK-1) in place"
+    );
+}
+
+/// A non-editable (Archived-source) card takes `render_strip`'s
+/// `Sense::click()`-only branch, never `Sense::click_and_drag()` — proves
+/// click-to-open still works without a drag sense in the mix at all, the
+/// same non-drag-wrapped case the old UNDRIVABLE investigation used to try
+/// to rule out drag-wrapping as the cause.
+#[test]
+fn board_non_editable_card_click_still_selects_it() {
+    let mut archived = task("TASK-1", "Archived card", "To Do");
+    archived.source = BacklogTaskSource::Archived;
+    let mut harness =
+        list_harness_with_tasks(vec![task("TASK-2", "Active card", "To Do"), archived]);
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().backlog_view.show_archived = true;
+    harness.run();
+
+    click_at_node_center(&mut harness, "Archived card");
+    harness.run();
+
+    assert_eq!(
+        harness.state().backlog_view.selected_task,
+        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string())),
+        "a non-editable card's click-only (no drag) sense should still select it"
+    );
+}
 
 /// TASK-25 (owner-requested UX): a project's `config.yml`-declared status
 /// (Icebox, matching budget's real config) should show as a Board column
@@ -974,41 +993,113 @@ fn board_does_not_show_icebox_when_no_project_declares_it() {
     );
 }
 
-// TASK-26 (owner-requested UX): Board bulk select + bulk-edit — UNDRIVABLE-
-// BY-KITTEST for the *click* on either the per-card checkbox or the
-// right-click context menu, discovered while adding this coverage.
-//
-// The card checkbox is a native `egui::Checkbox` — not the retroactively-
-// `.interact()`ed `egui::Frame` response TASK-24's own UNDRIVABLE note is
-// about — so it was a reasonable hope this one *would* click-drive even
-// though the card itself doesn't. It doesn't: `unlabeled_checkbox(&harness,
-// 1).simulate_click()` (the exact method `row_bulk_checkbox_click_selects_
-// the_task` below already proves works for List's structurally-identical
-// checkbox) leaves `bulk_selected_tasks` empty on Board. This rules out
-// "retroactive Frame interact specifically" as the root cause and points at
-// something common to *every* interactive element inside a column: each
-// column is both a `dnd_drop_zone` and its own vertical `ScrollArea`,
-// nested inside the board's own outer horizontal `ScrollArea` — the same
-// nesting the original QA audit already flagged as UNDRIVABLE for column
-// scrolling itself. The right-click context menu shares the List lens's own
-// already-documented UNDRIVABLE status for bare-interact context menus
-// (see the "List lens: right-click bulk context menu" note above), reused
-// unmodified rather than reimplemented.
-//
-// Verification instead rests on:
-//   1. Code review — the checkbox's click handler and the context menu call
-//      are both under ten lines, non-branching, and route through the
-//      exact same `selection::set_bulk_task_selected`/`select_bulk_task_
-//      range`/`focus_context_selection` and `list::render_task_context_
-//      menu` functions List's own proven-working bulk UI uses — see
-//      `row_bulk_checkbox_click_selects_the_task` and
-//      `shift_click_on_a_second_row_checkbox_selects_the_contiguous_range`
-//      below for that proof, at the function level shared by both lenses.
-//   2. The render (read) side is directly testable without a click —
-//      `board_card_checkbox_reflects_bulk_selection_state` below sets
-//      `bulk_selected_tasks` directly and confirms the card's own checkbox
-//      renders checked, proving the binding is wired correctly in the one
-//      direction that doesn't require simulating a click.
+// TASK-26/TASK-29: Board bulk select — the checkbox click was one of the
+// widgets TASK-29 fixed (see the "Board lens" section header above for the
+// full root-cause trace). Now that it's a non-overlapping sibling of the
+// card's click-and-drag region instead of nested inside a wider retroactive
+// interact, it click-drives cleanly — proven below alongside the
+// already-passing direct-state render check.
+#[test]
+fn board_card_checkbox_click_toggles_bulk_selection() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Selectable card", "To Do")]);
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.run();
+
+    let key = (PathBuf::from(REPO_PATH), "TASK-1".to_string());
+    assert!(!harness
+        .state()
+        .backlog_view
+        .bulk_selected_tasks
+        .contains(&key));
+
+    unlabeled_checkbox(&harness, 0).simulate_click();
+    harness.run();
+
+    assert!(
+        harness
+            .state()
+            .backlog_view
+            .bulk_selected_tasks
+            .contains(&key),
+        "TASK-29: the checkbox is now a non-overlapping sibling of the \
+         card's click-and-drag region, so its own click sense is no longer \
+         shadowed"
+    );
+
+    unlabeled_checkbox(&harness, 0).simulate_click();
+    harness.run();
+    assert!(
+        !harness
+            .state()
+            .backlog_view
+            .bulk_selected_tasks
+            .contains(&key),
+        "clicking again should toggle it back off"
+    );
+}
+
+/// TASK-29: unlike List's own right-click menu (attached to a bare
+/// `ui.horizontal(..).response` — see the "List lens: right-click bulk
+/// context menu" note above, a *separate*, still-standing kittest
+/// limitation this fix doesn't touch), Board's context menu is now
+/// attached to the single `ui.interact(content_rect, card_id, sense)`
+/// widget the TASK-29 restructuring introduced — a directly-registered
+/// widget, not a container response. That turns out to be drivable:
+/// simulating a secondary-click both fires `secondary_clicked()`
+/// (`selection::focus_context_selection`, asserted via
+/// `bulk_selection_anchor`) *and* actually opens the popup itself
+/// (`render_task_context_menu`'s own "N selected · M editable" label
+/// becomes queryable), so this is verified end to end, not just at the
+/// synchronous-state-change level.
+#[test]
+fn board_card_secondary_click_opens_the_bulk_context_menu() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Right click me", "To Do")]);
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.run();
+
+    let bounds = {
+        let node = harness.get_by_label("Right click me");
+        let b = node.raw_bounds().expect("node should have bounds");
+        egui::Rect::from_min_max(
+            egui::Pos2::new(b.x0 as f32, b.y0 as f32),
+            egui::Pos2::new(b.x1 as f32, b.y1 as f32),
+        )
+    };
+    let center = bounds.center();
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(center));
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: center,
+        button: egui::PointerButton::Secondary,
+        pressed: true,
+        modifiers: egui::Modifiers::default(),
+    });
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: center,
+        button: egui::PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::default(),
+    });
+    harness.run();
+
+    let key = (PathBuf::from(REPO_PATH), "TASK-1".to_string());
+    assert_eq!(
+        harness.state().backlog_view.bulk_selection_anchor,
+        Some(key),
+        "secondary-click should focus the clicked card for the context menu"
+    );
+    assert!(
+        harness
+            .query_all_by_label_contains("selected ·")
+            .next()
+            .is_some(),
+        "the context menu popup itself should have opened, not just the \
+         synchronous focus-selection side effect"
+    );
+}
+
 #[test]
 fn board_card_checkbox_reflects_bulk_selection_state() {
     let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Selectable card", "To Do")]);
@@ -1082,6 +1173,84 @@ fn board_card_omits_the_label_line_when_there_are_no_labels() {
     assert!(
         harness.query_all_by_label_contains("ago").next().is_some(),
         "age should still render from the fixture's updated_date"
+    );
+}
+
+/// TASK-29 mission item 4: prove the drag-to-change-status mechanism
+/// itself still works after replacing `Ui::dnd_drag_source` with the
+/// hand-rolled `Sense::click_and_drag()` + manual `dnd_set_drag_payload`
+/// approach — a full simulated pointer drag (press, move past the
+/// click/drag threshold across a couple of frames so egui's own
+/// `is_decidedly_dragging` commits to a drag, release over a different
+/// column) should still land on `apply_drop`'s synchronous status-change
+/// side effect. The CLI round-trip that follows (`spawn_backlog_save`) is
+/// already proven separately by `save_button_completes_a_real_cli_round_
+/// trip_against_a_real_fixture_repo`; what's under test here is the
+/// drag/drop wiring itself — did the right card land on the right column
+/// and get the right patch queued — which is what TASK-29's restructuring
+/// touched.
+#[test]
+fn board_drag_and_drop_between_columns_queues_a_status_change() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Draggable card", "To Do")]);
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.run();
+
+    let source_center = {
+        let node = harness.get_by_label("Draggable card");
+        let b = node.raw_bounds().expect("node should have bounds");
+        egui::Pos2::new(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32)
+    };
+    let target_center = {
+        // Drop well below the "In Progress" column's own header label, into
+        // its (empty) drop-zone body — dropping directly on the header text
+        // itself isn't the intended gesture and the header has no
+        // meaningful drop behavior of its own either way.
+        let node = harness.get_by_label("In Progress");
+        let b = node.raw_bounds().expect("node should have bounds");
+        egui::Pos2::new(((b.x0 + b.x1) / 2.0) as f32, b.y1 as f32 + 80.0)
+    };
+
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(source_center));
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: source_center,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::default(),
+    });
+    harness.run();
+
+    // Move in a couple of steps, well past any click-vs-drag threshold, so
+    // `is_decidedly_dragging` commits to a drag instead of resolving as a
+    // click on release.
+    let midpoint = egui::Pos2::new(source_center.x, (source_center.y + target_center.y) / 2.0);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(midpoint));
+    harness.run();
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(target_center));
+    harness.run();
+
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: target_center,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::default(),
+    });
+    harness.run();
+
+    assert_eq!(
+        harness.state().backlog_status.snapshot().as_deref(),
+        Some("moving TASK-1 to In Progress"),
+        "TASK-29: dropping a card on another column should still \
+         synchronously queue a status-change save, same as before the \
+         click/checkbox fix"
     );
 }
 
