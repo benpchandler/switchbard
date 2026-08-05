@@ -17,7 +17,7 @@
 
 use super::{dispatch_ui, format, list, scoped_projects, selection, Pending, Snapshot, TaskRow};
 use crate::app::HiveApp;
-use crate::runtime::{BacklogLens, BacklogTaskKey};
+use crate::runtime::BacklogTaskKey;
 use crate::ui::theme;
 use eframe::egui;
 use switchbard_core::{
@@ -276,24 +276,19 @@ fn render_strip(
     };
     let mut interacted = ui
         .interact(content_rect, card_id, sense)
-        .on_hover_text("Open in the List lens");
+        .on_hover_text("Show details in the rail");
     if editable {
         interacted = interacted.on_hover_cursor(egui::CursorIcon::Grab);
         interacted.dnd_set_drag_payload(key.clone());
     }
     if interacted.clicked() {
-        // TASK-24 (owner-requested UX): a Board card click used to only
-        // select the task — invisible, since the Board lens has no
-        // detail pane of its own. Jump to the List lens the same way
-        // Digest's card click already does (digest.rs), so the click
-        // actually opens something. The task's current scope carries
-        // over unchanged (no `selected_project` reset like Digest's):
-        // this card only rendered because the task was already visible
-        // under the current scope, so the List lens will find it there
-        // too.
+        // TASK-24 (owner-requested UX), superseded by the 2026-08-05 rail
+        // pass: a Board card click used to jump to the List lens just to
+        // reach its detail pane. Now the persistent detail rail
+        // (`rail::render_detail_rail`) shows any selected task's detail
+        // regardless of lens, so selecting is enough — no lens switch.
         app.backlog_view.selected_task = Some(key.clone());
         app.backlog_view.editor.loaded_key = None;
-        app.backlog_view.lens = BacklogLens::List;
     }
     // TASK-26: right-click bulk actions, reusing list::
     // render_task_context_menu exactly as list.rs's own row does — same

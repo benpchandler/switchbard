@@ -34,6 +34,7 @@
 //! - `saved_views` — named filter+sort+lens combinations, persisted on `Config::ui` (task-20).
 //! - `detail`     — the selected-task detail pane (editor, acceptance, notes).
 //! - `create`     — the "New Backlog Task" modal.
+//! - `rail`       — the persistent right-hand detail rail (owner UX pass, 2026-08-05).
 //!
 //! ## Lens
 //!
@@ -46,6 +47,18 @@
 //! directly instead, since a read-only aggregation or landing page
 //! shouldn't go empty just because the toolbar's Done/Archived filters are
 //! off elsewhere.
+//!
+//! ## Selecting a task shows its detail, regardless of lens
+//!
+//! Owner UX pass (2026-08-05): every lens's "click a task" affordance
+//! (Board card, List row, Digest card, Milestones row, search result) sets
+//! `backlog_view.selected_task` and nothing else — no lens switch. `rail`
+//! renders that selection's detail in a persistent right-side panel
+//! alongside whichever lens is active, replacing the old behavior where a
+//! click jumped you to the List lens specifically (its own detail pane was
+//! the only place selection was visible). List no longer embeds its own
+//! detail split for the same reason — the rail is the one place detail
+//! renders now, reusing `detail::render_task_detail` unchanged.
 
 mod board;
 mod create;
@@ -57,6 +70,7 @@ mod format;
 mod list;
 mod milestones;
 mod portfolio;
+mod rail;
 mod saved_views;
 mod search;
 mod selection;
@@ -219,6 +233,15 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
 
     search::handle_shortcut(app, ctx);
 
+    // Must render before the CentralPanel below so it claims its docked
+    // space first (same ordering rule every side panel in this app follows
+    // — see `HiveApp::render_ui`'s own comment). Skipped when there's
+    // nothing to ever select, matching the CentralPanel's own empty-scope
+    // branch just below.
+    if !snap.projects.is_empty() {
+        rail::render_detail_rail(app, ctx, &snap, &mut pending);
+    }
+
     egui::CentralPanel::default().show(ctx, |ui| {
         if snap.projects.is_empty() {
             render_empty(ui);
@@ -236,7 +259,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
             BacklogLens::List => {
                 toolbar::render_project_toolbar(app, ui, &snap, tasks.len());
                 ui.separator();
-                list::render_task_workspace(app, ui, &snap, tasks, &mut pending);
+                list::render_task_workspace(app, ui, tasks, &mut pending);
             }
             BacklogLens::Board => {
                 toolbar::render_project_toolbar(app, ui, &snap, tasks.len());

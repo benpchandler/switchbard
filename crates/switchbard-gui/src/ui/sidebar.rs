@@ -1,10 +1,11 @@
-//! "Tracked repos" right-side panel — persistent across all views.
-//!
-//! Rendered from `app::update` before the central-view dispatch so adding /
-//! removing repos works the same way no matter which tab you're on. The
-//! per-repo "N listeners" badge stays meaningful everywhere: listeners are a
-//! global concept, the count just describes how many of them attributed to
-//! that repo on the most recent scan.
+//! "Tracked repos" — a left-side panel local to the Servers view (owner UX
+//! pass, 2026-08-05: freed up the right edge for the Backlog view's
+//! persistent detail rail, `ui::backlog::rail`). Repo add/remove for every
+//! *other* view goes through the Settings window (`ui::settings`) instead —
+//! this panel's own add/remove buttons still work the same way, just no
+//! longer the only way to reach those actions. The per-repo "N listeners"
+//! badge is meaningful here specifically because it's now scoped to the one
+//! view (Servers) where listener counts are the point.
 
 use crate::app::HiveApp;
 use crate::runtime::PickerState;
@@ -34,13 +35,13 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     let mut want_pick = false;
     let mut move_request: Option<(usize, isize)> = None;
 
-    egui::SidePanel::right("repos")
+    egui::SidePanel::left("repos")
         .resizable(true)
         .default_width(280.0)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui
-                    .small_button("▶")
+                    .small_button("◀")
                     .on_hover_text("Collapse the tracked-repos panel")
                     .clicked()
                 {
@@ -216,23 +217,19 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     if let Some((i, delta)) = move_request {
         app.move_repo(i, delta);
     }
-    render_remove_confirmation(app, ctx);
 }
 
 /// The collapsed rail (TASK-27): a fixed-width, non-resizable panel with
-/// only the expand toggle. Still renders the remove-confirmation modal
-/// (below) in case a user collapsed the panel with that dialog already
-/// open — the modal is a separate `egui::Window`, not part of the
-/// SidePanel's own content, so collapsing doesn't dismiss it.
+/// only the expand toggle.
 fn render_collapsed(app: &mut HiveApp, ctx: &egui::Context) {
-    egui::SidePanel::right("repos")
+    egui::SidePanel::left("repos")
         .resizable(false)
         .exact_width(COLLAPSED_WIDTH)
         .show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(4.0);
                 if ui
-                    .small_button("◀")
+                    .small_button("▶")
                     .on_hover_text("Expand the tracked-repos panel")
                     .clicked()
                 {
@@ -240,12 +237,15 @@ fn render_collapsed(app: &mut HiveApp, ctx: &egui::Context) {
                 }
             });
         });
-    render_remove_confirmation(app, ctx);
 }
 
-/// Modal that pops over the whole window when the user clicks the ✕ next to
-/// a repo. Confirm removes the repo (does not touch the repo on disk).
-fn render_remove_confirmation(app: &mut HiveApp, ctx: &egui::Context) {
+/// Modal that pops over the whole window when the user clicks "Remove" next
+/// to a repo (from either this panel or the Settings window's own repo
+/// list). Confirm removes the repo (does not touch the repo on disk).
+/// Rendered unconditionally from `HiveApp::render_ui`, not tied to this
+/// panel's own visibility — the owner UX pass made "Tracked repos"
+/// Servers-only, but repo removal itself still needs to work from any view.
+pub(crate) fn render_remove_confirmation(app: &mut HiveApp, ctx: &egui::Context) {
     let Some((path, name)) = app.confirm_remove_repo.clone() else {
         return;
     };

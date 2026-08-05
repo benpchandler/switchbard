@@ -30,7 +30,7 @@ use switchbard_core::{
     BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource, Repo, WorktreeRef,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{BacklogLens, BacklogTaskSortDirection, ViewTab};
+use switchbard_gui::runtime::{BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey, ViewTab};
 
 fn task(id: &str, title: &str, status: &str) -> BacklogTask {
     BacklogTask {
@@ -741,8 +741,14 @@ fn escape_closes_the_search_overlay() {
     assert!(!harness.state().backlog_view.search.open);
 }
 
+/// Owner UX pass (2026-08-05): a search result click used to force-switch
+/// to the List lens just to reach its detail pane. Now the persistent
+/// detail rail shows any selected task regardless of lens, so the lens
+/// (deliberately set to Statistics here, an arbitrary lens the click has no
+/// business touching) stays exactly where the user left it — only
+/// selection and the search overlay's own open flag change.
 #[test]
-fn search_result_row_click_navigates_to_the_task_in_the_list_lens() {
+fn search_result_row_click_selects_the_task_without_changing_lens() {
     let mut harness = list_harness_with_tasks(vec![
         task("TASK-1", "First", "To Do"),
         task("TASK-2", "Second thing", "To Do"),
@@ -758,7 +764,11 @@ fn search_result_row_click_navigates_to_the_task_in_the_list_lens() {
     harness.run();
 
     assert!(!harness.state().backlog_view.search.open);
-    assert_eq!(harness.state().backlog_view.lens, BacklogLens::List);
+    assert_eq!(
+        harness.state().backlog_view.lens,
+        BacklogLens::Statistics,
+        "selecting a search result should not change the active lens"
+    );
     assert_eq!(
         harness.state().backlog_view.selected_task,
         Some((PathBuf::from(REPO_PATH), "TASK-2".to_string()))
@@ -803,16 +813,34 @@ fn digest_recently_done_view_all_jumps_to_list_filtered_to_done() {
     assert_eq!(harness.state().backlog_view.status_filter, "Done");
 }
 
+/// Owner UX pass (2026-08-05): a Digest card click used to force-switch to
+/// the List lens just to reach its detail pane. Now the persistent detail
+/// rail shows it regardless of lens, so Digest stays on screen — only
+/// selection (and the scope-widen to "All projects", still needed since a
+/// Digest card can surface a task from any tracked project) changes.
 #[test]
-fn digest_card_click_selects_the_task_and_jumps_to_list() {
+fn digest_card_click_selects_the_task_without_changing_lens() {
+    // A second, boring task: with only one task, `reconcile_selected_task`
+    // auto-selects it and the persistent detail rail (owner UX pass,
+    // 2026-08-05) renders its title too, making "Active work" ambiguous
+    // between the digest card and the rail's heading. Sorting by `Task`
+    // (id/title, ascending) deterministically auto-selects "TASK-0" instead,
+    // leaving "Active work" (TASK-1) unambiguous.
+    let boring = task("TASK-0", "Boring backlog item", "To Do");
     let mut in_progress = task("TASK-1", "Active work", "In Progress");
     in_progress.updated_date = Some("2026-08-01 12:00".to_string());
-    let mut harness = digest_harness_with(vec![in_progress]);
+    let mut harness = digest_harness_with(vec![boring, in_progress]);
+    harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
+    harness.run();
 
     click_at_node_center(&mut harness, "Active work");
     harness.run();
 
-    assert_eq!(harness.state().backlog_view.lens, BacklogLens::List);
+    assert_eq!(
+        harness.state().backlog_view.lens,
+        BacklogLens::Digest,
+        "selecting a Digest card should not change the active lens"
+    );
     assert_eq!(
         harness.state().backlog_view.selected_task,
         Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()))
@@ -883,8 +911,13 @@ fn click_at_node_center(harness: &mut Harness<'_, HiveApp>, label: &str) {
 /// `reconcile_selected_task`'s auto-select-first-row default can't produce
 /// a false positive, so clicking the *second* card and landing on it
 /// specifically proves the click itself is what moved selection.
+/// Owner UX pass (2026-08-05): TASK-24 originally jumped to the List lens
+/// on click, since Board had no detail pane of its own. Now the persistent
+/// detail rail shows the selection regardless of lens, so the click stays
+/// on Board — the assertion updated accordingly (the click/selection
+/// mechanism itself is unchanged from the doc block above).
 #[test]
-fn board_card_click_selects_the_task_and_jumps_to_list() {
+fn board_card_click_selects_the_task_without_changing_lens() {
     let mut harness = list_harness_with_tasks(vec![
         task("TASK-1", "First card", "To Do"),
         task("TASK-2", "Second card", "To Do"),
@@ -897,8 +930,8 @@ fn board_card_click_selects_the_task_and_jumps_to_list() {
 
     assert_eq!(
         harness.state().backlog_view.lens,
-        BacklogLens::List,
-        "TASK-24: a board card click should jump to the List lens"
+        BacklogLens::Board,
+        "selecting a board card should not change the active lens"
     );
     assert_eq!(
         harness.state().backlog_view.selected_task,
@@ -1074,8 +1107,17 @@ fn board_card_checkbox_click_toggles_bulk_selection() {
 /// synchronous-state-change level.
 #[test]
 fn board_card_secondary_click_opens_the_bulk_context_menu() {
-    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Right click me", "To Do")]);
+    // A second, boring task ahead of it in sort order: with only one task,
+    // `reconcile_selected_task` auto-selects it and the persistent detail
+    // rail (owner UX pass, 2026-08-05) renders its title too, making
+    // "Right click me" ambiguous between the board card and the rail's
+    // heading.
+    let mut harness = list_harness_with_tasks(vec![
+        task("TASK-1", "Boring backlog item", "To Do"),
+        task("TASK-2", "Right click me", "To Do"),
+    ]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
     harness.run();
 
     let bounds = {
@@ -1105,7 +1147,7 @@ fn board_card_secondary_click_opens_the_bulk_context_menu() {
     });
     harness.run();
 
-    let key = (PathBuf::from(REPO_PATH), "TASK-1".to_string());
+    let key = (PathBuf::from(REPO_PATH), "TASK-2".to_string());
     assert_eq!(
         harness.state().backlog_view.bulk_selection_anchor,
         Some(key),
@@ -1212,8 +1254,19 @@ fn board_card_omits_the_label_line_when_there_are_no_labels() {
 /// touched.
 #[test]
 fn board_drag_and_drop_between_columns_queues_a_status_change() {
-    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Draggable card", "To Do")]);
+    // Two tasks, not one: with only one, `reconcile_selected_task`
+    // auto-selects it and the persistent detail rail (owner UX pass,
+    // 2026-08-05) renders its title too, making "Draggable card" ambiguous
+    // between the board card and the rail's heading. Sorting by `Task`
+    // (id/title, ascending) deterministically puts TASK-1 first — that one
+    // becomes the boring auto-selected task, leaving TASK-2's "Draggable
+    // card" title unambiguous on the board.
+    let mut harness = list_harness_with_tasks(vec![
+        task("TASK-1", "Other card", "To Do"),
+        task("TASK-2", "Draggable card", "To Do"),
+    ]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
     harness.run();
 
     let source_center = {
@@ -1268,10 +1321,111 @@ fn board_drag_and_drop_between_columns_queues_a_status_change() {
 
     assert_eq!(
         harness.state().backlog_status.snapshot().as_deref(),
-        Some("moving TASK-1 to In Progress"),
+        Some("moving TASK-2 to In Progress"),
         "TASK-29: dropping a card on another column should still \
          synchronously queue a status-change save, same as before the \
          click/checkbox fix"
+    );
+}
+
+// ─── Persistent detail rail (owner UX pass, 2026-08-05) ─────────────────
+//
+// The tests above (board_card_click_selects_the_task_without_changing_lens,
+// digest_card_click_selects_the_task_without_changing_lens,
+// search_result_row_click_selects_the_task_without_changing_lens) prove
+// that clicking updates `backlog_view.selected_task` and leaves the lens
+// alone. The three tests below go one step further and prove the rail
+// itself renders that selection's detail — its task-id label specifically,
+// which `render_detail_header` renders once per selected task and nothing
+// else in the window duplicates, unlike the title (which the source card
+// keeps showing too).
+
+#[test]
+fn board_card_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
+    let mut harness = list_harness_with_tasks(vec![
+        task("TASK-1", "First card", "To Do"),
+        task("TASK-2", "Second card", "To Do"),
+    ]);
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
+    harness.run();
+    assert!(
+        harness.query_all_by_label("TASK-1").next().is_some(),
+        "sanity: the rail starts on the auto-selected first task"
+    );
+
+    click_at_node_center(&mut harness, "Second card");
+    harness.run();
+
+    assert!(
+        harness.query_all_by_label("TASK-2").next().is_some(),
+        "the rail should now show TASK-2's detail (its id label, unique to \
+         the rail's header)"
+    );
+}
+
+#[test]
+fn list_row_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
+    let mut harness = list_harness_with_tasks(vec![
+        task("TASK-1", "First", "To Do"),
+        task("TASK-2", "Second", "To Do"),
+    ]);
+    harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
+    harness.run();
+    assert!(harness.query_all_by_label("TASK-1").next().is_some());
+
+    harness.get_by_label("TASK-2  Second").click();
+    harness.run();
+
+    assert!(
+        harness.query_all_by_label("TASK-2").next().is_some(),
+        "the rail should show TASK-2's detail after selecting its row"
+    );
+}
+
+#[test]
+fn digest_card_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
+    let boring = task("TASK-0", "Boring backlog item", "To Do");
+    let mut in_progress = task("TASK-1", "Active work", "In Progress");
+    in_progress.updated_date = Some("2026-08-01 12:00".to_string());
+    let mut harness = digest_harness_with(vec![boring, in_progress]);
+    harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
+    harness.run();
+    assert!(
+        harness.query_all_by_label("TASK-0").next().is_some(),
+        "sanity: the rail starts on the auto-selected first task"
+    );
+
+    click_at_node_center(&mut harness, "Active work");
+    harness.run();
+
+    assert!(
+        harness.query_all_by_label("TASK-1").next().is_some(),
+        "the rail should now show TASK-1's ('Active work') detail"
+    );
+}
+
+/// No selection at all — not just "nothing clicked yet" (`reconcile_
+/// selected_task` always auto-selects the first *visible* task when one
+/// exists) but the realistic case where a project has tasks, none of them
+/// currently pass the visibility filters. The rail should show its quiet
+/// existing empty state (`render_task_detail`'s own "Select a task"),
+/// unmodified for the rail — proving the rail needs no separate
+/// empty-state handling of its own.
+#[test]
+fn rail_shows_the_quiet_empty_state_when_no_task_is_visible() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Only task", "To Do")]);
+    harness.state_mut().backlog_view.status_filter = "Done".to_string();
+    harness.run();
+
+    assert_eq!(
+        harness.state().backlog_view.selected_task,
+        None,
+        "sanity: nothing visible means nothing selected"
+    );
+    assert!(
+        harness.query_all_by_label("Select a task").next().is_some(),
+        "the rail should show the quiet empty state, not an empty editor"
     );
 }
 
@@ -1458,15 +1612,17 @@ fn append_note_button_clears_the_note_input() {
 #[test]
 fn editing_the_title_enables_the_save_button() {
     let mut harness = detail_harness_on(detail_task_with_checklists());
-    // Two "Save" buttons render on this pane (the field editor's and the
-    // Dependencies section's, in that order) — index 0 is the field editor.
-    // Three "Save"-labeled buttons render in a List-lens harness: the
-    // saved-views bar's (index 0), the field editor's (index 1), and
-    // Dependencies' (index 2) — all disabled with no pending edits.
+    // Owner UX pass (2026-08-05): the detail pane now renders in the
+    // persistent right-hand rail (`rail::render_detail_rail`), which is a
+    // SidePanel shown *before* the CentralPanel's List content — so its two
+    // Save buttons (field editor, then Dependencies) now come before the
+    // saved-views bar's own Save, reversing the old embedded-in-List order.
+    // Three "Save"-labeled buttons total: field editor (0), Dependencies
+    // (1), saved-views bar (2) — all disabled with no pending edits.
     assert!(
         harness
             .get_all_by_label("Save")
-            .nth(1)
+            .next()
             .unwrap()
             .is_disabled(),
         "Save should start disabled with no pending edits"
@@ -1482,7 +1638,7 @@ fn editing_the_title_enables_the_save_button() {
     assert!(
         !harness
             .get_all_by_label("Save")
-            .nth(1)
+            .next()
             .unwrap()
             .is_disabled(),
         "editing the title should enable Save (the click itself, and the CLI \
@@ -1624,14 +1780,22 @@ fn theme_persists_through_save_config_and_reload() {
 
 #[test]
 fn sidebar_collapse_button_hides_the_repo_list_both_directions() {
-    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "First", "To Do")]);
+    // Owner UX pass (2026-08-05): "Tracked repos" is now a left-side panel
+    // local to the Servers view (freed up the right edge for the Backlog
+    // view's detail rail) — a Backlog-lens harness never renders it at all
+    // now, so this needs the default Servers view instead of
+    // `list_harness_with_tasks`. The collapse/expand glyphs flipped with
+    // the side: "◀" (toward the left edge) collapses, "▶" (away from it)
+    // expands — the mirror image of the old right-side panel's arrows.
+    let mut harness = harness(seeded_app());
+    harness.run();
     assert!(!harness.state().config.ui.sidebar_collapsed);
     assert!(
         harness.query_by_label("Tracked repos").is_some(),
         "expanded by default: the heading should render"
     );
 
-    harness.get_by_label("▶").click();
+    harness.get_by_label("◀").click();
     harness.run();
     assert!(harness.state().config.ui.sidebar_collapsed);
     assert!(
@@ -1639,11 +1803,11 @@ fn sidebar_collapse_button_hides_the_repo_list_both_directions() {
         "collapsed: the repo list content should not render"
     );
     assert!(
-        harness.query_by_label("◀").is_some(),
+        harness.query_by_label("▶").is_some(),
         "collapsed: the rail should offer the expand toggle"
     );
 
-    harness.get_by_label("◀").click();
+    harness.get_by_label("▶").click();
     harness.run();
     assert!(!harness.state().config.ui.sidebar_collapsed);
     assert!(harness.query_by_label("Tracked repos").is_some());
@@ -1655,8 +1819,12 @@ fn sidebar_collapse_button_hides_the_repo_list_both_directions() {
 /// drives) — this proves the round trip itself.
 #[test]
 fn sidebar_collapsed_persists_through_save_config_and_reload() {
-    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "First", "To Do")]);
-    harness.get_by_label("▶").click();
+    // Owner UX pass (2026-08-05): "Tracked repos" only renders in the
+    // (default) Servers view now — see the sibling test above for why this
+    // switched away from `list_harness_with_tasks`.
+    let mut harness = harness(seeded_app());
+    harness.run();
+    harness.get_by_label("◀").click();
     harness.run();
     assert!(harness.state().config.ui.sidebar_collapsed);
 
@@ -1672,6 +1840,67 @@ fn sidebar_collapsed_persists_through_save_config_and_reload() {
     assert!(
         reloaded.ui.sidebar_collapsed,
         "sidebar_collapsed should round-trip through save_config/load_from"
+    );
+}
+
+// ─── Owner UX pass (2026-08-05): Tracked repos relocation + Settings ────
+
+#[test]
+fn tracked_repos_does_not_render_in_the_backlog_view() {
+    let harness = list_harness_with_tasks(vec![task("TASK-1", "First", "To Do")]);
+    assert!(
+        harness.query_by_label("Tracked repos").is_none(),
+        "Tracked repos is Servers-local now — a Backlog-view harness \
+         should never render it, regardless of lens"
+    );
+}
+
+#[test]
+fn settings_button_opens_a_window_with_the_repo_list() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "First", "To Do")]);
+    assert!(!harness.state().settings_open);
+    assert!(
+        harness.query_by_label("Settings").is_none(),
+        "sanity: closed by default"
+    );
+
+    harness.get_by_label("⚙ Settings").click();
+    harness.run();
+
+    assert!(harness.state().settings_open);
+    assert!(
+        harness.query_by_label("Settings").is_some(),
+        "the Settings window should be open"
+    );
+    assert!(
+        harness.query_all_by_label(REPO_NAME).next().is_some(),
+        "the tracked repo should be listed in Settings, reachable from the \
+         Backlog view where Tracked repos itself doesn't render"
+    );
+    assert!(harness.query_by_label("➕ Add repo").is_some());
+    assert!(harness.query_by_label("Remove").is_some());
+}
+
+#[test]
+fn settings_remove_button_opens_the_shared_confirmation_modal() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "First", "To Do")]);
+    harness.get_by_label("⚙ Settings").click();
+    harness.run();
+
+    harness.get_by_label("Remove").click();
+    harness.run();
+
+    assert_eq!(
+        harness.state().confirm_remove_repo,
+        Some((PathBuf::from(REPO_PATH), REPO_NAME.to_string())),
+        "Settings' Remove button should set the same confirm_remove_repo \
+         state the Tracked-repos panel's own Remove button does"
+    );
+    assert!(
+        harness.query_by_label("Remove repo?").is_some(),
+        "the confirmation modal is rendered unconditionally from render_ui, \
+         so it should appear even though this harness is in the Backlog \
+         view, not Servers"
     );
 }
 
@@ -1836,9 +2065,12 @@ fn save_button_completes_a_real_cli_round_trip_against_a_real_fixture_repo() {
     title_field.type_text(" — renamed by the real Save button");
     harness.run();
 
-    // Three "Save"-labeled buttons render (saved-views bar's, field
-    // editor's, Dependencies'); index 1 is the field editor's.
-    harness.get_all_by_label("Save").nth(1).unwrap().click();
+    // Owner UX pass (2026-08-05): the detail pane (and its Save button)
+    // now renders in the persistent rail, a SidePanel shown before the
+    // CentralPanel's List content — three "Save"-labeled buttons render
+    // (field editor's, Dependencies', saved-views bar's, in that order);
+    // index 0 is the field editor's.
+    harness.get_all_by_label("Save").next().unwrap().click();
     harness.run();
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);

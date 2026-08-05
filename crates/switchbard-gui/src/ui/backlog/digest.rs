@@ -206,12 +206,14 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &DigestRow<'_>) {
         .response;
     if resp
         .interact(egui::Sense::click())
-        .on_hover_text("Open in the List lens")
+        .on_hover_text("Show details in the rail")
         .clicked()
     {
+        // Widen to "All projects" scope — a Digest card can surface a task
+        // from any tracked project regardless of the current single-project
+        // scope, so selecting it needs the rail to actually find it.
         app.backlog_view.selected_project = None;
         app.backlog_view.selected_task = Some(key);
         app.backlog_view.editor.loaded_key = None;
-        app.backlog_view.lens = BacklogLens::List;
     }
 }

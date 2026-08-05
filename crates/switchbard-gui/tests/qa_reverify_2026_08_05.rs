@@ -149,8 +149,12 @@ fn board_card_with_no_labels_and_no_dates_omits_the_line_entirely() {
     let mut h = harness(app);
     h.run();
 
+    // Owner UX pass (2026-08-05, post-dates this test): with a single task,
+    // `reconcile_selected_task` auto-selects it and the persistent detail
+    // rail now also renders its title as a heading, so "Bare task" is no
+    // longer a unique label — `query_all` instead of the exactly-one query.
     assert!(
-        h.query_by_label("Bare task").is_some(),
+        h.query_all_by_label("Bare task").next().is_some(),
         "sanity: the card itself should still render"
     );
     // No label/age line means no "X ago" text anywhere and no comma-joined

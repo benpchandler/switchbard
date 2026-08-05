@@ -640,6 +640,15 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     seed_backlog_project(&stats_app);
     let stats = harness(stats_app);
 
+    // Owner UX pass (2026-08-05): the Settings window (repo add/remove,
+    // reachable from any view now that "Tracked repos" itself is
+    // Servers-only) only ever renders with `settings_open` set — none of
+    // the fixtures above touch it, so this is its only audit coverage.
+    let mut settings_app = seeded_app();
+    settings_app.config.ui.theme = theme;
+    settings_app.settings_open = true;
+    let settings = harness(settings_app);
+
     vec![
         (
             format!("Servers view (top bar + sidebar + workspace){suffix}"),
@@ -672,6 +681,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
         (format!("Backlog · Milestones lens{suffix}"), milestones),
         (format!("Backlog · Portfolio lens{suffix}"), portfolio),
         (format!("Backlog · Statistics lens{suffix}"), stats),
+        (format!("Settings window{suffix}"), settings),
     ]
 }
 

@@ -122,6 +122,17 @@ fn render_actions(app: &mut HiveApp, ui: &mut egui::Ui) {
     ui.separator();
     render_zoom_stepper(ui);
 
+    ui.separator();
+    // Owner UX pass (2026-08-05): repo add/remove reachable from any view,
+    // now that "Tracked repos" itself only renders in the Servers view.
+    if ui
+        .button("⚙ Settings")
+        .on_hover_text("Add or remove tracked repos")
+        .clicked()
+    {
+        app.settings_open = true;
+    }
+
     // TASK-28 (owner-found bug): every status message goes through the
     // same clamped label, not a bare `ui.label` — see
     // `action_status_label`'s doc for why this is defense in depth, not

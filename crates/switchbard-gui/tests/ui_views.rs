@@ -86,8 +86,15 @@ fn board_lens_renders_kanban_columns_with_the_seeded_task() {
         harness.query_all_by_label("In Progress").next().is_some(),
         "the In Progress column header should render even though it's empty"
     );
+    // Owner UX pass (2026-08-05, post-dates this test): with a single task,
+    // it's auto-selected and the persistent detail rail now also renders
+    // its title as a heading, so this label is no longer unique — `query_
+    // all` instead of the exactly-one query.
     assert!(
-        harness.query_by_label("Seeded Backlog Task").is_some(),
+        harness
+            .query_all_by_label("Seeded Backlog Task")
+            .next()
+            .is_some(),
         "the seeded task's flight strip should render in its status column"
     );
 }
@@ -432,8 +439,15 @@ fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
         harness.query_all_by_label("In progress").next().is_some(),
         "the In progress section header should render"
     );
+    // Owner UX pass (2026-08-05, post-dates this test): with a single task,
+    // it's auto-selected and the persistent detail rail now also renders
+    // its title as a heading, so this label is no longer unique — `query_
+    // all` instead of the exactly-one query.
     assert!(
-        harness.query_by_label("Seeded Backlog Task").is_some(),
+        harness
+            .query_all_by_label("Seeded Backlog Task")
+            .next()
+            .is_some(),
         "the in-progress task should render as a digest strip"
     );
 
@@ -654,7 +668,13 @@ fn saved_view_can_be_saved_and_deleted() {
     harness.run();
 
     harness.state_mut().backlog_view.saved_view_name_draft = "High priority".to_string();
-    harness.get_by_label("Save").click();
+    // Owner UX pass (2026-08-05, post-dates this test's own doc comment):
+    // the detail rail now renders regardless of lens (including
+    // Statistics, which this test picked specifically to avoid a detail
+    // pane), so "Save" is no longer unique — three render now, in order:
+    // the rail's field editor, the rail's Dependencies section, then the
+    // saved-views bar's own (index 2), which is the one this test means.
+    harness.get_all_by_label("Save").nth(2).unwrap().click();
     harness.run();
 
     assert_eq!(

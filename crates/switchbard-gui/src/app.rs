@@ -133,10 +133,16 @@ pub struct HiveApp {
     /// When on, the workspace hides unattributed listeners.
     pub show_only_managed: bool,
     pub confirm_kill_all: bool,
-    /// When Some, the sidebar shows a "Remove '{name}'?" confirmation modal
-    /// for the repo at the given path. The ✕ button in the sidebar sets this;
-    /// the modal clears it on Confirm or Cancel.
+    /// When Some, shows a "Remove '{name}'?" confirmation modal for the
+    /// repo at the given path — set by either the "Tracked repos" panel
+    /// (Servers view only, since the owner UX pass moved it there) or the
+    /// Settings window's own repo list (reachable from any view); rendered
+    /// unconditionally from `render_ui` so it works from either. The modal
+    /// clears it on Confirm or Cancel.
     pub confirm_remove_repo: Option<(PathBuf, String)>,
+    /// Owner UX pass (2026-08-05): the Settings window — repo add/remove,
+    /// now that "Tracked repos" itself only renders in the Servers view.
+    pub settings_open: bool,
     /// Modal state for `git worktree remove`. Shared with the worker thread
     /// so it can flip `busy`/`error` while the dialog is visible.
     pub confirm_remove_worktree: Arc<Mutex<Option<ConfirmRemoveWorktree>>>,
@@ -292,6 +298,7 @@ impl HiveApp {
             show_only_managed: false,
             confirm_kill_all: false,
             confirm_remove_repo: None,
+            settings_open: false,
             confirm_remove_worktree: Arc::new(Mutex::new(None)),
             create_worktree_dialog: Arc::new(Mutex::new(None)),
             create_worktree_outcomes: Arc::new(Mutex::new(Vec::new())),
@@ -1419,11 +1426,20 @@ impl HiveApp {
             perf.record_top_bar(top_start.elapsed());
         }
 
-        // Sidebar must render BEFORE the central panel so the SidePanel claims
-        // its docked space first; otherwise the central panel sizes to the full
-        // window and the side panel overlays it.
+        // Owner UX pass (2026-08-05): "Tracked repos" is now Servers-local
+        // (a left-side panel, not the global right-side one it used to be)
+        // — repo add/remove for every other view goes through the Settings
+        // window instead (`ui::settings`). Side panels must still render
+        // BEFORE the central panel so they claim their docked space first;
+        // otherwise the central panel sizes to the full window and the side
+        // panel overlays it. The Backlog view's own detail rail (also a
+        // right-side panel) follows the identical ordering rule, inside
+        // `ui::backlog::render` itself (it needs the same `Snapshot`/
+        // `Pending` the lens content does).
         let sidebar_start = Instant::now();
-        ui::sidebar::render(self, ctx);
+        if self.view_tab == ViewTab::Servers {
+            ui::sidebar::render(self, ctx);
+        }
         if let Some(perf) = &mut self.perf {
             perf.record_sidebar(sidebar_start.elapsed());
         }
@@ -1441,6 +1457,12 @@ impl HiveApp {
                 perf.record_workspace(central_elapsed);
             }
         }
+
+        // Reachable from any view (not just Servers, where the repo list
+        // itself now lives) and rendered unconditionally so it works no
+        // matter which tab triggered it.
+        ui::settings::render_settings_window(self, ctx);
+        ui::sidebar::render_remove_confirmation(self, ctx);
 
         // Onboarding overlay paints last so it sits on top of everything
         // else when shown. It no-ops when already dismissed.

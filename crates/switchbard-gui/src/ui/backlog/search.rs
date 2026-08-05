@@ -100,10 +100,12 @@ fn render_contents(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
             for (project, task) in matches.iter().take(MAX_RESULTS) {
                 let label = format!("{}:{}  {}", project.repo_name, task.id, task.title);
                 if ui.selectable_label(false, label).clicked() {
+                    // Owner UX pass (2026-08-05): selecting is enough — the
+                    // persistent detail rail shows it regardless of lens,
+                    // so this no longer needs to jump to List.
                     app.backlog_view.selected_project = None;
                     app.backlog_view.selected_task = Some((project.key.clone(), task.id.clone()));
                     app.backlog_view.editor.loaded_key = None;
-                    app.backlog_view.lens = crate::runtime::BacklogLens::List;
                     app.backlog_view.search.open = false;
                 }
             }
