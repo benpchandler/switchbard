@@ -554,6 +554,7 @@ mod tests {
             assignees: vec![],
             labels: labels.iter().map(|l| l.to_string()).collect(),
             dependencies: vec![],
+            references: vec![],
             milestone: None,
             parent: None,
             created_date: None,
