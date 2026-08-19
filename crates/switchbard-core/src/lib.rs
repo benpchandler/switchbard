@@ -6,6 +6,7 @@ pub mod backlog_triage;
 pub mod classify;
 pub mod config;
 pub mod discover;
+pub mod dispatch;
 pub mod expected_port;
 mod git_env;
 pub mod git_probe;
@@ -30,8 +31,8 @@ pub use attribution::attribute;
 pub use backlog::{
     append_backlog_notes, archive_backlog_task, backlog_cli_path, create_backlog_task,
     edit_backlog_task, is_backlog_project, load_backlog_project, set_backlog_acceptance_checked,
-    set_backlog_dod_checked, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskPatch,
-    BacklogTaskSource, NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
+    set_backlog_dod_checked, swap_backlog_label, BacklogChecklistItem, BacklogProject, BacklogTask,
+    BacklogTaskPatch, BacklogTaskSource, NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
 };
 pub use backlog_stats::{
     compute_burndown, compute_burndown_by_milestone, compute_cross_repo_stats, BurndownPoint,
@@ -43,6 +44,12 @@ pub use backlog_triage::{
 };
 pub use classify::{classify_command, classify_script_body, ServerLikelihood};
 pub use discover::{auto_scan_roots, discover_repos, DiscoveredRepo};
+pub use dispatch::{
+    build_dispatch_prompt, dispatch_branch_name, dispatch_one, drain_dispatch_queue,
+    list_dispatch_queue, select_batch, DispatchOptions, DispatchOutcome, DispatchResult,
+    DEFAULT_MAX_CONCURRENT, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL,
+    DISPATCH_LABEL,
+};
 pub use expected_port::{default_port_for_service, expected_port};
 pub use git_env::git_cmd;
 pub use git_probe::{
@@ -55,7 +62,7 @@ pub use kill::{kill_pgid, KillOutcome};
 pub use open_url::{open_url, url_for_port, BROWSER_APP_NAMES};
 pub use resolve::{resolve, ResolvedService};
 pub use scanner::scan_listeners;
-pub use spawn::{spawn_in_session, SpawnedRun};
+pub use spawn::{spawn_in_session, wait_for_exit, SpawnedRun, WaitOutcome};
 pub use types::{AttributedListener, LocalListener, Repo, WorktreeAlias, WorktreeRef};
 pub use workflow::{detect_services, DetectedService, ServiceSource};
 pub use worktree::{enumerate_worktrees, WorktreeEntry};
