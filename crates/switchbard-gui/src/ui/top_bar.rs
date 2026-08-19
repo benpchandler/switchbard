@@ -30,6 +30,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
             ui.separator();
             ui.label(format!("{total} listeners"));
             ui.label(format!("({attributed} attributed)"));
+            render_retired_worktrees_nudge(app, ui);
             ui.separator();
             render_actions(app, ui);
         });
@@ -87,6 +88,25 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
         ViewTab::AgentContext => {}
         ViewTab::Dispatch => {}
     }
+}
+
+/// TASK-41: "N retired worktrees" — nudges toward the Workspace's Merged
+/// filter chip + bulk-remove sweep whenever at least one non-primary
+/// worktree is clean and fully merged. Silent when the count is 0 rather
+/// than showing "0 retired", matching the repo's "no ticking counters with
+/// nothing to say" bias (see this module's header doc on the removed
+/// last-scan label).
+fn render_retired_worktrees_nudge(app: &HiveApp, ui: &mut egui::Ui) {
+    let n = workspace::staleness::retired_worktree_count(app);
+    if n == 0 {
+        return;
+    }
+    ui.separator();
+    ui.label(format!(
+        "{n} retired worktree{}",
+        if n == 1 { "" } else { "s" }
+    ))
+    .on_hover_text("Clean, fully-merged worktrees — see the Workspace view's Merged filter");
 }
 
 fn scan_summary(app: &HiveApp) -> (Option<String>, usize, usize) {

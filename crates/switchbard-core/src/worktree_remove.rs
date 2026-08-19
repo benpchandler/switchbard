@@ -155,7 +155,7 @@ pub fn assess_branch_delete(
     let other_checkouts = other_worktrees_on_branch(repo_path, branch, removing_worktree);
     let compared_against = default_branch(repo_path);
     let unmerged_commits = match compared_against.as_deref() {
-        Some(base) if base != branch => count_commits_ahead(repo_path, base, branch),
+        Some(base) if base != branch => commits_ahead(repo_path, base, branch),
         // The branch *is* the default branch — nothing is unique to it relative
         // to itself. (Deletion is still blocked via `other_checkouts`.)
         Some(_) => Some(0),
@@ -215,7 +215,12 @@ fn other_worktrees_on_branch(
 /// The repo's default branch, preferring `main` over `master`. Returns `None`
 /// when neither local branch exists (e.g. a repo using some other trunk name —
 /// we'd rather decline to claim "landed" than guess wrong).
-fn default_branch(repo_path: &Path) -> Option<String> {
+///
+/// `pub(crate)` — `git_probe::probe_worktree_staleness` reuses this instead of
+/// re-deriving "what's the default branch" a second way (DRY: one place
+/// answers that question for both the single-row remove dialog and the
+/// staleness badge/bulk-remove sweep).
+pub(crate) fn default_branch(repo_path: &Path) -> Option<String> {
     ["main", "master"]
         .into_iter()
         .find(|cand| branch_exists(repo_path, cand))
@@ -237,13 +242,22 @@ fn branch_exists(repo_path: &Path, branch: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Number of commits on `branch` not reachable from `base` (`base..branch`).
+/// Number of commits on `head_ref` not reachable from `base_ref`
+/// (`base_ref..head_ref`) — the one authoritative "how many commits ahead"
+/// primitive in the crate. `head_ref` can name a branch (`assess_branch_
+/// delete`'s use) or `HEAD` (`git_probe::probe_worktree_staleness`'s use,
+/// invoked at the worktree's own path so `HEAD` resolves to that worktree's
+/// checkout, not `path`'s) — `git rev-list` treats both identically once
+/// resolved, so one query answers "is this landed" for the remove dialog's
+/// branch-delete checkbox and for the staleness badge alike, rather than
+/// two subtly different queries that could disagree.
+///
 /// `None` if the git call fails.
-fn count_commits_ahead(repo_path: &Path, base: &str, branch: &str) -> Option<u32> {
+pub(crate) fn commits_ahead(path: &Path, base_ref: &str, head_ref: &str) -> Option<u32> {
     let output = git_cmd()
         .arg("-C")
-        .arg(repo_path)
-        .args(["rev-list", "--count", &format!("{base}..{branch}")])
+        .arg(path)
+        .args(["rev-list", "--count", &format!("{base_ref}..{head_ref}")])
         .output()
         .ok()?;
     if !output.status.success() {

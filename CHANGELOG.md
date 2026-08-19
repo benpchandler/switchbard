@@ -4,6 +4,26 @@ All notable changes to Switchbard are documented here. Switchbard is alpha
 software; versions follow [Semantic Versioning](https://semver.org/) loosely
 within the `0.x` line (minor = new features, patch = fixes).
 
+## [Unreleased]
+
+### Added
+
+- **Stale worktree sweep (TASK-41).** The Workspace view now shows a
+  Merged/Orphan/Live staleness badge and an on-disk size label on every
+  worktree row, plus All/Merged/Orphan/Live/Dirty filter chips (with live
+  counts) above the repo cards. A checkbox on each non-primary row feeds a
+  "Remove N selected…" bulk action: the confirmation dialog re-checks every
+  selection with the same primitives the single-row Remove dialog uses
+  (`collect_dirty_files` + `assess_branch_delete`), routes anything dirty,
+  unmerged, or still running services into a "needs review" list that's
+  never touched, and only ever removes clean + fully-merged worktrees —
+  never force, in bulk or otherwise. A top-bar "N retired worktrees" nudge
+  appears whenever at least one clean, merged worktree is sitting around.
+  Size is `du`-based, cached, and refreshed lazily on its own background
+  cadence (see `workers.rs`'s cadence-policy doc) — it's an order of
+  magnitude more expensive than any other per-worktree probe, so it never
+  runs on the main git-probe tick.
+
 ## [0.3.0] - 2026-06-05
 
 Worktree lifecycle release: create, rename, and remove worktrees — including
