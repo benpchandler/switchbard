@@ -75,8 +75,23 @@ pub struct BacklogViewState {
     pub sort_direction: BacklogTaskSortDirection,
     pub show_completed: bool,
     pub show_archived: bool,
+    /// Drafts are parsed by core unconditionally; this only controls whether
+    /// they're *visible* in the current filter (task-15 AC #4). Defaults to
+    /// `true` so existing behavior (drafts always shown) doesn't regress —
+    /// the checkbox is there so a user can filter them out, not opt in.
+    pub show_drafts: bool,
+    /// Which lens renders the central panel: the triage/status list (the
+    /// pre-existing view), the per-status kanban board, tasks grouped by
+    /// milestone, or the cross-repo statistics dashboard.
+    pub lens: BacklogLens,
     pub editor: BacklogEditorState,
     pub new_task: BacklogNewTaskState,
+    /// Global free-text search overlay (Cmd+K / Ctrl+K), task-15 AC #2.
+    pub search: BacklogSearchState,
+    /// Set to the task the user clicked "Archive" on; the detail pane shows
+    /// an inline "Archive this task?" confirmation until they confirm or
+    /// cancel. Cleared whenever the detail selection changes.
+    pub archive_confirm: bool,
 }
 
 impl Default for BacklogViewState {
@@ -93,10 +108,43 @@ impl Default for BacklogViewState {
             sort_direction: BacklogTaskSortDirection::default(),
             show_completed: false,
             show_archived: false,
+            show_drafts: true,
+            lens: BacklogLens::default(),
             editor: BacklogEditorState::default(),
             new_task: BacklogNewTaskState::default(),
+            search: BacklogSearchState::default(),
+            archive_confirm: false,
         }
     }
+}
+
+/// The Backlog view's central-panel lens. `List` is the pre-existing
+/// triage/status list; the rest are task-15/16 additions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BacklogLens {
+    #[default]
+    List,
+    Board,
+    Milestones,
+    Statistics,
+}
+
+impl BacklogLens {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::List => "List",
+            Self::Board => "Board",
+            Self::Milestones => "Milestones",
+            Self::Statistics => "Statistics",
+        }
+    }
+}
+
+/// State for the Cmd+K / Ctrl+K global task search overlay.
+#[derive(Debug, Clone, Default)]
+pub struct BacklogSearchState {
+    pub open: bool,
+    pub query: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -157,7 +205,17 @@ pub struct BacklogEditorState {
     pub priority: String,
     pub labels: String,
     pub assignees: String,
+    pub dependencies: String,
+    pub plan: String,
+    pub milestone: String,
     pub note: String,
+    /// `false` (default) shows the description as rendered CommonMark;
+    /// `true` reveals the raw multiline editor (task-15 AC #3).
+    pub description_editing: bool,
+    /// Draft text for the "add a reference" inline field. Submitting appends
+    /// it to the task's existing reference list and saves immediately —
+    /// unlike the other editor fields, it isn't held for the batch Save.
+    pub new_reference: String,
 }
 
 #[derive(Debug, Clone)]

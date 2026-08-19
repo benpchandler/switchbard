@@ -20,7 +20,7 @@ pub fn render_modal(app: &mut HiveApp, ctx: &egui::Context) {
             ui.set_max_width(440.0);
             ui.label(
                 egui::RichText::new(state.worktree_path.display().to_string())
-                    .color(theme::WEAK_TEXT)
+                    .color(theme::weak_text())
                     .small(),
             );
             ui.add_space(6.0);
@@ -31,11 +31,11 @@ pub fn render_modal(app: &mut HiveApp, ctx: &egui::Context) {
 
             if let Some(err) = validation.as_ref() {
                 ui.add_space(6.0);
-                ui.colored_label(theme::DANGER, validation_message(err));
+                ui.colored_label(theme::danger(), validation_message(err));
             }
             if let Some(err) = &state.error {
                 ui.add_space(6.0);
-                ui.colored_label(theme::DANGER, err);
+                ui.colored_label(theme::danger(), err);
             }
 
             ui.add_space(8.0);

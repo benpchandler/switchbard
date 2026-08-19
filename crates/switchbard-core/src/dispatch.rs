@@ -564,6 +564,7 @@ mod tests {
             final_summary: String::new(),
             acceptance_criteria: vec![],
             definition_of_done: vec![],
+            references: vec![],
             source: BacklogTaskSource::Active,
             path: PathBuf::from(format!("/repo/backlog/tasks/{id}.md")),
         }

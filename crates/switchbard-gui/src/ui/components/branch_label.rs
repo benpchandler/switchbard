@@ -17,7 +17,7 @@ pub fn branch_label(ui: &mut egui::Ui, branch: Option<&str>) -> egui::Response {
             egui::Label::new(
                 egui::RichText::new("(detached)")
                     .italics()
-                    .color(theme::MUTED_TEXT),
+                    .color(theme::muted_text()),
             )
             .truncate(),
         ),

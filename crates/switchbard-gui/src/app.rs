@@ -135,6 +135,10 @@ pub struct HiveApp {
     pub view_tab: ViewTab,
     pub agent_context_view: AgentContextViewState,
     pub backlog_view: BacklogViewState,
+    /// Shared render cache for the task detail pane's markdown description
+    /// (task-15 AC #3). `egui_commonmark` recommends one long-lived cache
+    /// rather than rebuilding it every frame.
+    pub commonmark_cache: egui_commonmark::CommonMarkCache,
     /// 0 = system default; 1..=BROWSER_APP_NAMES.len() = specific browser.
     pub browser_choice: usize,
     /// First-launch discovery state. Hidden by default; flips to Scanning
@@ -162,7 +166,12 @@ impl HiveApp {
         repos: Vec<Repo>,
         worktrees: Vec<WorktreeRef>,
     ) -> Self {
-        ui::theme::apply(&cc.egui_ctx);
+        // Fonts are expensive to install (atlas rebuild) so this happens once,
+        // here, rather than every frame; the theme's Visuals are cheap and get
+        // reapplied every frame in `render_ui` so a live toggle takes effect
+        // immediately.
+        ui::theme::install_fonts(&cc.egui_ctx);
+        ui::theme::apply(&cc.egui_ctx, cfg.ui.theme);
         // Restore the user's saved zoom before the first frame paints (eframe's
         // own zoom memory doesn't persist without the `persistence` feature).
         cc.egui_ctx.set_zoom_factor(clamp_ui_scale(cfg.ui.ui_scale));
@@ -231,6 +240,7 @@ impl HiveApp {
             view_tab: ViewTab::Servers,
             agent_context_view: AgentContextViewState::default(),
             backlog_view: BacklogViewState::default(),
+            commonmark_cache: egui_commonmark::CommonMarkCache::default(),
             browser_choice,
             onboarding: Arc::new(Mutex::new(DiscoveryState::default())),
             perf: PerfSession::from_env(),
@@ -929,6 +939,56 @@ impl HiveApp {
         });
     }
 
+    pub fn spawn_backlog_dod_toggle(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        index: usize,
+        checked: bool,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::set_backlog_dod_checked(&project_root, &task_id, index, checked)
+            {
+                Ok(_) => {
+                    refresh_backlog_project_cache(&projects, &project_root);
+                    let verb = if checked { "checked" } else { "unchecked" };
+                    status.set(format!("{verb} {task_id} DoD #{index}"));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("update {task_id} DoD #{index} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn spawn_backlog_archive(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::archive_backlog_task(&project_root, &task_id) {
+                Ok(_) => {
+                    refresh_backlog_project_cache(&projects, &project_root);
+                    status.set(format!("archived {task_id}"));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("archive {task_id} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
     pub fn spawn_backlog_append_note(
         &self,
         project_root: PathBuf,
@@ -1128,6 +1188,9 @@ impl HiveApp {
         if let Some(perf) = &mut self.perf {
             perf.begin_frame();
         }
+        // Cheap (Visuals swap only, no font-atlas work) — reapplied every
+        // frame so the theme toggle in the top bar takes effect immediately.
+        ui::theme::apply(ctx, self.config.ui.theme);
         self.drain_create_worktree_outcomes();
         self.drain_remove_worktree_outcomes();
 
@@ -1216,8 +1279,12 @@ impl eframe::App for HiveApp {
         self.drain_picker();
 
         // Snapshot persistable UI state so we can save the config if any
-        // toggle was flipped this update.
+        // toggle was flipped this update. `theme` lives directly on
+        // `config.ui` (the top bar's toggle mutates it in place), so it's
+        // tracked the same way `ui_scale` is below rather than mirrored
+        // through `save_ui_to_config`.
         let ui_before = (self.browser_choice, self.show_non_servers);
+        let theme_before = self.config.ui.theme;
 
         self.render_ui(ctx);
 
@@ -1231,7 +1298,8 @@ impl eframe::App for HiveApp {
         }
 
         let ui_after = (self.browser_choice, self.show_non_servers);
-        if ui_before != ui_after || zoom_changed {
+        let theme_changed = self.config.ui.theme != theme_before;
+        if ui_before != ui_after || zoom_changed || theme_changed {
             self.save_ui_to_config();
         }
     }

@@ -55,12 +55,20 @@ fn render_task_list(
         render_select_all_checkbox(app, ui, &tasks);
         ui.add_sized(
             [task_col_width(ui, show_repo), 18.0],
-            egui::Label::new(egui::RichText::new("Task").small().color(theme::MUTED_TEXT)),
+            egui::Label::new(
+                egui::RichText::new("Task")
+                    .small()
+                    .color(theme::muted_text()),
+            ),
         );
         if show_repo {
             ui.add_sized(
                 [REPO_COL_WIDTH, 18.0],
-                egui::Label::new(egui::RichText::new("Repo").small().color(theme::MUTED_TEXT)),
+                egui::Label::new(
+                    egui::RichText::new("Repo")
+                        .small()
+                        .color(theme::muted_text()),
+                ),
             );
         }
         ui.add_sized(
@@ -68,7 +76,7 @@ fn render_task_list(
             egui::Label::new(
                 egui::RichText::new("Status")
                     .small()
-                    .color(theme::MUTED_TEXT),
+                    .color(theme::muted_text()),
             ),
         );
         ui.add_sized(
@@ -76,12 +84,12 @@ fn render_task_list(
             egui::Label::new(
                 egui::RichText::new("Priority")
                     .small()
-                    .color(theme::MUTED_TEXT),
+                    .color(theme::muted_text()),
             ),
         );
         ui.add_sized(
             [52.0, 18.0],
-            egui::Label::new(egui::RichText::new("AC").small().color(theme::MUTED_TEXT)),
+            egui::Label::new(egui::RichText::new("AC").small().color(theme::muted_text())),
         );
     });
     ui.separator();
@@ -99,7 +107,7 @@ fn render_task_list(
                 ui.label(egui::RichText::new("No tasks match the current filters").strong());
                 ui.label(
                     egui::RichText::new("Adjust the filter, status, or priority.")
-                        .color(theme::MUTED_TEXT),
+                        .color(theme::muted_text()),
                 );
             }
         });
@@ -140,7 +148,7 @@ fn render_select_all_checkbox(app: &mut HiveApp, ui: &mut egui::Ui, tasks: &[Tas
 
 fn render_task_sort_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Sort").color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new("Sort").color(theme::muted_text()));
         egui::ComboBox::from_id_salt("backlog_task_sort_key")
             .selected_text(app.backlog_view.sort_key.label())
             .width(118.0)
@@ -166,7 +174,7 @@ fn render_task_sort_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
         if selected_count > 0 {
             ui.separator();
             ui.label(
-                egui::RichText::new(format!("{selected_count} selected")).color(theme::WEAK_TEXT),
+                egui::RichText::new(format!("{selected_count} selected")).color(theme::weak_text()),
             );
             if ui
                 .small_button("Clear")
@@ -283,10 +291,10 @@ fn render_task_list_row(
                             task.acceptance_criteria.len()
                         ))
                         .small()
-                        .color(theme::MUTED_TEXT),
+                        .color(theme::muted_text()),
                     );
                 } else {
-                    ui.label(egui::RichText::new("-").small().color(theme::MUTED_TEXT));
+                    ui.label(egui::RichText::new("-").small().color(theme::muted_text()));
                 }
             },
         );
@@ -294,7 +302,7 @@ fn render_task_list_row(
             ui.label(
                 egui::RichText::new(task.source.label())
                     .small()
-                    .color(theme::MUTED_TEXT),
+                    .color(theme::muted_text()),
             );
         }
     });
@@ -325,12 +333,16 @@ fn render_task_context_menu(
         ui.label(
             egui::RichText::new("Completed, archived, and draft tasks are skipped")
                 .small()
-                .color(theme::MUTED_TEXT),
+                .color(theme::muted_text()),
         );
     }
     ui.separator();
 
-    ui.label(egui::RichText::new("Move").small().color(theme::MUTED_TEXT));
+    ui.label(
+        egui::RichText::new("Move")
+            .small()
+            .color(theme::muted_text()),
+    );
     for status in BACKLOG_STATUSES {
         let label = if status.eq_ignore_ascii_case("done") {
             "Mark Done".to_string()
@@ -354,7 +366,7 @@ fn render_task_context_menu(
     ui.label(
         egui::RichText::new("Priority")
             .small()
-            .color(theme::MUTED_TEXT),
+            .color(theme::muted_text()),
     );
     for priority in BACKLOG_PRIORITIES {
         bulk_patch_button(

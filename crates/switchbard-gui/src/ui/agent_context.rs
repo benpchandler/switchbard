@@ -133,11 +133,11 @@ fn render_summary(ui: &mut egui::Ui, snap: &Snapshot) {
     let warnings = warning_items.len();
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Agent Context").strong());
-        ui.label(egui::RichText::new(format!("{items} assets")).color(theme::LAVENDER));
+        ui.label(egui::RichText::new(format!("{items} assets")).color(theme::lavender()));
         if warnings > 0 {
-            ui.colored_label(theme::AMBER, format!("{warnings} warnings"));
+            ui.colored_label(theme::amber(), format!("{warnings} warnings"));
         }
-        ui.label(egui::RichText::new("best-effort local scan").color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new("best-effort local scan").color(theme::muted_text()));
     });
 }
 
@@ -151,17 +151,18 @@ fn render_global_card(ui: &mut egui::Ui, app: &mut HiveApp, snap: &Snapshot) {
         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                theme::painted_dot(ui, theme::LAVENDER);
+                theme::painted_dot(ui, theme::lavender());
                 ui.label(egui::RichText::new("Global shared context").strong());
                 ui.label(
-                    egui::RichText::new(format!("{} assets", items.len())).color(theme::MUTED_TEXT),
+                    egui::RichText::new(format!("{} assets", items.len()))
+                        .color(theme::muted_text()),
                 );
                 if warnings > 0 {
-                    ui.colored_label(theme::AMBER, format!("{warnings} warnings"));
+                    ui.colored_label(theme::amber(), format!("{warnings} warnings"));
                 }
                 ui.label(
                     egui::RichText::new("available assets, not repo-specific")
-                        .color(theme::MUTED_TEXT),
+                        .color(theme::muted_text()),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let label = if app.agent_context_view.global_open {
@@ -281,14 +282,14 @@ fn render_repo(
             let selected = selected_worktree(repo, wts, snap);
             ui.horizontal(|ui| {
                 ui.heading(&repo.name);
-                ui.label(egui::RichText::new("Agent Context").color(theme::MUTED_TEXT));
+                ui.label(egui::RichText::new("Agent Context").color(theme::muted_text()));
                 let selected_map = selected.and_then(|w| snap.maps.get(&w.path));
                 let total = wts
                     .iter()
                     .filter_map(|w| snap.maps.get(&w.path))
                     .map(|m| repo_item_count(app, m))
                     .sum::<usize>();
-                ui.colored_label(theme::LAVENDER, format!("{total} assets"));
+                ui.colored_label(theme::lavender(), format!("{total} assets"));
                 if let (Some(w), Some(map)) = (selected, selected_map) {
                     ui.label(
                         egui::RichText::new(format!(
@@ -299,13 +300,13 @@ fn render_repo(
                                 &w.path,
                             ))
                         ))
-                        .color(theme::MUTED_TEXT),
+                        .color(theme::muted_text()),
                     );
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         egui::RichText::new(repo.path.display().to_string())
-                            .color(theme::MUTED_TEXT)
+                            .color(theme::muted_text())
                             .small(),
                     );
                 });
@@ -313,13 +314,13 @@ fn render_repo(
             ui.add_space(4.0);
 
             let Some(w) = selected else {
-                ui.label(egui::RichText::new("agent context scanning…").color(theme::MUTED_TEXT));
+                ui.label(egui::RichText::new("agent context scanning…").color(theme::muted_text()));
                 return;
             };
             let Some(map) = snap.maps.get(&w.path) else {
                 ui.label(
                     egui::RichText::new(format!("{} scanning…", branch(w)))
-                        .color(theme::MUTED_TEXT),
+                        .color(theme::muted_text()),
                 );
                 return;
             };
@@ -353,7 +354,7 @@ fn render_worktree(ui: &mut egui::Ui, app: &mut HiveApp, w: &WorktreeRef, map: &
         ui.label(egui::RichText::new(branch(w)).monospace().strong());
         ui.label(
             egui::RichText::new(format!("{} items", repo_item_count(app, map)))
-                .color(theme::MUTED_TEXT),
+                .color(theme::muted_text()),
         );
         ui.label(
             egui::RichText::new(format!(
@@ -364,11 +365,11 @@ fn render_worktree(ui: &mut egui::Ui, app: &mut HiveApp, w: &WorktreeRef, map: &
                     &w.path,
                 ))
             ))
-            .color(theme::MUTED_TEXT),
+            .color(theme::muted_text()),
         );
         let warnings = repo_warning_count(app, map);
         if warnings > 0 {
-            ui.colored_label(theme::AMBER, format!("{warnings} warnings"));
+            ui.colored_label(theme::amber(), format!("{warnings} warnings"));
         }
     });
 
@@ -425,7 +426,7 @@ fn render_context_target(ui: &mut egui::Ui, app: &mut HiveApp, cwd: &Path, names
         ui.label(
             egui::RichText::new(cwd.display().to_string())
                 .monospace()
-                .color(theme::MUTED_TEXT),
+                .color(theme::muted_text()),
         );
     });
 }
@@ -453,11 +454,11 @@ fn render_effective_stack(
                     .strong(),
                 );
                 if stack.is_empty() {
-                    ui.label(egui::RichText::new("none detected").color(theme::MUTED_TEXT));
+                    ui.label(egui::RichText::new("none detected").color(theme::muted_text()));
                 }
                 for (idx, item) in stack.iter().enumerate() {
                     if idx > 0 {
-                        ui.label(egui::RichText::new(">").color(theme::MUTED_TEXT));
+                        ui.label(egui::RichText::new(">").color(theme::muted_text()));
                     }
                     ui.label(short_path(&item.path));
                 }
@@ -557,10 +558,10 @@ fn render_global_items(ui: &mut egui::Ui, app: &mut HiveApp, items: &[&AgentCont
             .map(|kind| format!("Global · {}", kind.label()))
             .unwrap_or_else(|| "Global · All".to_string());
         ui.label(egui::RichText::new(title).strong());
-        ui.label(egui::RichText::new(format!("{} items", items.len())).color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new(format!("{} items", items.len())).color(theme::muted_text()));
         ui.label(
             egui::RichText::new("shown once; repo cards below omit these assets")
-                .color(theme::MUTED_TEXT),
+                .color(theme::muted_text()),
         );
     });
     ui.separator();
@@ -594,7 +595,7 @@ fn render_global_item_row(ui: &mut egui::Ui, app: &mut HiveApp, item: &AgentCont
         }
         path_link(ui, item, ui.available_width() - 70.0, "global");
         if item.warning.is_some() {
-            ui.colored_label(theme::AMBER, "!");
+            ui.colored_label(theme::amber(), "!");
         }
     });
 }
@@ -651,7 +652,7 @@ fn render_items(
 ) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(selection_title(app)).strong());
-        ui.label(egui::RichText::new(format!("{} items", items.len())).color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new(format!("{} items", items.len())).color(theme::muted_text()));
     });
     ui.separator();
     egui::ScrollArea::vertical()
@@ -684,7 +685,7 @@ fn render_item_row(ui: &mut egui::Ui, app: &mut HiveApp, item: &AgentContextItem
         }
         path_link(ui, item, ui.available_width() - 70.0, namespace);
         if item.warning.is_some() {
-            ui.colored_label(theme::AMBER, "!");
+            ui.colored_label(theme::amber(), "!");
         }
     });
 }
@@ -700,7 +701,7 @@ fn path_link(ui: &mut egui::Ui, item: &AgentContextItem, max_width: f32, namespa
                     egui::RichText::new(path)
                         .small()
                         .family(egui::FontFamily::Monospace)
-                        .color(theme::MUTED_TEXT),
+                        .color(theme::muted_text()),
                 )
                 .clicked()
             {
@@ -712,7 +713,9 @@ fn path_link(ui: &mut egui::Ui, item: &AgentContextItem, max_width: f32, namespa
 fn render_detail_drawer(ui: &mut egui::Ui, selected: Option<&AgentContextItem>, namespace: &str) {
     ui.separator();
     let Some(item) = selected else {
-        ui.label(egui::RichText::new("Select a context file to preview.").color(theme::MUTED_TEXT));
+        ui.label(
+            egui::RichText::new("Select a context file to preview.").color(theme::muted_text()),
+        );
         return;
     };
 
@@ -750,7 +753,7 @@ fn render_detail_drawer(ui: &mut egui::Ui, selected: Option<&AgentContextItem>, 
         ui.label(format!("{} bytes", item.size_bytes));
         if let Some(warning) = &item.warning {
             ui.separator();
-            ui.colored_label(theme::AMBER, warning);
+            ui.colored_label(theme::amber(), warning);
         }
     });
     let preview = read_context_preview(&item.path, PREVIEW_BYTES)
@@ -896,11 +899,11 @@ fn has_warning(
 
 fn headline_color(map: &AgentContextMap) -> egui::Color32 {
     if map.items.iter().any(|i| i.warning.is_some()) {
-        theme::AMBER
+        theme::amber()
     } else if map.items.is_empty() {
         egui::Color32::GRAY
     } else {
-        theme::LAVENDER
+        theme::lavender()
     }
 }
 

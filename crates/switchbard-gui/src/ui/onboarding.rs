@@ -198,7 +198,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                         egui::RichText::new(
                             "Looking under ~/ for folders that contain git repositories.",
                         )
-                        .color(theme::MUTED_TEXT),
+                        .color(theme::muted_text()),
                     );
                 }
                 DiscoveryState::Ready { rows } if rows.is_empty() => {
@@ -214,7 +214,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                 egui::RichText::new(
                     "Switchbard only watches what you add. Nothing leaves your machine.",
                 )
-                .color(theme::MUTED_TEXT)
+                .color(theme::muted_text())
                 .small(),
             );
         });
@@ -257,7 +257,7 @@ fn render_picklist(
             "Found {total} git repositor{}. Pick the ones you want to track:",
             if total == 1 { "y" } else { "ies" }
         ))
-        .color(theme::MUTED_TEXT),
+        .color(theme::muted_text()),
     );
     ui.add_space(6.0);
 
@@ -288,12 +288,12 @@ fn render_picklist(
                         ui.horizontal(|ui| {
                             ui.label(
                                 egui::RichText::new(display_path(&row.repo.path, &home))
-                                    .color(theme::MUTED_TEXT)
+                                    .color(theme::muted_text())
                                     .small(),
                             );
                             ui.label(
                                 egui::RichText::new(format!("· {}", recency_hint(&row.repo)))
-                                    .color(theme::MUTED_TEXT)
+                                    .color(theme::muted_text())
                                     .small(),
                             );
                         });
@@ -314,7 +314,7 @@ fn render_picklist(
             .add_enabled(
                 selected_count > 0,
                 egui::Button::new(egui::RichText::new(add_label).color(egui::Color32::WHITE))
-                    .fill(theme::GREEN),
+                    .fill(theme::green()),
             )
             .clicked()
         {
@@ -334,12 +334,12 @@ fn render_picklist(
 fn render_empty_pane(ui: &mut egui::Ui, pending: &mut Pending) {
     ui.label(
         egui::RichText::new("We didn't find any git repositories in the usual places.")
-            .color(theme::MUTED_TEXT),
+            .color(theme::muted_text()),
     );
     ui.add_space(6.0);
     ui.label(
         egui::RichText::new("Pick a folder containing a git repository to get started.")
-            .color(theme::MUTED_TEXT)
+            .color(theme::muted_text())
             .small(),
     );
     ui.add_space(10.0);
@@ -349,7 +349,7 @@ fn render_empty_pane(ui: &mut egui::Ui, pending: &mut Pending) {
                 egui::Button::new(
                     egui::RichText::new("Browse for a folder…").color(egui::Color32::WHITE),
                 )
-                .fill(theme::GREEN),
+                .fill(theme::green()),
             )
             .clicked()
         {

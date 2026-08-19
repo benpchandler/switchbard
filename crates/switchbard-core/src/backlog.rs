@@ -64,6 +64,7 @@ pub struct BacklogTask {
     pub assignees: Vec<String>,
     pub labels: Vec<String>,
     pub dependencies: Vec<String>,
+    pub references: Vec<String>,
     pub milestone: Option<String>,
     pub parent: Option<String>,
     pub created_date: Option<String>,
@@ -89,6 +90,21 @@ impl BacklogTask {
             .filter(|item| item.checked)
             .count()
     }
+
+    pub fn dod_done_count(&self) -> usize {
+        self.definition_of_done
+            .iter()
+            .filter(|item| item.checked)
+            .count()
+    }
+
+    /// `true` for the statuses the burndown/statistics views treat as
+    /// finished. Mirrors `sort::task_is_completed`'s GUI-side notion but
+    /// lives in core so `backlog_stats` (which has no GUI dependency) can
+    /// share the exact same definition rather than re-deriving it.
+    pub fn is_done(&self) -> bool {
+        self.source == BacklogTaskSource::Completed || self.status.eq_ignore_ascii_case("done")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +122,22 @@ pub struct BacklogTaskPatch {
     pub priority: Option<String>,
     pub labels: Option<Vec<String>>,
     pub assignees: Option<Vec<String>>,
+    pub dependencies: Option<Vec<String>>,
+    /// `--ref` replaces the whole references list per invocation (verified
+    /// against the live CLI — it is a set operation, not additive), so
+    /// "adding" a reference from the UI means submitting the full list with
+    /// the new entry appended, same shape as `labels`/`dependencies`.
+    pub references: Option<Vec<String>>,
+    pub implementation_plan: Option<String>,
+    /// `Some(name)` assigns the milestone; `None` with `clear_milestone` unset
+    /// leaves it untouched. Assign and clear are mutually exclusive — callers
+    /// that want to clear set `clear_milestone` instead of this field.
+    pub milestone: Option<String>,
+    /// Clears the task's milestone assignment (`--clear-milestone`). Ignored
+    /// if `milestone` is also set (assigning wins) — `is_empty` doesn't need
+    /// to police that; `edit_backlog_task` only ever receives one or the
+    /// other from the UI layer.
+    pub clear_milestone: bool,
 }
 
 impl BacklogTaskPatch {
@@ -116,6 +148,11 @@ impl BacklogTaskPatch {
             && self.priority.is_none()
             && self.labels.is_none()
             && self.assignees.is_none()
+            && self.dependencies.is_none()
+            && self.references.is_none()
+            && self.implementation_plan.is_none()
+            && self.milestone.is_none()
+            && !self.clear_milestone
     }
 }
 
@@ -228,7 +265,62 @@ pub fn edit_backlog_task(
         args.push("-a".into());
         args.push(assignees.join(",").into());
     }
+    if let Some(dependencies) = &patch.dependencies {
+        args.push("--depends-on".into());
+        args.push(dependencies.join(",").into());
+    }
+    if let Some(references) = &patch.references {
+        for reference in references {
+            args.push("--ref".into());
+            args.push(reference.into());
+        }
+    }
+    if let Some(plan) = &patch.implementation_plan {
+        args.push("--plan".into());
+        args.push(plan.into());
+    }
+    if let Some(milestone) = &patch.milestone {
+        args.push("-m".into());
+        args.push(milestone.into());
+    } else if patch.clear_milestone {
+        args.push("--clear-milestone".into());
+    }
     run_backlog(project_root, args)
+}
+
+pub fn set_backlog_dod_checked(
+    project_root: &Path,
+    task_id: &str,
+    index: usize,
+    checked: bool,
+) -> Result<String> {
+    let flag = if checked {
+        "--check-dod"
+    } else {
+        "--uncheck-dod"
+    };
+    run_backlog(
+        project_root,
+        [
+            OsString::from("task"),
+            OsString::from("edit"),
+            OsString::from(task_id),
+            OsString::from("--plain"),
+            OsString::from(flag),
+            OsString::from(index.to_string()),
+        ],
+    )
+}
+
+pub fn archive_backlog_task(project_root: &Path, task_id: &str) -> Result<String> {
+    run_backlog(
+        project_root,
+        [
+            OsString::from("task"),
+            OsString::from("archive"),
+            OsString::from(task_id),
+        ],
+    )
 }
 
 pub fn set_backlog_acceptance_checked(
@@ -391,6 +483,7 @@ fn parse_task_file(path: &Path, source: BacklogTaskSource) -> Result<BacklogTask
         assignees: yaml_string_list(&frontmatter, "assignee"),
         labels: yaml_string_list(&frontmatter, "labels"),
         dependencies: yaml_string_list(&frontmatter, "dependencies"),
+        references: yaml_string_list(&frontmatter, "references"),
         milestone: yaml_string(&frontmatter, "milestone"),
         parent: yaml_string(&frontmatter, "parent"),
         created_date: yaml_string(&frontmatter, "created_date"),
