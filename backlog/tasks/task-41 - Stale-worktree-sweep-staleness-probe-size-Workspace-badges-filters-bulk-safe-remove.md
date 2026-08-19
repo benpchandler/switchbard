@@ -3,10 +3,10 @@ id: TASK-41
 title: >-
   Stale worktree sweep: staleness probe + size, Workspace badges/filters, bulk
   safe remove
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-19 19:55'
-updated_date: '2026-08-19 20:52'
+updated_date: '2026-08-19 21:12'
 labels:
   - workspace
 dependencies: []
