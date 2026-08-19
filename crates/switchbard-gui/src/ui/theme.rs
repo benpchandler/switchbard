@@ -657,6 +657,11 @@ pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
     // — unlike `Ui::disable()`'s targets, exempt under WCAG 1.4.3 — the user
     // is meant to read) inside the same tuned, AA-safe tonal range.
     visuals.widgets.noninteractive.weak_bg_fill = palette.muted_text;
+    // Cursor blink is behaviour, not palette: rebuilding `Visuals` every
+    // frame must not flip it back on after a host turned it off (the
+    // headless test harness disables it so a focused text field settles
+    // instead of requesting an immediate repaint at each blink boundary).
+    visuals.text_cursor.blink = ctx.style().visuals.text_cursor.blink;
     ctx.set_visuals(visuals);
 
     // egui ships `Small` at 9pt — below the legibility floor. Raise it to the

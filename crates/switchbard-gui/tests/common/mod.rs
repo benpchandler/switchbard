@@ -138,6 +138,12 @@ pub fn harness(app: HiveApp) -> Harness<'static, HiveApp> {
                 // install — gets correct visuals for free; embedded fonts aren't
                 // needed for these tests (legibility_audit measures requested
                 // point size and color, not glyph shapes).
+                //
+                // Blink off: with it on, a focused `TextEdit` asks for a
+                // repaint at every blink boundary, which `Harness::run` can
+                // read as "never settles" and panic with max_steps exceeded
+                // (flaky on CI — see TASK-40). `theme::apply` preserves this.
+                ctx.style_mut(|style| style.visuals.text_cursor.blink = false);
                 app.render_ui(ctx);
             },
             app,
