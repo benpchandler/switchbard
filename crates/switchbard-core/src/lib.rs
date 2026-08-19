@@ -11,6 +11,7 @@ pub mod dispatch;
 pub mod expected_port;
 mod git_env;
 pub mod git_probe;
+pub mod instance_lock;
 pub mod kill;
 pub mod open_url;
 pub mod resolve;
@@ -30,11 +31,12 @@ pub use agent_context::{
 };
 pub use attribution::attribute;
 pub use backlog::{
-    append_backlog_notes, archive_backlog_task, backlog_cli_path, create_backlog_task,
-    edit_backlog_task, is_backlog_project, load_backlog_project, parse_backlog_day,
-    set_backlog_acceptance_checked, set_backlog_dod_checked, swap_backlog_label,
+    append_backlog_notes, archive_backlog_task, backlog_cli_path, complete_backlog_task,
+    create_backlog_task, edit_backlog_task, is_backlog_project, load_backlog_project,
+    ordered_status_vocabulary, parse_backlog_day, parse_created_task_id,
+    set_backlog_acceptance_checked, set_backlog_dod_checked, set_backlog_label, swap_backlog_label,
     BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskPatch, BacklogTaskSource,
-    NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
+    NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES, CANONICAL_STATUS_ORDER,
 };
 pub use backlog_relations::{
     blocking_dependencies, blocks, children, dependency_statuses, is_blocked, is_newly_unblocked,
@@ -45,8 +47,8 @@ pub use backlog_stats::{
     BurndownSeries, CrossRepoStats, RepoStats,
 };
 pub use backlog_triage::{
-    find_hub_repo, load_ordering_overlay, triage_entry_from_task, triage_rank, OrderingOverlay,
-    TriageDue, TriageEntry, TriagePriority,
+    find_hub_repo, load_ordering_overlay, parse_backlog_datetime_unix, triage_entry_from_task,
+    triage_rank, OrderingOverlay, TriageDue, TriageEntry, TriagePriority,
 };
 pub use classify::{classify_command, classify_script_body, ServerLikelihood};
 pub use discover::{auto_scan_roots, discover_repos, DiscoveredRepo};

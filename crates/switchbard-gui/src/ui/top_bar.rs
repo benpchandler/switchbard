@@ -4,6 +4,7 @@
 
 use crate::app::{self, HiveApp};
 use crate::runtime::ViewTab;
+use crate::ui::components::action_status_label;
 use crate::ui::theme;
 use crate::ui::theme::ThemeChoice;
 use crate::ui::workspace;
@@ -15,14 +16,16 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             ui.heading("Switchbard");
             ui.separator();
-            let (last_scan, last_error, total, attributed) = scan_summary(app);
-            if let Some(at) = last_scan {
-                ui.label(format!("{}s since last scan", at.elapsed().as_secs()));
-            } else {
-                ui.label("scanning…");
-            }
+            // Owner UX pass (2026-08-05): the "Ns since last scan" label is
+            // gone — staleness isn't actionable information on its own (the
+            // Refresh button next to it is), and the owner found it just
+            // added visual noise. If staleness ever needs to surface again,
+            // do it as a subtle indicator (e.g. dimming Refresh's icon),
+            // not a ticking counter competing for attention with the error
+            // label right after it.
+            let (last_error, total, attributed) = scan_summary(app);
             if let Some(err) = &last_error {
-                ui.colored_label(egui::Color32::RED, format!("error: {err}"));
+                ui.colored_label(theme::danger(), format!("error: {err}"));
             }
             ui.separator();
             ui.label(format!("{total} listeners"));
@@ -38,11 +41,23 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     });
 }
 
+/// Owner UX pass (2026-08-05): the view switcher gets its own `nav_bg()`
+/// band, distinct from the plain panel background the filter row sits on
+/// right next to it — navigation should read as its own zone, not blend
+/// into the content controls beside it.
 fn render_view_tabs(app: &mut HiveApp, ui: &mut egui::Ui) {
-    ui.label("view:");
-    ui.selectable_value(&mut app.view_tab, ViewTab::Servers, "Servers");
-    ui.selectable_value(&mut app.view_tab, ViewTab::AgentContext, "Agent Context");
-    ui.selectable_value(&mut app.view_tab, ViewTab::Backlog, "Backlog");
+    egui::Frame::default()
+        .fill(theme::nav_bg())
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(8, 3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("view:");
+                ui.selectable_value(&mut app.view_tab, ViewTab::Servers, "Servers");
+                ui.selectable_value(&mut app.view_tab, ViewTab::AgentContext, "Agent Context");
+                ui.selectable_value(&mut app.view_tab, ViewTab::Backlog, "Backlog");
+            });
+        });
 }
 
 fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
@@ -65,15 +80,10 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
     }
 }
 
-fn scan_summary(app: &HiveApp) -> (Option<std::time::Instant>, Option<String>, usize, usize) {
+fn scan_summary(app: &HiveApp) -> (Option<String>, usize, usize) {
     let s = app.state.lock().unwrap();
     let attributed = s.listeners.iter().filter(|l| l.repo_name.is_some()).count();
-    (
-        s.last_scan,
-        s.last_error.clone(),
-        s.listeners.len(),
-        attributed,
-    )
+    (s.last_error.clone(), s.listeners.len(), attributed)
 }
 
 fn render_actions(app: &mut HiveApp, ui: &mut egui::Ui) {
@@ -124,21 +134,36 @@ fn render_actions(app: &mut HiveApp, ui: &mut egui::Ui) {
     ui.separator();
     render_zoom_stepper(ui);
 
+    ui.separator();
+    // Owner UX pass (2026-08-05): repo add/remove reachable from any view,
+    // now that "Tracked repos" itself only renders in the Servers view.
+    if ui
+        .button("⚙ Settings")
+        .on_hover_text("Add or remove tracked repos")
+        .clicked()
+    {
+        app.settings_open = true;
+    }
+
+    // TASK-28 (owner-found bug): every status message goes through the
+    // same clamped label, not a bare `ui.label` — see
+    // `action_status_label`'s doc for why this is defense in depth, not
+    // just the fix for the one function that triggered it.
     if let Some(msg) = app.config_status.snapshot() {
         ui.separator();
-        ui.label(msg);
+        action_status_label(ui, &msg, None);
     }
     if let Some(msg) = app.kill_status.snapshot() {
         ui.separator();
-        ui.label(msg);
+        action_status_label(ui, &msg, None);
     }
     if let Some(msg) = app.server_status.snapshot() {
         ui.separator();
-        ui.label(msg);
+        action_status_label(ui, &msg, None);
     }
     if let Some(msg) = app.backlog_status.snapshot() {
         ui.separator();
-        ui.label(msg);
+        action_status_label(ui, &msg, None);
     }
 }
 

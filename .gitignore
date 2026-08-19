@@ -60,3 +60,7 @@ lcov.info
 **/tests/snapshots/*.diff.png
 **/tests/snapshots/*.new.png
 *.snap.new
+
+# egui_kittest snapshot scratch byproducts in the QA screenshot set
+docs/qa/screenshots/*.diff.png
+docs/qa/screenshots/*.old.png

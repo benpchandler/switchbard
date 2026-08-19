@@ -1,171 +1,15 @@
-use anyhow::{anyhow, bail, Context, Result};
+//! Turning a Backlog.md project directory (and the raw task markdown inside
+//! it) into `super::types` structs. Nothing here shells out — that's
+//! `super::mutations`.
+
+use super::types::{BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource};
+use anyhow::{bail, Context, Result};
 use serde_yaml::{Mapping, Value};
 use std::cmp::Ordering;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-pub const BACKLOG_STATUSES: &[&str] = &["To Do", "In Progress", "Done"];
-pub const BACKLOG_PRIORITIES: &[&str] = &["high", "medium", "low"];
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BacklogProject {
-    pub root: PathBuf,
-    pub cli_path: Option<PathBuf>,
-    pub tasks: Vec<BacklogTask>,
-    pub warnings: Vec<String>,
-    pub loaded_at_unix: u64,
-}
-
-impl BacklogProject {
-    pub fn cli_available(&self) -> bool {
-        self.cli_path.is_some()
-    }
-
-    pub fn active_task_count(&self) -> usize {
-        self.tasks
-            .iter()
-            .filter(|task| task.source == BacklogTaskSource::Active)
-            .count()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BacklogTaskSource {
-    Active,
-    Completed,
-    Draft,
-    Archived,
-}
-
-impl BacklogTaskSource {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Active => "active",
-            Self::Completed => "completed",
-            Self::Draft => "draft",
-            Self::Archived => "archived",
-        }
-    }
-
-    fn editable(self) -> bool {
-        matches!(self, Self::Active)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BacklogTask {
-    pub id: String,
-    pub title: String,
-    pub status: String,
-    pub priority: String,
-    pub assignees: Vec<String>,
-    pub labels: Vec<String>,
-    pub dependencies: Vec<String>,
-    pub references: Vec<String>,
-    pub milestone: Option<String>,
-    pub parent: Option<String>,
-    pub created_date: Option<String>,
-    pub updated_date: Option<String>,
-    pub description: String,
-    pub implementation_plan: String,
-    pub implementation_notes: String,
-    pub final_summary: String,
-    pub acceptance_criteria: Vec<BacklogChecklistItem>,
-    pub definition_of_done: Vec<BacklogChecklistItem>,
-    pub source: BacklogTaskSource,
-    pub path: PathBuf,
-}
-
-impl BacklogTask {
-    pub fn editable(&self) -> bool {
-        self.source.editable()
-    }
-
-    pub fn acceptance_done_count(&self) -> usize {
-        self.acceptance_criteria
-            .iter()
-            .filter(|item| item.checked)
-            .count()
-    }
-
-    pub fn dod_done_count(&self) -> usize {
-        self.definition_of_done
-            .iter()
-            .filter(|item| item.checked)
-            .count()
-    }
-
-    /// `true` for the statuses the burndown/statistics views treat as
-    /// finished. Mirrors `sort::task_is_completed`'s GUI-side notion but
-    /// lives in core so `backlog_stats` (which has no GUI dependency) can
-    /// share the exact same definition rather than re-deriving it.
-    pub fn is_done(&self) -> bool {
-        self.source == BacklogTaskSource::Completed || self.status.eq_ignore_ascii_case("done")
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BacklogChecklistItem {
-    pub index: usize,
-    pub checked: bool,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct BacklogTaskPatch {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    pub status: Option<String>,
-    pub priority: Option<String>,
-    pub labels: Option<Vec<String>>,
-    pub assignees: Option<Vec<String>>,
-    pub dependencies: Option<Vec<String>>,
-    /// `--ref` replaces the whole references list per invocation (verified
-    /// against the live CLI — it is a set operation, not additive), so
-    /// "adding" a reference from the UI means submitting the full list with
-    /// the new entry appended, same shape as `labels`/`dependencies`.
-    pub references: Option<Vec<String>>,
-    pub implementation_plan: Option<String>,
-    /// `Some(name)` assigns the milestone; `None` with `clear_milestone` unset
-    /// leaves it untouched. Assign and clear are mutually exclusive — callers
-    /// that want to clear set `clear_milestone` instead of this field.
-    pub milestone: Option<String>,
-    /// Clears the task's milestone assignment (`--clear-milestone`). Ignored
-    /// if `milestone` is also set (assigning wins) — `is_empty` doesn't need
-    /// to police that; `edit_backlog_task` only ever receives one or the
-    /// other from the UI layer.
-    pub clear_milestone: bool,
-}
-
-impl BacklogTaskPatch {
-    pub fn is_empty(&self) -> bool {
-        self.title.is_none()
-            && self.description.is_none()
-            && self.status.is_none()
-            && self.priority.is_none()
-            && self.labels.is_none()
-            && self.assignees.is_none()
-            && self.dependencies.is_none()
-            && self.references.is_none()
-            && self.implementation_plan.is_none()
-            && self.milestone.is_none()
-            && !self.clear_milestone
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NewBacklogTask {
-    pub title: String,
-    pub description: String,
-    pub status: String,
-    pub priority: String,
-    pub acceptance_criteria: Vec<String>,
-    /// Parent task id (task-17's create-subtask), passed as `-p`/`--parent`.
-    pub parent: Option<String>,
-}
 
 pub fn is_backlog_project(root: &Path) -> bool {
     root.join("backlog/config.yml").is_file()
@@ -226,232 +70,54 @@ pub fn load_backlog_project(root: &Path) -> Result<BacklogProject> {
         tasks,
         warnings,
         loaded_at_unix: unix_now(),
+        configured_statuses: parse_config_statuses(root),
     })
 }
 
-pub fn edit_backlog_task(
-    project_root: &Path,
-    task_id: &str,
-    patch: &BacklogTaskPatch,
-) -> Result<String> {
-    if patch.is_empty() {
-        return Ok("no changes".to_string());
-    }
-    let mut args: Vec<OsString> = vec![
-        "task".into(),
-        "edit".into(),
-        task_id.into(),
-        "--plain".into(),
-    ];
-    if let Some(title) = &patch.title {
-        args.push("-t".into());
-        args.push(title.into());
-    }
-    if let Some(description) = &patch.description {
-        args.push("-d".into());
-        args.push(description.into());
-    }
-    if let Some(status) = &patch.status {
-        args.push("-s".into());
-        args.push(status.into());
-    }
-    if let Some(priority) = &patch.priority {
-        args.push("--priority".into());
-        args.push(priority.into());
-    }
-    if let Some(labels) = &patch.labels {
-        args.push("-l".into());
-        args.push(labels.join(",").into());
-    }
-    if let Some(assignees) = &patch.assignees {
-        args.push("-a".into());
-        args.push(assignees.join(",").into());
-    }
-    if let Some(dependencies) = &patch.dependencies {
-        args.push("--depends-on".into());
-        args.push(dependencies.join(",").into());
-    }
-    if let Some(references) = &patch.references {
-        for reference in references {
-            args.push("--ref".into());
-            args.push(reference.into());
-        }
-    }
-    if let Some(plan) = &patch.implementation_plan {
-        args.push("--plan".into());
-        args.push(plan.into());
-    }
-    if let Some(milestone) = &patch.milestone {
-        args.push("-m".into());
-        args.push(milestone.into());
-    } else if patch.clear_milestone {
-        args.push("--clear-milestone".into());
-    }
-    run_backlog(project_root, args)
-}
-
-pub fn set_backlog_dod_checked(
-    project_root: &Path,
-    task_id: &str,
-    index: usize,
-    checked: bool,
-) -> Result<String> {
-    let flag = if checked {
-        "--check-dod"
-    } else {
-        "--uncheck-dod"
+/// Read `backlog/config.yml`'s `statuses:` array — see `BacklogProject::
+/// configured_statuses`'s doc for why this is worth a second read alongside
+/// the task files themselves. Never fails the whole project load: a
+/// missing/unreadable/malformed config just yields an empty list, same as
+/// if this function didn't exist.
+fn parse_config_statuses(root: &Path) -> Vec<String> {
+    let path = root.join("backlog/config.yml");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return Vec::new();
     };
-    run_backlog(
-        project_root,
-        [
-            OsString::from("task"),
-            OsString::from("edit"),
-            OsString::from(task_id),
-            OsString::from("--plain"),
-            OsString::from(flag),
-            OsString::from(index.to_string()),
-        ],
-    )
-}
-
-pub fn archive_backlog_task(project_root: &Path, task_id: &str) -> Result<String> {
-    run_backlog(
-        project_root,
-        [
-            OsString::from("task"),
-            OsString::from("archive"),
-            OsString::from(task_id),
-        ],
-    )
-}
-
-pub fn set_backlog_acceptance_checked(
-    project_root: &Path,
-    task_id: &str,
-    index: usize,
-    checked: bool,
-) -> Result<String> {
-    let flag = if checked {
-        "--check-ac"
-    } else {
-        "--uncheck-ac"
+    let Ok(value) = serde_yaml::from_str::<Value>(&text) else {
+        return Vec::new();
     };
-    run_backlog(
-        project_root,
-        [
-            OsString::from("task"),
-            OsString::from("edit"),
-            OsString::from(task_id),
-            OsString::from("--plain"),
-            OsString::from(flag),
-            OsString::from(index.to_string()),
-        ],
-    )
+    let Some(mapping) = value.as_mapping() else {
+        return Vec::new();
+    };
+    yaml_string_list(mapping, "statuses")
 }
 
-/// Atomically swap one label for another via the CLI's own `--remove-label`/
-/// `--add-label` flags (a single `task edit` invocation), rather than
-/// round-tripping the full label list through `-l` — that would race with any
-/// other label a human or another process added between our read and write.
-/// This is the in-flight guard the dispatch queue depends on: a task moves
-/// `dispatch` → `dispatching` before work starts, so a queue reload never
-/// sees it as eligible twice.
-pub fn swap_backlog_label(
-    project_root: &Path,
-    task_id: &str,
-    from: &str,
-    to: &str,
-) -> Result<String> {
-    run_backlog(
-        project_root,
-        [
-            OsString::from("task"),
-            OsString::from("edit"),
-            OsString::from(task_id),
-            OsString::from("--plain"),
-            OsString::from("--remove-label"),
-            OsString::from(from),
-            OsString::from("--add-label"),
-            OsString::from(to),
-        ],
-    )
-}
-
-pub fn append_backlog_notes(project_root: &Path, task_id: &str, note: &str) -> Result<String> {
-    if note.trim().is_empty() {
-        bail!("note is empty");
-    }
-    run_backlog(
-        project_root,
-        [
-            OsString::from("task"),
-            OsString::from("edit"),
-            OsString::from(task_id),
-            OsString::from("--plain"),
-            OsString::from("--append-notes"),
-            OsString::from(note),
-        ],
-    )
-}
-
-pub fn create_backlog_task(project_root: &Path, task: &NewBacklogTask) -> Result<String> {
-    if task.title.trim().is_empty() {
-        bail!("title is required");
-    }
-    let mut args: Vec<OsString> = vec![
-        "task".into(),
-        "create".into(),
-        task.title.clone().into(),
-        "--plain".into(),
-    ];
-    if !task.description.trim().is_empty() {
-        args.push("-d".into());
-        args.push(task.description.clone().into());
-    }
-    if !task.status.trim().is_empty() {
-        args.push("-s".into());
-        args.push(task.status.clone().into());
-    }
-    if !task.priority.trim().is_empty() {
-        args.push("--priority".into());
-        args.push(task.priority.clone().into());
-    }
-    for criterion in &task.acceptance_criteria {
-        if criterion.trim().is_empty() {
-            continue;
-        }
-        args.push("--ac".into());
-        args.push(criterion.clone().into());
-    }
-    if let Some(parent) = &task.parent {
-        args.push("-p".into());
-        args.push(parent.clone().into());
-    }
-    run_backlog(project_root, args)
-}
-
-fn run_backlog<I, S>(project_root: &Path, args: I) -> Result<String>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let cli = backlog_cli_path().ok_or_else(|| {
-        anyhow!(
-            "Backlog CLI not found. Install backlog or make it visible on PATH before editing tasks."
-        )
-    })?;
-    let output = Command::new(&cli)
-        .current_dir(project_root)
-        .args(args)
-        .output()
-        .with_context(|| format!("failed to run {}", cli.display()))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let msg = if stderr.is_empty() { stdout } else { stderr };
-        bail!("backlog failed: {msg}");
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+/// TASK-28 (owner-found bug): even with `--plain`, `backlog task create`
+/// (unlike `task archive`'s one-line `"Archived task TASK-1"`) writes the
+/// *entire* newly-created task's rendered form to stdout — file path, a
+/// `====` underline, Status/Ordinal/Created, empty Description/Acceptance
+/// Criteria/Definition of Done sections. `create_backlog_task`'s caller
+/// used to surface that raw multi-line blob as the GUI's action-status
+/// message, stretching the top bar into a many-line void. Every other
+/// mutation function in this module already discards its own raw stdout
+/// and lets the caller build a compact message instead (see
+/// `edit_backlog_task`'s callers); this is the one exception, so rather
+/// than have the GUI parse a format it doesn't own, this pulls the id out
+/// of the one line worth reading — `"Task TASK-1 - Title"` — so the caller
+/// can build `"Created {repo}:{id}"` without touching the rest.
+/// Empirically confirmed against a real `backlog init` fixture before
+/// writing this parser, not guessed. Returns `None` if that line isn't
+/// found (a future CLI output-format change) — callers must fall back to a
+/// generic message, not panic.
+pub fn parse_created_task_id(output: &str) -> Option<String> {
+    output
+        .lines()
+        .find_map(|line| line.strip_prefix("Task "))
+        .and_then(|rest| rest.split(" - ").next())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 fn find_on_path(name: &str) -> Option<PathBuf> {
@@ -491,7 +157,12 @@ fn parse_task_file(path: &Path, source: BacklogTaskSource) -> Result<BacklogTask
         dependencies: yaml_string_list(&frontmatter, "dependencies"),
         references: yaml_string_list(&frontmatter, "references"),
         milestone: yaml_string(&frontmatter, "milestone"),
-        parent: yaml_string(&frontmatter, "parent"),
+        // The real `backlog` CLI (v1.47.1) writes `parent_task_id:`, not
+        // `parent:` — confirmed empirically in the 2026-08-05 QA audit
+        // (docs/qa/2026-08-05-parity-qa.md, Defect 1). Fall back to the old
+        // key so fixtures/tasks written before this fix still parse.
+        parent: yaml_string(&frontmatter, "parent_task_id")
+            .or_else(|| yaml_string(&frontmatter, "parent")),
         created_date: yaml_string(&frontmatter, "created_date"),
         updated_date: yaml_string(&frontmatter, "updated_date"),
         description,
@@ -681,10 +352,12 @@ fn task_id_key(id: &str) -> Vec<u32> {
         .collect()
 }
 
+/// Milliseconds, not seconds — see `BacklogProject::loaded_at_unix`'s doc
+/// for why the finer precision matters.
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
+        .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
 }
 
@@ -702,6 +375,69 @@ pub fn parse_backlog_day(value: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TASK-25 (owner-requested UX): `configured_statuses` reads
+    /// `backlog/config.yml`'s `statuses:` array — budget's own config
+    /// declares exactly this set.
+    #[test]
+    fn parses_config_statuses_from_config_yml() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("backlog")).unwrap();
+        fs::write(
+            dir.path().join("backlog/config.yml"),
+            "project_name: \"Ledger\"\ndefault_status: \"To Do\"\nstatuses: [\"Icebox\", \"To Do\", \"In Progress\", \"In Review\", \"Done\"]\n",
+        )
+        .unwrap();
+
+        let statuses = parse_config_statuses(dir.path());
+        assert_eq!(
+            statuses,
+            vec!["Icebox", "To Do", "In Progress", "In Review", "Done"]
+        );
+    }
+
+    /// Missing/malformed config is never fatal — `configured_statuses` just
+    /// comes back empty, same as if the function didn't exist. Confirms
+    /// both a fully-missing file and a config.yml with no `statuses` key.
+    #[test]
+    fn missing_or_statusless_config_yields_an_empty_list() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(parse_config_statuses(dir.path()), Vec::<String>::new());
+
+        fs::create_dir_all(dir.path().join("backlog")).unwrap();
+        fs::write(
+            dir.path().join("backlog/config.yml"),
+            "project_name: \"No statuses key\"\n",
+        )
+        .unwrap();
+        assert_eq!(parse_config_statuses(dir.path()), Vec::<String>::new());
+    }
+
+    /// TASK-28: pins the real `backlog task create --plain` output shape
+    /// (captured empirically against a real fixture repo) so the parser
+    /// stays correct even without a CLI round trip for every test.
+    #[test]
+    fn parses_created_task_id_from_real_cli_output_shape() {
+        let output = "File: /tmp/x/backlog/tasks/task-1 - Test task for stdout inspection.md\n\
+                       \n\
+                       Task TASK-1 - Test task for stdout inspection\n\
+                       ==================================================\n\
+                       \n\
+                       Status: \u{25cb} To Do\n\
+                       Ordinal: 1000\n\
+                       Created: 2026-08-05 14:59\n\
+                       \n\
+                       Description:\n\
+                       --------------------------------------------------\n\
+                       No description provided\n";
+        assert_eq!(parse_created_task_id(output), Some("TASK-1".to_string()));
+    }
+
+    #[test]
+    fn parse_created_task_id_returns_none_on_unrecognized_output() {
+        assert_eq!(parse_created_task_id("some unexpected future format"), None);
+        assert_eq!(parse_created_task_id(""), None);
+    }
 
     #[test]
     fn parses_backlog_task_markdown() {
@@ -755,6 +491,35 @@ Existing note.
         assert_eq!(task.acceptance_criteria[0].index, 1);
         assert!(!task.acceptance_criteria[0].checked);
         assert!(task.acceptance_criteria[1].checked);
+    }
+
+    /// Regression for the 2026-08-05 QA audit's HIGH defect: the real
+    /// `backlog` CLI writes `parent_task_id:`, not `parent:`. This is the
+    /// fast, in-process complement to `backlog_cli_mutations.rs`'s real-CLI
+    /// round trip — it pins the parser's key preference directly, plus the
+    /// fallback for `parent:`-only fixtures written before this fix.
+    #[test]
+    fn parses_parent_task_id_and_falls_back_to_the_old_parent_key() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let real_cli_path = dir.path().join("task-2 - Subtask.md");
+        fs::write(
+            &real_cli_path,
+            "---\nid: TASK-2\ntitle: Subtask\nparent_task_id: TASK-1\n---\n",
+        )
+        .unwrap();
+        let real_cli_task = parse_task_file(&real_cli_path, BacklogTaskSource::Active).unwrap();
+        assert_eq!(real_cli_task.parent.as_deref(), Some("TASK-1"));
+
+        let old_fixture_path = dir.path().join("task-3 - Old fixture.md");
+        fs::write(
+            &old_fixture_path,
+            "---\nid: TASK-3\ntitle: Old fixture\nparent: TASK-1\n---\n",
+        )
+        .unwrap();
+        let old_fixture_task =
+            parse_task_file(&old_fixture_path, BacklogTaskSource::Active).unwrap();
+        assert_eq!(old_fixture_task.parent.as_deref(), Some("TASK-1"));
     }
 
     #[test]

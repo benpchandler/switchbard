@@ -164,11 +164,13 @@ fn render_section(
 
 fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &DigestRow<'_>) {
     let key = (row.project.key.clone(), row.task.id.clone());
+    // `theme::card_bg()`, not `ui.visuals().extreme_bg_color` — the owner UX
+    // pass repointed that egui slot to input fields (see theme.rs's doc).
     let frame = egui::Frame::default()
-        .fill(ui.visuals().extreme_bg_color)
+        .fill(theme::card_bg())
         .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
-        .rounding(3.0)
-        .inner_margin(egui::Margin::symmetric(10.0, 6.0));
+        .corner_radius(3.0)
+        .inner_margin(egui::Margin::symmetric(10, 6));
     let resp = frame
         .show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -206,12 +208,14 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &DigestRow<'_>) {
         .response;
     if resp
         .interact(egui::Sense::click())
-        .on_hover_text("Open in the List lens")
+        .on_hover_text("Show details in the rail")
         .clicked()
     {
+        // Widen to "All projects" scope — a Digest card can surface a task
+        // from any tracked project regardless of the current single-project
+        // scope, so selecting it needs the rail to actually find it.
         app.backlog_view.selected_project = None;
         app.backlog_view.selected_task = Some(key);
         app.backlog_view.editor.loaded_key = None;
-        app.backlog_view.lens = BacklogLens::List;
     }
 }

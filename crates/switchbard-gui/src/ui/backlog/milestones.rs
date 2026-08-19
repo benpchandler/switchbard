@@ -2,8 +2,8 @@
 //! cross-repo, sorted alphabetically with an "Unassigned" bucket last
 //! (task-15 AC #6). Milestone *assignment* lives in the detail pane
 //! (`detail::render_editor`); this lens is read/browse-only — clicking a
-//! task selects it so switching back to the List lens opens it in the
-//! detail pane.
+//! task selects it, which the persistent detail rail (`rail::render_
+//! detail_rail`) shows regardless of lens.
 
 use super::{format, Snapshot, TaskRow};
 use crate::app::HiveApp;

@@ -66,7 +66,16 @@ pub fn app_with_items(items: Vec<AgentContextItem>) -> HiveApp {
     // it keeps the harness driving only the seeded view.
     let mut cfg = Config::default();
     cfg.ui.onboarding_dismissed = true;
-    let app = HiveApp::new_headless(cfg, repos, worktrees);
+    let mut app = HiveApp::new_headless(cfg, repos, worktrees);
+    // MUST be set on every test-constructed HiveApp: `save_config` targets
+    // the real `~/.switchbard/config.toml` by default (correct for
+    // production), and any test that clicks a Save/Delete-style button
+    // (e.g. saved_views' "Save current as…") reaches it. Forgetting this is
+    // exactly how TASK-22 happened — every `cargo test` run was silently
+    // overwriting the developer's real tracked-repo list. `isolated_config_
+    // save_path` gives each call a fresh, unique path under `$TMPDIR` so
+    // parallel test threads can't collide either.
+    app.config_save_path = Some(isolated_config_save_path());
     app.agent_contexts.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         AgentContextMap {
@@ -76,6 +85,21 @@ pub fn app_with_items(items: Vec<AgentContextItem>) -> HiveApp {
         },
     );
     app
+}
+
+/// A fresh, unique path under `$TMPDIR` for a test's `HiveApp::config_save_
+/// path` — never the real `~/.switchbard/config.toml`. Unique per call (not
+/// just per process) because `cargo test` runs test functions in parallel
+/// threads within one process, so a shared path would let two tests race on
+/// the same file.
+pub fn isolated_config_save_path() -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "switchbard-test-config-{}-{n}.toml",
+        std::process::id()
+    ))
 }
 
 /// A representative fixture: one repo with a `CLAUDE.md` instruction and a
@@ -114,6 +138,12 @@ pub fn harness(app: HiveApp) -> Harness<'static, HiveApp> {
                 // install — gets correct visuals for free; embedded fonts aren't
                 // needed for these tests (legibility_audit measures requested
                 // point size and color, not glyph shapes).
+                //
+                // Blink off: with it on, a focused `TextEdit` asks for a
+                // repaint at every blink boundary, which `Harness::run` can
+                // read as "never settles" and panic with max_steps exceeded
+                // (flaky on CI — see TASK-40). `theme::apply` preserves this.
+                ctx.style_mut(|style| style.visuals.text_cursor.blink = false);
                 app.render_ui(ctx);
             },
             app,

@@ -15,6 +15,7 @@
 //! migrate the inline call sites. Don't extend an existing view file with a
 //! new free function — that's the duplication trap we're solving.
 
+pub mod action_status;
 pub mod badge;
 pub mod branch_label;
 pub mod mono_cell;
@@ -24,6 +25,7 @@ pub mod status_pill;
 pub mod strings;
 pub mod table_shell;
 
+pub use action_status::action_status_label;
 pub use badge::{count_badge, weak_dash, weak_dots};
 pub use branch_label::branch_label;
 pub use mono_cell::{mono_label, short_sha};

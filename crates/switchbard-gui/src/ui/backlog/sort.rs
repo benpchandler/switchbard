@@ -14,7 +14,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 use switchbard_core::{
     triage_entry_from_task, triage_rank, BacklogProject, BacklogTask, BacklogTaskSource,
-    BACKLOG_PRIORITIES, BACKLOG_STATUSES,
+    BACKLOG_PRIORITIES, CANONICAL_STATUS_ORDER,
 };
 
 /// Filter + order every visible task across the current scope. The single
@@ -100,6 +100,19 @@ pub(super) fn compare_tasks(
                     .len()
                     .cmp(&b.acceptance_criteria.len())
             }),
+        // Comma-joined, same string a reader sees on the row/card (list.rs's
+        // detail pane, board.rs's strip) — an unlabeled/unassigned/
+        // unmilestoned task joins to "", which sorts first ascending.
+        BacklogTaskSortKey::Labels => {
+            cmp_ascii_case_insensitive(&a.labels.join(", "), &b.labels.join(", "))
+        }
+        BacklogTaskSortKey::Assignee => {
+            cmp_ascii_case_insensitive(&a.assignees.join(", "), &b.assignees.join(", "))
+        }
+        BacklogTaskSortKey::Milestone => cmp_ascii_case_insensitive(
+            a.milestone.as_deref().unwrap_or(""),
+            b.milestone.as_deref().unwrap_or(""),
+        ),
     };
     let primary = match sort_direction {
         BacklogTaskSortDirection::Ascending => primary,
@@ -110,11 +123,16 @@ pub(super) fn compare_tasks(
         .then_with(|| cmp_ascii_case_insensitive(&a.title, &b.title))
 }
 
+/// Owner UX pass (2026-08-05): sorts by the same shared canonical order
+/// every other status surface uses (`ordered_status_vocabulary`'s
+/// `CANONICAL_STATUS_ORDER`), not the old 3-entry `BACKLOG_STATUSES` — a
+/// task in a repo-specific status like "Icebox" or "In Review" now sorts
+/// into its correct kanban position instead of falling to the end.
 fn status_rank(status: &str) -> usize {
-    BACKLOG_STATUSES
+    CANONICAL_STATUS_ORDER
         .iter()
         .position(|option| option.eq_ignore_ascii_case(status))
-        .unwrap_or(BACKLOG_STATUSES.len())
+        .unwrap_or(CANONICAL_STATUS_ORDER.len())
 }
 
 fn priority_rank(priority: &str) -> usize {
@@ -174,6 +192,19 @@ pub(super) fn task_visible(task: &BacklogTask, app: &HiveApp, filter_lc: &str) -
     {
         return false;
     }
+    if app.backlog_view.milestone_filter != "all"
+        && task.milestone.as_deref() != Some(app.backlog_view.milestone_filter.as_str())
+    {
+        return false;
+    }
+    if app.backlog_view.label_filter != "all"
+        && !task
+            .labels
+            .iter()
+            .any(|label| label.eq_ignore_ascii_case(&app.backlog_view.label_filter))
+    {
+        return false;
+    }
     if filter_lc.is_empty() {
         return true;
     }
@@ -206,18 +237,32 @@ pub(super) fn task_is_completed(task: &BacklogTask) -> bool {
     task.is_done()
 }
 
-/// The set of status values worth offering in the filter combo box: the
-/// standard `BACKLOG_STATUSES` plus any nonstandard value actually present
-/// on a task in the current scope (so a hand-edited task's odd status is
-/// still filterable).
-pub(super) fn status_options(scoped: &[&ProjectRow]) -> Vec<String> {
+/// Every distinct milestone value in the current scope, alphabetical.
+/// Unlike `switchbard_core::ordered_status_vocabulary` there's no fixed
+/// baseline set — milestones are entirely project-defined — so an empty
+/// scope just offers no milestones beyond "All".
+pub(super) fn milestone_options(scoped: &[&ProjectRow]) -> Vec<String> {
     let mut set = BTreeSet::new();
-    for status in BACKLOG_STATUSES {
-        set.insert((*status).to_string());
-    }
     for project in scoped {
         for task in &project.project.tasks {
-            set.insert(task.status.clone());
+            if let Some(milestone) = &task.milestone {
+                set.insert(milestone.clone());
+            }
+        }
+    }
+    set.into_iter().collect()
+}
+
+/// Every distinct label across every task in scope, alphabetical — QA
+/// parity matrix gap: the webview offers a dedicated label filter; before
+/// this, a label was only reachable through the free-text filter.
+pub(super) fn label_options(scoped: &[&ProjectRow]) -> Vec<String> {
+    let mut set = BTreeSet::new();
+    for project in scoped {
+        for task in &project.project.tasks {
+            for label in &task.labels {
+                set.insert(label.clone());
+            }
         }
     }
     set.into_iter().collect()
@@ -299,6 +344,7 @@ mod tests {
             ],
             warnings: vec![],
             loaded_at_unix: 0,
+            configured_statuses: vec![],
         };
 
         assert_eq!(open_task_count(&project), 2);
@@ -341,6 +387,94 @@ mod tests {
                 .map(|task| task.id.as_str())
                 .collect::<Vec<_>>(),
             vec!["TASK-3", "TASK-2", "TASK-1"]
+        );
+    }
+
+    fn task_with_labels_assignee_milestone(
+        id: &str,
+        labels: &[&str],
+        assignee: Option<&str>,
+        milestone: Option<&str>,
+    ) -> BacklogTask {
+        let mut task = task_with_fields(id, id, "To Do", "medium", 0, 0);
+        task.labels = labels.iter().map(|l| l.to_string()).collect();
+        task.assignees = assignee.into_iter().map(|a| a.to_string()).collect();
+        task.milestone = milestone.map(|m| m.to_string());
+        task
+    }
+
+    /// QA parity matrix MEDIUM gap: labels/assignee/milestone sort keys.
+    #[test]
+    fn labels_sort_orders_by_the_comma_joined_label_string() {
+        let none = task_with_labels_assignee_milestone("TASK-1", &[], None, None);
+        let alpha = task_with_labels_assignee_milestone("TASK-2", &["alpha"], None, None);
+        let zeta = task_with_labels_assignee_milestone("TASK-3", &["zeta"], None, None);
+        let mut tasks = [&zeta, &none, &alpha];
+
+        tasks.sort_by(|a, b| {
+            compare_tasks(
+                a,
+                b,
+                BacklogTaskSortKey::Labels,
+                BacklogTaskSortDirection::Ascending,
+            )
+        });
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["TASK-1", "TASK-2", "TASK-3"],
+            "unlabeled should sort first ascending (joins to an empty string)"
+        );
+    }
+
+    #[test]
+    fn assignee_sort_is_case_insensitive() {
+        let ben = task_with_labels_assignee_milestone("TASK-1", &[], Some("ben"), None);
+        let alice = task_with_labels_assignee_milestone("TASK-2", &[], Some("Alice"), None);
+        let mut tasks = [&ben, &alice];
+
+        tasks.sort_by(|a, b| {
+            compare_tasks(
+                a,
+                b,
+                BacklogTaskSortKey::Assignee,
+                BacklogTaskSortDirection::Ascending,
+            )
+        });
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["TASK-2", "TASK-1"],
+            "\"Alice\" should sort before \"ben\" case-insensitively"
+        );
+    }
+
+    #[test]
+    fn milestone_sort_groups_unmilestoned_tasks_together() {
+        let v2 = task_with_labels_assignee_milestone("TASK-1", &[], None, Some("v2"));
+        let none = task_with_labels_assignee_milestone("TASK-2", &[], None, None);
+        let v1 = task_with_labels_assignee_milestone("TASK-3", &[], None, Some("v1"));
+        let mut tasks = [&v2, &none, &v1];
+
+        tasks.sort_by(|a, b| {
+            compare_tasks(
+                a,
+                b,
+                BacklogTaskSortKey::Milestone,
+                BacklogTaskSortDirection::Ascending,
+            )
+        });
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["TASK-2", "TASK-3", "TASK-1"],
+            "unmilestoned (empty string) sorts first, then v1, then v2"
         );
     }
 

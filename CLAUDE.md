@@ -63,7 +63,7 @@ Re-exports are **explicit in `src/lib.rs`** (no glob re-exports). Module map:
 `src/main.rs` only loads config, expands worktrees, hands to `HiveApp`. Everything else is in the library crate.
 
 - `app.rs` — `HiveApp`: shared `Arc<Mutex<…>>` worker state + view-only fields; `update()` is pure dispatch. Header doc carries the mutation-method naming table (below).
-- `workers.rs` — four background threads, all the **same shape** (snapshot under brief lock → work outside lock → write back → `ctx.request_repaint()` → `kick.wait(period)`): scanner 3s, git probe 60s, service detection 30s, run-reaper 2s.
+- `workers.rs` — six periodic background threads plus a run-reaper, all the same shape (snapshot under brief lock → work outside lock → write back → `ctx.request_repaint()` → `kick.wait(period)`). Periods, per-tick cost, and rationale are a living table in the module's own header doc (`workers.rs`'s cadence-policy table) rather than duplicated here — re-run `examples/scan_cadence_audit.rs` for fresh real-machine numbers before changing any of them.
 - `sync/` — `Kick` (wake signal) and `Status` (one per UI surface so concurrent actions don't clobber).
 - `runtime/` — plain-data view types + `expand_worktrees()`.
 - `ui/` — the only module that touches egui. `theme.rs` is the single source for semantic colors and glyphs.

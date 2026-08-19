@@ -2,11 +2,11 @@
 //! is fixed (a label only); in the All-projects scope it carries its own
 //! project picker so filing a task doesn't require leaving the unified view.
 
-use super::{format, Pending, Snapshot};
+use super::{detail_lists, format, Pending, Snapshot};
 use crate::app::HiveApp;
 use crate::ui::theme;
 use eframe::egui;
-use switchbard_core::{NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES};
+use switchbard_core::{ordered_status_vocabulary, NewBacklogTask};
 
 pub(super) fn render_create_modal(
     app: &mut HiveApp,
@@ -83,11 +83,16 @@ pub(super) fn render_create_modal(
             );
             ui.horizontal(|ui| {
                 ui.label("status");
+                // Owner UX pass (2026-08-05): scoped to the target
+                // project's own vocabulary, not a fixed 3-entry list —
+                // e.g. a project declaring Icebox in config.yml can file a
+                // new task straight into it.
+                let statuses = ordered_status_vocabulary(std::iter::once(&project.project));
                 format::render_value_combo(
                     ui,
                     "backlog_new_status",
                     &mut app.backlog_view.new_task.status,
-                    BACKLOG_STATUSES,
+                    &statuses,
                     format::title_case_value,
                 );
                 ui.label("priority");
@@ -95,7 +100,7 @@ pub(super) fn render_create_modal(
                     ui,
                     "backlog_new_priority",
                     &mut app.backlog_view.new_task.priority,
-                    BACKLOG_PRIORITIES,
+                    &format::priority_options(),
                     format::priority_title,
                 );
             });
@@ -106,6 +111,33 @@ pub(super) fn render_create_modal(
                     .desired_rows(4)
                     .desired_width(520.0),
             );
+            ui.horizontal(|ui| {
+                ui.label("labels");
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.backlog_view.new_task.labels)
+                        .hint_text("comma, separated")
+                        .desired_width(200.0),
+                );
+                ui.label("assignee");
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.backlog_view.new_task.assignees)
+                        .hint_text("comma, separated")
+                        .desired_width(200.0),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.label("milestone");
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.backlog_view.new_task.milestone)
+                        .desired_width(200.0),
+                );
+                ui.label("dependencies");
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.backlog_view.new_task.dependencies)
+                        .hint_text("TASK-1, TASK-2")
+                        .desired_width(200.0),
+                );
+            });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let can_create = project.project.cli_available()
@@ -123,6 +155,7 @@ pub(super) fn render_create_modal(
                         .filter(|line| !line.is_empty())
                         .map(str::to_string)
                         .collect();
+                    let milestone = app.backlog_view.new_task.milestone.trim().to_string();
                     pending.create = Some((
                         target_key.clone(),
                         NewBacklogTask {
@@ -132,6 +165,14 @@ pub(super) fn render_create_modal(
                             priority: app.backlog_view.new_task.priority.clone(),
                             acceptance_criteria: criteria,
                             parent: app.backlog_view.new_task.parent.clone(),
+                            labels: detail_lists::split_csv(&app.backlog_view.new_task.labels),
+                            assignees: detail_lists::split_csv(
+                                &app.backlog_view.new_task.assignees,
+                            ),
+                            milestone: (!milestone.is_empty()).then_some(milestone),
+                            dependencies: detail_lists::split_csv(
+                                &app.backlog_view.new_task.dependencies,
+                            ),
                         },
                     ));
                     app.backlog_view.new_task = Default::default();

@@ -42,12 +42,12 @@ use std::path::PathBuf;
 
 use common::{harness, seeded_app, REPO_NAME, REPO_PATH};
 use eframe::egui::{epaint::Shape, Color32, Pos2, Rect};
+use egui_kittest::kittest::{by, Queryable};
 use egui_kittest::Harness;
-use kittest::{by, Queryable};
 use switchbard_core::config::ThemeChoice;
 use switchbard_core::{
     AttributedListener, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource,
-    LocalListener,
+    LocalListener, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{BacklogLens, ViewTab};
@@ -347,7 +347,11 @@ fn legibility_backlog_task() -> BacklogTask {
         status: "In Progress".to_string(),
         priority: "high".to_string(),
         assignees: vec!["ben".to_string()],
-        labels: vec!["demo".to_string()],
+        // `DISPATCH_LABEL` puts this task — the one selected by default in
+        // every List/Board harness below — in the Queued dispatch state, so
+        // the detail pane's dispatch section (pill + button + confirm) is
+        // part of the audited surface, not just the List/Board row pill.
+        labels: vec!["demo".to_string(), DISPATCH_LABEL.to_string()],
         dependencies: vec!["TASK-2".to_string()],
         references: vec!["https://example.com/spec".to_string()],
         milestone: Some("v1".to_string()),
@@ -401,6 +405,59 @@ fn legibility_subtask() -> BacklogTask {
     task
 }
 
+/// TASK-1 (above) covers the Queued dispatch state. The other three label
+/// states each get their own standalone task here so every pill text
+/// ("DISPATCHING" / "DISPATCHED" / "DISPATCH FAILED") and, for the two with
+/// distinct detail-pane messages, the PR link / failure reason text are part
+/// of the audited draw list.
+fn legibility_dispatch_inflight_task() -> BacklogTask {
+    let mut task = legibility_backlog_task();
+    task.id = "TASK-6".to_string();
+    task.title = "Dispatch in flight".to_string();
+    task.labels = vec![DISPATCHING_LABEL.to_string()];
+    task.dependencies = vec![];
+    task.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-6.md"));
+    task
+}
+
+fn legibility_dispatch_dispatched_task() -> BacklogTask {
+    let mut task = legibility_backlog_task();
+    task.id = "TASK-7".to_string();
+    task.title = "Dispatch succeeded".to_string();
+    task.labels = vec![DISPATCHED_LABEL.to_string()];
+    task.dependencies = vec![];
+    task.implementation_notes =
+        "Dispatch PR: https://github.com/example/switchbard/pull/42".to_string();
+    task.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-7.md"));
+    task
+}
+
+fn legibility_dispatch_failed_task() -> BacklogTask {
+    let mut task = legibility_backlog_task();
+    task.id = "TASK-8".to_string();
+    task.title = "Dispatch failed".to_string();
+    task.labels = vec![DISPATCH_FAILED_LABEL.to_string()];
+    task.dependencies = vec![];
+    task.implementation_notes = "Dispatch failed: headless run exited with status 1".to_string();
+    task.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-8.md"));
+    task
+}
+
+/// A Done, active, CLI-editable task — without one, "Clean Up Old Tasks"
+/// stays disabled in every harness below and its text (and the "Archive N
+/// Done tasks?" confirm prompt, seeded onto one harness in `views()`) would
+/// be WCAG 1.4.3-exempt and silently skip the audit entirely.
+fn legibility_done_task() -> BacklogTask {
+    let mut task = legibility_backlog_task();
+    task.id = "TASK-9".to_string();
+    task.title = "Stale done task".to_string();
+    task.status = "Done".to_string();
+    task.labels = vec![];
+    task.dependencies = vec![];
+    task.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-9.md"));
+    task
+}
+
 fn seed_backlog_project(app: &HiveApp) {
     app.backlog_projects.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
@@ -411,9 +468,14 @@ fn seed_backlog_project(app: &HiveApp) {
                 legibility_backlog_task(),
                 legibility_blocking_task(),
                 legibility_subtask(),
+                legibility_dispatch_inflight_task(),
+                legibility_dispatch_dispatched_task(),
+                legibility_dispatch_failed_task(),
+                legibility_done_task(),
             ],
             warnings: vec![],
             loaded_at_unix: 0,
+            configured_statuses: vec![],
         },
     );
 }
@@ -437,6 +499,15 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     seed_live_listener(&servers_app);
     let servers = harness(servers_app);
 
+    // TASK-27 (owner-requested UX): the collapsed sidebar rail's own text
+    // ("◀", the expand toggle) only ever paints in this state — every other
+    // harness here has the default expanded sidebar, which already covers
+    // the "▶" collapse toggle.
+    let mut sidebar_collapsed_app = seeded_app();
+    sidebar_collapsed_app.config.ui.theme = theme;
+    sidebar_collapsed_app.config.ui.sidebar_collapsed = true;
+    let sidebar_collapsed = harness(sidebar_collapsed_app);
+
     let mut agent_app = seeded_app();
     agent_app.config.ui.theme = theme;
     agent_app.view_tab = ViewTab::AgentContext;
@@ -457,6 +528,13 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     // `lens` unset deliberately — it's exercising the default a real launch
     // sees, not just picking the enum's first variant.
     seed_backlog_project(&digest_app);
+    // "Clean Up Old Tasks" (QA parity matrix LOW gap) is disabled without a
+    // Done task and its confirm prompt only ever renders after a click —
+    // neither of which the audit's harnesses otherwise trigger. Seeding
+    // `cleanup_confirm` directly (same technique the dispatch-state fixtures
+    // above use to reach a click-only state) gets its "Archive N Done
+    // tasks?" text and Confirm/Cancel buttons into this audit.
+    digest_app.backlog_view.cleanup_confirm = true;
     let digest = harness(digest_app);
 
     let mut list_app = seeded_app();
@@ -476,6 +554,54 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     seed_backlog_project(&list_app);
     let list = harness(list_app);
 
+    // Two more List-lens harnesses, each explicitly selecting a task the
+    // default first-visible-row selection wouldn't reach, so the detail
+    // pane's Dispatched (PR link) and Failed (failure reason) messages —
+    // each distinct text, not just a differently-colored pill — are part of
+    // the audited draw list too.
+    let mut dispatched_app = seeded_app();
+    dispatched_app.config.ui.theme = theme;
+    dispatched_app.view_tab = ViewTab::Backlog;
+    dispatched_app.backlog_view.lens = BacklogLens::List;
+    dispatched_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    dispatched_app.backlog_view.selected_task =
+        Some((PathBuf::from(REPO_PATH), "TASK-7".to_string()));
+    seed_backlog_project(&dispatched_app);
+    let dispatched = harness(dispatched_app);
+
+    let mut dispatch_failed_app = seeded_app();
+    dispatch_failed_app.config.ui.theme = theme;
+    dispatch_failed_app.view_tab = ViewTab::Backlog;
+    dispatch_failed_app.backlog_view.lens = BacklogLens::List;
+    dispatch_failed_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    dispatch_failed_app.backlog_view.selected_task =
+        Some((PathBuf::from(REPO_PATH), "TASK-8".to_string()));
+    seed_backlog_project(&dispatch_failed_app);
+    let dispatch_failed = harness(dispatch_failed_app);
+
+    // A Done task selected in the detail pane (2026-08-05 fix-wave 2):
+    // Backlog.md semantics route a Done task through Complete, not Archive
+    // (the real CLI refuses `task archive` on one) — `render_archive` shows
+    // a "Complete" button instead, with `archive_confirm` seeded directly
+    // (same technique the dispatch states above use) so the "Complete
+    // TASK-9?" confirm prompt is audited too, not just the button's resting
+    // state.
+    let mut done_app = seeded_app();
+    done_app.config.ui.theme = theme;
+    done_app.view_tab = ViewTab::Backlog;
+    done_app.backlog_view.lens = BacklogLens::List;
+    done_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    done_app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-9".to_string()));
+    done_app.backlog_view.archive_confirm = true;
+    // `reconcile_selected_task` (mod.rs) clears a selection outside the
+    // currently visible rows, and Done tasks are hidden by default — without
+    // this, TASK-9 above would silently fall back to no selection at all,
+    // and the "Complete"/confirm text this harness exists to audit would
+    // never actually render.
+    done_app.backlog_view.show_completed = true;
+    seed_backlog_project(&done_app);
+    let done = harness(done_app);
+
     let mut portfolio_app = seeded_app();
     portfolio_app.config.ui.theme = theme;
     portfolio_app.view_tab = ViewTab::Backlog;
@@ -489,6 +615,15 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     board_app.backlog_view.lens = BacklogLens::Board;
     board_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
     seed_backlog_project(&board_app);
+    // TASK-26 (owner-requested UX): bulk-select a task directly on state —
+    // the checkbox click itself is UNDRIVABLE-BY-KITTEST for this lens (see
+    // backlog_controls.rs's note near board_card_checkbox_reflects_bulk_
+    // selection_state) — so the "N selected · Clear" bar's text is only
+    // ever painted this way in this audit.
+    board_app
+        .backlog_view
+        .bulk_selected_tasks
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
     let board = harness(board_app);
 
     let mut milestones_app = seeded_app();
@@ -505,10 +640,64 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     seed_backlog_project(&stats_app);
     let stats = harness(stats_app);
 
+    // Owner UX pass (2026-08-05): the onboarding modal's two "success"
+    // buttons (`theme::success_button`) were never in any fixture before
+    // this pass — the gap that let their white-on-`theme::green()` fill
+    // silently fail AA in dark mode (~2.25:1) for who knows how long.
+    // `app.onboarding` is pre-seeded to `Ready` (bypassing `render`'s own
+    // lazy-init `start_discovery` call) so this harness never kicks off a
+    // real filesystem scan of `$HOME` — the same hermeticity concern
+    // `app_with_items`'s own doc comment already flags.
+    let mut onboarding_empty_app = seeded_app();
+    onboarding_empty_app.config.ui.theme = theme;
+    onboarding_empty_app.config.ui.onboarding_dismissed = false;
+    onboarding_empty_app.config.repos.clear();
+    *onboarding_empty_app.onboarding.lock().unwrap() =
+        switchbard_gui::ui::onboarding::DiscoveryState::Ready { rows: vec![] };
+    let onboarding_empty = harness(onboarding_empty_app);
+
+    let mut onboarding_picker_app = seeded_app();
+    onboarding_picker_app.config.ui.theme = theme;
+    onboarding_picker_app.config.ui.onboarding_dismissed = false;
+    onboarding_picker_app.config.repos.clear();
+    *onboarding_picker_app.onboarding.lock().unwrap() =
+        switchbard_gui::ui::onboarding::DiscoveryState::Ready {
+            rows: vec![switchbard_gui::ui::onboarding::OnboardingRow {
+                repo: switchbard_core::discover::DiscoveredRepo {
+                    path: PathBuf::from(REPO_PATH),
+                    name: REPO_NAME.to_string(),
+                    modified: std::time::SystemTime::UNIX_EPOCH,
+                },
+                selected: true,
+            }],
+        };
+    let onboarding_picker = harness(onboarding_picker_app);
+
+    // Owner UX pass (2026-08-05): the Settings window (repo add/remove,
+    // reachable from any view now that "Tracked repos" itself is
+    // Servers-only) only ever renders with `settings_open` set — none of
+    // the fixtures above touch it, so this is its only audit coverage.
+    let mut settings_app = seeded_app();
+    settings_app.config.ui.theme = theme;
+    settings_app.settings_open = true;
+    let settings = harness(settings_app);
+
     vec![
         (
             format!("Servers view (top bar + sidebar + workspace){suffix}"),
             servers,
+        ),
+        (
+            format!("Servers view (sidebar collapsed){suffix}"),
+            sidebar_collapsed,
+        ),
+        (
+            format!("Onboarding · no repos found{suffix}"),
+            onboarding_empty,
+        ),
+        (
+            format!("Onboarding · repo picker (one selected){suffix}"),
+            onboarding_picker,
         ),
         (format!("Agent Context view{suffix}"), agent),
         (
@@ -517,10 +706,23 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
         ),
         (format!("Backlog · Digest lens (default){suffix}"), digest),
         (format!("Backlog · List lens (task detail){suffix}"), list),
+        (
+            format!("Backlog · List lens (dispatched task detail){suffix}"),
+            dispatched,
+        ),
+        (
+            format!("Backlog · List lens (dispatch-failed task detail){suffix}"),
+            dispatch_failed,
+        ),
+        (
+            format!("Backlog · List lens (Done task, Complete confirm){suffix}"),
+            done,
+        ),
         (format!("Backlog · Board lens{suffix}"), board),
         (format!("Backlog · Milestones lens{suffix}"), milestones),
         (format!("Backlog · Portfolio lens{suffix}"), portfolio),
         (format!("Backlog · Statistics lens{suffix}"), stats),
+        (format!("Settings window{suffix}"), settings),
     ]
 }
 

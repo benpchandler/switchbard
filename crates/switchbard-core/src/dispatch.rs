@@ -554,6 +554,7 @@ mod tests {
             assignees: vec![],
             labels: labels.iter().map(|l| l.to_string()).collect(),
             dependencies: vec![],
+            references: vec![],
             milestone: None,
             parent: None,
             created_date: None,
@@ -564,7 +565,6 @@ mod tests {
             final_summary: String::new(),
             acceptance_criteria: vec![],
             definition_of_done: vec![],
-            references: vec![],
             source: BacklogTaskSource::Active,
             path: PathBuf::from(format!("/repo/backlog/tasks/{id}.md")),
         }
@@ -583,6 +583,7 @@ mod tests {
             ],
             warnings: vec![],
             loaded_at_unix: 0,
+            configured_statuses: vec![],
         };
 
         let queue = list_dispatch_queue(&project);
@@ -605,6 +606,7 @@ mod tests {
             tasks: vec![done],
             warnings: vec![],
             loaded_at_unix: 0,
+            configured_statuses: vec![],
         };
 
         assert!(list_dispatch_queue(&project).is_empty());

@@ -6,6 +6,15 @@
 use crate::ui::components::StatusKind;
 use crate::ui::theme;
 use eframe::egui;
+use switchbard_core::BACKLOG_PRIORITIES;
+
+/// `BACKLOG_PRIORITIES` as owned `String`s — `render_value_combo` takes
+/// `&[String]` (not `&[&str]`) so it can also accept a freshly computed,
+/// project-scoped status vocabulary; priority has no such per-project
+/// variant, so this is just the fixed list converted once per call site.
+pub(super) fn priority_options() -> Vec<String> {
+    BACKLOG_PRIORITIES.iter().map(|s| s.to_string()).collect()
+}
 
 pub(super) fn status_kind(status: &str) -> StatusKind {
     match status.to_ascii_lowercase().as_str() {
@@ -35,11 +44,14 @@ pub(super) fn priority_color(priority: &str) -> egui::Color32 {
     }
 }
 
-pub(super) fn status_filter_label(status: &str) -> String {
-    if status == "all" {
+/// "all" -> "All"; any other value displayed as-is. Generic across every
+/// `"all"`-sentinel filter combo (status, milestone, labels) — priority gets
+/// its own `priority_filter_label` because it also title-cases the value.
+pub(super) fn value_filter_label(value: &str) -> String {
+    if value == "all" {
         "All".to_string()
     } else {
-        status.to_string()
+        value.to_string()
     }
 }
 
@@ -58,12 +70,16 @@ pub(super) fn title_case_value(value: &str) -> String {
 /// A combo box over a fixed set of known values that also tolerates (and
 /// preserves) a value outside that set — the Backlog CLI accepts free-form
 /// status/priority strings, so a task edited outside Switchbard can carry
-/// one this view has never offered as an option.
+/// one this view has never offered as an option. `options` is owned
+/// (`String`, not `&str`) so a caller can pass either a `'static` constant
+/// slice's owned copies or a freshly computed vocabulary (e.g. the owner UX
+/// pass's `switchbard_core::ordered_status_vocabulary`, which is
+/// project-scope-dependent and can't be a fixed slice).
 pub(super) fn render_value_combo(
     ui: &mut egui::Ui,
     id: &'static str,
     value: &mut String,
-    options: &[&str],
+    options: &[String],
     label: fn(&str) -> String,
 ) -> bool {
     let before = value.clone();
@@ -71,7 +87,7 @@ pub(super) fn render_value_combo(
         .selected_text(label(value))
         .show_ui(ui, |ui| {
             for option in options {
-                ui.selectable_value(value, (*option).to_string(), label(option));
+                ui.selectable_value(value, option.clone(), label(option));
             }
             if !options
                 .iter()

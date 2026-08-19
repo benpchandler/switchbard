@@ -17,7 +17,7 @@ use crate::ui::theme;
 use eframe::egui;
 use egui_commonmark::CommonMarkViewer;
 use std::path::Path;
-use switchbard_core::{BacklogTask, BacklogTaskPatch, BACKLOG_PRIORITIES, BACKLOG_STATUSES};
+use switchbard_core::{ordered_status_vocabulary, BacklogTask, BacklogTaskPatch};
 
 pub(super) fn render_task_detail(
     app: &mut HiveApp,
@@ -52,7 +52,7 @@ pub(super) fn render_task_detail(
         .show(ui, |ui| {
             render_detail_header(ui, project, task, editable);
             ui.add_space(8.0);
-            render_editor(app, ui, &project.key, task, editable, pending);
+            render_editor(app, ui, project, task, editable, pending);
             ui.add_space(10.0);
             detail_lists::render_subtasks(app, ui, &project.key, task, &project.project, editable);
             ui.add_space(10.0);
@@ -76,6 +76,8 @@ pub(super) fn render_task_detail(
             ui.add_space(10.0);
             detail_lists::render_notes(app, ui, &project.key, task, editable, pending);
             detail_lists::render_readonly_sections(ui, task);
+            ui.add_space(10.0);
+            detail_lists::render_dispatch(app, ui, &project.key, task, editable, pending);
             ui.add_space(10.0);
             detail_lists::render_archive(app, ui, &project.key, task, editable, pending);
         });
@@ -154,11 +156,12 @@ fn render_detail_header(
 fn render_editor(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
-    project_root: &Path,
+    project: &ProjectRow,
     task: &BacklogTask,
     editable: bool,
     pending: &mut Pending,
 ) {
+    let project_root = &project.key;
     ui.label(egui::RichText::new("Task").strong());
     let mut status_save: Option<String> = None;
     ui.add_enabled_ui(editable, |ui| {
@@ -170,11 +173,15 @@ fn render_editor(
 
         ui.horizontal(|ui| {
             ui.label("status");
+            // Owner UX pass (2026-08-05): this task's own project's shared
+            // vocabulary, not a fixed 3-entry list — matches what Board and
+            // the List filter now offer for the same project.
+            let statuses = ordered_status_vocabulary(std::iter::once(&project.project));
             if format::render_value_combo(
                 ui,
                 "backlog_task_status",
                 &mut app.backlog_view.editor.status,
-                BACKLOG_STATUSES,
+                &statuses,
                 format::title_case_value,
             ) {
                 status_save = Some(app.backlog_view.editor.status.trim().to_string());
@@ -184,7 +191,7 @@ fn render_editor(
                 ui,
                 "backlog_task_priority",
                 &mut app.backlog_view.editor.priority,
-                BACKLOG_PRIORITIES,
+                &format::priority_options(),
                 format::priority_title,
             );
         });
@@ -321,6 +328,7 @@ fn sync_editor(app: &mut HiveApp, project_root: &Path, task: &BacklogTask) {
     app.backlog_view.editor.description_editing = false;
     app.backlog_view.editor.new_reference.clear();
     app.backlog_view.archive_confirm = false;
+    app.backlog_view.dispatch_confirm = false;
 }
 
 fn patch_from_editor(task: &BacklogTask, editor: &BacklogEditorState) -> BacklogTaskPatch {

@@ -41,6 +41,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use switchbard_core::config::Config;
+use switchbard_core::instance_lock::{self, AcquireError, InstanceLock};
 use switchbard_core::{
     assess_branch_delete, collect_dirty_files, config, delete_branch, is_primary_worktree,
     kill_pgid, load_agent_context_cache, load_backlog_project, open_url, remove_worktree,
@@ -92,6 +93,10 @@ pub struct HiveApp {
     pub detection_kick: Kick,
     pub agent_context_kick: Kick,
     pub backlog_kick: Kick,
+    /// Wakes the dispatch worker (`workers::spawn_dispatch`) early — used by
+    /// the per-task "Dispatch" toggle so flagging a task doesn't wait out
+    /// the worker's normal poll period before the queue is drained.
+    pub dispatch_kick: Kick,
     pub picker: Arc<Mutex<PickerState>>,
 
     // Per-view feedback channels. One per UI surface so messages don't
@@ -103,6 +108,24 @@ pub struct HiveApp {
 
     // Persisted config (single source of truth for repos + UI defaults).
     pub config: Config,
+    /// Overrides where `save_config` writes. Always `None` in production
+    /// (`HiveApp::new`) — `save_config` falls back to the real
+    /// `~/.switchbard/config.toml` in that case, same as always. Tests that
+    /// exercise a real save/delete path (e.g. saved_views' Save/Delete
+    /// buttons) MUST set this to an isolated temp path first; skipping it
+    /// silently writes to the developer's actual config file on every test
+    /// run — this is exactly how TASK-22 happened. `HiveApp::new_headless`
+    /// leaves it `None`, so tests opt in explicitly rather than relying on
+    /// a default that could quietly regress back to the same bug.
+    pub config_save_path: Option<PathBuf>,
+    /// RAII guard for the single-instance lock (`switchbard_core::
+    /// instance_lock`), held only so its `Drop` removes `~/.switchbard/
+    /// switchbard.lock` on exit — never read otherwise. `None` in
+    /// `new_headless` (tests never take the lock) and in `new` when the
+    /// lock file itself was unavailable (fails open — see
+    /// `acquire_instance_lock_or_warn`). A second *live* instance is
+    /// refused outright before `HiveApp` is constructed at all.
+    _instance_lock: Option<InstanceLock>,
 
     // View-only state.
     /// One workspace-wide filter. Each section's match function reads it.
@@ -110,10 +133,16 @@ pub struct HiveApp {
     /// When on, the workspace hides unattributed listeners.
     pub show_only_managed: bool,
     pub confirm_kill_all: bool,
-    /// When Some, the sidebar shows a "Remove '{name}'?" confirmation modal
-    /// for the repo at the given path. The ✕ button in the sidebar sets this;
-    /// the modal clears it on Confirm or Cancel.
+    /// When Some, shows a "Remove '{name}'?" confirmation modal for the
+    /// repo at the given path — set by either the "Tracked repos" panel
+    /// (Servers view only, since the owner UX pass moved it there) or the
+    /// Settings window's own repo list (reachable from any view); rendered
+    /// unconditionally from `render_ui` so it works from either. The modal
+    /// clears it on Confirm or Cancel.
     pub confirm_remove_repo: Option<(PathBuf, String)>,
+    /// Owner UX pass (2026-08-05): the Settings window — repo add/remove,
+    /// now that "Tracked repos" itself only renders in the Servers view.
+    pub settings_open: bool,
     /// Modal state for `git worktree remove`. Shared with the worker thread
     /// so it can flip `busy`/`error` while the dialog is visible.
     pub confirm_remove_worktree: Arc<Mutex<Option<ConfirmRemoveWorktree>>>,
@@ -149,6 +178,36 @@ pub struct HiveApp {
     perf: Option<PerfSession>,
 }
 
+/// Acquire the single-instance lock, or warn and terminate the process if a
+/// live instance already holds it. A lock-file I/O error (e.g. an
+/// unwritable `~/.switchbard`) fails *open*: the guard is a safety net
+/// against racing config saves, not a precondition for launching at all, so
+/// we log and return `None` rather than block startup over it.
+pub fn acquire_instance_lock_or_warn() -> Option<InstanceLock> {
+    let path = instance_lock::default_path()?;
+    match instance_lock::acquire(&path) {
+        Ok(lock) => Some(lock),
+        Err(AcquireError::AlreadyRunning(pid)) => {
+            let message = format!(
+                "Switchbard is already running (pid {pid}). Only one instance may run \
+                 at a time — a second instance would race the first one's config saves."
+            );
+            eprintln!("Switchbard: {message}");
+            rfd::MessageDialog::new()
+                .set_title("Switchbard is already running")
+                .set_description(&message)
+                .set_level(rfd::MessageLevel::Warning)
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+            std::process::exit(1);
+        }
+        Err(AcquireError::Io(e)) => {
+            eprintln!("Switchbard: instance lock unavailable ({e}); continuing without it");
+            None
+        }
+    }
+}
+
 fn cached_agent_contexts(worktrees: &[WorktreeRef]) -> HashMap<PathBuf, AgentContextMap> {
     let live_paths: BTreeSet<PathBuf> = worktrees.iter().map(|w| w.path.clone()).collect();
     load_agent_context_cache()
@@ -160,11 +219,16 @@ fn cached_agent_contexts(worktrees: &[WorktreeRef]) -> HashMap<PathBuf, AgentCon
 }
 
 impl HiveApp {
+    /// `instance_lock` is acquired by `main` (via
+    /// [`acquire_instance_lock_or_warn`]) *before* eframe opens the window,
+    /// so a refused second instance exits without a window flash. `new` just
+    /// holds it for its `Drop`.
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         cfg: Config,
         repos: Vec<Repo>,
         worktrees: Vec<WorktreeRef>,
+        instance_lock: Option<InstanceLock>,
     ) -> Self {
         // Fonts are expensive to install (atlas rebuild) so this happens once,
         // here, rather than every frame; the theme's Visuals are cheap and get
@@ -179,7 +243,8 @@ impl HiveApp {
         // Seed the first frame from the on-disk agent-context cache before any
         // worker scan completes, then start the workers against this state.
         let cached = cached_agent_contexts(&worktrees);
-        let app = Self::new_headless(cfg, repos, worktrees);
+        let mut app = Self::new_headless(cfg, repos, worktrees);
+        app._instance_lock = instance_lock;
         *app.agent_contexts.lock().unwrap() = cached;
         app.spawn_workers(cc.egui_ctx.clone());
         app
@@ -220,7 +285,10 @@ impl HiveApp {
             detection_kick: Kick::new(),
             agent_context_kick: Kick::new(),
             backlog_kick: Kick::new(),
+            dispatch_kick: Kick::new(),
             config: cfg,
+            config_save_path: None,
+            _instance_lock: None,
             picker: Arc::new(Mutex::new(PickerState::Idle)),
             config_status: Status::new(),
             kill_status: Status::new(),
@@ -230,6 +298,7 @@ impl HiveApp {
             show_only_managed: false,
             confirm_kill_all: false,
             confirm_remove_repo: None,
+            settings_open: false,
             confirm_remove_worktree: Arc::new(Mutex::new(None)),
             create_worktree_dialog: Arc::new(Mutex::new(None)),
             create_worktree_outcomes: Arc::new(Mutex::new(Vec::new())),
@@ -247,7 +316,7 @@ impl HiveApp {
         }
     }
 
-    /// Spawn the four background workers, wiring them to this app's shared
+    /// Spawn the five background workers, wiring them to this app's shared
     /// state. Separated from `new_headless` so tests can build an app that
     /// never starts threads.
     fn spawn_workers(&self, ctx: egui::Context) {
@@ -268,6 +337,7 @@ impl HiveApp {
                 detection_kick: self.detection_kick.clone(),
                 agent_context_kick: self.agent_context_kick.clone(),
                 backlog_kick: self.backlog_kick.clone(),
+                dispatch_kick: self.dispatch_kick.clone(),
             },
         );
     }
@@ -314,7 +384,11 @@ impl HiveApp {
     /// `config_status` surfaces the failure immediately so the user is never
     /// silently left with a stale file.
     pub fn save_config(&self) {
-        if let Err(e) = config::save(&self.config) {
+        let result = match &self.config_save_path {
+            Some(path) => config::save_to(path, &self.config),
+            None => config::save(&self.config),
+        };
+        if let Err(e) = result {
             self.config_status.set(format!("config save failed: {e}"));
         }
     }
@@ -908,6 +982,48 @@ impl HiveApp {
         });
     }
 
+    /// Per-task opt-in for the dispatch pipeline: adds or removes
+    /// `dispatch::DISPATCH_LABEL` via `set_backlog_label` (a targeted
+    /// add/remove, not a full labels replace — see that function's doc).
+    /// Also wakes the dispatch worker on enable, so flagging a task doesn't
+    /// sit waiting out the worker's normal poll period before it's picked
+    /// up. Strictly opt-in: this only ever touches the one label the user
+    /// clicked; the worker (`workers::spawn_dispatch`) owns everything after
+    /// that (claim, worktree, headless run, PR).
+    pub fn spawn_backlog_dispatch_toggle(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        enabled: bool,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let backlog_kick = self.backlog_kick.clone();
+        let dispatch_kick = self.dispatch_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::set_backlog_label(
+                &project_root,
+                &task_id,
+                switchbard_core::DISPATCH_LABEL,
+                enabled,
+            ) {
+                Ok(_) => {
+                    refresh_backlog_project_cache(&projects, &project_root);
+                    let verb = if enabled { "flagged" } else { "unflagged" };
+                    status.set(format!("{verb} {task_id} for dispatch"));
+                    backlog_kick.notify();
+                    if enabled {
+                        dispatch_kick.notify();
+                    }
+                }
+                Err(e) => status.set(format!("dispatch flag for {task_id} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
     pub fn spawn_backlog_acceptance_toggle(
         &self,
         project_root: PathBuf,
@@ -989,6 +1105,98 @@ impl HiveApp {
         });
     }
 
+    /// The Done-task counterpart to `spawn_backlog_archive` — `detail_lists::
+    /// render_archive` routes here instead of `spawn_backlog_archive` when
+    /// the task is Done, since the real CLI refuses `task archive` on one.
+    pub fn spawn_backlog_complete(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::complete_backlog_task(&project_root, &task_id) {
+                Ok(_) => {
+                    refresh_backlog_project_cache(&projects, &project_root);
+                    status.set(format!("completed {task_id}"));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("complete {task_id} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    /// "Clean Up Old Tasks" (QA parity matrix LOW gap): complete every Done
+    /// task in `per_project` — one `complete_backlog_task` call per task
+    /// (not `archive_backlog_task`; the real CLI refuses `task archive` on
+    /// a Done task, a defect the 2026-08-05 re-verification caught), across
+    /// however many projects the caller found Done tasks in. Mirrors
+    /// `spawn_backlog_bulk_save`'s per-project loop shape; the difference is
+    /// this always spans every tracked project rather than one bulk
+    /// selection, since "clean up" is a workspace-wide housekeeping action,
+    /// not scoped to whatever the user happens to be filtering by.
+    pub fn spawn_backlog_cleanup(
+        &self,
+        per_project: Vec<(PathBuf, Vec<String>)>,
+        ctx: &egui::Context,
+    ) {
+        if per_project.is_empty() {
+            return;
+        }
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let project_count = per_project.len();
+            let total: usize = per_project.iter().map(|(_, ids)| ids.len()).sum();
+            let mut completed = 0usize;
+            let mut first_error: Option<String> = None;
+            for (project_root, task_ids) in &per_project {
+                let mut touched = false;
+                for task_id in task_ids {
+                    // Every candidate here is Done (`cleanup_candidates`
+                    // filters on `task.is_done()`) — `complete_backlog_task`,
+                    // not `archive_backlog_task`: the real CLI refuses
+                    // `task archive` on a Done task ("should be completed,
+                    // not archived"). See detail_lists::render_archive's doc
+                    // comment for the single-task equivalent.
+                    match switchbard_core::complete_backlog_task(project_root, task_id) {
+                        Ok(_) => {
+                            completed += 1;
+                            touched = true;
+                        }
+                        Err(e) => {
+                            if first_error.is_none() {
+                                first_error = Some(format!("{task_id}: {e}"));
+                            }
+                        }
+                    }
+                }
+                if touched {
+                    refresh_backlog_project_cache(&projects, project_root);
+                }
+            }
+            if completed > 0 {
+                kick.notify();
+            }
+            match first_error {
+                Some(error) => status.set(format!(
+                    "cleaned up {completed}/{total} Done tasks across {project_count} projects; first failure: {error}"
+                )),
+                None => status.set(format!(
+                    "cleaned up {completed}/{total} Done tasks across {project_count} projects"
+                )),
+            }
+            ctx.request_repaint();
+        });
+    }
+
     pub fn spawn_backlog_append_note(
         &self,
         project_root: PathBuf,
@@ -1013,6 +1221,17 @@ impl HiveApp {
         });
     }
 
+    /// TASK-28 (owner-found bug): `create_backlog_task`'s raw stdout is the
+    /// *entire* newly-created task's rendered form — file path, a `====`
+    /// underline, every section header, even when empty — not a one-line
+    /// confirmation like `task archive`'s. That used to land verbatim in
+    /// `backlog_status`, stretching the top bar into a many-line void.
+    /// Builds a compact "Created {repo}:{id}" instead, the same way every
+    /// other mutation status in this file already discards raw CLI stdout
+    /// (see `spawn_backlog_save`'s `Ok(_) => ...`) — this was the one
+    /// exception. `ui::components::action_status_label` is the defense in
+    /// depth for whatever future case still slips through: no status
+    /// message renders unbounded, regardless of what built it.
     pub fn spawn_backlog_create(
         &self,
         project_root: PathBuf,
@@ -1021,16 +1240,23 @@ impl HiveApp {
     ) {
         let status = self.backlog_status.clone();
         let projects = self.backlog_projects.clone();
+        let repos = self.repos.clone();
         let kick = self.backlog_kick.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             match switchbard_core::create_backlog_task(&project_root, &task) {
                 Ok(output) => {
                     refresh_backlog_project_cache(&projects, &project_root);
-                    let msg = if output.is_empty() {
-                        "created task".to_string()
-                    } else {
-                        format!("created task: {output}")
+                    let repo_label = repos
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .find(|repo| repo.path == project_root)
+                        .map(|repo| repo.name.clone())
+                        .unwrap_or_else(|| project_root.display().to_string());
+                    let msg = match switchbard_core::parse_created_task_id(&output) {
+                        Some(task_id) => format!("Created {repo_label}:{task_id}"),
+                        None => format!("created task in {repo_label}"),
                     };
                     status.set(msg);
                     kick.notify();
@@ -1200,11 +1426,20 @@ impl HiveApp {
             perf.record_top_bar(top_start.elapsed());
         }
 
-        // Sidebar must render BEFORE the central panel so the SidePanel claims
-        // its docked space first; otherwise the central panel sizes to the full
-        // window and the side panel overlays it.
+        // Owner UX pass (2026-08-05): "Tracked repos" is now Servers-local
+        // (a left-side panel, not the global right-side one it used to be)
+        // — repo add/remove for every other view goes through the Settings
+        // window instead (`ui::settings`). Side panels must still render
+        // BEFORE the central panel so they claim their docked space first;
+        // otherwise the central panel sizes to the full window and the side
+        // panel overlays it. The Backlog view's own detail rail (also a
+        // right-side panel) follows the identical ordering rule, inside
+        // `ui::backlog::render` itself (it needs the same `Snapshot`/
+        // `Pending` the lens content does).
         let sidebar_start = Instant::now();
-        ui::sidebar::render(self, ctx);
+        if self.view_tab == ViewTab::Servers {
+            ui::sidebar::render(self, ctx);
+        }
         if let Some(perf) = &mut self.perf {
             perf.record_sidebar(sidebar_start.elapsed());
         }
@@ -1222,6 +1457,12 @@ impl HiveApp {
                 perf.record_workspace(central_elapsed);
             }
         }
+
+        // Reachable from any view (not just Servers, where the repo list
+        // itself now lives) and rendered unconditionally so it works no
+        // matter which tab triggered it.
+        ui::settings::render_settings_window(self, ctx);
+        ui::sidebar::render_remove_confirmation(self, ctx);
 
         // Onboarding overlay paints last so it sits on top of everything
         // else when shown. It no-ops when already dismissed.
@@ -1251,7 +1492,7 @@ fn render_perf_overlay(ctx: &egui::Context, summary: &PerfSummary) {
                     1.0,
                     ui.visuals().widgets.noninteractive.bg_stroke.color,
                 ))
-                .inner_margin(egui::Margin::same(8.0))
+                .inner_margin(egui::Margin::same(8))
                 .show(ui, |ui| {
                     ui.label(
                         egui::RichText::new(summary.overlay_text())
@@ -1279,12 +1520,13 @@ impl eframe::App for HiveApp {
         self.drain_picker();
 
         // Snapshot persistable UI state so we can save the config if any
-        // toggle was flipped this update. `theme` lives directly on
-        // `config.ui` (the top bar's toggle mutates it in place), so it's
-        // tracked the same way `ui_scale` is below rather than mirrored
-        // through `save_ui_to_config`.
+        // toggle was flipped this update. `theme` and `sidebar_collapsed`
+        // (TASK-27) live directly on `config.ui` (their toggles mutate in
+        // place), so they're tracked the same way `ui_scale` is below
+        // rather than mirrored through `save_ui_to_config`.
         let ui_before = (self.browser_choice, self.show_non_servers);
         let theme_before = self.config.ui.theme;
+        let sidebar_collapsed_before = self.config.ui.sidebar_collapsed;
 
         self.render_ui(ctx);
 
@@ -1299,7 +1541,9 @@ impl eframe::App for HiveApp {
 
         let ui_after = (self.browser_choice, self.show_non_servers);
         let theme_changed = self.config.ui.theme != theme_before;
-        if ui_before != ui_after || zoom_changed || theme_changed {
+        let sidebar_collapsed_changed =
+            self.config.ui.sidebar_collapsed != sidebar_collapsed_before;
+        if ui_before != ui_after || zoom_changed || theme_changed || sidebar_collapsed_changed {
             self.save_ui_to_config();
         }
     }

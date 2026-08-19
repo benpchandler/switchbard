@@ -23,6 +23,7 @@
 //! - `selection`  — bulk multi-select state machine (shift/ctrl-click, context menu targets).
 //! - `detail_lists` — detail-pane checklist/list sections split out of `detail`.
 //! - `digest`     — the Digest lens: "what should I do today" landing screen (task-21).
+//! - `dispatch_ui` — dispatch state derivation + pill, shared by detail/list/board.
 //! - `list`       — the List lens: task list column + row rendering.
 //! - `tree`        — the List lens's sub-task tree walk, split out of `list` (task-17).
 //! - `board`      — the Board lens: per-status kanban columns with drag-to-change-status.
@@ -33,6 +34,7 @@
 //! - `saved_views` — named filter+sort+lens combinations, persisted on `Config::ui` (task-20).
 //! - `detail`     — the selected-task detail pane (editor, acceptance, notes).
 //! - `create`     — the "New Backlog Task" modal.
+//! - `rail`       — the persistent right-hand detail rail (owner UX pass, 2026-08-05).
 //!
 //! ## Lens
 //!
@@ -45,16 +47,30 @@
 //! directly instead, since a read-only aggregation or landing page
 //! shouldn't go empty just because the toolbar's Done/Archived filters are
 //! off elsewhere.
+//!
+//! ## Selecting a task shows its detail, regardless of lens
+//!
+//! Owner UX pass (2026-08-05): every lens's "click a task" affordance
+//! (Board card, List row, Digest card, Milestones row, search result) sets
+//! `backlog_view.selected_task` and nothing else — no lens switch. `rail`
+//! renders that selection's detail in a persistent right-side panel
+//! alongside whichever lens is active, replacing the old behavior where a
+//! click jumped you to the List lens specifically (its own detail pane was
+//! the only place selection was visible). List no longer embeds its own
+//! detail split for the same reason — the rail is the one place detail
+//! renders now, reusing `detail::render_task_detail` unchanged.
 
 mod board;
 mod create;
 mod detail;
 mod detail_lists;
 mod digest;
+mod dispatch_ui;
 mod format;
 mod list;
 mod milestones;
 mod portfolio;
+mod rail;
 mod saved_views;
 mod search;
 mod selection;
@@ -217,12 +233,21 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
 
     search::handle_shortcut(app, ctx);
 
+    // Must render before the CentralPanel below so it claims its docked
+    // space first (same ordering rule every side panel in this app follows
+    // — see `HiveApp::render_ui`'s own comment). Skipped when there's
+    // nothing to ever select, matching the CentralPanel's own empty-scope
+    // branch just below.
+    if !snap.projects.is_empty() {
+        rail::render_detail_rail(app, ctx, &snap, &mut pending);
+    }
+
     egui::CentralPanel::default().show(ctx, |ui| {
         if snap.projects.is_empty() {
             render_empty(ui);
             return;
         }
-        toolbar::render_summary(app, ui, &snap);
+        toolbar::render_summary(app, ui, &snap, &mut pending);
         ui.add_space(6.0);
         toolbar::render_lens_tabs(app, ui);
         saved_views::render_saved_views_bar(app, ui);
@@ -234,7 +259,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
             BacklogLens::List => {
                 toolbar::render_project_toolbar(app, ui, &snap, tasks.len());
                 ui.separator();
-                list::render_task_workspace(app, ui, &snap, tasks, &mut pending);
+                list::render_task_workspace(app, ui, tasks, &mut pending);
             }
             BacklogLens::Board => {
                 toolbar::render_project_toolbar(app, ui, &snap, tasks.len());
@@ -326,6 +351,19 @@ pub(in crate::ui::backlog) struct Pending {
     pub append_note: Option<(PathBuf, String, String)>,
     pub create: Option<(PathBuf, NewBacklogTask)>,
     pub archive: Option<(PathBuf, String)>,
+    /// The Done-task counterpart to `archive` — `detail_lists::
+    /// render_archive` routes here instead when `task.is_done()`, since the
+    /// real CLI refuses `task archive` on a Done task.
+    pub complete: Option<(PathBuf, String)>,
+    /// `(project_root, task_id, enabled)` — the per-task Dispatch opt-in
+    /// toggle (task-11 GUI wiring).
+    pub dispatch_toggle: Option<(PathBuf, String, bool)>,
+    /// "Clean Up Old Tasks" (QA parity matrix LOW gap): one entry per
+    /// project with Done tasks to archive, same cross-repo shape as
+    /// `bulk_save` — a bulk archive still needs one `backlog` CLI
+    /// invocation per task, and those are scattered across every tracked
+    /// project, not just one.
+    pub cleanup: Option<Vec<(PathBuf, Vec<String>)>>,
 }
 
 fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, pending: Pending) {
@@ -349,5 +387,14 @@ fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, pending: Pending) {
     }
     if let Some((project_root, task_id)) = pending.archive {
         app.spawn_backlog_archive(project_root, task_id, ctx);
+    }
+    if let Some((project_root, task_id)) = pending.complete {
+        app.spawn_backlog_complete(project_root, task_id, ctx);
+    }
+    if let Some((project_root, task_id, enabled)) = pending.dispatch_toggle {
+        app.spawn_backlog_dispatch_toggle(project_root, task_id, enabled, ctx);
+    }
+    if let Some(per_project) = pending.cleanup {
+        app.spawn_backlog_cleanup(per_project, ctx);
     }
 }

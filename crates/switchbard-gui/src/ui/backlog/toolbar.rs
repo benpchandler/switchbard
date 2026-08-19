@@ -2,38 +2,53 @@
 //! (project/scope picker, status/priority filters, completed/archived
 //! toggles).
 
-use super::{format, reset_task_selection, sort, Snapshot};
+use super::{format, reset_task_selection, sort, Pending, Snapshot};
 use crate::app::HiveApp;
 use crate::runtime::BacklogLens;
 use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
-use switchbard_core::BACKLOG_PRIORITIES;
+use std::path::PathBuf;
+use switchbard_core::{ordered_status_vocabulary, BACKLOG_PRIORITIES};
 
 /// The lens tab strip shown under the summary line: List / Board /
 /// Milestones / Statistics. Switching lenses does not clear the current
-/// filters or selection — every lens reads the same `Snapshot`.
+/// filters or selection — every lens reads the same `Snapshot`. Owner UX
+/// pass (2026-08-05): wrapped in its own `nav_bg()` band, matching the
+/// top bar's view-tab strip, so navigation reads as its own zone rather
+/// than blending into the toolbar/content around it.
 pub(super) fn render_lens_tabs(app: &mut HiveApp, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        for lens in [
-            BacklogLens::Digest,
-            BacklogLens::List,
-            BacklogLens::Board,
-            BacklogLens::Milestones,
-            BacklogLens::Portfolio,
-            BacklogLens::Statistics,
-        ] {
-            if ui
-                .selectable_label(app.backlog_view.lens == lens, lens.label())
-                .clicked()
-            {
-                app.backlog_view.lens = lens;
-            }
-        }
-    });
+    egui::Frame::default()
+        .fill(theme::nav_bg())
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(8, 3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for lens in [
+                    BacklogLens::Digest,
+                    BacklogLens::List,
+                    BacklogLens::Board,
+                    BacklogLens::Milestones,
+                    BacklogLens::Portfolio,
+                    BacklogLens::Statistics,
+                ] {
+                    if ui
+                        .selectable_label(app.backlog_view.lens == lens, lens.label())
+                        .clicked()
+                    {
+                        app.backlog_view.lens = lens;
+                    }
+                }
+            });
+        });
 }
 
-pub(super) fn render_summary(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
+pub(super) fn render_summary(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    snap: &Snapshot,
+    pending: &mut Pending,
+) {
     let scoped = super::scoped_projects(app, snap);
     let task_count: usize = scoped.iter().map(|row| row.project.tasks.len()).sum();
     let open_count: usize = scoped
@@ -91,8 +106,79 @@ pub(super) fn render_summary(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapsh
                 app.backlog_view.new_task.target_project = target;
                 app.backlog_view.new_task.open = true;
             }
+
+            render_cleanup_button(app, ui, snap, pending);
         });
     });
+}
+
+/// "Clean Up Old Tasks" (QA parity matrix LOW gap): complete every Done,
+/// active, CLI-editable task across every tracked project — a
+/// workspace-wide housekeeping action, so it lives in the always-visible
+/// summary line rather than the List lens's own toolbar, and always spans
+/// every project regardless of the current filter/scope ("cross-repo
+/// aware" per the mission's own framing). Confirm-gated the same way
+/// Archive/Complete is on a single task: bulk-completing is consequential
+/// enough to confirm.
+///
+/// "Complete", not "Archive" — Backlog.md semantics (verified against a
+/// real fixture repo, both `backlog task complete --help` and the CLI's own
+/// refusal message): a Done task is *completed* into `backlog/completed/`,
+/// not archived into `backlog/archive/`; the real CLI rejects `task
+/// archive` on a Done task outright. The button keeps the "Clean Up Old
+/// Tasks" name (still an accurate description of the outcome — these tasks
+/// leave the active view) even though the underlying CLI verb and
+/// resulting `BacklogTaskSource` are Complete/`Completed`, not
+/// Archive/`Archived`.
+fn render_cleanup_button(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    snap: &Snapshot,
+    pending: &mut Pending,
+) {
+    let candidates = cleanup_candidates(snap);
+    let total: usize = candidates.iter().map(|(_, ids)| ids.len()).sum();
+
+    if app.backlog_view.cleanup_confirm {
+        ui.colored_label(theme::amber(), format!("Complete {total} Done tasks?"));
+        if ui.add(theme::danger_button("Confirm cleanup")).clicked() {
+            pending.cleanup = Some(candidates);
+            app.backlog_view.cleanup_confirm = false;
+            app.backlog_status
+                .set(format!("cleaning up {total} Done tasks"));
+        }
+        if ui.button("Cancel").clicked() {
+            app.backlog_view.cleanup_confirm = false;
+        }
+    } else if ui
+        .add_enabled(total > 0, egui::Button::new("Clean Up Old Tasks"))
+        .on_hover_text("Complete every Done task across all tracked projects")
+        .clicked()
+    {
+        app.backlog_view.cleanup_confirm = true;
+    }
+}
+
+/// Every project's Done, still-active, CLI-editable task ids — the
+/// candidate set `render_cleanup_button` completes. A `Completed`-sourced
+/// task (already moved to `backlog/completed/`) or an already-
+/// `Archived`/`Draft` one is excluded the same way a single task's
+/// Archive/Complete button already requires `editable()`.
+fn cleanup_candidates(snap: &Snapshot) -> Vec<(PathBuf, Vec<String>)> {
+    snap.projects
+        .iter()
+        .filter(|row| row.project.cli_available())
+        .filter_map(|row| {
+            let ids: Vec<String> = row
+                .project
+                .tasks
+                .iter()
+                .filter(|task| task.editable() && task.is_done())
+                .map(|task| task.id.clone())
+                .collect();
+            (!ids.is_empty()).then_some((row.key.clone(), ids))
+        })
+        .collect()
 }
 
 pub(super) fn render_project_toolbar(
@@ -162,9 +248,15 @@ pub(super) fn render_project_toolbar(
 
         ui.separator();
         ui.label(egui::RichText::new("Status").color(theme::muted_text()));
-        let statuses = sort::status_options(&super::scoped_projects(app, snap));
+        // Owner UX pass (2026-08-05): the same shared vocabulary Board's
+        // columns, the detail-pane editor, and Statistics all consume now,
+        // so this dropdown can no longer offer a different status set than
+        // what Board actually shows (previously this used a local union
+        // that omitted a project's declared-but-currently-empty statuses).
+        let scoped = super::scoped_projects(app, snap);
+        let statuses = ordered_status_vocabulary(scoped.iter().map(|row| &row.project));
         egui::ComboBox::from_id_salt("backlog_status_filter")
-            .selected_text(format::status_filter_label(&app.backlog_view.status_filter))
+            .selected_text(format::value_filter_label(&app.backlog_view.status_filter))
             .show_ui(ui, |ui| {
                 ui.selectable_value(
                     &mut app.backlog_view.status_filter,
@@ -197,6 +289,38 @@ pub(super) fn render_project_toolbar(
                         (*priority).to_string(),
                         format::priority_title(priority),
                     );
+                }
+            });
+
+        ui.label(egui::RichText::new("Milestone").color(theme::muted_text()));
+        let milestones = sort::milestone_options(&super::scoped_projects(app, snap));
+        egui::ComboBox::from_id_salt("backlog_milestone_filter")
+            .selected_text(format::value_filter_label(
+                &app.backlog_view.milestone_filter,
+            ))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut app.backlog_view.milestone_filter,
+                    "all".to_string(),
+                    "All",
+                );
+                for milestone in milestones {
+                    ui.selectable_value(
+                        &mut app.backlog_view.milestone_filter,
+                        milestone.clone(),
+                        milestone,
+                    );
+                }
+            });
+
+        ui.label(egui::RichText::new("Label").color(theme::muted_text()));
+        let labels = sort::label_options(&super::scoped_projects(app, snap));
+        egui::ComboBox::from_id_salt("backlog_label_filter")
+            .selected_text(format::value_filter_label(&app.backlog_view.label_filter))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut app.backlog_view.label_filter, "all".to_string(), "All");
+                for label in labels {
+                    ui.selectable_value(&mut app.backlog_view.label_filter, label.clone(), label);
                 }
             });
 

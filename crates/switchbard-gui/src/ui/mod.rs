@@ -10,6 +10,7 @@ pub mod components;
 pub mod legibility;
 pub mod onboarding;
 pub mod path_display;
+pub mod settings;
 pub mod sidebar;
 pub mod theme;
 pub mod top_bar;

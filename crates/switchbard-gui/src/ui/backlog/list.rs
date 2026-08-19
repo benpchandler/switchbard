@@ -3,7 +3,7 @@
 //! into a sub-task tree (task-17) — see `tree.rs` for how that's decided and
 //! walked; this file owns rendering one row's actual columns.
 
-use super::{format, selection, tree, Pending, Snapshot, TaskRow};
+use super::{dispatch_ui, format, selection, tree, Pending, TaskRow};
 use crate::app::HiveApp;
 use crate::runtime::{BacklogTaskKey, BacklogTaskSortKey};
 use crate::ui::components::{status_pill, StatusKind};
@@ -24,27 +24,18 @@ const TREE_INDENT: f32 = 20.0;
 const TRAILING_COLS_WIDTH: f32 = 236.0;
 const REPO_COL_WIDTH: f32 = 92.0;
 
+/// Owner UX pass (2026-08-05): List used to embed its own left-list +
+/// right-detail split, since it was the only lens with a detail pane at
+/// all. Now that `rail::render_detail_rail` shows the same detail
+/// persistently regardless of lens, List renders just the task list, at
+/// full width — the shared rail is the one place detail renders.
 pub(super) fn render_task_workspace(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
-    snap: &Snapshot,
     tasks: Vec<TaskRow<'_>>,
     pending: &mut Pending,
 ) {
-    let list_width = (ui.available_width() * 0.44).clamp(420.0, 620.0);
-    let height = ui.available_height();
-    ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width(list_width);
-            ui.set_min_height(height);
-            render_task_list(app, ui, tasks, pending);
-        });
-        ui.separator();
-        ui.vertical(|ui| {
-            ui.set_min_height(height);
-            super::detail::render_task_detail(app, ui, snap, pending);
-        });
-    });
+    render_task_list(app, ui, tasks, pending);
 }
 
 fn render_task_list(
@@ -179,6 +170,9 @@ fn render_task_sort_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
                     BacklogTaskSortKey::Status,
                     BacklogTaskSortKey::Priority,
                     BacklogTaskSortKey::AcceptanceCriteria,
+                    BacklogTaskSortKey::Labels,
+                    BacklogTaskSortKey::Assignee,
+                    BacklogTaskSortKey::Milestone,
                 ] {
                     ui.selectable_value(&mut app.backlog_view.sort_key, key, key.label());
                 }
@@ -360,6 +354,7 @@ pub(super) fn render_task_list_row(
                 Some("Blocked by one or more open dependencies"),
             );
         }
+        dispatch_ui::render_dispatch_pill(ui, &dispatch_ui::dispatch_state(task));
     });
     if row_response.response.secondary_clicked() {
         selection::focus_context_selection(app, key.clone());
@@ -370,7 +365,11 @@ pub(super) fn render_task_list_row(
     ui.separator();
 }
 
-fn render_task_context_menu(
+/// TASK-26 (owner-requested UX): also called from `board::render_strip`'s
+/// card context menu — the Move/Priority actions and the Board lens's own
+/// selection state (`bulk_selected_tasks`, shared across both lenses) are
+/// identical, so Board reuses this rather than a parallel implementation.
+pub(super) fn render_task_context_menu(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
     clicked: &TaskRow<'_>,

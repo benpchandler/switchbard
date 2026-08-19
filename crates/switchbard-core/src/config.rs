@@ -66,6 +66,12 @@ pub struct UiConfig {
     /// `Config::ui` single source of truth rather than a new store.
     #[serde(default)]
     pub saved_views: Vec<SavedView>,
+    /// TASK-27 (owner-requested UX): whether the "Tracked repos" side panel
+    /// is collapsed to a thin rail. Additive — defaults to `false`
+    /// (expanded), so an existing config with no `sidebar_collapsed` key
+    /// loads exactly as it did before this field existed.
+    #[serde(default)]
+    pub sidebar_collapsed: bool,
 }
 
 // Hand-written so the default scale is 1.0, not the f32 `Default` of 0.0 (which
@@ -79,6 +85,7 @@ impl Default for UiConfig {
             theme: ThemeChoice::default(),
             ui_scale: default_ui_scale(),
             saved_views: Vec::new(),
+            sidebar_collapsed: false,
         }
     }
 }
@@ -105,6 +112,10 @@ pub struct SavedView {
     pub status_filter: String,
     #[serde(default = "default_filter_all")]
     pub priority_filter: String,
+    #[serde(default = "default_filter_all")]
+    pub milestone_filter: String,
+    #[serde(default = "default_filter_all")]
+    pub label_filter: String,
     #[serde(default)]
     pub sort_key: String,
     #[serde(default)]
@@ -206,11 +217,47 @@ pub fn save_to(path: &Path, config: &Config) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+    tombstone_if_wiping_repos(path, config)?;
     let text = toml::to_string_pretty(config)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let tmp = path.with_extension("toml.tmp");
     fs::write(&tmp, text)?;
     fs::rename(tmp, path)
+}
+
+/// TASK-22 follow-up: the incident's root cause was a test harness writing
+/// to the real config (fixed separately), but "an empty `repos` write
+/// silently clobbers a non-empty on-disk list" was named as a risk in its
+/// own right and left open. This is the guard: if `config` would write an
+/// empty `repos` list over a file that currently has a non-empty one, the
+/// existing file is preserved first as a timestamped `config.tombstone-
+/// <ts>.toml` sidecar — mirroring `load()`'s `.broken-<ts>.toml` pattern —
+/// so the write still proceeds (an intentional "remove all repos" is a
+/// legitimate user action) but is never irrecoverable.
+///
+/// Never fails the save over this: an unreadable/unparsable/missing
+/// existing file, or a tombstone write that itself fails, just means there
+/// was nothing to protect (or protection isn't possible) — the save
+/// continues either way rather than blocking the user's action.
+fn tombstone_if_wiping_repos(path: &Path, config: &Config) -> io::Result<()> {
+    if !config.repos.is_empty() {
+        return Ok(());
+    }
+    let Ok(existing_text) = fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let Ok(existing) = toml::from_str::<Config>(&existing_text) else {
+        return Ok(());
+    };
+    if existing.repos.is_empty() {
+        return Ok(());
+    }
+    let tombstone = path.with_extension(format!(
+        "tombstone-{}.toml",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    ));
+    let _ = fs::write(&tombstone, existing_text);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -255,6 +302,8 @@ mod tests {
                     selected_project: None,
                     status_filter: "all".into(),
                     priority_filter: "high".into(),
+                    milestone_filter: "all".into(),
+                    label_filter: "all".into(),
                     sort_key: "triage".into(),
                     sort_direction: "ascending".into(),
                     lens: "list".into(),
@@ -262,6 +311,7 @@ mod tests {
                     show_archived: false,
                     show_drafts: true,
                 }],
+                sidebar_collapsed: true,
             },
         };
         save_to(&path, &cfg).unwrap();
@@ -368,6 +418,102 @@ path = "/Users/me/Dev/switchbard"
             !tmp.exists(),
             ".toml.tmp sidecar should not remain after successful save"
         );
+    }
+
+    #[test]
+    fn wiping_repos_over_a_non_empty_config_writes_a_tombstone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let populated = Config {
+            version: 1,
+            repos: vec![Repo {
+                name: "switchbard".into(),
+                path: PathBuf::from("/Users/me/Dev/switchbard"),
+            }],
+            worktrees: vec![],
+            ui: UiConfig::default(),
+        };
+        save_to(&path, &populated).unwrap();
+
+        // Simulate a save that would wipe the repos list.
+        let emptied = Config::default();
+        save_to(&path, &emptied).unwrap();
+
+        // The write still proceeds — removing all repos is a legitimate
+        // user action — but a recovery point exists.
+        let loaded = load_from(&path).unwrap();
+        assert!(loaded.repos.is_empty());
+
+        let tombstones: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.contains("tombstone"))
+            .collect();
+        assert_eq!(tombstones.len(), 1, "expected exactly one tombstone file");
+
+        let tombstone_text = fs::read_to_string(dir.path().join(&tombstones[0])).unwrap();
+        let recovered: Config = toml::from_str(&tombstone_text).unwrap();
+        assert_eq!(recovered, populated);
+    }
+
+    #[test]
+    fn wiping_repos_when_already_empty_writes_no_tombstone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        save_to(&path, &Config::default()).unwrap();
+        save_to(&path, &Config::default()).unwrap();
+
+        let tombstones = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains("tombstone"))
+            .count();
+        assert_eq!(tombstones, 0);
+    }
+
+    #[test]
+    fn saving_a_non_empty_repos_list_writes_no_tombstone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let cfg = Config {
+            version: 1,
+            repos: vec![Repo {
+                name: "switchbard".into(),
+                path: PathBuf::from("/Users/me/Dev/switchbard"),
+            }],
+            worktrees: vec![],
+            ui: UiConfig::default(),
+        };
+        save_to(&path, &cfg).unwrap();
+        // A second non-empty save (e.g. adding another repo) is not a wipe.
+        save_to(&path, &cfg).unwrap();
+
+        let tombstones = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains("tombstone"))
+            .count();
+        assert_eq!(tombstones, 0);
+    }
+
+    #[test]
+    fn first_ever_save_of_an_empty_config_writes_no_tombstone() {
+        // No existing file at all — nothing to protect.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        save_to(&path, &Config::default()).unwrap();
+
+        let tombstones = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains("tombstone"))
+            .count();
+        assert_eq!(tombstones, 0);
     }
 
     #[test]

@@ -1,10 +1,11 @@
-//! "Tracked repos" right-side panel — persistent across all views.
-//!
-//! Rendered from `app::update` before the central-view dispatch so adding /
-//! removing repos works the same way no matter which tab you're on. The
-//! per-repo "N listeners" badge stays meaningful everywhere: listeners are a
-//! global concept, the count just describes how many of them attributed to
-//! that repo on the most recent scan.
+//! "Tracked repos" — a left-side panel local to the Servers view (owner UX
+//! pass, 2026-08-05: freed up the right edge for the Backlog view's
+//! persistent detail rail, `ui::backlog::rail`). Repo add/remove for every
+//! *other* view goes through the Settings window (`ui::settings`) instead —
+//! this panel's own add/remove buttons still work the same way, just no
+//! longer the only way to reach those actions. The per-repo "N listeners"
+//! badge is meaningful here specifically because it's now scoped to the one
+//! view (Servers) where listener counts are the point.
 
 use crate::app::HiveApp;
 use crate::runtime::PickerState;
@@ -12,7 +13,18 @@ use crate::ui::theme;
 use eframe::egui;
 use switchbard_core::WorktreeRef;
 
+/// TASK-27 (owner-requested UX): collapsed to a thin, non-resizable rail —
+/// just the toggle button, no repo list — to reclaim horizontal space
+/// without losing the panel's presence entirely (a fully-hidden panel would
+/// need a separate "where did the repo list go" affordance elsewhere).
+const COLLAPSED_WIDTH: f32 = 28.0;
+
 pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
+    if app.config.ui.sidebar_collapsed {
+        render_collapsed(app, ctx);
+        return;
+    }
+
     let repos = app.repos_snapshot();
     let worktrees = app.worktrees_snapshot();
     let picker_busy = matches!(*app.picker.lock().unwrap(), PickerState::InFlight);
@@ -23,11 +35,18 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     let mut want_pick = false;
     let mut move_request: Option<(usize, isize)> = None;
 
-    egui::SidePanel::right("repos")
+    egui::SidePanel::left("repos")
         .resizable(true)
         .default_width(280.0)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
+                if ui
+                    .small_button("◀")
+                    .on_hover_text("Collapse the tracked-repos panel")
+                    .clicked()
+                {
+                    app.config.ui.sidebar_collapsed = true;
+                }
                 ui.heading("Tracked repos");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let label = if picker_busy { "Picking…" } else { "➕ Add" };
@@ -52,7 +71,10 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
             );
             if let Some(msg) = &config_msg {
                 ui.add_space(2.0);
-                ui.label(egui::RichText::new(msg).color(theme::muted_text()));
+                // TASK-28: same clamped label top_bar.rs's status messages
+                // use — defense in depth against unbounded multi-line text,
+                // regardless of which surface a Status ends up painted on.
+                crate::ui::components::action_status_label(ui, msg, Some(theme::muted_text()));
             }
             ui.add_space(6.0);
 
@@ -89,7 +111,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                     if repo_count > 0 {
                         theme::painted_dot_pulse(ui, theme::green(), repo_count);
                     } else {
-                        theme::painted_dot(ui, egui::Color32::GRAY);
+                        theme::painted_dot(ui, theme::idle_dot());
                     }
                     if theme::caret_button(ui, expanded).clicked() {
                         if expanded {
@@ -168,7 +190,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                             if n > 0 {
                                 theme::painted_dot_small_pulse(ui, theme::green(), n);
                             } else {
-                                theme::painted_dot_small(ui, egui::Color32::DARK_GRAY);
+                                theme::painted_dot_small(ui, theme::idle_dot());
                             }
                             let branch = w.branch.as_deref().unwrap_or("(detached)");
                             ui.label(egui::RichText::new(branch).small());
@@ -195,12 +217,35 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     if let Some((i, delta)) = move_request {
         app.move_repo(i, delta);
     }
-    render_remove_confirmation(app, ctx);
 }
 
-/// Modal that pops over the whole window when the user clicks the ✕ next to
-/// a repo. Confirm removes the repo (does not touch the repo on disk).
-fn render_remove_confirmation(app: &mut HiveApp, ctx: &egui::Context) {
+/// The collapsed rail (TASK-27): a fixed-width, non-resizable panel with
+/// only the expand toggle.
+fn render_collapsed(app: &mut HiveApp, ctx: &egui::Context) {
+    egui::SidePanel::left("repos")
+        .resizable(false)
+        .exact_width(COLLAPSED_WIDTH)
+        .show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(4.0);
+                if ui
+                    .small_button("▶")
+                    .on_hover_text("Expand the tracked-repos panel")
+                    .clicked()
+                {
+                    app.config.ui.sidebar_collapsed = false;
+                }
+            });
+        });
+}
+
+/// Modal that pops over the whole window when the user clicks "Remove" next
+/// to a repo (from either this panel or the Settings window's own repo
+/// list). Confirm removes the repo (does not touch the repo on disk).
+/// Rendered unconditionally from `HiveApp::render_ui`, not tied to this
+/// panel's own visibility — the owner UX pass made "Tracked repos"
+/// Servers-only, but repo removal itself still needs to work from any view.
+pub(crate) fn render_remove_confirmation(app: &mut HiveApp, ctx: &egui::Context) {
     let Some((path, name)) = app.confirm_remove_repo.clone() else {
         return;
     };

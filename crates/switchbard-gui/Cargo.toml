@@ -18,17 +18,16 @@ chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 libc = "0.2"
-egui_extras = { version = "0.30", features = ["all_loaders"] }
+egui_extras = { version = "0.31", features = ["all_loaders"] }
 # Renders the task detail pane's markdown description (task-15 AC #3).
-egui_commonmark = "0.19"
+egui_commonmark = "0.20"
 # Native file picker for the "Add repo…" flow.
 rfd = "0.14"
 # Resolve $HOME for the first-launch discovery scan and "~/..." path display.
 dirs = "5"
 
 [dev-dependencies]
-egui_kittest = { version = "0.30", features = ["snapshot", "wgpu"] }
-kittest = "0.1"
+egui_kittest = { version = "0.31", features = ["snapshot", "wgpu"] }
 tempfile = "3"
 
 # egui_kittest's `wgpu` feature pulls wgpu with `default-features = false` and
@@ -36,15 +35,15 @@ tempfile = "3"
 # (Metal-only) that leaves `wgpu_snapshot` with zero adapters ("No adapter
 # found"). Depending on wgpu here with the `metal` feature re-enables the
 # backend via Cargo feature unification. Keep the major version in lock-step
-# with egui_kittest's wgpu (currently 23.x).
+# with egui_kittest's own wgpu requirement.
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-wgpu = { version = "23", default-features = false, features = ["metal"] }
+wgpu = { version = "24", default-features = false, features = ["metal"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-eframe = { version = "0.30", default-features = false, features = ["accesskit", "default_fonts", "glow"] }
+eframe = { version = "0.31", default-features = false, features = ["accesskit", "default_fonts", "glow"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-eframe = { version = "0.30", default-features = false, features = ["accesskit", "default_fonts", "glow", "x11", "wayland"] }
+eframe = { version = "0.31", default-features = false, features = ["accesskit", "default_fonts", "glow", "x11", "wayland"] }
 
 [[bin]]
 name = "switchbard"

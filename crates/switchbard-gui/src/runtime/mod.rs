@@ -71,6 +71,11 @@ pub struct BacklogViewState {
     pub project_filter: String,
     pub status_filter: String,
     pub priority_filter: String,
+    /// QA parity matrix gap: milestone browsing previously required
+    /// switching to the separate Milestones lens; this filters the List
+    /// lens's own row set instead, same "all" sentinel as status/priority.
+    pub milestone_filter: String,
+    pub label_filter: String,
     pub sort_key: BacklogTaskSortKey,
     pub sort_direction: BacklogTaskSortDirection,
     pub show_completed: bool,
@@ -104,6 +109,16 @@ pub struct BacklogViewState {
     pub active_saved_view: Option<String>,
     /// Draft text for the "Save current as…" field.
     pub saved_view_name_draft: String,
+    /// Mirrors `archive_confirm`'s inline-confirm pattern for the "Dispatch
+    /// this task" opt-in — flagging a task hands it to an autonomous
+    /// headless agent run, consequential enough to confirm the same way
+    /// Archive does. Cleared whenever the detail selection changes.
+    pub dispatch_confirm: bool,
+    /// Mirrors `archive_confirm` for "Clean Up Old Tasks" (QA parity matrix
+    /// LOW gap) — a workspace-global bulk action, not tied to any one
+    /// task's selection, so unlike the per-task confirms above it's cleared
+    /// by its own Confirm/Cancel buttons only, not by selection changes.
+    pub cleanup_confirm: bool,
 }
 
 impl Default for BacklogViewState {
@@ -116,6 +131,8 @@ impl Default for BacklogViewState {
             project_filter: String::new(),
             status_filter: "all".to_string(),
             priority_filter: "all".to_string(),
+            milestone_filter: "all".to_string(),
+            label_filter: "all".to_string(),
             sort_key: BacklogTaskSortKey::default(),
             sort_direction: BacklogTaskSortDirection::default(),
             show_completed: false,
@@ -129,6 +146,8 @@ impl Default for BacklogViewState {
             expanded_parents: BTreeSet::new(),
             active_saved_view: None,
             saved_view_name_draft: String::new(),
+            dispatch_confirm: false,
+            cleanup_confirm: false,
         }
     }
 }
@@ -212,6 +231,12 @@ pub enum BacklogTaskSortKey {
     Status,
     Priority,
     AcceptanceCriteria,
+    /// QA parity matrix MEDIUM gap: the webview's All Tasks table sorts by
+    /// labels/assignee/milestone; `compare_tasks` (sort.rs) had no such
+    /// keys.
+    Labels,
+    Assignee,
+    Milestone,
 }
 
 impl BacklogTaskSortKey {
@@ -222,6 +247,9 @@ impl BacklogTaskSortKey {
             Self::Status => "Status",
             Self::Priority => "Priority",
             Self::AcceptanceCriteria => "AC",
+            Self::Labels => "Labels",
+            Self::Assignee => "Assignee",
+            Self::Milestone => "Milestone",
         }
     }
 
@@ -233,6 +261,9 @@ impl BacklogTaskSortKey {
             Self::Status => "status",
             Self::Priority => "priority",
             Self::AcceptanceCriteria => "acceptance_criteria",
+            Self::Labels => "labels",
+            Self::Assignee => "assignee",
+            Self::Milestone => "milestone",
         }
     }
 
@@ -242,6 +273,9 @@ impl BacklogTaskSortKey {
             "status" => Self::Status,
             "priority" => Self::Priority,
             "acceptance_criteria" => Self::AcceptanceCriteria,
+            "labels" => Self::Labels,
+            "assignee" => Self::Assignee,
+            "milestone" => Self::Milestone,
             _ => Self::Triage,
         }
     }
@@ -327,6 +361,15 @@ pub struct BacklogNewTaskState {
     pub status: String,
     pub priority: String,
     pub acceptance_criteria: String,
+    /// QA parity matrix LOW gap: labels/assignee/milestone/dependencies were
+    /// only settable after creation, via the detail pane's own editors. Same
+    /// comma-separated draft-text shape as `BacklogEditorState`'s
+    /// labels/assignees/dependencies fields (`detail_lists::split_csv`
+    /// parses both).
+    pub labels: String,
+    pub assignees: String,
+    pub milestone: String,
+    pub dependencies: String,
 }
 
 impl Default for BacklogNewTaskState {
@@ -340,6 +383,10 @@ impl Default for BacklogNewTaskState {
             status: "To Do".to_string(),
             priority: "medium".to_string(),
             acceptance_criteria: String::new(),
+            labels: String::new(),
+            assignees: String::new(),
+            milestone: String::new(),
+            dependencies: String::new(),
         }
     }
 }

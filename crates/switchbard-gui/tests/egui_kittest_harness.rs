@@ -1,6 +1,6 @@
 use eframe::egui::{self, accesskit::Toggled};
+use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
-use kittest::Queryable;
 
 #[test]
 fn harness_queries_and_clicks_egui_widgets() {

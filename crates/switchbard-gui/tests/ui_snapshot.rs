@@ -30,5 +30,5 @@ fn agent_context_view_snapshot() {
     app.view_tab = ViewTab::AgentContext;
     let mut harness = harness(app);
     harness.run();
-    harness.wgpu_snapshot("agent_context_view");
+    harness.snapshot("agent_context_view");
 }
