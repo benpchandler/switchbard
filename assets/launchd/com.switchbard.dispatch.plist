@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template launchd agent for switchbard-dispatch. NOT installed or loaded by
+  anything in this repo — copying it into ~/Library/LaunchAgents/ and running
+  `launchctl bootstrap` is a manual, owner-initiated step. See
+  ../../docs/INSTALL-DISPATCH.md before doing that.
+
+  StartInterval (not RunAtLoad + KeepAlive) is deliberate: this runs
+  switchbard-dispatch as a periodic batch job that drains the queue once and
+  exits, not a resident daemon. See docs/product-trajectory.md's "Owner-scoped
+  exception" note.
+
+  Before use, replace:
+    - the ProgramArguments path with your built binary's absolute path
+      (`cargo build --release -p switchbard-dispatch` outputs to
+      target/release/switchbard-dispatch)
+    - PATH below with wherever your `git`, `gh`, and `claude` binaries live
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.switchbard.dispatch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/absolute/path/to/switchbard-dispatch</string>
+    </array>
+
+    <!-- Seconds between drain passes. 900 = 15 minutes. -->
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/switchbard-dispatch.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/switchbard-dispatch.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

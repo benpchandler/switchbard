@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/switchbard-core", "crates/switchbard-gui"]
+members = ["crates/switchbard-core", "crates/switchbard-gui", "crates/switchbard-dispatch"]
 
 [workspace.package]
 edition = "2021"

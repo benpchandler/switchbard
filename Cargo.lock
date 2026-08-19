@@ -3427,6 +3427,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "switchbard-dispatch"
+version = "0.3.0"
+dependencies = [
+ "switchbard-core",
+]
+
+[[package]]
 name = "switchbard-gui"
 version = "0.3.0"
 dependencies = [

@@ -1,0 +1,19 @@
+[package]
+name = "switchbard-dispatch"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description = "Headless drain of Switchbard's dispatch queue — no GUI, meant to run under launchd."
+keywords = ["devtools", "git", "worktree", "automation"]
+categories = ["development-tools"]
+
+[dependencies]
+switchbard-core = { path = "../switchbard-core" }
+
+[[bin]]
+name = "switchbard-dispatch"
+path = "src/main.rs"
