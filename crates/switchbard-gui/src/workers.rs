@@ -49,7 +49,9 @@
 //!   Switchbard alt-tabbed away doesn't need second-by-second freshness.
 
 use crate::runtime::worktrees::expand_worktrees;
-use crate::runtime::{ActiveRun, FileListSummary, OrderingState, WorktreeMeta, WorktreeSizeEntry};
+use crate::runtime::{
+    is_retired_worktree, ActiveRun, FileListSummary, OrderingState, WorktreeMeta, WorktreeSizeEntry,
+};
 use crate::sync::Kick;
 use eframe::egui;
 use switchbard_core::{
@@ -205,6 +207,13 @@ pub struct Channels {
     /// own slow cadence — see that worker's doc for why it can't share the
     /// git-probe tick.
     pub sizes: Arc<Mutex<HashMap<PathBuf, WorktreeSizeEntry>>>,
+    /// TASK-41: count of non-primary, clean, fully-merged worktrees —
+    /// written once per git-probe tick (`spawn_probe`, alongside `meta`
+    /// itself) rather than recomputed every frame the top bar renders. The
+    /// top bar reads this directly (`ui::top_bar::render_retired_worktrees_
+    /// nudge`) instead of cloning `repos`/`worktrees` and locking `meta` on
+    /// every frame across every tab.
+    pub retired_worktree_count: Arc<Mutex<usize>>,
     pub scanner_kick: Kick,
     pub probe_kick: Kick,
     pub detection_kick: Kick,
@@ -280,6 +289,11 @@ fn spawn_probe(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
             let repo_paths = repo_paths_by_name(&repos);
             let wts = ch.worktrees.lock().unwrap().clone();
             let refresh_ignored = should_refresh_ignored_files(tick);
+            // TASK-41: accumulated alongside the per-worktree probe loop
+            // rather than in a second pass over `wts` — see
+            // `retired_worktree_count`'s own doc for why this is cached at
+            // all instead of recomputed per-frame by the top bar.
+            let mut retired = 0usize;
             for w in &wts {
                 let main_drift = probe_main_drift(&w.path);
                 let remote_drift = probe_remote_drift(&w.path);
@@ -312,9 +326,13 @@ fn spawn_probe(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
                     probed_at: Some(Instant::now()),
                     staleness,
                 };
+                if is_retired_worktree(w, &repos, Some(&m)) {
+                    retired += 1;
+                }
                 ch.meta.lock().unwrap().insert(w.path.clone(), m);
                 ctx.request_repaint();
             }
+            *ch.retired_worktree_count.lock().unwrap() = retired;
             tick = tick.wrapping_add(1);
             let focused = ctx.input(|i| i.focused);
             ch.probe_kick.wait(effective_period(PROBE_PERIOD, focused));

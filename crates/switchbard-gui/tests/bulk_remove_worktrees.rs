@@ -353,3 +353,67 @@ fn run_bulk_removal_deletes_all_removable_worktrees_and_their_branches() {
         );
     }
 }
+
+/// Audit fix (PR #23 review): a `git branch -d` failure used to be silently
+/// swallowed (`.is_ok()` and move on) — the worktree still got removed and
+/// `branch_deleted` just quietly stayed low with no explanation. Constructs
+/// a candidate whose worktree removal succeeds but whose `branch` name is
+/// stale (already gone), so `delete_branch` fails; asserts the failure is
+/// captured in `first_branch_error` and surfaces in `status_message`,
+/// separately from `first_error` (which is reserved for a worktree-removal
+/// failure — a strictly more severe, different class of problem).
+#[test]
+fn run_bulk_removal_reports_a_branch_delete_failure_without_swallowing_it() {
+    use switchbard_core::BranchDeleteAssessment;
+    use switchbard_gui::runtime::BulkRemoveCandidate;
+
+    let (_tmp, repo, clean_worktrees) = setup_repo_with_n_clean_merged_worktrees(1);
+    let worktree_path = clean_worktrees[0].clone();
+
+    let candidate = BulkRemoveCandidate {
+        repo_path: repo.clone(),
+        worktree_path: worktree_path.clone(),
+        display_name: "wt-clean-0".to_string(),
+        // A branch name that was never actually created — `remove_worktree`
+        // still succeeds (it only touches the worktree directory), but the
+        // subsequent `git branch -d` on this name fails.
+        branch: Some("feat/never-existed".to_string()),
+        branch_assessment: Some(BranchDeleteAssessment {
+            branch: "feat/never-existed".to_string(),
+            other_checkouts: vec![],
+            unmerged_commits: Some(0),
+            compared_against: Some("main".to_string()),
+        }),
+        review_reason: None,
+    };
+
+    let summary = switchbard_gui::worktree_actions::run_bulk_removal(&[candidate], true);
+
+    assert_eq!(
+        summary.removed,
+        vec![worktree_path],
+        "worktree removal itself should still succeed"
+    );
+    assert_eq!(
+        summary.branch_deleted, 0,
+        "the bad branch name should not count as deleted"
+    );
+    assert!(
+        summary.first_error.is_none(),
+        "worktree removal succeeded, so first_error stays empty"
+    );
+    let branch_err = summary
+        .first_branch_error
+        .clone()
+        .expect("the branch-delete failure must not be silently swallowed");
+    assert!(
+        branch_err.contains("feat/never-existed"),
+        "expected the branch name in the error, got: {branch_err}"
+    );
+
+    let msg = summary.status_message(1, 0);
+    assert!(
+        msg.contains("branch delete failed"),
+        "status message should surface the branch-delete failure, got: {msg}"
+    );
+}

@@ -21,7 +21,8 @@ use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use switchbard_core::{
     AgentKind, AttributedListener, BranchDeleteAssessment, CommitSummary, ContextKind,
-    ContextScope, DirtyFile, DriftDetail, DriftProbe, OrderingOverlay, WorktreeStaleness,
+    ContextScope, DirtyFile, DriftDetail, DriftProbe, OrderingOverlay, Repo, WorktreeRef,
+    WorktreeStaleness,
 };
 
 /// The cross-repo triage overlay (`<hub repo>/ordering.yml`), refreshed by
@@ -584,6 +585,37 @@ pub struct WorktreeSizeEntry {
     /// gotten to this worktree, and the entry doesn't exist in the map yet).
     pub bytes: Option<u64>,
     pub computed_at: Instant,
+}
+
+/// Is `w` the primary checkout of its repo? A cheap "same path" check — good
+/// enough for counts/badges/filters, which can tolerate the rare race where
+/// a repo's primary path briefly doesn't match (e.g. mid-rename). Callers
+/// about to take a destructive action instead use the stronger,
+/// filesystem-canonicalizing `switchbard_core::is_primary_worktree`.
+///
+/// Shared by the git-probe worker's retired-worktree-count cache
+/// (`workers::spawn_probe`) and the Workspace staleness view
+/// (`ui::workspace::staleness`) so "is this worktree primary" has exactly
+/// one answer instead of two copies that could drift apart.
+pub fn worktree_is_primary(w: &WorktreeRef, repos: &[Repo]) -> bool {
+    repos
+        .iter()
+        .any(|r| r.name == w.repo_name && r.path == w.path)
+}
+
+/// A worktree counts as "retired" — the top-bar nudge, the "Select all
+/// merged+clean" bulk-select action, and the Merged filter chip's implicit
+/// "safe to remove" reading all agree on this definition — when it's
+/// non-primary, cleanly merged into its repo's default branch, and has no
+/// uncommitted changes. `None` (staleness/dirty not probed yet) never counts
+/// as retired.
+pub fn is_retired_worktree(w: &WorktreeRef, repos: &[Repo], meta: Option<&WorktreeMeta>) -> bool {
+    if worktree_is_primary(w, repos) {
+        return false;
+    }
+    meta.is_some_and(|m| {
+        matches!(m.staleness, Some(WorktreeStaleness::Merged { .. })) && m.is_dirty() == Some(false)
+    })
 }
 
 /// How much an agent has been committing lately. The thresholds are tuned for

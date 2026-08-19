@@ -9,12 +9,12 @@
 
 use super::Snapshot;
 use crate::app::HiveApp;
-use crate::runtime::{WorktreeMeta, WorktreeSizeEntry};
+use crate::runtime::{is_retired_worktree, worktree_is_primary, WorktreeMeta, WorktreeSizeEntry};
 use crate::ui::components::{mono_label, status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
 use std::path::PathBuf;
-use switchbard_core::{humanize_size, Repo, WorktreeRef, WorktreeStaleness};
+use switchbard_core::{humanize_size, WorktreeStaleness};
 
 /// Which staleness class the Workspace filter chips currently narrow to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -150,18 +150,6 @@ impl StalenessCounts {
     }
 }
 
-/// Is `w` the primary checkout of its repo? Same "path equality" trick
-/// `render_repo_card` already uses (`w.path == repo.path`) — the actual
-/// canonicalizing check (`is_primary_worktree`) shells out to the
-/// filesystem and is reserved for the bulk-remove open path, which needs the
-/// stronger guarantee; this cheaper check is enough to keep a repo's own
-/// checkout out of "how many worktrees can I retire" counts.
-fn worktree_is_primary(w: &WorktreeRef, repos: &[Repo]) -> bool {
-    repos
-        .iter()
-        .any(|r| r.name == w.repo_name && r.path == w.path)
-}
-
 /// Counts behind the filter chips + the "Select all merged+clean" button.
 /// Primary checkouts are excluded: a repo's own primary is trivially
 /// "Merged" (its `HEAD` *is* the default branch) but is never a legal
@@ -190,40 +178,27 @@ pub(super) fn compute_counts(snap: &Snapshot) -> StalenessCounts {
     counts
 }
 
-/// Every non-primary worktree currently classified `Merged` + clean — what
-/// "Select all merged+clean" selects and what the top-bar "N retired
-/// worktrees" nudge (`retired_worktree_count`) counts.
+/// Every worktree `is_retired_worktree` would count — what "Select all
+/// merged+clean" selects. The shared predicate (`crate::runtime`) is also
+/// what the git-probe worker uses to compute the cached top-bar nudge count
+/// (`retired_worktree_count`, below), so this list and that count can never
+/// disagree about which worktrees qualify.
 fn merged_and_clean_paths(snap: &Snapshot) -> Vec<PathBuf> {
     snap.worktrees
         .iter()
-        .filter(|w| !worktree_is_primary(w, &snap.repos))
-        .filter(|w| {
-            snap.meta.get(&w.path).is_some_and(|m| {
-                matches!(m.staleness, Some(WorktreeStaleness::Merged { .. }))
-                    && m.is_dirty() == Some(false)
-            })
-        })
+        .filter(|w| is_retired_worktree(w, &snap.repos, snap.meta.get(&w.path)))
         .map(|w| w.path.clone())
         .collect()
 }
 
-/// Top-bar nudge count ("N retired worktrees") — every non-primary worktree
-/// that's Merged + clean, across every tracked repo. `>0` is what
-/// `ui::top_bar::render` gates the nudge on.
+/// Top-bar nudge count ("N retired worktrees"). Reads a cache written once
+/// per git-probe tick by `workers::spawn_probe` (using the same
+/// `is_retired_worktree` predicate `merged_and_clean_paths` above uses)
+/// rather than recomputing it here — this used to clone `repos`/`worktrees`
+/// and lock `meta` on every top-bar frame across every tab, which is wasted
+/// work for a number that only actually changes once per probe tick.
 pub fn retired_worktree_count(app: &HiveApp) -> usize {
-    let repos = app.repos_snapshot();
-    let worktrees = app.worktrees_snapshot();
-    let meta = app.meta.lock().unwrap();
-    worktrees
-        .iter()
-        .filter(|w| !worktree_is_primary(w, &repos))
-        .filter(|w| {
-            meta.get(&w.path).is_some_and(|m| {
-                matches!(m.staleness, Some(WorktreeStaleness::Merged { .. }))
-                    && m.is_dirty() == Some(false)
-            })
-        })
-        .count()
+    *app.retired_worktree_count.lock().unwrap()
 }
 
 /// The filter-chip row + bulk-selection convenience controls, rendered once

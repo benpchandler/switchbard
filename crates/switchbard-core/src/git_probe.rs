@@ -108,19 +108,23 @@ pub enum WorktreeStaleness {
 /// squash-merged and the remote branch got deleted, so "no upstream" alone
 /// isn't a reliable orphan signal — checking "fully contained in `main`/
 /// `master`" first is what actually answers "is this safe to retire".
-/// `default_branch` is shared with `worktree_remove::assess_branch_delete`
-/// (same repo-level fact, one place to compute it) rather than re-derived
-/// here.
+/// `default_branch` and the ahead-count itself (`commits_ahead`) are both
+/// shared with `worktree_remove::assess_branch_delete` — the single-row
+/// remove dialog's "is it merged" fact and this badge's must never be able
+/// to disagree, so there is exactly one place that answers "how many
+/// commits ahead" for the whole crate, not two similar-but-distinct git
+/// queries that happen to usually agree.
 ///
 /// Never panics; on any git failure this falls back to `Live` (the least
 /// destructive classification — an unclassifiable worktree should never look
 /// like a safe bulk-remove candidate).
 pub fn probe_worktree_staleness(repo_path: &Path, worktree_path: &Path) -> WorktreeStaleness {
     if let Some(base) = crate::worktree_remove::default_branch(repo_path) {
-        if let Some(DriftProbe::Ready { ahead, .. }) = probe_ref_drift(worktree_path, &base) {
-            if ahead == 0 {
-                return WorktreeStaleness::Merged { base };
-            }
+        // Invoked at `worktree_path` (not `repo_path`) so `HEAD` resolves to
+        // *this* worktree's checkout — each linked worktree has its own HEAD
+        // file even though branch refs themselves are shared repo-wide.
+        if let Some(0) = crate::worktree_remove::commits_ahead(worktree_path, &base, "HEAD") {
+            return WorktreeStaleness::Merged { base };
         }
     }
     match probe_remote_drift(worktree_path) {

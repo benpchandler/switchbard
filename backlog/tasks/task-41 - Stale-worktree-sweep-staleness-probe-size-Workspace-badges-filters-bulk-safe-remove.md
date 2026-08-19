@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-08-19 19:55'
-updated_date: '2026-08-19 20:35'
+updated_date: '2026-08-19 20:52'
 labels:
   - workspace
 dependencies: []
@@ -42,24 +42,10 @@ Make Switchbard the place to see and retire dead worktrees: which worktrees are 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implementation notes (fireteam, feature/stale-worktree-sweep):
+--- Audit fixes (PR #23 review, MERGE verdict, 3 non-blocking) ---
+1. DRY: extracted worktree_remove::commits_ahead (renamed from private count_commits_ahead, widened to pub(crate)) as the single authoritative "commits ahead of base" primitive. probe_worktree_staleness now calls it (at worktree_path, base..HEAD) instead of its own probe_ref_drift-based ahead check — badge and single-row dialog can no longer disagree about "is it merged".
+2. Perf: retired_worktree_count is no longer recomputed every top-bar frame (was cloning Vec<Repo>/Vec<WorktreeRef> + locking meta on every frame, every tab). Extracted shared is_retired_worktree/worktree_is_primary predicates into runtime/mod.rs (also dedupes 2 near-identical copies in staleness.rs); the git-probe worker now computes+caches the count once per tick (Arc<Mutex<usize>> on Channels/HiveApp) and the top bar just reads it. Perf smoke re-run: p95 frame 18.6ms (was 18.7ms) — flat, as expected for this fixture size; the real win is on real multi-tab-visible machines with more worktrees.
+3. Nit: run_bulk_removal no longer swallows a git branch -d failure via .is_ok() — added first_branch_error (kept separate from first_error, which is reserved for the more severe worktree-removal failure), surfaced in status_message. New test proves it: a candidate whose worktree removal succeeds but branch name is stale fails delete_branch, and the failure shows up in both the summary and the status line.
 
-Core (switchbard-core):
-- git_probe.rs: WorktreeStaleness enum (Merged{base}|Orphan|Live) + probe_worktree_staleness(repo_path, worktree_path) — pure fn, priority merged-first (ahead==0 vs local main/master) then upstream check for Orphan/Live. Reuses worktree_remove::default_branch (widened to pub(crate)) rather than re-deriving "what's the default branch". 4 new fixture tests (merged/orphan/live/dirty-is-orthogonal).
-- worktree_size.rs (new file): probe_worktree_size (du -sk) + humanize_size. Pure, uncached — GUI owns caching/cadence, same split as every other probe.
-
-GUI (switchbard-gui):
-- workers.rs: staleness computed inline in the existing git-probe tick (measured ~24ms/worktree — cheap, no new worker needed). Size gets its OWN worker (spawn_size, own Kick, own cadence: 300s period, 30min stale-age, 5-per-tick bounded catch-up batch) because du measured ~650ms avg / up to 1.5s per worktree on this real machine (examples/scan_cadence_audit.rs, extended with staleness+size sections — real numbers cited in workers.rs's cadence table).
-- runtime/mod.rs: WorktreeMeta.staleness field; new WorktreeSizeEntry (own Arc<Mutex<HashMap>> on HiveApp, not folded into WorktreeMeta, since its refresh cadence is independent); ConfirmBulkRemoveWorktrees + BulkRemoveCandidate.
-- ui/workspace/staleness.rs (new) + ui/workspace/bulk_remove.rs (new): kept new code OUT of ui/workspace/mod.rs where possible per the file's own "known debt" note (net +40 LOC there, two new ~360/~160-line modules instead of piling on).
-- worktree_actions.rs: open/cancel/execute_bulk_remove_worktree_confirm + classify_bulk_candidate (reuses collect_dirty_files + assess_branch_delete — never a parallel safety check) + run_bulk_removal (extracted synchronous core so it's directly testable, same pattern worktree_removal_orchestration.rs already uses for the single-row dialog's decision logic).
-- Bulk-remove additionally routes a selected worktree with active Switchbard runs or attributed listeners into needs-review (not just dirty/unmerged) — a safety extension beyond the literal brief: a batch action shouldn't silently kill running services across N worktrees. Flagging this explicitly since it's scope I added, not scope I was handed.
-- Top-bar "N retired worktrees" nudge + Merged/Orphan/Live/Dirty filter chips (with live counts) exclude the primary checkout from counts — a primary's HEAD trivially equals its own default branch (always "Merged"), which would otherwise inflate "N retired" with worktrees nobody can actually retire. Per-row badge still shows on primary rows (AC#1 wants every worktree badged); only the actionable counts exclude it.
-
-Evidence:
-- mise run ci green locally (fmt + clippy -D warnings + full test suite, incl. new tests) — see PR for CI on macOS+Ubuntu.
-- Real-machine check (read-only, via examples/scan_cadence_audit.rs against the actual ~/.switchbard/config.toml, 11 repos / 84 worktrees under ~/Dev): 20 merged, 20 orphan, 44 live, staleness probe ~2.06s total; du sample of 20 worktrees averaged ~691ms each. Note: this machine's tracked repos are under ~/Dev, not the ~/Dev/.worktrees dir the task's "~89 merged / 138 total" figures came from (that dir isn't in this machine's tracked repo list) — the classification logic is proven correct and fast against real repos, but the literal "~89" count wasn't reproduced 1:1. Did not touch the real config or click Remove on anything real.
-- New tests: git_probe.rs (4 staleness fixtures), worktree_size.rs (3 fixtures), ui/workspace/staleness.rs (4 filter unit tests), tests/bulk_remove_worktrees.rs (3 tests: kittest auto-deselect incl. primary-drop, disabled-button, and a real-git-repo run_bulk_removal proof that 5 selected worktrees + their branches are actually gone and git worktree list agrees).
-- Perf smoke: tests/workspace_perf_smoke.rs (#[ignore]d, run explicitly) — headless egui_kittest harness with SWITCHBARD_PERF driving the real render_ui path over 11 repos x 12 linked worktrees (143 total, close to the real ~138-worktree citation), 200 frames, every row hitting the new badge/size/checkbox render paths. Result: frame p50 17.5ms / p95 18.7ms / max 38.7ms; workspace p50 16.4ms / p95 17.5ms / max 29.7ms (debug build). No pre-TASK-41 baseline build exists to diff against (the render path didn't exist before this task) — noted in the test's own doc; the assertion trips a regression tripwire at p95 < 33ms (one 30fps frame).
-- docs/product-trajectory.md intentionally NOT updated: this feature fulfills the already-documented direction ("progressive-disclosure workspace cards", worktree-first model) rather than changing the plan — DoD#4 left unchecked rather than falsely marking it "updated".
+Evidence: mise run ci green (fmt+clippy -D warnings+full suite incl. 2 new tests, one for branch-delete-failure surfacing); perf smoke re-run, no regression. Pushed as follow-up commit(s) on feature/stale-worktree-sweep, no squash/force-push.
 <!-- SECTION:NOTES:END -->

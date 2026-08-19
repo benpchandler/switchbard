@@ -286,15 +286,6 @@ impl HiveApp {
     }
 }
 
-/// TASK-41: classify one selected worktree for the bulk-remove dialog.
-/// `review_reason` is `None` iff every safety check passed — a worktree with
-/// zero attributed listeners/Switchbard runs, no uncommitted changes, and a
-/// branch `assess_branch_delete` already confirmed is fully merged into the
-/// repo's default branch. The active-run/listener check has no equivalent in
-/// the single-row dialog (which can stop services as part of removal); bulk
-/// removal deliberately never does that — a batch action shouldn't silently
-/// kill running agent processes across N worktrees, so any of them route to
-/// "needs review" instead.
 /// Outcome of one `run_bulk_removal` call. `removed` (not just a count) is
 /// what the caller needs to prune `worktrees`/queue `RemovedWorktree`
 /// outcomes for the exact set that actually succeeded — a partial failure
@@ -304,6 +295,13 @@ pub struct BulkRemovalSummary {
     pub removed: Vec<PathBuf>,
     pub branch_deleted: usize,
     pub first_error: Option<String>,
+    /// First `git branch -d` failure, if any — kept separate from
+    /// `first_error` because it's a strictly less severe class: the
+    /// worktree behind it is already gone (that's `first_error`'s job to
+    /// report), only the branch itself lingers. Silently swallowing this
+    /// (as the very first cut of this function did) left the status line's
+    /// "N branches deleted" undercount unexplained.
+    pub first_branch_error: Option<String>,
 }
 
 impl BulkRemovalSummary {
@@ -330,6 +328,9 @@ impl BulkRemovalSummary {
         }
         if let Some(err) = &self.first_error {
             msg.push_str(&format!("; first failure: {err}"));
+        }
+        if let Some(err) = &self.first_branch_error {
+            msg.push_str(&format!("; branch delete failed: {err}"));
         }
         msg
     }
@@ -362,10 +363,15 @@ pub fn run_bulk_removal(
                     if let (Some(branch), Some(assessment)) =
                         (&candidate.branch, &candidate.branch_assessment)
                     {
-                        if !assessment.is_blocked()
-                            && delete_branch(&candidate.repo_path, branch, false).is_ok()
-                        {
-                            summary.branch_deleted += 1;
+                        if !assessment.is_blocked() {
+                            match delete_branch(&candidate.repo_path, branch, false) {
+                                Ok(()) => summary.branch_deleted += 1,
+                                Err(e) => {
+                                    if summary.first_branch_error.is_none() {
+                                        summary.first_branch_error = Some(format!("{branch}: {e}"));
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -380,6 +386,15 @@ pub fn run_bulk_removal(
     summary
 }
 
+/// TASK-41: classify one selected worktree for the bulk-remove dialog.
+/// `review_reason` is `None` iff every safety check passed — a worktree with
+/// zero attributed listeners/Switchbard runs, no uncommitted changes, and a
+/// branch `assess_branch_delete` already confirmed is fully merged into the
+/// repo's default branch. The active-run/listener check has no equivalent in
+/// the single-row dialog (which can stop services as part of removal); bulk
+/// removal deliberately never does that — a batch action shouldn't silently
+/// kill running agent processes across N worktrees, so any of them route to
+/// "needs review" instead.
 fn classify_bulk_candidate(
     repo: &Repo,
     w: &WorktreeRef,

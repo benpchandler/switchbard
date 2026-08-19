@@ -93,6 +93,11 @@ pub struct HiveApp {
     /// on its own slow cadence (see that worker's doc for why it's not part
     /// of `meta`/the git-probe tick).
     pub sizes: Arc<Mutex<HashMap<PathBuf, WorktreeSizeEntry>>>,
+    /// TASK-41: count of non-primary, clean, fully-merged worktrees, written
+    /// once per git-probe tick by `workers::spawn_probe`. The top bar's "N
+    /// retired worktrees" nudge reads this directly rather than recomputing
+    /// it (a `repos`/`worktrees` clone + a `meta` lock) on every frame.
+    pub retired_worktree_count: Arc<Mutex<usize>>,
     pub state: Arc<Mutex<ScanState>>,
     pub scanner_kick: Kick,
     pub probe_kick: Kick,
@@ -299,6 +304,7 @@ impl HiveApp {
             ordering: Arc::new(Mutex::new(OrderingState::default())),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             sizes: Arc::new(Mutex::new(HashMap::new())),
+            retired_worktree_count: Arc::new(Mutex::new(0)),
             state: Arc::new(Mutex::new(ScanState::default())),
             scanner_kick: Kick::new(),
             probe_kick: Kick::new(),
@@ -357,6 +363,7 @@ impl HiveApp {
                 ordering: self.ordering.clone(),
                 active_runs: self.active_runs.clone(),
                 sizes: self.sizes.clone(),
+                retired_worktree_count: self.retired_worktree_count.clone(),
                 scanner_kick: self.scanner_kick.clone(),
                 probe_kick: self.probe_kick.clone(),
                 detection_kick: self.detection_kick.clone(),
