@@ -27,7 +27,7 @@ use crate::runtime::worktree_rename::RenameWorktreeDialog;
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
     ActiveRun, ActiveRunSummary, AgentContextViewState, BacklogViewState, ConfirmRemoveWorktree,
-    PickerState, ViewTab, WorktreeMeta,
+    OrderingState, PickerState, ViewTab, WorktreeMeta,
 };
 use crate::sync::{Kick, Status};
 use crate::ui;
@@ -83,6 +83,8 @@ pub struct HiveApp {
     pub services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>>,
     pub agent_contexts: Arc<Mutex<HashMap<PathBuf, AgentContextMap>>>,
     pub backlog_projects: Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
+    /// The cross-repo triage overlay, refreshed alongside `backlog_projects`.
+    pub ordering: Arc<Mutex<OrderingState>>,
     pub active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
     pub state: Arc<Mutex<ScanState>>,
     pub scanner_kick: Kick,
@@ -201,6 +203,7 @@ impl HiveApp {
             services: Arc::new(Mutex::new(HashMap::new())),
             agent_contexts: Arc::new(Mutex::new(HashMap::new())),
             backlog_projects: Arc::new(Mutex::new(HashMap::new())),
+            ordering: Arc::new(Mutex::new(OrderingState::default())),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             state: Arc::new(Mutex::new(ScanState::default())),
             scanner_kick: Kick::new(),
@@ -248,6 +251,7 @@ impl HiveApp {
                 services: self.services.clone(),
                 agent_contexts: self.agent_contexts.clone(),
                 backlog_projects: self.backlog_projects.clone(),
+                ordering: self.ordering.clone(),
                 active_runs: self.active_runs.clone(),
                 scanner_kick: self.scanner_kick.clone(),
                 probe_kick: self.probe_kick.clone(),
@@ -268,6 +272,10 @@ impl HiveApp {
 
     pub fn backlog_projects_snapshot(&self) -> HashMap<PathBuf, BacklogProject> {
         self.backlog_projects.lock().unwrap().clone()
+    }
+
+    pub fn ordering_snapshot(&self) -> OrderingState {
+        self.ordering.lock().unwrap().clone()
     }
 
     pub fn kick_all(&self) {

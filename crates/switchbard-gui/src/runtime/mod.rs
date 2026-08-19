@@ -21,8 +21,21 @@ use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use switchbard_core::{
     AgentKind, AttributedListener, BranchDeleteAssessment, CommitSummary, ContextKind,
-    ContextScope, DirtyFile, DriftDetail, DriftProbe,
+    ContextScope, DirtyFile, DriftDetail, DriftProbe, OrderingOverlay,
 };
+
+/// The cross-repo triage overlay (`<hub repo>/ordering.yml`), refreshed by
+/// the backlog worker alongside the project scan. `warning` is set when a
+/// present-but-malformed file falls back to an empty overlay (task-10 AC #3)
+/// — surfaced in the Backlog view's summary bar as a warning pill, the same
+/// treatment `BacklogProject::warnings` gets, rather than through the
+/// transient `backlog_status` line (which a 30s-periodic worker write would
+/// otherwise clobber mid-read).
+#[derive(Debug, Clone, Default)]
+pub struct OrderingState {
+    pub overlay: OrderingOverlay,
+    pub warning: Option<String>,
+}
 
 /// Top-level central-panel tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -33,13 +46,28 @@ pub enum ViewTab {
     Backlog,
 }
 
+/// Identifies one task across every tracked Backlog project: the project's
+/// worktree-root key (as everywhere else backlog state is keyed) plus its
+/// `backlog` task id. A bare task id is only unique **within** a project —
+/// the unified All-projects scope can show two "TASK-10"s side by side from
+/// different repos, so selection/bulk-selection must key on the pair.
+pub type BacklogTaskKey = (PathBuf, String);
+
 /// UI-local filters and edit buffers for the Backlog project-management view.
+///
+/// `selected_project` doubles as the scope switch: `None` (the default) is
+/// the unified "All projects" scope — the task list merges every tracked
+/// project, triage-ranked, with a repo badge per row. `Some(path)` narrows
+/// to that one project, matching how the view worked before the unified
+/// scope. Reusing the field rather than adding a parallel enum keeps "which
+/// project(s) am I looking at" in one place, and it's exactly the field the
+/// existing project picker combo box already drives.
 #[derive(Debug, Clone)]
 pub struct BacklogViewState {
     pub selected_project: Option<PathBuf>,
-    pub selected_task_id: Option<String>,
-    pub bulk_selected_task_ids: BTreeSet<String>,
-    pub bulk_selection_anchor_task_id: Option<String>,
+    pub selected_task: Option<BacklogTaskKey>,
+    pub bulk_selected_tasks: BTreeSet<BacklogTaskKey>,
+    pub bulk_selection_anchor: Option<BacklogTaskKey>,
     pub project_filter: String,
     pub status_filter: String,
     pub priority_filter: String,
@@ -55,9 +83,9 @@ impl Default for BacklogViewState {
     fn default() -> Self {
         Self {
             selected_project: None,
-            selected_task_id: None,
-            bulk_selected_task_ids: BTreeSet::new(),
-            bulk_selection_anchor_task_id: None,
+            selected_task: None,
+            bulk_selected_tasks: BTreeSet::new(),
+            bulk_selection_anchor: None,
             project_filter: String::new(),
             status_filter: "all".to_string(),
             priority_filter: "all".to_string(),
@@ -73,7 +101,12 @@ impl Default for BacklogViewState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BacklogTaskSortKey {
+    /// The triage-ranked order (`switchbard_core::triage_rank`): overlay
+    /// rank, then overdue/due-today/priority/age/repo. Default — this is
+    /// what makes the All-projects scope a triage queue out of the box; the
+    /// other sort keys remain available in either scope to override it.
     #[default]
+    Triage,
     Task,
     Status,
     Priority,
@@ -83,6 +116,7 @@ pub enum BacklogTaskSortKey {
 impl BacklogTaskSortKey {
     pub fn label(self) -> &'static str {
         match self {
+            Self::Triage => "Triage",
             Self::Task => "Task",
             Self::Status => "Status",
             Self::Priority => "Priority",
@@ -129,6 +163,12 @@ pub struct BacklogEditorState {
 #[derive(Debug, Clone)]
 pub struct BacklogNewTaskState {
     pub open: bool,
+    /// Which project to create the task in. Seeded from `selected_project`
+    /// when it names one project; when the view is in the All-projects scope
+    /// (`selected_project` is `None`), the modal shows its own project picker
+    /// and stores the choice here instead of forcing the user out of the
+    /// unified scope just to file a task.
+    pub target_project: Option<PathBuf>,
     pub title: String,
     pub description: String,
     pub status: String,
@@ -140,6 +180,7 @@ impl Default for BacklogNewTaskState {
     fn default() -> Self {
         Self {
             open: false,
+            target_project: None,
             title: String::new(),
             description: String::new(),
             status: "To Do".to_string(),
