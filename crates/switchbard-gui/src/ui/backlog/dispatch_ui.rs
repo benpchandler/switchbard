@@ -14,7 +14,7 @@ use switchbard_core::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum DispatchState {
+pub(crate) enum DispatchState {
     /// No dispatch label at all — the normal state for a task nobody has
     /// opted in.
     NotFlagged,
@@ -34,7 +34,7 @@ pub(super) enum DispatchState {
 /// Derive the current state from `task.labels` + `task.implementation_notes`
 /// — see the module doc for why those are authoritative rather than any
 /// state this app tracks itself.
-pub(super) fn dispatch_state(task: &BacklogTask) -> DispatchState {
+pub(crate) fn dispatch_state(task: &BacklogTask) -> DispatchState {
     let has = |label: &str| task.labels.iter().any(|l| l == label);
     if has(DISPATCHED_LABEL) {
         DispatchState::Dispatched {
@@ -68,7 +68,7 @@ fn find_note_suffix(notes: &str, prefix: &str) -> Option<String> {
 
 /// Compact pill for List rows / Board strips. `None` for `NotFlagged` — a
 /// row with nothing to say about dispatch shouldn't render an empty pill.
-pub(super) fn render_dispatch_pill(ui: &mut egui::Ui, state: &DispatchState) {
+pub(crate) fn render_dispatch_pill(ui: &mut egui::Ui, state: &DispatchState) {
     let (text, color) = match state {
         DispatchState::NotFlagged => return,
         DispatchState::Queued => ("QUEUED", theme::dispatch_accent()),

@@ -65,7 +65,7 @@ mod create;
 mod detail;
 mod detail_lists;
 mod digest;
-mod dispatch_ui;
+pub(crate) mod dispatch_ui;
 mod format;
 mod list;
 mod milestones;

@@ -53,6 +53,51 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
      success `gh pr create` → append PR link to the task's notes.
   3. *Headless dispatcher binary* — thin `switchbard-dispatch` bin reusing
      `switchbard-core`, run by launchd, drains the dispatch queue with the GUI closed.
+  4. *Dispatch view* (owner-approved 2026-08-06) — a fourth `ViewTab` (nav label
+     "Dispatches") listing every dispatch-labeled task across all repos, grouped
+     attention-first: **finished-never-released** → in flight → queued → failed →
+     awaiting review. Shows elapsed time, branch, worktree, log path, PR link,
+     failure reason. The `dispatching` label alone is *not* treated as proof a run
+     is live — an orphaned run wears it forever — so the view cross-checks it
+     against `DispatchRun::looks_orphaned` (agent output written, `RELEASE_GRACE`
+     elapsed, claim still held). Found by dogfooding: MusicProduction TASK-307 sat
+     under "In flight" for 84 minutes after its agent had already finished and
+     committed. See TASK-39 for actually recovering such runs. **No run store**:
+     `dispatch_inspect` rebuilds every path from repo root + task id, and recovers
+     the start time from the unix stamp already embedded in the log filename, so
+     inspection survives an app restart and `workers::spawn_dispatch` keeps its
+     "publishes no state of its own" property. The `dispatch_runs` map on `HiveApp`
+     is a *cache* refreshed by the backlog worker purely to keep `read_dir` off the
+     render path — the labels stay authoritative.
+
+- **Standardized cross-repo status vocabulary (owner decision 2026-08-06).** Every
+  tracked project offers the same statuses — `Icebox → To Do → In Progress →
+  In Review → Done` (`switchbard_core::STANDARD_STATUSES`) — regardless of what its
+  own `backlog/config.yml` declares. Chosen from evidence, not invented: a survey of
+  all 8 configured repos found `budget` already declaring exactly this list and the
+  other four backlog-bearing repos declaring a strict subset, so 322 of 323 existing
+  tasks already conformed. `ordered_status_vocabulary` seeds from this set rather
+  than the narrower `BACKLOG_STATUSES` trio, which is what makes the guarantee
+  scope-independent (the detail rail passes a single project).
+  - Accepted cost: a project with no `Icebox` tasks still renders an empty `Icebox`
+    Board column. `board_shows_the_full_standard_vocabulary_even_when_a_project_
+    declares_none` is the deliberate reversal of the older test that asserted the
+    opposite.
+  - The one non-conforming task (a single MusicProduction task on `Backlog`) is
+    intentionally left alone; `CANONICAL_STATUS_ORDER` still sorts it sensibly.
+  - **Not yet done:** the other repos' `backlog/config.yml` files are unchanged.
+    Switchbard offers the standard set regardless, so this is cosmetic — but until
+    those are rewritten, `backlog` CLI users outside Switchbard still see each
+    repo's old declared list.
+
+- **Dispatch lifecycle status transitions (owner decision 2026-08-06).** Claiming a
+  task sets its status to `In Progress`; opening its PR sets `In Review`. A failed
+  run *restores the status the task carried before the claim* rather than picking a
+  fixed default, so the pipeline is a true inverse of itself. No hook or callback is
+  involved — `dispatch_one` blocks on `wait_for_exit` and already knows the outcome.
+  The label state machine remains the authority on pipeline state; the status exists
+  so an agent-worked task is visible to someone reading the board rather than the
+  dispatch pill.
 
 ## Speculative (do NOT pre-build)
 

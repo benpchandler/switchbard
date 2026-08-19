@@ -47,16 +47,18 @@
 //!   Switchbard alt-tabbed away doesn't need second-by-second freshness.
 
 use crate::runtime::worktrees::expand_worktrees;
-use crate::runtime::{ActiveRun, FileListSummary, OrderingState, WorktreeMeta};
+use crate::runtime::{ActiveRun, BacklogTaskKey, FileListSummary, OrderingState, WorktreeMeta};
 use crate::sync::Kick;
 use eframe::egui;
+use switchbard_core::dispatch_inspect::{inspect_dispatch_run, DispatchRun};
 use switchbard_core::{
     agent_context_needs_rescan, attribute, detect_services, drain_dispatch_queue, find_hub_repo,
     is_backlog_project, list_dispatch_queue, load_backlog_project, load_ordering_overlay,
     probe_dirty_files, probe_fetch_age, probe_head_commit_time, probe_ignored_files,
     probe_main_drift, probe_recent_commits, probe_ref_drift_detail, probe_remote_drift,
     save_agent_context_cache, scan_agent_context, scan_listeners, AgentContextMap, BacklogProject,
-    DetectedService, DispatchOptions, DriftProbe, Repo, WorktreeRef,
+    DetectedService, DispatchOptions, DriftProbe, Repo, WorktreeRef, DISPATCHED_LABEL,
+    DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
@@ -175,6 +177,7 @@ pub struct Channels {
     pub services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>>,
     pub agent_contexts: Arc<Mutex<HashMap<PathBuf, AgentContextMap>>>,
     pub backlog_projects: Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
+    pub dispatch_runs: Arc<Mutex<HashMap<BacklogTaskKey, DispatchRun>>>,
     pub ordering: Arc<Mutex<OrderingState>>,
     pub active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
     pub scanner_kick: Kick,
@@ -472,6 +475,51 @@ pub(crate) fn collect_backlog_projects(roots: &[PathBuf]) -> HashMap<PathBuf, Ba
 /// Repo removal still works correctly: `roots` is this scan's authoritative
 /// set of *currently tracked* repos, so any cache entry outside it (an
 /// untracked repo) is dropped rather than lingering forever.
+/// Re-derive `dispatch_runs` for every task carrying a dispatch label.
+///
+/// Lives on the backlog worker rather than the dispatch worker because
+/// `spawn_dispatch` *blocks* for the entire length of a run — it could not
+/// refresh anything while the thing worth watching is happening. This runs on
+/// the backlog cadence instead, which is the same data's natural refresh rate.
+///
+/// The filesystem work is deliberately done outside the `backlog_projects`
+/// lock: collecting the (root, id) pairs first keeps that mutex held for a map
+/// walk rather than for a `read_dir` per dispatched task.
+fn refresh_dispatch_runs(ch: &Channels) {
+    let targets: Vec<(PathBuf, String)> = {
+        let projects = ch.backlog_projects.lock().unwrap();
+        projects
+            .iter()
+            .flat_map(|(root, project)| {
+                project
+                    .tasks
+                    .iter()
+                    .filter(|task| task.labels.iter().any(|label| is_dispatch_label(label)))
+                    .map(|task| (root.clone(), task.id.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    };
+
+    let runs = targets
+        .into_iter()
+        .map(|(root, task_id)| {
+            let run = inspect_dispatch_run(&root, &task_id);
+            ((root, task_id), run)
+        })
+        .collect();
+    *ch.dispatch_runs.lock().unwrap() = runs;
+}
+
+/// Any of the four labels that make up the dispatch state machine. A task
+/// carrying none of them has never been flagged and needs no run lookup.
+fn is_dispatch_label(label: &str) -> bool {
+    matches!(
+        label,
+        DISPATCH_LABEL | DISPATCHING_LABEL | DISPATCHED_LABEL | DISPATCH_FAILED_LABEL
+    )
+}
+
 pub(crate) fn merge_backlog_projects(
     cache: &mut HashMap<PathBuf, BacklogProject>,
     roots: &[PathBuf],
@@ -500,6 +548,7 @@ fn spawn_backlog(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
             let roots = backlog_project_roots(&repos);
             let projects = collect_backlog_projects(&roots);
             merge_backlog_projects(&mut ch.backlog_projects.lock().unwrap(), &roots, projects);
+            refresh_dispatch_runs(&ch);
 
             // The unified triage overlay lives in whichever tracked repo hosts
             // `ordering.yml` (the "hub" repo — see backlog_triage module doc).

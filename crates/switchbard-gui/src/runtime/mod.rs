@@ -44,6 +44,7 @@ pub enum ViewTab {
     Servers,
     AgentContext,
     Backlog,
+    Dispatch,
 }
 
 /// Identifies one task across every tracked Backlog project: the project's

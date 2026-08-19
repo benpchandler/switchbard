@@ -26,8 +26,8 @@ use crate::runtime::worktree_create::{CreateWorktreeDialog, CreateWorktreeOutcom
 use crate::runtime::worktree_rename::RenameWorktreeDialog;
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
-    ActiveRun, ActiveRunSummary, AgentContextViewState, BacklogViewState, ConfirmRemoveWorktree,
-    OrderingState, PickerState, ViewTab, WorktreeMeta,
+    ActiveRun, ActiveRunSummary, AgentContextViewState, BacklogTaskKey, BacklogViewState,
+    ConfirmRemoveWorktree, OrderingState, PickerState, ViewTab, WorktreeMeta,
 };
 use crate::sync::{Kick, Status};
 use crate::ui;
@@ -41,6 +41,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use switchbard_core::config::Config;
+use switchbard_core::dispatch_inspect::DispatchRun;
 use switchbard_core::instance_lock::{self, AcquireError, InstanceLock};
 use switchbard_core::{
     assess_branch_delete, collect_dirty_files, config, delete_branch, is_primary_worktree,
@@ -84,6 +85,11 @@ pub struct HiveApp {
     pub services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>>,
     pub agent_contexts: Arc<Mutex<HashMap<PathBuf, AgentContextMap>>>,
     pub backlog_projects: Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
+    /// Disk-derived state for every task carrying a dispatch label, refreshed
+    /// by `workers::spawn_backlog`. A cache of what `dispatch_inspect`
+    /// recomputes from the repo + task id, never a second source of truth —
+    /// it exists only to keep `read_dir`/`metadata` calls off the render path.
+    pub dispatch_runs: Arc<Mutex<HashMap<BacklogTaskKey, DispatchRun>>>,
     /// The cross-repo triage overlay, refreshed alongside `backlog_projects`.
     pub ordering: Arc<Mutex<OrderingState>>,
     pub active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
@@ -277,6 +283,7 @@ impl HiveApp {
             services: Arc::new(Mutex::new(HashMap::new())),
             agent_contexts: Arc::new(Mutex::new(HashMap::new())),
             backlog_projects: Arc::new(Mutex::new(HashMap::new())),
+            dispatch_runs: Arc::new(Mutex::new(HashMap::new())),
             ordering: Arc::new(Mutex::new(OrderingState::default())),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             state: Arc::new(Mutex::new(ScanState::default())),
@@ -330,6 +337,7 @@ impl HiveApp {
                 services: self.services.clone(),
                 agent_contexts: self.agent_contexts.clone(),
                 backlog_projects: self.backlog_projects.clone(),
+                dispatch_runs: self.dispatch_runs.clone(),
                 ordering: self.ordering.clone(),
                 active_runs: self.active_runs.clone(),
                 scanner_kick: self.scanner_kick.clone(),
@@ -352,6 +360,10 @@ impl HiveApp {
 
     pub fn backlog_projects_snapshot(&self) -> HashMap<PathBuf, BacklogProject> {
         self.backlog_projects.lock().unwrap().clone()
+    }
+
+    pub fn dispatch_runs_snapshot(&self) -> HashMap<BacklogTaskKey, DispatchRun> {
+        self.dispatch_runs.lock().unwrap().clone()
     }
 
     pub fn ordering_snapshot(&self) -> OrderingState {
@@ -929,8 +941,8 @@ impl HiveApp {
         thread::spawn(move || {
             match switchbard_core::edit_backlog_task(&project_root, &task_id, &patch) {
                 Ok(_) => {
-                    refresh_backlog_project_cache(&projects, &project_root);
-                    status.set(format!("saved {task_id}"));
+                    let reload = refresh_backlog_project_cache(&projects, &project_root);
+                    status.set(with_stale_warning(reload, format!("saved {task_id}")));
                     kick.notify();
                 }
                 Err(e) => status.set(format!("save {task_id} failed: {e}")),
@@ -968,16 +980,18 @@ impl HiveApp {
                     }
                 }
             }
+            let mut reload = Ok(());
             if saved > 0 {
-                refresh_backlog_project_cache(&projects, &project_root);
+                reload = refresh_backlog_project_cache(&projects, &project_root);
                 kick.notify();
             }
-            match first_error {
-                Some(error) => status.set(format!(
-                    "{action_label}: saved {saved}/{total} tasks; first failure: {error}"
-                )),
-                None => status.set(format!("{action_label}: updated {saved} task(s)")),
-            }
+            let summary = match first_error {
+                Some(error) => {
+                    format!("{action_label}: saved {saved}/{total} tasks; first failure: {error}")
+                }
+                None => format!("{action_label}: updated {saved} task(s)"),
+            };
+            status.set(with_stale_warning(reload, summary));
             ctx.request_repaint();
         });
     }
@@ -1010,9 +1024,12 @@ impl HiveApp {
                 enabled,
             ) {
                 Ok(_) => {
-                    refresh_backlog_project_cache(&projects, &project_root);
+                    let reload = refresh_backlog_project_cache(&projects, &project_root);
                     let verb = if enabled { "flagged" } else { "unflagged" };
-                    status.set(format!("{verb} {task_id} for dispatch"));
+                    status.set(with_stale_warning(
+                        reload,
+                        format!("{verb} {task_id} for dispatch"),
+                    ));
                     backlog_kick.notify();
                     if enabled {
                         dispatch_kick.notify();
@@ -1044,9 +1061,12 @@ impl HiveApp {
                 checked,
             ) {
                 Ok(_) => {
-                    refresh_backlog_project_cache(&projects, &project_root);
+                    let reload = refresh_backlog_project_cache(&projects, &project_root);
                     let verb = if checked { "checked" } else { "unchecked" };
-                    status.set(format!("{verb} {task_id} AC #{index}"));
+                    status.set(with_stale_warning(
+                        reload,
+                        format!("{verb} {task_id} AC #{index}"),
+                    ));
                     kick.notify();
                 }
                 Err(e) => status.set(format!("update {task_id} AC #{index} failed: {e}")),
@@ -1071,9 +1091,12 @@ impl HiveApp {
             match switchbard_core::set_backlog_dod_checked(&project_root, &task_id, index, checked)
             {
                 Ok(_) => {
-                    refresh_backlog_project_cache(&projects, &project_root);
+                    let reload = refresh_backlog_project_cache(&projects, &project_root);
                     let verb = if checked { "checked" } else { "unchecked" };
-                    status.set(format!("{verb} {task_id} DoD #{index}"));
+                    status.set(with_stale_warning(
+                        reload,
+                        format!("{verb} {task_id} DoD #{index}"),
+                    ));
                     kick.notify();
                 }
                 Err(e) => status.set(format!("update {task_id} DoD #{index} failed: {e}")),
@@ -1095,8 +1118,8 @@ impl HiveApp {
         thread::spawn(move || {
             match switchbard_core::archive_backlog_task(&project_root, &task_id) {
                 Ok(_) => {
-                    refresh_backlog_project_cache(&projects, &project_root);
-                    status.set(format!("archived {task_id}"));
+                    let reload = refresh_backlog_project_cache(&projects, &project_root);
+                    status.set(with_stale_warning(reload, format!("archived {task_id}")));
                     kick.notify();
                 }
                 Err(e) => status.set(format!("archive {task_id} failed: {e}")),
@@ -1121,8 +1144,8 @@ impl HiveApp {
         thread::spawn(move || {
             match switchbard_core::complete_backlog_task(&project_root, &task_id) {
                 Ok(_) => {
-                    refresh_backlog_project_cache(&projects, &project_root);
-                    status.set(format!("completed {task_id}"));
+                    let reload = refresh_backlog_project_cache(&projects, &project_root);
+                    status.set(with_stale_warning(reload, format!("completed {task_id}")));
                     kick.notify();
                 }
                 Err(e) => status.set(format!("complete {task_id} failed: {e}")),
@@ -1157,6 +1180,7 @@ impl HiveApp {
             let total: usize = per_project.iter().map(|(_, ids)| ids.len()).sum();
             let mut completed = 0usize;
             let mut first_error: Option<String> = None;
+            let mut first_reload_error: Result<(), String> = Ok(());
             for (project_root, task_ids) in &per_project {
                 let mut touched = false;
                 for task_id in task_ids {
@@ -1179,20 +1203,24 @@ impl HiveApp {
                     }
                 }
                 if touched {
-                    refresh_backlog_project_cache(&projects, project_root);
+                    let reload = refresh_backlog_project_cache(&projects, project_root);
+                    if first_reload_error.is_ok() {
+                        first_reload_error = reload;
+                    }
                 }
             }
             if completed > 0 {
                 kick.notify();
             }
-            match first_error {
-                Some(error) => status.set(format!(
+            let summary = match first_error {
+                Some(error) => format!(
                     "cleaned up {completed}/{total} Done tasks across {project_count} projects; first failure: {error}"
-                )),
-                None => status.set(format!(
+                ),
+                None => format!(
                     "cleaned up {completed}/{total} Done tasks across {project_count} projects"
-                )),
-            }
+                ),
+            };
+            status.set(with_stale_warning(first_reload_error, summary));
             ctx.request_repaint();
         });
     }
@@ -1211,8 +1239,11 @@ impl HiveApp {
         thread::spawn(move || {
             match switchbard_core::append_backlog_notes(&project_root, &task_id, &note) {
                 Ok(_) => {
-                    refresh_backlog_project_cache(&projects, &project_root);
-                    status.set(format!("appended note to {task_id}"));
+                    let reload = refresh_backlog_project_cache(&projects, &project_root);
+                    status.set(with_stale_warning(
+                        reload,
+                        format!("appended note to {task_id}"),
+                    ));
                     kick.notify();
                 }
                 Err(e) => status.set(format!("append note to {task_id} failed: {e}")),
@@ -1246,7 +1277,7 @@ impl HiveApp {
         thread::spawn(move || {
             match switchbard_core::create_backlog_task(&project_root, &task) {
                 Ok(output) => {
-                    refresh_backlog_project_cache(&projects, &project_root);
+                    let reload = refresh_backlog_project_cache(&projects, &project_root);
                     let repo_label = repos
                         .lock()
                         .unwrap()
@@ -1258,7 +1289,7 @@ impl HiveApp {
                         Some(task_id) => format!("Created {repo_label}:{task_id}"),
                         None => format!("created task in {repo_label}"),
                     };
-                    status.set(msg);
+                    status.set(with_stale_warning(reload, msg));
                     kick.notify();
                 }
                 Err(e) => status.set(format!("create task failed: {e}")),
@@ -1448,6 +1479,7 @@ impl HiveApp {
         match self.view_tab {
             ViewTab::Servers => ui::workspace::render(self, ctx),
             ViewTab::AgentContext => ui::agent_context::render(self, ctx),
+            ViewTab::Dispatch => ui::dispatch::render(self, ctx),
             ViewTab::Backlog => ui::backlog::render(self, ctx),
         }
         let central_elapsed = central_start.elapsed();
@@ -1503,15 +1535,38 @@ fn render_perf_overlay(ctx: &egui::Context, summary: &PerfSummary) {
         });
 }
 
+/// Re-read one project straight after a mutation so the UI reflects the edit
+/// without waiting out `workers::spawn_backlog`'s poll period.
+///
+/// Returns the reload failure rather than swallowing it. A dropped error here
+/// is invisible in the worst way: the `backlog` CLI write succeeded, so the
+/// status bar says "saved", while the cache the views render from still holds
+/// the pre-mutation snapshot — the user sees their edit apparently do nothing
+/// and has no clue why. Callers pair this with [`with_stale_warning`].
 fn refresh_backlog_project_cache(
     projects: &Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
     project_root: &Path,
-) {
-    if let Ok(project) = load_backlog_project(project_root) {
-        projects
-            .lock()
-            .unwrap()
-            .insert(project_root.to_path_buf(), project);
+) -> Result<(), String> {
+    match load_backlog_project(project_root) {
+        Ok(project) => {
+            projects
+                .lock()
+                .unwrap()
+                .insert(project_root.to_path_buf(), project);
+            Ok(())
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Compose a mutation's success message with the [`refresh_backlog_project_cache`]
+/// outcome. The write really did succeed, so the message still says so — but a
+/// failed reload means the visible snapshot is stale, and that has to be said
+/// out loud rather than left for the user to infer from a view that didn't move.
+fn with_stale_warning(reload: Result<(), String>, success: String) -> String {
+    match reload {
+        Ok(()) => success,
+        Err(e) => format!("{success} — view may be stale, reload failed: {e}"),
     }
 }
 

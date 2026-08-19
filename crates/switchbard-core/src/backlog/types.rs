@@ -6,8 +6,33 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+/// The three-status subset offered as one-click actions on a List row. This
+/// is an *affordance*, not a vocabulary claim — the full set a user can pick
+/// from is [`STANDARD_STATUSES`]. Five buttons per row would crowd the row;
+/// the rarer transitions live in the detail rail's dropdown.
 pub const BACKLOG_STATUSES: &[&str] = &["To Do", "In Progress", "Done"];
 pub const BACKLOG_PRIORITIES: &[&str] = &["high", "medium", "low"];
+
+/// The standardized cross-repo status vocabulary (owner decision 2026-08-06):
+/// every tracked project offers exactly these, whatever its own
+/// `backlog/config.yml` happens to declare.
+///
+/// Chosen from what the tracked repos already used rather than invented: a
+/// survey of all 8 configured repos found `budget` declaring precisely this
+/// five-value list and the other four backlog-bearing repos (CambridgeKitchens,
+/// MusicProduction, switchbard, hub) declaring an exact *subset*
+/// (`To Do`/`In Progress`/`Done`). Standardizing on the superset therefore
+/// reclassifies nothing — 322 of 323 existing tasks already sit on a value in
+/// this list. `In Review` in particular is the dispatch pipeline's
+/// "agent finished, a human should look" state (see `crate::dispatch`); it was
+/// already declared by `budget` and simply never used, so the lifecycle needed
+/// no new vocabulary.
+///
+/// The one holdout is a single MusicProduction task on `Backlog`, which no
+/// repo declares. It is deliberately NOT erased: [`CANONICAL_STATUS_ORDER`]
+/// still positions it so the task stays visible and sensibly sorted until
+/// someone moves it.
+pub const STANDARD_STATUSES: &[&str] = &["Icebox", "To Do", "In Progress", "In Review", "Done"];
 
 /// The owner's preferred kanban ordering for any status name this app has
 /// ever seen, whether or not it's one of `BACKLOG_STATUSES` — a leading
@@ -35,16 +60,24 @@ pub const CANONICAL_STATUS_ORDER: &[&str] = &[
 /// List's filter dropdown didn't, so the two lenses silently disagreed on
 /// what statuses existed.
 ///
-/// Union of `BACKLOG_STATUSES` (always present, even for a project that
-/// hasn't customized anything), every given project's own
-/// `configured_statuses` (`backlog/config.yml`'s declared list), and any
-/// status actually carried by a task in scope (covers a repo with genuinely
-/// ad hoc values outside both of the above) — ordered per
+/// Union of [`STANDARD_STATUSES`] (always present, so the offered vocabulary
+/// does not depend on which project happens to be in scope), every given
+/// project's own `configured_statuses` (`backlog/config.yml`'s declared list),
+/// and any status actually carried by a task in scope (covers a repo with
+/// genuinely ad hoc values outside both of the above) — ordered per
 /// `CANONICAL_STATUS_ORDER` first, anything else alphabetically after.
+///
+/// Seeding from `STANDARD_STATUSES` rather than the narrower
+/// `BACKLOG_STATUSES` is what makes standardization hold at every call site
+/// *without* each one having to pass all tracked projects: the detail rail
+/// scopes to a single project (`once(&project)`), so with the old trio as the
+/// seed a repo whose `config.yml` omitted `In Review` could never offer it —
+/// which is exactly how the dispatch lifecycle's target status became
+/// unreachable in four of the five backlog-bearing repos.
 pub fn ordered_status_vocabulary<'a>(
     projects: impl IntoIterator<Item = &'a BacklogProject>,
 ) -> Vec<String> {
-    let mut set: BTreeSet<String> = BACKLOG_STATUSES.iter().map(|s| (*s).to_string()).collect();
+    let mut set: BTreeSet<String> = STANDARD_STATUSES.iter().map(|s| (*s).to_string()).collect();
     for project in projects {
         for status in &project.configured_statuses {
             set.insert(status.clone());
@@ -307,10 +340,31 @@ mod tests {
         }
     }
 
+    /// The standardization guarantee: the offered vocabulary is the full
+    /// `STANDARD_STATUSES` set even with nothing in scope, so a surface that
+    /// scopes to one project (the detail rail) still offers `In Review` for a
+    /// repo whose own `config.yml` never declared it.
     #[test]
-    fn always_includes_backlog_statuses_even_with_no_projects() {
+    fn always_includes_the_standard_statuses_even_with_no_projects() {
         let vocab = ordered_status_vocabulary(std::iter::empty());
-        assert_eq!(vocab, vec!["To Do", "In Progress", "Done"]);
+        assert_eq!(
+            vocab,
+            vec!["Icebox", "To Do", "In Progress", "In Review", "Done"]
+        );
+    }
+
+    /// Regression guard for the bug this standardization fixed: a project
+    /// declaring only the narrow trio must still offer the dispatch
+    /// lifecycle's `In Review`, or `release_as_dispatched` writes a status the
+    /// user can never select back out of by hand.
+    #[test]
+    fn a_project_declaring_only_the_narrow_trio_still_offers_in_review() {
+        let p = project(&["To Do", "In Progress", "Done"], &[]);
+        let vocab = ordered_status_vocabulary([&p]);
+        assert!(
+            vocab.iter().any(|s| s == "In Review"),
+            "In Review must be offered regardless of the project's own config.yml, got {vocab:?}"
+        );
     }
 
     #[test]
@@ -333,23 +387,38 @@ mod tests {
         let vocab = ordered_status_vocabulary([&p]);
         assert_eq!(
             vocab,
-            vec!["To Do", "In Progress", "Done", "Blocked"],
+            vec![
+                "Icebox",
+                "To Do",
+                "In Progress",
+                "In Review",
+                "Done",
+                "Blocked"
+            ],
             "a genuinely ad hoc task status should still be offered, sorted after the canonical set"
         );
     }
 
     #[test]
     fn orders_canonically_regardless_of_which_project_declared_what() {
-        // "Backlog" and "Icebox" only ever appear if something declares
-        // them; they aren't in BACKLOG_STATUSES, so this also proves the
-        // canonical order applies to non-base statuses, not just the
-        // hardcoded three.
+        // "Backlog" is the one legacy value no repo declares (a single
+        // MusicProduction task still carries it), so it is deliberately not in
+        // STANDARD_STATUSES — but CANONICAL_STATUS_ORDER still places it ahead
+        // of the standardized set rather than dumping it in the alphabetical
+        // tail, which is what keeps that task sensibly sorted until it moves.
         let a = project(&["Backlog"], &[]);
         let b = project(&["In Review"], &[]);
         let vocab = ordered_status_vocabulary([&a, &b]);
         assert_eq!(
             vocab,
-            vec!["Backlog", "To Do", "In Progress", "In Review", "Done"]
+            vec![
+                "Backlog",
+                "Icebox",
+                "To Do",
+                "In Progress",
+                "In Review",
+                "Done"
+            ]
         );
     }
 
@@ -357,6 +426,17 @@ mod tests {
     fn extra_nonstandard_statuses_sort_alphabetically_after_the_canonical_set() {
         let p = project(&[], &["Zeta", "Alpha"]);
         let vocab = ordered_status_vocabulary([&p]);
-        assert_eq!(vocab, vec!["To Do", "In Progress", "Done", "Alpha", "Zeta"]);
+        assert_eq!(
+            vocab,
+            vec![
+                "Icebox",
+                "To Do",
+                "In Progress",
+                "In Review",
+                "Done",
+                "Alpha",
+                "Zeta"
+            ]
+        );
     }
 }
