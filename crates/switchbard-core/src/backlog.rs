@@ -163,6 +163,8 @@ pub struct NewBacklogTask {
     pub status: String,
     pub priority: String,
     pub acceptance_criteria: Vec<String>,
+    /// Parent task id (task-17's create-subtask), passed as `-p`/`--parent`.
+    pub parent: Option<String>,
 }
 
 pub fn is_backlog_project(root: &Path) -> bool {
@@ -420,6 +422,10 @@ pub fn create_backlog_task(project_root: &Path, task: &NewBacklogTask) -> Result
         }
         args.push("--ac".into());
         args.push(criterion.clone().into());
+    }
+    if let Some(parent) = &task.parent {
+        args.push("-p".into());
+        args.push(parent.clone().into());
     }
     run_backlog(project_root, args)
 }
@@ -680,6 +686,17 @@ fn unix_now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
+}
+
+/// Parse a Backlog `"YYYY-MM-DD HH:MM"` timestamp (`created_date`/
+/// `updated_date`) into a day count since the Unix epoch. Shared by
+/// `backlog_stats` (burndown, portfolio) and `backlog_relations` ("newly
+/// unblocked") — both only need day granularity, unlike `backlog_triage`'s
+/// age-based tiebreak, which keeps its own seconds-precision parser.
+pub fn parse_backlog_day(value: &str) -> Option<i64> {
+    chrono::NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%d %H:%M")
+        .ok()
+        .map(|dt| dt.and_utc().timestamp().div_euclid(86_400))
 }
 
 #[cfg(test)]

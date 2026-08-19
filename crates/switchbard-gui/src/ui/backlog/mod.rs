@@ -22,34 +22,46 @@
 //! - `sort`       — task filtering, sorting (incl. triage ranking), status options.
 //! - `selection`  — bulk multi-select state machine (shift/ctrl-click, context menu targets).
 //! - `detail_lists` — detail-pane checklist/list sections split out of `detail`.
+//! - `digest`     — the Digest lens: "what should I do today" landing screen (task-21).
 //! - `list`       — the List lens: task list column + row rendering.
+//! - `tree`        — the List lens's sub-task tree walk, split out of `list` (task-17).
 //! - `board`      — the Board lens: per-status kanban columns with drag-to-change-status.
 //! - `milestones` — the Milestones lens: tasks grouped by milestone, cross-repo.
+//! - `portfolio`  — the Portfolio lens: read-only per-repo health (task-19).
 //! - `stats`      — the Statistics lens: cross-repo totals + burndown (task-16).
 //! - `search`     — the Cmd+K / Ctrl+K global free-text search overlay.
+//! - `saved_views` — named filter+sort+lens combinations, persisted on `Config::ui` (task-20).
 //! - `detail`     — the selected-task detail pane (editor, acceptance, notes).
 //! - `create`     — the "New Backlog Task" modal.
 //!
 //! ## Lens
 //!
-//! `app.backlog_view.lens` (`BacklogLens`) picks which of the four central
-//! renderers below the toolbar owns the frame: `List` (default), `Board`,
-//! `Milestones`, or `Statistics`. All four share the same `Snapshot` and the
-//! same triage-ranked/filtered `tasks` list computed once per frame in
-//! `render` — see the perf note there.
+//! `app.backlog_view.lens` (`BacklogLens`) picks which of the six central
+//! renderers below the toolbar owns the frame: `Digest` (default), `List`,
+//! `Board`, `Milestones`, `Portfolio`, or `Statistics`. All six share the
+//! same `Snapshot`; `List`/`Board` additionally share one triage-ranked/
+//! filtered `tasks` list computed once per frame in `render` (see the perf
+//! note there) — `Digest`/`Portfolio`/`Statistics` read `scoped_projects`
+//! directly instead, since a read-only aggregation or landing page
+//! shouldn't go empty just because the toolbar's Done/Archived filters are
+//! off elsewhere.
 
 mod board;
 mod create;
 mod detail;
 mod detail_lists;
+mod digest;
 mod format;
 mod list;
 mod milestones;
+mod portfolio;
+mod saved_views;
 mod search;
 mod selection;
 mod sort;
 mod stats;
 mod toolbar;
+mod tree;
 
 use crate::app::HiveApp;
 use crate::runtime::worktree_names::worktree_display_name;
@@ -213,7 +225,12 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         toolbar::render_summary(app, ui, &snap);
         ui.add_space(6.0);
         toolbar::render_lens_tabs(app, ui);
+        saved_views::render_saved_views_bar(app, ui);
         match app.backlog_view.lens {
+            BacklogLens::Digest => {
+                ui.separator();
+                digest::render_digest(app, ui, &snap);
+            }
             BacklogLens::List => {
                 toolbar::render_project_toolbar(app, ui, &snap, tasks.len());
                 ui.separator();
@@ -227,6 +244,10 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
             BacklogLens::Milestones => {
                 ui.separator();
                 milestones::render_milestones(app, ui, &snap, tasks);
+            }
+            BacklogLens::Portfolio => {
+                ui.separator();
+                portfolio::render_portfolio(app, ui, &snap);
             }
             BacklogLens::Statistics => {
                 ui.separator();

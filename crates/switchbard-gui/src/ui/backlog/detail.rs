@@ -54,7 +54,19 @@ pub(super) fn render_task_detail(
             ui.add_space(8.0);
             render_editor(app, ui, &project.key, task, editable, pending);
             ui.add_space(10.0);
-            detail_lists::render_dependencies(app, ui, &project.key, task, editable, pending);
+            detail_lists::render_subtasks(app, ui, &project.key, task, &project.project, editable);
+            ui.add_space(10.0);
+            detail_lists::render_dependencies(
+                app,
+                ui,
+                &project.key,
+                task,
+                &project.project,
+                editable,
+                pending,
+            );
+            ui.add_space(10.0);
+            detail_lists::render_blocks(ui, task, &project.project);
             ui.add_space(10.0);
             detail_lists::render_references(app, ui, &project.key, task, editable, pending);
             ui.add_space(10.0);
@@ -92,6 +104,14 @@ fn render_detail_header(
                 StatusKind::Neutral,
                 "read-only",
                 Some("Only active backlog/tasks entries are edited through the CLI"),
+            );
+        }
+        if !task.is_done() && switchbard_core::is_blocked(task, &project.project) {
+            status_pill(
+                ui,
+                StatusKind::Danger,
+                "blocked",
+                Some("Blocked by one or more open dependencies — see Dependencies below"),
             );
         }
     });

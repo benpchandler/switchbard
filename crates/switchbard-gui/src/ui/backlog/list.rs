@@ -1,14 +1,22 @@
 //! The task list: column header, scrollable rows, bulk-select checkboxes,
-//! sort controls, and the right-click bulk-action context menu.
+//! sort controls, and the right-click bulk-action context menu. Rows nest
+//! into a sub-task tree (task-17) — see `tree.rs` for how that's decided and
+//! walked; this file owns rendering one row's actual columns.
 
-use super::{format, selection, Pending, Snapshot, TaskRow};
+use super::{format, selection, tree, Pending, Snapshot, TaskRow};
 use crate::app::HiveApp;
 use crate::runtime::{BacklogTaskKey, BacklogTaskSortKey};
 use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
 use std::path::PathBuf;
-use switchbard_core::{BacklogTaskPatch, BacklogTaskSource, BACKLOG_PRIORITIES, BACKLOG_STATUSES};
+use switchbard_core::{
+    is_blocked, BacklogTask, BacklogTaskPatch, BacklogTaskSource, BACKLOG_PRIORITIES,
+    BACKLOG_STATUSES,
+};
+
+/// Indentation per tree depth level.
+const TREE_INDENT: f32 = 20.0;
 
 /// Width of the trailing checkbox + status + priority + AC columns (i.e.
 /// everything to the right of the title). The repo badge column, present
@@ -93,14 +101,26 @@ fn render_task_list(
         );
     });
     ui.separator();
+    let child_keys = tree::child_keys_in_view(&tasks);
     egui::ScrollArea::vertical()
         .id_salt("backlog_task_list")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let rendered = tasks.len();
             for row in &tasks {
-                render_task_list_row(app, ui, row, &tasks, &visible_keys, show_repo, pending);
-                ui.add_space(5.0);
+                if child_keys.contains(&row.key()) {
+                    continue; // rendered nested under its parent below
+                }
+                tree::render_task_tree_row(
+                    app,
+                    ui,
+                    row,
+                    &tasks,
+                    &visible_keys,
+                    show_repo,
+                    0,
+                    pending,
+                );
             }
             if rendered == 0 {
                 ui.add_space(20.0);
@@ -188,13 +208,16 @@ fn render_task_sort_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
     });
 }
 
-fn render_task_list_row(
+#[allow(clippy::too_many_arguments)]
+pub(super) fn render_task_list_row(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
     row: &TaskRow<'_>,
     all_visible: &[TaskRow<'_>],
     visible_keys: &[BacklogTaskKey],
     show_repo: bool,
+    depth: usize,
+    children: &[&BacklogTask],
     pending: &mut Pending,
 ) {
     let task = row.task;
@@ -202,8 +225,23 @@ fn render_task_list_row(
     let detail_selected = app.backlog_view.selected_task.as_ref() == Some(&key);
     let bulk_selected = app.backlog_view.bulk_selected_tasks.contains(&key);
     let selected = detail_selected || bulk_selected;
-    let title_width = task_col_width(ui, show_repo);
+    let title_width = task_col_width(ui, show_repo) - (depth as f32 * TREE_INDENT);
     let row_response = ui.horizontal(|ui| {
+        if depth > 0 {
+            ui.add_space(depth as f32 * TREE_INDENT);
+        }
+        if children.is_empty() {
+            ui.add_space(18.0); // keeps childless rows aligned with the caret column
+        } else {
+            let expanded = app.backlog_view.expanded_parents.contains(&key);
+            if theme::caret_button(ui, expanded).clicked() {
+                if expanded {
+                    app.backlog_view.expanded_parents.remove(&key);
+                } else {
+                    app.backlog_view.expanded_parents.insert(key.clone());
+                }
+            }
+        }
         let mut checked = bulk_selected;
         let checkbox = ui
             .add_sized([24.0, 26.0], egui::Checkbox::without_text(&mut checked))
@@ -220,6 +258,12 @@ fn render_task_list_row(
             format!("{}:{}  {}", row.project.repo_name, task.id, task.title)
         } else {
             format!("{}  {}", task.id, task.title)
+        };
+        let title_text = if children.is_empty() {
+            title_text
+        } else {
+            let done = children.iter().filter(|c| c.is_done()).count();
+            format!("{title_text}  [{done}/{}]", children.len())
         };
         let resp = ui
             .add_sized(
@@ -303,6 +347,17 @@ fn render_task_list_row(
                 egui::RichText::new(task.source.label())
                     .small()
                     .color(theme::muted_text()),
+            );
+        }
+        // task-18: a lamp-language marker (StatusKind::Danger → warn_orange,
+        // the same "hot" tone Operator's Console uses for line/due alerts)
+        // for tasks with at least one open dependency.
+        if !task.is_done() && is_blocked(task, &row.project.project) {
+            status_pill(
+                ui,
+                StatusKind::Danger,
+                "blocked",
+                Some("Blocked by one or more open dependencies"),
             );
         }
     });

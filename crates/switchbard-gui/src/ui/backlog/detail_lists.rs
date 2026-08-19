@@ -5,18 +5,24 @@
 //! action. `split_csv` is a small shared helper `detail.rs` also uses for
 //! its labels/assignees fields.
 
-use super::Pending;
+use super::{format, Pending};
 use crate::app::HiveApp;
+use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
 use std::path::Path;
-use switchbard_core::{BacklogTask, BacklogTaskPatch};
+use switchbard_core::{BacklogProject, BacklogTask, BacklogTaskPatch};
 
+/// "Depends on" (task-18): each dependency shown with its own done/open
+/// status, not just the bare id — `dependency_statuses` resolves them
+/// against `project` (Backlog.md dependency ids are project-scoped, no repo
+/// qualifier, so there's no cross-repo case to handle here).
 pub(super) fn render_dependencies(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
     project_root: &Path,
     task: &BacklogTask,
+    project: &BacklogProject,
     editable: bool,
     pending: &mut Pending,
 ) {
@@ -24,7 +30,32 @@ pub(super) fn render_dependencies(
     if task.dependencies.is_empty() {
         ui.label(egui::RichText::new("No dependencies").color(theme::muted_text()));
     } else {
-        ui.label(task.dependencies.join(", "));
+        for (dep, done) in switchbard_core::dependency_statuses(task, project) {
+            ui.horizontal(|ui| {
+                ui.label(format!("{} {}", dep.id, dep.title));
+                if done {
+                    status_pill(ui, StatusKind::Good, "done", None);
+                } else {
+                    status_pill(ui, StatusKind::Danger, "open", None);
+                }
+            });
+        }
+        // Ids that didn't resolve to a task in this project (typo, or a task
+        // since archived/removed) — dependency_statuses omits them, so name
+        // them here rather than silently dropping them from view.
+        let unresolved: Vec<&str> = task
+            .dependencies
+            .iter()
+            .filter(|id| !project.tasks.iter().any(|t| &t.id == *id))
+            .map(String::as_str)
+            .collect();
+        if !unresolved.is_empty() {
+            ui.label(
+                egui::RichText::new(format!("Unresolved: {}", unresolved.join(", ")))
+                    .small()
+                    .color(theme::muted_text()),
+            );
+        }
     }
     ui.add_enabled_ui(editable, |ui| {
         ui.horizontal(|ui| {
@@ -56,6 +87,76 @@ pub(super) fn render_dependencies(
             }
         });
     });
+}
+
+/// Sub-tasks (task-17): direct children with a roll-up progress line, plus a
+/// "+ Subtask" button that opens the "New Backlog Task" modal pre-filled
+/// with this task as parent (`create::render_create_modal` reads `new_task.
+/// parent`). Mutation (the actual create) goes through the same `backlog
+/// task create -p` path every other creation uses — this section itself
+/// only sets up the modal's pre-fill, mirroring how the List lens's tree
+/// expand/collapse toggle works without a direct CLI call.
+pub(super) fn render_subtasks(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    project_root: &Path,
+    task: &BacklogTask,
+    project: &BacklogProject,
+    editable: bool,
+) {
+    let kids = switchbard_core::children(task, project);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Sub-tasks").strong());
+        if !kids.is_empty() {
+            let done = kids.iter().filter(|k| k.is_done()).count();
+            ui.label(
+                egui::RichText::new(format!("{done}/{} done", kids.len()))
+                    .color(theme::muted_text()),
+            );
+        }
+        if editable
+            && ui
+                .small_button("+ Subtask")
+                .on_hover_text("Create a subtask through backlog task create -p")
+                .clicked()
+        {
+            app.backlog_view.new_task.target_project = Some(project_root.to_path_buf());
+            app.backlog_view.new_task.parent = Some(task.id.clone());
+            app.backlog_view.new_task.open = true;
+        }
+    });
+    if kids.is_empty() {
+        ui.label(egui::RichText::new("No sub-tasks").color(theme::muted_text()));
+        return;
+    }
+    for child in kids {
+        ui.horizontal(|ui| {
+            ui.label(format!("{} {}", child.id, child.title));
+            status_pill(ui, format::status_kind(&child.status), &child.status, None);
+        });
+    }
+}
+
+/// "Blocks" (task-18's reverse direction): every task in `project` that
+/// names this task as one of its own dependencies. Purely derived — there's
+/// no CLI mutation for it, so this is read-only, unlike `render_dependencies`.
+pub(super) fn render_blocks(ui: &mut egui::Ui, task: &BacklogTask, project: &BacklogProject) {
+    ui.label(egui::RichText::new("Blocks").strong());
+    let blocked = switchbard_core::blocks(task, project);
+    if blocked.is_empty() {
+        ui.label(
+            egui::RichText::new("No other tasks depend on this one").color(theme::muted_text()),
+        );
+        return;
+    }
+    for dependent in blocked {
+        ui.horizontal(|ui| {
+            ui.label(format!("{} {}", dependent.id, dependent.title));
+            if dependent.is_done() {
+                status_pill(ui, StatusKind::Good, "done", None);
+            }
+        });
+    }
 }
 
 pub(super) fn render_references(

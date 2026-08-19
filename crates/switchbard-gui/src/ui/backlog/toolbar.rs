@@ -16,9 +16,11 @@ use switchbard_core::BACKLOG_PRIORITIES;
 pub(super) fn render_lens_tabs(app: &mut HiveApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         for lens in [
+            BacklogLens::Digest,
             BacklogLens::List,
             BacklogLens::Board,
             BacklogLens::Milestones,
+            BacklogLens::Portfolio,
             BacklogLens::Statistics,
         ] {
             if ui

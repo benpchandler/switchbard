@@ -373,13 +373,45 @@ fn legibility_backlog_task() -> BacklogTask {
     }
 }
 
+/// TASK-1's open dependency (task-18) — gives `legibility_backlog_task`'s
+/// `dependencies: ["TASK-2"]` something real to resolve against, so the
+/// "blocked" marker (List row, Board strip, detail header) actually renders
+/// during the audit instead of silently no-oping on an unresolved id.
+fn legibility_blocking_task() -> BacklogTask {
+    let mut task = legibility_backlog_task();
+    task.id = "TASK-2".to_string();
+    task.title = "Blocking dependency".to_string();
+    task.status = "To Do".to_string();
+    task.dependencies = vec![];
+    task.parent = None;
+    task.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-2.md"));
+    task
+}
+
+/// A direct child of `legibility_backlog_task` (task-17) — exercises the
+/// List lens's roll-up badge and, once expanded, its nested child row.
+fn legibility_subtask() -> BacklogTask {
+    let mut task = legibility_backlog_task();
+    task.id = "TASK-3".to_string();
+    task.title = "Subtask".to_string();
+    task.status = "To Do".to_string();
+    task.dependencies = vec![];
+    task.parent = Some("TASK-1".to_string());
+    task.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-3.md"));
+    task
+}
+
 fn seed_backlog_project(app: &HiveApp) {
     app.backlog_projects.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
             cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
-            tasks: vec![legibility_backlog_task()],
+            tasks: vec![
+                legibility_backlog_task(),
+                legibility_blocking_task(),
+                legibility_subtask(),
+            ],
             warnings: vec![],
             loaded_at_unix: 0,
         },
@@ -418,12 +450,38 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     seed_live_listener(&drawer_app);
     let drawer = harness(drawer_app);
 
+    let mut digest_app = seeded_app();
+    digest_app.config.ui.theme = theme;
+    digest_app.view_tab = ViewTab::Backlog;
+    // Digest is `BacklogLens::default()` (task-21), so this fixture leaves
+    // `lens` unset deliberately — it's exercising the default a real launch
+    // sees, not just picking the enum's first variant.
+    seed_backlog_project(&digest_app);
+    let digest = harness(digest_app);
+
     let mut list_app = seeded_app();
     list_app.config.ui.theme = theme;
     list_app.view_tab = ViewTab::Backlog;
+    // Explicit: `BacklogLens::default()` is `Digest`, not `List`, since
+    // task-21 — without this, this fixture would silently audit Digest
+    // twice and never touch the List lens's detail pane at all.
+    list_app.backlog_view.lens = BacklogLens::List;
     list_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    // Expanded so the sub-task tree's nested child row (task-17) is part of
+    // what gets audited, not just the collapsed parent's roll-up badge.
+    list_app
+        .backlog_view
+        .expanded_parents
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
     seed_backlog_project(&list_app);
     let list = harness(list_app);
+
+    let mut portfolio_app = seeded_app();
+    portfolio_app.config.ui.theme = theme;
+    portfolio_app.view_tab = ViewTab::Backlog;
+    portfolio_app.backlog_view.lens = BacklogLens::Portfolio;
+    seed_backlog_project(&portfolio_app);
+    let portfolio = harness(portfolio_app);
 
     let mut board_app = seeded_app();
     board_app.config.ui.theme = theme;
@@ -457,9 +515,11 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
             format!("Agent Context · file selected (path + preview){suffix}"),
             drawer,
         ),
+        (format!("Backlog · Digest lens (default){suffix}"), digest),
         (format!("Backlog · List lens (task detail){suffix}"), list),
         (format!("Backlog · Board lens{suffix}"), board),
         (format!("Backlog · Milestones lens{suffix}"), milestones),
+        (format!("Backlog · Portfolio lens{suffix}"), portfolio),
         (format!("Backlog · Statistics lens{suffix}"), stats),
     ]
 }

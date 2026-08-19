@@ -204,6 +204,18 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_re
                                     .color(theme::muted_text()),
                                 );
                             }
+                            // task-18 lamp-language marker — same rationale
+                            // as the List lens's blocked pill.
+                            if !row.task.is_done()
+                                && switchbard_core::is_blocked(row.task, &row.project.project)
+                            {
+                                ui.label(
+                                    egui::RichText::new("blocked")
+                                        .small()
+                                        .strong()
+                                        .color(theme::warn_orange()),
+                                );
+                            }
                         });
                     });
                 });

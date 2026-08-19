@@ -96,6 +96,10 @@ fn board_lens_renders_kanban_columns_with_the_seeded_task() {
 fn global_search_overlay_finds_the_matching_task_across_repos() {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
+    // The List lens's own row renders the same "repo:id  title" label the
+    // search result does (see the assertion below); the Digest lens
+    // (task-21's default) doesn't render that format at all.
+    app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.search.open = true;
     app.backlog_view.search.query = "Seeded".to_string();
     app.backlog_projects.lock().unwrap().insert(
@@ -254,6 +258,7 @@ fn agent_context_estimate_uses_effective_instructions_not_all_assets() {
 fn backlog_view_surfaces_seeded_task() {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::List;
     app.backlog_projects.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogProject {
@@ -324,6 +329,7 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::List;
 
     for (repo_name, title) in [("alpha", "Alpha task"), ("beta", "Beta task")] {
         app.backlog_projects.lock().unwrap().insert(
@@ -382,5 +388,287 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
     assert!(
         harness.query_all_by_label("beta").next().is_some(),
         "repo badge should render on the beta row"
+    );
+}
+
+/// Digest lens (task-21): the Backlog tab's default landing screen should
+/// surface an in-progress task under its "In progress" section.
+#[test]
+fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    let mut in_progress_task = seeded_backlog_task();
+    in_progress_task.status = "In Progress".to_string();
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![in_progress_task],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+
+    assert_eq!(
+        harness.state().backlog_view.lens,
+        BacklogLens::Digest,
+        "Digest is the Backlog tab's default lens"
+    );
+    assert!(
+        harness.query_all_by_label("In progress").next().is_some(),
+        "the In progress section header should render"
+    );
+    assert!(
+        harness.query_by_label("Seeded Backlog Task").is_some(),
+        "the in-progress task should render as a digest strip"
+    );
+
+    // Sections render Overdue, Newly unblocked, In progress, Recently done in
+    // that order, each with its own "View all" button.
+    harness
+        .get_all_by_label("View all")
+        .nth(2)
+        .expect("the In progress section's View all button")
+        .click();
+    harness.run();
+    assert_eq!(
+        harness.state().backlog_view.lens,
+        BacklogLens::List,
+        "View all on a digest section should jump to the List lens"
+    );
+}
+
+/// Portfolio lens (task-19): a read-only per-repo health table.
+#[test]
+fn portfolio_lens_renders_per_repo_health() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::Portfolio;
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![seeded_backlog_task()],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_all_by_label(REPO_NAME).next().is_some(),
+        "the repo name should render as a portfolio row"
+    );
+    assert!(
+        harness.query_by_label("Oldest open").is_some(),
+        "the oldest-open column header should render"
+    );
+    assert!(
+        harness.query_by_label("Last activity").is_some(),
+        "the last-activity column header should render"
+    );
+}
+
+/// Dependency/blocked visibility (task-18): a task with an open dependency
+/// should show a "blocked" marker in the List lens row and a per-dependency
+/// status in the detail pane's Dependencies section; the dependency itself
+/// should list this task under "Blocks".
+#[test]
+fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+
+    let mut blocker = seeded_backlog_task();
+    blocker.id = "TASK-1".to_string();
+    blocker.title = "Blocking task".to_string();
+    blocker.status = "To Do".to_string();
+
+    let mut dependent = seeded_backlog_task();
+    dependent.id = "TASK-2".to_string();
+    dependent.title = "Dependent task".to_string();
+    dependent.status = "To Do".to_string();
+    dependent.dependencies = vec!["TASK-1".to_string()];
+    dependent.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-2.md"));
+
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![blocker, dependent],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-2".to_string()));
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_all_by_label("blocked").next().is_some(),
+        "the dependent task's row should show a blocked marker"
+    );
+    assert!(
+        harness.query_by_label("TASK-1 Blocking task").is_some(),
+        "the detail pane's Dependencies section should name the open dependency"
+    );
+
+    harness.state_mut().backlog_view.selected_task =
+        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+    harness.run();
+    assert!(
+        harness.query_by_label("TASK-2 Dependent task").is_some(),
+        "the blocking task's detail pane should list what it Blocks"
+    );
+}
+
+/// Sub-task hierarchy (task-17): a parent with children collapses to a
+/// single row with a roll-up badge; expanding it reveals the children
+/// nested underneath, and the parent's detail pane offers "+ Subtask".
+#[test]
+fn parent_task_shows_rollup_and_expands_to_reveal_children() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+
+    let mut parent = seeded_backlog_task();
+    parent.id = "TASK-1".to_string();
+    parent.title = "Parent task".to_string();
+
+    let mut done_child = seeded_backlog_task();
+    done_child.id = "TASK-1.1".to_string();
+    done_child.title = "Done child".to_string();
+    done_child.status = "Done".to_string();
+    done_child.parent = Some("TASK-1".to_string());
+    done_child.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-1.1.md"));
+
+    let mut open_child = seeded_backlog_task();
+    open_child.id = "TASK-1.2".to_string();
+    open_child.title = "Open child".to_string();
+    open_child.parent = Some("TASK-1".to_string());
+    open_child.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-1.2.md"));
+
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![parent, done_child, open_child],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness
+            .query_by_label("TASK-1  Parent task  [1/2]")
+            .is_some(),
+        "the parent row should show a 1/2 roll-up badge"
+    );
+    assert!(
+        harness.query_by_label("TASK-1.2  Open child").is_none(),
+        "children stay collapsed until the parent is expanded"
+    );
+    assert!(
+        harness.query_by_label("+ Subtask").is_some(),
+        "the parent's detail pane should offer to create a subtask"
+    );
+
+    // The caret is the only unlabeled clickable control at the head of the
+    // parent's row; toggle expansion directly via view state instead of
+    // hunting for it by position, since it has no accessible label.
+    harness
+        .state_mut()
+        .backlog_view
+        .expanded_parents
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+    harness.run();
+
+    assert!(
+        harness.query_by_label("TASK-1.2  Open child").is_some(),
+        "expanding the parent should reveal its children nested underneath"
+    );
+    assert!(
+        harness.query_by_label("TASK-1.1  Done child").is_some(),
+        "the done child should also render once expanded"
+    );
+
+    harness.get_by_label("+ Subtask").click();
+    harness.run();
+    assert_eq!(
+        harness.state().backlog_view.new_task.parent.as_deref(),
+        Some("TASK-1"),
+        "+ Subtask should pre-fill the new-task modal's parent"
+    );
+    assert!(harness.state().backlog_view.new_task.open);
+}
+
+/// Saved views (task-20): saving the current filter/lens combination under a
+/// name persists it to `Config::ui.saved_views` and marks it active;
+/// deleting it removes it from config. Uses the Statistics lens (no detail
+/// pane, so no ambiguous second "Save" button) to isolate the saved-views
+/// bar's own controls.
+#[test]
+fn saved_view_can_be_saved_and_deleted() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::Statistics;
+    app.backlog_view.priority_filter = "high".to_string();
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![seeded_backlog_task()],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+
+    harness.state_mut().backlog_view.saved_view_name_draft = "High priority".to_string();
+    harness.get_by_label("Save").click();
+    harness.run();
+
+    assert_eq!(
+        harness.state().config.ui.saved_views.len(),
+        1,
+        "saving should persist one SavedView"
+    );
+    assert_eq!(
+        harness.state().config.ui.saved_views[0].priority_filter,
+        "high"
+    );
+    assert_eq!(harness.state().config.ui.saved_views[0].lens, "statistics");
+    assert_eq!(
+        harness.state().backlog_view.active_saved_view.as_deref(),
+        Some("High priority")
+    );
+
+    // Re-applying via the combo isn't exercised here: egui's ComboBox
+    // trigger has no accessible label in this harness (confirmed — it's
+    // absent from the accesskit tree entirely, not just unqueried), and its
+    // popup items only render once the trigger has been clicked open, which
+    // that same limitation blocks. `saved_views::apply_saved_view` itself is
+    // a handful of direct field assignments with no CLI call and no
+    // branching, unlike save/delete's config-mutation paths this test does
+    // cover end to end.
+    harness.get_by_label("Delete").click();
+    harness.run();
+    assert!(
+        harness.state().config.ui.saved_views.is_empty(),
+        "deleting the active saved view should remove it from config"
     );
 }

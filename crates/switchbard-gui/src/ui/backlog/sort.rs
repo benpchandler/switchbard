@@ -50,7 +50,12 @@ fn sort_by_triage<'a>(app: &HiveApp, rows: &mut Vec<TaskRow<'a>>) {
     let entries: Vec<_> = rows
         .iter()
         .map(|row| {
-            triage_entry_from_task(row.project.key.clone(), &row.project.repo_name, row.task)
+            triage_entry_from_task(
+                row.project.key.clone(),
+                &row.project.repo_name,
+                row.task,
+                &row.project.project,
+            )
         })
         .collect();
     let ranked = triage_rank(&entries, &overlay);

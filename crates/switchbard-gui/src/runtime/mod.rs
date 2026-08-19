@@ -92,6 +92,18 @@ pub struct BacklogViewState {
     /// an inline "Archive this task?" confirmation until they confirm or
     /// cancel. Cleared whenever the detail selection changes.
     pub archive_confirm: bool,
+    /// Which parent rows the List lens's sub-task tree (task-17) currently
+    /// shows expanded. Session-only UI state — not persisted, same as
+    /// `bulk_selected_tasks`; a collapsed-by-default tree on next launch is
+    /// the expected, unsurprising behavior.
+    pub expanded_parents: BTreeSet<BacklogTaskKey>,
+    /// Name of the `SavedView` (task-20, `Config::ui.saved_views`) currently
+    /// applied, if the filters/sort/lens still match what was saved under
+    /// it. `None` means "unsaved" — the normal state while just filtering
+    /// around. Session-only; not itself persisted.
+    pub active_saved_view: Option<String>,
+    /// Draft text for the "Save current as…" field.
+    pub saved_view_name_draft: String,
 }
 
 impl Default for BacklogViewState {
@@ -114,28 +126,69 @@ impl Default for BacklogViewState {
             new_task: BacklogNewTaskState::default(),
             search: BacklogSearchState::default(),
             archive_confirm: false,
+            expanded_parents: BTreeSet::new(),
+            active_saved_view: None,
+            saved_view_name_draft: String::new(),
         }
     }
 }
 
 /// The Backlog view's central-panel lens. `List` is the pre-existing
-/// triage/status list; the rest are task-15/16 additions.
+/// triage/status list; `Board`/`Milestones`/`Statistics` are task-15/16
+/// additions; `Digest`/`Portfolio` are task-21/19. `Digest` is the default —
+/// task-21 makes the "what should I do today" landing screen the Backlog
+/// tab's default lens (not the whole app's default *tab*, which stays
+/// `ViewTab::Servers`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BacklogLens {
     #[default]
+    Digest,
     List,
     Board,
     Milestones,
+    Portfolio,
     Statistics,
 }
 
 impl BacklogLens {
     pub fn label(self) -> &'static str {
         match self {
+            Self::Digest => "Digest",
             Self::List => "List",
             Self::Board => "Board",
             Self::Milestones => "Milestones",
+            Self::Portfolio => "Portfolio",
             Self::Statistics => "Statistics",
+        }
+    }
+
+    /// Stable identifier persisted in `SavedView::lens` (task-20). Not the
+    /// same string as `label()` on principle — `label()` is UI copy, free to
+    /// reword; this one is a serialization format that must stay stable
+    /// across renames.
+    pub fn as_saved_id(self) -> &'static str {
+        match self {
+            Self::Digest => "digest",
+            Self::List => "list",
+            Self::Board => "board",
+            Self::Milestones => "milestones",
+            Self::Portfolio => "portfolio",
+            Self::Statistics => "statistics",
+        }
+    }
+
+    /// Inverse of [`as_saved_id`][Self::as_saved_id]. Falls back to the
+    /// default lens for anything unrecognized (a saved view from an older
+    /// build naming a lens this version doesn't have) rather than erroring —
+    /// see `SavedView`'s doc in `switchbard_core::config`.
+    pub fn from_saved_id(id: &str) -> Self {
+        match id {
+            "list" => Self::List,
+            "board" => Self::Board,
+            "milestones" => Self::Milestones,
+            "portfolio" => Self::Portfolio,
+            "statistics" => Self::Statistics,
+            _ => Self::Digest,
         }
     }
 }
@@ -171,6 +224,27 @@ impl BacklogTaskSortKey {
             Self::AcceptanceCriteria => "AC",
         }
     }
+
+    /// See `BacklogLens::as_saved_id` — same rationale (task-20 saved views).
+    pub fn as_saved_id(self) -> &'static str {
+        match self {
+            Self::Triage => "triage",
+            Self::Task => "task",
+            Self::Status => "status",
+            Self::Priority => "priority",
+            Self::AcceptanceCriteria => "acceptance_criteria",
+        }
+    }
+
+    pub fn from_saved_id(id: &str) -> Self {
+        match id {
+            "task" => Self::Task,
+            "status" => Self::Status,
+            "priority" => Self::Priority,
+            "acceptance_criteria" => Self::AcceptanceCriteria,
+            _ => Self::Triage,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -192,6 +266,21 @@ impl BacklogTaskSortDirection {
         match self {
             Self::Ascending => Self::Descending,
             Self::Descending => Self::Ascending,
+        }
+    }
+
+    /// See `BacklogLens::as_saved_id` (task-20 saved views).
+    pub fn as_saved_id(self) -> &'static str {
+        match self {
+            Self::Ascending => "ascending",
+            Self::Descending => "descending",
+        }
+    }
+
+    pub fn from_saved_id(id: &str) -> Self {
+        match id {
+            "descending" => Self::Descending,
+            _ => Self::Ascending,
         }
     }
 }
@@ -227,6 +316,12 @@ pub struct BacklogNewTaskState {
     /// and stores the choice here instead of forcing the user out of the
     /// unified scope just to file a task.
     pub target_project: Option<PathBuf>,
+    /// Set when the modal was opened via "+ Subtask" on a task's detail pane
+    /// (task-17) — the parent task id, passed through as `-p` on create.
+    /// `Some` also pins `target_project` to the parent's own project; a
+    /// subtask can't be filed in a different repo than its parent, since
+    /// Backlog.md's `parent` field is a bare, project-scoped id.
+    pub parent: Option<String>,
     pub title: String,
     pub description: String,
     pub status: String,
@@ -239,6 +334,7 @@ impl Default for BacklogNewTaskState {
         Self {
             open: false,
             target_project: None,
+            parent: None,
             title: String::new(),
             description: String::new(),
             status: "To Do".to_string(),

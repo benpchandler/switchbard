@@ -1,6 +1,7 @@
 pub mod agent_context;
 pub mod attribution;
 pub mod backlog;
+pub mod backlog_relations;
 pub mod backlog_stats;
 pub mod backlog_triage;
 pub mod classify;
@@ -30,9 +31,14 @@ pub use agent_context::{
 pub use attribution::attribute;
 pub use backlog::{
     append_backlog_notes, archive_backlog_task, backlog_cli_path, create_backlog_task,
-    edit_backlog_task, is_backlog_project, load_backlog_project, set_backlog_acceptance_checked,
-    set_backlog_dod_checked, swap_backlog_label, BacklogChecklistItem, BacklogProject, BacklogTask,
-    BacklogTaskPatch, BacklogTaskSource, NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
+    edit_backlog_task, is_backlog_project, load_backlog_project, parse_backlog_day,
+    set_backlog_acceptance_checked, set_backlog_dod_checked, swap_backlog_label,
+    BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskPatch, BacklogTaskSource,
+    NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
+};
+pub use backlog_relations::{
+    blocking_dependencies, blocks, children, dependency_statuses, is_blocked, is_newly_unblocked,
+    subtask_progress,
 };
 pub use backlog_stats::{
     compute_burndown, compute_burndown_by_milestone, compute_cross_repo_stats, BurndownPoint,
