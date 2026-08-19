@@ -35,8 +35,8 @@ use tempfile::TempDir;
 /// init`'s default git integration) plus `backlog init --defaults`, with
 /// agent instruction files skipped (irrelevant noise for this fixture).
 /// Panics on setup failure — a missing/broken `backlog` CLI on `PATH` is a
-/// hard prerequisite for this whole file, matching how CI already requires
-/// it for other integration coverage.
+/// hard prerequisite for this whole file. `mise.toml` pins it
+/// (`npm:backlog.md`), so `mise install` / `jdx/mise-action` in CI provide it.
 fn fixture_repo() -> TempDir {
     let dir = TempDir::new().expect("create temp dir");
     run(dir.path(), "git", &["init", "-q"]);
