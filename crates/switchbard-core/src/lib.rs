@@ -22,6 +22,7 @@ pub mod workflow;
 pub mod worktree;
 pub mod worktree_create;
 pub mod worktree_remove;
+pub mod worktree_size;
 
 pub use agent_context::{
     agent_context_cache_path, agent_context_needs_rescan, load_agent_context_cache,
@@ -63,8 +64,8 @@ pub use git_env::git_cmd;
 pub use git_probe::{
     humanize_age, probe_ahead_behind, probe_dirty_files, probe_drift_detail, probe_fetch_age,
     probe_head_commit_time, probe_ignored_files, probe_main_drift, probe_recent_commits,
-    probe_ref_drift, probe_ref_drift_detail, probe_remote_drift, CommitSummary, DriftDetail,
-    DriftProbe,
+    probe_ref_drift, probe_ref_drift_detail, probe_remote_drift, probe_worktree_staleness,
+    CommitSummary, DriftDetail, DriftProbe, WorktreeStaleness,
 };
 pub use kill::{kill_pgid, KillOutcome};
 pub use open_url::{open_url, url_for_port, BROWSER_APP_NAMES};
@@ -79,3 +80,4 @@ pub use worktree_remove::{
     assess_branch_delete, collect_dirty_files, delete_branch, is_primary_worktree, remove_worktree,
     BranchDeleteAssessment, DirtyFile,
 };
+pub use worktree_size::{humanize_size, probe_worktree_size};

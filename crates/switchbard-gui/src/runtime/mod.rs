@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use switchbard_core::{
     AgentKind, AttributedListener, BranchDeleteAssessment, CommitSummary, ContextKind,
-    ContextScope, DirtyFile, DriftDetail, DriftProbe, OrderingOverlay,
+    ContextScope, DirtyFile, DriftDetail, DriftProbe, OrderingOverlay, WorktreeStaleness,
 };
 
 /// The cross-repo triage overlay (`<hub repo>/ordering.yml`), refreshed by
@@ -493,6 +493,50 @@ impl ConfirmRemoveWorktree {
     }
 }
 
+/// One worktree considered for the bulk-remove sweep (TASK-41), classified at
+/// dialog-open time by re-running the same primitives the single-row Remove
+/// dialog uses (`collect_dirty_files` + `assess_branch_delete`) — never a
+/// parallel "is this safe" check.
+#[derive(Debug, Clone)]
+pub struct BulkRemoveCandidate {
+    pub repo_path: PathBuf,
+    pub worktree_path: PathBuf,
+    pub display_name: String,
+    pub branch: Option<String>,
+    pub branch_assessment: Option<BranchDeleteAssessment>,
+    /// Why this candidate isn't in the removable set — `None` for a
+    /// clean+merged worktree with no other blockers. Non-`None` routes it
+    /// into the "needs review" list instead, and it is never force-removed.
+    pub review_reason: Option<String>,
+}
+
+impl BulkRemoveCandidate {
+    pub fn is_removable(&self) -> bool {
+        self.review_reason.is_none()
+    }
+}
+
+/// State for the bulk "Remove N worktrees" confirmation modal (TASK-41).
+/// Deliberately lighter-weight than `ConfirmRemoveWorktree`: there's no
+/// worker-visible `busy`/`error` in-place mutation here because, like
+/// `HiveApp::spawn_backlog_bulk_save`/`spawn_backlog_cleanup`, Confirm closes
+/// the dialog immediately and reports the outcome via `config_status` —
+/// appropriate for a batch action where "which of the N failed" is better
+/// read as a summary line than re-litigated in a lingering modal.
+#[derive(Debug, Clone)]
+pub struct ConfirmBulkRemoveWorktrees {
+    /// Clean + merged: what Confirm actually removes.
+    pub removable: Vec<BulkRemoveCandidate>,
+    /// Dirty and/or unmerged (or has active runs/listeners — see
+    /// `worktree_actions::open_bulk_remove_worktree_confirm`'s doc): shown for
+    /// visibility only, never touched by Confirm.
+    pub needs_review: Vec<BulkRemoveCandidate>,
+    /// "Also delete branch" — defaults ON here (unlike the single-row
+    /// dialog): every `removable` candidate is already known merged, so
+    /// deleting its branch is always a plain, non-force `git branch -d`.
+    pub delete_branches: bool,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct WorktreeMeta {
     /// `Some(files)` after the porcelain probe completes — empty means clean.
@@ -522,6 +566,24 @@ pub struct WorktreeMeta {
     /// the UI. Currently unread.
     #[allow(dead_code)]
     pub probed_at: Option<Instant>,
+    /// Merged/Orphan/Live classification (TASK-41), computed by the same
+    /// git-probe worker tick as `main_drift`/`remote_drift`. `None` while the
+    /// probe hasn't returned yet.
+    pub staleness: Option<WorktreeStaleness>,
+}
+
+/// Cached on-disk size for one worktree (TASK-41). Lives in its own
+/// `Arc<Mutex<HashMap<..>>>` on `HiveApp` (not folded into `WorktreeMeta`)
+/// because it's refreshed on a much slower, independently-paced cadence — see
+/// `workers::spawn_size`'s doc for why `du` can't share the git-probe
+/// worker's tick.
+#[derive(Debug, Clone, Copy)]
+pub struct WorktreeSizeEntry {
+    /// `None` when the `du` call itself failed (missing dir, permission
+    /// error) — distinct from "not probed yet" (`spawn_size` simply hasn't
+    /// gotten to this worktree, and the entry doesn't exist in the map yet).
+    pub bytes: Option<u64>,
+    pub computed_at: Instant,
 }
 
 /// How much an agent has been committing lately. The thresholds are tuned for

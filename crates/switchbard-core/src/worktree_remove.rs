@@ -215,7 +215,12 @@ fn other_worktrees_on_branch(
 /// The repo's default branch, preferring `main` over `master`. Returns `None`
 /// when neither local branch exists (e.g. a repo using some other trunk name —
 /// we'd rather decline to claim "landed" than guess wrong).
-fn default_branch(repo_path: &Path) -> Option<String> {
+///
+/// `pub(crate)` — `git_probe::probe_worktree_staleness` reuses this instead of
+/// re-deriving "what's the default branch" a second way (DRY: one place
+/// answers that question for both the single-row remove dialog and the
+/// staleness badge/bulk-remove sweep).
+pub(crate) fn default_branch(repo_path: &Path) -> Option<String> {
     ["main", "master"]
         .into_iter()
         .find(|cand| branch_exists(repo_path, cand))

@@ -6,10 +6,14 @@ use crate::runtime::worktree_names::{
     remove_worktree_alias, upsert_worktree_alias, worktree_display_name,
 };
 use crate::runtime::worktree_rename::RenameWorktreeDialog;
+use crate::runtime::{BulkRemoveCandidate, ConfirmBulkRemoveWorktrees};
 use eframe::egui;
 use std::path::PathBuf;
 use std::thread;
-use switchbard_core::{create_worktree, Repo, WorktreeRef};
+use switchbard_core::{
+    assess_branch_delete, collect_dirty_files, create_worktree, delete_branch, is_primary_worktree,
+    remove_worktree, Repo, WorktreeRef,
+};
 
 /// Payload pushed onto `remove_worktree_outcomes` by the worker thread on a
 /// successful `git worktree remove`.  The UI thread drains this queue and
@@ -143,6 +147,116 @@ impl HiveApp {
             .set(format!("renamed worktree label to '{name}'"));
     }
 
+    /// TASK-41: classify every currently bulk-selected worktree into
+    /// "removable" (clean + merged + nothing running here) vs "needs
+    /// review", reusing the exact same primitives the single-row Remove
+    /// dialog uses (`collect_dirty_files` + `assess_branch_delete`) — never
+    /// a parallel "is this safe" check. Primary worktrees are dropped
+    /// silently: `is_primary_worktree` (the real, canonicalizing check, not
+    /// the cheap `w.path == repo.path` the checkbox/chip-count use) is the
+    /// defense in depth against a primary ever reaching the dialog at all.
+    pub fn open_bulk_remove_worktree_confirm(&mut self) {
+        let repos = self.repos_snapshot();
+        let worktrees = self.worktrees_snapshot();
+        let selected = std::mem::take(&mut self.bulk_selected_worktrees);
+
+        let mut removable = Vec::new();
+        let mut needs_review = Vec::new();
+        for wt_path in selected {
+            let Some(w) = worktrees.iter().find(|w| w.path == wt_path) else {
+                continue;
+            };
+            let Some(repo) = repos.iter().find(|r| r.name == w.repo_name) else {
+                continue;
+            };
+            if is_primary_worktree(&repo.path, &wt_path) {
+                continue;
+            }
+            let display_name = worktree_display_name(&self.config, repo, w);
+            let active_run_count = self.snapshot_runs_for_worktree(&wt_path).len();
+            let listener_count = self
+                .state
+                .lock()
+                .unwrap()
+                .listeners
+                .iter()
+                .filter(|l| l.worktree_path.as_deref() == Some(wt_path.as_path()))
+                .count();
+            let candidate =
+                classify_bulk_candidate(repo, w, &display_name, active_run_count, listener_count);
+            if candidate.is_removable() {
+                removable.push(candidate);
+            } else {
+                needs_review.push(candidate);
+            }
+        }
+
+        *self.confirm_bulk_remove_worktrees.lock().unwrap() = Some(ConfirmBulkRemoveWorktrees {
+            removable,
+            needs_review,
+            delete_branches: true,
+        });
+    }
+
+    pub fn cancel_bulk_remove_worktree_confirm(&self) {
+        *self.confirm_bulk_remove_worktrees.lock().unwrap() = None;
+    }
+
+    /// Removes every `removable` candidate (never `--force`, matching the
+    /// invariant that nothing in the bulk sweep is ever force-removed) and,
+    /// when opted in, deletes each one's branch with a plain, non-force
+    /// `git branch -d` — safe because `removable` only ever contains
+    /// candidates `assess_branch_delete` already confirmed are fully merged.
+    /// `needs_review` candidates are never touched. Unlike
+    /// `execute_remove_worktree`'s single-row dialog, this closes
+    /// immediately and reports the outcome via `config_status` — the same
+    /// shape as `spawn_backlog_bulk_save`/`spawn_backlog_cleanup` use for
+    /// their own batch actions.
+    pub fn execute_bulk_remove_worktrees(&self, ctx: &egui::Context) {
+        let Some(state) = self.confirm_bulk_remove_worktrees.lock().unwrap().take() else {
+            return;
+        };
+        if state.removable.is_empty() {
+            return;
+        }
+
+        let status = self.config_status.clone();
+        let remove_outcomes = self.remove_worktree_outcomes.clone();
+        let worktrees = self.worktrees.clone();
+        let scanner_kick = self.scanner_kick.clone();
+        let probe_kick = self.probe_kick.clone();
+        let detection_kick = self.detection_kick.clone();
+        let agent_context_kick = self.agent_context_kick.clone();
+        let size_kick = self.size_kick.clone();
+        let ctx = ctx.clone();
+
+        thread::spawn(move || {
+            let needs_review_count = state.needs_review.len();
+            let summary = run_bulk_removal(&state.removable, state.delete_branches);
+
+            for path in &summary.removed {
+                worktrees.lock().unwrap().retain(|w| &w.path != path);
+            }
+            for candidate in &state.removable {
+                if summary.removed.contains(&candidate.worktree_path) {
+                    remove_outcomes.lock().unwrap().push(RemovedWorktree {
+                        repo_path: candidate.repo_path.clone(),
+                        worktree_path: candidate.worktree_path.clone(),
+                    });
+                }
+            }
+
+            status.set(summary.status_message(state.removable.len(), needs_review_count));
+
+            scanner_kick.notify();
+            probe_kick.notify();
+            detection_kick.notify();
+            agent_context_kick.notify();
+            size_kick.notify();
+            ctx.request_repaint();
+        });
+    }
+
     fn apply_created_worktree(&mut self, created: CreatedWorktree) {
         upsert_worktree_alias(
             &mut self.config,
@@ -169,5 +283,140 @@ impl HiveApp {
             self.config_status
                 .set(format!("create worktree failed: {error}"));
         }
+    }
+}
+
+/// TASK-41: classify one selected worktree for the bulk-remove dialog.
+/// `review_reason` is `None` iff every safety check passed — a worktree with
+/// zero attributed listeners/Switchbard runs, no uncommitted changes, and a
+/// branch `assess_branch_delete` already confirmed is fully merged into the
+/// repo's default branch. The active-run/listener check has no equivalent in
+/// the single-row dialog (which can stop services as part of removal); bulk
+/// removal deliberately never does that — a batch action shouldn't silently
+/// kill running agent processes across N worktrees, so any of them route to
+/// "needs review" instead.
+/// Outcome of one `run_bulk_removal` call. `removed` (not just a count) is
+/// what the caller needs to prune `worktrees`/queue `RemovedWorktree`
+/// outcomes for the exact set that actually succeeded — a partial failure
+/// partway through must not be reported as if every candidate landed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BulkRemovalSummary {
+    pub removed: Vec<PathBuf>,
+    pub branch_deleted: usize,
+    pub first_error: Option<String>,
+}
+
+impl BulkRemovalSummary {
+    /// The `config_status` line `execute_bulk_remove_worktrees` reports.
+    /// `total_removable`/`needs_review_count` come from the caller because
+    /// this summary only knows what it actually touched, not what the
+    /// dialog originally offered.
+    pub fn status_message(&self, total_removable: usize, needs_review_count: usize) -> String {
+        let mut msg = format!(
+            "bulk remove: removed {}/{total_removable} worktree(s)",
+            self.removed.len()
+        );
+        if self.branch_deleted > 0 {
+            msg.push_str(&format!(
+                " ({} branch{} deleted)",
+                self.branch_deleted,
+                if self.branch_deleted == 1 { "" } else { "es" }
+            ));
+        }
+        if needs_review_count > 0 {
+            msg.push_str(&format!(
+                "; {needs_review_count} left for review (dirty/unmerged/active)"
+            ));
+        }
+        if let Some(err) = &self.first_error {
+            msg.push_str(&format!("; first failure: {err}"));
+        }
+        msg
+    }
+}
+
+/// Removes every candidate in `removable` — never `--force`, matching the
+/// invariant that nothing in the bulk sweep is ever force-removed — and,
+/// when `delete_branches` is set, deletes each one's branch with a plain,
+/// non-force `git branch -d`. Safe because `removable` only ever contains
+/// candidates `assess_branch_delete` already confirmed are fully merged
+/// (`classify_bulk_candidate`'s doc). `needs_review` candidates are never
+/// passed in here at all.
+///
+/// Deliberately synchronous and free of any `Arc<Mutex<..>>`/`egui::Context`
+/// — the real git I/O this needs to prove ("5 selected worktrees really
+/// gone, `git worktree list` agrees") is exactly what a test can drive
+/// directly, the same way `worktree_remove.rs` and
+/// `worktree_removal_orchestration.rs` test `remove_worktree`/
+/// `delete_branch` themselves rather than the threaded wrapper around them.
+pub fn run_bulk_removal(
+    removable: &[BulkRemoveCandidate],
+    delete_branches: bool,
+) -> BulkRemovalSummary {
+    let mut summary = BulkRemovalSummary::default();
+    for candidate in removable {
+        match remove_worktree(&candidate.repo_path, &candidate.worktree_path, false) {
+            Ok(()) => {
+                summary.removed.push(candidate.worktree_path.clone());
+                if delete_branches {
+                    if let (Some(branch), Some(assessment)) =
+                        (&candidate.branch, &candidate.branch_assessment)
+                    {
+                        if !assessment.is_blocked()
+                            && delete_branch(&candidate.repo_path, branch, false).is_ok()
+                        {
+                            summary.branch_deleted += 1;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                if summary.first_error.is_none() {
+                    summary.first_error = Some(format!("{}: {e}", candidate.display_name));
+                }
+            }
+        }
+    }
+    summary
+}
+
+fn classify_bulk_candidate(
+    repo: &Repo,
+    w: &WorktreeRef,
+    display_name: &str,
+    active_run_count: usize,
+    listener_count: usize,
+) -> BulkRemoveCandidate {
+    let dirty = collect_dirty_files(&w.path).ok();
+    let is_dirty = dirty.as_ref().is_some_and(|files| !files.is_empty());
+    let branch_assessment = w
+        .branch
+        .as_ref()
+        .map(|b| assess_branch_delete(&repo.path, b, &w.path));
+    let is_merged = branch_assessment.as_ref().is_some_and(|a| !a.needs_force());
+
+    let review_reason = if dirty.is_none() {
+        Some("could not verify git status".to_string())
+    } else if is_dirty {
+        Some("has uncommitted changes".to_string())
+    } else if w.branch.is_none() {
+        Some("detached HEAD".to_string())
+    } else if !is_merged {
+        Some("branch not fully merged".to_string())
+    } else if active_run_count > 0 || listener_count > 0 {
+        Some(format!(
+            "{active_run_count} switchbard run(s), {listener_count} attributed listener(s) still here"
+        ))
+    } else {
+        None
+    };
+
+    BulkRemoveCandidate {
+        repo_path: repo.path.clone(),
+        worktree_path: w.path.clone(),
+        display_name: display_name.to_string(),
+        branch: w.branch.clone(),
+        branch_assessment,
+        review_reason,
     }
 }
