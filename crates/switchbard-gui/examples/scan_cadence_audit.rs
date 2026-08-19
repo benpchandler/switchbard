@@ -13,8 +13,16 @@ use switchbard_core::{
     config, detect_services, enumerate_worktrees, is_backlog_project, load_backlog_project,
     probe_dirty_files, probe_fetch_age, probe_head_commit_time, probe_ignored_files,
     probe_main_drift, probe_recent_commits, probe_ref_drift_detail, probe_remote_drift,
-    scan_agent_context, scan_listeners, DriftProbe, Repo, WorktreeRef,
+    probe_worktree_size, probe_worktree_staleness, scan_agent_context, scan_listeners, DriftProbe,
+    Repo, WorktreeRef,
 };
+
+/// `du` measured ~0.8-1.5s per real worktree in the 2026-08-19 audit (see
+/// `workers.rs`'s cadence-policy doc) — running it over every worktree on a
+/// 100+ worktree machine would make this "read-only, never blocks anything"
+/// instrument itself a multi-minute blocker. Bounded and logged rather than
+/// silently truncated (see the printed note below).
+const SIZE_SAMPLE_LIMIT: usize = 20;
 
 fn detect_services_timed(path: &std::path::Path) -> usize {
     detect_services(path).len()
@@ -236,4 +244,60 @@ fn main() {
         backlog_elapsed,
         task_total
     );
+
+    // ---- TASK-41 staleness probe: same cost class as the other git probes ----
+    let repo_paths: std::collections::HashMap<String, std::path::PathBuf> = cfg
+        .repos
+        .iter()
+        .map(|r| (r.name.clone(), r.path.clone()))
+        .collect();
+    let (mut merged, mut orphan, mut live, mut unclassified) = (0usize, 0usize, 0usize, 0usize);
+    let t0 = Instant::now();
+    for w in &worktrees {
+        match repo_paths
+            .get(&w.repo_name)
+            .map(|repo_path| probe_worktree_staleness(repo_path, &w.path))
+        {
+            Some(switchbard_core::WorktreeStaleness::Merged { .. }) => merged += 1,
+            Some(switchbard_core::WorktreeStaleness::Orphan) => orphan += 1,
+            Some(switchbard_core::WorktreeStaleness::Live) => live += 1,
+            None => unclassified += 1,
+        }
+    }
+    let staleness_elapsed = t0.elapsed();
+    println!(
+        "\n[staleness] probe_worktree_staleness over {} worktrees: {:?} (~2-3 git subprocess spawns each, same class as probe_main_drift/probe_remote_drift)",
+        worktrees.len(),
+        staleness_elapsed
+    );
+    println!(
+        "  -> merged {merged}, orphan {orphan}, live {live}, unclassified (no repo path found) {unclassified}"
+    );
+
+    // ---- TASK-41 size probe (`du`): the outlier — see SIZE_SAMPLE_LIMIT's doc ----
+    let sample: Vec<&WorktreeRef> = worktrees.iter().take(SIZE_SAMPLE_LIMIT).collect();
+    let t0 = Instant::now();
+    for w in &sample {
+        let _ = probe_worktree_size(&w.path);
+    }
+    let size_elapsed = t0.elapsed();
+    println!(
+        "\n[size] probe_worktree_size (`du -sk`) over a bounded sample of {}/{} worktrees: {:?}",
+        sample.len(),
+        worktrees.len(),
+        size_elapsed
+    );
+    if !sample.is_empty() {
+        println!(
+            "  -> average per worktree: {:?} (see workers::SIZE_MAX_MISSING_PER_TICK / SIZE_PERIOD for why this never runs as one unbounded sweep)",
+            size_elapsed / sample.len() as u32
+        );
+    }
+    if worktrees.len() > sample.len() {
+        println!(
+            "  -> {} worktrees NOT sampled (SIZE_SAMPLE_LIMIT={}) — re-run with a higher limit for a full-machine number, deliberately, not by default",
+            worktrees.len() - sample.len(),
+            SIZE_SAMPLE_LIMIT
+        );
+    }
 }

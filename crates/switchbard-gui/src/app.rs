@@ -26,12 +26,14 @@ use crate::runtime::worktree_create::{CreateWorktreeDialog, CreateWorktreeOutcom
 use crate::runtime::worktree_rename::RenameWorktreeDialog;
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
-    ActiveRun, ActiveRunSummary, AgentContextViewState, BacklogViewState, ConfirmRemoveWorktree,
-    OrderingState, PickerState, ViewTab, WorktreeMeta,
+    ActiveRun, ActiveRunSummary, AgentContextViewState, BacklogViewState,
+    ConfirmBulkRemoveWorktrees, ConfirmRemoveWorktree, OrderingState, PickerState, ViewTab,
+    WorktreeMeta, WorktreeSizeEntry,
 };
 use crate::sync::{Kick, Status};
 use crate::ui;
 use crate::ui::onboarding::DiscoveryState;
+use crate::ui::workspace::staleness::StalenessFilter;
 use crate::workers::{self, Channels};
 use crate::worktree_actions::RemovedWorktree;
 use eframe::egui;
@@ -87,6 +89,15 @@ pub struct HiveApp {
     /// The cross-repo triage overlay, refreshed alongside `backlog_projects`.
     pub ordering: Arc<Mutex<OrderingState>>,
     pub active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
+    /// TASK-41: on-disk size per worktree, refreshed by `workers::spawn_size`
+    /// on its own slow cadence (see that worker's doc for why it's not part
+    /// of `meta`/the git-probe tick).
+    pub sizes: Arc<Mutex<HashMap<PathBuf, WorktreeSizeEntry>>>,
+    /// TASK-41: count of non-primary, clean, fully-merged worktrees, written
+    /// once per git-probe tick by `workers::spawn_probe`. The top bar's "N
+    /// retired worktrees" nudge reads this directly rather than recomputing
+    /// it (a `repos`/`worktrees` clone + a `meta` lock) on every frame.
+    pub retired_worktree_count: Arc<Mutex<usize>>,
     pub state: Arc<Mutex<ScanState>>,
     pub scanner_kick: Kick,
     pub probe_kick: Kick,
@@ -97,6 +108,7 @@ pub struct HiveApp {
     /// the per-task "Dispatch" toggle so flagging a task doesn't wait out
     /// the worker's normal poll period before the queue is drained.
     pub dispatch_kick: Kick,
+    pub size_kick: Kick,
     pub picker: Arc<Mutex<PickerState>>,
 
     // Per-view feedback channels. One per UI surface so messages don't
@@ -146,6 +158,18 @@ pub struct HiveApp {
     /// Modal state for `git worktree remove`. Shared with the worker thread
     /// so it can flip `busy`/`error` while the dialog is visible.
     pub confirm_remove_worktree: Arc<Mutex<Option<ConfirmRemoveWorktree>>>,
+    /// TASK-41: modal state for the bulk "Remove N worktrees" sweep. `Arc<Mutex<>>`
+    /// for the same reason as `confirm_remove_worktree` — it renders across
+    /// frames while `worktree_actions::execute_bulk_remove_worktrees` (a
+    /// worker thread) is running.
+    pub confirm_bulk_remove_worktrees: Arc<Mutex<Option<ConfirmBulkRemoveWorktrees>>>,
+    /// TASK-41: which staleness class the Workspace filter chips currently
+    /// show (`All` by default). View-only — not persisted, same as `filter`.
+    pub staleness_filter: StalenessFilter,
+    /// TASK-41: worktrees the user has checked for the bulk-remove sweep.
+    /// View-only; cleared whenever a selected path stops being visible or
+    /// after a bulk removal completes.
+    pub bulk_selected_worktrees: BTreeSet<PathBuf>,
     /// Modal state for `git worktree add`.
     pub create_worktree_dialog: Arc<Mutex<Option<CreateWorktreeDialog>>>,
     /// Worker-to-UI completion queue for create operations. The worker runs
@@ -279,6 +303,8 @@ impl HiveApp {
             backlog_projects: Arc::new(Mutex::new(HashMap::new())),
             ordering: Arc::new(Mutex::new(OrderingState::default())),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
+            sizes: Arc::new(Mutex::new(HashMap::new())),
+            retired_worktree_count: Arc::new(Mutex::new(0)),
             state: Arc::new(Mutex::new(ScanState::default())),
             scanner_kick: Kick::new(),
             probe_kick: Kick::new(),
@@ -286,6 +312,7 @@ impl HiveApp {
             agent_context_kick: Kick::new(),
             backlog_kick: Kick::new(),
             dispatch_kick: Kick::new(),
+            size_kick: Kick::new(),
             config: cfg,
             config_save_path: None,
             _instance_lock: None,
@@ -300,6 +327,9 @@ impl HiveApp {
             confirm_remove_repo: None,
             settings_open: false,
             confirm_remove_worktree: Arc::new(Mutex::new(None)),
+            confirm_bulk_remove_worktrees: Arc::new(Mutex::new(None)),
+            staleness_filter: StalenessFilter::All,
+            bulk_selected_worktrees: BTreeSet::new(),
             create_worktree_dialog: Arc::new(Mutex::new(None)),
             create_worktree_outcomes: Arc::new(Mutex::new(Vec::new())),
             remove_worktree_outcomes: Arc::new(Mutex::new(Vec::new())),
@@ -332,12 +362,15 @@ impl HiveApp {
                 backlog_projects: self.backlog_projects.clone(),
                 ordering: self.ordering.clone(),
                 active_runs: self.active_runs.clone(),
+                sizes: self.sizes.clone(),
+                retired_worktree_count: self.retired_worktree_count.clone(),
                 scanner_kick: self.scanner_kick.clone(),
                 probe_kick: self.probe_kick.clone(),
                 detection_kick: self.detection_kick.clone(),
                 agent_context_kick: self.agent_context_kick.clone(),
                 backlog_kick: self.backlog_kick.clone(),
                 dispatch_kick: self.dispatch_kick.clone(),
+                size_kick: self.size_kick.clone(),
             },
         );
     }
@@ -364,6 +397,7 @@ impl HiveApp {
         self.detection_kick.notify();
         self.agent_context_kick.notify();
         self.backlog_kick.notify();
+        self.size_kick.notify();
     }
 
     pub fn mark_agent_contexts_stale(&self) {
@@ -519,7 +553,7 @@ impl HiveApp {
     /// Active runs whose `worktree_path` matches, projected to the lightweight
     /// summary the dialog renders. Used at dialog-open time AND at confirm
     /// time so the worker thread can detect drift before signaling anything.
-    fn snapshot_runs_for_worktree(&self, worktree_path: &Path) -> Vec<ActiveRunSummary> {
+    pub(crate) fn snapshot_runs_for_worktree(&self, worktree_path: &Path) -> Vec<ActiveRunSummary> {
         self.active_runs
             .lock()
             .unwrap()
@@ -577,6 +611,7 @@ impl HiveApp {
         let probe_kick = self.probe_kick.clone();
         let detection_kick = self.detection_kick.clone();
         let agent_context_kick = self.agent_context_kick.clone();
+        let size_kick = self.size_kick.clone();
         let config_status = self.config_status.clone();
         let remove_outcomes = self.remove_worktree_outcomes.clone();
         let ctx = ctx.clone();
@@ -687,6 +722,7 @@ impl HiveApp {
                     probe_kick.notify();
                     detection_kick.notify();
                     agent_context_kick.notify();
+                    size_kick.notify();
                 }
                 Err(e) => {
                     if let Some(state) = confirm.lock().unwrap().as_mut() {

@@ -22,7 +22,7 @@ use crate::app::HiveApp;
 use crate::runtime::worktree_names::worktree_display_name;
 use crate::runtime::{
     delete_safety_criteria, ActiveRun, ActivityLevel, ConfirmRemoveWorktree, DeleteSafetyCriterion,
-    DeleteSafetyCriterionKind, RowState, WorktreeMeta,
+    DeleteSafetyCriterionKind, RowState, WorktreeMeta, WorktreeSizeEntry,
 };
 use crate::ui::components::{
     branch_label, mono_label, path_cell, status_pill, weak_dots, Chip, StatusKind,
@@ -37,9 +37,12 @@ use switchbard_core::{
     DriftProbe, Repo, ResolvedService, ServerLikelihood, ServiceSource, WorktreeRef,
 };
 
+mod bulk_remove;
 pub mod create_worktree;
 pub mod rename_worktree;
+pub mod staleness;
 pub mod tooltips;
+use staleness::StalenessFilter;
 use tooltips::{activity_tooltip, dirty_tooltip, ref_drift_tooltip};
 
 /// Actions queued during the walk; applied after the central panel
@@ -63,6 +66,8 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
 
     egui::CentralPanel::default().show(ctx, |ui| {
         render_summary(ui, &snap);
+        ui.add_space(4.0);
+        staleness::render_filter_bar(ui, app, &snap);
         ui.add_space(6.0);
         egui::ScrollArea::vertical()
             .id_salt("workspace_scroll")
@@ -74,14 +79,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                         .iter()
                         .filter(|w| w.repo_name == repo.name)
                         .collect();
-                    if wts.is_empty() {
-                        continue;
-                    }
-                    if !snap.filter_lc.is_empty()
-                        && !wts
-                            .iter()
-                            .any(|w| worktree_matches(w, &snap, &snap.filter_lc))
-                    {
+                    if wts.is_empty() || !wts.iter().any(|w| worktree_visible(w, &snap)) {
                         continue;
                     }
                     render_repo_card(ui, repo, &wts, &snap, app, &mut pending);
@@ -96,6 +94,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     apply_pending(app, ctx, pending);
     render_kill_all_modal(app, ctx);
     render_remove_worktree_modal(app, ctx);
+    bulk_remove::render_modal(app, ctx);
     create_worktree::render_modal(app, ctx);
     rename_worktree::render_modal(app, ctx);
 }
@@ -138,6 +137,9 @@ struct Snapshot {
     repos: Vec<Repo>,
     worktrees: Vec<WorktreeRef>,
     meta: HashMap<PathBuf, WorktreeMeta>,
+    /// TASK-41: on-disk size cache, refreshed on its own cadence — see
+    /// `WorktreeSizeEntry`'s doc.
+    sizes: HashMap<PathBuf, WorktreeSizeEntry>,
     services: HashMap<PathBuf, Vec<ResolvedService>>,
     listeners_by_wt: HashMap<PathBuf, Vec<AttributedListener>>,
     unattributed: Vec<AttributedListener>,
@@ -147,6 +149,7 @@ struct Snapshot {
     filter_lc: String,
     show_only_managed: bool,
     raw_detected_total: usize,
+    staleness_filter: StalenessFilter,
 }
 
 impl Snapshot {
@@ -185,6 +188,7 @@ impl Snapshot {
             repos: app.repos_snapshot(),
             worktrees: app.worktrees_snapshot(),
             meta,
+            sizes: app.sizes.lock().unwrap().clone(),
             services,
             listeners_by_wt,
             unattributed,
@@ -194,6 +198,7 @@ impl Snapshot {
             filter_lc: app.filter.to_lowercase(),
             show_only_managed: app.show_only_managed,
             raw_detected_total,
+            staleness_filter: app.staleness_filter,
         }
     }
 
@@ -349,7 +354,7 @@ fn render_repo_card(
             ui.add_space(4.0);
 
             for w in wts {
-                if !worktree_matches(w, snap, &snap.filter_lc) {
+                if !worktree_visible(w, snap) {
                     continue;
                 }
                 let is_primary = w.path == repo.path;
@@ -443,9 +448,17 @@ fn render_worktree_row(
                     meta: m,
                     listener_count: listeners.len(),
                     services: svcs,
+                    size: snap.sizes.get(&w.path),
                 };
                 render_worktree_summary_line(ui, summary, snap);
-                render_worktree_row_trailing(ui, repo, w, is_primary, pending);
+                render_worktree_row_trailing(
+                    ui,
+                    repo,
+                    w,
+                    is_primary,
+                    pending,
+                    &mut app.bulk_selected_worktrees,
+                );
             })
             .body(|ui| {
                 ui.add_space(2.0);
@@ -497,6 +510,9 @@ struct WorktreeSummary<'a> {
     meta: &'a WorktreeMeta,
     listener_count: usize,
     services: &'a [ResolvedService],
+    /// TASK-41: on-disk size, `None` while `workers::spawn_size` hasn't
+    /// reached this worktree yet.
+    size: Option<&'a WorktreeSizeEntry>,
 }
 
 fn render_worktree_summary_line(ui: &mut egui::Ui, summary: WorktreeSummary<'_>, snap: &Snapshot) {
@@ -520,6 +536,10 @@ fn render_worktree_summary_line(ui: &mut egui::Ui, summary: WorktreeSummary<'_>,
     // Health zone: dirty appears only when dirty; drift only when non-zero;
     // listener count is on the dot tooltip already (no inline tag).
     render_health_inline(ui, summary.meta);
+    // TASK-41: Merged/Orphan/Live badge + on-disk size, right after the
+    // existing dirty/drift health pills — same "one inline zone" pattern.
+    staleness::render_staleness_badge(ui, summary.meta);
+    staleness::render_size_label(ui, summary.size);
     render_activity_inline(ui, summary.meta);
     render_delete_safety_inline(
         ui,
@@ -557,6 +577,7 @@ fn render_worktree_row_trailing(
     w: &WorktreeRef,
     is_primary: bool,
     pending: &mut Pending,
+    bulk_selected: &mut BTreeSet<PathBuf>,
 ) {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.label(
@@ -582,6 +603,10 @@ fn render_worktree_row_trailing(
                     Some((w.repo_name.clone(), w.path.clone(), w.branch.clone()));
             }
         }
+        // TASK-41: bulk-select checkbox, closest to the row content so it
+        // reads as "part of this row" rather than another trailing action.
+        ui.add_space(4.0);
+        bulk_remove::render_select_checkbox(ui, w, is_primary, bulk_selected);
     });
 }
 
@@ -1274,6 +1299,15 @@ fn render_unattributed_card(ui: &mut egui::Ui, list: &[AttributedListener], pend
 
 // ── filter (worktree-level) ─────────────────────────────────────────────
 
+/// A worktree row renders iff it passes BOTH the freeform text filter and
+/// the staleness filter chip (TASK-41) — the two are independent, ANDed
+/// conditions, same as "only attributed listeners" + text filter already are
+/// for the Servers view generally.
+fn worktree_visible(w: &WorktreeRef, snap: &Snapshot) -> bool {
+    worktree_matches(w, snap, &snap.filter_lc)
+        && staleness::passes_staleness_filter(snap.staleness_filter, snap.meta.get(&w.path))
+}
+
 fn worktree_matches(w: &WorktreeRef, snap: &Snapshot, filter_lc: &str) -> bool {
     if filter_lc.is_empty() {
         return true;
@@ -1652,6 +1686,7 @@ mod tests {
             repos: Vec::new(),
             worktrees: Vec::new(),
             meta: HashMap::new(),
+            sizes: HashMap::new(),
             services: HashMap::new(),
             listeners_by_wt: HashMap::new(),
             unattributed: Vec::new(),
@@ -1661,6 +1696,7 @@ mod tests {
             filter_lc: String::new(),
             show_only_managed: false,
             raw_detected_total: 0,
+            staleness_filter: StalenessFilter::All,
         }
     }
 

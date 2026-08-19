@@ -79,6 +79,60 @@ impl DriftProbe {
     }
 }
 
+/// Where a worktree sits relative to the repo's cleanup lifecycle — computed
+/// alongside `DriftProbe` by the same git-probe worker (see `workers.rs`'s
+/// cadence table). Orthogonal to dirty state: a worktree can be `Merged` and
+/// still have uncommitted scratch files, which is exactly why the Workspace
+/// view renders staleness and dirty as separate signals (a badge + a filter
+/// chip each) rather than folding one into the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorktreeStaleness {
+    /// HEAD has no commits unique to it relative to `base` (the repo's local
+    /// `main`/`master`) — everything on this branch already landed. Safe
+    /// candidate for the bulk-remove sweep once dirty state is also clean.
+    Merged { base: String },
+    /// The worktree's branch has no configured upstream (`@{u}` unset,
+    /// including a detached HEAD). Common right after a squash-merged PR
+    /// whose remote branch was deleted — still worth surfacing distinctly
+    /// from `Live`, since nothing is tracking it anymore.
+    Orphan,
+    /// Neither of the above: still ahead of/behind an upstream, i.e.
+    /// probably active work.
+    Live,
+}
+
+/// Pure fn of `(repo_path, worktree_path)`: is this worktree's branch merged
+/// into the repo's default branch, orphaned (no upstream), or still live?
+///
+/// Priority is merged-first: a branch can lose its upstream *because* it was
+/// squash-merged and the remote branch got deleted, so "no upstream" alone
+/// isn't a reliable orphan signal — checking "fully contained in `main`/
+/// `master`" first is what actually answers "is this safe to retire".
+/// `default_branch` and the ahead-count itself (`commits_ahead`) are both
+/// shared with `worktree_remove::assess_branch_delete` — the single-row
+/// remove dialog's "is it merged" fact and this badge's must never be able
+/// to disagree, so there is exactly one place that answers "how many
+/// commits ahead" for the whole crate, not two similar-but-distinct git
+/// queries that happen to usually agree.
+///
+/// Never panics; on any git failure this falls back to `Live` (the least
+/// destructive classification — an unclassifiable worktree should never look
+/// like a safe bulk-remove candidate).
+pub fn probe_worktree_staleness(repo_path: &Path, worktree_path: &Path) -> WorktreeStaleness {
+    if let Some(base) = crate::worktree_remove::default_branch(repo_path) {
+        // Invoked at `worktree_path` (not `repo_path`) so `HEAD` resolves to
+        // *this* worktree's checkout — each linked worktree has its own HEAD
+        // file even though branch refs themselves are shared repo-wide.
+        if let Some(0) = crate::worktree_remove::commits_ahead(worktree_path, &base, "HEAD") {
+            return WorktreeStaleness::Merged { base };
+        }
+    }
+    match probe_remote_drift(worktree_path) {
+        Some(DriftProbe::NoUpstream) | None => WorktreeStaleness::Orphan,
+        Some(_) => WorktreeStaleness::Live,
+    }
+}
+
 /// Changed files in the worktree (the `git status --porcelain` output, line by
 /// line). Empty vec = clean; non-empty = dirty.
 pub fn probe_dirty_files(path: &Path) -> Option<Vec<String>> {
@@ -444,6 +498,83 @@ mod tests {
         assert!(
             files.iter().any(|f| f == "!! settings.local"),
             "expected ignored local file, got {files:?}"
+        );
+    }
+
+    #[test]
+    fn staleness_merged_when_branch_fully_contained_in_main() {
+        let (_tmp, repo) = setup_repo("main");
+        commit_file(&repo, "base.txt", "base", "base");
+        run_git(&repo, &["checkout", "-b", "feature"]);
+        // No new commits on `feature` — it's at the same tip as `main`, i.e.
+        // trivially merged.
+        assert_eq!(
+            probe_worktree_staleness(&repo, &repo),
+            WorktreeStaleness::Merged {
+                base: "main".into()
+            }
+        );
+    }
+
+    #[test]
+    fn staleness_orphan_when_no_upstream_and_not_merged() {
+        let (_tmp, repo) = setup_repo("main");
+        commit_file(&repo, "base.txt", "base", "base");
+        run_git(&repo, &["checkout", "-b", "scratch"]);
+        commit_file(&repo, "scratch.txt", "one", "unique commit");
+
+        assert_eq!(
+            probe_worktree_staleness(&repo, &repo),
+            WorktreeStaleness::Orphan
+        );
+    }
+
+    #[test]
+    fn staleness_live_when_ahead_of_a_configured_upstream() {
+        let tmp = TempDir::new().unwrap();
+        let remote = tmp.path().join("origin.git");
+        let repo = tmp.path().join("repo");
+        run_raw_git(&["init", "--bare", remote.to_str().unwrap()]);
+        fs::create_dir(&repo).unwrap();
+        run_raw_git(&["-C", repo.to_str().unwrap(), "init", "-b", "main"]);
+        configure_identity(&repo);
+        run_git(
+            &repo,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        commit_file(&repo, "base.txt", "base", "base");
+        run_git(&repo, &["push", "-u", "origin", "main"]);
+        run_git(&repo, &["checkout", "-b", "feature"]);
+        commit_file(&repo, "feature.txt", "one", "feature one");
+        run_git(&repo, &["push", "-u", "origin", "feature"]);
+        commit_file(&repo, "feature-2.txt", "two", "unpushed");
+
+        assert_eq!(
+            probe_worktree_staleness(&repo, &repo),
+            WorktreeStaleness::Live
+        );
+    }
+
+    #[test]
+    fn staleness_is_orthogonal_to_dirty_state() {
+        // A worktree can be Merged (or Orphan/Live) and still have
+        // uncommitted scratch files — dirty is a separate, independently
+        // probed signal, not folded into the staleness classification.
+        let (_tmp, repo) = setup_repo("main");
+        commit_file(&repo, "base.txt", "base", "base");
+        run_git(&repo, &["checkout", "-b", "feature"]);
+        fs::write(repo.join("scratch.txt"), "uncommitted").unwrap();
+
+        assert_eq!(
+            probe_worktree_staleness(&repo, &repo),
+            WorktreeStaleness::Merged {
+                base: "main".into()
+            }
+        );
+        let dirty = probe_dirty_files(&repo).unwrap();
+        assert!(
+            !dirty.is_empty(),
+            "scratch file should still show up as dirty"
         );
     }
 

@@ -29,10 +29,12 @@
 //! | scanner | 3s | ~0.2s, 1 subprocess, independent of worktree count | UX-critical: the Servers view's whole point is "what's listening right now." Kept snappy. |
 //! | git probe | 120s (was 60s) | ~6-8s once `probe_ignored_files` is decoupled (was ~37-40s every tick — see below) | Real git-subprocess cost (~10/worktree) that scales with worktree count; drift/dirty/recent-commits data is useful within a couple minutes' staleness, not seconds. |
 //! | — ignored-files sub-probe | every 5th probe tick (~10 min) | ~32s of the ~37s pre-fix tick (measured in isolation) — `git status --ignored` can't prune subtrees the way plain status does | Tooltip-only cosmetic data (see `IGNORED_FILES_PREVIEW_LIMIT`'s own doc); by far the single most expensive call in this module. Decoupling it from the main probe cadence is the highest-leverage fix found by this audit. |
+//! | — staleness sub-probe (TASK-41) | every probe tick (no decoupling needed) | ~2.0s isolated over 84 worktrees (~24ms each, measured 2026-08-19 via `examples/scan_cadence_audit.rs`) | Same cost class as `probe_main_drift`/`probe_remote_drift` (2-3 git subprocesses each) — cheap enough to compute alongside `DriftProbe` on every tick, unlike size below. |
 //! | detection | 60s (was 30s) | ~0.15s cold, ~0 steady-state (idempotent — skips worktrees already in `services`) | No urgency: a newly tracked worktree still gets detected within a minute. |
 //! | agent-context | 60s (was 30s), capped at `AGENT_CONTEXT_MAX_MISSING_PER_TICK` new worktrees per tick | ~47s in one unbroken burst pre-fix (cold scan of all 84 at once) | Recursive per-worktree filesystem walk; cheap in steady state (only rescans missing/>24h-stale entries) but a cold launch or adding several repos at once used to stall the thread for tens of seconds in a single tick. Capping the batch turns that into several bounded, interleaved ticks instead. |
 //! | backlog | 30s (unchanged) | ~0.15-0.2s over 6 repo *roots*, not per-worktree | Already cheap at this scale (one load per tracked repo, not per worktree) and users watch task state change in near-real-time — no evidence to slow this down. |
 //! | dispatch | 90s (unchanged) | negligible when the queue is empty (the common case) | Opt-in and rare by design — see its own doc. Unaffected by worktree count. |
+//! | size (TASK-41) | 300s, bounded catch-up batch of 5 | ~650ms **per worktree** average (measured 2026-08-19 via `examples/scan_cadence_audit.rs`, sampled 20/84 real worktrees, `du -sk`; a manual sweep of `~/Dev/.worktrees`'s larger checkouts saw individual calls up to ~1.5s) — an order of magnitude past every other per-worktree probe | `du` walks the whole tree (node_modules/target/build artifacts); see `worktree_size.rs`'s own doc. Never runs inline with the git-probe tick — its own worker, own cadence, catches up a bounded batch of never-yet-sized worktrees per tick (same shape as agent-context's cold-start batching below) rather than blocking on a full sweep. |
 //! | reaper | 2s (unchanged) | negligible, in-memory PGID check only | Not part of the worktree-count scaling problem this audit targets. |
 //!
 //! Two cross-cutting mechanisms apply on top of the table above:
@@ -47,7 +49,9 @@
 //!   Switchbard alt-tabbed away doesn't need second-by-second freshness.
 
 use crate::runtime::worktrees::expand_worktrees;
-use crate::runtime::{ActiveRun, FileListSummary, OrderingState, WorktreeMeta};
+use crate::runtime::{
+    is_retired_worktree, ActiveRun, FileListSummary, OrderingState, WorktreeMeta, WorktreeSizeEntry,
+};
 use crate::sync::Kick;
 use eframe::egui;
 use switchbard_core::{
@@ -55,8 +59,9 @@ use switchbard_core::{
     is_backlog_project, list_dispatch_queue, load_backlog_project, load_ordering_overlay,
     probe_dirty_files, probe_fetch_age, probe_head_commit_time, probe_ignored_files,
     probe_main_drift, probe_recent_commits, probe_ref_drift_detail, probe_remote_drift,
-    save_agent_context_cache, scan_agent_context, scan_listeners, AgentContextMap, BacklogProject,
-    DetectedService, DispatchOptions, DriftProbe, Repo, WorktreeRef,
+    probe_worktree_size, probe_worktree_staleness, save_agent_context_cache, scan_agent_context,
+    scan_listeners, AgentContextMap, BacklogProject, DetectedService, DispatchOptions, DriftProbe,
+    Repo, WorktreeRef,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
@@ -106,6 +111,27 @@ const BACKLOG_PERIOD: Duration = Duration::from_secs(30);
 const DISPATCH_PERIOD: Duration = Duration::from_secs(90);
 const CONTEXT_CACHE_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24);
 const REAPER_PERIOD: Duration = Duration::from_secs(2);
+/// TASK-41: on-disk size (`du`) is by far the most expensive per-worktree
+/// probe in the app — measured ~0.8-1.5s each against real worktrees (see
+/// this module's cadence-policy doc table), roughly an order of magnitude
+/// past `probe_ignored_files` (the previous record-holder). A worktree's
+/// size also changes slowly in practice (mostly build-artifact churn), so a
+/// 5-minute steady-state cadence for the single-stalest-entry refresh is
+/// generous, not stingy.
+const SIZE_PERIOD: Duration = Duration::from_secs(300);
+/// An entry older than this becomes eligible for the steady-state
+/// single-entry refresh — mirrors `CONTEXT_CACHE_MAX_AGE`'s role for
+/// agent-context, scaled down because size is refreshed far less urgently
+/// than dirty/drift but still ought to catch up within the hour.
+const SIZE_CACHE_MAX_AGE: Duration = Duration::from_secs(60 * 30);
+/// Bounded per-tick batch for never-yet-sized worktrees, same rationale as
+/// `AGENT_CONTEXT_MAX_MISSING_PER_TICK`: at ~1s/worktree, sizing all of a
+/// 138-worktree machine in one unbroken tick would stall this thread for
+/// well over a minute. 5/tick keeps each tick's worst case bounded to a few
+/// seconds while a large backlog still drains promptly (this worker skips
+/// its sleep and loops again immediately when more remain — same shape as
+/// `spawn_agent_context`).
+const SIZE_MAX_MISSING_PER_TICK: usize = 5;
 
 /// Every Nth git-probe tick recomputes `probe_ignored_files`; other ticks
 /// carry forward the previously cached value. The 2026-08-05 cadence audit
@@ -177,12 +203,24 @@ pub struct Channels {
     pub backlog_projects: Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
     pub ordering: Arc<Mutex<OrderingState>>,
     pub active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
+    /// TASK-41: on-disk size per worktree, refreshed by `spawn_size` on its
+    /// own slow cadence — see that worker's doc for why it can't share the
+    /// git-probe tick.
+    pub sizes: Arc<Mutex<HashMap<PathBuf, WorktreeSizeEntry>>>,
+    /// TASK-41: count of non-primary, clean, fully-merged worktrees —
+    /// written once per git-probe tick (`spawn_probe`, alongside `meta`
+    /// itself) rather than recomputed every frame the top bar renders. The
+    /// top bar reads this directly (`ui::top_bar::render_retired_worktrees_
+    /// nudge`) instead of cloning `repos`/`worktrees` and locking `meta` on
+    /// every frame across every tab.
+    pub retired_worktree_count: Arc<Mutex<usize>>,
     pub scanner_kick: Kick,
     pub probe_kick: Kick,
     pub detection_kick: Kick,
     pub agent_context_kick: Kick,
     pub backlog_kick: Kick,
     pub dispatch_kick: Kick,
+    pub size_kick: Kick,
 }
 
 pub fn spawn_all(ctx: egui::Context, ch: Channels) {
@@ -192,6 +230,7 @@ pub fn spawn_all(ctx: egui::Context, ch: Channels) {
     spawn_agent_context(ctx.clone(), ch.clone(), stagger_offset(3));
     spawn_backlog(ctx.clone(), ch.clone(), stagger_offset(4));
     spawn_dispatch(ctx.clone(), ch.clone(), stagger_offset(5));
+    spawn_size(ctx.clone(), ch.clone(), stagger_offset(6));
     spawn_reaper(ctx, ch);
 }
 
@@ -236,15 +275,25 @@ fn spawn_probe(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
         let mut tick: u64 = 0;
         loop {
             // Step 1: re-enumerate worktrees from disk and publish.
+            let repos = ch.repos.lock().unwrap().clone();
             {
-                let repos = ch.repos.lock().unwrap().clone();
                 let fresh = expand_worktrees(&repos);
                 *ch.worktrees.lock().unwrap() = fresh;
                 ctx.request_repaint();
             }
-            // Step 2: probe each.
+            // Step 2: probe each. `repo_paths` resolves a worktree's
+            // `repo_name` back to its primary checkout path — `WorktreeRef`
+            // itself only carries the name (see its own doc), and
+            // `probe_worktree_staleness` needs the repo path to find the
+            // local default branch to compare against.
+            let repo_paths = repo_paths_by_name(&repos);
             let wts = ch.worktrees.lock().unwrap().clone();
             let refresh_ignored = should_refresh_ignored_files(tick);
+            // TASK-41: accumulated alongside the per-worktree probe loop
+            // rather than in a second pass over `wts` — see
+            // `retired_worktree_count`'s own doc for why this is cached at
+            // all instead of recomputed per-frame by the top bar.
+            let mut retired = 0usize;
             for w in &wts {
                 let main_drift = probe_main_drift(&w.path);
                 let remote_drift = probe_remote_drift(&w.path);
@@ -261,6 +310,9 @@ fn spawn_probe(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
                         .get(&w.path)
                         .and_then(|m| m.ignored_files.clone())
                 };
+                let staleness = repo_paths
+                    .get(&w.repo_name)
+                    .map(|repo_path| probe_worktree_staleness(repo_path, &w.path));
                 let m = WorktreeMeta {
                     dirty_files: probe_dirty_files(&w.path),
                     ignored_files,
@@ -272,15 +324,30 @@ fn spawn_probe(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
                     fetch_unix: probe_fetch_age(&w.path),
                     recent_commits: probe_recent_commits(&w.path, RECENT_COMMITS_LIMIT),
                     probed_at: Some(Instant::now()),
+                    staleness,
                 };
+                if is_retired_worktree(w, &repos, Some(&m)) {
+                    retired += 1;
+                }
                 ch.meta.lock().unwrap().insert(w.path.clone(), m);
                 ctx.request_repaint();
             }
+            *ch.retired_worktree_count.lock().unwrap() = retired;
             tick = tick.wrapping_add(1);
             let focused = ctx.input(|i| i.focused);
             ch.probe_kick.wait(effective_period(PROBE_PERIOD, focused));
         }
     });
+}
+
+/// `repo_name -> primary checkout path`, built fresh each probe tick from the
+/// same `repos` snapshot `expand_worktrees` just consumed. Small (one entry
+/// per tracked repo, not per worktree) so rebuilding it every tick is free.
+fn repo_paths_by_name(repos: &[Repo]) -> HashMap<String, PathBuf> {
+    repos
+        .iter()
+        .map(|r| (r.name.clone(), r.path.clone()))
+        .collect()
 }
 
 fn drift_detail_for_probe(
@@ -392,6 +459,83 @@ fn spawn_agent_context(ctx: egui::Context, ch: Channels, initial_delay: Duration
                 .wait(effective_period(CONTEXT_PERIOD, focused));
         }
     });
+}
+
+/// TASK-41: on-disk size per worktree. Same shape as `spawn_agent_context`
+/// (bounded catch-up batch for never-yet-sized worktrees, then a
+/// single-stalest-entry refresh per tick) because it solves the identical
+/// problem — an expensive per-worktree scan that must never block a whole
+/// tick on a cold, unbounded sweep. `du`'s per-call cost (~0.8-1.5s measured,
+/// see this module's cadence-policy doc) is what actually justifies its own
+/// worker rather than folding into `spawn_probe`: even the *bounded* batch
+/// here is meaningfully slower than that entire git-probe tick over every
+/// worktree.
+fn spawn_size(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
+    thread::spawn(move || {
+        ch.size_kick.wait(initial_delay);
+        loop {
+            let wts = ch.worktrees.lock().unwrap().clone();
+            let live_paths: std::collections::HashSet<PathBuf> =
+                wts.iter().map(|w| w.path.clone()).collect();
+
+            let (batch, more_missing, stale) = {
+                let mut sizes = ch.sizes.lock().unwrap();
+                sizes.retain(|path, _| live_paths.contains(path));
+                let missing: Vec<PathBuf> = wts
+                    .iter()
+                    .map(|w| w.path.clone())
+                    .filter(|p| !sizes.contains_key(p))
+                    .collect();
+                let now = Instant::now();
+                let stale = wts
+                    .iter()
+                    .map(|w| w.path.clone())
+                    .filter(|p| {
+                        sizes
+                            .get(p)
+                            .is_some_and(|e| now.duration_since(e.computed_at) > SIZE_CACHE_MAX_AGE)
+                    })
+                    .min_by_key(|p| sizes.get(p).map(|e| e.computed_at));
+                let batch: Vec<PathBuf> = missing
+                    .iter()
+                    .take(SIZE_MAX_MISSING_PER_TICK)
+                    .cloned()
+                    .collect();
+                let more_missing = missing.len() > batch.len();
+                (batch, more_missing, stale)
+            };
+
+            let mut refreshed = false;
+            if batch.is_empty() {
+                if let Some(path) = stale {
+                    size_and_publish(&ch, &path);
+                    refreshed = true;
+                }
+            } else {
+                for path in &batch {
+                    size_and_publish(&ch, path);
+                }
+                refreshed = true;
+            }
+
+            if refreshed {
+                ctx.request_repaint();
+            }
+            if more_missing {
+                continue;
+            }
+            let focused = ctx.input(|i| i.focused);
+            ch.size_kick.wait(effective_period(SIZE_PERIOD, focused));
+        }
+    });
+}
+
+fn size_and_publish(ch: &Channels, path: &Path) {
+    let entry = WorktreeSizeEntry {
+        bytes: probe_worktree_size(path),
+        computed_at: Instant::now(),
+    };
+    ch.sizes.lock().unwrap().insert(path.to_path_buf(), entry);
 }
 
 fn scan_and_publish_agent_context(ch: &Channels, w: &WorktreeRef) {
