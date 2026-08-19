@@ -173,6 +173,34 @@ fn multiline_input_nth<'t>(harness: &'t Harness<'_, HiveApp>, index: usize) -> k
 
 // ─── List lens: bulk selection ──────────────────────────────────────────
 
+/// Asserts a control routed to the right backlog action by checking the
+/// status surface. The UI sets `in_flight` synchronously on click, then a
+/// `spawn_backlog_*` thread overwrites it with a terminal message once the
+/// CLI call finishes — and against this fixture's nonexistent project root
+/// that thread can lose or win the race with the assertion (on CI the spawn
+/// fails instantly; locally a stray dir makes it slow). Either observation
+/// proves the click dispatched the intended action, so accept both: the
+/// exact in-flight string, or any terminal message starting with one of
+/// `terminal_prefixes`. The CLI's actual effect is proven in
+/// `switchbard-core/tests/backlog_cli_mutations.rs`, not here.
+fn assert_action_status(
+    harness: &Harness<'static, HiveApp>,
+    in_flight: &str,
+    terminal_prefixes: &[&str],
+    context: &str,
+) {
+    let status = harness.state().backlog_status.snapshot();
+    let ok = match status.as_deref() {
+        Some(s) => s == in_flight || terminal_prefixes.iter().any(|p| s.starts_with(p)),
+        None => false,
+    };
+    assert!(
+        ok,
+        "{context}: expected status {in_flight:?} (or a terminal message starting with one \
+         of {terminal_prefixes:?}), got {status:?}"
+    );
+}
+
 #[test]
 fn select_all_checkbox_selects_then_deselects_every_visible_task() {
     let mut harness = list_harness_with_tasks(vec![
@@ -441,12 +469,11 @@ fn cleanup_confirm_sets_the_synchronous_status_before_the_spawned_archive_calls(
     harness.get_by_label("Confirm cleanup").click();
     harness.run();
 
-    assert_eq!(
-        harness.state().backlog_status.snapshot().as_deref(),
-        Some("cleaning up 1 Done tasks"),
-        "confirming should set the synchronous status before the spawned \
-         per-task archive calls run — same split real_backlog_cli_
-         mutations.rs proves the per-task Archive path with"
+    assert_action_status(
+        &harness,
+        "cleaning up 1 Done tasks",
+        &["cleaned up 0/1 Done tasks", "cleaned up 1/1 Done tasks"],
+        "confirming cleanup should route to the spawned per-task archive calls",
     );
     assert!(!harness.state().backlog_view.cleanup_confirm);
 }
@@ -1319,12 +1346,11 @@ fn board_drag_and_drop_between_columns_queues_a_status_change() {
     });
     harness.run();
 
-    assert_eq!(
-        harness.state().backlog_status.snapshot().as_deref(),
-        Some("moving TASK-2 to In Progress"),
-        "TASK-29: dropping a card on another column should still \
-         synchronously queue a status-change save, same as before the \
-         click/checkbox fix"
+    assert_action_status(
+        &harness,
+        "moving TASK-2 to In Progress",
+        &["saved TASK-2", "save TASK-2 failed"],
+        "TASK-29: dropping a card on another column should queue a status-change save",
     );
 }
 
@@ -1550,12 +1576,15 @@ fn acceptance_criterion_checkbox_click_sets_the_synchronous_updating_status() {
     let mut harness = detail_harness_on(detail_task_with_checklists());
     harness.get_by_label("#1 Criterion one").click();
     harness.run();
-    assert_eq!(
-        harness.state().backlog_status.snapshot().as_deref(),
-        Some("updating TASK-1 AC #1"),
-        "clicking an AC checkbox should synchronously report the pending update \
-         (the eventual CLI completion is proven directly in switchbard-core's \
-         backlog_cli_mutations.rs, not by waiting on this background thread)"
+    assert_action_status(
+        &harness,
+        "updating TASK-1 AC #1",
+        &[
+            "checked TASK-1 AC #1",
+            "unchecked TASK-1 AC #1",
+            "update TASK-1 AC #1 failed",
+        ],
+        "clicking an AC checkbox should route to the AC update",
     );
 }
 
@@ -1564,9 +1593,15 @@ fn definition_of_done_checkbox_click_sets_the_synchronous_updating_status() {
     let mut harness = detail_harness_on(detail_task_with_checklists());
     harness.get_by_label("#1 DoD one").click();
     harness.run();
-    assert_eq!(
-        harness.state().backlog_status.snapshot().as_deref(),
-        Some("updating TASK-1 DoD #1")
+    assert_action_status(
+        &harness,
+        "updating TASK-1 DoD #1",
+        &[
+            "checked TASK-1 DoD #1",
+            "unchecked TASK-1 DoD #1",
+            "update TASK-1 DoD #1 failed",
+        ],
+        "clicking a DoD checkbox should route to the DoD update",
     );
 }
 
@@ -1709,9 +1744,11 @@ fn archive_confirm_sets_the_synchronous_archiving_status() {
     harness.run();
 
     assert!(!harness.state().backlog_view.archive_confirm);
-    assert_eq!(
-        harness.state().backlog_status.snapshot().as_deref(),
-        Some("archiving TASK-1")
+    assert_action_status(
+        &harness,
+        "archiving TASK-1",
+        &["archived TASK-1", "archive TASK-1 failed"],
+        "confirming archive should route to the archive action",
     );
 }
 
@@ -1753,9 +1790,11 @@ fn done_task_offers_complete_instead_of_archive() {
     harness.get_by_label("Confirm complete").click();
     harness.run();
     assert!(!harness.state().backlog_view.archive_confirm);
-    assert_eq!(
-        harness.state().backlog_status.snapshot().as_deref(),
-        Some("completing TASK-1")
+    assert_action_status(
+        &harness,
+        "completing TASK-1",
+        &["completed TASK-1", "complete TASK-1 failed"],
+        "confirming complete should route to the complete action",
     );
 }
 
