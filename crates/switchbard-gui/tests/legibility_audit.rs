@@ -19,18 +19,38 @@
 //! It does not know which call sites are wrong; it discovers them. A failure
 //! prints every offending run, grouped by view, with text / size / contrast so
 //! the fix is obvious.
+//!
+//! ## Disabled controls are exempt (WCAG 1.4.3)
+//!
+//! egui's `Ui::disable()` fades every shape's color 50% toward `Visuals::
+//! fade_out_to_color()` — a fixed blend baked into the framework, not
+//! something a palette choice can tune away, since it always pulls whatever
+//! color the enabled widget would have painted halfway toward a background
+//! tone. WCAG 2.1 Success Criterion 1.4.3 explicitly excludes this case:
+//! "Text... that is part of an inactive user interface component has no
+//! contrast requirement." So rather than chase an architecturally-unreachable
+//! target, `audit_owned` looks up each run's containing node in the real
+//! accessibility tree (the same tree `ui_views.rs` queries) and skips any
+//! run whose node reports `is_disabled()`.
 
 mod common;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+use std::path::PathBuf;
+
 use common::{harness, seeded_app, REPO_NAME, REPO_PATH};
 use eframe::egui::{epaint::Shape, Color32, Pos2, Rect};
 use egui_kittest::Harness;
-use switchbard_core::{AttributedListener, LocalListener};
+use kittest::{by, Queryable};
+use switchbard_core::config::ThemeChoice;
+use switchbard_core::{
+    AttributedListener, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource,
+    LocalListener,
+};
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::ViewTab;
+use switchbard_gui::runtime::{BacklogLens, ViewTab};
 use switchbard_gui::ui::legibility;
 
 /// One painted run of text with a single resolved size + color.
@@ -44,7 +64,7 @@ struct TextRun {
 
 /// A run that failed the contract, with the perceived contrast and why.
 struct Violation {
-    view: &'static str,
+    view: String,
     text: String,
     size: f32,
     contrast: f64,
@@ -135,9 +155,29 @@ fn background_at(pos: Pos2, rects: &[FilledRect], base: Color32) -> Color32 {
         .fold(base, |bg, r| legibility::composite_over(r.fill, bg))
 }
 
-/// Audit one rendered view against the legibility contract.
-fn audit(view: &'static str, harness: &Harness<'_, HiveApp>) -> Vec<Violation> {
+/// Every disabled node's bounds in `harness`'s accessibility tree, converted
+/// to `egui::Rect` — see the module doc's "Disabled controls are exempt"
+/// section for why this is the correct exemption rather than a gap.
+fn disabled_rects(harness: &Harness<'_, HiveApp>) -> Vec<Rect> {
+    harness
+        .query_all(by())
+        .filter(|node| node.is_disabled())
+        .filter_map(|node| node.raw_bounds())
+        .map(|r| {
+            Rect::from_min_max(
+                Pos2::new(r.x0 as f32, r.y0 as f32),
+                Pos2::new(r.x1 as f32, r.y1 as f32),
+            )
+        })
+        .collect()
+}
+
+/// Audit one rendered view against the legibility contract. `view` is owned
+/// rather than `&'static str` because the theme-parameterized `views()`
+/// formats each name with a `[Light]`/`[Dark]` suffix.
+fn audit_owned(view: String, harness: &Harness<'_, HiveApp>) -> Vec<Violation> {
     let panel = harness.ctx.style().visuals.panel_fill;
+    let disabled = disabled_rects(harness);
 
     let mut runs = Vec::new();
     let mut rects = Vec::new();
@@ -147,6 +187,10 @@ fn audit(view: &'static str, harness: &Harness<'_, HiveApp>) -> Vec<Violation> {
 
     let mut violations = Vec::new();
     for run in runs {
+        // WCAG 1.4.3 exempts inactive-component text — see the module doc.
+        if disabled.iter().any(|r| r.contains(run.pos)) {
+            continue;
+        }
         let bg = background_at(run.pos, &rects, panel);
         let perceived = legibility::composite_over(run.color, bg);
         let contrast = legibility::contrast_ratio(perceived, bg);
@@ -160,7 +204,7 @@ fn audit(view: &'static str, harness: &Harness<'_, HiveApp>) -> Vec<Violation> {
         }
         if !reasons.is_empty() {
             violations.push(Violation {
-                view,
+                view: view.clone(),
                 text: run.text,
                 size: run.size,
                 contrast,
@@ -199,7 +243,7 @@ fn report(violations: &[Violation]) -> String {
 
     let mut by_view: BTreeMap<&str, Vec<&Violation>> = BTreeMap::new();
     for v in violations {
-        by_view.entry(v.view).or_default().push(v);
+        by_view.entry(v.view.as_str()).or_default().push(v);
     }
 
     for (view, items) in &by_view {
@@ -291,46 +335,144 @@ fn seed_live_listener(app: &HiveApp) {
         });
 }
 
-/// Build the harnesses for every view we audit. Covers the top bar + sidebar +
-/// each central view, plus the Agent Context drawer with a file selected (the
-/// exact surface in the reported screenshot: small gray paths + preview body).
+/// A Backlog task with real content in every task-15/16 surface: a
+/// multi-element markdown description (exercises `egui_commonmark`
+/// rendering, not just the "No description" empty branch), dependencies,
+/// references, a milestone, and both checklists — so the audit actually
+/// covers the parity work, not just the pre-existing views.
+fn legibility_backlog_task() -> BacklogTask {
+    BacklogTask {
+        id: "TASK-1".to_string(),
+        title: "Legibility fixture task".to_string(),
+        status: "In Progress".to_string(),
+        priority: "high".to_string(),
+        assignees: vec!["ben".to_string()],
+        labels: vec!["demo".to_string()],
+        dependencies: vec!["TASK-2".to_string()],
+        references: vec!["https://example.com/spec".to_string()],
+        milestone: Some("v1".to_string()),
+        parent: None,
+        created_date: Some("2026-06-01 09:00".to_string()),
+        updated_date: Some("2026-06-20 12:00".to_string()),
+        description: "## Why\n\nThis exercises **CommonMark** rendering with a list:\n\n- first item\n- second item\n\nand a [link](https://example.com).".to_string(),
+        implementation_plan: "Step one, then step two.".to_string(),
+        implementation_notes: "Existing note text.".to_string(),
+        final_summary: String::new(),
+        acceptance_criteria: vec![BacklogChecklistItem {
+            index: 1,
+            checked: false,
+            text: "Criterion renders".to_string(),
+        }],
+        definition_of_done: vec![BacklogChecklistItem {
+            index: 1,
+            checked: true,
+            text: "DoD item renders".to_string(),
+        }],
+        source: BacklogTaskSource::Active,
+        path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-1.md")),
+    }
+}
+
+fn seed_backlog_project(app: &HiveApp) {
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![legibility_backlog_task()],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+}
+
+/// Build the harnesses for every view we audit, under `theme`. Covers the top
+/// bar + sidebar + each central view, the Agent Context drawer with a file
+/// selected (the exact surface in the reported screenshot: small gray paths +
+/// preview body), and every task-15/16 Backlog lens with a real, non-empty
+/// task selected.
 ///
 /// Scope note: backgrounds are reconstructed from the draw list's filled rects
 /// (`background_at`), which covers button fills, selection highlights, and card
 /// frames. The remaining blind spot is text painted over an image or gradient
 /// (no fill rect to read) — none of the audited views do that today.
-fn views() -> Vec<(&'static str, Harness<'static, HiveApp>)> {
+fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     write_preview_fixture();
+    let suffix = format!(" [{theme:?}]");
 
-    let servers_app = seeded_app(); // defaults to ViewTab::Servers
+    let mut servers_app = seeded_app(); // defaults to ViewTab::Servers
+    servers_app.config.ui.theme = theme;
     seed_live_listener(&servers_app);
     let servers = harness(servers_app);
 
     let mut agent_app = seeded_app();
+    agent_app.config.ui.theme = theme;
     agent_app.view_tab = ViewTab::AgentContext;
     seed_live_listener(&agent_app);
     let agent = harness(agent_app);
 
     let mut drawer_app = seeded_app();
+    drawer_app.config.ui.theme = theme;
     drawer_app.view_tab = ViewTab::AgentContext;
     drawer_app.agent_context_view.selected_id = Some("claude-md".to_string());
     seed_live_listener(&drawer_app);
     let drawer = harness(drawer_app);
 
+    let mut list_app = seeded_app();
+    list_app.config.ui.theme = theme;
+    list_app.view_tab = ViewTab::Backlog;
+    list_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    seed_backlog_project(&list_app);
+    let list = harness(list_app);
+
+    let mut board_app = seeded_app();
+    board_app.config.ui.theme = theme;
+    board_app.view_tab = ViewTab::Backlog;
+    board_app.backlog_view.lens = BacklogLens::Board;
+    board_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    seed_backlog_project(&board_app);
+    let board = harness(board_app);
+
+    let mut milestones_app = seeded_app();
+    milestones_app.config.ui.theme = theme;
+    milestones_app.view_tab = ViewTab::Backlog;
+    milestones_app.backlog_view.lens = BacklogLens::Milestones;
+    seed_backlog_project(&milestones_app);
+    let milestones = harness(milestones_app);
+
+    let mut stats_app = seeded_app();
+    stats_app.config.ui.theme = theme;
+    stats_app.view_tab = ViewTab::Backlog;
+    stats_app.backlog_view.lens = BacklogLens::Statistics;
+    seed_backlog_project(&stats_app);
+    let stats = harness(stats_app);
+
     vec![
-        ("Servers view (top bar + sidebar + workspace)", servers),
-        ("Agent Context view", agent),
-        ("Agent Context · file selected (path + preview)", drawer),
+        (
+            format!("Servers view (top bar + sidebar + workspace){suffix}"),
+            servers,
+        ),
+        (format!("Agent Context view{suffix}"), agent),
+        (
+            format!("Agent Context · file selected (path + preview){suffix}"),
+            drawer,
+        ),
+        (format!("Backlog · List lens (task detail){suffix}"), list),
+        (format!("Backlog · Board lens{suffix}"), board),
+        (format!("Backlog · Milestones lens{suffix}"), milestones),
+        (format!("Backlog · Statistics lens{suffix}"), stats),
     ]
 }
 
 #[test]
 fn ui_text_meets_legibility_contract() {
     let mut violations = Vec::new();
-    for (name, mut harness) in views() {
-        // Let scroll areas / layout settle before reading the draw list.
-        harness.run();
-        violations.extend(audit(name, &harness));
+    for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+        for (name, mut harness) in views(theme) {
+            // Let scroll areas / layout settle before reading the draw list.
+            harness.run();
+            violations.extend(audit_owned(name, &harness));
+        }
     }
 
     assert!(violations.is_empty(), "{}", report(&violations));

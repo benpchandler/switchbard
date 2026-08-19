@@ -72,23 +72,23 @@ pub fn render_modal(app: &mut HiveApp, ctx: &egui::Context) {
             });
 
             ui.add_space(8.0);
-            ui.label(egui::RichText::new("Preview").color(theme::WEAK_TEXT));
+            ui.label(egui::RichText::new("Preview").color(theme::weak_text()));
             ui.add(
                 egui::Label::new(
                     egui::RichText::new(state.command_preview())
                         .monospace()
-                        .color(theme::MUTED_TEXT),
+                        .color(theme::muted_text()),
                 )
                 .wrap(),
             );
 
             if let Some(err) = validation.as_ref() {
                 ui.add_space(6.0);
-                ui.colored_label(theme::DANGER, validation_message(err));
+                ui.colored_label(theme::danger(), validation_message(err));
             }
             if let Some(err) = &state.error {
                 ui.add_space(6.0);
-                ui.colored_label(theme::DANGER, err);
+                ui.colored_label(theme::danger(), err);
             }
 
             ui.add_space(8.0);

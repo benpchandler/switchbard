@@ -261,7 +261,7 @@ fn render_summary(ui: &mut egui::Ui, snap: &Snapshot) {
     if external > 0 {
         s.push_str(&format!(" · {external} external"));
     }
-    ui.label(egui::RichText::new(s).color(theme::WEAK_TEXT));
+    ui.label(egui::RichText::new(s).color(theme::weak_text()));
 }
 
 // ── repo card ────────────────────────────────────────────────────────────
@@ -302,13 +302,15 @@ fn render_repo_card(
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 if listening > 0 {
-                    theme::painted_dot_pulse(ui, theme::GREEN, listening);
+                    theme::painted_dot_pulse(ui, theme::green(), listening);
                 } else {
                     theme::painted_dot(ui, egui::Color32::GRAY);
                 }
                 ui.add_space(2.0);
                 ui.heading(&repo.name);
-                ui.label(egui::RichText::new(format!("{} wt", wts.len())).color(theme::WEAK_TEXT));
+                ui.label(
+                    egui::RichText::new(format!("{} wt", wts.len())).color(theme::weak_text()),
+                );
                 // Chips quiet down: dirty/drifted only when the repo has more
                 // worktrees than the eye can summarize at a glance. Listener
                 // count is on the dot's pulse, no chip needed.
@@ -339,7 +341,7 @@ fn render_repo_card(
                     ui.add_space(6.0);
                     ui.label(
                         egui::RichText::new(repo.path.display().to_string())
-                            .color(theme::WEAK_TEXT)
+                            .color(theme::weak_text())
                             .small(),
                     );
                 });
@@ -365,13 +367,13 @@ fn build_chips(
 ) -> Vec<(egui::Color32, String)> {
     let mut chips = Vec::new();
     if dirty > 0 {
-        chips.push((theme::AMBER, format!("{dirty} dirty")));
+        chips.push((theme::amber(), format!("{dirty} dirty")));
     }
     if main_drifted > 0 {
-        chips.push((theme::LAVENDER, format!("{main_drifted} vs main")));
+        chips.push((theme::lavender(), format!("{main_drifted} vs main")));
     }
     if remote_attention > 0 {
-        chips.push((theme::SKY, format!("{remote_attention} remote")));
+        chips.push((theme::sky(), format!("{remote_attention} remote")));
     }
     chips
 }
@@ -425,7 +427,7 @@ fn render_worktree_row(
     // list.
     let mut frame = egui::Frame::none().inner_margin(egui::Margin::symmetric(4.0, 1.0));
     if is_primary {
-        frame = frame.fill(theme::PRIMARY_WORKTREE_TINT);
+        frame = frame.fill(theme::primary_worktree_tint());
     }
     frame.show(ui, |ui| {
         let id = ui.make_persistent_id(format!("wt_row_{}", w.path.display()));
@@ -457,7 +459,9 @@ fn render_worktree_row(
                     render_listeners_strip(ui, listeners, &service_ports, snap, pending);
                 }
                 if svcs.is_empty() && listeners.is_empty() {
-                    ui.label(egui::RichText::new("nothing detected here").color(theme::WEAK_TEXT));
+                    ui.label(
+                        egui::RichText::new("nothing detected here").color(theme::weak_text()),
+                    );
                 }
                 ui.add_space(4.0);
             });
@@ -534,7 +538,7 @@ fn render_branch_inline(ui: &mut egui::Ui, w: &WorktreeRef) {
         ui.label(
             egui::RichText::new("branch")
                 .small()
-                .color(theme::WEAK_TEXT),
+                .color(theme::weak_text()),
         );
         branch_label(ui, w.branch.as_deref());
     });
@@ -558,7 +562,7 @@ fn render_worktree_row_trailing(
         ui.label(
             egui::RichText::new(w.head.chars().take(8).collect::<String>())
                 .monospace()
-                .color(theme::WEAK_TEXT)
+                .color(theme::weak_text())
                 .small(),
         )
         .on_hover_text(&w.head);
@@ -600,19 +604,19 @@ fn headline_dot(
         }
     }
     if running > 0 || listener_count > 0 {
-        return (theme::GREEN, listener_count.max(running));
+        return (theme::green(), listener_count.max(running));
     }
     if external > 0 {
-        return (theme::SKY, 0);
+        return (theme::sky(), 0);
     }
     if m.is_dirty() == Some(true) {
-        return (theme::AMBER, 0);
+        return (theme::amber(), 0);
     }
     if drift_is_drifted(&m.main_drift) {
-        return (theme::LAVENDER, 0);
+        return (theme::lavender(), 0);
     }
     if drift_needs_attention(&m.remote_drift) {
-        return (theme::SKY, 0);
+        return (theme::sky(), 0);
     }
     (egui::Color32::GRAY, 0)
 }
@@ -628,7 +632,7 @@ fn render_health_inline(ui: &mut egui::Ui, m: &WorktreeMeta) {
         m.main_drift.as_ref(),
         m.main_drift_detail.as_ref(),
         None,
-        theme::LAVENDER,
+        theme::lavender(),
     );
     render_drift_inline(
         ui,
@@ -636,7 +640,7 @@ fn render_health_inline(ui: &mut egui::Ui, m: &WorktreeMeta) {
         m.remote_drift.as_ref(),
         m.remote_drift_detail.as_ref(),
         m.fetch_unix,
-        theme::SKY,
+        theme::sky(),
     );
 }
 
@@ -655,7 +659,7 @@ fn render_dirty_inline(ui: &mut egui::Ui, m: &WorktreeMeta) {
             );
         }
         None => {
-            ui.label(egui::RichText::new("dirty ...").color(theme::WEAK_TEXT))
+            ui.label(egui::RichText::new("dirty ...").color(theme::weak_text()))
                 .on_hover_text("Dirty probe pending or failed");
         }
     }
@@ -670,7 +674,7 @@ fn render_drift_inline(
     drift_color: egui::Color32,
 ) {
     let Some(probe) = probe else {
-        ui.label(egui::RichText::new(format!("{label} ...")).color(theme::WEAK_TEXT))
+        ui.label(egui::RichText::new(format!("{label} ...")).color(theme::weak_text()))
             .on_hover_text(format!("{label} comparison pending or failed"));
         return;
     };
@@ -685,7 +689,7 @@ fn render_drift_inline(
                 ui.label(
                     egui::RichText::new(text)
                         .monospace()
-                        .color(theme::WEAK_TEXT),
+                        .color(theme::weak_text()),
                 )
                 .on_hover_text(tip);
             }
@@ -866,7 +870,7 @@ fn render_service_line(
 
         let name_text = match resolved.likelihood {
             ServerLikelihood::NotServer => egui::RichText::new(&resolved.canonical_name)
-                .color(theme::WEAK_TEXT)
+                .color(theme::weak_text())
                 .italics(),
             _ => egui::RichText::new(&resolved.canonical_name).strong(),
         };
@@ -878,7 +882,7 @@ fn render_service_line(
             ui.label(
                 egui::RichText::new(format!("▸{}", resolved.entry_points.len()))
                     .small()
-                    .color(theme::WEAK_TEXT),
+                    .color(theme::weak_text()),
             )
             .on_hover_text(&entry_hover);
         }
@@ -929,7 +933,7 @@ fn render_service_state_inline(ui: &mut egui::Ui, row_state: &RowState) {
             );
         }
         RowState::Idle => {
-            ui.label(egui::RichText::new("idle").color(theme::WEAK_TEXT));
+            ui.label(egui::RichText::new("idle").color(theme::weak_text()));
         }
     }
 }
@@ -1140,9 +1144,9 @@ fn render_service_actions_inline(
 
 fn state_dot_color(row_state: &RowState) -> egui::Color32 {
     match row_state {
-        RowState::Running { .. } => theme::GREEN,
-        RowState::ExternalLive { .. } => theme::SKY,
-        RowState::Blocked { .. } => theme::WARN_ORANGE,
+        RowState::Running { .. } => theme::green(),
+        RowState::ExternalLive { .. } => theme::sky(),
+        RowState::Blocked { .. } => theme::warn_orange(),
         RowState::Idle => egui::Color32::GRAY,
     }
 }
@@ -1224,7 +1228,7 @@ fn listener_matches(l: &AttributedListener, filter_lc: &str) -> bool {
 
 fn render_listener_line(ui: &mut egui::Ui, l: &AttributedListener, pending: &mut Pending) {
     ui.horizontal(|ui| {
-        theme::painted_dot(ui, theme::GREEN);
+        theme::painted_dot(ui, theme::green());
         ui.add_space(2.0);
         mono_label(ui, &format!(":{}", l.listener.port), None);
         ui.add(egui::Label::new(&l.listener.command_name).truncate())
@@ -1257,7 +1261,7 @@ fn render_unattributed_card(ui: &mut egui::Ui, list: &[AttributedListener], pend
                     ui.add_space(2.0);
                     ui.label(egui::RichText::new("Unattributed listeners").strong());
                     ui.label(
-                        egui::RichText::new(format!("({})", list.len())).color(theme::WEAK_TEXT),
+                        egui::RichText::new(format!("({})", list.len())).color(theme::weak_text()),
                     );
                 })
                 .body(|ui| {
@@ -1367,7 +1371,7 @@ fn render_remove_worktree_modal(app: &mut HiveApp, ctx: &egui::Context) {
                             "s"
                         }
                     ))
-                    .color(theme::AMBER),
+                    .color(theme::amber()),
                 );
                 for run in &state.active_runs {
                     ui.label(format!("    {}    (pgid {})", run.service_name, run.pgid));
@@ -1386,7 +1390,7 @@ fn render_remove_worktree_modal(app: &mut HiveApp, ctx: &egui::Context) {
                             "s"
                         }
                     ))
-                    .color(theme::AMBER),
+                    .color(theme::amber()),
                 );
                 egui::ScrollArea::vertical()
                     .max_height(160.0)
@@ -1400,7 +1404,7 @@ fn render_remove_worktree_modal(app: &mut HiveApp, ctx: &egui::Context) {
 
             if let Some(err) = &state.error {
                 ui.add_space(6.0);
-                ui.colored_label(theme::DANGER, err);
+                ui.colored_label(theme::danger(), err);
             }
 
             ui.add_space(8.0);
@@ -1470,7 +1474,7 @@ fn render_branch_delete_section(
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "another worktree".to_string());
         ui.colored_label(
-            theme::MUTED_TEXT,
+            theme::muted_text(),
             format!("Branch '{branch}' is checked out at {where_} — can't delete it here."),
         );
         return;
@@ -1487,7 +1491,7 @@ fn render_branch_delete_section(
         ui.checkbox(
             delete_branch,
             egui::RichText::new(format!("⚠ Force-delete branch '{branch}' ({detail})"))
-                .color(theme::DANGER),
+                .color(theme::danger()),
         );
     } else {
         let base = assessment.compared_against.as_deref().unwrap_or("main");

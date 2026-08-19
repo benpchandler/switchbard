@@ -27,11 +27,11 @@ pub enum StatusKind {
 impl StatusKind {
     fn color(self) -> egui::Color32 {
         match self {
-            Self::Good => theme::GREEN,
-            Self::Warn => theme::AMBER,
-            Self::Info => theme::SKY,
-            Self::Danger => theme::WARN_ORANGE,
-            Self::Neutral => theme::WEAK_TEXT,
+            Self::Good => theme::green(),
+            Self::Warn => theme::amber(),
+            Self::Info => theme::sky(),
+            Self::Danger => theme::warn_orange(),
+            Self::Neutral => theme::weak_text(),
         }
     }
 }

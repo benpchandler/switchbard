@@ -27,7 +27,7 @@ pub fn repo_section_header(
 ) {
     ui.horizontal(|ui| {
         ui.heading(heading);
-        ui.label(egui::RichText::new(subtitle).color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new(subtitle).color(theme::muted_text()));
         if !chips.is_empty() {
             ui.separator();
         }
@@ -36,7 +36,7 @@ pub fn repo_section_header(
         }
     });
     if let Some(line) = second_line {
-        ui.label(egui::RichText::new(line).color(theme::MUTED_TEXT));
+        ui.label(egui::RichText::new(line).color(theme::muted_text()));
     }
     ui.add_space(6.0);
 }

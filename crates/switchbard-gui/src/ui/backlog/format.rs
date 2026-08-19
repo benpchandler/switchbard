@@ -28,10 +28,10 @@ pub(super) fn priority_title(priority: &str) -> String {
 
 pub(super) fn priority_color(priority: &str) -> egui::Color32 {
     match priority.to_ascii_lowercase().as_str() {
-        "high" => theme::WARN_ORANGE,
-        "medium" => theme::SKY,
-        "low" => theme::MUTED_TEXT,
-        _ => theme::WEAK_TEXT,
+        "high" => theme::warn_orange(),
+        "medium" => theme::sky(),
+        "low" => theme::muted_text(),
+        _ => theme::weak_text(),
     }
 }
 

@@ -18,7 +18,120 @@ use switchbard_core::{
     ContextScope, Repo, WorktreeRef,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::ViewTab;
+use switchbard_gui::runtime::{BacklogLens, ViewTab};
+
+fn seeded_backlog_task() -> BacklogTask {
+    BacklogTask {
+        id: "TASK-1".to_string(),
+        title: "Seeded Backlog Task".to_string(),
+        status: "To Do".to_string(),
+        priority: "high".to_string(),
+        assignees: vec!["ben".to_string()],
+        labels: vec!["demo".to_string()],
+        dependencies: vec![],
+        references: vec![],
+        milestone: None,
+        parent: None,
+        created_date: Some("2026-06-20 12:00".to_string()),
+        updated_date: Some("2026-06-20 12:00".to_string()),
+        description: "Task detail body".to_string(),
+        implementation_plan: String::new(),
+        implementation_notes: "Existing note".to_string(),
+        final_summary: String::new(),
+        acceptance_criteria: vec![BacklogChecklistItem {
+            index: 1,
+            checked: false,
+            text: "Criterion renders".to_string(),
+        }],
+        definition_of_done: vec![],
+        source: BacklogTaskSource::Active,
+        path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-1.md")),
+    }
+}
+
+/// Board lens (task-15 AC #1): switching to it should replace the list/detail
+/// split with per-status columns, each showing the tasks currently in that
+/// status as flight-strip cards.
+#[test]
+fn board_lens_renders_kanban_columns_with_the_seeded_task() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::Board;
+    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![seeded_backlog_task()],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_by_label("Board").is_some(),
+        "the Board lens tab should render"
+    );
+    assert!(
+        harness.query_all_by_label("To Do").next().is_some(),
+        "the To Do column header should render"
+    );
+    assert!(
+        harness.query_all_by_label("In Progress").next().is_some(),
+        "the In Progress column header should render even though it's empty"
+    );
+    assert!(
+        harness.query_by_label("Seeded Backlog Task").is_some(),
+        "the seeded task's flight strip should render in its status column"
+    );
+}
+
+/// Global search overlay (task-15 AC #2): opening it and matching a query
+/// should surface results across every tracked repo, prefixed with the
+/// repo id the same way the All-projects list rows are.
+#[test]
+fn global_search_overlay_finds_the_matching_task_across_repos() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.search.open = true;
+    app.backlog_view.search.query = "Seeded".to_string();
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![seeded_backlog_task()],
+            warnings: vec![],
+            loaded_at_unix: 0,
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_by_label("Search all repos").is_some(),
+        "the search window should be open"
+    );
+    // Both the search overlay's result row and the underlying List lens's own
+    // row render the same "repo:id  title" label, so two nodes is correct.
+    assert_eq!(
+        harness
+            .query_all_by_label(&format!("{REPO_NAME}:TASK-1  Seeded Backlog Task"))
+            .count(),
+        2,
+        "the matching task should appear as a repo-prefixed search result"
+    );
+
+    harness.state_mut().backlog_view.search.query = "no-such-task-anywhere".to_string();
+    harness.run();
+    assert!(
+        harness.query_by_label("No matches").is_some(),
+        "a query with no hits should say so rather than showing stale results"
+    );
+}
 
 #[test]
 fn window_defaults_to_servers_view() {
@@ -146,31 +259,7 @@ fn backlog_view_surfaces_seeded_task() {
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
             cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
-            tasks: vec![BacklogTask {
-                id: "TASK-1".to_string(),
-                title: "Seeded Backlog Task".to_string(),
-                status: "To Do".to_string(),
-                priority: "high".to_string(),
-                assignees: vec!["ben".to_string()],
-                labels: vec!["demo".to_string()],
-                dependencies: vec![],
-                milestone: None,
-                parent: None,
-                created_date: Some("2026-06-20 12:00".to_string()),
-                updated_date: Some("2026-06-20 12:00".to_string()),
-                description: "Task detail body".to_string(),
-                implementation_plan: String::new(),
-                implementation_notes: "Existing note".to_string(),
-                final_summary: String::new(),
-                acceptance_criteria: vec![BacklogChecklistItem {
-                    index: 1,
-                    checked: false,
-                    text: "Criterion renders".to_string(),
-                }],
-                definition_of_done: vec![],
-                source: BacklogTaskSource::Active,
-                path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-1.md")),
-            }],
+            tasks: vec![seeded_backlog_task()],
             warnings: vec![],
             loaded_at_unix: 0,
         },
@@ -250,6 +339,7 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
                     assignees: vec![],
                     labels: vec![],
                     dependencies: vec![],
+                    references: vec![],
                     milestone: None,
                     parent: None,
                     created_date: None,

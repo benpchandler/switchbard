@@ -19,6 +19,8 @@ serde.workspace = true
 serde_json.workspace = true
 libc = "0.2"
 egui_extras = { version = "0.30", features = ["all_loaders"] }
+# Renders the task detail pane's markdown description (task-15 AC #3).
+egui_commonmark = "0.19"
 # Native file picker for the "Add repo…" flow.
 rfd = "0.14"
 # Resolve $HOME for the first-launch discovery scan and "~/..." path display.

@@ -17,25 +17,43 @@
 //! ids are only unique within a project.
 //!
 //! ## Module map
-//! - `format`    — presentation-only helpers (status/priority labels+colors).
-//! - `toolbar`   — summary line + project/status/priority filter bar.
-//! - `sort`      — task filtering, sorting (incl. triage ranking), status options.
-//! - `selection` — bulk multi-select state machine (shift/ctrl-click, context menu targets).
-//! - `list`      — the task list column + row rendering.
-//! - `detail`    — the selected-task detail pane (editor, acceptance, notes).
-//! - `create`    — the "New Backlog Task" modal.
+//! - `format`     — presentation-only helpers (status/priority labels+colors).
+//! - `toolbar`    — summary line + project/status/priority filter bar + lens tabs.
+//! - `sort`       — task filtering, sorting (incl. triage ranking), status options.
+//! - `selection`  — bulk multi-select state machine (shift/ctrl-click, context menu targets).
+//! - `detail_lists` — detail-pane checklist/list sections split out of `detail`.
+//! - `list`       — the List lens: task list column + row rendering.
+//! - `board`      — the Board lens: per-status kanban columns with drag-to-change-status.
+//! - `milestones` — the Milestones lens: tasks grouped by milestone, cross-repo.
+//! - `stats`      — the Statistics lens: cross-repo totals + burndown (task-16).
+//! - `search`     — the Cmd+K / Ctrl+K global free-text search overlay.
+//! - `detail`     — the selected-task detail pane (editor, acceptance, notes).
+//! - `create`     — the "New Backlog Task" modal.
+//!
+//! ## Lens
+//!
+//! `app.backlog_view.lens` (`BacklogLens`) picks which of the four central
+//! renderers below the toolbar owns the frame: `List` (default), `Board`,
+//! `Milestones`, or `Statistics`. All four share the same `Snapshot` and the
+//! same triage-ranked/filtered `tasks` list computed once per frame in
+//! `render` — see the perf note there.
 
+mod board;
 mod create;
 mod detail;
+mod detail_lists;
 mod format;
 mod list;
+mod milestones;
+mod search;
 mod selection;
 mod sort;
+mod stats;
 mod toolbar;
 
 use crate::app::HiveApp;
 use crate::runtime::worktree_names::worktree_display_name;
-use crate::runtime::BacklogTaskKey;
+use crate::runtime::{BacklogLens, BacklogTaskKey};
 use crate::ui::theme;
 use eframe::egui;
 use std::collections::HashMap;
@@ -179,11 +197,13 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     // Computed once per frame — it re-sorts (and, for the default Triage key,
     // re-ranks via a per-task clone into `TriageEntry`) every visible task,
     // so a second pass here is exactly the "per-frame rebuild" render-path
-    // perf rule warns against. `reconcile_selected_task` and every renderer
-    // below share this one list.
+    // perf rule warns against. `reconcile_selected_task` and every lens
+    // renderer below share this one list.
     let tasks = sort::visible_task_rows(app, &snap);
     reconcile_selected_task(app, &tasks);
     let mut pending = Pending::default();
+
+    search::handle_shortcut(app, ctx);
 
     egui::CentralPanel::default().show(ctx, |ui| {
         if snap.projects.is_empty() {
@@ -192,11 +212,30 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         }
         toolbar::render_summary(app, ui, &snap);
         ui.add_space(6.0);
-        toolbar::render_project_toolbar(app, ui, &snap, tasks.len());
-        ui.separator();
-        list::render_task_workspace(app, ui, &snap, tasks, &mut pending);
+        toolbar::render_lens_tabs(app, ui);
+        match app.backlog_view.lens {
+            BacklogLens::List => {
+                toolbar::render_project_toolbar(app, ui, &snap, tasks.len());
+                ui.separator();
+                list::render_task_workspace(app, ui, &snap, tasks, &mut pending);
+            }
+            BacklogLens::Board => {
+                toolbar::render_project_toolbar(app, ui, &snap, tasks.len());
+                ui.separator();
+                board::render_board(app, ui, &snap, tasks, &mut pending);
+            }
+            BacklogLens::Milestones => {
+                ui.separator();
+                milestones::render_milestones(app, ui, &snap, tasks);
+            }
+            BacklogLens::Statistics => {
+                ui.separator();
+                stats::render_statistics(app, ui, &snap);
+            }
+        }
     });
 
+    search::render_overlay(app, ctx, &snap);
     create::render_create_modal(app, ctx, &snap, &mut pending);
     apply_pending(app, ctx, pending);
 }
@@ -250,7 +289,7 @@ fn render_empty(ui: &mut egui::Ui) {
             egui::RichText::new(
                 "No tracked worktrees have a backlog/config.yml or backlog/tasks directory.",
             )
-            .color(theme::MUTED_TEXT),
+            .color(theme::muted_text()),
         );
     });
 }
@@ -262,8 +301,10 @@ pub(in crate::ui::backlog) struct Pending {
     /// selection needs one `backlog` CLI invocation per project root.
     pub bulk_save: Vec<(PathBuf, Vec<String>, BacklogTaskPatch, String)>,
     pub toggle_ac: Option<(PathBuf, String, usize, bool)>,
+    pub toggle_dod: Option<(PathBuf, String, usize, bool)>,
     pub append_note: Option<(PathBuf, String, String)>,
     pub create: Option<(PathBuf, NewBacklogTask)>,
+    pub archive: Option<(PathBuf, String)>,
 }
 
 fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, pending: Pending) {
@@ -276,10 +317,16 @@ fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, pending: Pending) {
     if let Some((project_root, task_id, index, checked)) = pending.toggle_ac {
         app.spawn_backlog_acceptance_toggle(project_root, task_id, index, checked, ctx);
     }
+    if let Some((project_root, task_id, index, checked)) = pending.toggle_dod {
+        app.spawn_backlog_dod_toggle(project_root, task_id, index, checked, ctx);
+    }
     if let Some((project_root, task_id, note)) = pending.append_note {
         app.spawn_backlog_append_note(project_root, task_id, note, ctx);
     }
     if let Some((project_root, task)) = pending.create {
         app.spawn_backlog_create(project_root, task, ctx);
+    }
+    if let Some((project_root, task_id)) = pending.archive {
+        app.spawn_backlog_archive(project_root, task_id, ctx);
     }
 }

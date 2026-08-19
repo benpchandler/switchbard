@@ -152,6 +152,9 @@ pub(super) fn task_visible(task: &BacklogTask, app: &HiveApp, filter_lc: &str) -
     if task.source == BacklogTaskSource::Archived && !app.backlog_view.show_archived {
         return false;
     }
+    if task.source == BacklogTaskSource::Draft && !app.backlog_view.show_drafts {
+        return false;
+    }
     if app.backlog_view.status_filter != "all"
         && !task
             .status
@@ -191,8 +194,11 @@ pub(super) fn open_task_count(project: &BacklogProject) -> usize {
         .count()
 }
 
+/// Delegates to `BacklogTask::is_done` (core) so the GUI and
+/// `backlog_stats`'s burndown/statistics walk share one definition of
+/// "done" rather than maintaining two.
 pub(super) fn task_is_completed(task: &BacklogTask) -> bool {
-    task.source == BacklogTaskSource::Completed || task.status.eq_ignore_ascii_case("done")
+    task.is_done()
 }
 
 /// The set of status values worth offering in the filter combo box: the
@@ -246,6 +252,7 @@ mod tests {
             assignees: vec![],
             labels: vec![],
             dependencies: vec![],
+            references: vec![],
             milestone: None,
             parent: None,
             created_date: None,

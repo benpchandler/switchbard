@@ -1,7 +1,7 @@
 //! Small badges and missing-data placeholders.
 //!
 //! These appeared inline 15+ times across the view modules as
-//! `RichText::new("—")` colored `theme::WEAK_TEXT`. Centralized
+//! `RichText::new("—")` colored `theme::weak_text()`. Centralized
 //! so a future restyle of "what does missing data look like" is one diff.
 
 use eframe::egui;
@@ -10,12 +10,12 @@ use crate::ui::theme;
 
 /// "—" — the value is known to be absent or in-sync. Always subdued.
 pub fn weak_dash(ui: &mut egui::Ui) {
-    ui.label(egui::RichText::new("—").color(theme::WEAK_TEXT));
+    ui.label(egui::RichText::new("—").color(theme::weak_text()));
 }
 
 /// "…" — the value is being computed / probe in flight. Always subdued.
 pub fn weak_dots(ui: &mut egui::Ui) {
-    ui.label(egui::RichText::new("…").color(theme::WEAK_TEXT));
+    ui.label(egui::RichText::new("…").color(theme::weak_text()));
 }
 
 /// Count badge for table cells. Renders the number in `color` when > 0,
