@@ -22,5 +22,5 @@ pub use parse::{
 pub use types::{
     ordered_status_vocabulary, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskPatch,
     BacklogTaskSource, NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
-    CANONICAL_STATUS_ORDER,
+    CANONICAL_STATUS_ORDER, STANDARD_STATUSES,
 };

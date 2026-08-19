@@ -73,7 +73,8 @@
 //! `workers.rs`'s pattern) is separate scope.
 
 use crate::backlog::{
-    append_backlog_notes, swap_backlog_label, BacklogProject, BacklogTask, BacklogTaskSource,
+    append_backlog_notes, edit_backlog_task, swap_backlog_label, BacklogProject, BacklogTask,
+    BacklogTaskPatch, BacklogTaskSource,
 };
 use crate::git_env::git_cmd;
 use crate::kill::kill_pgid;
@@ -88,6 +89,20 @@ pub const DISPATCH_LABEL: &str = "dispatch";
 pub const DISPATCHING_LABEL: &str = "dispatching";
 pub const DISPATCHED_LABEL: &str = "dispatched";
 pub const DISPATCH_FAILED_LABEL: &str = "dispatch-failed";
+
+/// Status a task moves to when the pipeline claims it: an agent is actively
+/// working the task in its own worktree, which is what "In Progress" means on
+/// every board this app renders. The label state machine
+/// (`dispatch`/`dispatching`/…) stays the authority on *pipeline* state; the
+/// status exists so a task being worked by an agent is not invisible to
+/// someone reading the board rather than the dispatch pill.
+pub const DISPATCH_IN_PROGRESS_STATUS: &str = "In Progress";
+
+/// Status a task moves to once the pipeline opened a PR: the agent is done and
+/// a human should look. Already part of [`crate::STANDARD_STATUSES`], so this
+/// introduces no new vocabulary — see that constant's doc for why the
+/// standardized set is what makes this reachable in every repo.
+pub const DISPATCH_REVIEW_STATUS: &str = "In Review";
 
 /// Default cap on how many queued tasks one `drain_dispatch_queue` call picks
 /// up (per the mission's "per-run concurrency cap default 2").
@@ -191,10 +206,33 @@ pub fn dispatch_branch_name(task_id: &str) -> String {
     format!("dispatch/{}", task_id.to_ascii_lowercase())
 }
 
-fn dispatch_worktree_path(repo_root: &Path, task_id: &str) -> PathBuf {
+/// Where a task's dispatch worktree lives. Public because it is also the
+/// *only* definition of that convention — `crate::dispatch_inspect` rebuilds
+/// the path to find an existing run rather than keeping a parallel copy of the
+/// rule (see that module's doc on why the pipeline needs no run store).
+pub fn dispatch_worktree_path(repo_root: &Path, task_id: &str) -> PathBuf {
     repo_root
         .join(".worktrees")
         .join(format!("dispatch-{}", task_id.to_ascii_lowercase()))
+}
+
+/// Directory holding every dispatch run's log and prompt file. Shared with the
+/// service-log directory on purpose: one place a user has to look for "what
+/// did switchbard spawn".
+pub fn dispatch_log_dir() -> PathBuf {
+    std::env::temp_dir().join("switchbard-logs")
+}
+
+/// Filename stem shared by a run's log (`<stem>.log`) and prompt
+/// (`<stem>-prompt.md`). The embedded `unix_now()` seconds stamp is what lets
+/// `dispatch_inspect` recover a run's start time — and therefore its elapsed
+/// time — without the pipeline persisting anything.
+pub fn dispatch_log_stem(task_id: &str, started_at_unix: u64) -> String {
+    format!(
+        "dispatch-{}-{}",
+        task_id.to_ascii_lowercase(),
+        started_at_unix
+    )
 }
 
 /// The prompt handed to the headless `claude -p` run: the task's own
@@ -264,10 +302,16 @@ pub fn dispatch_one(
     swap_backlog_label(repo_root, &task.id, DISPATCH_LABEL, DISPATCHING_LABEL)
         .with_context(|| format!("failed to claim {} for dispatch", task.id))?;
 
+    // Captured *before* the pipeline moves the task, so a failure can put it
+    // back where the user left it instead of stranding it on "In Progress"
+    // with nothing actually progressing.
+    let prior_status = task.status.clone();
+    set_dispatch_status(repo_root, &task.id, DISPATCH_IN_PROGRESS_STATUS);
+
     let paths = match prepare_dispatch(repo_root, task, opts) {
         Ok(paths) => paths,
         Err(e) => {
-            release_as_failed(repo_root, &task.id, &e.to_string());
+            release_as_failed(repo_root, &task.id, &e.to_string(), &prior_status);
             return Err(e);
         }
     };
@@ -275,7 +319,7 @@ pub fn dispatch_one(
     let exit = match run_claude_headless(&paths, opts) {
         Ok(exit) => exit,
         Err(e) => {
-            release_as_failed(repo_root, &task.id, &e.to_string());
+            release_as_failed(repo_root, &task.id, &e.to_string(), &prior_status);
             return Err(e);
         }
     };
@@ -289,7 +333,7 @@ pub fn dispatch_one(
         DispatchResult::PrOpened { url } => {
             let _ = release_as_dispatched(repo_root, &task.id, url);
         }
-        other => release_as_failed(repo_root, &task.id, &describe_result(other)),
+        other => release_as_failed(repo_root, &task.id, &describe_result(other), &prior_status),
     }
 
     Ok(DispatchOutcome {
@@ -352,12 +396,11 @@ fn prepare_dispatch(
     })
     .context("dispatch worktree create failed")?;
 
-    let log_dir = std::env::temp_dir().join("switchbard-logs");
+    let log_dir = dispatch_log_dir();
     std::fs::create_dir_all(&log_dir).context("failed to create switchbard-logs dir")?;
-    let slug = task.id.to_ascii_lowercase();
-    let stamp = unix_now();
-    let log_path = log_dir.join(format!("dispatch-{slug}-{stamp}.log"));
-    let prompt_path = log_dir.join(format!("dispatch-{slug}-{stamp}-prompt.md"));
+    let stem = dispatch_log_stem(&task.id, unix_now());
+    let log_path = log_dir.join(format!("{stem}.log"));
+    let prompt_path = log_dir.join(format!("{stem}-prompt.md"));
     std::fs::write(&prompt_path, build_dispatch_prompt(task))
         .context("failed writing dispatch prompt")?;
 
@@ -501,16 +544,38 @@ fn open_pull_request(
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn release_as_failed(repo_root: &Path, task_id: &str, reason: &str) {
+/// Move a task's status as part of the dispatch lifecycle.
+///
+/// Best-effort and deliberately non-fatal: the label state machine, not the
+/// status, is what guards against double dispatch, so a failed status write
+/// must never abort a run or leave the task un-released. The visible cost of
+/// a failure here is a task whose board column lags its dispatch pill — bad,
+/// but strictly better than a half-claimed task.
+fn set_dispatch_status(repo_root: &Path, task_id: &str, status: &str) {
+    let patch = BacklogTaskPatch {
+        status: Some(status.to_string()),
+        ..Default::default()
+    };
+    let _ = edit_backlog_task(repo_root, task_id, &patch);
+}
+
+/// `prior_status` is the status the task carried before [`dispatch_one`]
+/// claimed it; the pipeline moved it to `In Progress`, so the pipeline puts it
+/// back. Restoring rather than picking a fixed "failed" status keeps this a
+/// true inverse — a task that was in `Icebox` when someone flagged it returns
+/// to `Icebox`, not to whatever this module considers a sensible default.
+fn release_as_failed(repo_root: &Path, task_id: &str, reason: &str, prior_status: &str) {
     // Best-effort: if the label swap itself fails there is nothing more we
     // can do here beyond leaving the task on `dispatching` for a human to
     // notice. Never panic a background worker over a bookkeeping write.
     let _ = swap_backlog_label(repo_root, task_id, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL);
+    set_dispatch_status(repo_root, task_id, prior_status);
     let _ = append_backlog_notes(repo_root, task_id, &format!("Dispatch failed: {reason}"));
 }
 
 fn release_as_dispatched(repo_root: &Path, task_id: &str, pr_url: &str) -> Result<()> {
     swap_backlog_label(repo_root, task_id, DISPATCHING_LABEL, DISPATCHED_LABEL)?;
+    set_dispatch_status(repo_root, task_id, DISPATCH_REVIEW_STATUS);
     append_backlog_notes(repo_root, task_id, &format!("Dispatch PR: {pr_url}"))?;
     Ok(())
 }

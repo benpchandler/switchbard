@@ -7,6 +7,7 @@ pub mod agent_context;
 pub mod backlog;
 pub mod column_widths;
 pub mod components;
+pub mod dispatch;
 pub mod legibility;
 pub mod onboarding;
 pub mod path_display;

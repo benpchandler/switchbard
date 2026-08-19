@@ -57,6 +57,13 @@ fn render_view_tabs(app: &mut HiveApp, ui: &mut egui::Ui) {
                 ui.selectable_value(&mut app.view_tab, ViewTab::Servers, "Servers");
                 ui.selectable_value(&mut app.view_tab, ViewTab::AgentContext, "Agent Context");
                 ui.selectable_value(&mut app.view_tab, ViewTab::Backlog, "Backlog");
+                // "Dispatches", not "Dispatch": the per-task flag button in the
+                // Backlog detail rail is already labeled "Dispatch", and this
+                // repo deliberately keeps that string unique in the
+                // accessibility tree (see `detail_lists::render_dispatch`'s note
+                // on why it has no section header). The plural also reads as
+                // "the list of runs", which is what the view is.
+                ui.selectable_value(&mut app.view_tab, ViewTab::Dispatch, "Dispatches");
             });
         });
 }
@@ -68,6 +75,7 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
         ViewTab::Servers => "matches repo, branch, service, command, port, listener cwd",
         ViewTab::AgentContext => "matches repo, path, title, or instruction text",
         ViewTab::Backlog => "matches task id, title, labels, assignee, or description",
+        ViewTab::Dispatch => "matches task id, title, repo, or branch",
     };
     ui.label(egui::RichText::new(hint).color(theme::muted_text()));
     match app.view_tab {
@@ -78,6 +86,7 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
         }
         ViewTab::Backlog => {}
         ViewTab::AgentContext => {}
+        ViewTab::Dispatch => {}
     }
 }
 

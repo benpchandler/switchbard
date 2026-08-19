@@ -1059,19 +1059,34 @@ fn board_shows_the_icebox_column_even_with_zero_icebox_tasks() {
 //      column headers, which — unlike a ComboBox's popup — are plain,
 //      always-rendered labels and so are directly queryable.
 
-/// Without a declared statuses list at all (the default `Vec::new()`),
-/// nothing should change from before TASK-25 — no phantom columns beyond
-/// the standard three plus whatever a task actually carries.
+/// **Deliberate reversal (owner decision 2026-08-06, cross-repo status
+/// standardization).** This test previously asserted the opposite — that a
+/// project declaring no statuses got "no phantom columns beyond the standard
+/// three". That was correct under the old per-project vocabulary, where
+/// `ordered_status_vocabulary` seeded from `BACKLOG_STATUSES`.
+///
+/// Standardizing means the offered set no longer depends on which project is
+/// in scope: every project shows all of `STANDARD_STATUSES`. The concrete bug
+/// that forced this is the dispatch lifecycle — `release_as_dispatched` moves
+/// a task to `In Review`, and under the old rule four of the five
+/// backlog-bearing repos could never display or select that status, so a
+/// dispatched task landed in a column that did not exist.
+///
+/// The empty-column cost is real and accepted: an unused `Icebox` column is
+/// the visible price of every board meaning the same thing.
 #[test]
-fn board_does_not_show_icebox_when_no_project_declares_it() {
+fn board_shows_the_full_standard_vocabulary_even_when_a_project_declares_none() {
     let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Ordinary task", "To Do")]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
     harness.run();
 
-    assert!(
-        harness.query_all_by_label("Icebox").next().is_none(),
-        "no project declared Icebox, so it should not appear as a column"
-    );
+    for status in ["Icebox", "To Do", "In Progress", "In Review", "Done"] {
+        assert!(
+            harness.query_all_by_label(status).next().is_some(),
+            "{status} should be a column even though this project declares no statuses — \
+             the standardized vocabulary is scope-independent"
+        );
+    }
 }
 
 // TASK-26/TASK-29: Board bulk select — the checkbox click was one of the
