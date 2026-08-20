@@ -1813,8 +1813,15 @@ fn board_rail_edit_save_serializes_against_an_in_flight_drop_on_the_same_task() 
     // lock) every opportunity to have already written the file, so this
     // assertion would catch that regression; a *correct* implementation
     // passes regardless of how long this sleep is, since it cannot have
-    // proceeded past `lock_task` while `held` is still alive.
-    std::thread::sleep(std::time::Duration::from_millis(150));
+    // proceeded past `lock_task` while `held` is still alive. Must exceed
+    // the real `backlog task edit` subprocess's own wall-clock time against
+    // this fixture (measured ~160ms) with real margin — an earlier version
+    // of this test used 150ms, *below* that measured time, which made the
+    // negative control vacuous (removing the lock did not turn this red,
+    // since the unserialized write hadn't landed yet either way). 1000ms is
+    // ~6x the measured time; re-verified red with the lock removed at this
+    // duration before trusting it (see this task's PR description).
+    std::thread::sleep(std::time::Duration::from_millis(1000));
     let project_while_locked =
         switchbard_core::load_backlog_project(root).expect("reload the real fixture project");
     let status_while_locked = project_while_locked
@@ -1992,7 +1999,51 @@ fn board_drop_back_to_origin_while_pending_queues_a_reversing_move() {
         let b = leftmost_bounds(&harness, "To Do");
         egui::Pos2::new(b.center().x, b.max.y + 80.0)
     };
-    drag_and_drop(&mut harness, source_center, target_center);
+
+    // Not `drag_and_drop` (which ends each event in `Harness::run`) — this
+    // drop is a *genuine* new move (not a no-op like the redrop test
+    // above), so it really does spawn a real `spawn_board_move_save`
+    // thread. Against this fixture's fake `cli_path`, that thread fails
+    // near-instantly and reports its outcome; `Harness::run`'s settle loop
+    // can (rarely, when something unrelated also requests an immediate
+    // repaint on the same frame — e.g. a hover-state change right after the
+    // drop) execute a *second* internal step before returning, and if the
+    // background thread's outcome lands in that window, `resolve_pending_
+    // moves` drains and resolves the entry before this test ever gets to
+    // inspect it — a CI-observed flake (post-review finding N4-follow-up),
+    // not a hypothetical one. `Harness::step` processes exactly one queued
+    // event with no internal retry loop, so pushing the release event and
+    // stepping once guarantees the assertions below run on the very frame
+    // the drop landed, before anything else can possibly run.
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(source_center));
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: source_center,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::default(),
+    });
+    harness.step();
+    let midpoint = egui::Pos2::new(source_center.x, (source_center.y + target_center.y) / 2.0);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(midpoint));
+    harness.step();
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(target_center));
+    harness.step();
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: target_center,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::default(),
+    });
+    harness.step();
 
     assert_eq!(
         harness.state().backlog_view.next_move_generation,
@@ -2007,7 +2058,10 @@ fn board_drop_back_to_origin_while_pending_queues_a_reversing_move() {
         .pending_moves
         .get(&key)
         .cloned()
-        .expect("the reversing move should itself be a fresh pending entry");
+        .expect(
+            "the reversing move should itself be a fresh pending entry, \
+             still present on the exact frame the drop landed",
+        );
     assert_eq!(
         mv.target_status, "To Do",
         "the fresh entry should target the origin status the card was \

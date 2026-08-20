@@ -91,6 +91,16 @@ const LANDING_FLASH_DURATION: Duration = Duration::from_millis(700);
 /// `egui_kittest`'s default `step_dt` (250ms, `HarnessBuilder`) — see
 /// `render_board`'s own note on why that specific margin matters for every
 /// kittest in this crate that drives a real drop.
+///
+/// That margin is only 50ms (300ms vs. 250ms `step_dt`) — brittle but
+/// loud: if a future change shrinks this constant to within `step_dt`
+/// again, `Context::request_repaint_after`'s own `predicted_dt` subtraction
+/// (see `render_board`'s note) will collapse the requested delay back to
+/// effectively zero under kittest specifically, and every drag/drop test in
+/// this crate that calls plain `Harness::run` will start failing with
+/// "exceeded max_steps" — a clear, immediate signal, not a silent
+/// regression, but worth knowing the margin is this tight before touching
+/// this value.
 const LANDING_FLASH_REPAINT_INTERVAL: Duration = Duration::from_millis(300);
 
 /// Column order: the shared status vocabulary (owner UX pass, 2026-08-05),
