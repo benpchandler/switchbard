@@ -257,17 +257,19 @@ fn yaml_string_list(map: &Mapping, key: &str) -> Vec<String> {
 /// disk. TASK-44's audit found both of the original rules lossy:
 ///
 /// 1. **Code fences suspend section detection.** A `## ` line inside a
-///    ``` / ~~~ block is content — a markdown sample, a doc excerpt, a diff
-///    — not the start of the next section. Ending the section there dropped
-///    the rest of the fence *and every line after it*. Only a *closed* fence
-///    counts (see [`fenced_lines`]): an unterminated opener is treated as
-///    literal text, so a malformed task degrades to the old behavior instead
-///    of hiding all its later sections.
+///    backtick- or tilde-fenced block is content — a markdown sample, a doc
+///    excerpt, a diff — not the start of the next section. Ending the section
+///    there dropped the rest of the fence *and every line after it*. Only a
+///    *closed* fence counts (see [`scan_fences`]): an unterminated opener is
+///    treated as literal text, so a malformed task degrades to the old
+///    behavior instead of hiding all its later sections. That degradation is
+///    safe for *reading* and unsafe for *writing*, which is why
+///    [`body_round_trips`] refuses it outright.
 /// 2. **Only the CLI's own `NAME:BEGIN`/`NAME:END` comments are dropped**
 ///    (see [`is_section_marker_comment`]), not every HTML comment. An
 ///    author's `<!-- note to self -->` is content and survives.
 fn extract_section(body: &str, heading: &str) -> String {
-    let fenced = fenced_lines(body);
+    let fenced = scan_fences(body).inside;
     let mut in_section = false;
     let mut lines = Vec::new();
     for (i, line) in body.lines().enumerate() {
@@ -293,27 +295,44 @@ fn extract_section(body: &str, heading: &str) -> String {
     lines.join("\n").trim().to_string()
 }
 
-/// Per-line flags: is this line inside (or is it a delimiter of) a code
-/// fence that is properly closed?
+/// Result of one pass over a body's code fences.
+struct FenceScan {
+    /// Per line: is it inside (or a delimiter of) a *properly closed* fence?
+    inside: Vec<bool>,
+    /// Did every opener find a closer? `false` means the body's fences are
+    /// malformed — readable, but not safe to write back.
+    balanced: bool,
+}
+
+/// Locate every properly closed code fence in `body`.
 ///
-/// Deliberately requires a matching closer. An unbalanced opener would
-/// otherwise make every following section invisible — a task's acceptance
-/// criteria silently vanishing from every view is a far worse failure than
-/// the one this fence-awareness exists to prevent, so an unmatched fence is
-/// simply not a fence.
-fn fenced_lines(body: &str) -> Vec<bool> {
+/// An opener with no closer is deliberately *not* treated as a fence, so
+/// `extract_section` keeps finding the sections after it. A task's acceptance
+/// criteria silently vanishing from every view is a far worse read-side
+/// failure than the one fence-awareness exists to prevent. The write side
+/// takes the opposite stance: [`body_round_trips`] rejects any body whose
+/// fences don't balance, because that same degradation is what lets a
+/// truncated read look self-consistent (audit finding R1).
+///
+/// Pairing follows CommonMark: a closer uses the *same character*, is *at
+/// least as long* as its opener, and carries no info string. The length rule
+/// matters — without it a four-backtick opener would be "closed" by an
+/// ordinary three-backtick line inside it (audit finding R2), silently
+/// truncating the fence and, with it, the section.
+fn scan_fences(body: &str) -> FenceScan {
     let lines: Vec<&str> = body.lines().collect();
-    let mut flags = vec![false; lines.len()];
-    let mut open: Option<(usize, char)> = None;
+    let mut inside = vec![false; lines.len()];
+    let mut open: Option<(usize, char, usize)> = None;
     for (i, line) in lines.iter().enumerate() {
-        let Some(marker) = fence_marker(line) else {
+        let Some((marker, run)) = fence_run(line) else {
             continue;
         };
         match open {
-            None => open = Some((i, marker)),
-            // CommonMark: a fence closes only on its own character.
-            Some((start, kind)) if kind == marker => {
-                for flag in flags.iter_mut().take(i + 1).skip(start) {
+            None => open = Some((i, marker, run)),
+            Some((start, kind, opener_len))
+                if kind == marker && run >= opener_len && closes_fence(line, marker, run) =>
+            {
+                for flag in inside.iter_mut().take(i + 1).skip(start) {
                     *flag = true;
                 }
                 open = None;
@@ -321,18 +340,60 @@ fn fenced_lines(body: &str) -> Vec<bool> {
             Some(_) => {}
         }
     }
-    flags
+    FenceScan {
+        inside,
+        balanced: open.is_none(),
+    }
 }
 
-fn fence_marker(line: &str) -> Option<char> {
+/// The fence character and run length a line opens with, if it is a fence
+/// delimiter at all (3+ backticks or tildes).
+fn fence_run(line: &str) -> Option<(char, usize)> {
     let trimmed = line.trim_start();
-    if trimmed.starts_with("```") {
-        Some('`')
-    } else if trimmed.starts_with("~~~") {
-        Some('~')
-    } else {
-        None
-    }
+    let marker = trimmed.chars().next().filter(|c| *c == '`' || *c == '~')?;
+    let run = trimmed.chars().take_while(|c| *c == marker).count();
+    (run >= 3).then_some((marker, run))
+}
+
+/// A closing fence carries nothing after its run — CommonMark forbids an info
+/// string on the closer, which is exactly what distinguishes a nested
+/// opener from the real close.
+fn closes_fence(line: &str, marker: char, run: usize) -> bool {
+    let trimmed = line.trim_start();
+    let rest: String = trimmed.chars().skip(run).collect();
+    debug_assert!(
+        trimmed.starts_with(marker),
+        "closes_fence is only called on a line fence_run already matched"
+    );
+    rest.trim().is_empty()
+}
+
+/// The `## ` headings a Backlog task file may carry: exactly the six sections
+/// `parse_task_file` extracts, and — verified against all 44 task files in
+/// this repo — the only ones that actually occur. Used by
+/// [`body_round_trips`] as an allowlist; see its doc for why an *unknown*
+/// heading has to mean "don't write".
+const KNOWN_SECTION_HEADINGS: &[&str] = &[
+    "Description",
+    "Acceptance Criteria",
+    "Implementation Plan",
+    "Implementation Notes",
+    "Definition of Done",
+    "Final Summary",
+];
+
+fn is_known_section_heading(title: &str) -> bool {
+    KNOWN_SECTION_HEADINGS
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(title))
+}
+
+/// The `## ` heading a line declares, if it declares one.
+fn heading_title(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    trimmed
+        .starts_with("## ")
+        .then(|| trimmed.trim_start_matches('#').trim())
 }
 
 /// One of the `backlog` CLI's own structural markers — `<!-- AC:BEGIN -->`,
@@ -361,48 +422,92 @@ fn is_section_marker_comment(trimmed: &str) -> bool {
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == ':' || c == '_')
 }
 
-/// Does the parser reproduce every line of `body`, in order, across the
-/// sections it extracts?
+/// Is this body's structure one a section-replacing write can safely be based
+/// on?
 ///
-/// The write-path safety net for TASK-44's audit finding F1. `extract_section`
-/// is now fence- and comment-aware, but a *replace*-write (`-d`, `--plan`)
-/// stakes real user data on the reader being lossless, and the next lossy
-/// case is by definition one nobody has thought of yet. So callers that are
-/// about to overwrite a whole section ask this first and skip the write when
-/// it is `false` — degrading to a visible no-op instead of a silent deletion.
+/// The write-path safety net for TASK-44's audit findings F1/R1/R3.
+/// `extract_section` is fence- and comment-aware now, but a *replace*-write
+/// (`-d`, `--plan`) stakes real user data on the reader being lossless, and
+/// the next lossy case is by definition one nobody has thought of yet. So
+/// callers about to overwrite a whole section ask this first and skip the
+/// write when it is `false`.
 ///
-/// The check is conservation, not equality: every non-blank body line must
-/// appear exactly once and in order across the extracted sections, ignoring
-/// the section headings and the CLI's own markers (which the writer
-/// regenerates). Lines are compared trimmed — interior indentation is
-/// provably preserved by `extract_section`, which pushes each line verbatim,
-/// so a per-line trim only absorbs the leading/trailing whitespace its final
-/// `.trim()` touches, and cannot mask a dropped or reordered line.
+/// ## Four rules, and why conservation alone was not enough
 ///
-/// Conservative by construction: a body with content outside any section, a
-/// duplicated `## ` heading, or any future reader bug all come back `false`.
+/// The first version of this function checked conservation only: every
+/// non-blank line must reappear, in order, across the extracted sections.
+/// That check was **circular** — it derived "which lines are headings" with
+/// the same predicate the reader uses, so a lossy read that manifested *as a
+/// spurious heading* was self-consistent and passed. The auditor's repro:
+/// `Intro.` / an unterminated ```` ```sh ```` / `## build` / `make all`. The
+/// unmatched opener is not a fence, so `## build` looks like a section to
+/// both the reader and the check; conservation balanced, the guard said
+/// "safe", and the write deleted `## build` and `make all`. Three structural
+/// rules now bound that class before conservation runs at all:
+///
+/// 1. **Fences must balance.** An unmatched opener is exactly the state that
+///    makes a truncated read look self-consistent (R1), and the state a
+///    mismatched closer length produces (R2).
+/// 2. **Every unfenced `## ` heading must be a known section name** (the six
+///    `parse_task_file` extracts), **and must not repeat.** A heading the
+///    Backlog format does not define is either the user's prose being
+///    misread as structure, or a previous bad write — either way, not
+///    something to overwrite. The no-repeat half also means a file already
+///    carrying a duplicated heading fails closed rather than trapping the
+///    caller in a loop (R3).
+/// 3. **No known section heading may sit inside a fence.** That means fence
+///    pairing swallowed a real section boundary, which is how a plan heading
+///    ends up embedded in a description (R3).
+/// 4. **Conservation**, as before: every non-blank line reappears exactly
+///    once, in order, across the extracted sections — ignoring headings and
+///    the CLI's own markers, which the writer regenerates. Lines are compared
+///    trimmed; interior indentation is provably preserved by
+///    `extract_section` (it pushes each line verbatim), so the trim only
+///    absorbs whitespace its final `.trim()` touches and cannot mask a
+///    dropped or reordered line.
+///
+/// This bounds a class; it is not a proof of losslessness. Rules 1–3 make the
+/// structure recognizable before rule 4 compares content, which is what stops
+/// the reader from being its own witness — but a future reader bug that
+/// preserves balanced fences, known headings, and line conservation would
+/// still slip through. It is a strong check, not a theorem.
 pub fn body_round_trips(body: &str) -> bool {
-    let fenced = fenced_lines(body);
+    let scan = scan_fences(body);
+    // Rule 1.
+    if !scan.balanced {
+        return false;
+    }
+
     let mut expected: Vec<&str> = Vec::new();
-    let mut headings: Vec<String> = Vec::new();
+    let mut headings: Vec<&str> = Vec::new();
     for (i, line) in body.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        if !fenced[i] {
-            let from_start = line.trim_start();
-            if from_start.starts_with("## ") {
-                headings.push(from_start.trim_start_matches('#').trim().to_string());
+        match heading_title(line) {
+            // Rule 3.
+            Some(title) if scan.inside[i] && is_known_section_heading(title) => return false,
+            Some(_) if scan.inside[i] => {}
+            // Rule 2.
+            Some(title) => {
+                if !is_known_section_heading(title)
+                    || headings.iter().any(|seen| seen.eq_ignore_ascii_case(title))
+                {
+                    return false;
+                }
+                headings.push(title);
                 continue;
             }
-            if is_section_marker_comment(trimmed) {
-                continue;
-            }
+            None => {}
+        }
+        if !scan.inside[i] && is_section_marker_comment(trimmed) {
+            continue;
         }
         expected.push(trimmed);
     }
 
+    // Rule 4.
     let mut actual: Vec<String> = Vec::new();
     for heading in &headings {
         for line in extract_section(body, heading).lines() {
@@ -722,6 +827,129 @@ mod tests {
         let body = "A stray preamble the parser has nowhere to put.\n\n\
                     ## Description\n\n\
                     Body.\n";
+
+        assert!(!body_round_trips(body));
+    }
+
+    // ---- audit round 2: the guard must not be its own witness ----
+
+    /// R1, the auditor's exact repro. An unmatched fence opener is not a
+    /// fence, so `## build` looked like a section heading to the reader *and*
+    /// to the conservation check — self-consistent, "safe", and the write
+    /// then deleted `## build` and `make all`. Rejected now on two
+    /// independent grounds (unbalanced fence, unknown heading), either of
+    /// which alone would be enough.
+    #[test]
+    fn body_round_trips_rejects_a_spurious_heading_produced_by_an_unterminated_fence() {
+        let body = "## Description\n\n\
+                    Intro.\n\
+                    ```sh\n\
+                    ## build\n\
+                    make all\n";
+
+        assert!(
+            !body_round_trips(body),
+            "conservation alone called this safe; it is not"
+        );
+    }
+
+    /// R1's general form: the reason conservation could be fooled is that it
+    /// trusted "looks like a heading" as ground truth. An unfenced `## ` that
+    /// is not one of the six names the Backlog format defines is prose being
+    /// misread as structure — never something to base a section-replace on.
+    #[test]
+    fn body_round_trips_rejects_a_heading_that_is_not_a_known_backlog_section() {
+        let known = "## Description\n\nIntro.\n\n## Implementation Notes\n\nNotes.\n";
+        assert!(body_round_trips(known));
+
+        let unknown = "## Description\n\nIntro.\n\n## Build steps\n\nmake all\n";
+        assert!(
+            !body_round_trips(unknown),
+            "`## Build steps` is not a Backlog section, so its content has no safe home"
+        );
+    }
+
+    /// R2: CommonMark requires a closing fence at least as long as its
+    /// opener. Closing a four-backtick fence on an ordinary three-backtick
+    /// line ends the fence early, which drops `## Not a section` back out
+    /// into the open where it truncates the section.
+    #[test]
+    fn a_short_fence_line_does_not_close_a_longer_opener() {
+        let body = "## Description\n\n\
+                    ````markdown\n\
+                    ```\n\
+                    ## Not a section\n\
+                    ````\n\
+                    Outro.\n\n\
+                    ## Acceptance Criteria\n\
+                    - [ ] #1 Criterion\n";
+
+        let description = extract_section(body, "Description");
+
+        assert!(
+            description.contains("## Not a section"),
+            "a 3-backtick line cannot close a 4-backtick fence: {description:?}"
+        );
+        assert!(description.contains("Outro."), "{description:?}");
+        assert!(body_round_trips(body));
+        assert_eq!(
+            parse_checklist_section(&extract_section(body, "Acceptance Criteria")).len(),
+            1,
+            "the real section break after the fence must still be honored"
+        );
+    }
+
+    /// …and a closer may not carry an info string, which is what keeps a
+    /// *nested opener* from being mistaken for the close.
+    #[test]
+    fn a_fence_line_with_an_info_string_is_an_opener_not_a_closer() {
+        let body = "## Description\n\n\
+                    ```sh\n\
+                    ```python\n\
+                    ```\n\
+                    Outro.\n";
+
+        let description = extract_section(body, "Description");
+
+        assert!(description.contains("```python"), "{description:?}");
+        assert!(description.contains("Outro."), "{description:?}");
+    }
+
+    /// R3, the one-way trap. An unterminated opener in Description pairs with
+    /// the opener in Implementation Plan, swallowing the plan's own heading.
+    /// Left unguarded, refine would then see an "empty" plan to fill and
+    /// write a description containing a literal `## Implementation Plan`
+    /// line — corrupting the file in a way that blocks every later refine.
+    /// Rule 3 refuses at the write, so the trap is never built.
+    #[test]
+    fn body_round_trips_rejects_a_fence_that_swallowed_a_real_section_heading() {
+        let body = "## Description\n\n\
+                    <!-- SECTION:DESCRIPTION:BEGIN -->\n\
+                    Intro.\n\
+                    ```sh\n\
+                    make all\n\
+                    <!-- SECTION:DESCRIPTION:END -->\n\n\
+                    ## Implementation Plan\n\n\
+                    <!-- SECTION:PLAN:BEGIN -->\n\
+                    ```python\n\
+                    code\n\
+                    ```\n\
+                    <!-- SECTION:PLAN:END -->\n";
+
+        assert!(
+            !body_round_trips(body),
+            "a known section heading buried inside a fence means the pairing ate a boundary"
+        );
+    }
+
+    /// …and a file already carrying the damage fails closed rather than
+    /// looping: the caller reports "cannot round-trip" forever instead of
+    /// re-corrupting it on every run.
+    #[test]
+    fn body_round_trips_rejects_an_already_duplicated_section_heading() {
+        let body = "## Description\n\nIntro.\n\n\
+                    ## Implementation Plan\n\n1. Step\n\n\
+                    ## Implementation Plan\n\n2. Step\n";
 
         assert!(!body_round_trips(body));
     }

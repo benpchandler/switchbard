@@ -52,13 +52,17 @@
 //!   `edit_backlog_task` call, so there is no partially-applied state to
 //!   unwind.
 //!
-//! "Verbatim" has exactly one qualification, and it is not this module's
-//! doing: the `backlog` CLI collapses any run of blank lines down to one on
-//! *every* write, including a plain detail-rail Save. So [`collapse_blank_runs`]
-//! puts both sides into that normal form before comparing or writing, which
-//! makes the write a fixed point — the original's lines survive in order,
-//! byte for byte, with only blank runs collapsed, and re-refining the same
-//! text is a no-op instead of appending a near-duplicate block.
+//! "Verbatim" has two qualifications, both about whitespace and neither
+//! about content. The `backlog` CLI collapses any run of blank lines down to
+//! one on *every* write, including a plain detail-rail Save, so
+//! `collapse_blank_runs` puts both sides into that normal form before
+//! comparing or writing — which makes the write a fixed point and re-refining
+//! the same text a no-op rather than a near-duplicate append. That
+//! normalization also *empties* whitespace-only lines, which the CLI itself
+//! would have preserved. So the precise claim is: **every non-blank line of
+//! the original survives, in order, byte for byte**; blank runs collapse to
+//! one and whitespace-only lines lose their whitespace. No line of content is
+//! reworded, reordered, or dropped.
 //!
 //! ## The write-path guard (audit finding F1)
 //!
@@ -71,13 +75,45 @@
 //! line), but the next lossy case is by definition one nobody has thought of
 //! yet.
 //!
-//! So before emitting any replace-write, [`apply_refine`] asks
-//! [`backlog::task_file_round_trips`] whether the parser reproduces the task
-//! file's own content completely. If it does not, the two prose fields are
-//! **skipped entirely** and reported ([`RefineResult::ProseWriteUnsafe`]);
-//! only the acceptance-criteria append still runs, because `--ac` adds to a
-//! list and never replaces a section. An unknown reader bug therefore
-//! degrades to a visible no-op, never to a silent deletion.
+//! So before emitting any replace-write, `apply_refine` asks
+//! [`crate::backlog::task_file_round_trips`] whether the parser reproduces
+//! the task file's own content completely, and whether its structure is one a
+//! section-replacing write can be based on at all. If not, the two prose
+//! fields are **skipped entirely** and reported
+//! ([`RefineResult::ProseWriteUnsafe`]); only the acceptance-criteria append
+//! still runs, because `--ac` adds to a list and never replaces a section.
+//!
+//! Calibrating that claim, because an earlier version of this doc overstated
+//! it: the guard **bounds a class**, it does not prove losslessness. It
+//! requires balanced code fences, and every `## ` heading to be one of the six
+//! the Backlog format defines and appear once — three structural rules that
+//! stop a lossy read from being its own witness — before it compares content
+//! line by line. A future reader bug that preserved all of that *and*
+//! conserved every line would still slip through. It is a strong check, not a
+//! theorem. What it does guarantee is that the failures found so far, and the
+//! whole "spurious heading" family behind them, fail closed to a visible
+//! no-op.
+//!
+//! This is not hypothetical strictness. Measured across 345 real task files in
+//! three repos, 51 fail the guard — every one of them because it carries a
+//! human-written section the Backlog format has no field for (`## Resolution`,
+//! `## Root Cause Hypothesis`, `## Reproduction Steps`). `parse_task_file`
+//! extracts six sections; content under any other heading lands in no field at
+//! all, so a replace-write genuinely would delete it. Refine refuses those
+//! tasks' prose writes and says so.
+//!
+//! ## Two residuals worth naming
+//!
+//! - **The detail rail's Save does not consult this guard.** It writes `-d`
+//!   from the same parsed description, so on exactly those 51 files it can
+//!   still delete a custom section — a pre-existing bug this work measured but
+//!   did not fix. Refine is guarded; Save is not.
+//! - **Hooks in the target repo's `.claude/settings.json` execute regardless
+//!   of these flags.** `--permission-mode plan` and the deny list constrain
+//!   the *model's* tool use; they do not constrain Claude Code's own hook
+//!   machinery, which the repo being groomed configures. Refining a repo means
+//!   trusting that repo's hooks. Unfixable from here; named so nobody reads
+//!   "read-only" as "sandboxed".
 //!
 //! ## Why the appended block is not a `##` heading
 //!
@@ -87,7 +123,7 @@
 //! `BacklogTask::description` on the next load — and a second refine would
 //! then append to a *truncated* original, quietly breaking the
 //! verbatim-prefix guarantee. So the separator is a bold line, not a heading,
-//! and [`demote_section_headings`] pushes any unfenced `## ` the model itself
+//! and `demote_section_headings` pushes any unfenced `## ` the model itself
 //! wrote down to `### ` for the same reason.
 
 use crate::backlog::{edit_backlog_task, task_file_round_trips, BacklogTask, BacklogTaskPatch};

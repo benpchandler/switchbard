@@ -96,13 +96,36 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
     `<!-- … -->` line — while every replace-write in the app (`-d`/`--plan`: the
     detail rail's Save as well as Refine) writes back what that reader returned. So a
     fenced heading, a hand-written HTML comment, or anything after such a fence was
-    deleted on the next save. The reader is now fence- and comment-aware, and any
-    replace-write is additionally gated on `task_file_round_trips`: if the parser
-    cannot reproduce the file's own content, the description and plan are skipped
-    (the criteria append still runs — `--ac` adds to a list rather than replacing a
-    section) and the status line says why. Unknown future lossy cases degrade to a
-    visible no-op, never a silent deletion. The one remaining qualification is the
-    CLI's own collapsing of blank runs, which it applies to every write regardless.
+    deleted on the next save. The reader is now fence-aware (with CommonMark's
+    closer-length rule) and drops only the CLI's own markers, and Refine's
+    replace-writes are additionally gated on `task_file_round_trips`: if the file's
+    structure isn't one a section-replace can be based on, the description and plan
+    are skipped (the criteria append still runs — `--ac` adds to a list rather than
+    replacing a section) and the status line says why.
+    - *What the guard is and isn't.* It requires balanced fences, and every `## `
+      heading to be one of the six the format defines and appear once, before it
+      compares content line by line. Those structural rules exist because the first
+      version checked conservation alone and was **circular** — it derived "which
+      lines are headings" with the same predicate the reader used, so a lossy read
+      that surfaced as a spurious heading was self-consistent and passed. It now
+      bounds that class; it is a strong check, not a proof of losslessness.
+    - *It fires on real data.* Across 345 real task files in three repos, 51 fail —
+      every one because it carries a human-written section the format has no field
+      for (`## Resolution`, `## Root Cause Hypothesis`, `## Reproduction Steps`).
+      `parse_task_file` extracts six sections; content under any other heading lands
+      in no field at all, so a replace-write really would delete it.
+    - **Residual (pre-existing, unfixed): the detail rail's Save does not consult
+      the guard.** It writes `-d` from the same parsed description, so on exactly
+      those 51 files it can still delete a custom section. Refine is guarded; Save
+      is not. Fix it when Save is next touched.
+    - Whitespace qualification: every non-blank line of the original survives in
+      order, byte for byte. Blank runs collapse to one (the CLI does this to every
+      write regardless) and whitespace-only lines lose their whitespace.
+  - *Residual, unfixable from here: hooks are not covered by the permission flags.*
+    `--permission-mode plan` and the tool deny list constrain the model's tool use,
+    not Claude Code's own hook machinery, which the **target** repo configures in its
+    `.claude/settings.json`. Refining a repo means trusting that repo's hooks —
+    "read-only" is a statement about the agent, not a sandbox.
   - *Accepted risk, named not mitigated — write amplification into dispatch.* Refine
     output persists into a task's description and acceptance criteria; those are
     exactly the fields `dispatch::build_dispatch_prompt` later embeds verbatim into a
