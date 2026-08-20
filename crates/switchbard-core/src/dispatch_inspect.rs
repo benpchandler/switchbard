@@ -44,11 +44,28 @@
 //! [`DispatchRunLiveness::Unverifiable`] and no kill handle.
 //!
 //! Identification is not "a process with that group id exists" — that is the
-//! very thing pid recycling defeats. It is: the sidecar was minted this boot
-//! (`crate::boot_time`), *and* some live process in that group still carries
-//! this run's own prompt path on its command line. That path embeds the task
-//! id and the run's start stamp, so it is unique to the run and cannot be
-//! inherited by an unrelated process that merely landed on the same number.
+//! very thing pid recycling defeats. It is, precisely: the sidecar was minted
+//! this boot (`crate::boot_time`), *and* a substring match for this run's log
+//! stem (`dispatch-<task>-<stamp>`) hits the command line of some live process
+//! **in that process group**.
+//!
+//! Two things make that sound rather than merely suggestive, and both are
+//! worth stating because neither is obvious:
+//!
+//! - The match is *group-anchored*. It is not a search of the whole process
+//!   table for a string; the candidate set is already narrowed to the recorded
+//!   pgid, and within one boot a process group contains only the tree the
+//!   pipeline spawned into it. So a hit means "this group is still running the
+//!   thing we put there".
+//! - The stem embeds the task id and the run's start unix-seconds, so it is
+//!   unique per run — a *different* dispatch run that happened to land on this
+//!   pgid would carry its own stem and miss.
+//!
+//! What this does not claim: that no unrelated process anywhere could ever
+//! contain that substring in its argv. One could (a text editor with the log
+//! open, a `grep` for it). It would have to be *in the recorded process
+//! group*, on this boot, for that to matter — which is why the boot gate and
+//! the group filter are load-bearing rather than belt-and-braces.
 //!
 //! Probing is a `ps` subprocess, so it runs on the worker cadence
 //! (`workers::refresh_dispatch_runs`) like every other read here, never on the
@@ -317,7 +334,14 @@ pub fn inspect_dispatch_run(repo_root: &Path, task_id: &str) -> DispatchRun {
 /// offers nothing. The order is cheapest-and-most-decisive first: a missing
 /// file needs no parse, an unparseable one needs no boot comparison, and a
 /// stale-boot sidecar needs no `ps` at all.
-fn probe_liveness(task_id: &str, started_at_unix: u64) -> DispatchRunLiveness {
+///
+/// Public because it is the authenticated path, and there must be exactly
+/// one. [`crate::dispatch_kill::kill_dispatch_run`] re-runs *this* function
+/// immediately before it signals rather than trusting the verdict cached on a
+/// `DispatchRun`, which can be minutes old — see that module's doc. A second,
+/// bespoke "is it still there?" check written next to the kill would be a
+/// second place for the identity rules to drift.
+pub fn probe_liveness(task_id: &str, started_at_unix: u64) -> DispatchRunLiveness {
     let path = dispatch_pid_path(task_id, started_at_unix);
     if !path.exists() {
         return DispatchRunLiveness::NoSidecar;

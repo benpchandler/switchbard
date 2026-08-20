@@ -92,6 +92,17 @@ impl DispatchSummary {
                 // an abandoned one wears it forever. Same predicate the view's
                 // sectioning uses, so the chip and the list can never disagree
                 // about which runs are stuck.
+                //
+                // Known gap, accepted (audit N5): a claimed run whose sidecar
+                // is `Unverifiable` — from a previous boot, or in the legacy
+                // format — counts here as *running* until `looks_stalled`
+                // catches it at the 30-minute mark. `is_abandoned` needs
+                // positive proof of death, and "we can't tell" is not that.
+                // Counting the other way would mean an unverifiable sidecar
+                // could raise a permanent red alarm over a run that is in fact
+                // healthy, which is the worse error for a chip whose whole
+                // job is to be believed; the row itself already says
+                // "unverified" for anyone who looks.
                 let abandoned = run.is_some_and(|run| run.is_abandoned(now, true));
                 let stalled = run.is_some_and(|run| run.looks_stalled(now, timeout));
                 if abandoned || stalled {
@@ -583,6 +594,13 @@ fn render_unsupervised_notice(ui: &mut egui::Ui, run: &DispatchRun) {
 /// is the gate; when it says `None`, `render_unsupervised_notice` has already
 /// explained why in the row above.
 ///
+/// The pgid it returns is used to *render* — to decide there is a button and
+/// to name the group in the confirmation — and is then thrown away.
+/// `spawn_kill_dispatch` takes the run's start stamp instead and
+/// re-authenticates on its own thread, because this verdict is up to a few
+/// minutes stale (audit N1) and a stale pgid is exactly what the sidecar
+/// format exists to stop anyone signalling.
+///
 /// ## Why the copy changes with supervision
 ///
 /// A supervised kill is a complete operation: the pipeline is blocked on this
@@ -593,6 +611,13 @@ fn render_unsupervised_notice(ui: &mut egui::Ui, run: &DispatchRun) {
 /// doing the second is precisely the F3 finding.
 fn render_kill_control(app: &mut HiveApp, ui: &mut egui::Ui, row: &DispatchRow, run: &DispatchRun) {
     let Some(pgid) = run.liveness.killable_pgid() else {
+        return;
+    };
+    // No stamp, no re-authentication, no kill: the stamp is how the kill
+    // thread finds the sidecar to check. A verified-alive run always has one
+    // (the verdict was derived from a file named by it), so this is a
+    // belt-and-braces guard rather than a reachable branch.
+    let Some(started_at_unix) = run.started_at_unix else {
         return;
     };
     let supervised = run.liveness.is_supervised();
@@ -621,7 +646,7 @@ fn render_kill_control(app: &mut HiveApp, ui: &mut egui::Ui, row: &DispatchRow, 
                  release the task afterwards"
             };
             if ui.button("Confirm kill").on_hover_text(hover).clicked() {
-                app.spawn_kill_dispatch(row.task.id.clone(), pgid, supervised, ui.ctx());
+                app.spawn_kill_dispatch(row.task.id.clone(), started_at_unix, ui.ctx());
                 app.dispatch_kill_confirm = None;
             }
             if ui.button("Cancel kill").clicked() {

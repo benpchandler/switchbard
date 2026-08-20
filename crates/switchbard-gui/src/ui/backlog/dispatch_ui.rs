@@ -31,21 +31,35 @@ pub(crate) enum DispatchCategory {
 }
 
 /// The label ladder, and the single place its precedence is written down.
+/// [`dispatch_state`] is this function plus a note lookup, so the two can
+/// never rank a task differently.
 ///
-/// Order matters and is not arbitrary: a task carries several of these labels
-/// across its life, and the *most recent outcome* has to win. `dispatch_one`
-/// clears the previous attempt's terminal labels as it claims (see
-/// `switchbard_core::dispatch::claim_task_for_dispatch`), so a re-flagged task
-/// no longer reports its old verdict over a live run — but the ordering here
-/// stays the belt to that fix's braces.
+/// **A live claim outranks a finished verdict.** `dispatching` is checked
+/// first because it is the only label that describes something happening
+/// *now*; `dispatched` and `dispatch-failed` describe a run that is over. A
+/// task carrying both is a task whose previous attempt's label outlived its
+/// re-claim, and in that state the truth is the live run.
+///
+/// This is the belt to `claim_task_for_dispatch`'s braces, and — unlike the
+/// original ordering, which claimed to be exactly that while doing the
+/// opposite (audit N4) — it actually holds. The claim's label strip is
+/// best-effort by design (it must never abort a run that has already passed
+/// the double-dispatch guard), so it *can* fail, leaving `dispatch-failed`
+/// beside `dispatching`. Ranked the old way that reinstated the whole F4b
+/// symptom: a healthy agent rendered as a red DISPATCH FAILED pill, lighting
+/// the attention chip with a warning nothing could clear.
+///
+/// Among the terminal labels `dispatched` still outranks `dispatch-failed`:
+/// those two only coexist across separate attempts, and a PR is the more
+/// useful thing to surface.
 pub(crate) fn dispatch_category(task: &BacklogTask) -> DispatchCategory {
     let has = |label: &str| task.labels.iter().any(|l| l == label);
-    if has(DISPATCHED_LABEL) {
+    if has(DISPATCHING_LABEL) {
+        DispatchCategory::InFlight
+    } else if has(DISPATCHED_LABEL) {
         DispatchCategory::Dispatched
     } else if has(DISPATCH_FAILED_LABEL) {
         DispatchCategory::Failed
-    } else if has(DISPATCHING_LABEL) {
-        DispatchCategory::InFlight
     } else if has(DISPATCH_LABEL) {
         DispatchCategory::Queued
     } else {
@@ -112,4 +126,127 @@ pub(crate) fn render_dispatch_pill(ui: &mut egui::Ui, state: &DispatchState) {
         DispatchState::Failed { .. } => ("DISPATCH FAILED", theme::danger()),
     };
     ui.label(egui::RichText::new(text).small().strong().color(color));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use switchbard_core::{BacklogTaskSource, DISPATCHING_LABEL};
+
+    fn task_labelled(labels: &[&str]) -> BacklogTask {
+        BacklogTask {
+            id: "TASK-1".to_string(),
+            title: "Example".to_string(),
+            status: "In Progress".to_string(),
+            priority: "medium".to_string(),
+            assignees: vec![],
+            labels: labels.iter().map(|l| l.to_string()).collect(),
+            dependencies: vec![],
+            references: vec![],
+            milestone: None,
+            parent: None,
+            created_date: None,
+            updated_date: None,
+            description: String::new(),
+            implementation_plan: String::new(),
+            implementation_notes: "Dispatch failed: boom\nDispatch PR: https://example/pr/1"
+                .to_string(),
+            final_summary: String::new(),
+            acceptance_criteria: vec![],
+            definition_of_done: vec![],
+            source: BacklogTaskSource::Active,
+            path: std::path::PathBuf::from("/repo/backlog/tasks/task-1.md"),
+        }
+    }
+
+    /// Audit N4. `claim_task_for_dispatch` strips the previous attempt's
+    /// terminal labels, but that strip is best-effort — it must never abort a
+    /// run that already passed the double-dispatch guard — so this ordering
+    /// is the fallback when it fails. Ranked the other way, a live agent
+    /// reports as Failed for its entire run and lights the attention chip
+    /// with a warning nothing can clear.
+    #[test]
+    fn a_live_claim_outranks_a_stale_failure_label() {
+        let task = task_labelled(&[DISPATCH_FAILED_LABEL, DISPATCHING_LABEL]);
+
+        assert_eq!(dispatch_category(&task), DispatchCategory::InFlight);
+        assert_eq!(dispatch_state(&task), DispatchState::InFlight);
+    }
+
+    /// The same for a task re-flagged after a *successful* run, which is the
+    /// likelier sequence (open a PR, decide it needs another pass).
+    #[test]
+    fn a_live_claim_outranks_a_stale_dispatched_label() {
+        let task = task_labelled(&[DISPATCHED_LABEL, DISPATCHING_LABEL]);
+
+        assert_eq!(dispatch_category(&task), DispatchCategory::InFlight);
+        assert_eq!(dispatch_state(&task), DispatchState::InFlight);
+    }
+
+    /// Once the claim is released the terminal verdict is the truth again —
+    /// the rule is "a live claim wins", not "dispatching wins forever".
+    #[test]
+    fn a_released_task_reports_its_terminal_verdict() {
+        assert_eq!(
+            dispatch_category(&task_labelled(&[DISPATCH_FAILED_LABEL])),
+            DispatchCategory::Failed
+        );
+        assert_eq!(
+            dispatch_category(&task_labelled(&[DISPATCHED_LABEL])),
+            DispatchCategory::Dispatched
+        );
+    }
+
+    /// Across separate attempts a PR is the more useful thing to surface.
+    #[test]
+    fn a_pr_outranks_an_older_failure() {
+        let task = task_labelled(&[DISPATCH_FAILED_LABEL, DISPATCHED_LABEL]);
+
+        assert_eq!(dispatch_category(&task), DispatchCategory::Dispatched);
+    }
+
+    #[test]
+    fn the_ladders_bottom_rungs_are_unchanged() {
+        assert_eq!(
+            dispatch_category(&task_labelled(&[DISPATCH_LABEL])),
+            DispatchCategory::Queued
+        );
+        assert_eq!(
+            dispatch_category(&task_labelled(&["hub"])),
+            DispatchCategory::NotFlagged
+        );
+    }
+
+    /// `dispatch_state` is `dispatch_category` plus a note lookup, so the two
+    /// cannot rank a task differently — pinned because they are consumed by
+    /// different surfaces (top bar vs. detail rail) and a future edit to one
+    /// would otherwise silently diverge.
+    #[test]
+    fn state_and_category_agree_on_every_label_combination() {
+        for labels in [
+            vec![],
+            vec![DISPATCH_LABEL],
+            vec![DISPATCHING_LABEL],
+            vec![DISPATCHED_LABEL],
+            vec![DISPATCH_FAILED_LABEL],
+            vec![DISPATCHING_LABEL, DISPATCH_FAILED_LABEL],
+            vec![DISPATCHING_LABEL, DISPATCHED_LABEL],
+            vec![DISPATCHED_LABEL, DISPATCH_FAILED_LABEL],
+            vec![DISPATCH_LABEL, DISPATCHING_LABEL],
+        ] {
+            let task = task_labelled(&labels);
+            let expected = match dispatch_category(&task) {
+                DispatchCategory::NotFlagged => DispatchState::NotFlagged,
+                DispatchCategory::Queued => DispatchState::Queued,
+                DispatchCategory::InFlight => DispatchState::InFlight,
+                DispatchCategory::Dispatched => DispatchState::Dispatched {
+                    pr_url: Some("https://example/pr/1".to_string()),
+                },
+                DispatchCategory::Failed => DispatchState::Failed {
+                    reason: Some("boom".to_string()),
+                },
+            };
+            assert_eq!(dispatch_state(&task), expected, "labels {labels:?}");
+        }
+    }
 }

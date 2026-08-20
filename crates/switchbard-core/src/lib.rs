@@ -10,6 +10,7 @@ pub mod config;
 pub mod discover;
 pub mod dispatch;
 pub mod dispatch_inspect;
+pub mod dispatch_kill;
 pub mod expected_port;
 mod git_env;
 pub mod git_probe;
@@ -65,6 +66,7 @@ pub use dispatch::{
     DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_IN_PROGRESS_STATUS, DISPATCH_LABEL,
     DISPATCH_REVIEW_STATUS, SIDECAR_VERSION,
 };
+pub use dispatch_kill::{kill_dispatch_run, DispatchKillOutcome, KillRefusal};
 pub use expected_port::{default_port_for_service, expected_port};
 pub use git_env::git_cmd;
 pub use git_probe::{

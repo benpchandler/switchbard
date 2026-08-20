@@ -47,10 +47,10 @@ use switchbard_core::dispatch_inspect::DispatchRun;
 use switchbard_core::instance_lock::{self, AcquireError, InstanceLock};
 use switchbard_core::{
     assess_branch_delete, collect_dirty_files, config, delete_branch, is_primary_worktree,
-    kill_pgid, load_agent_context_cache, load_backlog_project, open_url, remove_worktree,
-    spawn_in_session, url_for_port, AgentContextMap, AttributedListener, BacklogProject,
-    BacklogTaskPatch, DetectedService, KillOutcome, NewBacklogTask, Repo, WorktreeRef,
-    BROWSER_APP_NAMES,
+    kill_dispatch_run, kill_pgid, load_agent_context_cache, load_backlog_project, open_url,
+    remove_worktree, spawn_in_session, url_for_port, AgentContextMap, AttributedListener,
+    BacklogProject, BacklogTaskPatch, DetectedService, KillOutcome, NewBacklogTask, Repo,
+    WorktreeRef, BROWSER_APP_NAMES,
 };
 
 /// Legible band for the persisted UI zoom factor. A hand-edited config or an
@@ -862,37 +862,36 @@ impl HiveApp {
     /// its ordinary failure path — `dispatch-failed` plus a note — on its own.
     /// Bookkeeping from this side would be a second writer racing the first.
     ///
-    /// `supervised` says whether that pipeline still exists. When it does not
-    /// — the agent outlived the Switchbard that spawned it — the kill stops
-    /// the agent and *nothing else*: no release, no note, the task stays on
-    /// `dispatching`. The status message says so rather than letting the user
-    /// infer a bookkeeping step that will never happen. (The caller only ever
-    /// reaches here for a run whose process group `dispatch_inspect` has
-    /// positively identified; see `ui::dispatch::render_kill_control`.)
+    /// **No pgid is passed in, deliberately.** The run's identity is
+    /// re-established *on this thread, immediately before signalling*, by
+    /// `kill_dispatch_run` (which re-runs `dispatch_inspect::probe_liveness`,
+    /// the same authenticated path the worker uses). The verdict cached on a
+    /// `DispatchRun` is up to `BACKLOG_PERIOD` × `UNFOCUSED_BACKOFF_MULTIPLIER`
+    /// old — roughly four minutes with the window in the background — and
+    /// within that window the agent can exit and the OS can reissue its
+    /// process group id to something unrelated. Signalling a cached number is
+    /// the sidecar-authentication failure with a shorter fuse; the cached
+    /// verdict is fit to decide whether to *render* a button, never to decide
+    /// what to *signal*.
     ///
-    /// `KillOutcome::NotFound` remains an expected answer — a group can exit
-    /// between the worker's probe and this click — and reports through
-    /// `backlog_status` like any other outcome. The `backlog_kick` afterwards
-    /// refreshes the labels the pipeline just rewrote, the same wake the
-    /// dispatch worker uses for its own outcomes.
-    pub fn spawn_kill_dispatch(
-        &self,
-        task_id: String,
-        pgid: i32,
-        supervised: bool,
-        ctx: &egui::Context,
-    ) {
+    /// A run that no longer authenticates is reported and left alone, so the
+    /// two answers this can give are "killed it" and "nothing killed" — never
+    /// "killed something". Supervision is read from the fresh probe too: when
+    /// the agent outlived the Switchbard that spawned it, the kill stops the
+    /// agent and nothing else (no release, no note, the task stays on
+    /// `dispatching`) and the status message says so rather than letting the
+    /// user infer a bookkeeping step that will never happen.
+    ///
+    /// The `backlog_kick` afterwards refreshes the labels the pipeline
+    /// rewrites in response, the same wake the dispatch worker uses for its
+    /// own outcomes.
+    pub fn spawn_kill_dispatch(&self, task_id: String, started_at_unix: u64, ctx: &egui::Context) {
         let kick = self.backlog_kick.clone();
         let status = self.backlog_status.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
-            let outcome = kill_pgid(pgid, Duration::from_secs(3));
-            let tail = if supervised {
-                ""
-            } else {
-                " — unsupervised, so the task stays on `dispatching`"
-            };
-            status.set(format!("{task_id}: {}{tail}", describe_kill(pgid, outcome)));
+            let outcome = kill_dispatch_run(&task_id, started_at_unix, Duration::from_secs(3));
+            status.set(outcome.describe(&task_id));
             kick.notify();
             ctx.request_repaint();
         });

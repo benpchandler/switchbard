@@ -113,11 +113,22 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
        classifies as needs-attention rather than sitting under "In flight"
        forever; that is the case file evidence alone cannot see, because an
        empty log is also what a healthy run looks like.
-     - **Claiming clears the previous attempt's terminal labels.** The ladder
-       (`dispatched` > `dispatch-failed` > `dispatching` > `dispatch`) meant a
-       re-flagged task reported Failed for the whole length of its new run and
-       lit the attention chip with a warning nothing could clear.
-       `claim_task_for_dispatch` strips them as part of the claim.
+     - **Claiming clears the previous attempt's terminal labels**, and a live
+       `dispatching` claim outranks a stale terminal verdict in the ladder.
+       Previously the ladder ran `dispatched` > `dispatch-failed` >
+       `dispatching`, so a re-flagged task reported Failed for the whole length
+       of its new run and lit the attention chip with a warning nothing could
+       clear. `claim_task_for_dispatch` strips the stale labels; the reordered
+       ladder is the fallback for when that best-effort strip fails.
+     - **A cached verdict may render a button; only a fresh one may fire it.**
+       The liveness verdict on a `DispatchRun` is up to ~4 minutes stale (30s
+       worker cadence × the unfocused backoff), and in that window a pgid can
+       be reissued. `dispatch_kill::kill_dispatch_run` therefore re-runs the
+       *same* authenticated probe on the thread that signals, immediately
+       before signalling, and refuses ("run already ended — nothing killed")
+       rather than firing at a number it can no longer vouch for. The two
+       answers it can give are "killed it" and "nothing killed" — never
+       "killed something".
 
 - **Standardized cross-repo status vocabulary (owner decision 2026-08-06).** Every
   tracked project offers the same statuses — `Icebox → To Do → In Progress →

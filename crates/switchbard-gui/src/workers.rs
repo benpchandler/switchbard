@@ -668,14 +668,25 @@ fn refresh_dispatch_runs(ch: &Channels) {
     *ch.dispatch_runs.lock().unwrap() = runs;
 }
 
-/// TASK-43: delete a pgid sidecar whose process group has been positively
-/// verified gone — but only once the task is no longer claimed.
+/// TASK-43: delete a pgid sidecar that can no longer name a live run — but
+/// only once the task is no longer claimed.
 ///
 /// A Switchbard force-quit mid-run never reaches `dispatch_one`'s release
-/// boundary, so its sidecar outlives the run. Leaving those on disk forever
-/// is what the audit's F1 was about, and `dispatch_inspect` already refuses to
-/// arm a Kill button from one, so this is hygiene rather than the safety
-/// mechanism.
+/// boundary, so its sidecar outlives the run. `dispatch_inspect` already
+/// refuses to arm a Kill button from one, so this is hygiene rather than the
+/// safety mechanism — deleting a file never signals anything.
+///
+/// Two verdicts qualify, for the same reason from opposite directions:
+///
+/// - `Gone` — the group was positively identified as dead.
+/// - `Unverifiable(StaleBoot)` — the sidecar was minted under a previous boot,
+///   so its pgid names a number the kernel has since reissued. It can never
+///   authenticate again, however long it sits there, and after a reboot this
+///   is the whole surviving population (audit N2).
+///
+/// `LegacyFormat` is deliberately *not* swept: a pre-versioning sidecar
+/// carries no boot epoch, which is exactly why it cannot be dated — sweeping
+/// it would mean guessing that it is old, and the file is already inert.
 ///
 /// The `!claimed` condition is the part worth reading twice. While a task is
 /// still labelled `dispatching`, a verified-dead group is the **only**
@@ -687,12 +698,22 @@ fn refresh_dispatch_runs(ch: &Channels) {
 /// belongs to is gone. (Recovering a claimed-but-dead run is TASK-39's
 /// reaper; this deliberately stops at not lying about it.)
 fn sweep_sidecar_if_finished(run: &DispatchRun, claimed: bool) {
-    if claimed || !run.liveness.is_gone() {
+    if claimed || !sidecar_is_spent(run) {
         return;
     }
     if let Some(started) = run.started_at_unix {
         sweep_dead_sidecar(&run.task_id, started);
     }
+}
+
+/// A sidecar that can never name a live run again — see
+/// [`sweep_sidecar_if_finished`] for why these two verdicts and no others.
+fn sidecar_is_spent(run: &DispatchRun) -> bool {
+    run.liveness.is_gone()
+        || matches!(
+            run.liveness.doubt(),
+            Some(switchbard_core::dispatch_inspect::SidecarDoubt::StaleBoot)
+        )
 }
 
 /// Any of the four labels that make up the dispatch state machine. A task
@@ -833,6 +854,50 @@ mod tests {
             effective_period(Duration::from_secs(60), true),
             Duration::from_secs(60)
         );
+    }
+
+    fn run_with(liveness: switchbard_core::dispatch_inspect::DispatchRunLiveness) -> DispatchRun {
+        DispatchRun {
+            task_id: "TASK-1".to_string(),
+            branch: "dispatch/task-1".to_string(),
+            worktree_path: PathBuf::from("/repo/.worktrees/dispatch-task-1"),
+            worktree_exists: false,
+            log_path: None,
+            prompt_path: None,
+            started_at_unix: Some(1_700_000_000),
+            log_bytes: 0,
+            log_modified_unix: None,
+            liveness,
+        }
+    }
+
+    /// Audit N2: after a reboot, every sidecar left on disk is `StaleBoot` —
+    /// permanently unauthenticatable litter. Deleting one signals nothing, so
+    /// it is safe to sweep alongside a positively-dead group.
+    #[test]
+    fn a_spent_sidecar_is_one_that_can_never_name_a_live_run_again() {
+        use switchbard_core::dispatch_inspect::{DispatchRunLiveness, SidecarDoubt};
+
+        assert!(sidecar_is_spent(&run_with(DispatchRunLiveness::Gone)));
+        assert!(sidecar_is_spent(&run_with(
+            DispatchRunLiveness::Unverifiable(SidecarDoubt::StaleBoot)
+        )));
+
+        // A legacy sidecar carries no boot epoch, so it cannot be dated —
+        // sweeping it would be guessing that it is old. It is already inert.
+        assert!(!sidecar_is_spent(&run_with(
+            DispatchRunLiveness::Unverifiable(SidecarDoubt::LegacyFormat)
+        )));
+        // A probe that failed this tick may well succeed next tick.
+        assert!(!sidecar_is_spent(&run_with(
+            DispatchRunLiveness::Unverifiable(SidecarDoubt::ProbeFailed)
+        )));
+        // And never the live ones.
+        assert!(!sidecar_is_spent(&run_with(DispatchRunLiveness::Alive {
+            pgid: 42,
+            supervised: true
+        })));
+        assert!(!sidecar_is_spent(&run_with(DispatchRunLiveness::NoSidecar)));
     }
 
     #[test]
