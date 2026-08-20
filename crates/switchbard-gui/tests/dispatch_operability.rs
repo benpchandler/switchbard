@@ -1,0 +1,362 @@
+//! TASK-43 — dispatch operability: the ambient chip, the tab badge, and the
+//! Kill control, driven through real widgets in `egui_kittest`.
+//!
+//! The point of these is the *chrome*, not the pipeline. A user on the
+//! Servers tab has no way to know an agent is running unless the top bar says
+//! so, and no way to stop one unless a row offers a button — so every
+//! assertion here is about what the always-visible surface renders and where
+//! clicking it goes, with the app seeded into the state that surface is
+//! supposed to describe.
+//!
+//! What is deliberately *not* asserted here: that confirming a kill actually
+//! terminates a process. That crosses into a real signal against a real pgid,
+//! which belongs (and lives) in `switchbard-core`'s
+//! `killing_a_runs_process_group_via_its_sidecar_unblocks_the_pipelines_wait`
+//! — the same bar `backlog_controls.rs`'s module doc sets for controls whose
+//! only effect is a background thread.
+
+mod common;
+
+use std::path::PathBuf;
+
+use common::{harness, seeded_app, REPO_PATH};
+use egui_kittest::kittest::{self, Queryable};
+use egui_kittest::Harness;
+use switchbard_core::dispatch_inspect::{now_unix, DispatchRun};
+use switchbard_core::{
+    BacklogProject, BacklogTask, BacklogTaskSource, DispatchOptions, DISPATCHED_LABEL,
+    DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
+};
+use switchbard_gui::app::HiveApp;
+use switchbard_gui::runtime::ViewTab;
+
+fn task(id: &str, labels: &[&str], notes: &str) -> BacklogTask {
+    BacklogTask {
+        id: id.to_string(),
+        title: format!("{id} work"),
+        status: "In Progress".to_string(),
+        priority: "medium".to_string(),
+        assignees: vec![],
+        labels: labels.iter().map(|l| l.to_string()).collect(),
+        dependencies: vec![],
+        references: vec![],
+        milestone: None,
+        parent: None,
+        created_date: None,
+        updated_date: None,
+        description: String::new(),
+        implementation_plan: String::new(),
+        implementation_notes: notes.to_string(),
+        final_summary: String::new(),
+        acceptance_criteria: vec![],
+        definition_of_done: vec![],
+        source: BacklogTaskSource::Active,
+        path: PathBuf::from(format!(
+            "{REPO_PATH}/backlog/tasks/{}.md",
+            id.to_lowercase()
+        )),
+    }
+}
+
+/// A cached run that started `age_secs` ago. `pgid` present means the pipeline
+/// wrote a sidecar and has not released yet — the exact condition the Kill
+/// button keys on.
+fn run(task_id: &str, age_secs: u64, pgid: Option<i32>) -> DispatchRun {
+    DispatchRun {
+        task_id: task_id.to_string(),
+        branch: format!("dispatch/{}", task_id.to_lowercase()),
+        worktree_path: PathBuf::from(format!("{REPO_PATH}/.worktrees/dispatch-{task_id}")),
+        worktree_exists: false,
+        log_path: Some(PathBuf::from("/tmp/switchbard-logs/dispatch.log")),
+        prompt_path: None,
+        started_at_unix: Some(now_unix().saturating_sub(age_secs)),
+        log_bytes: 0,
+        log_modified_unix: None,
+        pgid,
+    }
+}
+
+/// A headless app holding `tasks` in one project, with `runs` already cached
+/// the way `workers::refresh_dispatch_runs` would have left them.
+fn app_with(tasks: Vec<BacklogTask>, runs: Vec<DispatchRun>) -> HiveApp {
+    let app = seeded_app();
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: None,
+            tasks,
+            warnings: vec![],
+            loaded_at_unix: 0,
+            configured_statuses: vec![],
+        },
+    );
+    let mut cached = app.dispatch_runs.lock().unwrap();
+    for run in runs {
+        cached.insert((PathBuf::from(REPO_PATH), run.task_id.clone()), run);
+    }
+    drop(cached);
+    app
+}
+
+fn harness_with(tasks: Vec<BacklogTask>, runs: Vec<DispatchRun>) -> Harness<'static, HiveApp> {
+    let mut harness = harness(app_with(tasks, runs));
+    harness.run();
+    harness
+}
+
+/// The chip's rendered text, if it rendered at all.
+///
+/// Matched by its glyph prefix rather than by an exact label, because the
+/// running chip embeds a live elapsed time. `⚙ Settings` shares the gear, so
+/// it is excluded by name — that collision is itself worth pinning: a future
+/// chip whose copy drifted into "Settings" would silently break this probe.
+fn dispatch_chip(harness: &Harness<'_, HiveApp>) -> Option<String> {
+    harness
+        .query_all(kittest::by())
+        .filter_map(|node| node.label())
+        .find(|label| {
+            (label.starts_with('⚙') || label.starts_with('⚠')) && !label.contains("Settings")
+        })
+}
+
+/// Every piece of text in the tree containing `needle` — for assertions about
+/// copy that embeds a live clock or a runtime-assigned pgid.
+///
+/// Reads a node's `value` as well as its `label`: a bare `ui.label` /
+/// `ui.colored_label` surfaces its text as the node's *value* in egui's
+/// accessibility tree, while interactive widgets (buttons, selectables)
+/// surface theirs as the *label*. Checking only one of the two silently
+/// misses half the UI — which cost real debugging time here.
+///
+/// Distinct strings only: egui hangs one `ui.label`'s text off more than one
+/// node in the tree, so a raw collect reports the same copy two or three
+/// times and turns any count-based assertion into a lie.
+fn text_containing(harness: &Harness<'_, HiveApp>, needle: &str) -> Vec<String> {
+    let mut found: Vec<String> = harness
+        .query_all(kittest::by())
+        .flat_map(|node| [node.label(), node.value()])
+        .flatten()
+        .filter(|text| text.contains(needle))
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+// ─── The chip ───────────────────────────────────────────────────────────────
+
+/// The default state of a Switchbard that has never dispatched anything: no
+/// chip, no badge. Empty chrome is the failure mode this feature is most
+/// likely to introduce, so it is asserted first.
+#[test]
+fn top_bar_shows_no_dispatch_chip_when_nothing_is_flagged() {
+    let harness = harness_with(vec![task("TASK-1", &[], "")], vec![]);
+
+    assert_eq!(dispatch_chip(&harness), None);
+    assert!(
+        harness.query_by_label("Dispatches").is_some(),
+        "the tab itself still renders, unbadged"
+    );
+}
+
+/// A task that already has its PR is finished work, not operational state —
+/// it must not leave a chip lit forever.
+#[test]
+fn a_dispatched_task_awaiting_review_lights_no_chip() {
+    let harness = harness_with(
+        vec![task(
+            "TASK-1",
+            &[DISPATCHED_LABEL],
+            "Dispatch PR: https://example.test/pr/1",
+        )],
+        vec![run("TASK-1", 3_000, None)],
+    );
+
+    assert_eq!(dispatch_chip(&harness), None);
+    assert!(harness.query_by_label("Dispatches").is_some());
+}
+
+#[test]
+fn top_bar_chip_counts_running_agents_and_navigates_to_the_dispatches_tab() {
+    let mut harness = harness_with(
+        vec![
+            task("TASK-1", &[DISPATCHING_LABEL], ""),
+            task("TASK-2", &[DISPATCHING_LABEL], ""),
+        ],
+        vec![run("TASK-1", 300, None), run("TASK-2", 60, None)],
+    );
+
+    let chip = dispatch_chip(&harness).expect("chip must render while agents are running");
+    assert!(
+        chip.starts_with("⚙ 2 running · 5m"),
+        "chip should count both runs and lead with the oldest one's elapsed time: {chip:?}"
+    );
+    assert_eq!(
+        harness.state().view_tab,
+        ViewTab::Servers,
+        "precondition: the chip is visible from a tab that is not Dispatches"
+    );
+
+    harness.get_by_label(chip.as_str()).click();
+    harness.run();
+
+    assert_eq!(harness.state().view_tab, ViewTab::Dispatch);
+}
+
+/// The attention flip, through the real widget: a failed run changes the
+/// chip's *words*, not just its color (a color-only change is invisible to
+/// this harness and, for a colorblind user, to the product).
+#[test]
+fn top_bar_chip_flips_to_attention_wording_when_a_run_failed() {
+    let harness = harness_with(
+        vec![
+            task(
+                "TASK-1",
+                &[DISPATCH_FAILED_LABEL],
+                "Dispatch failed: claude exited with Some(1)",
+            ),
+            task("TASK-2", &[DISPATCHING_LABEL], ""),
+        ],
+        vec![run("TASK-2", 120, None)],
+    );
+
+    assert_eq!(
+        dispatch_chip(&harness).as_deref(),
+        Some("⚠ 1 dispatch run needs attention · 1 running")
+    );
+}
+
+/// A run past its own hard-kill deadline is reported as needing attention
+/// rather than as healthily running — the stalled case, end to end.
+#[test]
+fn top_bar_chip_treats_a_run_past_its_timeout_as_needing_attention() {
+    let past_deadline = DispatchOptions::default().timeout.as_secs() + 60;
+    let harness = harness_with(
+        vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
+        vec![run("TASK-1", past_deadline, None)],
+    );
+
+    assert_eq!(
+        dispatch_chip(&harness).as_deref(),
+        Some("⚠ 1 dispatch run needs attention")
+    );
+}
+
+// ─── The tab badge ──────────────────────────────────────────────────────────
+
+/// The badge counts *runs* — in flight plus needing attention — so a long
+/// queue of flagged-but-unstarted tasks does not inflate it.
+#[test]
+fn dispatches_tab_badge_counts_runs_not_queue_depth() {
+    let harness = harness_with(
+        vec![
+            task("TASK-1", &[DISPATCHING_LABEL], ""),
+            task("TASK-2", &[DISPATCH_FAILED_LABEL], ""),
+            task("TASK-3", &[DISPATCH_LABEL], ""),
+            task("TASK-4", &[DISPATCH_LABEL], ""),
+        ],
+        vec![run("TASK-1", 90, None)],
+    );
+
+    assert!(
+        harness.query_by_label("Dispatches (2)").is_some(),
+        "one in flight + one failed; the two queued tasks are not runs"
+    );
+    assert!(
+        harness.query_by_label("Dispatches").is_none(),
+        "the badged label replaces the plain one rather than doubling it"
+    );
+    // The queue still reaches the user through the chip, just not the badge.
+    let chip = dispatch_chip(&harness).expect("chip");
+    assert!(chip.contains("needs attention"), "{chip:?}");
+}
+
+// ─── The Kill control ───────────────────────────────────────────────────────
+
+#[test]
+fn an_in_flight_row_shows_its_hard_kill_deadline() {
+    let mut app = app_with(
+        vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
+        vec![run("TASK-1", 300, None)],
+    );
+    app.view_tab = ViewTab::Dispatch;
+    let mut harness = harness(app);
+    harness.run();
+
+    let deadlines = text_containing(&harness, "hard kill in");
+    assert_eq!(deadlines.len(), 1, "{deadlines:?}");
+    assert!(
+        deadlines[0].starts_with("· hard kill in 25m"),
+        "30m timeout minus 5m elapsed: {:?}",
+        deadlines[0]
+    );
+}
+
+/// Arm, read the confirmation, back out. The confirm step is the whole point
+/// of the control — a bare Kill button next to a run someone spent 20 minutes
+/// waiting on is a misclick away from a disaster.
+#[test]
+fn the_kill_button_is_confirm_armed_and_cancellable() {
+    let mut app = app_with(
+        vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
+        vec![run("TASK-1", 300, Some(4242))],
+    );
+    app.view_tab = ViewTab::Dispatch;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(harness.state().dispatch_kill_confirm.is_none());
+    harness.get_by_label("Kill run").click();
+    harness.run();
+
+    assert_eq!(
+        harness.state().dispatch_kill_confirm,
+        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string())),
+        "arming is keyed by (repo root, task id) — a task id alone is not unique"
+    );
+    assert!(
+        !text_containing(&harness, "pgid 4242").is_empty(),
+        "the confirmation names the process group it is about to signal"
+    );
+    assert!(harness.query_by_label("Confirm kill").is_some());
+
+    harness.get_by_label("Cancel kill").click();
+    harness.run();
+
+    assert!(harness.state().dispatch_kill_confirm.is_none());
+    assert!(harness.query_by_label("Confirm kill").is_none());
+    assert!(harness.query_by_label("Kill run").is_some());
+}
+
+/// No sidecar, no button. This is the normal state for a run started by a
+/// Switchbard that has since restarted: offering a button with no process
+/// group behind it would be worse than offering none.
+#[test]
+fn a_run_without_a_pid_sidecar_offers_no_kill_button() {
+    let mut app = app_with(
+        vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
+        vec![run("TASK-1", 300, None)],
+    );
+    app.view_tab = ViewTab::Dispatch;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(harness.query_by_label("Kill run").is_none());
+    assert!(
+        !text_containing(&harness, "hard kill in").is_empty(),
+        "the row still renders — only the kill affordance is withheld"
+    );
+}
+
+/// A queued task has no process to kill, even though the Dispatch view lists
+/// it a section away from the in-flight rows.
+#[test]
+fn a_queued_task_offers_no_kill_button() {
+    let mut app = app_with(vec![task("TASK-1", &[DISPATCH_LABEL], "")], vec![]);
+    app.view_tab = ViewTab::Dispatch;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(harness.query_by_label("Kill run").is_none());
+}

@@ -192,6 +192,13 @@ pub struct HiveApp {
     /// (test scripts, build wrappers, ship-gate runners, etc.).
     pub show_non_servers: bool,
     pub view_tab: ViewTab,
+    /// TASK-43: which in-flight dispatch run has its Kill button armed, if
+    /// any. Confirm state only — one at a time, cleared on confirm/cancel —
+    /// exactly like `backlog_view.dispatch_confirm` arms the Dispatch button
+    /// it is the inverse of. View-only: killing a run publishes nothing here,
+    /// because the run's own pipeline releases the task and the label stays
+    /// the state machine (see `switchbard_core::dispatch`'s module doc).
+    pub dispatch_kill_confirm: Option<BacklogTaskKey>,
     pub agent_context_view: AgentContextViewState,
     pub backlog_view: BacklogViewState,
     /// Shared render cache for the task detail pane's markdown description
@@ -329,6 +336,7 @@ impl HiveApp {
             server_status: Status::new(),
             backlog_status: Status::new(),
             filter: String::new(),
+            dispatch_kill_confirm: None,
             show_only_managed: false,
             confirm_kill_all: false,
             confirm_remove_repo: None,
@@ -840,6 +848,33 @@ impl HiveApp {
         let ctx = ctx.clone();
         thread::spawn(move || {
             status.set(describe_kill(pgid, kill_pgid(pgid, Duration::from_secs(3))));
+            kick.notify();
+            ctx.request_repaint();
+        });
+    }
+
+    /// TASK-43: pull the plug on one in-flight dispatch run by signalling the
+    /// process group recorded in its pgid sidecar.
+    ///
+    /// Deliberately *only* a signal. Nothing here touches the task's labels or
+    /// notes: `dispatch_one` is blocked in `wait_for_exit` on this exact
+    /// process, so killing it makes that wait return and the pipeline walks
+    /// its ordinary failure path — `dispatch-failed` plus a note — on its own.
+    /// Bookkeeping from this side would be a second writer racing the first.
+    ///
+    /// A sidecar can outlive its run (Switchbard died mid-run without
+    /// releasing), so `KillOutcome::NotFound` is an expected answer, not an
+    /// error: it reports through `backlog_status` like any other outcome. The
+    /// `backlog_kick` afterwards is what refreshes the labels the pipeline
+    /// just rewrote — the same wake the dispatch worker uses for its own
+    /// outcomes.
+    pub fn spawn_kill_dispatch(&self, task_id: String, pgid: i32, ctx: &egui::Context) {
+        let kick = self.backlog_kick.clone();
+        let status = self.backlog_status.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let outcome = kill_pgid(pgid, Duration::from_secs(3));
+            status.set(format!("{task_id}: {}", describe_kill(pgid, outcome)));
             kick.notify();
             ctx.request_repaint();
         });

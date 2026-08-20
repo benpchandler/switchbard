@@ -50,6 +50,29 @@
 //! mode — a better fit for a worker meant to actually run than a flag that
 //! may simply refuse to execute.
 //!
+//! ## Bounding a runaway run
+//!
+//! Two limits apply, and they bound different failure modes. `opts.timeout`
+//! is wall-clock and external: the pipeline kills the process group once the
+//! run has hung for too long. [`DispatchOptions::max_turns`] is internal and
+//! passed to the agent itself as `--max-turns` — it bounds *looping*, which
+//! is what a runaway agent actually does, and ends the run as an ordinary
+//! exit the pipeline can report rather than a kill it can only infer.
+//!
+//! Neither helps a human who is watching a run go wrong right now, so
+//! [`dispatch_one`] also writes a pgid sidecar next to the run's log
+//! ([`dispatch_pid_path`]) between spawning the agent and blocking on it, and
+//! deletes it as the run releases. A UI that reads that file can signal the
+//! group directly with [`crate::kill_pgid`].
+//!
+//! Killing the group needs **no coordination with this module**, which is the
+//! property that makes the sidecar cheap: the pipeline is already blocked in
+//! `wait_for_exit` on that exact process, so the kill simply makes the wait
+//! return early. The run then walks its normal exit path — non-zero exit →
+//! [`DispatchResult::ClaudeFailed`] → `release_as_failed` → the task lands on
+//! `dispatch-failed` with a note. One signal in; the existing label state
+//! machine does all the bookkeeping.
+//!
 //! ## Why `drain_dispatch_queue` is serial, not parallel
 //!
 //! `opts.max_concurrent` caps how many tasks one drain call picks up, but it
@@ -108,6 +131,12 @@ pub const DISPATCH_REVIEW_STATUS: &str = "In Review";
 /// up (per the mission's "per-run concurrency cap default 2").
 pub const DEFAULT_MAX_CONCURRENT: usize = 2;
 
+/// Default [`DispatchOptions::max_turns`]. 50 is well clear of what a real
+/// task-sized run takes (the runs this pipeline was built against land in the
+/// low tens) while still being a hard stop on a loop that would otherwise only
+/// end at the 30-minute timeout.
+pub const DEFAULT_MAX_TURNS: u32 = 50;
+
 const KILL_GRACE: Duration = Duration::from_secs(10);
 const GH_SPACING: Duration = Duration::from_secs(2);
 
@@ -123,6 +152,20 @@ pub struct DispatchOptions {
     pub timeout: Duration,
     /// See [`DEFAULT_MAX_CONCURRENT`] and the module doc's "why serial" note.
     pub max_concurrent: usize,
+    /// Hard cap on agent turns for one headless run, passed straight through
+    /// as `claude -p --max-turns`.
+    ///
+    /// A runaway agent is a *turn-count* problem before it is a wall-clock
+    /// problem: the failure mode this bounds is a loop — re-reading the same
+    /// file, re-running the same failing test, re-deciding the same fork —
+    /// which burns tokens at full rate and produces nothing. `opts.timeout`
+    /// catches that too, but only after the full 30 minutes, and only by
+    /// killing the process from outside, leaving a log that ends mid-thought
+    /// with no statement of why. `--max-turns` bounds it upstream, inside the
+    /// agent, where the run ends as an ordinary exit the pipeline can report.
+    /// The two limits are complementary, not redundant: turns bound looping,
+    /// the timeout bounds hanging.
+    pub max_turns: u32,
 }
 
 impl Default for DispatchOptions {
@@ -133,6 +176,7 @@ impl Default for DispatchOptions {
             remote: "origin".to_string(),
             timeout: Duration::from_secs(30 * 60),
             max_concurrent: DEFAULT_MAX_CONCURRENT,
+            max_turns: DEFAULT_MAX_TURNS,
         }
     }
 }
@@ -235,6 +279,64 @@ pub fn dispatch_log_stem(task_id: &str, started_at_unix: u64) -> String {
     )
 }
 
+/// Where a run's pgid sidecar lives: `<stem>.pid` alongside that run's log
+/// and prompt.
+///
+/// The sidecar is the one thing about a run that genuinely *cannot* be rebuilt
+/// from the repo root and the task id — a process group id is assigned by the
+/// kernel at spawn. It is still run-scoped evidence on disk rather than a run
+/// store, in exactly the sense [`crate::dispatch_inspect`]'s doc means: it is
+/// named by the same stem convention as the log, it is written by the run and
+/// deleted when that run releases, and nothing reads it as authority on
+/// pipeline state (the task's label remains the state machine). It exists so a
+/// human watching a run has a hand on the plug.
+pub fn dispatch_pid_path(task_id: &str, started_at_unix: u64) -> PathBuf {
+    dispatch_log_dir().join(format!(
+        "{}.pid",
+        dispatch_log_stem(task_id, started_at_unix)
+    ))
+}
+
+/// Parse a pgid out of a sidecar written by [`write_pid_sidecar`]. `None` for
+/// a missing, empty, or unparseable file — a caller that cannot read a pgid
+/// simply has no kill affordance to offer, which is the position every caller
+/// was in before sidecars existed. Non-positive values are rejected because
+/// `kill_pgid` negates its argument to address a group: a 0 or negative pgid
+/// would widen the signal past the one run it is meant for.
+pub fn read_pid_sidecar(path: &Path) -> Option<i32> {
+    std::fs::read_to_string(path)
+        .ok()?
+        .trim()
+        .parse::<i32>()
+        .ok()
+        .filter(|pgid| *pgid > 0)
+}
+
+/// Record the run's process group so a UI can signal it. Best-effort by
+/// design: failing to write the sidecar costs the user a Kill button, which
+/// must never be worth aborting a run that is otherwise fine.
+fn write_pid_sidecar(path: &Path, pgid: i32) {
+    let _ = std::fs::write(path, format!("{pgid}\n"));
+}
+
+/// Drop the kill handle. Called as the run releases its claim — see
+/// [`dispatch_one`] for why that is the right boundary.
+fn remove_pid_sidecar(path: &Path) {
+    let _ = std::fs::remove_file(path);
+}
+
+/// The `/bin/sh -c` line for one headless run. Pure so the flag set — in
+/// particular `--max-turns`, the only bound that acts *inside* the agent — is
+/// unit-testable without spawning a process.
+fn build_claude_command(prompt_path: &Path, opts: &DispatchOptions) -> String {
+    format!(
+        "cat {} | {} -p --permission-mode acceptEdits --max-turns {} --output-format text",
+        shell_quote(prompt_path),
+        opts.claude_binary,
+        opts.max_turns,
+    )
+}
+
 /// The prompt handed to the headless `claude -p` run: the task's own
 /// description/AC/DoD verbatim, plus the operating contract (implement and
 /// commit; don't push or open a PR — the pipeline owns that). Pure so wording
@@ -316,7 +418,15 @@ pub fn dispatch_one(
         }
     };
 
-    let exit = match run_claude_headless(&paths, opts) {
+    let exit = run_claude_headless(&paths, opts);
+    // The agent is gone either way by the time that returns — whether it
+    // exited on its own, hit `opts.timeout`, or was killed from the Dispatch
+    // view. Drop the kill handle here, at the release boundary, so a sidecar
+    // on disk never names a process group that is not this run's live one.
+    // (The remaining commit/push/PR tail is Switchbard's own work, not the
+    // agent's; there is deliberately nothing to signal for it.)
+    remove_pid_sidecar(&paths.pid_path);
+    let exit = match exit {
         Ok(exit) => exit,
         Err(e) => {
             release_as_failed(repo_root, &task.id, &e.to_string(), &prior_status);
@@ -377,6 +487,7 @@ struct DispatchPaths {
     branch: String,
     log_path: PathBuf,
     prompt_path: PathBuf,
+    pid_path: PathBuf,
 }
 
 fn prepare_dispatch(
@@ -401,6 +512,7 @@ fn prepare_dispatch(
     let stem = dispatch_log_stem(&task.id, unix_now());
     let log_path = log_dir.join(format!("{stem}.log"));
     let prompt_path = log_dir.join(format!("{stem}-prompt.md"));
+    let pid_path = log_dir.join(format!("{stem}.pid"));
     std::fs::write(&prompt_path, build_dispatch_prompt(task))
         .context("failed writing dispatch prompt")?;
 
@@ -413,6 +525,7 @@ fn prepare_dispatch(
         branch,
         log_path,
         prompt_path,
+        pid_path,
     })
 }
 
@@ -420,13 +533,13 @@ fn prepare_dispatch(
 /// `opts.timeout` elapses. `Ok(None)` means it was killed for running too
 /// long; `Ok(Some(code))` is its real exit code.
 fn run_claude_headless(paths: &DispatchPaths, opts: &DispatchOptions) -> Result<Option<i32>> {
-    let command = format!(
-        "cat {} | {} -p --permission-mode acceptEdits --output-format text",
-        shell_quote(&paths.prompt_path),
-        opts.claude_binary,
-    );
+    let command = build_claude_command(&paths.prompt_path, opts);
     let run = spawn_in_session(&command, &paths.worktree_path, &paths.log_path)
         .context("failed to spawn claude")?;
+    // Written *after* the spawn (the kernel assigns the group) and before the
+    // blocking wait, so the sidecar exists for essentially the whole window in
+    // which there is something to kill.
+    write_pid_sidecar(&paths.pid_path, run.pgid);
     match wait_for_exit(run.pid, opts.timeout).context("failed waiting on claude")? {
         WaitOutcome::Exited(code) => Ok(Some(code)),
         WaitOutcome::TimedOut => {
@@ -780,6 +893,162 @@ mod tests {
         let quoted = shell_quote(&path);
 
         assert_eq!(quoted, "'/tmp/it'\\''s-a-test/prompt.md'");
+    }
+
+    #[test]
+    fn claude_command_carries_the_turn_cap_from_options() {
+        let opts = DispatchOptions {
+            max_turns: 7,
+            ..Default::default()
+        };
+
+        let command = build_claude_command(Path::new("/tmp/prompt.md"), &opts);
+
+        assert!(
+            command.contains("--max-turns 7"),
+            "turn cap must reach the agent: {command}"
+        );
+        // The permission-mode rationale in this module's doc is load-bearing;
+        // assert the flag survives any future edit to the command line.
+        assert!(command.contains("--permission-mode acceptEdits"));
+        assert!(command.contains("'/tmp/prompt.md'"));
+    }
+
+    #[test]
+    fn the_default_turn_cap_is_the_documented_one() {
+        let command = build_claude_command(Path::new("/tmp/p.md"), &DispatchOptions::default());
+
+        assert_eq!(DispatchOptions::default().max_turns, DEFAULT_MAX_TURNS);
+        assert!(command.contains(&format!("--max-turns {DEFAULT_MAX_TURNS}")));
+    }
+
+    #[test]
+    fn pid_sidecar_sits_beside_the_run_it_names() {
+        let pid = dispatch_pid_path("TASK-11", 1_700_000_000);
+        let log = dispatch_log_dir().join(format!(
+            "{}.log",
+            dispatch_log_stem("TASK-11", 1_700_000_000)
+        ));
+
+        assert_eq!(pid.parent(), log.parent());
+        assert_eq!(
+            pid.file_name().unwrap().to_str().unwrap(),
+            "dispatch-task-11-1700000000.pid"
+        );
+    }
+
+    /// The whole sidecar lifecycle in one place: written at spawn, readable
+    /// as a pgid while the run is live, gone once the run releases.
+    #[test]
+    fn pid_sidecar_round_trips_and_is_removed_on_release() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dispatch-task-11-1700000000.pid");
+
+        assert_eq!(read_pid_sidecar(&path), None, "nothing written yet");
+
+        write_pid_sidecar(&path, 4242);
+        assert!(path.exists());
+        assert_eq!(read_pid_sidecar(&path), Some(4242));
+
+        remove_pid_sidecar(&path);
+        assert!(!path.exists());
+        assert_eq!(read_pid_sidecar(&path), None);
+    }
+
+    /// Removing a sidecar that is already gone is the normal case on any
+    /// early-exit path — it must be silent, not an error a caller has to
+    /// thread through the release bookkeeping.
+    #[test]
+    fn removing_a_missing_pid_sidecar_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+
+        remove_pid_sidecar(&dir.path().join("never-written.pid"));
+    }
+
+    /// A truncated or hand-mangled sidecar must not hand a caller a pgid it
+    /// would then signal. Non-positive values are rejected specifically
+    /// because `kill_pgid` negates its argument to address the group.
+    #[test]
+    fn a_malformed_pid_sidecar_yields_no_pgid() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, contents) in [
+            ("empty.pid", ""),
+            ("blank.pid", "   \n"),
+            ("words.pid", "not-a-pid\n"),
+            ("zero.pid", "0\n"),
+            ("negative.pid", "-1\n"),
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, contents).unwrap();
+            assert_eq!(read_pid_sidecar(&path), None, "{name} must not parse");
+        }
+    }
+
+    /// Trailing whitespace/newline is what `write_pid_sidecar` itself emits,
+    /// so the reader has to tolerate it — a regression here would silently
+    /// disable every Kill button.
+    #[test]
+    fn pid_sidecar_reader_tolerates_the_writers_trailing_newline() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nl.pid");
+        fs::write(&path, "  91234  \n").unwrap();
+
+        assert_eq!(read_pid_sidecar(&path), Some(91234));
+    }
+
+    /// The Kill button's entire mechanism, against a real process group:
+    /// spawn a run the way the pipeline does, record its pgid in a sidecar,
+    /// then — reading *only* the sidecar, exactly as the UI does — signal the
+    /// group and watch the pipeline's own blocked `wait_for_exit` return.
+    ///
+    /// This is the claim that makes the feature need no coordination with the
+    /// worker thread: the kill is one signal, and the wait coming back early
+    /// is what routes the run into `ClaudeFailed` → `release_as_failed`. If
+    /// this ever regresses, a killed run would sit out the full timeout with
+    /// its task still claimed.
+    ///
+    /// `#[ignore]` for the reason `spawn::tests::spawn_then_kill_works`
+    /// already documents and carries the same attribute for: signalling a
+    /// freshly-`setsid`'d group from under the macOS test harness returns
+    /// EPERM, while the same code path works against real long-lived groups
+    /// in the running app. Re-confirmed while writing this (2026-08-19):
+    /// SIGTERM is accepted and does nothing, the SIGKILL escalation comes
+    /// back `Operation not permitted`, with and without the shell `exec` +
+    /// settle delay that test uses. Run it deliberately —
+    /// `cargo test -p switchbard-core -- --ignored killing_a_runs` — when
+    /// changing the kill path; the pure sidecar round-trip above is what
+    /// guards the format on every CI run.
+    #[test]
+    #[ignore]
+    fn killing_a_runs_process_group_via_its_sidecar_unblocks_the_pipelines_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("run.log");
+        let pid_path = dir.path().join("run.pid");
+
+        // `sleep 600` stands in for the headless agent: it outlives any
+        // plausible test runtime, so the only way this test finishes is if
+        // the kill actually lands.
+        let run = spawn_in_session("exec sleep 600", dir.path(), &log_path).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        write_pid_sidecar(&pid_path, run.pgid);
+
+        let from_sidecar = read_pid_sidecar(&pid_path).expect("sidecar must name the group");
+        assert_eq!(from_sidecar, run.pgid);
+
+        let outcome = kill_pgid(from_sidecar, Duration::from_secs(2)).unwrap();
+        assert!(
+            matches!(outcome, crate::kill::KillOutcome::Terminated),
+            "SIGTERM should be enough for the group: {outcome:?}"
+        );
+
+        let waited = wait_for_exit(run.pid, Duration::from_secs(10)).unwrap();
+        assert!(
+            matches!(waited, WaitOutcome::Exited(_)),
+            "the pipeline's blocked wait must return on the kill, not time out: {waited:?}"
+        );
+
+        remove_pid_sidecar(&pid_path);
+        assert_eq!(read_pid_sidecar(&pid_path), None);
     }
 
     #[test]

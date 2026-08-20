@@ -12,7 +12,10 @@
 //! task itself (its label) via `switchbard_core::dispatch`. It publishes
 //! nothing new; it just runs the pipeline and kicks `backlog_kick` so the
 //! *existing* backlog worker's next (or forced) reload picks up the label
-//! and notes change. See its own doc for why one iteration can block far
+//! and notes change. (TASK-43's pgid sidecar does not change that: it is a
+//! file the *pipeline* writes and deletes within one run's lifetime, read
+//! back off disk by `refresh_dispatch_runs` like every other `DispatchRun`
+//! field — no worker state, nothing for this thread to publish or own.) See its own doc for why one iteration can block far
 //! longer than the other workers' — this reuses `drain_dispatch_queue`'s
 //! serial-by-design batching rather than reimplementing it.
 //!

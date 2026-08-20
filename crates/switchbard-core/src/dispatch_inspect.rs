@@ -26,16 +26,24 @@
 //!
 //! ## What this deliberately does not claim
 //!
-//! It reports **evidence**, not a verdict on liveness. There is no pid to
-//! check — the pipeline blocks on its own child in a worker thread and never
-//! records one — so [`DispatchRun::looks_stalled`] is expressed against the
-//! run's own configured timeout rather than pretending to probe the process
-//! table. An empty log is normal for a healthy in-flight run: `claude -p
-//! --output-format text` emits nothing until it exits, which is the single
-//! most misleading signal a user looking at these files will hit.
+//! It reports **evidence**, not a verdict on liveness. [`DispatchRun::pgid`]
+//! is recovered from the run's pgid sidecar (see
+//! [`crate::dispatch::dispatch_pid_path`]) purely so a UI can offer a kill
+//! affordance — it is a *handle*, not proof the group is alive. A sidecar
+//! outlives its run only when Switchbard died mid-run without releasing, and
+//! this module deliberately does not probe the process table to adjudicate
+//! that: the honest presentation is "here is the run's group, killing it is
+//! your call", which is why the affordance it feeds is confirm-armed.
+//!
+//! So [`DispatchRun::looks_stalled`] stays expressed against the run's own
+//! configured timeout rather than against process liveness. An empty log is
+//! normal for a healthy in-flight run: `claude -p --output-format text` emits
+//! nothing until it exits, which is the single most misleading signal a user
+//! looking at these files will hit.
 
 use crate::dispatch::{
-    dispatch_branch_name, dispatch_log_dir, dispatch_log_stem, dispatch_worktree_path,
+    dispatch_branch_name, dispatch_log_dir, dispatch_log_stem, dispatch_pid_path,
+    dispatch_worktree_path, read_pid_sidecar,
 };
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -61,6 +69,11 @@ pub struct DispatchRun {
     /// flushes at exit, this is effectively *when the agent finished* — the
     /// one timestamp that distinguishes a live run from an abandoned one.
     pub log_modified_unix: Option<u64>,
+    /// Process group of the run's agent, from the pgid sidecar the pipeline
+    /// writes at spawn and deletes on release. `Some` means there is a group
+    /// to signal; it is not a claim the group is still alive (see the module
+    /// doc). `None` is the normal state for every finished run.
+    pub pgid: Option<i32>,
 }
 
 /// How long after the agent exits the pipeline is still allowed to be working
@@ -137,6 +150,10 @@ pub fn inspect_dispatch_run(repo_root: &Path, task_id: &str) -> DispatchRun {
     let prompt_path = started_at_unix.map(|started| {
         dispatch_log_dir().join(format!("{}-prompt.md", dispatch_log_stem(task_id, started)))
     });
+    // Only the *newest* run's sidecar is consulted: an older run's sidecar
+    // still on disk describes a group nobody should be offered a button for.
+    let pgid =
+        started_at_unix.and_then(|started| read_pid_sidecar(&dispatch_pid_path(task_id, started)));
 
     DispatchRun {
         task_id: task_id.to_string(),
@@ -148,6 +165,7 @@ pub fn inspect_dispatch_run(repo_root: &Path, task_id: &str) -> DispatchRun {
         started_at_unix,
         log_bytes,
         log_modified_unix,
+        pgid,
     }
 }
 
@@ -199,6 +217,7 @@ mod tests {
             started_at_unix: started,
             log_bytes,
             log_modified_unix: (log_bytes > 0).then_some(started.unwrap_or(0)),
+            pgid: None,
         }
     }
 
@@ -285,6 +304,47 @@ mod tests {
         assert!(!run.worktree_exists);
         assert_eq!(run.log_path, None);
         assert_eq!(run.started_at_unix, None);
+        assert_eq!(run.pgid, None);
         assert!(run.worktree_path.ends_with(".worktrees/dispatch-task-999"));
+    }
+
+    /// The sidecar half of the rebuild-from-disk contract, against real files
+    /// in the real log dir: a run with a sidecar surfaces its pgid, and the
+    /// same run once released (sidecar deleted) surfaces `None` — which is
+    /// exactly the transition the Kill button's visibility keys on.
+    #[test]
+    fn a_live_runs_sidecar_is_surfaced_and_disappears_with_it() {
+        let task_id = unique_task_id("sidecar");
+        let started = 1_700_000_042;
+        let log_dir = dispatch_log_dir();
+        std::fs::create_dir_all(&log_dir).unwrap();
+        let log = log_dir.join(format!("{}.log", dispatch_log_stem(&task_id, started)));
+        let pid = crate::dispatch::dispatch_pid_path(&task_id, started);
+        std::fs::write(&log, "").unwrap();
+        std::fs::write(&pid, "5150\n").unwrap();
+
+        let live = inspect_dispatch_run(Path::new("/nonexistent/repo"), &task_id);
+        assert_eq!(live.started_at_unix, Some(started));
+        assert_eq!(live.pgid, Some(5150));
+
+        std::fs::remove_file(&pid).unwrap();
+        let released = inspect_dispatch_run(Path::new("/nonexistent/repo"), &task_id);
+        assert_eq!(released.started_at_unix, Some(started));
+        assert_eq!(released.pgid, None);
+
+        std::fs::remove_file(&log).unwrap();
+    }
+
+    /// `dispatch_log_dir()` is a real shared directory (`$TMPDIR/
+    /// switchbard-logs`), also used by a running Switchbard — every test
+    /// writing there needs an id no other test, run, or app can collide with.
+    fn unique_task_id(tag: &str) -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        format!(
+            "TASK-inspecttest-{tag}-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        )
     }
 }

@@ -22,18 +22,189 @@
 //! (`workers::refresh_dispatch_runs`); this module reads the resulting cache
 //! and recomputes just `elapsed` from the cached start stamp, so the elapsed
 //! time still ticks live at frame rate without a `read_dir` per row.
+//!
+//! [`summarize_dispatch`] holds that line for the *top bar*, which renders on
+//! every frame of every tab. It walks the same two caches without cloning a
+//! task or a run — the row-building path below clones because it renders the
+//! rows; the summary only counts them.
+//!
+//! ## The Kill button
+//!
+//! An in-flight row whose run has a pgid sidecar
+//! (`switchbard_core::dispatch::dispatch_pid_path`) gets a confirm-armed Kill
+//! control. It sends exactly one signal and records nothing: the pipeline is
+//! blocked in `wait_for_exit` on that process group, so the kill makes the
+//! wait return and `dispatch_one` releases the task as `dispatch-failed` with
+//! a note through its ordinary failure path. Writing any state from here
+//! would be a second writer racing the first.
 
 use crate::app::HiveApp;
 use crate::runtime::BacklogTaskKey;
 use crate::ui::backlog::dispatch_ui::{self, DispatchState};
 use crate::ui::theme;
 use eframe::egui;
+use std::path::PathBuf;
 use std::time::Duration;
 use switchbard_core::dispatch_inspect::{now_unix, DispatchRun};
 use switchbard_core::{BacklogTask, DispatchOptions};
 
+/// Ambient dispatch counts for the top bar — the chip and the Dispatches tab
+/// badge, i.e. the answer to "is anything running?" from a tab that is not
+/// this one.
+///
+/// The buckets are **disjoint**, so `queued + in_flight + needs_attention` is
+/// a real total rather than a double count. A stalled run lands in
+/// `needs_attention` rather than `in_flight`: a run past its own hard-kill
+/// deadline is not in the happy path any more, and reporting it as healthily
+/// running is exactly the false reassurance this whole task exists to remove.
+/// Runs that already opened a PR are in none of them — awaiting review is not
+/// an operational state, and a permanent chip nobody can clear is chrome, not
+/// information.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DispatchSummary {
+    /// Flagged for dispatch, not yet claimed by the worker.
+    pub queued: usize,
+    /// Claimed, running, and still inside its timeout.
+    pub in_flight: usize,
+    /// Failed, orphaned, or past its timeout — a human has to look.
+    pub needs_attention: usize,
+    /// Elapsed seconds of the oldest *claimed* run (healthy or stalled).
+    /// `None` when nothing is claimed.
+    pub oldest_running_secs: Option<u64>,
+}
+
+impl DispatchSummary {
+    /// Fold one dispatch-labeled task into the counts. Pure — `now` and
+    /// `timeout` are parameters, not clock reads — so every visibility rule
+    /// below is unit-testable without a frame or a filesystem.
+    fn observe(
+        &mut self,
+        state: &DispatchState,
+        run: Option<&DispatchRun>,
+        now: u64,
+        timeout: Duration,
+    ) {
+        match state {
+            DispatchState::Queued => self.queued += 1,
+            DispatchState::Failed { .. } => self.needs_attention += 1,
+            DispatchState::InFlight => {
+                // Same cross-check the view's sectioning does: the
+                // `dispatching` label alone is not proof a run is live, an
+                // orphan wears it forever.
+                let orphaned = run.is_some_and(|run| run.looks_orphaned(now, true));
+                let stalled = run.is_some_and(|run| run.looks_stalled(now, timeout));
+                if orphaned || stalled {
+                    self.needs_attention += 1;
+                } else {
+                    self.in_flight += 1;
+                }
+                if !orphaned {
+                    if let Some(elapsed) = run.and_then(|run| run.elapsed(now)) {
+                        let secs = elapsed.as_secs();
+                        self.oldest_running_secs =
+                            Some(self.oldest_running_secs.map_or(secs, |old| old.max(secs)));
+                    }
+                }
+            }
+            DispatchState::Dispatched { .. } | DispatchState::NotFlagged => {}
+        }
+    }
+
+    /// Nothing queued, nothing running, nothing to fix. The top bar renders
+    /// no chip and no badge in this state — the same "no ticking counters
+    /// with nothing to say" rule that removed the last-scan label and keeps
+    /// the retired-worktrees nudge silent at zero.
+    pub fn is_idle(&self) -> bool {
+        self.queued == 0 && self.in_flight == 0 && self.needs_attention == 0
+    }
+
+    /// Whether the chip should read as an alarm rather than as status.
+    pub fn needs_attention(&self) -> bool {
+        self.needs_attention > 0
+    }
+
+    /// The Dispatches tab badge count: work in flight plus work asking for a
+    /// decision. Queued tasks are deliberately excluded — the badge is about
+    /// runs, and a queued task has not started one.
+    pub fn badge_count(&self) -> usize {
+        self.in_flight + self.needs_attention
+    }
+
+    /// One line for the top-bar chip. Leads with whatever is most urgent:
+    /// attention first, then live runs with the oldest one's elapsed time
+    /// (the number that says "should I go look?"), then a bare queue depth.
+    pub fn chip_text(&self) -> String {
+        if self.needs_attention > 0 {
+            let mut text = format!(
+                "⚠ {} dispatch run{} need{} attention",
+                self.needs_attention,
+                if self.needs_attention == 1 { "" } else { "s" },
+                if self.needs_attention == 1 { "s" } else { "" },
+            );
+            if self.in_flight > 0 {
+                text.push_str(&format!(" · {} running", self.in_flight));
+            }
+            return text;
+        }
+        if self.in_flight > 0 {
+            let mut text = format!("⚙ {} running", self.in_flight);
+            if let Some(secs) = self.oldest_running_secs {
+                text.push_str(&format!(" · {}", format_elapsed(Duration::from_secs(secs))));
+            }
+            if self.queued > 0 {
+                text.push_str(&format!(" · {} queued", self.queued));
+            }
+            return text;
+        }
+        format!("⚙ {} queued", self.queued)
+    }
+}
+
+/// Count what the top bar needs without building a single row.
+///
+/// Deliberately not `collect_rows` + fold: that path clones every task and
+/// run so it can render them, and the top bar renders on every frame of every
+/// tab — including tabs that never look at dispatch at all. This takes the two
+/// locks one at a time (never both at once, matching `workers::
+/// refresh_dispatch_runs`'s ordering) and does arithmetic on borrows.
+pub(crate) fn summarize_dispatch(app: &HiveApp) -> DispatchSummary {
+    // Only dispatch-labeled tasks need a run lookup, and a project usually has
+    // none — so the projects lock is held for a label scan, and the (small)
+    // key clones happen only for tasks that are actually in the pipeline.
+    let flagged: Vec<(BacklogTaskKey, DispatchState)> = {
+        let projects = app.backlog_projects.lock().unwrap();
+        projects
+            .iter()
+            .flat_map(|(root, project)| {
+                project.tasks.iter().filter_map(move |task| {
+                    match dispatch_ui::dispatch_state(task) {
+                        DispatchState::NotFlagged => None,
+                        state => Some(((root.clone(), task.id.clone()), state)),
+                    }
+                })
+            })
+            .collect()
+    };
+    if flagged.is_empty() {
+        return DispatchSummary::default();
+    }
+
+    let now = now_unix();
+    let timeout = DispatchOptions::default().timeout;
+    let runs = app.dispatch_runs.lock().unwrap();
+    let mut summary = DispatchSummary::default();
+    for (key, state) in &flagged {
+        summary.observe(state, runs.get(key), now, timeout);
+    }
+    summary
+}
+
 /// One dispatched task, joined to whatever is knowable about its run.
 struct DispatchRow {
+    /// Repo root, not just the display name: the Kill control keys its
+    /// confirm state by [`BacklogTaskKey`], and a task id is only unique
+    /// within one project.
+    repo_root: PathBuf,
     repo_name: String,
     task: BacklogTask,
     state: DispatchState,
@@ -135,7 +306,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                 if in_section.is_empty() {
                     continue;
                 }
-                render_section(ui, section, &in_section, now, timeout);
+                render_section(app, ui, section, &in_section, now, timeout);
             }
         });
     });
@@ -167,6 +338,7 @@ fn collect_rows(app: &HiveApp) -> Vec<DispatchRow> {
                 .get(&(root.clone(), task.id.clone()) as &BacklogTaskKey)
                 .cloned();
             let row = DispatchRow {
+                repo_root: root.clone(),
                 repo_name: repo_name.clone(),
                 task: task.clone(),
                 state,
@@ -206,6 +378,7 @@ fn row_matches(row: &DispatchRow, filter_lc: &str) -> bool {
 }
 
 fn render_section(
+    app: &mut HiveApp,
     ui: &mut egui::Ui,
     section: Section,
     rows: &[&DispatchRow],
@@ -223,12 +396,18 @@ fn render_section(
     });
     ui.separator();
     for row in rows {
-        render_row(ui, row, now, timeout);
+        render_row(app, ui, row, now, timeout);
     }
     ui.add_space(10.0);
 }
 
-fn render_row(ui: &mut egui::Ui, row: &DispatchRow, now: u64, timeout: Duration) {
+fn render_row(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    row: &DispatchRow,
+    now: u64,
+    timeout: Duration,
+) {
     egui::Frame::default()
         .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {
@@ -242,13 +421,14 @@ fn render_row(ui: &mut egui::Ui, row: &DispatchRow, now: u64, timeout: Duration)
             });
 
             if let Some(run) = &row.run {
-                render_run_details(ui, row, run, now, timeout);
+                render_run_details(app, ui, row, run, now, timeout);
             }
             render_outcome(ui, &row.state);
         });
 }
 
 fn render_run_details(
+    app: &mut HiveApp,
     ui: &mut egui::Ui,
     row: &DispatchRow,
     run: &DispatchRun,
@@ -276,6 +456,22 @@ fn render_run_details(
                 theme::muted_text()
             };
             ui.label(egui::RichText::new(label).color(color));
+            // The deadline, not just the clock: "running 12m" only means
+            // something to someone who has memorised `DispatchOptions::
+            // default().timeout`. Spelling out how long is left is what turns
+            // the elapsed time into a decision ("kill it now, or let the
+            // hard kill have it in three minutes").
+            if let Some(remaining) = time_until_hard_kill(elapsed, timeout) {
+                if in_flight {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "· hard kill in {}",
+                            format_elapsed(remaining)
+                        ))
+                        .color(theme::muted_text()),
+                    );
+                }
+            }
             if stalled {
                 ui.label(
                     egui::RichText::new(format!(
@@ -317,6 +513,66 @@ fn render_run_details(
             );
         });
     }
+    if in_flight {
+        render_kill_control(app, ui, row, run);
+    }
+}
+
+/// Confirm-armed Kill for one in-flight run, mirroring the two-step shape of
+/// the Dispatch button it undoes (`backlog::detail_lists::
+/// render_dispatch_toggle`) — this is the more destructive of the pair, so it
+/// does not get the *lighter* affordance.
+///
+/// Renders nothing without a pgid. That is the normal state for a released
+/// run and for one started by a Switchbard that has since restarted without
+/// its sidecar; offering a dead button would be worse than offering none.
+/// A sidecar that *is* present may still name a group that has already
+/// exited — `kill_pgid` reports that as `NotFound` and it surfaces as a
+/// status message, which is why this is safe to offer on evidence alone.
+fn render_kill_control(app: &mut HiveApp, ui: &mut egui::Ui, row: &DispatchRow, run: &DispatchRun) {
+    let Some(pgid) = run.pgid else {
+        return;
+    };
+    let key: BacklogTaskKey = (row.repo_root.clone(), row.task.id.clone());
+    if app.dispatch_kill_confirm.as_ref() == Some(&key) {
+        ui.horizontal(|ui| {
+            ui.colored_label(
+                theme::amber(),
+                format!(
+                    "Kill {}'s agent (pgid {pgid})? The worktree and anything \
+                     it already committed are left alone.",
+                    row.task.id
+                ),
+            );
+            if ui
+                .button("Confirm kill")
+                .on_hover_text(
+                    "Signals the run's process group; the pipeline then releases \
+                     the task as dispatch-failed with a note",
+                )
+                .clicked()
+            {
+                app.spawn_kill_dispatch(row.task.id.clone(), pgid, ui.ctx());
+                app.dispatch_kill_confirm = None;
+            }
+            if ui.button("Cancel kill").clicked() {
+                app.dispatch_kill_confirm = None;
+            }
+        });
+    } else if ui
+        .button("Kill run")
+        .on_hover_text("Stop this headless agent now, without waiting for the hard kill")
+        .clicked()
+    {
+        app.dispatch_kill_confirm = Some(key);
+    }
+}
+
+/// How long an in-flight run has before `dispatch_one` kills it for exceeding
+/// `timeout`. `None` once the deadline has passed — at that point the run is
+/// stalled and the view says so instead of counting down past zero.
+fn time_until_hard_kill(elapsed: Duration, timeout: Duration) -> Option<Duration> {
+    timeout.checked_sub(elapsed).filter(|left| !left.is_zero())
 }
 
 fn render_outcome(ui: &mut egui::Ui, state: &DispatchState) {
@@ -366,6 +622,172 @@ fn format_elapsed(elapsed: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+    /// A run started `age` seconds before "now" (= `NOW`), with `log_bytes`
+    /// of output already flushed. Output + an old mtime is what
+    /// `looks_orphaned` keys on, so `finished_ago` drives that separately.
+    fn run(age: u64, log_bytes: u64, finished_ago: Option<u64>) -> DispatchRun {
+        DispatchRun {
+            task_id: "TASK-1".to_string(),
+            branch: "dispatch/task-1".to_string(),
+            worktree_path: std::path::PathBuf::from("/repo/.worktrees/dispatch-task-1"),
+            worktree_exists: true,
+            log_path: None,
+            prompt_path: None,
+            started_at_unix: Some(NOW - age),
+            log_bytes,
+            log_modified_unix: finished_ago.map(|ago| NOW - ago),
+            pgid: None,
+        }
+    }
+
+    const NOW: u64 = 1_000_000;
+
+    fn summarize(entries: &[(DispatchState, Option<DispatchRun>)]) -> DispatchSummary {
+        let mut summary = DispatchSummary::default();
+        for (state, run) in entries {
+            summary.observe(state, run.as_ref(), NOW, TIMEOUT);
+        }
+        summary
+    }
+
+    /// The chip's whole reason to exist is that it is *absent* almost all the
+    /// time. Nothing flagged at all, and nothing flagged that has finished,
+    /// must both read as idle — a permanently-lit chip is chrome, not signal.
+    #[test]
+    fn a_workspace_with_no_live_dispatch_work_is_idle() {
+        assert!(summarize(&[]).is_idle());
+
+        let finished = summarize(&[(
+            DispatchState::Dispatched {
+                pr_url: Some("https://example/pr/1".to_string()),
+            },
+            Some(run(600, 900, Some(600))),
+        )]);
+
+        assert!(finished.is_idle(), "awaiting review is not an alarm");
+        assert_eq!(finished.badge_count(), 0);
+    }
+
+    #[test]
+    fn queued_and_running_tasks_are_counted_separately() {
+        let summary = summarize(&[
+            (DispatchState::Queued, None),
+            (DispatchState::Queued, None),
+            (DispatchState::InFlight, Some(run(300, 0, None))),
+        ]);
+
+        assert_eq!(summary.queued, 2);
+        assert_eq!(summary.in_flight, 1);
+        assert_eq!(summary.needs_attention, 0);
+        assert!(!summary.is_idle());
+        // The badge is about runs, so the two queued tasks don't inflate it.
+        assert_eq!(summary.badge_count(), 1);
+        assert!(!summary.needs_attention());
+    }
+
+    /// A queue with nothing claimed yet still shows a chip — the user flagged
+    /// something and it has not started, which is worth an ambient word.
+    #[test]
+    fn a_queue_with_nothing_claimed_still_shows_a_chip() {
+        let summary = summarize(&[(DispatchState::Queued, None)]);
+
+        assert!(!summary.is_idle());
+        assert_eq!(summary.badge_count(), 0);
+        assert_eq!(summary.chip_text(), "⚙ 1 queued");
+    }
+
+    #[test]
+    fn the_chip_reports_the_oldest_running_run() {
+        let summary = summarize(&[
+            (DispatchState::InFlight, Some(run(90, 0, None))),
+            (DispatchState::InFlight, Some(run(450, 0, None))),
+        ]);
+
+        assert_eq!(summary.oldest_running_secs, Some(450));
+        assert_eq!(summary.chip_text(), "⚙ 2 running · 7m 30s");
+    }
+
+    /// The attention flip, one bucket at a time. Each of the three is a
+    /// different upstream condition (label / mtime evidence / clock) and each
+    /// has to move the chip into its danger register on its own.
+    #[test]
+    fn a_failed_run_flips_the_chip_to_attention() {
+        let summary = summarize(&[(
+            DispatchState::Failed {
+                reason: Some("claude exited with Some(1)".to_string()),
+            },
+            None,
+        )]);
+
+        assert!(summary.needs_attention());
+        assert_eq!(summary.needs_attention, 1);
+        assert_eq!(summary.in_flight, 0);
+        assert_eq!(summary.chip_text(), "⚠ 1 dispatch run needs attention");
+    }
+
+    #[test]
+    fn an_orphaned_run_flips_the_chip_to_attention_despite_its_in_flight_label() {
+        let orphan = run(3_000, 900, Some(600));
+        assert!(
+            orphan.looks_orphaned(NOW, true),
+            "fixture must be an orphan"
+        );
+
+        let summary = summarize(&[(DispatchState::InFlight, Some(orphan))]);
+
+        assert!(summary.needs_attention());
+        assert_eq!(summary.in_flight, 0, "an orphan is not running");
+        // An orphan's elapsed time is not a live clock — it stopped when the
+        // agent did — so it must not be what the chip counts up.
+        assert_eq!(summary.oldest_running_secs, None);
+    }
+
+    #[test]
+    fn a_stalled_run_counts_as_attention_not_as_healthy_running() {
+        let stalled = run(TIMEOUT.as_secs() + 60, 0, None);
+        assert!(stalled.looks_stalled(NOW, TIMEOUT));
+
+        let summary = summarize(&[
+            (DispatchState::InFlight, Some(stalled)),
+            (DispatchState::InFlight, Some(run(120, 0, None))),
+        ]);
+
+        assert_eq!(summary.in_flight, 1);
+        assert_eq!(summary.needs_attention, 1);
+        assert_eq!(summary.badge_count(), 2);
+        assert_eq!(
+            summary.chip_text(),
+            "⚠ 1 dispatch run needs attention · 1 running"
+        );
+    }
+
+    #[test]
+    fn attention_wording_pluralizes_both_ways() {
+        let two = summarize(&[
+            (DispatchState::Failed { reason: None }, None),
+            (DispatchState::Failed { reason: None }, None),
+        ]);
+
+        assert_eq!(two.chip_text(), "⚠ 2 dispatch runs need attention");
+    }
+
+    /// A run inside its timeout counts down; one past it has no countdown to
+    /// show and the view says "stalled" instead of a negative number.
+    #[test]
+    fn the_hard_kill_countdown_stops_at_the_deadline() {
+        assert_eq!(
+            time_until_hard_kill(Duration::from_secs(600), TIMEOUT),
+            Some(Duration::from_secs(1_200))
+        );
+        assert_eq!(time_until_hard_kill(TIMEOUT, TIMEOUT), None);
+        assert_eq!(
+            time_until_hard_kill(TIMEOUT + Duration::from_secs(60), TIMEOUT),
+            None
+        );
+    }
 
     #[test]
     fn elapsed_formats_by_the_largest_useful_unit() {
