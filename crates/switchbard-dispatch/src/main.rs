@@ -91,9 +91,9 @@ fn dispatch_options_from_env() -> DispatchOptions {
             opts.max_concurrent = n;
         }
     }
-    if let Ok(secs) = std::env::var("SWITCHBARD_DISPATCH_TIMEOUT_SECS") {
+    if let Ok(secs) = std::env::var("SWITCHBARD_DISPATCH_STALE_AFTER_SECS") {
         if let Ok(n) = secs.parse::<u64>() {
-            opts.timeout = Duration::from_secs(n);
+            opts.stale_after = Duration::from_secs(n);
         }
     }
     opts

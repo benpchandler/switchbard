@@ -54,19 +54,23 @@ use switchbard_core::{BacklogTask, DispatchOptions};
 ///
 /// The buckets are **disjoint**, so `queued + in_flight + needs_attention` is
 /// a real total rather than a double count. A stalled run lands in
-/// `needs_attention` rather than `in_flight`: a run past its own hard-kill
-/// deadline is not in the happy path any more, and reporting it as healthily
-/// running is exactly the false reassurance this whole task exists to remove.
-/// Runs that already opened a PR are in none of them — awaiting review is not
-/// an operational state, and a permanent chip nobody can clear is chrome, not
-/// information.
+/// `needs_attention` rather than `in_flight`: a run past its own advisory
+/// staleness threshold is not in the happy path any more, and reporting it as
+/// healthily running is exactly the false reassurance this whole task exists
+/// to remove — even though (TASK-46) the run itself is still going and
+/// nothing here will kill it. Runs that already opened a PR are in none of
+/// them — awaiting review is not an operational state, and a permanent chip
+/// nobody can clear is chrome, not information.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DispatchSummary {
     /// Flagged for dispatch, not yet claimed by the worker.
     pub queued: usize,
-    /// Claimed, running, and still inside its timeout.
+    /// Claimed, running, and not yet past the advisory staleness threshold.
     pub in_flight: usize,
-    /// Failed, orphaned, or past its timeout — a human has to look.
+    /// Failed, orphaned, or past the advisory staleness threshold — a human
+    /// has to look, though a staleness hit alone is still a *running* run
+    /// (TASK-46 removed the automatic kill; see `crate::dispatch`'s module
+    /// doc).
     pub needs_attention: usize,
     /// Elapsed seconds of the oldest *claimed* run (healthy or stalled).
     /// `None` when nothing is claimed.
@@ -75,14 +79,14 @@ pub(crate) struct DispatchSummary {
 
 impl DispatchSummary {
     /// Fold one dispatch-labeled task into the counts. Pure — `now` and
-    /// `timeout` are parameters, not clock reads — so every visibility rule
-    /// below is unit-testable without a frame or a filesystem.
+    /// `stale_after` are parameters, not clock reads — so every visibility
+    /// rule below is unit-testable without a frame or a filesystem.
     fn observe(
         &mut self,
         category: DispatchCategory,
         run: Option<&DispatchRun>,
         now: u64,
-        timeout: Duration,
+        stale_after: Duration,
     ) {
         match category {
             DispatchCategory::Queued => self.queued += 1,
@@ -104,7 +108,7 @@ impl DispatchSummary {
                 // job is to be believed; the row itself already says
                 // "unverified" for anyone who looks.
                 let abandoned = run.is_some_and(|run| run.is_abandoned(now, true));
-                let stalled = run.is_some_and(|run| run.looks_stalled(now, timeout));
+                let stalled = run.is_some_and(|run| run.looks_stalled(now, stale_after));
                 if abandoned || stalled {
                     self.needs_attention += 1;
                 } else {
@@ -207,11 +211,11 @@ pub(crate) fn summarize_dispatch(app: &HiveApp) -> DispatchSummary {
     }
 
     let now = now_unix();
-    let timeout = DispatchOptions::default().timeout;
+    let stale_after = DispatchOptions::default().stale_after;
     let runs = app.dispatch_runs.lock().unwrap();
     let mut summary = DispatchSummary::default();
     for (key, category) in &flagged {
-        summary.observe(*category, runs.get(key), now, timeout);
+        summary.observe(*category, runs.get(key), now, stale_after);
     }
     summary
 }
@@ -309,7 +313,7 @@ impl Section {
 pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     let rows = collect_rows(app);
     let now = now_unix();
-    let timeout = DispatchOptions::default().timeout;
+    let stale_after = DispatchOptions::default().stale_after;
 
     egui::CentralPanel::default().show(ctx, |ui| {
         if rows.is_empty() {
@@ -325,7 +329,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
                 if in_section.is_empty() {
                     continue;
                 }
-                render_section(app, ui, section, &in_section, now, timeout);
+                render_section(app, ui, section, &in_section, now, stale_after);
             }
         });
     });
@@ -402,7 +406,7 @@ fn render_section(
     section: Section,
     rows: &[&DispatchRow],
     now: u64,
-    timeout: Duration,
+    stale_after: Duration,
 ) {
     ui.add_space(6.0);
     ui.horizontal(|ui| {
@@ -415,7 +419,7 @@ fn render_section(
     });
     ui.separator();
     for row in rows {
-        render_row(app, ui, row, now, timeout);
+        render_row(app, ui, row, now, stale_after);
     }
     ui.add_space(10.0);
 }
@@ -425,7 +429,7 @@ fn render_row(
     ui: &mut egui::Ui,
     row: &DispatchRow,
     now: u64,
-    timeout: Duration,
+    stale_after: Duration,
 ) {
     egui::Frame::default()
         .inner_margin(egui::Margin::symmetric(8, 6))
@@ -440,7 +444,7 @@ fn render_row(
             });
 
             if let Some(run) = &row.run {
-                render_run_details(app, ui, row, run, now, timeout);
+                render_run_details(app, ui, row, run, now, stale_after);
             }
             render_outcome(ui, &row.state);
         });
@@ -452,24 +456,34 @@ fn render_run_details(
     row: &DispatchRow,
     run: &DispatchRun,
     now: u64,
-    timeout: Duration,
+    stale_after: Duration,
 ) {
     let orphaned = row.section(now) == Section::Orphaned;
     // An abandoned run carries the in-flight label but is not running, so the
     // live-run affordances (ticking "running", the empty-log reassurance)
     // must not apply to it.
     let in_flight = matches!(row.state, DispatchState::InFlight) && !orphaned;
-    // The deadline exists only because a supervisor is enforcing it. When the
-    // Switchbard that spawned this agent is gone, `wait_for_exit` died with
-    // it: nothing will time the run out, and nothing will release the task
-    // when it ends. Everything below keys off this rather than off the
-    // in-flight label, because a countdown nobody is counting is a lie.
+    // TASK-46 removed the wall-clock kill entirely, so there is no deadline
+    // left to gate on `supervised` — a run past `stale_after` just keeps
+    // running, supervised or not. What supervision still gates is *release*:
+    // when the Switchbard that spawned this agent is gone, `wait_for_exit`
+    // died with it, and nothing will release the task when the agent ends.
+    // Everything below keys off this rather than off the in-flight label for
+    // that reason.
     let supervised = run.liveness.is_supervised();
     ui.horizontal(|ui| {
         if let Some(elapsed) = run.elapsed(now) {
-            let stalled = in_flight && run.looks_stalled(now, timeout);
+            let stalled = in_flight && run.looks_stalled(now, stale_after);
+            // A stalled run is still running — TASK-46's whole point — so the
+            // label stays "running", just with an honest nudge to go look
+            // rather than a promise ("hard kill in Ym") this app no longer
+            // keeps.
             let label = if in_flight {
-                format!("running {}", format_elapsed(elapsed))
+                if stalled {
+                    format!("running {} — check on it", format_elapsed(elapsed))
+                } else {
+                    format!("running {}", format_elapsed(elapsed))
+                }
             } else if orphaned {
                 format!("abandoned after {}", format_elapsed(elapsed))
             } else {
@@ -481,31 +495,6 @@ fn render_run_details(
                 theme::muted_text()
             };
             ui.label(egui::RichText::new(label).color(color));
-            // The deadline, not just the clock: "running 12m" only means
-            // something to someone who has memorised `DispatchOptions::
-            // default().timeout`. Spelling out how long is left is what turns
-            // the elapsed time into a decision ("kill it now, or let the
-            // hard kill have it in three minutes").
-            if in_flight && supervised {
-                if let Some(remaining) = time_until_hard_kill(elapsed, timeout) {
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "· hard kill in {}",
-                            format_elapsed(remaining)
-                        ))
-                        .color(theme::muted_text()),
-                    );
-                }
-            }
-            if stalled && supervised {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "past the {} timeout — check the log",
-                        format_elapsed(timeout)
-                    ))
-                    .color(theme::danger()),
-                );
-            }
         }
         ui.label(egui::RichText::new(&run.branch).color(theme::muted_text()));
     });
@@ -547,26 +536,29 @@ fn render_run_details(
     }
 }
 
-/// The honest replacement for the deadline, on a run whose supervisor is gone.
+/// What to say about a run whose supervisor is gone, now that there is no
+/// deadline left to explain either way (TASK-46).
 ///
 /// Two different situations wear the same `dispatching` label here, and they
 /// need different words:
 ///
-/// - the agent is verifiably still running, but unsupervised — no timeout will
-///   fire and nothing will release the task, so it can run indefinitely;
+/// - the agent is verifiably still running, but unsupervised — nothing will
+///   release the task when it ends, so a human has to finish that step by
+///   hand;
 /// - nothing about the run can be verified at all (a sidecar from before the
 ///   last reboot, a legacy-format one, a failed probe) — in which case the app
 ///   genuinely does not know whether an agent is out there.
 ///
-/// The old copy said "hard kill in Xm" in both cases, which was the F3
-/// finding: a countdown promising an enforcement mechanism that no longer
-/// exists.
+/// The old copy said "hard kill in Xm" in both cases (audit finding F3): a
+/// countdown promising an enforcement mechanism that, even before TASK-46
+/// removed it globally, was never armed for an unsupervised run in the first
+/// place.
 fn render_unsupervised_notice(ui: &mut egui::Ui, run: &DispatchRun) {
     let text = match run.liveness.doubt() {
         Some(doubt) => format!("unverified — {}", doubt.explain()),
         None if run.liveness.killable_pgid().is_some() => {
-            "unsupervised — the app that started this run is gone, so no deadline applies and \
-             nothing will release the task when it ends"
+            "unsupervised — the app that started this run is gone, so nothing will release \
+             the task when it ends; kill it or resolve the task by hand"
                 .to_string()
         }
         None => "unsupervised — no record of a live process for this run".to_string(),
@@ -654,8 +646,10 @@ fn render_kill_control(app: &mut HiveApp, ui: &mut egui::Ui, row: &DispatchRow, 
             }
         });
     } else {
+        // TASK-46: there is no automatic kill left to be "faster than", so
+        // the supervised case no longer contrasts itself with one.
         let hover = if supervised {
-            "Stop this headless agent now, without waiting for the hard kill"
+            "Stop this headless agent now"
         } else {
             "Stop this headless agent now. Nothing is supervising it, so the task will need \
              resolving by hand"
@@ -664,13 +658,6 @@ fn render_kill_control(app: &mut HiveApp, ui: &mut egui::Ui, row: &DispatchRow, 
             app.dispatch_kill_confirm = Some(key);
         }
     }
-}
-
-/// How long an in-flight run has before `dispatch_one` kills it for exceeding
-/// `timeout`. `None` once the deadline has passed — at that point the run is
-/// stalled and the view says so instead of counting down past zero.
-fn time_until_hard_kill(elapsed: Duration, timeout: Duration) -> Option<Duration> {
-    timeout.checked_sub(elapsed).filter(|left| !left.is_zero())
 }
 
 fn render_outcome(ui: &mut egui::Ui, state: &DispatchState) {
@@ -707,7 +694,8 @@ fn render_empty(ui: &mut egui::Ui) {
 }
 
 /// Compact `2h 14m` / `7m 30s` / `45s`. Minutes matter for a run measured in
-/// tens of minutes against a 30-minute timeout; seconds only matter early on.
+/// tens of minutes against a 30-minute default staleness threshold; seconds
+/// only matter early on.
 fn format_elapsed(elapsed: Duration) -> String {
     let secs = elapsed.as_secs();
     match (secs / 3600, (secs % 3600) / 60, secs % 60) {
@@ -722,7 +710,7 @@ mod tests {
     use super::*;
     use switchbard_core::dispatch_inspect::DispatchRunLiveness;
 
-    const TIMEOUT: Duration = Duration::from_secs(30 * 60);
+    const STALE_AFTER: Duration = Duration::from_secs(30 * 60);
 
     /// A run started `age` seconds before "now" (= `NOW`), with `log_bytes`
     /// of output already flushed. Output + an old mtime is what
@@ -756,7 +744,7 @@ mod tests {
     fn summarize(entries: &[(DispatchCategory, Option<DispatchRun>)]) -> DispatchSummary {
         let mut summary = DispatchSummary::default();
         for (category, run) in entries {
-            summary.observe(*category, run.as_ref(), NOW, TIMEOUT);
+            summary.observe(*category, run.as_ref(), NOW, STALE_AFTER);
         }
         summary
     }
@@ -845,8 +833,8 @@ mod tests {
 
     #[test]
     fn a_stalled_run_counts_as_attention_not_as_healthy_running() {
-        let stalled = run(TIMEOUT.as_secs() + 60, 0, None);
-        assert!(stalled.looks_stalled(NOW, TIMEOUT));
+        let stalled = run(STALE_AFTER.as_secs() + 60, 0, None);
+        assert!(stalled.looks_stalled(NOW, STALE_AFTER));
 
         let summary = summarize(&[
             (DispatchCategory::InFlight, Some(stalled)),
@@ -913,21 +901,6 @@ mod tests {
 
         assert_eq!(summary.in_flight, 1);
         assert_eq!(summary.needs_attention, 0);
-    }
-
-    /// A run inside its timeout counts down; one past it has no countdown to
-    /// show and the view says "stalled" instead of a negative number.
-    #[test]
-    fn the_hard_kill_countdown_stops_at_the_deadline() {
-        assert_eq!(
-            time_until_hard_kill(Duration::from_secs(600), TIMEOUT),
-            Some(Duration::from_secs(1_200))
-        );
-        assert_eq!(time_until_hard_kill(TIMEOUT, TIMEOUT), None);
-        assert_eq!(
-            time_until_hard_kill(TIMEOUT + Duration::from_secs(60), TIMEOUT),
-            None
-        );
     }
 
     #[test]
