@@ -116,6 +116,11 @@ pub const DEFAULT_REFINE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// keep going only burns tokens before the timeout catches it anyway. 30 is
 /// deliberately generous against the ~5–15 turns a real pass takes (measured
 /// on this repo) so a large codebase isn't cut off mid-exploration.
+///
+/// Note for anyone tempted to delete the flag: `--max-turns` is **not listed
+/// in `claude --help`** on the version this was built against, but it is
+/// accepted and honored (verified empirically, 2026-08-19, by running a
+/// headless prompt with it). Absent from `--help` is not absent from the CLI.
 pub const DEFAULT_REFINE_MAX_TURNS: u32 = 30;
 
 /// Tools the refine run is denied outright, on top of `--permission-mode
