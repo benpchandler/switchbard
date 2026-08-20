@@ -355,6 +355,12 @@ pub(in crate::ui::backlog) struct Pending {
     /// render_archive` routes here instead when `task.is_done()`, since the
     /// real CLI refuses `task archive` on a Done task.
     pub complete: Option<(PathBuf, String)>,
+    /// `(project_root, task_id)` — the per-task Refine grooming pass
+    /// (TASK-44). Unlike `dispatch_toggle`, which only flags a label for a
+    /// worker to notice later, this queues the whole run: `HiveApp::
+    /// spawn_backlog_refine` does the headless call and the additive write
+    /// on its own thread.
+    pub refine: Option<(PathBuf, String)>,
     /// `(project_root, task_id, enabled)` — the per-task Dispatch opt-in
     /// toggle (task-11 GUI wiring).
     pub dispatch_toggle: Option<(PathBuf, String, bool)>,
@@ -390,6 +396,9 @@ fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, pending: Pending) {
     }
     if let Some((project_root, task_id)) = pending.complete {
         app.spawn_backlog_complete(project_root, task_id, ctx);
+    }
+    if let Some((project_root, task_id)) = pending.refine {
+        app.spawn_backlog_refine(project_root, task_id, ctx);
     }
     if let Some((project_root, task_id, enabled)) = pending.dispatch_toggle {
         app.spawn_backlog_dispatch_toggle(project_root, task_id, enabled, ctx);

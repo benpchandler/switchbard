@@ -77,6 +77,7 @@ pub(super) fn render_task_detail(
             detail_lists::render_notes(app, ui, &project.key, task, editable, pending);
             detail_lists::render_readonly_sections(ui, task);
             ui.add_space(10.0);
+            detail_lists::render_refine(app, ui, &project.key, task, editable, pending);
             detail_lists::render_dispatch(app, ui, &project.key, task, editable, pending);
             ui.add_space(10.0);
             detail_lists::render_archive(app, ui, &project.key, task, editable, pending);

@@ -592,12 +592,14 @@ fn describe_result(result: &DispatchResult) -> String {
 
 /// Quote a path for interpolation into a `/bin/sh -c` string (the one place
 /// this module builds a shell command instead of passing argv directly, to
-/// pipe the prompt file into `claude -p`'s stdin).
-fn shell_quote(path: &Path) -> String {
+/// pipe the prompt file into `claude -p`'s stdin). `pub(crate)` because
+/// `crate::refine` pipes its prompt into the same binary the same way —
+/// one shell-quoting rule, not two.
+pub(crate) fn shell_quote(path: &Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
 }
 
-fn unix_now() -> u64 {
+pub(crate) fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())

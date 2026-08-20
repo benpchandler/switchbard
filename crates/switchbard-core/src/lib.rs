@@ -15,6 +15,7 @@ pub mod git_probe;
 pub mod instance_lock;
 pub mod kill;
 pub mod open_url;
+pub mod refine;
 pub mod resolve;
 pub mod scanner;
 pub mod spawn;
@@ -72,6 +73,11 @@ pub use git_probe::{
 };
 pub use kill::{kill_pgid, KillOutcome};
 pub use open_url::{open_url, url_for_port, BROWSER_APP_NAMES};
+pub use refine::{
+    build_refine_patch, build_refine_prompt, describe_refine_result, normalize_criterion,
+    parse_refine_response, refine_log_stem, refine_task, RefineOptions, RefineOutcome, RefinePlan,
+    RefineResult, RefineSuggestion, DEFAULT_REFINE_TIMEOUT, REFINED_MARKER,
+};
 pub use resolve::{resolve, ResolvedService};
 pub use scanner::scan_listeners;
 pub use spawn::{spawn_in_session, wait_for_exit, SpawnedRun, WaitOutcome};

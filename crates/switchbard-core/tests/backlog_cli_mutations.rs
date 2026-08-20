@@ -219,6 +219,7 @@ fn edit_backlog_task_persists_every_field_the_detail_pane_editor_exposes() {
         dependencies: Some(vec!["TASK-2".to_string()]),
         references: Some(vec!["https://example.com/spec".to_string()]),
         implementation_plan: Some("Step one, then step two.".to_string()),
+        append_acceptance_criteria: vec![],
         milestone: Some("v1".to_string()),
         clear_milestone: false,
     };
@@ -301,6 +302,48 @@ fn acceptance_and_definition_of_done_checkboxes_persist_through_the_cli() {
         task.definition_of_done[0].checked,
         "DoD #1 should be checked after set_backlog_dod_checked(true)"
     );
+}
+
+/// TASK-44: the Refine feature's whole safety claim is that an agent's
+/// suggestions can never disturb a criterion a human wrote or checked. That
+/// claim rests on `BacklogTaskPatch::append_acceptance_criteria` mapping to
+/// the CLI's *additive* `--ac`, not its list-replacing
+/// `--acceptance-criteria`. Proving the distinction needs the real CLI —
+/// `refine.rs`'s own unit tests can only prove the patch it builds, not what
+/// the CLI does with it.
+#[test]
+fn appended_acceptance_criteria_extend_the_list_without_disturbing_existing_ones() {
+    let fixture = fixture_repo();
+    let root = fixture.path();
+    let task_id = create_fixture_task(root);
+    set_backlog_acceptance_checked(root, &task_id, 1, true).expect("check the first criterion");
+
+    let patch = BacklogTaskPatch {
+        append_acceptance_criteria: vec![
+            "Second criterion".to_string(),
+            "Third criterion".to_string(),
+        ],
+        ..Default::default()
+    };
+    edit_backlog_task(root, &task_id, &patch).expect("appending criteria should succeed");
+
+    let project = reload(root);
+    let task = project.tasks.iter().find(|t| t.id == task_id).unwrap();
+    let texts: Vec<&str> = task
+        .acceptance_criteria
+        .iter()
+        .map(|item| item.text.as_str())
+        .collect();
+    assert_eq!(
+        texts,
+        vec!["First criterion", "Second criterion", "Third criterion"],
+        "existing criteria keep their text and position; new ones land after them"
+    );
+    assert!(
+        task.acceptance_criteria[0].checked,
+        "the pre-existing criterion must keep its checked state across an append"
+    );
+    assert!(!task.acceptance_criteria[1].checked);
 }
 
 #[test]
