@@ -18,7 +18,7 @@
 //! ## Optimistic move + drop feedback (task-42)
 //!
 //! A drop's status change writes through the real `backlog` CLI
-//! (`HiveApp::spawn_backlog_save`), which is a 0.5-1.5s subprocess round
+//! (`HiveApp::spawn_board_move_save`), which is a 0.5-1.5s subprocess round
 //! trip — rendering strictly off `HiveApp::backlog_projects` would leave a
 //! dropped card sitting in its origin column, motionless, for that entire
 //! window. `apply_drop` instead writes a `PendingBoardMove` into
@@ -31,6 +31,20 @@
 //! once per frame before any column is built, is the only place an entry
 //! ever leaves `pending_moves` — see its doc for the resolution signal and
 //! the timeout fallback.
+//!
+//! **Post-review revision (independent audit of the first version):** a
+//! pending move now resolves only off its *own* drop's own save completing
+//! (a per-drop `generation` token, carried by `HiveApp::spawn_board_move_save`
+//! into `HiveApp::board_move_outcomes`) — never off an unrelated cache
+//! reload, which the first version used and which could resolve (and
+//! visually snap back) a still-in-flight move early. `apply_drop` also now
+//! compares a drop's target against the card's *effective* (overlay-aware)
+//! status rather than its real one, so dragging a card back out of its own
+//! pending destination is recognized as a genuine new move instead of a
+//! silent no-op, and `HiveApp::board_move_locks` serializes same-task saves
+//! so two racing drops can't leave on-disk state that doesn't match the
+//! user's last gesture. See `resolve_pending_moves` and `apply_drop` for
+//! the detail.
 
 use super::{dispatch_ui, format, list, scoped_projects, selection, Pending, Snapshot, TaskRow};
 use crate::app::HiveApp;
@@ -43,20 +57,27 @@ use switchbard_core::{
     BacklogTaskPatch,
 };
 
-/// How long a `PendingBoardMove` is allowed to sit without any project
-/// reload landing before it gives up and clears itself (see that type's doc,
-/// runtime/mod.rs, for why this exists as a fallback rather than the primary
-/// signal). Comfortably above the 0.5-1.5s CLI round trip this task's own
-/// mission brief names, so a normal save — success or failure — always
-/// resolves off the `loaded_at_unix` signal well before this fires; this is
-/// purely the "something went wrong in a way that never reloaded the cache"
-/// backstop.
+/// How long a `PendingBoardMove` is allowed to sit without its own
+/// generation's outcome ever being reported before it gives up and clears
+/// itself (see that type's doc, runtime/mod.rs, for why this is now purely
+/// a last-resort backstop rather than the primary resolution signal).
+/// Comfortably above the 0.5-1.5s CLI round trip this task's own mission
+/// brief names, so a normal save — success or failure — always resolves off
+/// its own completion well before this fires; this only fires if that
+/// report is somehow lost (e.g. the save thread panics).
 const PENDING_MOVE_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// One-shot "landing flash" duration once a `pending_moves` entry resolves
 /// as a success — kept short and subtle per the task-42 design brief, not a
 /// sustained highlight.
 const LANDING_FLASH_DURATION: Duration = Duration::from_millis(700);
+
+/// How often `resolve_pending_moves` asks for a repaint while something is
+/// pending or flashing (F5, post-review revision) — frequent enough that
+/// the 700ms landing flash reads as a fade rather than a single frame,
+/// nowhere near frequent enough to matter for battery/CPU given it only
+/// runs during an active drag-drop's brief window.
+const LANDING_FLASH_REPAINT_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Column order: the shared status vocabulary (owner UX pass, 2026-08-05),
 /// scoped to whichever projects are currently in view. Declaring a status
@@ -75,10 +96,19 @@ pub(super) fn render_board(
     tasks: Vec<TaskRow<'_>>,
     pending: &mut Pending,
 ) {
-    // task-42: resolve every in-flight drag-drop against this frame's
-    // (possibly just-reloaded) cache before any column buckets a single
-    // card — see `resolve_pending_moves`'s own doc.
-    resolve_pending_moves(app, snap);
+    // task-42: resolve every in-flight drag-drop's own completion before
+    // any column buckets a single card — see `resolve_pending_moves`'s own
+    // doc. It requests a bounded, non-zero-delay repaint while anything is
+    // pending/flashing; `egui_kittest::Harness::run`'s bounded step loop
+    // (used by every drag/drop kittest in this crate) only treats a
+    // *zero-delay* repaint request as "still animating, keep stepping" —
+    // see `try_run`'s own source (`repaint_delay != Duration::ZERO` is its
+    // settle condition) — so a bounded interval like this one settles
+    // `run()` immediately rather than tripping its max_steps panic. Tests
+    // that need to observe several *ticks* of this repaint (the flash
+    // actually fading, not just its start/end state) use `Harness::step`/
+    // `run_steps` instead, per that panic message's own guidance.
+    resolve_pending_moves(app, snap, ui.ctx());
 
     // TASK-26: keeps bulk_selected_tasks consistent with whatever's
     // currently visible — same per-frame call `list::render_task_workspace`
@@ -101,60 +131,71 @@ pub(super) fn render_board(
         });
 }
 
-/// Resolve every `pending_moves` entry against `snap` (this frame's cache
-/// snapshot), and expire any `landing_flash` entry whose one-shot window has
-/// elapsed. The only place either map is mutated outside a drop itself.
+/// Resolve every `pending_moves` entry against its *own* save's completion
+/// report (`app.board_move_outcomes`, written by `HiveApp::
+/// spawn_board_move_save`), and expire any `landing_flash` entry whose
+/// one-shot window has elapsed. The only place either map is mutated
+/// outside a drop itself.
 ///
-/// An entry resolves once its project's `BacklogProject::loaded_at_unix` has
-/// advanced past the value captured at drop time (`PendingBoardMove::
-/// since_loaded_at_unix`) — a reload happened, from `spawn_backlog_save`'s
-/// own targeted reload (success *or* error path, task-42) or an unrelated
-/// periodic worker poll, either way "the world moved, go check reality"
-/// (see that field's doc). Once resolved: if the task's *current* status now
-/// matches the move's target, it won — the key moves into `landing_flash`
-/// for one subtle flash frame-range; either way it leaves `pending_moves`,
-/// so a loss silently and immediately falls back to rendering the task's
-/// real status (the rollback AC #2 asks for needs no separate code path —
-/// it falls out of the overlay simply no longer applying).
+/// Drains `board_move_outcomes` once per frame (there's nothing to gain by
+/// leaving a resolved outcome sitting in the shared map for a later frame
+/// to look at again). An entry in `pending_moves` resolves only when a
+/// drained outcome's `generation` matches that entry's own `generation`
+/// exactly — a stale outcome for a generation `apply_drop` has since
+/// superseded (a later drop on the same task) is recognized and discarded,
+/// never used to resolve the *newer* entry (see `PendingBoardMove::
+/// generation`'s doc for why the first version of this function got this
+/// wrong by resolving off any cache reload instead). On a match: success
+/// moves the key into `landing_flash` for one subtle flash frame-range;
+/// either way the entry leaves `pending_moves`, so a loss silently and
+/// immediately falls back to rendering the task's real status (the
+/// rollback AC #2 asks for needs no separate code path — it falls out of
+/// the overlay simply no longer applying).
 ///
-/// `PENDING_MOVE_TIMEOUT` is a fallback exit for the one case
-/// `loaded_at_unix` can't signal: the reload itself erroring (see
-/// `refresh_backlog_project_cache`'s doc in app.rs), which never bumps the
-/// timestamp. Without it a card could claim a status the real data never
-/// confirmed, indefinitely — worse than a rare card that quietly reverts
-/// after a bounded wait with no reload ever having landed.
+/// `PENDING_MOVE_TIMEOUT` is a fallback exit for the one case an outcome
+/// can't signal: the save thread never reporting one at all (e.g. a panic).
+/// Without it a card could claim a status the real data never confirmed,
+/// indefinitely — worse than a rare card that quietly reverts after a
+/// bounded wait with no outcome ever having landed. On timeout, `snap` (this
+/// frame's cache snapshot) is consulted as a best-effort courtesy check —
+/// if the real data happens to already show the target status by then, the
+/// move still gets its landing flash instead of a spurious snap-back.
 ///
-/// Deliberately does *not* call `ctx.request_repaint_after` to proactively
-/// re-check the timeout — `spawn_backlog_save`'s background thread already
-/// calls `ctx.request_repaint()` the moment it resolves (success or error),
-/// which covers the overwhelming normal case immediately, and `workers.rs`'s
-/// own periodic cadences keep the app repainting every few seconds even
-/// otherwise, which is enough for an already-rare "reload itself errored"
-/// backstop to land within roughly its bound rather than to the millisecond.
-/// A UI that proactively schedules its own repaint doesn't settle inside
-/// `egui_kittest::Harness::run`'s bounded step loop (its own error message
-/// says as much) — this keeps `render_board` usable from the plain
-/// `harness.run()` idiom every other test in this crate already relies on,
-/// including immediately after a real drop.
-fn resolve_pending_moves(app: &mut HiveApp, snap: &Snapshot) {
+/// Requests a bounded repaint while anything is still pending or flashing,
+/// so the "saving…" state visibly ticks and the landing flash actually
+/// animates instead of painting one static frame — see `render_board`'s own
+/// call site and its test-harness note for how this stays compatible with
+/// `egui_kittest::Harness::run`'s bounded step loop.
+fn resolve_pending_moves(app: &mut HiveApp, snap: &Snapshot, ctx: &egui::Context) {
     let now = Instant::now();
+    let outcomes = std::mem::take(&mut *app.board_move_outcomes.lock().unwrap());
     let mut landed: Vec<BacklogTaskKey> = Vec::new();
     app.backlog_view.pending_moves.retain(|key, mv| {
-        let Some(project) = snap.project(&key.0) else {
-            // The project vanished (untracked) mid-flight — nothing left to
-            // reconcile against.
-            return false;
-        };
-        let reloaded = project.project.loaded_at_unix > mv.since_loaded_at_unix;
+        if let Some(outcome) = outcomes.get(key) {
+            if outcome.generation == mv.generation {
+                if outcome.success {
+                    landed.push(key.clone());
+                }
+                return false; // this generation's own save resolved
+            }
+            // A stale outcome for a generation this key's entry has since
+            // moved past (a later drop superseded it) — not this entry's
+            // business; keep waiting for the *current* generation's own
+            // completion (or the timeout fallback below).
+        }
         let timed_out = now.duration_since(mv.queued_at) > PENDING_MOVE_TIMEOUT;
-        if !reloaded && !timed_out {
+        if !timed_out {
             return true; // still genuinely in flight
         }
-        let succeeded = project
-            .project
-            .tasks
-            .iter()
-            .any(|t| t.id == key.1 && t.status.eq_ignore_ascii_case(&mv.target_status));
+        // Best-effort only (see the doc above) — no outcome ever arrived,
+        // so fall back to whatever `snap` currently shows for this task.
+        let succeeded = snap.project(&key.0).is_some_and(|project| {
+            project
+                .project
+                .tasks
+                .iter()
+                .any(|t| t.id == key.1 && t.status.eq_ignore_ascii_case(&mv.target_status))
+        });
         if succeeded {
             landed.push(key.clone());
         }
@@ -166,6 +207,14 @@ fn resolve_pending_moves(app: &mut HiveApp, snap: &Snapshot) {
     app.backlog_view
         .landing_flash
         .retain(|_, started| now.duration_since(*started) <= LANDING_FLASH_DURATION);
+
+    // Bounded: only while something is actually pending or flashing, and
+    // egui coalesces repeated `request_repaint_after` calls to the soonest
+    // one rather than stacking them, so this doesn't runaway. See the
+    // kittest compatibility note on `render_board`'s call site.
+    if !app.backlog_view.pending_moves.is_empty() || !app.backlog_view.landing_flash.is_empty() {
+        ctx.request_repaint_after(LANDING_FLASH_REPAINT_INTERVAL);
+    }
 }
 
 /// TASK-26 (owner-requested UX): the same "N selected · Clear" indicator
@@ -260,34 +309,68 @@ fn render_column(
         });
 
         if let Some(dropped_key) = dropped {
-            apply_drop(app, all_visible, &dropped_key, column_status, pending);
+            apply_drop(app, all_visible, &dropped_key, column_status, ui.ctx());
         }
     });
 }
 
-/// Which column a card renders under: `pending_moves`' target status if an
-/// optimistic move for this task is in flight, else the task's real status.
-/// Compares directly (no owned-`String` allocation) rather than materializing
-/// an "effective status" per row — this runs once per row per column, every
-/// frame, for every visible card.
+/// The status a card currently *renders under*: `pending_moves`' target
+/// status if an optimistic move for this task is in flight, else the task's
+/// real status. `apply_drop`'s no-op guard uses this too (F2, post-review
+/// fix) — comparing a drop's target against the task's *real* status let a
+/// drag back out of an in-flight optimistic column silently do nothing,
+/// since the real status hadn't changed yet.
+///
+/// Iterates `pending_moves` (never a `HashMap` lookup keyed by a freshly
+/// cloned `(PathBuf, String)`) — deliberately: `pending_moves` is empty the
+/// overwhelming majority of frames (no drag in flight) and realistically
+/// holds at most a handful of entries even mid-drag, while this runs once
+/// per row *per column*, every frame, for every visible card. A `HashMap::
+/// get` keyed by `row.key()` would allocate that key on every one of those
+/// calls (F4, post-review fix — the first version's doc claimed no
+/// allocation while doing exactly that); scanning the tiny overlay instead
+/// is both allocation-free and cheaper in the common (empty) case.
 fn card_shows_in_column(app: &HiveApp, row: &TaskRow<'_>, column_status: &str) -> bool {
-    match app.backlog_view.pending_moves.get(&row.key()) {
-        Some(mv) => mv.target_status.eq_ignore_ascii_case(column_status),
-        None => row.task.status.eq_ignore_ascii_case(column_status),
+    if !app.backlog_view.pending_moves.is_empty() {
+        if let Some((_, mv)) = app
+            .backlog_view
+            .pending_moves
+            .iter()
+            .find(|(key, _)| key.0 == row.project.key && key.1 == row.task.id)
+        {
+            return mv.target_status.eq_ignore_ascii_case(column_status);
+        }
     }
+    row.task.status.eq_ignore_ascii_case(column_status)
 }
 
+/// `dropped_key`'s card was released over `column_status`'s drop zone.
+///
+/// The no-op guard (F2, post-review fix) compares `column_status` against
+/// the card's *effective* status, not its real one — this makes two drags
+/// behave correctly that the first version got wrong:
+/// - dropping back onto the same column a pending move is already headed
+///   for is recognized as "already there" and skipped, instead of queuing a
+///   redundant second subprocess for the same target;
+/// - dragging a card back out of its own in-flight destination column (to
+///   its real, origin status, or to any other column) is recognized as a
+///   genuine new move — queued exactly like any other drop, which is also
+///   what makes it "cancel" the appearance of the old one: the new
+///   `PendingBoardMove` overwrites the old entry outright (same key), so
+///   the card visually snaps to the new target this same frame, and
+///   `HiveApp::board_move_locks` (see its doc) ensures the on-disk write
+///   this produces is the one that ends up sticking.
 fn apply_drop(
     app: &mut HiveApp,
     tasks: &[TaskRow<'_>],
     dropped_key: &BacklogTaskKey,
     column_status: &str,
-    pending: &mut Pending,
+    ctx: &egui::Context,
 ) {
     let Some(row) = tasks.iter().find(|row| &row.key() == dropped_key) else {
         return;
     };
-    if row.task.status.eq_ignore_ascii_case(column_status) {
+    if card_shows_in_column(app, row, column_status) {
         return;
     }
     if !(row.task.editable() && row.project.project.cli_available()) {
@@ -295,28 +378,35 @@ fn apply_drop(
             .set(format!("{} is read-only; drag ignored", row.task.id));
         return;
     }
-    pending.save = Some((
+    let generation = app.backlog_view.next_move_generation;
+    app.backlog_view.next_move_generation += 1;
+    // task-42 AC #1: written synchronously, this same frame — see the
+    // module doc's "Optimistic move + drop feedback" section for how
+    // `render_column` reads it back before `spawn_board_move_save`'s CLI
+    // subprocess (spawned below) ever resolves. Overwrites any prior entry
+    // for this key outright — see this function's own doc for why that's
+    // exactly the supersede behavior a second drop on the same task needs.
+    app.backlog_view.pending_moves.insert(
+        dropped_key.clone(),
+        PendingBoardMove {
+            target_status: column_status.to_string(),
+            generation,
+            queued_at: Instant::now(),
+        },
+    );
+    app.backlog_status
+        .set(format!("moving {} to {column_status}", row.task.id));
+    app.spawn_board_move_save(
         row.project.key.clone(),
         row.task.id.clone(),
         BacklogTaskPatch {
             status: Some(column_status.to_string()),
             ..Default::default()
         },
-    ));
-    // task-42 AC #1: written synchronously, this same frame — see the
-    // module doc's "Optimistic move + drop feedback" section for how
-    // `render_column` reads it back before `spawn_backlog_save`'s CLI
-    // subprocess (queued via `pending.save` above) ever resolves.
-    app.backlog_view.pending_moves.insert(
         dropped_key.clone(),
-        PendingBoardMove {
-            target_status: column_status.to_string(),
-            since_loaded_at_unix: row.project.project.loaded_at_unix,
-            queued_at: Instant::now(),
-        },
+        generation,
+        ctx,
     );
-    app.backlog_status
-        .set(format!("moving {} to {column_status}", row.task.id));
 }
 
 /// One "flight strip": a repo-colored rail, id/title, priority, and AC

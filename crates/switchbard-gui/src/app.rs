@@ -27,8 +27,8 @@ use crate::runtime::worktree_rename::RenameWorktreeDialog;
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
     ActiveRun, ActiveRunSummary, AgentContextViewState, BacklogTaskKey, BacklogViewState,
-    ConfirmBulkRemoveWorktrees, ConfirmRemoveWorktree, OrderingState, PickerState, ViewTab,
-    WorktreeMeta, WorktreeSizeEntry,
+    BoardMoveOutcome, ConfirmBulkRemoveWorktrees, ConfirmRemoveWorktree, OrderingState,
+    PickerState, ViewTab, WorktreeMeta, WorktreeSizeEntry,
 };
 use crate::sync::{Kick, Status};
 use crate::ui;
@@ -87,6 +87,28 @@ pub struct HiveApp {
     pub services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>>,
     pub agent_contexts: Arc<Mutex<HashMap<PathBuf, AgentContextMap>>>,
     pub backlog_projects: Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
+    /// task-42, post-review revision: one board drag-drop's completion
+    /// report, keyed by the moved task and written by
+    /// `spawn_board_move_save`'s background thread. `board::
+    /// resolve_pending_moves` drains this every frame and resolves a
+    /// `PendingBoardMove` only against an outcome whose `generation`
+    /// matches — see `BoardMoveOutcome`'s doc (runtime/mod.rs) for why this
+    /// replaced resolving off any `backlog_projects` reload.
+    pub board_move_outcomes: Arc<Mutex<HashMap<BacklogTaskKey, BoardMoveOutcome>>>,
+    /// task-42, post-review revision (F3): one `Mutex` per task currently
+    /// (or ever) being moved, so two overlapping drops on the *same* task
+    /// can't run their `backlog task edit` subprocesses concurrently.
+    /// `edit_backlog_task` shells out and blocks until the process exits —
+    /// there is no cheap way to cancel an in-flight one — so two racing
+    /// saves for one task could otherwise complete in either order,
+    /// leaving on-disk state that doesn't match the user's *last* gesture.
+    /// `spawn_board_move_save`'s thread acquires this task's lock before
+    /// calling `edit_backlog_task` and holds it for the whole subprocess
+    /// call, which forces same-task saves to execute one at a time, in the
+    /// order their threads were spawned (which is drop order, since drops
+    /// only ever happen synchronously on the UI thread) — the last drop's
+    /// save is always the last one to actually touch disk.
+    pub board_move_locks: Arc<Mutex<HashMap<BacklogTaskKey, Arc<Mutex<()>>>>>,
     /// Disk-derived state for every task carrying a dispatch label, refreshed
     /// by `workers::spawn_backlog`. A cache of what `dispatch_inspect`
     /// recomputes from the repo + task id, never a second source of truth —
@@ -307,6 +329,8 @@ impl HiveApp {
             services: Arc::new(Mutex::new(HashMap::new())),
             agent_contexts: Arc::new(Mutex::new(HashMap::new())),
             backlog_projects: Arc::new(Mutex::new(HashMap::new())),
+            board_move_outcomes: Arc::new(Mutex::new(HashMap::new())),
+            board_move_locks: Arc::new(Mutex::new(HashMap::new())),
             dispatch_runs: Arc::new(Mutex::new(HashMap::new())),
             ordering: Arc::new(Mutex::new(OrderingState::default())),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
@@ -982,17 +1006,12 @@ impl HiveApp {
                     kick.notify();
                 }
                 Err(e) => {
-                    // task-42: the Board lens's optimistic-move overlay
-                    // (`PendingBoardMove`) resolves off `BacklogProject::
-                    // loaded_at_unix` advancing past the snapshot taken at
-                    // drop time. Without this reload, a *failed* drag-drop
-                    // save would leave that timestamp frozen and the
-                    // overlay — and the card it's optimistically
-                    // rendering — stranded in the "saving" state short of
-                    // its own timeout fallback. The reload can't change
-                    // what failed (the edit already didn't happen), only
-                    // confirm to the overlay that it's safe to check
-                    // reality and roll the card back.
+                    // Reload even on failure: the edit itself didn't
+                    // happen, but the view's cached snapshot could still be
+                    // stale for an unrelated reason (e.g. an external
+                    // edit), and `with_stale_warning` already has to say so
+                    // out loud if this reload itself fails — no reason to
+                    // only make that check on the success path.
                     let reload = refresh_backlog_project_cache(&projects, &project_root);
                     status.set(with_stale_warning(
                         reload,
@@ -1000,6 +1019,86 @@ impl HiveApp {
                     ));
                 }
             }
+            ctx.request_repaint();
+        });
+    }
+
+    /// The Board lens's dedicated drag-drop save (task-42, post-review
+    /// revision) — deliberately **not** routed through `spawn_backlog_save`
+    /// above, because a drag-drop needs two things that path doesn't
+    /// provide: a completion report keyed to *this specific drop*
+    /// (`generation`, into `board_move_outcomes`, consumed by `board::
+    /// resolve_pending_moves` — see `BoardMoveOutcome`'s doc), and
+    /// per-task serialization against a concurrent drop on the same task
+    /// (`board_move_locks` — see that field's doc for why an in-flight
+    /// `edit_backlog_task` subprocess can't just be cancelled).
+    ///
+    /// `key` and `generation` together identify exactly which
+    /// `PendingBoardMove` this save is for; `board::apply_drop` is the only
+    /// caller and always passes the same pair it just stamped the overlay
+    /// entry with.
+    pub fn spawn_board_move_save(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        patch: BacklogTaskPatch,
+        key: BacklogTaskKey,
+        generation: u64,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let outcomes = self.board_move_outcomes.clone();
+        let task_lock = {
+            let mut locks = self.board_move_locks.lock().unwrap();
+            locks
+                .entry(key.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            // Holds this task's lock for the whole subprocess call, so a
+            // second drop on the same task (already queued behind this one
+            // via its own `spawn_board_move_save` call) can't run its own
+            // `edit_backlog_task` concurrently — see `board_move_locks`'s
+            // doc on `HiveApp` for why that matters (F3: without this, two
+            // racing saves could complete in either order and leave
+            // on-disk state that doesn't match the user's last gesture).
+            let _task_guard = task_lock.lock().unwrap();
+            let success = match switchbard_core::edit_backlog_task(&project_root, &task_id, &patch)
+            {
+                Ok(_) => {
+                    let reload = refresh_backlog_project_cache(&projects, &project_root);
+                    status.set(with_stale_warning(reload, format!("saved {task_id}")));
+                    kick.notify();
+                    true
+                }
+                Err(e) => {
+                    // Reload on failure too — the edit didn't happen, but
+                    // `board::resolve_pending_moves`'s fallback status
+                    // check (its wall-clock-timeout path) reads whatever
+                    // `backlog_projects` currently holds, and a stale
+                    // snapshot there is a worse failure mode than a status
+                    // line that also says the reload itself failed
+                    // (`with_stale_warning`).
+                    let reload = refresh_backlog_project_cache(&projects, &project_root);
+                    status.set(with_stale_warning(
+                        reload,
+                        format!("save {task_id} failed: {e}"),
+                    ));
+                    false
+                }
+            };
+            drop(_task_guard);
+            outcomes.lock().unwrap().insert(
+                key,
+                BoardMoveOutcome {
+                    generation,
+                    success,
+                },
+            );
             ctx.request_repaint();
         });
     }

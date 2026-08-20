@@ -1326,40 +1326,7 @@ fn board_drag_and_drop_between_columns_queues_a_status_change() {
         egui::Pos2::new(((b.x0 + b.x1) / 2.0) as f32, b.y1 as f32 + 80.0)
     };
 
-    harness
-        .input_mut()
-        .events
-        .push(egui::Event::PointerMoved(source_center));
-    harness.input_mut().events.push(egui::Event::PointerButton {
-        pos: source_center,
-        button: egui::PointerButton::Primary,
-        pressed: true,
-        modifiers: egui::Modifiers::default(),
-    });
-    harness.run();
-
-    // Move in a couple of steps, well past any click-vs-drag threshold, so
-    // `is_decidedly_dragging` commits to a drag instead of resolving as a
-    // click on release.
-    let midpoint = egui::Pos2::new(source_center.x, (source_center.y + target_center.y) / 2.0);
-    harness
-        .input_mut()
-        .events
-        .push(egui::Event::PointerMoved(midpoint));
-    harness.run();
-    harness
-        .input_mut()
-        .events
-        .push(egui::Event::PointerMoved(target_center));
-    harness.run();
-
-    harness.input_mut().events.push(egui::Event::PointerButton {
-        pos: target_center,
-        button: egui::PointerButton::Primary,
-        pressed: false,
-        modifiers: egui::Modifiers::default(),
-    });
-    harness.run();
+    drag_and_drop(&mut harness, source_center, target_center);
 
     assert_action_status(
         &harness,
@@ -1372,20 +1339,30 @@ fn board_drag_and_drop_between_columns_queues_a_status_change() {
 // ─── task-42: Board drag optimistic move + drop feedback ────────────────
 //
 // A drop's status change writes through a real `backlog` CLI subprocess
-// (`spawn_backlog_save`), a 0.5-1.5s round trip — see board.rs's own
-// "Optimistic move + drop feedback" module-doc section for the mechanism
-// (`pending_moves` overlay, resolved by `loaded_at_unix` advancing past the
-// drop-time snapshot). The two tests below prove opposite ends of it:
+// (`HiveApp::spawn_board_move_save`), a 0.5-1.5s round trip — see board.rs's
+// own "Optimistic move + drop feedback" module-doc section for the current
+// mechanism (a `pending_moves` overlay resolved by each drop's own
+// `generation` token against its own save's completion report, never by an
+// unrelated cache reload — see `PendingBoardMove`'s doc, runtime/mod.rs, for
+// why the first version's `loaded_at_unix`-based signal was wrong).
 //
-// - the render-time overlay itself (a card shows in its destination column
-//   while `pending_moves` still holds its key, before any save resolves) —
-//   proven by directly seeding the overlay rather than racing a real
-//   background thread, the same "assert the synchronous state" approach
-//   this file's module doc already establishes for CLI-writing controls;
-// - the full real round trip *failing* and visibly rolling the card back,
-//   which needs the real `backlog` CLI and a real fixture repo to produce a
-//   genuine, deterministic failure (the fixture task's own file is deleted
-//   out from under the in-flight edit) rather than a faked one.
+// Tests below split into two groups:
+// - the pure overlay/resolution *mechanism* (this file's first block) is
+//   proven by directly seeding `pending_moves`/`board_move_outcomes` rather
+//   than racing a real background thread, the same "assert the synchronous
+//   state" approach this file's module doc already establishes for
+//   CLI-writing controls generally, and the only way to deterministically
+//   test something as inherently timing-dependent as "which of two racing
+//   saves resolves the overlay";
+// - the real round trip *failing* end to end and visibly rolling the card
+//   back needs the real `backlog` CLI and a real fixture repo to produce a
+//   genuine, deterministic failure (dropped onto "Icebox", a column
+//   `backlog init --defaults` never configures) rather than a faked one —
+//   `board_drag_failure_rolls_back_the_card_and_reloads_the_cache`, further
+//   down, is the one test in this section that waits on a real thread, and
+//   deliberately avoids asserting anything about the overlay's state before
+//   its own bounded poll settles it (post-review finding F7: a fast CI box
+//   could otherwise win that race and turn a real check into a flake).
 
 /// A column header label's left edge — a stand-in for "which column is this
 /// x-coordinate under," since columns are fixed-width and laid out strictly
@@ -1398,24 +1375,34 @@ fn board_drag_and_drop_between_columns_queues_a_status_change() {
 /// same-text pill — so this takes the **leftmost** match rather than
 /// assuming there's only one: the rail sits to the right of the board by
 /// construction, so the true column header is always the smaller-x node.
+/// Uses `_contains` rather than the exact-match query: a card carrying the
+/// task-42 "saving…" in-flight marker sits in the same accessible group as
+/// its own title/labels, which empirically (not from any documented
+/// kittest behavior) makes `kittest`'s exact-match `label()` filter — which
+/// excludes nodes accesskit considers a `labelled_by` target of another
+/// node — drop the title node from its results in that state, while
+/// `label_contains()` (same underlying `node_label`, per `kittest::filter::
+/// By::matches`) still finds it. Every label this helper is ever called
+/// with is specific enough on this screen that substring matching can't
+/// pick up a false positive.
 fn column_left_x(harness: &Harness<'_, HiveApp>, column_label: &str) -> f32 {
     harness
-        .query_all_by_label(column_label)
+        .query_all_by_label_contains(column_label)
         .map(|n| n.raw_bounds().expect("column header should have bounds").x0 as f32)
         .fold(f32::INFINITY, f32::min)
 }
 
 /// The leftmost node matching `label`'s screen bounds. Same rationale as
-/// `column_left_x` above: the persistent detail rail also shows the
-/// *selected* task's own title as its own heading, and a lone- or
-/// first-sorted-task fixture's task is often auto-selected
-/// (`reconcile_selected_task`'s default), so a board card's title is never
-/// assumed to be the only match for its own text — the rail sits to the
-/// right of the board by construction, so the board's own card is always
-/// the smaller-x node.
+/// `column_left_x` above (including its note on why this uses `_contains`,
+/// not exact match): the persistent detail rail also shows the *selected*
+/// task's own title as its own heading, and a lone- or first-sorted-task
+/// fixture's task is often auto-selected (`reconcile_selected_task`'s
+/// default), so a board card's title is never assumed to be the only match
+/// for its own text — the rail sits to the right of the board by
+/// construction, so the board's own card is always the smaller-x node.
 fn leftmost_bounds(harness: &Harness<'_, HiveApp>, label: &str) -> egui::Rect {
     let b = harness
-        .query_all_by_label(label)
+        .query_all_by_label_contains(label)
         .map(|n| n.raw_bounds().expect("node should have bounds"))
         .min_by(|a, b| a.x0.partial_cmp(&b.x0).unwrap())
         .unwrap_or_else(|| panic!("no node found matching label {label:?}"));
@@ -1428,6 +1415,50 @@ fn leftmost_bounds(harness: &Harness<'_, HiveApp>, label: &str) -> egui::Rect {
 /// A card's title label's own left edge — see `leftmost_bounds`.
 fn label_left_x(harness: &Harness<'_, HiveApp>, label: &str) -> f32 {
     leftmost_bounds(harness, label).min.x
+}
+
+/// Press at `source`, move past the click/drag threshold, release at
+/// `target` — the same simulated pointer drag every drag/drop test in this
+/// section drives a real Board card with. Uses `Harness::step` throughout,
+/// not `run`: once any drop in this section lands, `pending_moves` is
+/// non-empty and `resolve_pending_moves`'s bounded repaint request keeps
+/// `run()`'s settle loop from ever reaching quiescence under kittest's
+/// default `step_dt` (see board.rs's own note on this).
+fn drag_and_drop(harness: &mut Harness<'_, HiveApp>, source: egui::Pos2, target: egui::Pos2) {
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(source));
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: source,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::default(),
+    });
+    harness.step();
+
+    // Move in a couple of steps, well past any click-vs-drag threshold, so
+    // `is_decidedly_dragging` commits to a drag instead of resolving as a
+    // click on release.
+    let midpoint = egui::Pos2::new(source.x, (source.y + target.y) / 2.0);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(midpoint));
+    harness.step();
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(target));
+    harness.step();
+
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: target,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::default(),
+    });
+    harness.step();
 }
 
 /// task-42 AC #1 ("dropped card renders in the destination column on the
@@ -1462,15 +1493,21 @@ fn board_pending_move_overlay_renders_card_in_destination_column_before_save_res
         key,
         switchbard_gui::runtime::PendingBoardMove {
             target_status: "In Progress".to_string(),
-            // Matches the in-memory fixture's `loaded_at_unix: 0` exactly —
-            // nothing in this test ever reloads the project cache, so the
-            // overlay must stay pending for the entire test with no thread
-            // or CLI involved at all.
-            since_loaded_at_unix: 0,
+            // No outcome will ever land in `board_move_outcomes` for this
+            // generation (no real save was ever spawned) and nothing else
+            // in this test resolves it either, so the overlay stays pending
+            // for the entire test with no thread or CLI involved at all —
+            // the generation's exact value doesn't matter here.
+            generation: 0,
             queued_at: std::time::Instant::now(),
         },
     );
-    harness.run();
+    // `step()`, not `run()` — see the equivalent note in
+    // `board_drag_and_drop_between_columns_queues_a_status_change`: with a
+    // `pending_moves` entry now seeded, `resolve_pending_moves` keeps
+    // requesting a repaint every frame, which `run()`'s settle loop can't
+    // resolve under kittest's default `step_dt`.
+    harness.step();
 
     let todo_x_after = column_left_x(&harness, "To Do");
     let in_progress_x_after = column_left_x(&harness, "In Progress");
@@ -1578,66 +1615,29 @@ fn board_drag_failure_rolls_back_the_card_and_reloads_the_cache() {
         egui::Pos2::new(b.center().x, b.max.y + 80.0)
     };
 
-    harness
-        .input_mut()
-        .events
-        .push(egui::Event::PointerMoved(source_center));
-    harness.input_mut().events.push(egui::Event::PointerButton {
-        pos: source_center,
-        button: egui::PointerButton::Primary,
-        pressed: true,
-        modifiers: egui::Modifiers::default(),
-    });
-    harness.run();
-
-    let midpoint = egui::Pos2::new(source_center.x, (source_center.y + target_center.y) / 2.0);
-    harness
-        .input_mut()
-        .events
-        .push(egui::Event::PointerMoved(midpoint));
-    harness.run();
-    harness
-        .input_mut()
-        .events
-        .push(egui::Event::PointerMoved(target_center));
-    harness.run();
-
-    harness.input_mut().events.push(egui::Event::PointerButton {
-        pos: target_center,
-        button: egui::PointerButton::Primary,
-        pressed: false,
-        modifiers: egui::Modifiers::default(),
-    });
-    harness.run();
+    drag_and_drop(&mut harness, source_center, target_center);
 
     let key = (root.to_path_buf(), "TASK-1".to_string());
-    assert!(
-        harness
-            .state()
-            .backlog_view
-            .pending_moves
-            .contains_key(&key),
-        "AC #1: the drop should synchronously queue an optimistic overlay \
-         entry, still in flight immediately after release (the real \
-         subprocess this fixture spawns takes real process-startup time, \
-         so it should not have resolved on this very next frame)"
-    );
-    let todo_x = column_left_x(&harness, "To Do");
-    let icebox_x = column_left_x(&harness, "Icebox");
-    let card_x = label_left_x(&harness, "Draggable card");
-    assert!(
-        (card_x - icebox_x).abs() < (card_x - todo_x).abs(),
-        "AC #1: immediately after the drop, before the real (still \
-         in-flight) CLI save resolves, the card should already render under \
-         its destination column"
-    );
+    // AC #1's "renders in the destination column before the save resolves,
+    // same frame as the drop" is proven deterministically, with no real
+    // thread involved at all, by
+    // `board_pending_move_overlay_renders_card_in_destination_column_before_
+    // save_resolves` above. This test's own value is the real round trip's
+    // *failure* path (AC #2/#4) — asserting "still pending right here" or
+    // "still visually in Icebox right here" would race the real `backlog`
+    // subprocess this fixture spawns (post-review finding F7: a fast CI box
+    // could legitimately win that race), so this deliberately doesn't check
+    // either before the bounded poll below settles it one way or the other.
 
     // Bounded poll for the real `backlog` CLI subprocess to finish and
     // fail — same pattern as
-    // save_button_completes_a_real_cli_round_trip_against_a_real_fixture_repo.
+    // save_button_completes_a_real_cli_round_trip_against_a_real_fixture_repo,
+    // using `step()` rather than `run()` for the same reason as above: the
+    // move stays in `pending_moves` for the whole wait, so `run()` would
+    // spin on the same bounded-repaint request every iteration.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        harness.run();
+        harness.step();
         if !harness
             .state()
             .backlog_view
@@ -1691,6 +1691,303 @@ fn board_drag_failure_rolls_back_the_card_and_reloads_the_cache() {
     assert_eq!(
         cached_status, "To Do",
         "the reloaded cache should confirm the edit never actually happened"
+    );
+}
+
+// ─── task-42 post-review revision: generation-based resolution ──────────
+//
+// Independent audit findings F1-F4 all traced back to the first version
+// resolving a `PendingBoardMove` off *any* `BacklogProject::loaded_at_unix`
+// advance instead of its own drop's own save completing. The four tests
+// below exercise the replacement (`PendingBoardMove::generation` +
+// `HiveApp::board_move_outcomes`) directly against seeded state — the same
+// "assert the synchronous, deterministic mechanism, don't race a real
+// thread" approach
+// `board_pending_move_overlay_renders_card_in_destination_column_before_
+// save_resolves` above already established, and for the same reason: a
+// real spawned save (even one that fails against a fake CLI path) can't be
+// made to complete-or-not-complete before a given assertion on demand, so
+// asserting around one would just reintroduce the exact "probabilistic
+// check" F7 flagged.
+
+/// F2 (drop-to-same-optimistic-target should no-op): re-dropping a card
+/// onto the column its own in-flight move is already headed for must not
+/// queue a second, redundant subprocess. `next_move_generation` only ever
+/// advances synchronously on the UI thread when `apply_drop` actually
+/// queues a save (see that field's doc) — never touched by any background
+/// thread — so "did it advance" is a fully race-free proxy for "was a save
+/// queued," independent of whether any real thread ever runs.
+#[test]
+fn board_redrop_onto_the_same_pending_target_column_is_a_no_op() {
+    let mut harness = list_harness_with_tasks(vec![
+        task("TASK-1", "Other card", "To Do"),
+        task("TASK-2", "Draggable card", "To Do"),
+    ]);
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
+    harness.run();
+
+    let key = (PathBuf::from(REPO_PATH), "TASK-2".to_string());
+    harness.state_mut().backlog_view.pending_moves.insert(
+        key.clone(),
+        switchbard_gui::runtime::PendingBoardMove {
+            target_status: "In Progress".to_string(),
+            generation: 5,
+            queued_at: std::time::Instant::now(),
+        },
+    );
+    harness.state_mut().backlog_view.next_move_generation = 6;
+    harness.step();
+
+    // Locate the card by its task-id label ("TASK-2"), not its title: with
+    // `CardMotion::Saving` active (a `pending_moves` entry is seeded above),
+    // the title label sits beside the "saving…" marker in a way that made
+    // `kittest`'s label query empirically unreliable for it specifically —
+    // the id label doesn't have that problem and identifies the same card.
+    let source_center = leftmost_bounds(&harness, "TASK-2").center();
+    let target_center = {
+        let b = leftmost_bounds(&harness, "In Progress");
+        egui::Pos2::new(b.center().x, b.max.y + 80.0)
+    };
+    drag_and_drop(&mut harness, source_center, target_center);
+
+    assert_eq!(
+        harness.state().backlog_view.next_move_generation,
+        6,
+        "AC #4/F2: dropping onto the same column a pending move is already \
+         headed for must not consume a new generation — i.e. must not \
+         queue a second, redundant save"
+    );
+    let mv = harness
+        .state()
+        .backlog_view
+        .pending_moves
+        .get(&key)
+        .cloned()
+        .expect("the original pending move should be untouched, not cleared");
+    assert_eq!(
+        mv.generation, 5,
+        "the original entry itself must be untouched"
+    );
+    assert_eq!(mv.target_status, "In Progress");
+}
+
+/// F2 (drop-to-origin while pending should cancel/reverse the pending
+/// entry): dragging a card back out of its own in-flight destination column
+/// — including back to its real, origin status — must be recognized as a
+/// genuine new move, not silently swallowed by a guard that only compared
+/// against the task's stale real status. `next_move_generation` advancing
+/// is the race-free proxy for "a new save was queued" (see the previous
+/// test's doc); the position check is also race-free here specifically
+/// because this drop's target *is* the task's real status, so the card
+/// renders there whether or not this fresh save has resolved yet by the
+/// time the assertion runs.
+#[test]
+fn board_drop_back_to_origin_while_pending_queues_a_reversing_move() {
+    let mut harness = list_harness_with_tasks(vec![
+        task("TASK-1", "Other card", "To Do"),
+        task("TASK-2", "Draggable card", "To Do"),
+    ]);
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
+    harness.run();
+
+    let key = (PathBuf::from(REPO_PATH), "TASK-2".to_string());
+    harness.state_mut().backlog_view.pending_moves.insert(
+        key.clone(),
+        switchbard_gui::runtime::PendingBoardMove {
+            target_status: "In Progress".to_string(),
+            generation: 9,
+            queued_at: std::time::Instant::now(),
+        },
+    );
+    harness.state_mut().backlog_view.next_move_generation = 10;
+    harness.step();
+
+    // The card renders under "In Progress" per the seeded overlay — drag it
+    // from there back to "To Do", its real, origin status. Locate it by its
+    // task-id label ("TASK-2"), not its title — see the equivalent note in
+    // `board_redrop_onto_the_same_pending_target_column_is_a_no_op`.
+    let source_center = leftmost_bounds(&harness, "TASK-2").center();
+    let target_center = {
+        let b = leftmost_bounds(&harness, "To Do");
+        egui::Pos2::new(b.center().x, b.max.y + 80.0)
+    };
+    drag_and_drop(&mut harness, source_center, target_center);
+
+    assert_eq!(
+        harness.state().backlog_view.next_move_generation,
+        11,
+        "F2: dragging back to the origin column while a move is pending \
+         should queue a genuine new save (a new generation consumed), not \
+         no-op against the stale real status"
+    );
+    let mv = harness
+        .state()
+        .backlog_view
+        .pending_moves
+        .get(&key)
+        .cloned()
+        .expect("the reversing move should itself be a fresh pending entry");
+    assert_eq!(
+        mv.target_status, "To Do",
+        "the fresh entry should target the origin status the card was \
+         dragged back to"
+    );
+    assert_eq!(
+        mv.generation, 10,
+        "should be exactly the newly consumed generation"
+    );
+    // Not re-checked here: that a `pending_moves` entry targeting a column
+    // renders the card there is already proven directly by
+    // `board_pending_move_overlay_renders_card_in_destination_column_before_
+    // save_resolves` and `board_redrop_onto_the_same_pending_target_column_
+    // is_a_no_op` above — this test's own job is proving the *overlay
+    // mutation* (a fresh, correctly-targeted entry, not a no-op), which the
+    // state assertions above already do.
+}
+
+/// F1 (the actual root-cause fix): an *unrelated* project reload — the
+/// periodic backlog worker's own poll, standing in for `Kick::notify`
+/// waking it early right after some other save — must have zero effect on
+/// a still-in-flight pending move. Directly overwrites `backlog_projects`
+/// (what a worker's reload would do) with a snapshot where the task's real
+/// status *already* matches the move's target — the strongest version of
+/// this check: even a reload that happens to agree with the pending move's
+/// destination must not be what resolves it, only that move's own
+/// `board_move_outcomes` report may.
+#[test]
+fn board_unrelated_project_reload_does_not_resolve_a_pending_move() {
+    let mut harness = list_harness_with_tasks(vec![
+        task("TASK-1", "Other card", "To Do"),
+        task("TASK-2", "Draggable card", "To Do"),
+    ]);
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
+    harness.run();
+
+    let key = (PathBuf::from(REPO_PATH), "TASK-2".to_string());
+    harness.state_mut().backlog_view.pending_moves.insert(
+        key.clone(),
+        switchbard_gui::runtime::PendingBoardMove {
+            target_status: "In Progress".to_string(),
+            generation: 42,
+            queued_at: std::time::Instant::now(),
+        },
+    );
+    harness.step();
+
+    // Simulate an unrelated worker reload: the cache is replaced wholesale
+    // (as `refresh_backlog_project_cache`/a periodic scan would do) with a
+    // fresh snapshot whose task already carries the move's own target
+    // status — no `board_move_outcomes` entry is written, because this
+    // reload has nothing to do with this drop.
+    harness.state_mut().backlog_projects.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogProject {
+            root: PathBuf::from(REPO_PATH),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![
+                task("TASK-1", "Other card", "To Do"),
+                task("TASK-2", "Draggable card", "In Progress"),
+            ],
+            warnings: vec![],
+            loaded_at_unix: 999_999,
+            configured_statuses: vec![],
+        },
+    );
+    harness.step();
+
+    let mv = harness
+        .state()
+        .backlog_view
+        .pending_moves
+        .get(&key)
+        .cloned()
+        .expect(
+            "F1: an unrelated reload must not resolve a still-in-flight \
+             pending move, even one whose target the reload happens to agree with",
+        );
+    assert_eq!(
+        mv.generation, 42,
+        "the entry itself should be completely untouched"
+    );
+    assert!(
+        !harness
+            .state()
+            .backlog_view
+            .landing_flash
+            .contains_key(&key),
+        "no landing flash should fire off an unrelated reload either"
+    );
+}
+
+/// F3/F1 (supersede ordering): a stale completion report for a generation
+/// `pending_moves` has since moved past (a later drop superseded it) must
+/// be discarded, never used to resolve — let alone land — the *newer*
+/// entry. Simulates the old save "winning the race" and reporting after the
+/// new drop already landed, exactly the ordering a real two-drops-in-a-row
+/// gesture could produce.
+#[test]
+fn board_stale_outcome_for_a_superseded_generation_does_not_resolve_the_newer_entry() {
+    let mut harness = list_harness_with_tasks(vec![
+        task("TASK-1", "Other card", "To Do"),
+        task("TASK-2", "Draggable card", "To Do"),
+    ]);
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
+    harness.run();
+
+    let key = (PathBuf::from(REPO_PATH), "TASK-2".to_string());
+    // The newer drop already landed in the overlay (generation 2, target
+    // "Done") — as if the user dropped on "In Progress" and then, before
+    // that save resolved, dragged again onto "Done".
+    harness.state_mut().backlog_view.pending_moves.insert(
+        key.clone(),
+        switchbard_gui::runtime::PendingBoardMove {
+            target_status: "Done".to_string(),
+            generation: 2,
+            queued_at: std::time::Instant::now(),
+        },
+    );
+    // The *old* (generation 1, "In Progress") save now reports success —
+    // late, after being superseded.
+    harness
+        .state_mut()
+        .board_move_outcomes
+        .lock()
+        .unwrap()
+        .insert(
+            key.clone(),
+            switchbard_gui::runtime::BoardMoveOutcome {
+                generation: 1,
+                success: true,
+            },
+        );
+    harness.step();
+
+    let mv = harness
+        .state()
+        .backlog_view
+        .pending_moves
+        .get(&key)
+        .cloned()
+        .expect(
+            "F3: a stale outcome for a superseded generation must not resolve \
+             the current, newer pending entry",
+        );
+    assert_eq!(
+        mv.generation, 2,
+        "the newer entry should be completely untouched"
+    );
+    assert_eq!(mv.target_status, "Done");
+    assert!(
+        !harness
+            .state()
+            .backlog_view
+            .landing_flash
+            .contains_key(&key),
+        "the stale generation's success must not land a flash for the newer move"
     );
 }
 

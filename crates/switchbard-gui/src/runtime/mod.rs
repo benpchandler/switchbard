@@ -67,32 +67,56 @@ pub type BacklogTaskKey = (PathBuf, String);
 /// folds this on top of it for exactly one purpose — bucketing the card into
 /// its destination column before the round trip through the `backlog` CLI
 /// resolves.
+///
+/// **Post-review revision (independent audit, F1/F3):** the first version of
+/// this type resolved off `BacklogProject::loaded_at_unix` advancing past a
+/// drop-time snapshot — "any reload, from any source, resolves it." That was
+/// wrong: an *unrelated* reload (the periodic backlog worker's own poll,
+/// woken early by `Kick::notify` right after a completely different save)
+/// would resolve a still-in-flight move early, snapping the card back to
+/// its stale real status mid-flight — exactly the confusing flicker this
+/// feature exists to kill, and *more* likely right after a prior drop since
+/// that's precisely when the worker gets woken. `generation` replaces that
+/// signal: an entry now resolves only off **its own drop's own save**
+/// completing (`HiveApp::board_move_outcomes`, written by
+/// `spawn_board_move_save`), never off an unrelated cache reload.
 #[derive(Debug, Clone)]
 pub struct PendingBoardMove {
     /// The column the card was dropped on — what it renders under until
     /// this entry resolves one way or the other.
     pub target_status: String,
-    /// `BacklogProject::loaded_at_unix` for this task's project, captured at
-    /// drop time. `HiveApp::spawn_backlog_save` reloads the project cache on
-    /// both its success *and* (task-42) error paths, and the periodic
-    /// backlog worker reloads it independently on its own cadence too — any
-    /// of those bumps this project's `loaded_at_unix` past this snapshot,
-    /// which is this overlay's signal that "the world has moved since this
-    /// drop optimistically rendered, go check whether it won or lost."
-    /// Reusing `loaded_at_unix` (rather than a bespoke generation counter)
-    /// means *any* reload resolves the overlay, from any source — the
-    /// concrete mechanism behind AC #4's "concurrent worker reloads cannot
-    /// strand a card."
-    pub since_loaded_at_unix: u64,
-    /// Wall-clock fallback: if no reload ever lands (e.g. the reload itself
-    /// errors, so `loaded_at_unix` never bumps — see `refresh_backlog_
-    /// project_cache`'s doc in app.rs), this bounds how long a card can sit
-    /// in the optimistic "saving" state before the overlay gives up and
-    /// clears itself, falling back to whatever's actually on disk next
-    /// render. A stranded overlay entry — a card permanently claiming a
-    /// status the real data never confirmed — is a worse failure mode than
-    /// an occasional card that quietly reverts after a bounded wait.
+    /// Monotonically increasing per-drop token (`BacklogViewState::
+    /// next_move_generation`), stamped at drop time and carried by
+    /// `spawn_board_move_save` into its completion report
+    /// (`BoardMoveOutcome`). `board::resolve_pending_moves` only ever
+    /// resolves an entry against an outcome whose generation matches this
+    /// one exactly — a later drop on the same task overwrites this whole
+    /// `PendingBoardMove` (a fresh generation), so a *stale* outcome for a
+    /// now-superseded generation is recognized and discarded rather than
+    /// incorrectly resolving the newer entry.
+    pub generation: u64,
+    /// Wall-clock fallback: if this generation's own outcome is never
+    /// reported (e.g. the save thread panics, or some future code path
+    /// forgets to report), this bounds how long a card can sit in the
+    /// optimistic "saving" state before the overlay gives up and clears
+    /// itself, falling back to whatever's actually on disk next render. A
+    /// stranded overlay entry — a card permanently claiming a status the
+    /// real data never confirmed — is a worse failure mode than an
+    /// occasional card that quietly reverts after a bounded wait. This is
+    /// now purely a last-resort backstop, not (as in the first version) the
+    /// thing standing in for a real completion signal.
     pub queued_at: Instant,
+}
+
+/// The result `HiveApp::spawn_board_move_save`'s background thread reports
+/// for one drop, keyed by the moved task in `HiveApp::board_move_outcomes`.
+/// `board::resolve_pending_moves` drains this map every frame and only acts
+/// on an outcome whose `generation` matches the *current* `pending_moves`
+/// entry for that key — see `PendingBoardMove::generation`'s doc.
+#[derive(Debug, Clone, Copy)]
+pub struct BoardMoveOutcome {
+    pub generation: u64,
+    pub success: bool,
 }
 
 /// UI-local filters and edit buffers for the Backlog project-management view.
@@ -173,6 +197,13 @@ pub struct BacklogViewState {
     /// (and remove themselves) once the flash's fixed duration elapses;
     /// see `board::resolve_pending_moves`.
     pub landing_flash: HashMap<BacklogTaskKey, Instant>,
+    /// task-42: the next `PendingBoardMove::generation` token —
+    /// `board::apply_drop` reads-then-increments this on every drop.
+    /// Session-only, single-threaded (only ever touched from the UI thread
+    /// during `render_board`); the background save thread only ever
+    /// receives a copy of the value stamped at drop time, never this
+    /// counter itself.
+    pub next_move_generation: u64,
 }
 
 impl Default for BacklogViewState {
@@ -204,6 +235,7 @@ impl Default for BacklogViewState {
             cleanup_confirm: false,
             pending_moves: HashMap::new(),
             landing_flash: HashMap::new(),
+            next_move_generation: 0,
         }
     }
 }
