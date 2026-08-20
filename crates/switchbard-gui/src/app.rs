@@ -53,6 +53,14 @@ use switchbard_core::{
     BROWSER_APP_NAMES,
 };
 
+/// One `backlog` CLI writer's per-task serialization registry (task-42,
+/// post-review revision) — see `HiveApp::task_write_locks`'s own doc for
+/// what it's for. A plain type alias rather than a real newtype: nothing
+/// here needs its own methods, this exists purely so the nested-Arc/Mutex
+/// type doesn't have to be spelled out (and re-triggers clippy's
+/// `type_complexity` lint) at every function signature that touches it.
+type TaskWriteLocks = Arc<Mutex<HashMap<BacklogTaskKey, Arc<Mutex<()>>>>>;
+
 /// Legible band for the persisted UI zoom factor. A hand-edited config or an
 /// enthusiastic ⌘+ can't push the window outside this on load; the top-bar
 /// stepper steps within it. (egui's own keyboard zoom may briefly exceed it at
@@ -95,20 +103,37 @@ pub struct HiveApp {
     /// matches — see `BoardMoveOutcome`'s doc (runtime/mod.rs) for why this
     /// replaced resolving off any `backlog_projects` reload.
     pub board_move_outcomes: Arc<Mutex<HashMap<BacklogTaskKey, BoardMoveOutcome>>>,
-    /// task-42, post-review revision (F3): one `Mutex` per task currently
-    /// (or ever) being moved, so two overlapping drops on the *same* task
-    /// can't run their `backlog task edit` subprocesses concurrently.
-    /// `edit_backlog_task` shells out and blocks until the process exits —
-    /// there is no cheap way to cancel an in-flight one — so two racing
-    /// saves for one task could otherwise complete in either order,
-    /// leaving on-disk state that doesn't match the user's *last* gesture.
-    /// `spawn_board_move_save`'s thread acquires this task's lock before
-    /// calling `edit_backlog_task` and holds it for the whole subprocess
-    /// call, which forces same-task saves to execute one at a time, in the
-    /// order their threads were spawned (which is drop order, since drops
-    /// only ever happen synchronously on the UI thread) — the last drop's
-    /// save is always the last one to actually touch disk.
-    pub board_move_locks: Arc<Mutex<HashMap<BacklogTaskKey, Arc<Mutex<()>>>>>,
+    /// task-42, post-review revision (N9): reports, per key, the
+    /// `PendingBoardMove::generation` whose `spawn_board_move_save` thread
+    /// has just acquired `task_write_locks`' lock and is about to run the
+    /// subprocess (i.e. actually started, as opposed to still queued behind
+    /// a prior same-task save). `board::resolve_pending_moves` drains this
+    /// every frame and, for a matching generation, refreshes that entry's
+    /// `queued_at` — so `PENDING_MOVE_TIMEOUT` measures how long the save
+    /// itself has been running, not how long the drop sat queued behind an
+    /// earlier same-task save's lock. Without this, a rapid second drop on
+    /// the same task could have its overlay entry time out and snap back
+    /// before its own save even began.
+    pub board_move_started: Arc<Mutex<HashMap<BacklogTaskKey, u64>>>,
+    /// task-42, post-review revision (N1/N2, second pass): one `Mutex` per
+    /// task, held for the duration of every `backlog task edit` subprocess
+    /// this app spawns for that task — by **all three** savers
+    /// (`spawn_backlog_save`, `spawn_board_move_save`, and
+    /// `spawn_backlog_bulk_save` per task inside its own loop), not just
+    /// Board drops. `edit_backlog_task` shells out and blocks until the
+    /// process exits, and there is no cheap way to cancel an in-flight one,
+    /// so two racing writers touching the *same* task — a Board drag and a
+    /// detail-rail field edit, say, or a bulk edit landing mid-drag — could
+    /// otherwise complete in either order and leave on-disk state that
+    /// doesn't match whichever gesture actually happened last. Because
+    /// every writer takes this same lock before touching a task's file, the
+    /// last save to actually acquire it — which, since writes only ever get
+    /// *queued* synchronously on the UI thread, is always the last one
+    /// submitted — is always the last one to touch disk, true across every
+    /// writer in this app, not just among concurrent drops. First version
+    /// of this field (named `board_move_locks`) only covered
+    /// `spawn_board_move_save`'s own writes against each other.
+    pub task_write_locks: TaskWriteLocks,
     /// Disk-derived state for every task carrying a dispatch label, refreshed
     /// by `workers::spawn_backlog`. A cache of what `dispatch_inspect`
     /// recomputes from the repo + task id, never a second source of truth —
@@ -330,7 +355,8 @@ impl HiveApp {
             agent_contexts: Arc::new(Mutex::new(HashMap::new())),
             backlog_projects: Arc::new(Mutex::new(HashMap::new())),
             board_move_outcomes: Arc::new(Mutex::new(HashMap::new())),
-            board_move_locks: Arc::new(Mutex::new(HashMap::new())),
+            board_move_started: Arc::new(Mutex::new(HashMap::new())),
+            task_write_locks: Arc::new(Mutex::new(HashMap::new())),
             dispatch_runs: Arc::new(Mutex::new(HashMap::new())),
             ordering: Arc::new(Mutex::new(OrderingState::default())),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
@@ -987,6 +1013,13 @@ impl HiveApp {
         }
     }
 
+    /// Save one task's edit through the real `backlog` CLI, on a background
+    /// thread. Shares `save_one_task` (edit → reload → stale-aware status)
+    /// with `spawn_board_move_save`'s single-task save (N1/N2, post-review
+    /// revision — the two used to duplicate that sequence near-verbatim),
+    /// and takes this task's `task_write_locks` entry the same way every
+    /// other saver does, so this can't race a concurrent Board drag or bulk
+    /// edit on the same task.
     pub fn spawn_backlog_save(
         &self,
         project_root: PathBuf,
@@ -997,41 +1030,26 @@ impl HiveApp {
         let status = self.backlog_status.clone();
         let projects = self.backlog_projects.clone();
         let kick = self.backlog_kick.clone();
+        let locks = self.task_write_locks.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
-            match switchbard_core::edit_backlog_task(&project_root, &task_id, &patch) {
-                Ok(_) => {
-                    let reload = refresh_backlog_project_cache(&projects, &project_root);
-                    status.set(with_stale_warning(reload, format!("saved {task_id}")));
-                    kick.notify();
-                }
-                Err(e) => {
-                    // Reload even on failure: the edit itself didn't
-                    // happen, but the view's cached snapshot could still be
-                    // stale for an unrelated reason (e.g. an external
-                    // edit), and `with_stale_warning` already has to say so
-                    // out loud if this reload itself fails — no reason to
-                    // only make that check on the success path.
-                    let reload = refresh_backlog_project_cache(&projects, &project_root);
-                    status.set(with_stale_warning(
-                        reload,
-                        format!("save {task_id} failed: {e}"),
-                    ));
-                }
-            }
+            let key = (project_root.clone(), task_id.clone());
+            let task_lock = task_write_lock(&locks, &key);
+            let _guard = lock_task(&task_lock);
+            save_one_task(&project_root, &task_id, &patch, &projects, &status, &kick);
             ctx.request_repaint();
         });
     }
 
     /// The Board lens's dedicated drag-drop save (task-42, post-review
-    /// revision) — deliberately **not** routed through `spawn_backlog_save`
-    /// above, because a drag-drop needs two things that path doesn't
-    /// provide: a completion report keyed to *this specific drop*
-    /// (`generation`, into `board_move_outcomes`, consumed by `board::
-    /// resolve_pending_moves` — see `BoardMoveOutcome`'s doc), and
-    /// per-task serialization against a concurrent drop on the same task
-    /// (`board_move_locks` — see that field's doc for why an in-flight
-    /// `edit_backlog_task` subprocess can't just be cancelled).
+    /// revision) — deliberately **not** just a call to `spawn_backlog_save`
+    /// above, because a drag-drop needs one thing that path doesn't
+    /// provide on its own: a completion report keyed to *this specific
+    /// drop* (`generation`, into `board_move_outcomes`, consumed by
+    /// `board::resolve_pending_moves` — see `BoardMoveOutcome`'s doc). The
+    /// actual edit/reload/status work is `save_one_task`, shared with
+    /// `spawn_backlog_save`; the per-task write lock
+    /// (`HiveApp::task_write_locks`) is the same one every saver takes.
     ///
     /// `key` and `generation` together identify exactly which
     /// `PendingBoardMove` this save is for; `board::apply_drop` is the only
@@ -1050,48 +1068,28 @@ impl HiveApp {
         let projects = self.backlog_projects.clone();
         let kick = self.backlog_kick.clone();
         let outcomes = self.board_move_outcomes.clone();
-        let task_lock = {
-            let mut locks = self.board_move_locks.lock().unwrap();
-            locks
-                .entry(key.clone())
-                .or_insert_with(|| Arc::new(Mutex::new(())))
-                .clone()
-        };
+        let started = self.board_move_started.clone();
+        let locks = self.task_write_locks.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
+            let task_lock = task_write_lock(&locks, &key);
             // Holds this task's lock for the whole subprocess call, so a
-            // second drop on the same task (already queued behind this one
-            // via its own `spawn_board_move_save` call) can't run its own
-            // `edit_backlog_task` concurrently — see `board_move_locks`'s
-            // doc on `HiveApp` for why that matters (F3: without this, two
-            // racing saves could complete in either order and leave
-            // on-disk state that doesn't match the user's last gesture).
-            let _task_guard = task_lock.lock().unwrap();
-            let success = match switchbard_core::edit_backlog_task(&project_root, &task_id, &patch)
-            {
-                Ok(_) => {
-                    let reload = refresh_backlog_project_cache(&projects, &project_root);
-                    status.set(with_stale_warning(reload, format!("saved {task_id}")));
-                    kick.notify();
-                    true
-                }
-                Err(e) => {
-                    // Reload on failure too — the edit didn't happen, but
-                    // `board::resolve_pending_moves`'s fallback status
-                    // check (its wall-clock-timeout path) reads whatever
-                    // `backlog_projects` currently holds, and a stale
-                    // snapshot there is a worse failure mode than a status
-                    // line that also says the reload itself failed
-                    // (`with_stale_warning`).
-                    let reload = refresh_backlog_project_cache(&projects, &project_root);
-                    status.set(with_stale_warning(
-                        reload,
-                        format!("save {task_id} failed: {e}"),
-                    ));
-                    false
-                }
-            };
-            drop(_task_guard);
+            // second drop on the same task (already queued behind this one)
+            // can't run its own `edit_backlog_task` concurrently — see
+            // `task_write_locks`'s doc on `HiveApp` for why that matters
+            // (N1/N2: every writer takes this same lock, not just Board
+            // drops against each other).
+            let _guard = lock_task(&task_lock);
+            // N9: this generation's save has now actually started (lock
+            // acquired, about to run the subprocess) — see
+            // `board_move_started`'s doc on `HiveApp`.
+            started.lock().unwrap().insert(key.clone(), generation);
+            let success = save_one_task(&project_root, &task_id, &patch, &projects, &status, &kick);
+            // N8: record the outcome *before* releasing the lock — closes
+            // the window where a second, newer same-task save (already
+            // queued behind this lock) could acquire it, finish, and report
+            // its own outcome first, only for this now-stale report to land
+            // a moment later and overwrite it.
             outcomes.lock().unwrap().insert(
                 key,
                 BoardMoveOutcome {
@@ -1099,10 +1097,24 @@ impl HiveApp {
                     success,
                 },
             );
+            drop(_guard);
             ctx.request_repaint();
         });
     }
 
+    /// Bulk-edit a shared patch (status/priority/labels) across many tasks,
+    /// on a background thread. Unlike `spawn_backlog_save`/
+    /// `spawn_board_move_save`, this deliberately does **not** call
+    /// `save_one_task` per task in the loop below — reloading and
+    /// re-parsing the whole project after every individual edit in an
+    /// n-task batch would be an O(n) reload done O(n) times, so this
+    /// aggregates one reload/status/kick for the whole batch instead. It
+    /// does still take each task's `task_write_locks` entry before editing
+    /// it (N1/N2, post-review revision), so a bulk edit landing on a task
+    /// that a Board drag or a detail-rail edit is also mid-write on still
+    /// serializes correctly against them (both those savers reach the same
+    /// lock via `save_one_task`) — only the post-write reload/status/kick
+    /// bundling stays batch-specific to this method.
     pub fn spawn_backlog_bulk_save(
         &self,
         project_root: PathBuf,
@@ -1117,12 +1129,16 @@ impl HiveApp {
         let status = self.backlog_status.clone();
         let projects = self.backlog_projects.clone();
         let kick = self.backlog_kick.clone();
+        let locks = self.task_write_locks.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             let total = task_ids.len();
             let mut saved = 0usize;
             let mut first_error: Option<String> = None;
             for task_id in &task_ids {
+                let key = (project_root.clone(), task_id.clone());
+                let task_lock = task_write_lock(&locks, &key);
+                let _guard = lock_task(&task_lock);
                 match switchbard_core::edit_backlog_task(&project_root, task_id, &patch) {
                     Ok(_) => saved += 1,
                     Err(e) => {
@@ -1685,6 +1701,86 @@ fn render_perf_overlay(ctx: &egui::Context, summary: &PerfSummary) {
                     );
                 });
         });
+}
+
+/// Returns (creating it if needed) the shared per-task serialization lock
+/// for `key` — see `HiveApp::task_write_locks`'s doc for why every
+/// `backlog` CLI writer in this app takes this same lock before touching a
+/// task's file. The per-task `Arc<Mutex<()>>` entries this map accumulates
+/// are never removed (N6: both this map and `HiveApp::board_move_outcomes`/
+/// `board_move_started` are bounded by the number of distinct tasks ever
+/// written to in this run, not by anything unbounded — acceptable, the same
+/// trade-off `HiveApp::dispatch_runs`/`sizes` already make for other
+/// per-task maps in this app).
+fn task_write_lock(locks: &TaskWriteLocks, key: &BacklogTaskKey) -> Arc<Mutex<()>> {
+    locks
+        .lock()
+        .unwrap()
+        .entry(key.clone())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
+/// Lock a per-task write lock, tolerating poisoning (N7, post-review
+/// revision): a prior save panicking mid-edit must not permanently and
+/// silently block every future write to that task. The guard protects no
+/// real state (`()`), so recovering it from a poisoned lock is safe — the
+/// alternative (propagating the panic here too, via a bare `.unwrap()`)
+/// would strand every subsequent save for that task behind a lock nothing
+/// could ever acquire again.
+fn lock_task(task_lock: &Arc<Mutex<()>>) -> std::sync::MutexGuard<'_, ()> {
+    task_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Shared core of a single-task `backlog` CLI save (N1/N2, post-review
+/// revision — previously duplicated near-verbatim between
+/// `spawn_backlog_save` and `spawn_board_move_save`): run
+/// `edit_backlog_task`, reload the project cache either way, and set the
+/// stale-aware status message. Returns whether the edit itself succeeded —
+/// `spawn_board_move_save` needs that for its own outcome report;
+/// `spawn_backlog_save` just discards it.
+///
+/// Used by `spawn_backlog_save` and `spawn_board_move_save` — the two
+/// savers that each touch exactly one task and want that edit's outcome
+/// reflected immediately (reload + status + wake the backlog worker on
+/// success). `spawn_backlog_bulk_save` deliberately does *not* call this
+/// per task in its own loop — see that method's own doc for why.
+fn save_one_task(
+    project_root: &Path,
+    task_id: &str,
+    patch: &BacklogTaskPatch,
+    projects: &Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
+    status: &Status,
+    kick: &Kick,
+) -> bool {
+    match switchbard_core::edit_backlog_task(project_root, task_id, patch) {
+        Ok(_) => {
+            let reload = refresh_backlog_project_cache(projects, project_root);
+            status.set(with_stale_warning(reload, format!("saved {task_id}")));
+            kick.notify();
+            true
+        }
+        Err(e) => {
+            // Reload even on failure: the edit itself didn't happen, but
+            // the view's cached snapshot could still be stale for an
+            // unrelated reason (e.g. an external edit), and
+            // `with_stale_warning` already has to say so out loud if this
+            // reload itself fails — no reason to only make that check on
+            // the success path. `board::resolve_pending_moves`'s
+            // wall-clock-timeout fallback also reads whatever
+            // `backlog_projects` currently holds, so a stale snapshot there
+            // is a worse failure mode than a status line that also says the
+            // reload failed.
+            let reload = refresh_backlog_project_cache(projects, project_root);
+            status.set(with_stale_warning(
+                reload,
+                format!("save {task_id} failed: {e}"),
+            ));
+            false
+        }
+    }
 }
 
 /// Re-read one project straight after a mutation so the UI reflects the edit

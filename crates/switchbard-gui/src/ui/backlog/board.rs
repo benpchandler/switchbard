@@ -41,10 +41,11 @@
 //! compares a drop's target against the card's *effective* (overlay-aware)
 //! status rather than its real one, so dragging a card back out of its own
 //! pending destination is recognized as a genuine new move instead of a
-//! silent no-op, and `HiveApp::board_move_locks` serializes same-task saves
-//! so two racing drops can't leave on-disk state that doesn't match the
-//! user's last gesture. See `resolve_pending_moves` and `apply_drop` for
-//! the detail.
+//! silent no-op, and `HiveApp::task_write_locks` serializes every writer's
+//! saves per task (not just Board drops against each other, as of a second
+//! post-review pass — see that field's doc) so two racing writes to the
+//! same task can't leave on-disk state that doesn't match the user's last
+//! gesture. See `resolve_pending_moves` and `apply_drop` for the detail.
 
 use super::{dispatch_ui, format, list, scoped_projects, selection, Pending, Snapshot, TaskRow};
 use crate::app::HiveApp;
@@ -65,6 +66,15 @@ use switchbard_core::{
 /// brief names, so a normal save — success or failure — always resolves off
 /// its own completion well before this fires; this only fires if that
 /// report is somehow lost (e.g. the save thread panics).
+///
+/// Measured against `PendingBoardMove::queued_at`, which `resolve_pending_
+/// moves` refreshes to "now" the moment the save actually *starts* (N9,
+/// post-review revision — `HiveApp::board_move_started`), not the moment
+/// the drop was queued. Without that refresh, a rapid second drop on a task
+/// whose prior same-task save was still running could sit queued behind
+/// `task_write_locks`' lock for a while before its own save even begins —
+/// counting that queue wait against this same 8s budget could time out (and
+/// visibly snap back) an overlay entry whose save hadn't even started yet.
 const PENDING_MOVE_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// One-shot "landing flash" duration once a `pending_moves` entry resolves
@@ -74,10 +84,14 @@ const LANDING_FLASH_DURATION: Duration = Duration::from_millis(700);
 
 /// How often `resolve_pending_moves` asks for a repaint while something is
 /// pending or flashing (F5, post-review revision) — frequent enough that
-/// the 700ms landing flash reads as a fade rather than a single frame,
-/// nowhere near frequent enough to matter for battery/CPU given it only
-/// runs during an active drag-drop's brief window.
-const LANDING_FLASH_REPAINT_INTERVAL: Duration = Duration::from_millis(50);
+/// the 700ms landing flash reads as a fade (a couple of visible steps) not
+/// a single static frame, nowhere near frequent enough to matter for
+/// battery/CPU given it only runs during an active drag-drop's brief
+/// window. Also, incidentally but usefully, comfortably above
+/// `egui_kittest`'s default `step_dt` (250ms, `HarnessBuilder`) — see
+/// `render_board`'s own note on why that specific margin matters for every
+/// kittest in this crate that drives a real drop.
+const LANDING_FLASH_REPAINT_INTERVAL: Duration = Duration::from_millis(300);
 
 /// Column order: the shared status vocabulary (owner UX pass, 2026-08-05),
 /// scoped to whichever projects are currently in view. Declaring a status
@@ -98,16 +112,25 @@ pub(super) fn render_board(
 ) {
     // task-42: resolve every in-flight drag-drop's own completion before
     // any column buckets a single card — see `resolve_pending_moves`'s own
-    // doc. It requests a bounded, non-zero-delay repaint while anything is
-    // pending/flashing; `egui_kittest::Harness::run`'s bounded step loop
-    // (used by every drag/drop kittest in this crate) only treats a
-    // *zero-delay* repaint request as "still animating, keep stepping" —
-    // see `try_run`'s own source (`repaint_delay != Duration::ZERO` is its
-    // settle condition) — so a bounded interval like this one settles
-    // `run()` immediately rather than tripping its max_steps panic. Tests
-    // that need to observe several *ticks* of this repaint (the flash
-    // actually fading, not just its start/end state) use `Harness::step`/
-    // `run_steps` instead, per that panic message's own guidance.
+    // doc. It requests a bounded, non-zero-delay repaint
+    // (`LANDING_FLASH_REPAINT_INTERVAL`) while anything is pending/
+    // flashing. `egui_kittest::Harness::run`'s settle loop (`try_run`'s own
+    // source) only keeps stepping on a *zero-delay* repaint request —
+    // `repaint_delay != Duration::ZERO` is its settle condition — and a
+    // non-zero request only actually reaches `try_run` as non-zero if it
+    // clears kittest's own `predicted_dt` subtraction inside `Context::
+    // request_repaint_after` (`delay.saturating_sub(predicted_frame_time)`,
+    // egui's own source), which for the *test* harness means clearing its
+    // default `step_dt` (250ms, `HarnessBuilder`) specifically, not just
+    // being "non-zero" in the abstract. `LANDING_FLASH_REPAINT_INTERVAL`
+    // (300ms) clears that margin, so the practical implication holds
+    // crate-wide: while any `pending_moves`/`landing_flash` entry exists,
+    // plain `harness.run()` still settles — returning after exactly one
+    // frame — everywhere a kittest drives a real Board drop, no
+    // `Harness::step`/`run_steps` workaround needed. (Post-review
+    // correction, N4: an earlier revision used a repaint interval short
+    // enough to collapse to zero here, which genuinely did make `run()`
+    // spin — the fix was the interval, not avoiding `run()`.)
     resolve_pending_moves(app, snap, ui.ctx());
 
     // TASK-26: keeps bulk_selected_tasks consistent with whatever's
@@ -133,9 +156,10 @@ pub(super) fn render_board(
 
 /// Resolve every `pending_moves` entry against its *own* save's completion
 /// report (`app.board_move_outcomes`, written by `HiveApp::
-/// spawn_board_move_save`), and expire any `landing_flash` entry whose
-/// one-shot window has elapsed. The only place either map is mutated
-/// outside a drop itself.
+/// spawn_board_move_save`), refresh `queued_at` for any entry whose own
+/// save has just started (`app.board_move_started` — N9), and expire any
+/// `landing_flash` entry whose one-shot window has elapsed. The only place
+/// any of the three is mutated outside a drop itself.
 ///
 /// Drains `board_move_outcomes` once per frame (there's nothing to gain by
 /// leaving a resolved outcome sitting in the shared map for a later frame
@@ -162,13 +186,27 @@ pub(super) fn render_board(
 /// move still gets its landing flash instead of a spurious snap-back.
 ///
 /// Requests a bounded repaint while anything is still pending or flashing,
-/// so the "saving…" state visibly ticks and the landing flash actually
-/// animates instead of painting one static frame — see `render_board`'s own
-/// call site and its test-harness note for how this stays compatible with
-/// `egui_kittest::Harness::run`'s bounded step loop.
+/// so the landing flash actually animates instead of painting one static
+/// frame — see `render_board`'s own call site for the interval choice and
+/// why it stays compatible with (rather than defeating) `egui_kittest::
+/// Harness::run`'s settle loop.
 fn resolve_pending_moves(app: &mut HiveApp, snap: &Snapshot, ctx: &egui::Context) {
     let now = Instant::now();
     let outcomes = std::mem::take(&mut *app.board_move_outcomes.lock().unwrap());
+
+    // N9: refresh `queued_at` for any entry whose own save has just
+    // reported starting (lock acquired, subprocess about to run) — see
+    // `HiveApp::board_move_started`'s doc. Before the `retain` below so its
+    // timeout check reads the refreshed value, not the drop-time one.
+    let started = std::mem::take(&mut *app.board_move_started.lock().unwrap());
+    for (key, generation) in started {
+        if let Some(mv) = app.backlog_view.pending_moves.get_mut(&key) {
+            if mv.generation == generation {
+                mv.queued_at = now;
+            }
+        }
+    }
+
     let mut landed: Vec<BacklogTaskKey> = Vec::new();
     app.backlog_view.pending_moves.retain(|key, mv| {
         if let Some(outcome) = outcomes.get(key) {
@@ -358,7 +396,7 @@ fn card_shows_in_column(app: &HiveApp, row: &TaskRow<'_>, column_status: &str) -
 ///   what makes it "cancel" the appearance of the old one: the new
 ///   `PendingBoardMove` overwrites the old entry outright (same key), so
 ///   the card visually snaps to the new target this same frame, and
-///   `HiveApp::board_move_locks` (see its doc) ensures the on-disk write
+///   `HiveApp::task_write_locks` (see its doc) ensures the on-disk write
 ///   this produces is the one that ends up sticking.
 fn apply_drop(
     app: &mut HiveApp,
@@ -396,6 +434,13 @@ fn apply_drop(
     );
     app.backlog_status
         .set(format!("moving {} to {column_status}", row.task.id));
+    // N10: calls `spawn_board_move_save` directly rather than going through
+    // the `Pending`/`apply_pending` seam every other mutation in this
+    // module uses (`pending.save = Some(...)`, drained after rendering) —
+    // deliberately, not an oversight: `generation` must be stamped and
+    // handed to the save in the same synchronous step that inserts the
+    // overlay entry above, and `Pending` only carries a `(root, id, patch)`
+    // tuple with no room for that pairing.
     app.spawn_board_move_save(
         row.project.key.clone(),
         row.task.id.clone(),
@@ -504,6 +549,32 @@ fn render_strip(
     } else {
         egui::Sense::click()
     };
+    // N5 (post-review, bounded investigation — timeboxed, documented rather
+    // than fixed): this retroactive `ui.interact(content_rect, ...)` region
+    // (TASK-29's own doc above explains why it exists and why it can't be
+    // restructured casually) gets no explicit accessible label, so
+    // `accesskit_consumer::Node::labelled_by` auto-derives one from its
+    // descendant Label/Image nodes for interactive-role widgets with none
+    // set (confirmed by reading its source, not guessed:
+    // `accesskit_consumer-0.25.0/src/node.rs`'s `labelled_by`, the
+    // `FromDescendants` branch). With `CardMotion::Saving` active, the
+    // extra "saving…" label inside this same region changes which
+    // descendant(s) that auto-derivation picks up, which empirically makes
+    // the card's own title fail an *exact*-match accessibility query
+    // (`kittest`'s `by().label(...)`, which excludes a node that's the
+    // `labelled_by` target of another matched node) — the same query a
+    // real screen reader's accessible-name resolution would also be
+    // affected by. That's a genuine, not-yet-fixed a11y regression for
+    // in-flight cards specifically, not just a test-query quirk: a screen
+    // reader could plausibly announce this region by some other descendant
+    // text instead of the title while a card is Saving. Restructuring this
+    // region to carry an explicit label (e.g. `.on_hover_text` doesn't set
+    // one, but egui's `Response` does have label-setting affordances) is
+    // the real fix; out of scope for this bounded pass — kittest tests that
+    // need to locate a card while `CardMotion::Saving` is active query by
+    // its stable task-id label instead (see `leftmost_bounds`'s doc in
+    // `tests/backlog_controls.rs`), which side-steps the same underlying
+    // issue rather than actually fixing it.
     let mut interacted = ui
         .interact(content_rect, card_id, sense)
         .on_hover_text("Show details in the rail");
@@ -692,19 +763,20 @@ fn paint_card(
                                 // task-42 AC #1: a clear, queryable in-flight
                                 // treatment — the dimmed frame alone reads as
                                 // "disabled" as easily as "in progress", so
-                                // this spells it out. A *static* dot, not
-                                // `theme::painted_dot_pulse`: that helper's
-                                // own `request_repaint_after` keeps
-                                // `egui_kittest::Harness::run` from ever
-                                // settling for as long as a card renders
-                                // Saving (its bounded step loop treats any
-                                // outstanding repaint request as "still
-                                // animating" and gives up) — which would
-                                // break the plain `harness.run()` idiom
-                                // every drag/drop test in this crate uses
-                                // immediately after a real drop.
+                                // this spells it out. `theme::painted_dot_
+                                // pulse`'s own `request_repaint_after`
+                                // (500ms, `PULSE_FRAME_MS`) is safely above
+                                // kittest's default `step_dt` too (see
+                                // `render_board`'s note on that margin), so
+                                // — post-review correction, same class as
+                                // N4 — it does not in fact break the plain
+                                // `harness.run()` idiom, and the "live
+                                // activity" pulse language this app already
+                                // uses elsewhere (listener dots) is the
+                                // better match for a real "spinner" than a
+                                // static one.
                                 if motion == CardMotion::Saving {
-                                    theme::painted_dot(ui, theme::sky());
+                                    theme::painted_dot_pulse(ui, theme::sky(), 1);
                                     ui.label(
                                         egui::RichText::new("saving…")
                                             .small()
