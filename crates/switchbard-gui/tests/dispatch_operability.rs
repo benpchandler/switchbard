@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use common::{harness, seeded_app, REPO_PATH};
 use egui_kittest::kittest::{self, Queryable};
 use egui_kittest::Harness;
-use switchbard_core::dispatch_inspect::{now_unix, DispatchRun};
+use switchbard_core::dispatch_inspect::{now_unix, DispatchRun, DispatchRunLiveness, SidecarDoubt};
 use switchbard_core::{
     BacklogProject, BacklogTask, BacklogTaskSource, DispatchOptions, DISPATCHED_LABEL,
     DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
@@ -58,10 +58,26 @@ fn task(id: &str, labels: &[&str], notes: &str) -> BacklogTask {
     }
 }
 
-/// A cached run that started `age_secs` ago. `pgid` present means the pipeline
-/// wrote a sidecar and has not released yet — the exact condition the Kill
-/// button keys on.
-fn run(task_id: &str, age_secs: u64, pgid: Option<i32>) -> DispatchRun {
+/// A cached run that started `age_secs` ago, with no sidecar — the state of
+/// every run the app cannot vouch for a process group for.
+fn run(task_id: &str, age_secs: u64) -> DispatchRun {
+    run_with(task_id, age_secs, DispatchRunLiveness::NoSidecar)
+}
+
+/// A cached run whose agent is verified alive and supervised by this process —
+/// the *only* state in which the Kill button is allowed to render.
+fn live_run(task_id: &str, age_secs: u64, pgid: i32) -> DispatchRun {
+    run_with(
+        task_id,
+        age_secs,
+        DispatchRunLiveness::Alive {
+            pgid,
+            supervised: true,
+        },
+    )
+}
+
+fn run_with(task_id: &str, age_secs: u64, liveness: DispatchRunLiveness) -> DispatchRun {
     DispatchRun {
         task_id: task_id.to_string(),
         branch: format!("dispatch/{}", task_id.to_lowercase()),
@@ -72,7 +88,7 @@ fn run(task_id: &str, age_secs: u64, pgid: Option<i32>) -> DispatchRun {
         started_at_unix: Some(now_unix().saturating_sub(age_secs)),
         log_bytes: 0,
         log_modified_unix: None,
-        pgid,
+        liveness,
     }
 }
 
@@ -170,7 +186,7 @@ fn a_dispatched_task_awaiting_review_lights_no_chip() {
             &[DISPATCHED_LABEL],
             "Dispatch PR: https://example.test/pr/1",
         )],
-        vec![run("TASK-1", 3_000, None)],
+        vec![run("TASK-1", 3_000)],
     );
 
     assert_eq!(dispatch_chip(&harness), None);
@@ -184,7 +200,7 @@ fn top_bar_chip_counts_running_agents_and_navigates_to_the_dispatches_tab() {
             task("TASK-1", &[DISPATCHING_LABEL], ""),
             task("TASK-2", &[DISPATCHING_LABEL], ""),
         ],
-        vec![run("TASK-1", 300, None), run("TASK-2", 60, None)],
+        vec![run("TASK-1", 300), run("TASK-2", 60)],
     );
 
     let chip = dispatch_chip(&harness).expect("chip must render while agents are running");
@@ -218,7 +234,7 @@ fn top_bar_chip_flips_to_attention_wording_when_a_run_failed() {
             ),
             task("TASK-2", &[DISPATCHING_LABEL], ""),
         ],
-        vec![run("TASK-2", 120, None)],
+        vec![run("TASK-2", 120)],
     );
 
     assert_eq!(
@@ -234,7 +250,7 @@ fn top_bar_chip_treats_a_run_past_its_timeout_as_needing_attention() {
     let past_deadline = DispatchOptions::default().timeout.as_secs() + 60;
     let harness = harness_with(
         vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
-        vec![run("TASK-1", past_deadline, None)],
+        vec![run("TASK-1", past_deadline)],
     );
 
     assert_eq!(
@@ -256,7 +272,7 @@ fn dispatches_tab_badge_counts_runs_not_queue_depth() {
             task("TASK-3", &[DISPATCH_LABEL], ""),
             task("TASK-4", &[DISPATCH_LABEL], ""),
         ],
-        vec![run("TASK-1", 90, None)],
+        vec![run("TASK-1", 90)],
     );
 
     assert!(
@@ -278,7 +294,7 @@ fn dispatches_tab_badge_counts_runs_not_queue_depth() {
 fn an_in_flight_row_shows_its_hard_kill_deadline() {
     let mut app = app_with(
         vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
-        vec![run("TASK-1", 300, None)],
+        vec![live_run("TASK-1", 300, 4242)],
     );
     app.view_tab = ViewTab::Dispatch;
     let mut harness = harness(app);
@@ -286,9 +302,14 @@ fn an_in_flight_row_shows_its_hard_kill_deadline() {
 
     let deadlines = text_containing(&harness, "hard kill in");
     assert_eq!(deadlines.len(), 1, "{deadlines:?}");
+    // 30m timeout minus 5m elapsed. The window rather than an exact string
+    // because `elapsed` is recomputed from a live clock at render time, so
+    // the sub-second gap between seeding the fixture and painting the frame
+    // lands the remainder on either side of the 25m boundary.
     assert!(
-        deadlines[0].starts_with("· hard kill in 25m"),
-        "30m timeout minus 5m elapsed: {:?}",
+        deadlines[0].starts_with("· hard kill in 24m")
+            || deadlines[0].starts_with("· hard kill in 25m"),
+        "{:?}",
         deadlines[0]
     );
 }
@@ -300,7 +321,7 @@ fn an_in_flight_row_shows_its_hard_kill_deadline() {
 fn the_kill_button_is_confirm_armed_and_cancellable() {
     let mut app = app_with(
         vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
-        vec![run("TASK-1", 300, Some(4242))],
+        vec![live_run("TASK-1", 300, 4242)],
     );
     app.view_tab = ViewTab::Dispatch;
     let mut harness = harness(app);
@@ -329,14 +350,17 @@ fn the_kill_button_is_confirm_armed_and_cancellable() {
     assert!(harness.query_by_label("Kill run").is_some());
 }
 
-/// No sidecar, no button. This is the normal state for a run started by a
-/// Switchbard that has since restarted: offering a button with no process
-/// group behind it would be worse than offering none.
+/// No verified process, no button — and, just as importantly, no deadline.
+///
+/// This is the state of every run started by a Switchbard that has since
+/// restarted. The app has no evidence any agent is out there, so it must stop
+/// counting down to a hard kill that nothing will perform (audit F3) as well
+/// as withholding the button.
 #[test]
-fn a_run_without_a_pid_sidecar_offers_no_kill_button() {
+fn a_run_without_a_verified_process_offers_no_kill_and_no_deadline() {
     let mut app = app_with(
         vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
-        vec![run("TASK-1", 300, None)],
+        vec![run("TASK-1", 300)],
     );
     app.view_tab = ViewTab::Dispatch;
     let mut harness = harness(app);
@@ -344,12 +368,162 @@ fn a_run_without_a_pid_sidecar_offers_no_kill_button() {
 
     assert!(harness.query_by_label("Kill run").is_none());
     assert!(
-        !text_containing(&harness, "hard kill in").is_empty(),
-        "the row still renders — only the kill affordance is withheld"
+        text_containing(&harness, "hard kill in").is_empty(),
+        "no supervisor means no deadline to promise"
+    );
+    assert!(
+        !text_containing(&harness, "unsupervised").is_empty(),
+        "the row must say why, not just render less"
+    );
+    assert!(
+        !text_containing(&harness, "running 5m").is_empty(),
+        "the row still renders — only the deadline and the kill are withheld"
     );
 }
 
-/// A queued task has no process to kill, even though the Dispatch view lists
+/// F1, the blocking finding, at the UI boundary: a sidecar left behind by a
+/// force-quit Switchbard names a pgid the OS may since have reissued. However
+/// alive that number looks, an unauthenticated sidecar must never produce a
+/// button — the whole danger of the original design was that the confirm
+/// dialog reassured the user in exactly this case.
+///
+/// Each doubt is pinned separately because each comes from a different guard
+/// (format version, boot epoch, the probe itself) and any one of them
+/// regressing independently would re-arm the weapon.
+#[test]
+fn an_unverifiable_sidecar_never_arms_a_kill_whatever_the_reason() {
+    for doubt in [
+        SidecarDoubt::LegacyFormat,
+        SidecarDoubt::StaleBoot,
+        SidecarDoubt::ProbeFailed,
+    ] {
+        let mut app = app_with(
+            vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
+            vec![run_with(
+                "TASK-1",
+                300,
+                DispatchRunLiveness::Unverifiable(doubt),
+            )],
+        );
+        app.view_tab = ViewTab::Dispatch;
+        let mut harness = harness(app);
+        harness.run();
+
+        assert!(
+            harness.query_by_label("Kill run").is_none(),
+            "{doubt:?} must not arm a kill"
+        );
+        assert!(
+            text_containing(&harness, "hard kill in").is_empty(),
+            "{doubt:?} must not promise a deadline"
+        );
+        assert!(
+            !text_containing(&harness, "unverified").is_empty(),
+            "{doubt:?} must explain itself"
+        );
+    }
+}
+
+/// F1's other half: a run whose group is *positively verified gone* while its
+/// task is still claimed. Before the liveness probe this row sat under "In
+/// flight" forever with a live Kill button, because an empty log is
+/// indistinguishable from a healthy run. It must now read as abandoned, count
+/// toward the attention chip, and offer no kill.
+#[test]
+fn a_run_whose_group_died_reads_as_abandoned_and_offers_no_kill() {
+    let mut app = app_with(
+        vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
+        vec![run_with("TASK-1", 300, DispatchRunLiveness::Gone)],
+    );
+    app.view_tab = ViewTab::Dispatch;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(harness.query_by_label("Kill run").is_none());
+    assert!(
+        !text_containing(&harness, "Claimed, but nothing is running").is_empty(),
+        "the row belongs in the attention section, not under 'In flight'"
+    );
+    assert!(
+        text_containing(&harness, "hard kill in").is_empty(),
+        "nothing is running, so nothing is counting down"
+    );
+    assert_eq!(
+        dispatch_chip(&harness).as_deref(),
+        Some("⚠ 1 dispatch run needs attention"),
+        "and the chip must say so from every other tab"
+    );
+}
+
+/// The unsupervised-but-alive case (audit F3): the agent is verifiably still
+/// running, but the Switchbard that spawned it is gone. Killing is allowed —
+/// the process was positively identified — but the copy must not promise the
+/// bookkeeping that only a live pipeline can do.
+#[test]
+fn an_unsupervised_live_run_offers_an_honestly_labelled_kill() {
+    let mut app = app_with(
+        vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
+        vec![run_with(
+            "TASK-1",
+            300,
+            DispatchRunLiveness::Alive {
+                pgid: 4242,
+                supervised: false,
+            },
+        )],
+    );
+    app.view_tab = ViewTab::Dispatch;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        text_containing(&harness, "hard kill in").is_empty(),
+        "no supervisor is enforcing the timeout, so there is no deadline"
+    );
+    assert!(
+        !text_containing(&harness, "no deadline applies").is_empty(),
+        "the row has to say the run can go on indefinitely"
+    );
+
+    harness.get_by_label("Kill run").click();
+    harness.run();
+
+    let confirm = text_containing(&harness, "pgid 4242");
+    assert_eq!(confirm.len(), 1, "{confirm:?}");
+    assert!(
+        confirm[0].contains("stays on `dispatching`"),
+        "the confirmation must not promise a release nothing will perform: {:?}",
+        confirm[0]
+    );
+}
+
+/// A supervised kill *does* get to promise the release, because the pipeline
+/// really is blocked on that process group. The two messages are the point of
+/// the distinction, so pin both sides.
+#[test]
+fn a_supervised_kill_promises_the_release_the_pipeline_will_actually_do() {
+    let mut app = app_with(
+        vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
+        vec![live_run("TASK-1", 300, 4242)],
+    );
+    app.view_tab = ViewTab::Dispatch;
+    let mut harness = harness(app);
+    harness.run();
+
+    harness.get_by_label("Kill run").click();
+    harness.run();
+
+    let confirm = text_containing(&harness, "pgid 4242");
+    assert_eq!(confirm.len(), 1, "{confirm:?}");
+    assert!(
+        confirm[0].contains("released as dispatch-failed"),
+        "{:?}",
+        confirm[0]
+    );
+    assert!(!confirm[0].contains("stays on `dispatching`"));
+}
+
+/// A queued task has no process to kill, even though the Dispatch view lists/// A queued task has no process to kill, even though the Dispatch view lists
 /// it a section away from the in-flight rows.
 #[test]
 fn a_queued_task_offers_no_kill_button() {

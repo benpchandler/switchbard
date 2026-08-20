@@ -93,6 +93,31 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
      - `DispatchOptions::max_turns` (default 50) is passed as `claude -p
        --max-turns`. Complementary to `timeout`, not redundant: turns bound
        *looping* from inside the agent, the timeout bounds *hanging* from outside.
+     - **The sidecar is self-authenticating** (adversarial review, 2026-08-19).
+       A bare pgid on disk is a loaded weapon: force-quit Switchbard mid-run and
+       the file survives, macOS recycles pids at 99999, and the Kill button then
+       aims at whatever inherited that number — under a dialog reassuring the
+       user it is safe. So the sidecar is versioned and records the boot epoch
+       (`switchbard_core::boot_time`), the supervisor's pid, and the run's start
+       stamp, and `dispatch_inspect` issues a `DispatchRunLiveness` verdict that
+       **fails closed**: a kill handle exists only when the sidecar was minted
+       this boot *and* a live process in that group still carries this run's own
+       prompt path. Legacy bare-pgid files, other-boot files, and failed probes
+       are all `Unverifiable` — no button, with the reason shown in its place.
+     - **Supervision is a first-class distinction.** When the Switchbard that
+       spawned an agent is gone, no `wait_for_exit` is enforcing the timeout and
+       nothing will release the task. Such a row stops claiming `hard kill in
+       Ym`, says the run has no deadline, and — if the agent is still
+       identifiable — offers a Kill labelled honestly ("task stays on
+       `dispatching`"). A verified-**dead** group under a still-claimed task
+       classifies as needs-attention rather than sitting under "In flight"
+       forever; that is the case file evidence alone cannot see, because an
+       empty log is also what a healthy run looks like.
+     - **Claiming clears the previous attempt's terminal labels.** The ladder
+       (`dispatched` > `dispatch-failed` > `dispatching` > `dispatch`) meant a
+       re-flagged task reported Failed for the whole length of its new run and
+       lit the attention chip with a warning nothing could clear.
+       `claim_task_for_dispatch` strips them as part of the claim.
 
 - **Standardized cross-repo status vocabulary (owner decision 2026-08-06).** Every
   tracked project offers the same statuses — `Icebox → To Do → In Progress →

@@ -13,6 +13,46 @@ use switchbard_core::{
     BacklogTask, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 
+/// Which rung of the label ladder a task is on, with no notes parsed.
+///
+/// Split out of [`DispatchState`] for the top bar: the chip and tab badge
+/// only ever need to *count* by category, and running
+/// [`dispatch_state`] to get one would allocate a `String` per finished task
+/// (the PR link / failure reason) on every frame of every tab, for text
+/// nothing in the top bar renders. This is the same ladder, decided by
+/// labels alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DispatchCategory {
+    NotFlagged,
+    Queued,
+    InFlight,
+    Dispatched,
+    Failed,
+}
+
+/// The label ladder, and the single place its precedence is written down.
+///
+/// Order matters and is not arbitrary: a task carries several of these labels
+/// across its life, and the *most recent outcome* has to win. `dispatch_one`
+/// clears the previous attempt's terminal labels as it claims (see
+/// `switchbard_core::dispatch::claim_task_for_dispatch`), so a re-flagged task
+/// no longer reports its old verdict over a live run — but the ordering here
+/// stays the belt to that fix's braces.
+pub(crate) fn dispatch_category(task: &BacklogTask) -> DispatchCategory {
+    let has = |label: &str| task.labels.iter().any(|l| l == label);
+    if has(DISPATCHED_LABEL) {
+        DispatchCategory::Dispatched
+    } else if has(DISPATCH_FAILED_LABEL) {
+        DispatchCategory::Failed
+    } else if has(DISPATCHING_LABEL) {
+        DispatchCategory::InFlight
+    } else if has(DISPATCH_LABEL) {
+        DispatchCategory::Queued
+    } else {
+        DispatchCategory::NotFlagged
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DispatchState {
     /// No dispatch label at all — the normal state for a task nobody has
@@ -35,21 +75,16 @@ pub(crate) enum DispatchState {
 /// — see the module doc for why those are authoritative rather than any
 /// state this app tracks itself.
 pub(crate) fn dispatch_state(task: &BacklogTask) -> DispatchState {
-    let has = |label: &str| task.labels.iter().any(|l| l == label);
-    if has(DISPATCHED_LABEL) {
-        DispatchState::Dispatched {
+    match dispatch_category(task) {
+        DispatchCategory::Dispatched => DispatchState::Dispatched {
             pr_url: find_note_suffix(&task.implementation_notes, "Dispatch PR: "),
-        }
-    } else if has(DISPATCH_FAILED_LABEL) {
-        DispatchState::Failed {
+        },
+        DispatchCategory::Failed => DispatchState::Failed {
             reason: find_note_suffix(&task.implementation_notes, "Dispatch failed: "),
-        }
-    } else if has(DISPATCHING_LABEL) {
-        DispatchState::InFlight
-    } else if has(DISPATCH_LABEL) {
-        DispatchState::Queued
-    } else {
-        DispatchState::NotFlagged
+        },
+        DispatchCategory::InFlight => DispatchState::InFlight,
+        DispatchCategory::Queued => DispatchState::Queued,
+        DispatchCategory::NotFlagged => DispatchState::NotFlagged,
     }
 }
 

@@ -22,14 +22,22 @@
 //!
 //! | | top bar p50 | top bar p95 | frame p95 |
 //! |---|---|---|---|
-//! | baseline (no summary) | 0.229ms | 0.274ms | 2.890ms |
-//! | TASK-43 (summary on)  | 0.307ms | 0.367ms | 2.982ms |
+//! | baseline (no summary) | 0.212ms | 0.262ms | 2.817ms |
+//! | TASK-43 (summary on)  | 0.270ms | 0.296ms | 2.637ms |
 //!
-//! ~0.09ms of p95 top-bar time for 440 tasks / 44 dispatch-labeled, in a
-//! *debug* build — against a 16.7ms frame budget. The cost is a per-frame
-//! label scan over the already-cached backlog, which is the shape the design
-//! intends; anything that regresses it into filesystem or per-worktree work
-//! blows the assertion below by an order of magnitude.
+//! ~0.03ms of p95 top-bar time for 440 tasks / 44 dispatch-labeled, in a
+//! *debug* build — against a 16.7ms frame budget, and inside the frame-level
+//! noise. The cost is a per-frame label scan over the already-cached backlog,
+//! which is the shape the design intends; anything that regresses it into
+//! filesystem or per-worktree work blows the assertion below by an order of
+//! magnitude.
+//!
+//! (An earlier measurement of this same A/B read 0.367ms p95. The difference
+//! is the audit's F6 fix: the summary now folds `dispatch_category`, which
+//! decides the label ladder without parsing notes, rather than
+//! `dispatch_state`, which allocated a `String` per finished task to extract
+//! a PR link the top bar never renders. Correcting the doc's claim about the
+//! cost turned out to also remove a third of it.)
 //!
 //! Run explicitly:
 //! ```sh
@@ -43,7 +51,7 @@ use std::path::PathBuf;
 
 use common::{harness, isolated_config_save_path};
 use switchbard_core::config::Config;
-use switchbard_core::dispatch_inspect::{now_unix, DispatchRun};
+use switchbard_core::dispatch_inspect::{now_unix, DispatchRun, DispatchRunLiveness};
 use switchbard_core::{
     BacklogProject, BacklogTask, BacklogTaskSource, Repo, WorktreeRef, DISPATCHED_LABEL,
     DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
@@ -165,7 +173,13 @@ fn build_fixture() -> HiveApp {
                         started_at_unix: Some(now.saturating_sub(300)),
                         log_bytes: 0,
                         log_modified_unix: None,
-                        pgid: Some(4242),
+                        // Verified-alive: the state that makes the summary do
+                        // the most work per row (a supervision check and an
+                        // elapsed-time fold, not an early bail).
+                        liveness: DispatchRunLiveness::Alive {
+                            pgid: 4242,
+                            supervised: true,
+                        },
                     },
                 );
             }

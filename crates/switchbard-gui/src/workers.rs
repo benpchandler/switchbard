@@ -15,7 +15,10 @@
 //! and notes change. (TASK-43's pgid sidecar does not change that: it is a
 //! file the *pipeline* writes and deletes within one run's lifetime, read
 //! back off disk by `refresh_dispatch_runs` like every other `DispatchRun`
-//! field — no worker state, nothing for this thread to publish or own.) See its own doc for why one iteration can block far
+//! field — no worker state, nothing for this thread to publish or own.)
+//! The backlog worker additionally *sweeps* sidecars left behind by a
+//! Switchbard that died mid-run; see `sweep_sidecar_if_finished` for why that
+//! deliberately spares a sidecar whose task is still claimed. See its own doc for why one iteration can block far
 //! longer than the other workers' — this reuses `drain_dispatch_queue`'s
 //! serial-by-design batching rather than reimplementing it.
 //!
@@ -65,8 +68,9 @@ use switchbard_core::{
     probe_dirty_files, probe_fetch_age, probe_head_commit_time, probe_ignored_files,
     probe_main_drift, probe_recent_commits, probe_ref_drift_detail, probe_remote_drift,
     probe_worktree_size, probe_worktree_staleness, save_agent_context_cache, scan_agent_context,
-    scan_listeners, AgentContextMap, BacklogProject, DetectedService, DispatchOptions, DriftProbe,
-    Repo, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
+    scan_listeners, sweep_dead_sidecar, AgentContextMap, BacklogProject, DetectedService,
+    DispatchOptions, DriftProbe, Repo, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL,
+    DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
@@ -631,9 +635,11 @@ pub(crate) fn collect_backlog_projects(roots: &[PathBuf]) -> HashMap<PathBuf, Ba
 ///
 /// The filesystem work is deliberately done outside the `backlog_projects`
 /// lock: collecting the (root, id) pairs first keeps that mutex held for a map
-/// walk rather than for a `read_dir` per dispatched task.
+/// walk rather than for a `read_dir` per dispatched task. Whether each task is
+/// still *claimed* is collected in the same pass, because the sidecar sweep
+/// below needs it and re-locking to ask would be a second walk.
 fn refresh_dispatch_runs(ch: &Channels) {
-    let targets: Vec<(PathBuf, String)> = {
+    let targets: Vec<(PathBuf, String, bool)> = {
         let projects = ch.backlog_projects.lock().unwrap();
         projects
             .iter()
@@ -642,7 +648,10 @@ fn refresh_dispatch_runs(ch: &Channels) {
                     .tasks
                     .iter()
                     .filter(|task| task.labels.iter().any(|label| is_dispatch_label(label)))
-                    .map(|task| (root.clone(), task.id.clone()))
+                    .map(|task| {
+                        let claimed = task.labels.iter().any(|label| label == DISPATCHING_LABEL);
+                        (root.clone(), task.id.clone(), claimed)
+                    })
                     .collect::<Vec<_>>()
             })
             .collect()
@@ -650,12 +659,40 @@ fn refresh_dispatch_runs(ch: &Channels) {
 
     let runs = targets
         .into_iter()
-        .map(|(root, task_id)| {
+        .map(|(root, task_id, claimed)| {
             let run = inspect_dispatch_run(&root, &task_id);
+            sweep_sidecar_if_finished(&run, claimed);
             ((root, task_id), run)
         })
         .collect();
     *ch.dispatch_runs.lock().unwrap() = runs;
+}
+
+/// TASK-43: delete a pgid sidecar whose process group has been positively
+/// verified gone — but only once the task is no longer claimed.
+///
+/// A Switchbard force-quit mid-run never reaches `dispatch_one`'s release
+/// boundary, so its sidecar outlives the run. Leaving those on disk forever
+/// is what the audit's F1 was about, and `dispatch_inspect` already refuses to
+/// arm a Kill button from one, so this is hygiene rather than the safety
+/// mechanism.
+///
+/// The `!claimed` condition is the part worth reading twice. While a task is
+/// still labelled `dispatching`, a verified-dead group is the **only**
+/// evidence that the run died: the log is empty (which is also what a healthy
+/// in-flight run looks like), so `looks_orphaned` cannot see it, and deleting
+/// the sidecar would erase the one fact that lets the Dispatch view move that
+/// row out of "In flight" and into the attention section. So the file is kept
+/// exactly as long as it is load-bearing, and swept the moment the claim it
+/// belongs to is gone. (Recovering a claimed-but-dead run is TASK-39's
+/// reaper; this deliberately stops at not lying about it.)
+fn sweep_sidecar_if_finished(run: &DispatchRun, claimed: bool) {
+    if claimed || !run.liveness.is_gone() {
+        return;
+    }
+    if let Some(started) = run.started_at_unix {
+        sweep_dead_sidecar(&run.task_id, started);
+    }
 }
 
 /// Any of the four labels that make up the dispatch state machine. A task

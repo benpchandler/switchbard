@@ -4,6 +4,7 @@ pub mod backlog;
 pub mod backlog_relations;
 pub mod backlog_stats;
 pub mod backlog_triage;
+pub mod boot_time;
 pub mod classify;
 pub mod config;
 pub mod discover;
@@ -56,11 +57,13 @@ pub use backlog_triage::{
 pub use classify::{classify_command, classify_script_body, ServerLikelihood};
 pub use discover::{auto_scan_roots, discover_repos, DiscoveredRepo};
 pub use dispatch::{
-    build_dispatch_prompt, dispatch_branch_name, dispatch_log_dir, dispatch_log_stem, dispatch_one,
-    dispatch_pid_path, dispatch_worktree_path, drain_dispatch_queue, list_dispatch_queue,
-    read_pid_sidecar, select_batch, DispatchOptions, DispatchOutcome, DispatchResult,
-    DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_TURNS, DISPATCHED_LABEL, DISPATCHING_LABEL,
-    DISPATCH_FAILED_LABEL, DISPATCH_IN_PROGRESS_STATUS, DISPATCH_LABEL, DISPATCH_REVIEW_STATUS,
+    build_dispatch_prompt, claim_task_for_dispatch, dispatch_branch_name, dispatch_log_dir,
+    dispatch_log_stem, dispatch_one, dispatch_pid_path, dispatch_worktree_path,
+    drain_dispatch_queue, list_dispatch_queue, parse_dispatch_sidecar, read_dispatch_sidecar,
+    select_batch, sweep_dead_sidecar, DispatchOptions, DispatchOutcome, DispatchResult,
+    DispatchSidecar, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_TURNS, DISPATCHED_LABEL,
+    DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_IN_PROGRESS_STATUS, DISPATCH_LABEL,
+    DISPATCH_REVIEW_STATUS, SIDECAR_VERSION,
 };
 pub use expected_port::{default_port_for_service, expected_port};
 pub use git_env::git_cmd;

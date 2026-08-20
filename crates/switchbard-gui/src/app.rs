@@ -862,19 +862,37 @@ impl HiveApp {
     /// its ordinary failure path — `dispatch-failed` plus a note — on its own.
     /// Bookkeeping from this side would be a second writer racing the first.
     ///
-    /// A sidecar can outlive its run (Switchbard died mid-run without
-    /// releasing), so `KillOutcome::NotFound` is an expected answer, not an
-    /// error: it reports through `backlog_status` like any other outcome. The
-    /// `backlog_kick` afterwards is what refreshes the labels the pipeline
-    /// just rewrote — the same wake the dispatch worker uses for its own
-    /// outcomes.
-    pub fn spawn_kill_dispatch(&self, task_id: String, pgid: i32, ctx: &egui::Context) {
+    /// `supervised` says whether that pipeline still exists. When it does not
+    /// — the agent outlived the Switchbard that spawned it — the kill stops
+    /// the agent and *nothing else*: no release, no note, the task stays on
+    /// `dispatching`. The status message says so rather than letting the user
+    /// infer a bookkeeping step that will never happen. (The caller only ever
+    /// reaches here for a run whose process group `dispatch_inspect` has
+    /// positively identified; see `ui::dispatch::render_kill_control`.)
+    ///
+    /// `KillOutcome::NotFound` remains an expected answer — a group can exit
+    /// between the worker's probe and this click — and reports through
+    /// `backlog_status` like any other outcome. The `backlog_kick` afterwards
+    /// refreshes the labels the pipeline just rewrote, the same wake the
+    /// dispatch worker uses for its own outcomes.
+    pub fn spawn_kill_dispatch(
+        &self,
+        task_id: String,
+        pgid: i32,
+        supervised: bool,
+        ctx: &egui::Context,
+    ) {
         let kick = self.backlog_kick.clone();
         let status = self.backlog_status.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             let outcome = kill_pgid(pgid, Duration::from_secs(3));
-            status.set(format!("{task_id}: {}", describe_kill(pgid, outcome)));
+            let tail = if supervised {
+                ""
+            } else {
+                " — unsupervised, so the task stays on `dispatching`"
+            };
+            status.set(format!("{task_id}: {}{tail}", describe_kill(pgid, outcome)));
             kick.notify();
             ctx.request_repaint();
         });

@@ -40,7 +40,7 @@
 
 use crate::app::HiveApp;
 use crate::runtime::BacklogTaskKey;
-use crate::ui::backlog::dispatch_ui::{self, DispatchState};
+use crate::ui::backlog::dispatch_ui::{self, DispatchCategory, DispatchState};
 use crate::ui::theme;
 use eframe::egui;
 use std::path::PathBuf;
@@ -79,26 +79,27 @@ impl DispatchSummary {
     /// below is unit-testable without a frame or a filesystem.
     fn observe(
         &mut self,
-        state: &DispatchState,
+        category: DispatchCategory,
         run: Option<&DispatchRun>,
         now: u64,
         timeout: Duration,
     ) {
-        match state {
-            DispatchState::Queued => self.queued += 1,
-            DispatchState::Failed { .. } => self.needs_attention += 1,
-            DispatchState::InFlight => {
-                // Same cross-check the view's sectioning does: the
-                // `dispatching` label alone is not proof a run is live, an
-                // orphan wears it forever.
-                let orphaned = run.is_some_and(|run| run.looks_orphaned(now, true));
+        match category {
+            DispatchCategory::Queued => self.queued += 1,
+            DispatchCategory::Failed => self.needs_attention += 1,
+            DispatchCategory::InFlight => {
+                // The `dispatching` label alone is not proof a run is live —
+                // an abandoned one wears it forever. Same predicate the view's
+                // sectioning uses, so the chip and the list can never disagree
+                // about which runs are stuck.
+                let abandoned = run.is_some_and(|run| run.is_abandoned(now, true));
                 let stalled = run.is_some_and(|run| run.looks_stalled(now, timeout));
-                if orphaned || stalled {
+                if abandoned || stalled {
                     self.needs_attention += 1;
                 } else {
                     self.in_flight += 1;
                 }
-                if !orphaned {
+                if !abandoned {
                     if let Some(elapsed) = run.and_then(|run| run.elapsed(now)) {
                         let secs = elapsed.as_secs();
                         self.oldest_running_secs =
@@ -106,7 +107,7 @@ impl DispatchSummary {
                     }
                 }
             }
-            DispatchState::Dispatched { .. } | DispatchState::NotFlagged => {}
+            DispatchCategory::Dispatched | DispatchCategory::NotFlagged => {}
         }
     }
 
@@ -163,23 +164,28 @@ impl DispatchSummary {
 /// Count what the top bar needs without building a single row.
 ///
 /// Deliberately not `collect_rows` + fold: that path clones every task and
-/// run so it can render them, and the top bar renders on every frame of every
-/// tab — including tabs that never look at dispatch at all. This takes the two
-/// locks one at a time (never both at once, matching `workers::
-/// refresh_dispatch_runs`'s ordering) and does arithmetic on borrows.
+/// every run so it can render them, and the top bar renders on every frame of
+/// every tab — including tabs that never look at dispatch at all.
+///
+/// What this actually costs per frame, precisely: one pass over the cached
+/// tasks comparing label strings ([`dispatch_ui::dispatch_category`], chosen
+/// over `dispatch_state` because the latter allocates a `String` per finished
+/// task to extract a PR link the top bar never renders), plus one `Vec` of
+/// `(repo root, task id)` keys for the dispatch-labeled tasks only. That `Vec`
+/// is empty — and therefore allocation-free — in the overwhelmingly common
+/// case of nothing being dispatched. It exists so the two mutexes are taken
+/// one at a time rather than nested, matching `workers::refresh_dispatch_runs`'s
+/// ordering. No task, run, or note text is cloned.
 pub(crate) fn summarize_dispatch(app: &HiveApp) -> DispatchSummary {
-    // Only dispatch-labeled tasks need a run lookup, and a project usually has
-    // none — so the projects lock is held for a label scan, and the (small)
-    // key clones happen only for tasks that are actually in the pipeline.
-    let flagged: Vec<(BacklogTaskKey, DispatchState)> = {
+    let flagged: Vec<(BacklogTaskKey, DispatchCategory)> = {
         let projects = app.backlog_projects.lock().unwrap();
         projects
             .iter()
             .flat_map(|(root, project)| {
                 project.tasks.iter().filter_map(move |task| {
-                    match dispatch_ui::dispatch_state(task) {
-                        DispatchState::NotFlagged => None,
-                        state => Some(((root.clone(), task.id.clone()), state)),
+                    match dispatch_ui::dispatch_category(task) {
+                        DispatchCategory::NotFlagged => None,
+                        category => Some(((root.clone(), task.id.clone()), category)),
                     }
                 })
             })
@@ -193,8 +199,8 @@ pub(crate) fn summarize_dispatch(app: &HiveApp) -> DispatchSummary {
     let timeout = DispatchOptions::default().timeout;
     let runs = app.dispatch_runs.lock().unwrap();
     let mut summary = DispatchSummary::default();
-    for (key, state) in &flagged {
-        summary.observe(state, runs.get(key), now, timeout);
+    for (key, category) in &flagged {
+        summary.observe(*category, runs.get(key), now, timeout);
     }
     summary
 }
@@ -217,18 +223,19 @@ impl DispatchRow {
     /// in-flight next because those rows change while you watch; failures
     /// outrank finished work because they are the ones asking for a decision.
     ///
-    /// The `dispatching` label alone does NOT mean in flight. An orphaned run
-    /// carries that label forever (its releaser died), so the label is checked
+    /// The `dispatching` label alone does NOT mean in flight. A run whose
+    /// releaser died carries that label forever, so the label is checked
     /// against the run's own evidence before trusting it — see
-    /// `DispatchRun::looks_orphaned`.
+    /// `DispatchRun::is_abandoned`, which covers both the agent-finished and
+    /// the process-group-is-gone flavours of that.
     fn section(&self, now: u64) -> Section {
         match self.state {
             DispatchState::InFlight => {
-                let orphaned = self
+                let abandoned = self
                     .run
                     .as_ref()
-                    .is_some_and(|run| run.looks_orphaned(now, true));
-                if orphaned {
+                    .is_some_and(|run| run.is_abandoned(now, true));
+                if abandoned {
                     Section::Orphaned
                 } else {
                     Section::InFlight
@@ -254,7 +261,7 @@ enum Section {
 impl Section {
     fn title(self) -> &'static str {
         match self {
-            Section::Orphaned => "Finished, never released",
+            Section::Orphaned => "Claimed, but nothing is running",
             Section::InFlight => "In flight",
             Section::Queued => "Queued",
             Section::Failed => "Failed",
@@ -268,8 +275,9 @@ impl Section {
     fn blurb(self) -> &'static str {
         match self {
             Section::Orphaned => {
-                "The agent finished and committed, but Switchbard exited before pushing. \
-                 Review the branch, then push and open the PR by hand."
+                "The task is still claimed but its agent is gone — either it finished and \
+                 Switchbard exited before pushing, or the run died with it. Review the \
+                 branch, then push and open the PR by hand, or re-flag the task."
             }
             Section::InFlight => "A headless agent is running now in its own worktree.",
             Section::Queued => "Flagged, waiting for the dispatch worker's next poll.",
@@ -436,10 +444,16 @@ fn render_run_details(
     timeout: Duration,
 ) {
     let orphaned = row.section(now) == Section::Orphaned;
-    // An orphan carries the in-flight label but is not running, so the
+    // An abandoned run carries the in-flight label but is not running, so the
     // live-run affordances (ticking "running", the empty-log reassurance)
     // must not apply to it.
     let in_flight = matches!(row.state, DispatchState::InFlight) && !orphaned;
+    // The deadline exists only because a supervisor is enforcing it. When the
+    // Switchbard that spawned this agent is gone, `wait_for_exit` died with
+    // it: nothing will time the run out, and nothing will release the task
+    // when it ends. Everything below keys off this rather than off the
+    // in-flight label, because a countdown nobody is counting is a lie.
+    let supervised = run.liveness.is_supervised();
     ui.horizontal(|ui| {
         if let Some(elapsed) = run.elapsed(now) {
             let stalled = in_flight && run.looks_stalled(now, timeout);
@@ -461,8 +475,8 @@ fn render_run_details(
             // default().timeout`. Spelling out how long is left is what turns
             // the elapsed time into a decision ("kill it now, or let the
             // hard kill have it in three minutes").
-            if let Some(remaining) = time_until_hard_kill(elapsed, timeout) {
-                if in_flight {
+            if in_flight && supervised {
+                if let Some(remaining) = time_until_hard_kill(elapsed, timeout) {
                     ui.label(
                         egui::RichText::new(format!(
                             "· hard kill in {}",
@@ -472,7 +486,7 @@ fn render_run_details(
                     );
                 }
             }
-            if stalled {
+            if stalled && supervised {
                 ui.label(
                     egui::RichText::new(format!(
                         "past the {} timeout — check the log",
@@ -484,6 +498,10 @@ fn render_run_details(
         }
         ui.label(egui::RichText::new(&run.branch).color(theme::muted_text()));
     });
+
+    if in_flight && !supervised {
+        render_unsupervised_notice(ui, run);
+    }
 
     // The single most misleading signal in this pipeline, called out inline
     // rather than left for the user to misread as a dead run: `claude -p
@@ -518,53 +536,108 @@ fn render_run_details(
     }
 }
 
+/// The honest replacement for the deadline, on a run whose supervisor is gone.
+///
+/// Two different situations wear the same `dispatching` label here, and they
+/// need different words:
+///
+/// - the agent is verifiably still running, but unsupervised — no timeout will
+///   fire and nothing will release the task, so it can run indefinitely;
+/// - nothing about the run can be verified at all (a sidecar from before the
+///   last reboot, a legacy-format one, a failed probe) — in which case the app
+///   genuinely does not know whether an agent is out there.
+///
+/// The old copy said "hard kill in Xm" in both cases, which was the F3
+/// finding: a countdown promising an enforcement mechanism that no longer
+/// exists.
+fn render_unsupervised_notice(ui: &mut egui::Ui, run: &DispatchRun) {
+    let text = match run.liveness.doubt() {
+        Some(doubt) => format!("unverified — {}", doubt.explain()),
+        None if run.liveness.killable_pgid().is_some() => {
+            "unsupervised — the app that started this run is gone, so no deadline applies and \
+             nothing will release the task when it ends"
+                .to_string()
+        }
+        None => "unsupervised — no record of a live process for this run".to_string(),
+    };
+    ui.label(egui::RichText::new(text).color(theme::amber()).italics());
+}
+
 /// Confirm-armed Kill for one in-flight run, mirroring the two-step shape of
 /// the Dispatch button it undoes (`backlog::detail_lists::
 /// render_dispatch_toggle`) — this is the more destructive of the pair, so it
 /// does not get the *lighter* affordance.
 ///
-/// Renders nothing without a pgid. That is the normal state for a released
-/// run and for one started by a Switchbard that has since restarted without
-/// its sidecar; offering a dead button would be worse than offering none.
-/// A sidecar that *is* present may still name a group that has already
-/// exited — `kill_pgid` reports that as `NotFound` and it surfaces as a
-/// status message, which is why this is safe to offer on evidence alone.
+/// ## What has to be true before this renders a button
+///
+/// Exactly one thing, and it is not "a sidecar exists": the run's liveness
+/// verdict must be `Alive`, which `dispatch_inspect` only issues after
+/// authenticating the sidecar against this boot **and** confirming the process
+/// group still carries this run's own prompt path. Reading a pgid from
+/// anywhere else would reintroduce the audit's F1: a Switchbard force-quit
+/// mid-run leaves its sidecar behind, macOS recycles pids at 99999, and a
+/// button built on the raw number is a SIGKILL pointed at a stranger — under a
+/// confirmation dialog that cheerfully reassures the user it is safe.
+///
+/// So there is no `pgid` parameter here and no fallback path. `killable_pgid`
+/// is the gate; when it says `None`, `render_unsupervised_notice` has already
+/// explained why in the row above.
+///
+/// ## Why the copy changes with supervision
+///
+/// A supervised kill is a complete operation: the pipeline is blocked on this
+/// group, so the signal unblocks it and the task releases as `dispatch-failed`
+/// with a note. An **unsupervised** kill stops the agent and nothing else —
+/// there is no pipeline left to do the bookkeeping, so the task stays on
+/// `dispatching` and a human has to finish the job. Promising the first while
+/// doing the second is precisely the F3 finding.
 fn render_kill_control(app: &mut HiveApp, ui: &mut egui::Ui, row: &DispatchRow, run: &DispatchRun) {
-    let Some(pgid) = run.pgid else {
+    let Some(pgid) = run.liveness.killable_pgid() else {
         return;
     };
+    let supervised = run.liveness.is_supervised();
     let key: BacklogTaskKey = (row.repo_root.clone(), row.task.id.clone());
     if app.dispatch_kill_confirm.as_ref() == Some(&key) {
         ui.horizontal(|ui| {
+            let aftermath = if supervised {
+                "The task is released as dispatch-failed with a note."
+            } else {
+                "Nothing is supervising this run, so the task stays on `dispatching` — \
+                 re-flag or resolve it by hand afterwards."
+            };
             ui.colored_label(
                 theme::amber(),
                 format!(
-                    "Kill {}'s agent (pgid {pgid})? The worktree and anything \
-                     it already committed are left alone.",
+                    "Kill {}'s agent (pgid {pgid})? The worktree and anything it already \
+                     committed are left alone. {aftermath}",
                     row.task.id
                 ),
             );
-            if ui
-                .button("Confirm kill")
-                .on_hover_text(
-                    "Signals the run's process group; the pipeline then releases \
-                     the task as dispatch-failed with a note",
-                )
-                .clicked()
-            {
-                app.spawn_kill_dispatch(row.task.id.clone(), pgid, ui.ctx());
+            let hover = if supervised {
+                "Signals the run's process group; the pipeline then releases the task as \
+                 dispatch-failed with a note"
+            } else {
+                "Signals the run's process group. Its supervisor is gone, so nothing will \
+                 release the task afterwards"
+            };
+            if ui.button("Confirm kill").on_hover_text(hover).clicked() {
+                app.spawn_kill_dispatch(row.task.id.clone(), pgid, supervised, ui.ctx());
                 app.dispatch_kill_confirm = None;
             }
             if ui.button("Cancel kill").clicked() {
                 app.dispatch_kill_confirm = None;
             }
         });
-    } else if ui
-        .button("Kill run")
-        .on_hover_text("Stop this headless agent now, without waiting for the hard kill")
-        .clicked()
-    {
-        app.dispatch_kill_confirm = Some(key);
+    } else {
+        let hover = if supervised {
+            "Stop this headless agent now, without waiting for the hard kill"
+        } else {
+            "Stop this headless agent now. Nothing is supervising it, so the task will need \
+             resolving by hand"
+        };
+        if ui.button("Kill run").on_hover_text(hover).clicked() {
+            app.dispatch_kill_confirm = Some(key);
+        }
     }
 }
 
@@ -622,6 +695,7 @@ fn format_elapsed(elapsed: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use switchbard_core::dispatch_inspect::DispatchRunLiveness;
 
     const TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
@@ -629,6 +703,15 @@ mod tests {
     /// of output already flushed. Output + an old mtime is what
     /// `looks_orphaned` keys on, so `finished_ago` drives that separately.
     fn run(age: u64, log_bytes: u64, finished_ago: Option<u64>) -> DispatchRun {
+        run_with_liveness(age, log_bytes, finished_ago, DispatchRunLiveness::NoSidecar)
+    }
+
+    fn run_with_liveness(
+        age: u64,
+        log_bytes: u64,
+        finished_ago: Option<u64>,
+        liveness: DispatchRunLiveness,
+    ) -> DispatchRun {
         DispatchRun {
             task_id: "TASK-1".to_string(),
             branch: "dispatch/task-1".to_string(),
@@ -639,16 +722,16 @@ mod tests {
             started_at_unix: Some(NOW - age),
             log_bytes,
             log_modified_unix: finished_ago.map(|ago| NOW - ago),
-            pgid: None,
+            liveness,
         }
     }
 
     const NOW: u64 = 1_000_000;
 
-    fn summarize(entries: &[(DispatchState, Option<DispatchRun>)]) -> DispatchSummary {
+    fn summarize(entries: &[(DispatchCategory, Option<DispatchRun>)]) -> DispatchSummary {
         let mut summary = DispatchSummary::default();
-        for (state, run) in entries {
-            summary.observe(state, run.as_ref(), NOW, TIMEOUT);
+        for (category, run) in entries {
+            summary.observe(*category, run.as_ref(), NOW, TIMEOUT);
         }
         summary
     }
@@ -660,12 +743,7 @@ mod tests {
     fn a_workspace_with_no_live_dispatch_work_is_idle() {
         assert!(summarize(&[]).is_idle());
 
-        let finished = summarize(&[(
-            DispatchState::Dispatched {
-                pr_url: Some("https://example/pr/1".to_string()),
-            },
-            Some(run(600, 900, Some(600))),
-        )]);
+        let finished = summarize(&[(DispatchCategory::Dispatched, Some(run(600, 900, Some(600))))]);
 
         assert!(finished.is_idle(), "awaiting review is not an alarm");
         assert_eq!(finished.badge_count(), 0);
@@ -674,9 +752,9 @@ mod tests {
     #[test]
     fn queued_and_running_tasks_are_counted_separately() {
         let summary = summarize(&[
-            (DispatchState::Queued, None),
-            (DispatchState::Queued, None),
-            (DispatchState::InFlight, Some(run(300, 0, None))),
+            (DispatchCategory::Queued, None),
+            (DispatchCategory::Queued, None),
+            (DispatchCategory::InFlight, Some(run(300, 0, None))),
         ]);
 
         assert_eq!(summary.queued, 2);
@@ -692,7 +770,7 @@ mod tests {
     /// something and it has not started, which is worth an ambient word.
     #[test]
     fn a_queue_with_nothing_claimed_still_shows_a_chip() {
-        let summary = summarize(&[(DispatchState::Queued, None)]);
+        let summary = summarize(&[(DispatchCategory::Queued, None)]);
 
         assert!(!summary.is_idle());
         assert_eq!(summary.badge_count(), 0);
@@ -702,8 +780,8 @@ mod tests {
     #[test]
     fn the_chip_reports_the_oldest_running_run() {
         let summary = summarize(&[
-            (DispatchState::InFlight, Some(run(90, 0, None))),
-            (DispatchState::InFlight, Some(run(450, 0, None))),
+            (DispatchCategory::InFlight, Some(run(90, 0, None))),
+            (DispatchCategory::InFlight, Some(run(450, 0, None))),
         ]);
 
         assert_eq!(summary.oldest_running_secs, Some(450));
@@ -715,12 +793,7 @@ mod tests {
     /// has to move the chip into its danger register on its own.
     #[test]
     fn a_failed_run_flips_the_chip_to_attention() {
-        let summary = summarize(&[(
-            DispatchState::Failed {
-                reason: Some("claude exited with Some(1)".to_string()),
-            },
-            None,
-        )]);
+        let summary = summarize(&[(DispatchCategory::Failed, None)]);
 
         assert!(summary.needs_attention());
         assert_eq!(summary.needs_attention, 1);
@@ -736,7 +809,7 @@ mod tests {
             "fixture must be an orphan"
         );
 
-        let summary = summarize(&[(DispatchState::InFlight, Some(orphan))]);
+        let summary = summarize(&[(DispatchCategory::InFlight, Some(orphan))]);
 
         assert!(summary.needs_attention());
         assert_eq!(summary.in_flight, 0, "an orphan is not running");
@@ -751,8 +824,8 @@ mod tests {
         assert!(stalled.looks_stalled(NOW, TIMEOUT));
 
         let summary = summarize(&[
-            (DispatchState::InFlight, Some(stalled)),
-            (DispatchState::InFlight, Some(run(120, 0, None))),
+            (DispatchCategory::InFlight, Some(stalled)),
+            (DispatchCategory::InFlight, Some(run(120, 0, None))),
         ]);
 
         assert_eq!(summary.in_flight, 1);
@@ -767,11 +840,54 @@ mod tests {
     #[test]
     fn attention_wording_pluralizes_both_ways() {
         let two = summarize(&[
-            (DispatchState::Failed { reason: None }, None),
-            (DispatchState::Failed { reason: None }, None),
+            (DispatchCategory::Failed, None),
+            (DispatchCategory::Failed, None),
         ]);
 
         assert_eq!(two.chip_text(), "⚠ 2 dispatch runs need attention");
+    }
+
+    /// F1/F4a through the summary: a claimed run whose process group has been
+    /// verified gone must feed the chip as *attention*, not as a healthy
+    /// running agent. Its log is empty — indistinguishable from a live run by
+    /// file evidence alone — so this is the only signal that catches it.
+    #[test]
+    fn a_run_whose_group_is_verified_gone_counts_as_attention() {
+        let dead = run_with_liveness(300, 0, None, DispatchRunLiveness::Gone);
+        assert!(dead.is_abandoned(NOW, true));
+
+        let summary = summarize(&[(DispatchCategory::InFlight, Some(dead))]);
+
+        assert_eq!(summary.needs_attention, 1);
+        assert_eq!(summary.in_flight, 0, "a dead group is not running");
+        assert!(summary.needs_attention());
+        assert_eq!(
+            summary.oldest_running_secs, None,
+            "a dead run's clock stopped; it must not drive the chip's elapsed time"
+        );
+    }
+
+    /// An unsupervised but verifiably *live* agent is still running, so it
+    /// belongs in the running count — the audit's F4a scope is deliberately
+    /// limited to verified-dead groups. What changes for it is the row's copy
+    /// (no deadline), not the chip's arithmetic.
+    #[test]
+    fn an_unsupervised_but_live_run_still_counts_as_running() {
+        let live = run_with_liveness(
+            300,
+            0,
+            None,
+            DispatchRunLiveness::Alive {
+                pgid: 4242,
+                supervised: false,
+            },
+        );
+        assert!(!live.is_abandoned(NOW, true));
+
+        let summary = summarize(&[(DispatchCategory::InFlight, Some(live))]);
+
+        assert_eq!(summary.in_flight, 1);
+        assert_eq!(summary.needs_attention, 0);
     }
 
     /// A run inside its timeout counts down; one past it has no countdown to

@@ -113,12 +113,18 @@ mod tests {
     use crate::kill::{kill_pgid, KillOutcome};
     use std::time::Duration;
 
-    // macOS test harness returns EPERM when signaling a freshly-setsid'd group
-    // even though the real kill_pgid path works fine against long-lived orphan
-    // groups (verified by the GUI sweep that cleaned up 6 PGIDs of pytest leaks).
-    // Worth investigating later; ignoring so CI doesn't block on a sandbox quirk.
+    /// Un-ignored 2026-08-19 (TASK-43 audit). The old `#[ignore]` blamed "the
+    /// macOS test harness returns EPERM when signaling a freshly-setsid'd
+    /// group", which was a misdiagnosis: the SIGTERM lands fine. The EPERM
+    /// came from probing the resulting **zombie** — nothing here was reaping
+    /// the child, macOS answers `kill(-pgid, 0)` on an unreaped group with
+    /// EPERM, and `kill_pgid` reads EPERM as "still alive" and escalates into
+    /// a second EPERM.
+    ///
+    /// Reaping concurrently — which is what every production caller does,
+    /// since `dispatch_one` is parked in `wait_for_exit` on the same child —
+    /// makes this deterministic. See `kill::kill_pgid`'s doc.
     #[test]
-    #[ignore]
     fn spawn_then_kill_works() {
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("test.log");
@@ -130,13 +136,19 @@ mod tests {
         // not the bootstrap shell — kill(-pgid, …) cross-session has stricter rules
         // before the exec completes on macOS).
         std::thread::sleep(Duration::from_millis(150));
+
+        let pid = run.pid;
+        let reaper = std::thread::spawn(move || wait_for_exit(pid, Duration::from_secs(10)));
         let outcome = kill_pgid(run.pgid, Duration::from_secs(2)).expect("kill");
+        let waited = reaper.join().unwrap().expect("wait");
+
         assert!(
-            matches!(
-                outcome,
-                KillOutcome::Terminated | KillOutcome::Killed | KillOutcome::NotFound
-            ),
+            matches!(outcome, KillOutcome::Terminated | KillOutcome::Killed),
             "got {outcome:?}",
+        );
+        assert!(
+            matches!(waited, WaitOutcome::Exited(_)),
+            "the child must actually be gone: {waited:?}",
         );
     }
 

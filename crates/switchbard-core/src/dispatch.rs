@@ -60,10 +60,23 @@
 //! exit the pipeline can report rather than a kill it can only infer.
 //!
 //! Neither helps a human who is watching a run go wrong right now, so
-//! [`dispatch_one`] also writes a pgid sidecar next to the run's log
+//! [`dispatch_one`] also writes a [`DispatchSidecar`] next to the run's log
 //! ([`dispatch_pid_path`]) between spawning the agent and blocking on it, and
 //! deletes it as the run releases. A UI that reads that file can signal the
 //! group directly with [`crate::kill_pgid`].
+//!
+//! That file is a loaded gun, so it is **self-authenticating**. A pid is only
+//! meaningful within one boot and only supervised by the process that spawned
+//! it, so the sidecar records the boot epoch and the supervisor's pid
+//! alongside the pgid, and a reader that cannot match both refuses to hand
+//! out a kill handle at all. The failure this prevents is concrete: force-quit
+//! Switchbard mid-run, restart, and a bare pgid on disk would arm a Kill
+//! button aimed at whatever process group has since inherited that number.
+//! Every ambiguity — missing file, unknown version, legacy bare-pgid format,
+//! different boot — collapses to the same answer, *unverifiable*, and the
+//! same obligation: offer nothing. See
+//! [`crate::dispatch_inspect::DispatchRunLiveness`] for the verdict a UI
+//! actually consumes.
 //!
 //! Killing the group needs **no coordination with this module**, which is the
 //! property that makes the sidecar cheap: the pipeline is already blocked in
@@ -96,8 +109,8 @@
 //! `workers.rs`'s pattern) is separate scope.
 
 use crate::backlog::{
-    append_backlog_notes, edit_backlog_task, swap_backlog_label, BacklogProject, BacklogTask,
-    BacklogTaskPatch, BacklogTaskSource,
+    append_backlog_notes, edit_backlog_task, set_backlog_label, swap_backlog_label, BacklogProject,
+    BacklogTask, BacklogTaskPatch, BacklogTaskSource,
 };
 use crate::git_env::git_cmd;
 use crate::kill::kill_pgid;
@@ -297,32 +310,144 @@ pub fn dispatch_pid_path(task_id: &str, started_at_unix: u64) -> PathBuf {
     ))
 }
 
-/// Parse a pgid out of a sidecar written by [`write_pid_sidecar`]. `None` for
-/// a missing, empty, or unparseable file — a caller that cannot read a pgid
-/// simply has no kill affordance to offer, which is the position every caller
-/// was in before sidecars existed. Non-positive values are rejected because
-/// `kill_pgid` negates its argument to address a group: a 0 or negative pgid
-/// would widen the signal past the one run it is meant for.
-pub fn read_pid_sidecar(path: &Path) -> Option<i32> {
-    std::fs::read_to_string(path)
-        .ok()?
-        .trim()
-        .parse::<i32>()
-        .ok()
-        .filter(|pgid| *pgid > 0)
+/// Current sidecar format version. Bump when a field's meaning changes; a
+/// reader that does not recognise the version treats the file as
+/// unverifiable rather than guessing, which is always safe because the only
+/// thing a sidecar unlocks is a destructive action.
+pub const SIDECAR_VERSION: u32 = 2;
+
+/// What one run's sidecar claims about the process it spawned.
+///
+/// Every field exists to answer "is the group named here still *this run*?" —
+/// none of them is decoration:
+///
+/// - `pgid` — what to signal.
+/// - `supervisor_pid` — the Switchbard process that spawned the agent and is
+///   blocked in `wait_for_exit` on it. When this is not the *current* process,
+///   there is no pipeline behind the run: no timeout will fire, and nothing
+///   will release the task when the agent exits. A UI that keeps promising
+///   either is lying (see [`crate::dispatch_inspect::DispatchRunLiveness`]).
+/// - `agent_started_unix` — the run's own start stamp, so a sidecar can be
+///   matched against the log it belongs to rather than merely sitting near it.
+/// - `boot_epoch_unix` — the boot this pgid was minted under. macOS wraps pids
+///   at 99999; across a reboot the same number names a stranger. Without this
+///   field a sidecar that outlives a restart is an armed weapon pointed at an
+///   arbitrary process group. See [`crate::boot_time`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DispatchSidecar {
+    pub pgid: i32,
+    pub supervisor_pid: u32,
+    pub agent_started_unix: u64,
+    pub boot_epoch_unix: u64,
 }
 
-/// Record the run's process group so a UI can signal it. Best-effort by
-/// design: failing to write the sidecar costs the user a Kill button, which
-/// must never be worth aborting a run that is otherwise fine.
-fn write_pid_sidecar(path: &Path, pgid: i32) {
-    let _ = std::fs::write(path, format!("{pgid}\n"));
+impl DispatchSidecar {
+    /// Whether the process that spawned this run is *this* process — i.e.
+    /// whether there is still a pipeline thread blocked on the agent to
+    /// enforce the timeout and release the task afterwards.
+    pub fn supervised_by_this_process(&self) -> bool {
+        self.supervisor_pid == std::process::id()
+    }
+
+    /// Whether the recorded pgid can still mean anything on this machine. A
+    /// sidecar from a previous boot names a pid that has since been reissued;
+    /// no amount of further probing makes it safe to signal.
+    pub fn minted_this_boot(&self) -> bool {
+        crate::boot_time::boot_epoch_unix().is_some_and(|boot| boot == self.boot_epoch_unix)
+    }
+
+    fn render(&self) -> String {
+        format!(
+            "v={}\npgid={}\nsupervisor={}\nstarted={}\nboot={}\n",
+            SIDECAR_VERSION,
+            self.pgid,
+            self.supervisor_pid,
+            self.agent_started_unix,
+            self.boot_epoch_unix,
+        )
+    }
+}
+
+/// Parse a sidecar written by [`write_dispatch_sidecar`].
+///
+/// `None` for a missing file, a malformed one, an unrecognised version, or a
+/// **legacy** bare-pgid sidecar (the pre-versioning format, which carried no
+/// boot epoch and therefore cannot be authenticated). Every one of those is
+/// the same answer to the caller — *I cannot vouch for this pgid* — and the
+/// caller's obligation is identical: offer no kill affordance. Distinguishing
+/// them would only let a caller talk itself into signalling anyway.
+///
+/// Non-positive pgids are rejected because `kill_pgid` negates its argument
+/// to address a group: a 0 or negative pgid would widen the signal past the
+/// one run it is meant for.
+pub fn read_dispatch_sidecar(path: &Path) -> Option<DispatchSidecar> {
+    parse_dispatch_sidecar(&std::fs::read_to_string(path).ok()?)
+}
+
+/// The pure half of [`read_dispatch_sidecar`], so every rejection rule is
+/// testable without touching disk.
+pub fn parse_dispatch_sidecar(text: &str) -> Option<DispatchSidecar> {
+    let mut version = None;
+    let mut pgid = None;
+    let mut supervisor = None;
+    let mut started = None;
+    let mut boot = None;
+    for line in text.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = value.trim();
+        match key.trim() {
+            "v" => version = value.parse::<u32>().ok(),
+            "pgid" => pgid = value.parse::<i32>().ok(),
+            "supervisor" => supervisor = value.parse::<u32>().ok(),
+            "started" => started = value.parse::<u64>().ok(),
+            "boot" => boot = value.parse::<u64>().ok(),
+            _ => {}
+        }
+    }
+    if version? != SIDECAR_VERSION {
+        return None;
+    }
+    let sidecar = DispatchSidecar {
+        pgid: pgid?,
+        supervisor_pid: supervisor?,
+        agent_started_unix: started?,
+        boot_epoch_unix: boot?,
+    };
+    // A zero boot epoch is what a platform that wouldn't answer `boot_time`
+    // leaves behind; it can never equal a real epoch, but rejecting it here
+    // keeps "unverifiable" a property of the file rather than of a comparison
+    // somewhere downstream.
+    (sidecar.pgid > 0 && sidecar.supervisor_pid > 0 && sidecar.boot_epoch_unix > 0)
+        .then_some(sidecar)
+}
+
+/// Record everything needed to later authenticate the run's process group.
+/// Best-effort by design: failing to write the sidecar costs the user a Kill
+/// button, which must never be worth aborting a run that is otherwise fine.
+fn write_dispatch_sidecar(path: &Path, sidecar: &DispatchSidecar) {
+    let _ = std::fs::write(path, sidecar.render());
 }
 
 /// Drop the kill handle. Called as the run releases its claim — see
 /// [`dispatch_one`] for why that is the right boundary.
 fn remove_pid_sidecar(path: &Path) {
     let _ = std::fs::remove_file(path);
+}
+
+/// Delete a sidecar whose process group is known to be gone.
+///
+/// Public because the *pipeline* is not always the one that gets to clean up:
+/// a Switchbard killed mid-run never reaches its release boundary, and the
+/// file it left behind is exactly the stale handle this whole format exists to
+/// neutralise. `workers::refresh_dispatch_runs` calls this once a run's group
+/// has been positively verified dead **and** its task is no longer claimed —
+/// see that call site for why a *claimed* task keeps its dead sidecar (it is
+/// the only evidence that turns a permanently-"in flight" row into one that
+/// asks for attention).
+pub fn sweep_dead_sidecar(task_id: &str, started_at_unix: u64) {
+    remove_pid_sidecar(&dispatch_pid_path(task_id, started_at_unix));
 }
 
 /// The `/bin/sh -c` line for one headless run. Pure so the flag set — in
@@ -385,6 +510,39 @@ fn push_checklist_section(
     prompt.push('\n');
 }
 
+/// Step 1 of the pipeline: take exclusive ownership of a task.
+///
+/// Two moves, in this order and for different reasons:
+///
+/// 1. `dispatch` → `dispatching`, atomically. This is the double-dispatch
+///    guard — a queue reload between here and the spawn must never see the
+///    task as eligible again — so its failure aborts the claim.
+/// 2. Strip any **previous** attempt's terminal labels. The state machine
+///    reads as a priority ladder (`dispatched` > `dispatch-failed` >
+///    `dispatching` > `dispatch`, see `ui::backlog::dispatch_ui::
+///    dispatch_state`), so a task re-flagged after a failure would otherwise
+///    carry both `dispatch-failed` and `dispatching` and report as Failed for
+///    the entire length of its new run — a live agent rendered as a red alarm
+///    that nothing can clear. The ladder is the right shape; carrying a
+///    finished run's verdict into the next run's claim is the bug.
+///
+/// Step 2 is best-effort and non-fatal for the same reason as
+/// [`set_dispatch_status`]: by then the guard has already succeeded, and a
+/// failure costs a stale pill rather than correctness. Aborting there would
+/// strand a task mid-claim, which is strictly worse.
+///
+/// Public because it is the one step of the pipeline that is meaningfully
+/// testable against a real Backlog project without spawning an agent — see
+/// `tests/backlog_cli_mutations.rs`.
+pub fn claim_task_for_dispatch(repo_root: &Path, task_id: &str) -> Result<()> {
+    swap_backlog_label(repo_root, task_id, DISPATCH_LABEL, DISPATCHING_LABEL)
+        .with_context(|| format!("failed to claim {task_id} for dispatch"))?;
+    for stale in [DISPATCH_FAILED_LABEL, DISPATCHED_LABEL] {
+        let _ = set_backlog_label(repo_root, task_id, stale, false);
+    }
+    Ok(())
+}
+
 /// Run the full pipeline for one task: claim → worktree → headless `claude
 /// -p` → commit/push → `gh pr create` → notes. Blocking; safe to call from a
 /// background worker thread the same way `switchbard-core`'s other probes
@@ -401,8 +559,7 @@ pub fn dispatch_one(
     task: &BacklogTask,
     opts: &DispatchOptions,
 ) -> Result<DispatchOutcome> {
-    swap_backlog_label(repo_root, &task.id, DISPATCH_LABEL, DISPATCHING_LABEL)
-        .with_context(|| format!("failed to claim {} for dispatch", task.id))?;
+    claim_task_for_dispatch(repo_root, &task.id)?;
 
     // Captured *before* the pipeline moves the task, so a failure can put it
     // back where the user left it instead of stranding it on "In Progress"
@@ -488,6 +645,10 @@ struct DispatchPaths {
     log_path: PathBuf,
     prompt_path: PathBuf,
     pid_path: PathBuf,
+    /// The run's own start stamp — the same one embedded in every path above.
+    /// Carried explicitly so the sidecar can record it as a field rather than
+    /// re-deriving it by parsing one of its own filenames back.
+    started_at_unix: u64,
 }
 
 fn prepare_dispatch(
@@ -509,7 +670,8 @@ fn prepare_dispatch(
 
     let log_dir = dispatch_log_dir();
     std::fs::create_dir_all(&log_dir).context("failed to create switchbard-logs dir")?;
-    let stem = dispatch_log_stem(&task.id, unix_now());
+    let started_at_unix = unix_now();
+    let stem = dispatch_log_stem(&task.id, started_at_unix);
     let log_path = log_dir.join(format!("{stem}.log"));
     let prompt_path = log_dir.join(format!("{stem}-prompt.md"));
     let pid_path = log_dir.join(format!("{stem}.pid"));
@@ -526,6 +688,7 @@ fn prepare_dispatch(
         log_path,
         prompt_path,
         pid_path,
+        started_at_unix,
     })
 }
 
@@ -539,7 +702,19 @@ fn run_claude_headless(paths: &DispatchPaths, opts: &DispatchOptions) -> Result<
     // Written *after* the spawn (the kernel assigns the group) and before the
     // blocking wait, so the sidecar exists for essentially the whole window in
     // which there is something to kill.
-    write_pid_sidecar(&paths.pid_path, run.pgid);
+    write_dispatch_sidecar(
+        &paths.pid_path,
+        &DispatchSidecar {
+            pgid: run.pgid,
+            // This process is the supervisor precisely because it is about to
+            // block on the agent below. If Switchbard dies, that fact dies
+            // with it — and the recorded pid is how a later Switchbard finds
+            // out rather than assuming it inherited the duty.
+            supervisor_pid: std::process::id(),
+            agent_started_unix: paths.started_at_unix,
+            boot_epoch_unix: crate::boot_time::boot_epoch_unix().unwrap_or(0),
+        },
+    );
     match wait_for_exit(run.pid, opts.timeout).context("failed waiting on claude")? {
         WaitOutcome::Exited(code) => Ok(Some(code)),
         WaitOutcome::TimedOut => {
@@ -937,22 +1112,170 @@ mod tests {
         );
     }
 
+    fn sample_sidecar() -> DispatchSidecar {
+        DispatchSidecar {
+            pgid: 4242,
+            supervisor_pid: 99,
+            agent_started_unix: 1_700_000_000,
+            boot_epoch_unix: 1_600_000_000,
+        }
+    }
+
     /// The whole sidecar lifecycle in one place: written at spawn, readable
-    /// as a pgid while the run is live, gone once the run releases.
+    /// while the run is live, gone once the run releases.
     #[test]
-    fn pid_sidecar_round_trips_and_is_removed_on_release() {
+    fn dispatch_sidecar_round_trips_and_is_removed_on_release() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("dispatch-task-11-1700000000.pid");
 
-        assert_eq!(read_pid_sidecar(&path), None, "nothing written yet");
+        assert_eq!(read_dispatch_sidecar(&path), None, "nothing written yet");
 
-        write_pid_sidecar(&path, 4242);
+        let written = sample_sidecar();
+        write_dispatch_sidecar(&path, &written);
         assert!(path.exists());
-        assert_eq!(read_pid_sidecar(&path), Some(4242));
+        assert_eq!(read_dispatch_sidecar(&path), Some(written));
 
         remove_pid_sidecar(&path);
         assert!(!path.exists());
-        assert_eq!(read_pid_sidecar(&path), None);
+        assert_eq!(read_dispatch_sidecar(&path), None);
+    }
+
+    /// Every field has to survive the round trip, not just the pgid: dropping
+    /// the boot epoch or the supervisor pid on the floor would leave a
+    /// sidecar that *parses* but can no longer be authenticated, which is the
+    /// exact failure this format was introduced to remove.
+    #[test]
+    fn every_authenticating_field_survives_the_round_trip() {
+        let written = sample_sidecar();
+
+        let read = parse_dispatch_sidecar(&written.render()).expect("round trip");
+
+        assert_eq!(read.pgid, 4242);
+        assert_eq!(read.supervisor_pid, 99);
+        assert_eq!(read.agent_started_unix, 1_700_000_000);
+        assert_eq!(read.boot_epoch_unix, 1_600_000_000);
+    }
+
+    /// A pre-versioning bare-pgid file is the dangerous legacy case: it looks
+    /// like a perfectly usable number and carries nothing to check it
+    /// against. It must never parse.
+    #[test]
+    fn a_legacy_bare_pgid_sidecar_never_parses() {
+        assert_eq!(parse_dispatch_sidecar("4242\n"), None);
+        assert_eq!(parse_dispatch_sidecar("4242"), None);
+    }
+
+    /// An unknown version is a file written by a future Switchbard whose
+    /// field meanings we cannot assume. Refuse it rather than guess.
+    #[test]
+    fn an_unknown_sidecar_version_never_parses() {
+        let future = sample_sidecar().render().replace("v=2", "v=99");
+
+        assert_eq!(parse_dispatch_sidecar(&future), None);
+    }
+
+    /// Any missing field breaks authentication, so any missing field must
+    /// break parsing — checked one at a time so a future refactor that drops
+    /// one silently can't slip through.
+    #[test]
+    fn a_sidecar_missing_any_field_never_parses() {
+        for dropped in ["v=", "pgid=", "supervisor=", "started=", "boot="] {
+            let text: String = sample_sidecar()
+                .render()
+                .lines()
+                .filter(|line| !line.starts_with(dropped))
+                .map(|line| format!("{line}\n"))
+                .collect();
+            assert_eq!(
+                parse_dispatch_sidecar(&text),
+                None,
+                "a sidecar without {dropped} must not parse"
+            );
+        }
+    }
+
+    /// `kill_pgid` negates its argument to address a process group, so a 0 or
+    /// negative pgid would widen the signal far past the one run it names.
+    /// A zero boot epoch is what a platform that wouldn't answer leaves
+    /// behind, and can never authenticate.
+    #[test]
+    fn a_sidecar_with_an_unusable_field_never_parses() {
+        for (field, bad) in [
+            ("pgid=4242", "pgid=0"),
+            ("pgid=4242", "pgid=-1"),
+            ("supervisor=99", "supervisor=0"),
+            ("boot=1600000000", "boot=0"),
+        ] {
+            let text = sample_sidecar().render().replace(field, bad);
+            assert_eq!(parse_dispatch_sidecar(&text), None, "{bad} must not parse");
+        }
+    }
+
+    #[test]
+    fn a_malformed_sidecar_yields_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, contents) in [
+            ("empty.pid", ""),
+            ("blank.pid", "   \n"),
+            ("words.pid", "not-a-pid\n"),
+            ("halfway.pid", "v=2\npgid=notanumber\n"),
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, contents).unwrap();
+            assert_eq!(read_dispatch_sidecar(&path), None, "{name} must not parse");
+        }
+    }
+
+    /// The writer emits trailing newlines and the reader has to tolerate
+    /// them (plus any stray padding); a regression here would silently
+    /// disable every Kill button.
+    #[test]
+    fn the_sidecar_reader_tolerates_the_writers_whitespace() {
+        let padded = "v = 2\n pgid = 91234 \nsupervisor= 7\nstarted =1\nboot= 2\n\n";
+
+        let read = parse_dispatch_sidecar(padded).expect("whitespace must not defeat the parser");
+
+        assert_eq!(read.pgid, 91234);
+        assert_eq!(read.supervisor_pid, 7);
+    }
+
+    /// The supervisor check is what tells a restarted Switchbard that it is
+    /// *not* the process blocked on this agent — the whole basis of the
+    /// unsupervised-run treatment in the Dispatch view.
+    #[test]
+    fn supervision_is_decided_by_the_recorded_pid_not_by_hope() {
+        let mine = DispatchSidecar {
+            supervisor_pid: std::process::id(),
+            ..sample_sidecar()
+        };
+        let theirs = DispatchSidecar {
+            supervisor_pid: std::process::id().wrapping_add(1).max(1),
+            ..sample_sidecar()
+        };
+
+        assert!(mine.supervised_by_this_process());
+        assert!(!theirs.supervised_by_this_process());
+    }
+
+    /// A sidecar from another boot names a recycled pid. This is the guard
+    /// that stands between a force-quit-and-restart and a SIGKILL aimed at a
+    /// stranger.
+    #[test]
+    fn a_sidecar_from_another_boot_is_never_minted_this_boot() {
+        let stale = DispatchSidecar {
+            boot_epoch_unix: 1,
+            ..sample_sidecar()
+        };
+
+        assert!(!stale.minted_this_boot());
+
+        if let Some(boot) = crate::boot_time::boot_epoch_unix() {
+            let current = DispatchSidecar {
+                boot_epoch_unix: boot,
+                ..sample_sidecar()
+            };
+            assert!(current.minted_this_boot());
+        }
     }
 
     /// Removing a sidecar that is already gone is the normal case on any
@@ -963,37 +1286,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         remove_pid_sidecar(&dir.path().join("never-written.pid"));
-    }
-
-    /// A truncated or hand-mangled sidecar must not hand a caller a pgid it
-    /// would then signal. Non-positive values are rejected specifically
-    /// because `kill_pgid` negates its argument to address the group.
-    #[test]
-    fn a_malformed_pid_sidecar_yields_no_pgid() {
-        let dir = tempfile::tempdir().unwrap();
-        for (name, contents) in [
-            ("empty.pid", ""),
-            ("blank.pid", "   \n"),
-            ("words.pid", "not-a-pid\n"),
-            ("zero.pid", "0\n"),
-            ("negative.pid", "-1\n"),
-        ] {
-            let path = dir.path().join(name);
-            fs::write(&path, contents).unwrap();
-            assert_eq!(read_pid_sidecar(&path), None, "{name} must not parse");
-        }
-    }
-
-    /// Trailing whitespace/newline is what `write_pid_sidecar` itself emits,
-    /// so the reader has to tolerate it — a regression here would silently
-    /// disable every Kill button.
-    #[test]
-    fn pid_sidecar_reader_tolerates_the_writers_trailing_newline() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("nl.pid");
-        fs::write(&path, "  91234  \n").unwrap();
-
-        assert_eq!(read_pid_sidecar(&path), Some(91234));
     }
 
     /// The Kill button's entire mechanism, against a real process group:
@@ -1007,19 +1299,15 @@ mod tests {
     /// this ever regresses, a killed run would sit out the full timeout with
     /// its task still claimed.
     ///
-    /// `#[ignore]` for the reason `spawn::tests::spawn_then_kill_works`
-    /// already documents and carries the same attribute for: signalling a
-    /// freshly-`setsid`'d group from under the macOS test harness returns
-    /// EPERM, while the same code path works against real long-lived groups
-    /// in the running app. Re-confirmed while writing this (2026-08-19):
-    /// SIGTERM is accepted and does nothing, the SIGKILL escalation comes
-    /// back `Operation not permitted`, with and without the shell `exec` +
-    /// settle delay that test uses. Run it deliberately —
-    /// `cargo test -p switchbard-core -- --ignored killing_a_runs` — when
-    /// changing the kill path; the pure sidecar round-trip above is what
-    /// guards the format on every CI run.
+    /// **The reaper thread is load-bearing, not scaffolding.** It reproduces
+    /// the production topology — the pipeline thread sits in `wait_for_exit`
+    /// while the UI thread kills — and without it this test fails with a
+    /// misleading EPERM: a killed child that nobody `waitpid`s becomes a
+    /// zombie, macOS answers `kill(-pgid, 0)` on a zombie group with EPERM,
+    /// and `kill.rs` reads EPERM as "still alive" and escalates into a second
+    /// EPERM. In production a `wait_for_exit` is *always* concurrently
+    /// reaping, so that state is unreachable there. See `kill_pgid`'s own doc.
     #[test]
-    #[ignore]
     fn killing_a_runs_process_group_via_its_sidecar_unblocks_the_pipelines_wait() {
         let dir = tempfile::tempdir().unwrap();
         let log_path = dir.path().join("run.log");
@@ -1029,26 +1317,42 @@ mod tests {
         // plausible test runtime, so the only way this test finishes is if
         // the kill actually lands.
         let run = spawn_in_session("exec sleep 600", dir.path(), &log_path).unwrap();
-        std::thread::sleep(Duration::from_millis(200));
-        write_pid_sidecar(&pid_path, run.pgid);
-
-        let from_sidecar = read_pid_sidecar(&pid_path).expect("sidecar must name the group");
-        assert_eq!(from_sidecar, run.pgid);
-
-        let outcome = kill_pgid(from_sidecar, Duration::from_secs(2)).unwrap();
-        assert!(
-            matches!(outcome, crate::kill::KillOutcome::Terminated),
-            "SIGTERM should be enough for the group: {outcome:?}"
+        write_dispatch_sidecar(
+            &pid_path,
+            &DispatchSidecar {
+                pgid: run.pgid,
+                supervisor_pid: std::process::id(),
+                agent_started_unix: unix_now(),
+                boot_epoch_unix: crate::boot_time::boot_epoch_unix().unwrap_or(0),
+            },
         );
 
-        let waited = wait_for_exit(run.pid, Duration::from_secs(10)).unwrap();
+        let sidecar = read_dispatch_sidecar(&pid_path).expect("sidecar must name the group");
+        assert_eq!(sidecar.pgid, run.pgid);
+        assert!(sidecar.supervised_by_this_process());
+        assert!(sidecar.minted_this_boot());
+
+        // Stand in for the pipeline thread blocked in `dispatch_one`.
+        let pid = run.pid;
+        let pipeline = std::thread::spawn(move || wait_for_exit(pid, Duration::from_secs(10)));
+
+        let outcome = kill_pgid(sidecar.pgid, Duration::from_secs(2)).unwrap();
+        assert!(
+            matches!(
+                outcome,
+                crate::kill::KillOutcome::Terminated | crate::kill::KillOutcome::Killed
+            ),
+            "the group must die on one signal: {outcome:?}"
+        );
+
+        let waited = pipeline.join().unwrap().unwrap();
         assert!(
             matches!(waited, WaitOutcome::Exited(_)),
             "the pipeline's blocked wait must return on the kill, not time out: {waited:?}"
         );
 
         remove_pid_sidecar(&pid_path);
-        assert_eq!(read_pid_sidecar(&pid_path), None);
+        assert_eq!(read_dispatch_sidecar(&pid_path), None);
     }
 
     #[test]
