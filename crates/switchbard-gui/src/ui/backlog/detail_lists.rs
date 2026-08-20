@@ -387,11 +387,13 @@ pub(super) fn render_archive(
 ///
 /// One click, no confirmation, unlike its neighbor: a refine run writes no
 /// code, opens no PR, and can only *add* to the task (see
-/// `switchbard_core::refine`'s additive-apply contract), so the consequence
-/// bar that earns Dispatch its inline confirm isn't met here. The button
-/// disables itself while a run is in flight for this task — `HiveApp::
-/// is_refining` reads the same in-memory set `spawn_backlog_refine` guards
-/// on, so the affordance and the guard can't disagree.
+/// `switchbard_core::refine`'s additive-apply contract and its write-path
+/// guard — a section whose content the parser cannot round-trip is skipped,
+/// never overwritten), so the consequence bar that earns Dispatch its inline
+/// confirm isn't met here. The button disables itself while a run is in
+/// flight for this task — `HiveApp::is_refining` reads the same in-memory set
+/// `spawn_backlog_refine` guards on, so the affordance and the guard can't
+/// disagree.
 pub(super) fn render_refine(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
@@ -410,8 +412,12 @@ pub(super) fn render_refine(
             .add_enabled(!in_flight, egui::Button::new("Refine"))
             .on_hover_text(
                 "Explore the repo read-only with a headless agent and fill in the \
-                 description, acceptance criteria, and implementation plan. Existing \
-                 content is never overwritten.",
+                 description, acceptance criteria, and implementation plan. Your \
+                 existing text and checked criteria are kept: new content is \
+                 appended after a \"Refined by Switchbard\" marker, never replaced. \
+                 If this task's markdown contains anything the parser cannot safely \
+                 round-trip, the description and plan are skipped rather than \
+                 overwritten, and the status line says so.",
             )
             .clicked()
         {

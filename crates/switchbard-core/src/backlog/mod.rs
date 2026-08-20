@@ -16,8 +16,8 @@ pub use mutations::{
     swap_backlog_label,
 };
 pub use parse::{
-    backlog_cli_path, is_backlog_project, load_backlog_project, parse_backlog_day,
-    parse_created_task_id,
+    backlog_cli_path, body_round_trips, is_backlog_project, load_backlog_project,
+    parse_backlog_day, parse_created_task_id, task_file_round_trips,
 };
 pub use types::{
     ordered_status_vocabulary, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskPatch,

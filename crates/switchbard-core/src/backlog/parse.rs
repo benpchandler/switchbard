@@ -120,6 +120,20 @@ pub fn parse_created_task_id(output: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// [`body_round_trips`] for one task file on disk — what `crate::refine`
+/// asks before it overwrites a whole section.
+///
+/// Fails **closed**: an unreadable file returns `false`. The only reason to
+/// call this is to decide whether a destructive replace-write is safe, and
+/// "I could not check" must mean "do not write", never "assume it's fine".
+pub fn task_file_round_trips(path: &Path) -> bool {
+    let Ok(text) = fs::read_to_string(path) else {
+        return false;
+    };
+    let (_, body) = split_frontmatter(&text);
+    body_round_trips(body)
+}
+
 fn find_on_path(name: &str) -> Option<PathBuf> {
     let path_var = std::env::var_os("PATH")?;
     std::env::split_paths(&path_var)
@@ -233,12 +247,32 @@ fn yaml_string_list(map: &Mapping, key: &str) -> Vec<String> {
     }
 }
 
+/// The body of one `## <heading>` section, with the CLI's own structural
+/// marker comments removed.
+///
+/// Two rules here are load-bearing rather than cosmetic, because **every
+/// replace-write path in this app writes back what this function returned**
+/// (`edit_backlog_task`'s `-d`/`--plan`: the detail rail's Save, and
+/// `crate::refine`). Anything this reader drops, the next save deletes from
+/// disk. TASK-44's audit found both of the original rules lossy:
+///
+/// 1. **Code fences suspend section detection.** A `## ` line inside a
+///    ``` / ~~~ block is content — a markdown sample, a doc excerpt, a diff
+///    — not the start of the next section. Ending the section there dropped
+///    the rest of the fence *and every line after it*. Only a *closed* fence
+///    counts (see [`fenced_lines`]): an unterminated opener is treated as
+///    literal text, so a malformed task degrades to the old behavior instead
+///    of hiding all its later sections.
+/// 2. **Only the CLI's own `NAME:BEGIN`/`NAME:END` comments are dropped**
+///    (see [`is_section_marker_comment`]), not every HTML comment. An
+///    author's `<!-- note to self -->` is content and survives.
 fn extract_section(body: &str, heading: &str) -> String {
+    let fenced = fenced_lines(body);
     let mut in_section = false;
     let mut lines = Vec::new();
-    for line in body.lines() {
+    for (i, line) in body.lines().enumerate() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("## ") {
+        if !fenced[i] && trimmed.starts_with("## ") {
             if in_section {
                 break;
             }
@@ -248,11 +282,142 @@ fn extract_section(body: &str, heading: &str) -> String {
             }
             continue;
         }
-        if in_section && !trimmed.starts_with("<!--") {
-            lines.push(line);
+        if !in_section {
+            continue;
         }
+        if !fenced[i] && is_section_marker_comment(line.trim()) {
+            continue;
+        }
+        lines.push(line);
     }
     lines.join("\n").trim().to_string()
+}
+
+/// Per-line flags: is this line inside (or is it a delimiter of) a code
+/// fence that is properly closed?
+///
+/// Deliberately requires a matching closer. An unbalanced opener would
+/// otherwise make every following section invisible — a task's acceptance
+/// criteria silently vanishing from every view is a far worse failure than
+/// the one this fence-awareness exists to prevent, so an unmatched fence is
+/// simply not a fence.
+fn fenced_lines(body: &str) -> Vec<bool> {
+    let lines: Vec<&str> = body.lines().collect();
+    let mut flags = vec![false; lines.len()];
+    let mut open: Option<(usize, char)> = None;
+    for (i, line) in lines.iter().enumerate() {
+        let Some(marker) = fence_marker(line) else {
+            continue;
+        };
+        match open {
+            None => open = Some((i, marker)),
+            // CommonMark: a fence closes only on its own character.
+            Some((start, kind)) if kind == marker => {
+                for flag in flags.iter_mut().take(i + 1).skip(start) {
+                    *flag = true;
+                }
+                open = None;
+            }
+            Some(_) => {}
+        }
+    }
+    flags
+}
+
+fn fence_marker(line: &str) -> Option<char> {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("```") {
+        Some('`')
+    } else if trimmed.starts_with("~~~") {
+        Some('~')
+    } else {
+        None
+    }
+}
+
+/// One of the `backlog` CLI's own structural markers — `<!-- AC:BEGIN -->`,
+/// `<!-- DOD:END -->`, `<!-- SECTION:DESCRIPTION:BEGIN -->` and friends (the
+/// full set observed across the tracked repos' task files). Matching the
+/// shape rather than an enumerated list keeps a future
+/// `SECTION:WHATEVER:BEGIN` working; matching *only* this shape keeps an
+/// author's ordinary HTML comment out of the discard pile.
+fn is_section_marker_comment(trimmed: &str) -> bool {
+    let Some(inner) = trimmed
+        .strip_prefix("<!--")
+        .and_then(|rest| rest.strip_suffix("-->"))
+    else {
+        return false;
+    };
+    let inner = inner.trim();
+    let Some((name, terminator)) = inner.rsplit_once(':') else {
+        return false;
+    };
+    if !matches!(terminator, "BEGIN" | "END") {
+        return false;
+    }
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == ':' || c == '_')
+}
+
+/// Does the parser reproduce every line of `body`, in order, across the
+/// sections it extracts?
+///
+/// The write-path safety net for TASK-44's audit finding F1. `extract_section`
+/// is now fence- and comment-aware, but a *replace*-write (`-d`, `--plan`)
+/// stakes real user data on the reader being lossless, and the next lossy
+/// case is by definition one nobody has thought of yet. So callers that are
+/// about to overwrite a whole section ask this first and skip the write when
+/// it is `false` — degrading to a visible no-op instead of a silent deletion.
+///
+/// The check is conservation, not equality: every non-blank body line must
+/// appear exactly once and in order across the extracted sections, ignoring
+/// the section headings and the CLI's own markers (which the writer
+/// regenerates). Lines are compared trimmed — interior indentation is
+/// provably preserved by `extract_section`, which pushes each line verbatim,
+/// so a per-line trim only absorbs the leading/trailing whitespace its final
+/// `.trim()` touches, and cannot mask a dropped or reordered line.
+///
+/// Conservative by construction: a body with content outside any section, a
+/// duplicated `## ` heading, or any future reader bug all come back `false`.
+pub fn body_round_trips(body: &str) -> bool {
+    let fenced = fenced_lines(body);
+    let mut expected: Vec<&str> = Vec::new();
+    let mut headings: Vec<String> = Vec::new();
+    for (i, line) in body.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !fenced[i] {
+            let from_start = line.trim_start();
+            if from_start.starts_with("## ") {
+                headings.push(from_start.trim_start_matches('#').trim().to_string());
+                continue;
+            }
+            if is_section_marker_comment(trimmed) {
+                continue;
+            }
+        }
+        expected.push(trimmed);
+    }
+
+    let mut actual: Vec<String> = Vec::new();
+    for heading in &headings {
+        for line in extract_section(body, heading).lines() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                actual.push(trimmed.to_string());
+            }
+        }
+    }
+
+    expected.len() == actual.len()
+        && expected
+            .iter()
+            .zip(actual.iter())
+            .all(|(want, got)| *want == got.as_str())
 }
 
 fn parse_checklist_section(section: &str) -> Vec<BacklogChecklistItem> {
@@ -437,6 +602,170 @@ mod tests {
     fn parse_created_task_id_returns_none_on_unrecognized_output() {
         assert_eq!(parse_created_task_id("some unexpected future format"), None);
         assert_eq!(parse_created_task_id(""), None);
+    }
+
+    /// TASK-44 audit finding F1 (HIGH). `extract_section` used to end a
+    /// section at *any* line starting with `## ` and to drop *any* line
+    /// starting with `<!--`. Both are lossy in the read direction, and every
+    /// replace-write path in this app (`edit_backlog_task`'s `-d`/`--plan`,
+    /// i.e. the detail rail's Save and `crate::refine`) writes back what the
+    /// parser returned — so a fenced code block containing a `## ` heading,
+    /// a non-marker HTML comment, or anything after such a fence was
+    /// permanently deleted on the next save. These four tests pin the exact
+    /// shapes the auditor reproduced end to end.
+    #[test]
+    fn a_markdown_heading_inside_a_code_fence_does_not_end_the_section() {
+        let body = "## Description\n\n\
+                    <!-- SECTION:DESCRIPTION:BEGIN -->\n\
+                    Intro paragraph.\n\n\
+                    ```markdown\n\
+                    ## Not a real section\n\
+                    fenced body\n\
+                    ```\n\n\
+                    Trailing paragraph after the fence.\n\
+                    <!-- SECTION:DESCRIPTION:END -->\n\n\
+                    ## Acceptance Criteria\n\
+                    <!-- AC:BEGIN -->\n\
+                    - [ ] #1 Real criterion\n\
+                    <!-- AC:END -->\n";
+
+        let description = extract_section(body, "Description");
+
+        assert!(
+            description.contains("## Not a real section"),
+            "a heading inside a fence is content, not a section break: {description:?}"
+        );
+        assert!(
+            description.contains("Trailing paragraph after the fence."),
+            "content after the fence must survive: {description:?}"
+        );
+        assert_eq!(
+            parse_checklist_section(&extract_section(body, "Acceptance Criteria")).len(),
+            1,
+            "the real section break after the fence must still be honored"
+        );
+    }
+
+    #[test]
+    fn a_non_marker_html_comment_is_preserved_as_content() {
+        let body = "## Description\n\n\
+                    <!-- SECTION:DESCRIPTION:BEGIN -->\n\
+                    Before.\n\
+                    <!-- a note the author wrote on purpose -->\n\
+                    After.\n\
+                    <!-- SECTION:DESCRIPTION:END -->\n";
+
+        let description = extract_section(body, "Description");
+
+        assert!(
+            description.contains("<!-- a note the author wrote on purpose -->"),
+            "only the CLI's own SECTION/AC/DOD markers may be dropped: {description:?}"
+        );
+    }
+
+    #[test]
+    fn the_clis_own_section_markers_are_still_dropped() {
+        let body = "## Description\n\n\
+                    <!-- SECTION:DESCRIPTION:BEGIN -->\n\
+                    Body.\n\
+                    <!-- SECTION:DESCRIPTION:END -->\n";
+
+        assert_eq!(extract_section(body, "Description"), "Body.");
+    }
+
+    /// Degrade-to-old-behavior guard: an unterminated fence must not swallow
+    /// every later section (which would make a task's acceptance criteria
+    /// silently vanish from every view). An opener with no closer is treated
+    /// as literal text, exactly as before this fix.
+    #[test]
+    fn an_unterminated_code_fence_does_not_swallow_the_following_sections() {
+        let body = "## Description\n\n\
+                    ```rust\n\
+                    fn never_closed() {}\n\n\
+                    ## Acceptance Criteria\n\
+                    - [ ] #1 Still visible\n";
+
+        assert_eq!(
+            parse_checklist_section(&extract_section(body, "Acceptance Criteria")).len(),
+            1,
+            "an unbalanced fence must not hide later sections"
+        );
+    }
+
+    /// The write-path safety net (audit finding F1, layer 2). Any future
+    /// lossy read this fix did not anticipate must degrade to a no-op write,
+    /// never to a silent deletion — so `crate::refine` asks this before it
+    /// emits a `-d`/`--plan` replace-write.
+    #[test]
+    fn body_round_trips_accepts_a_body_the_parser_reproduces_completely() {
+        let body = "## Description\n\n\
+                    <!-- SECTION:DESCRIPTION:BEGIN -->\n\
+                    Intro.\n\n\
+                    ```markdown\n\
+                    ## Fenced heading\n\
+                    ```\n\
+                    Outro.\n\
+                    <!-- SECTION:DESCRIPTION:END -->\n\n\
+                    ## Acceptance Criteria\n\
+                    <!-- AC:BEGIN -->\n\
+                    - [ ] #1 Criterion\n\
+                    <!-- AC:END -->\n";
+
+        assert!(body_round_trips(body));
+    }
+
+    #[test]
+    fn body_round_trips_rejects_a_body_whose_content_the_parser_drops() {
+        // Content before the first `## ` heading belongs to no section, so
+        // the parser cannot reproduce it — exactly the class of silent loss
+        // the guard exists to catch.
+        let body = "A stray preamble the parser has nowhere to put.\n\n\
+                    ## Description\n\n\
+                    Body.\n";
+
+        assert!(!body_round_trips(body));
+    }
+
+    /// The file-level entry point `crate::refine` actually calls. Fails
+    /// closed on a missing file, because "I could not check" must never be
+    /// read as "safe to overwrite".
+    #[test]
+    fn task_file_round_trips_distinguishes_a_normal_task_from_a_lossy_one() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let good = dir.path().join("good.md");
+        fs::write(
+            &good,
+            "---\nid: TASK-1\ntitle: Fine\n---\n\n\
+             ## Description\n\n\
+             <!-- SECTION:DESCRIPTION:BEGIN -->\n\
+             Intro.\n\n\
+             ```markdown\n\
+             ## Fenced heading\n\
+             ```\n\
+             Outro.\n\
+             <!-- SECTION:DESCRIPTION:END -->\n",
+        )
+        .unwrap();
+        assert!(task_file_round_trips(&good));
+
+        // Body text sitting before the first `## ` heading belongs to no
+        // section, so no replace-write could ever put it back.
+        let lossy = dir.path().join("lossy.md");
+        fs::write(
+            &lossy,
+            "---\nid: TASK-2\ntitle: Lossy\n---\n\n\
+             An orphan preamble.\n\n\
+             ## Description\n\n\
+             Body.\n",
+        )
+        .unwrap();
+        assert!(!task_file_round_trips(&lossy));
+
+        assert!(
+            !task_file_round_trips(&dir.path().join("does-not-exist.md")),
+            "an unreadable file must fail closed"
+        );
     }
 
     #[test]

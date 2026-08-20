@@ -52,17 +52,45 @@
 //!   `edit_backlog_task` call, so there is no partially-applied state to
 //!   unwind.
 //!
+//! "Verbatim" has exactly one qualification, and it is not this module's
+//! doing: the `backlog` CLI collapses any run of blank lines down to one on
+//! *every* write, including a plain detail-rail Save. So [`collapse_blank_runs`]
+//! puts both sides into that normal form before comparing or writing, which
+//! makes the write a fixed point — the original's lines survive in order,
+//! byte for byte, with only blank runs collapsed, and re-refining the same
+//! text is a no-op instead of appending a near-duplicate block.
+//!
+//! ## The write-path guard (audit finding F1)
+//!
+//! Everything above is a claim about *this module's* merge. It is worthless
+//! if the string called "the original" is already a truncated view of the
+//! file — and a replace-write (`-d`, `--plan`) then persists that truncation
+//! as a deletion. `backlog::parse::extract_section` is now fence- and
+//! comment-aware precisely because it used to be lossy that way (it ended a
+//! section at a `## ` inside a code fence and dropped every `<!-- … -->`
+//! line), but the next lossy case is by definition one nobody has thought of
+//! yet.
+//!
+//! So before emitting any replace-write, [`apply_refine`] asks
+//! [`backlog::task_file_round_trips`] whether the parser reproduces the task
+//! file's own content completely. If it does not, the two prose fields are
+//! **skipped entirely** and reported ([`RefineResult::ProseWriteUnsafe`]);
+//! only the acceptance-criteria append still runs, because `--ac` adds to a
+//! list and never replaces a section. An unknown reader bug therefore
+//! degrades to a visible no-op, never to a silent deletion.
+//!
 //! ## Why the appended block is not a `##` heading
 //!
-//! `backlog::parse::extract_section` ends a section at the next `## ` line.
-//! A `## Refined` heading inside the description would therefore make the
-//! appended text vanish from `BacklogTask::description` on the next load —
-//! and a second refine would then append to a *truncated* original, quietly
-//! breaking the verbatim-prefix guarantee. So the separator is a bold line,
-//! not a heading, and [`demote_section_headings`] pushes any `## ` the model
-//! itself wrote down to `### ` for the same reason.
+//! `backlog::parse::extract_section` ends a section at the next `## ` line
+//! *outside a code fence*. A `## Refined` heading inside the description
+//! would therefore make the appended text vanish from
+//! `BacklogTask::description` on the next load — and a second refine would
+//! then append to a *truncated* original, quietly breaking the
+//! verbatim-prefix guarantee. So the separator is a bold line, not a heading,
+//! and [`demote_section_headings`] pushes any unfenced `## ` the model itself
+//! wrote down to `### ` for the same reason.
 
-use crate::backlog::{edit_backlog_task, BacklogTask, BacklogTaskPatch};
+use crate::backlog::{edit_backlog_task, task_file_round_trips, BacklogTask, BacklogTaskPatch};
 use crate::dispatch::{dispatch_log_dir, shell_quote, unix_now};
 use crate::kill::kill_pgid;
 use crate::spawn::{spawn_in_session, wait_for_exit, WaitOutcome};
@@ -80,6 +108,29 @@ pub const REFINED_MARKER: &str = "**Refined by Switchbard**";
 /// enough that a wedged run frees the task's button within a coffee break.
 pub const DEFAULT_REFINE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
+/// Default cap on agentic turns for one refine run.
+///
+/// The wall-clock timeout bounds a *stuck* run; this bounds a *busy* one. A
+/// grooming pass over one card is a read-a-few-files-and-answer job — a run
+/// still looping after this many turns has lost the plot, and letting it
+/// keep going only burns tokens before the timeout catches it anyway. 30 is
+/// deliberately generous against the ~5–15 turns a real pass takes (measured
+/// on this repo) so a large codebase isn't cut off mid-exploration.
+pub const DEFAULT_REFINE_MAX_TURNS: u32 = 30;
+
+/// Tools the refine run is denied outright, on top of `--permission-mode
+/// plan`. Belt and braces on purpose: plan mode already blocks edits, but it
+/// is a *mode* — one flag away from being changed by a future caller — while
+/// this is an explicit, greppable statement of what a grooming pass may never
+/// do. `Bash` is on the list because "read-only" is not a property `Bash` can
+/// be trusted to have, and `WebFetch`/`WebSearch` because grounding the card
+/// in *this repo* is the entire point.
+const DISALLOWED_TOOLS: &str = "Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch";
+
+/// Tools pre-approved so the exploration this prompt asks for never stalls
+/// on a permission prompt nobody is at the keyboard to answer.
+const ALLOWED_TOOLS: &str = "Read,Grep,Glob";
+
 const KILL_GRACE: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
@@ -88,6 +139,8 @@ pub struct RefineOptions {
     pub claude_binary: String,
     /// How long to let one refine run go before killing it as stuck.
     pub timeout: Duration,
+    /// See [`DEFAULT_REFINE_MAX_TURNS`].
+    pub max_turns: u32,
 }
 
 impl Default for RefineOptions {
@@ -95,6 +148,7 @@ impl Default for RefineOptions {
         Self {
             claude_binary: "claude".to_string(),
             timeout: DEFAULT_REFINE_TIMEOUT,
+            max_turns: DEFAULT_REFINE_MAX_TURNS,
         }
     }
 }
@@ -118,6 +172,10 @@ pub struct RefinePlan {
     pub description_extended: bool,
     pub criteria_added: usize,
     pub plan_extended: bool,
+    /// The description/plan replace-writes were withheld because the task
+    /// file does not round-trip through the parser — see the module doc's
+    /// write-path guard. The criteria append is unaffected.
+    pub prose_skipped: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,7 +184,14 @@ pub enum RefineResult {
         description_extended: bool,
         criteria_added: usize,
         plan_extended: bool,
+        /// See [`RefinePlan::prose_skipped`] — the write landed, but the two
+        /// prose fields were withheld to avoid a lossy overwrite.
+        prose_skipped: bool,
     },
+    /// The task's own markdown does not round-trip through the parser, so
+    /// every replace-write was withheld and there was no criterion left to
+    /// append. Nothing was written. See the module doc's write-path guard.
+    ProseWriteUnsafe,
     /// The run's output did not satisfy the JSON contract. Nothing was
     /// written — parsing completes before any CLI call.
     Unparseable { message: String },
@@ -289,16 +354,31 @@ fn strip_code_fence(text: &str) -> &str {
 /// always-on internal-invariant assertion because that guarantee is the
 /// entire reason a user can safely press this button on a card they wrote by
 /// hand.
-pub fn build_refine_patch(task: &BacklogTask, suggestion: &RefineSuggestion) -> Result<RefinePlan> {
-    let description = merge_prose(&task.description, &suggestion.description)?;
-    let implementation_plan =
-        merge_prose(&task.implementation_plan, &suggestion.implementation_plan)?;
+pub fn build_refine_patch(
+    task: &BacklogTask,
+    suggestion: &RefineSuggestion,
+    replace_writes_safe: bool,
+) -> Result<RefinePlan> {
+    let (description, implementation_plan) = if replace_writes_safe {
+        (
+            merge_prose(&task.description, &suggestion.description)?,
+            merge_prose(&task.implementation_plan, &suggestion.implementation_plan)?,
+        )
+    } else {
+        // The guard fired: the parsed description/plan are not a faithful
+        // view of the file, so overwriting either would delete whatever the
+        // reader could not see. Withhold both; the criteria append below is
+        // still safe because `--ac` adds to a list rather than replacing a
+        // section.
+        (None, None)
+    };
     let criteria = new_criteria(task, &suggestion.acceptance_criteria);
 
     let plan = RefinePlan {
         description_extended: description.is_some(),
         criteria_added: criteria.len(),
         plan_extended: implementation_plan.is_some(),
+        prose_skipped: !replace_writes_safe,
         patch: BacklogTaskPatch {
             description,
             implementation_plan,
@@ -311,6 +391,10 @@ pub fn build_refine_patch(task: &BacklogTask, suggestion: &RefineSuggestion) -> 
         !plan.description_extended && !plan.plan_extended && plan.criteria_added == 0,
         "a plan that reports a change must produce a non-empty patch"
     );
+    debug_assert!(
+        replace_writes_safe || plan.patch.description.is_none(),
+        "a withheld prose write must never reach the patch"
+    );
     Ok(plan)
 }
 
@@ -318,11 +402,16 @@ pub fn build_refine_patch(task: &BacklogTask, suggestion: &RefineSuggestion) -> 
 /// present); otherwise the merged text, which always starts with `original`
 /// verbatim when `original` is non-empty.
 fn merge_prose(original: &str, addition: &str) -> Result<Option<String>> {
-    let addition = demote_section_headings(addition.trim());
+    let addition = collapse_blank_runs(&demote_section_headings(addition.trim()));
     if addition.is_empty() {
         return Ok(None);
     }
-    let original = original.trim();
+    // Normalized on both sides so the containment check below actually
+    // matches what a previous refine wrote: the CLI collapses blank runs on
+    // every write, so an un-normalized `addition` would never be found inside
+    // the normalized text already on disk, and re-refining would append a
+    // near-duplicate block (audit finding F2).
+    let original = collapse_blank_runs(original.trim());
     if original.is_empty() {
         return Ok(Some(addition));
     }
@@ -330,10 +419,32 @@ fn merge_prose(original: &str, addition: &str) -> Result<Option<String>> {
         return Ok(None);
     }
     let merged = format!("{original}\n\n{REFINED_MARKER}\n\n{addition}");
-    if !merged.starts_with(original) {
+    if !merged.starts_with(&original) {
         bail!("refine merge would not preserve the original text verbatim");
     }
     Ok(Some(merged))
+}
+
+/// Put text into the `backlog` CLI's own normal form: at most one blank line
+/// in a row, and no whitespace-only lines. The CLI applies this to every
+/// write regardless, so normalizing first is what makes a refine write a
+/// fixed point — write it twice, get the same file, and the idempotence check
+/// in `merge_prose` can actually find what a previous run left behind.
+fn collapse_blank_runs(text: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut blank_run = 0usize;
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            blank_run += 1;
+            if blank_run == 1 {
+                out.push("");
+            }
+        } else {
+            blank_run = 0;
+            out.push(line);
+        }
+    }
+    out.join("\n")
 }
 
 /// Push any `## ` heading the model wrote down one level. See the module
@@ -451,11 +562,7 @@ fn run_claude_read_only(
     log_path: &Path,
     opts: &RefineOptions,
 ) -> Result<Option<i32>> {
-    let command = format!(
-        "cat {} | {} -p --permission-mode plan --allowedTools Read,Grep,Glob --output-format text",
-        shell_quote(prompt_path),
-        opts.claude_binary,
-    );
+    let command = headless_command(prompt_path, opts);
     let run = spawn_in_session(&command, repo_root, log_path).context("failed to spawn claude")?;
     match wait_for_exit(run.pid, opts.timeout).context("failed waiting on claude")? {
         WaitOutcome::Exited(code) => Ok(Some(code)),
@@ -465,6 +572,21 @@ fn run_claude_read_only(
             Ok(None)
         }
     }
+}
+
+/// The exact `/bin/sh -c` string the refine run executes. Split out from
+/// [`run_claude_read_only`] so the read-only posture is pinned by a unit test
+/// rather than by a comment — see the module doc for why each flag is there.
+fn headless_command(prompt_path: &Path, opts: &RefineOptions) -> String {
+    format!(
+        "cat {} | {} -p --permission-mode plan --allowedTools {} \
+         --disallowedTools {} --max-turns {} --output-format text",
+        shell_quote(prompt_path),
+        opts.claude_binary,
+        ALLOWED_TOOLS,
+        DISALLOWED_TOOLS,
+        opts.max_turns,
+    )
 }
 
 /// Parse → merge → one `edit_backlog_task`. Every rejection path returns
@@ -479,7 +601,12 @@ fn apply_refine(repo_root: &Path, task: &BacklogTask, raw: &str) -> RefineResult
             }
         }
     };
-    let plan = match build_refine_patch(task, &suggestion) {
+    // The write-path guard (see the module doc). Asked here, immediately
+    // before the only write, rather than at the top of `refine_task` — the
+    // headless run takes minutes, and the file could have been edited by a
+    // human or another process in the meantime.
+    let replace_writes_safe = task_file_round_trips(&task.path);
+    let plan = match build_refine_patch(task, &suggestion, replace_writes_safe) {
         Ok(plan) => plan,
         Err(e) => {
             return RefineResult::Unparseable {
@@ -488,13 +615,18 @@ fn apply_refine(repo_root: &Path, task: &BacklogTask, raw: &str) -> RefineResult
         }
     };
     if plan.patch.is_empty() {
-        return RefineResult::NothingToApply;
+        return if plan.prose_skipped {
+            RefineResult::ProseWriteUnsafe
+        } else {
+            RefineResult::NothingToApply
+        };
     }
     match edit_backlog_task(repo_root, &task.id, &plan.patch) {
         Ok(_) => RefineResult::Applied {
             description_extended: plan.description_extended,
             criteria_added: plan.criteria_added,
             plan_extended: plan.plan_extended,
+            prose_skipped: plan.prose_skipped,
         },
         Err(e) => RefineResult::EditFailed {
             message: e.to_string(),
@@ -511,6 +643,7 @@ pub fn describe_refine_result(task_id: &str, result: &RefineResult) -> String {
             description_extended,
             criteria_added,
             plan_extended,
+            prose_skipped,
         } => {
             let mut parts = Vec::new();
             if *description_extended {
@@ -522,7 +655,14 @@ pub fn describe_refine_result(task_id: &str, result: &RefineResult) -> String {
             if *plan_extended {
                 parts.push("implementation plan".to_string());
             }
-            format!("refined {task_id}: updated {}", parts.join(", "))
+            let mut message = format!("refined {task_id}: updated {}", parts.join(", "));
+            if *prose_skipped {
+                message.push_str(&format!("; {UNSAFE_PROSE_REASON}"));
+            }
+            message
+        }
+        RefineResult::ProseWriteUnsafe => {
+            format!("refine {task_id}: {UNSAFE_PROSE_REASON}")
         }
         RefineResult::NothingToApply => {
             format!("refine {task_id}: nothing new to add")
@@ -539,6 +679,32 @@ pub fn describe_refine_result(task_id: &str, result: &RefineResult) -> String {
         RefineResult::EditFailed { message } => {
             format!("refine {task_id}: backlog edit failed: {message}")
         }
+    }
+}
+
+/// Why a replace-write was withheld, in the user's words rather than the
+/// parser's. One constant so the "Applied but partial" and the
+/// "nothing applied" phrasings cannot drift apart.
+const UNSAFE_PROSE_REASON: &str = "description/plan skipped — this task's markdown \
+     contains content the parser cannot round-trip, and overwriting the section \
+     would delete it";
+
+/// [`describe_refine_result`] plus the run's log path on the failure
+/// variants (audit finding F6). A user told only "the model returned
+/// nonsense" has nowhere to go; the log is what the model actually said, and
+/// it is already on disk. Kept separate from the pure `describe_refine_result`
+/// so the wording stays unit-testable without a path.
+pub fn describe_refine_outcome(outcome: &RefineOutcome) -> String {
+    let message = describe_refine_result(&outcome.task_id, &outcome.result);
+    match &outcome.result {
+        RefineResult::Unparseable { .. }
+        | RefineResult::ClaudeFailed { .. }
+        | RefineResult::EditFailed { .. } => {
+            format!("{message} (log: {})", outcome.log_path.display())
+        }
+        RefineResult::Applied { .. }
+        | RefineResult::NothingToApply
+        | RefineResult::ProseWriteUnsafe => message,
     }
 }
 
@@ -578,6 +744,12 @@ mod tests {
             checked,
             text: text.to_string(),
         }
+    }
+
+    /// `build_refine_patch` with the write-path guard satisfied — the normal
+    /// case. The guard's own behavior is covered separately below.
+    fn patch_for(task: &BacklogTask, suggestion: &RefineSuggestion) -> RefinePlan {
+        build_refine_patch(task, suggestion, true).unwrap()
     }
 
     fn suggestion(description: &str, criteria: &[&str], plan: &str) -> RefineSuggestion {
@@ -709,7 +881,7 @@ mod tests {
     fn build_refine_patch_keeps_the_original_description_as_a_verbatim_prefix() {
         let t = task();
 
-        let plan = build_refine_patch(&t, &suggestion("Extra context.", &[], "")).unwrap();
+        let plan = patch_for(&t, &suggestion("Extra context.", &[], ""));
 
         let merged = plan.patch.description.clone().unwrap();
         assert!(
@@ -726,7 +898,7 @@ mod tests {
         let mut t = task();
         t.description = String::new();
 
-        let plan = build_refine_patch(&t, &suggestion("Fresh prose.", &[], "")).unwrap();
+        let plan = patch_for(&t, &suggestion("Fresh prose.", &[], ""));
 
         assert_eq!(plan.patch.description.as_deref(), Some("Fresh prose."));
     }
@@ -735,7 +907,7 @@ mod tests {
     fn build_refine_patch_demotes_model_headings_so_the_section_cannot_be_truncated() {
         let t = task();
 
-        let plan = build_refine_patch(&t, &suggestion("## Context\n\nDetails.", &[], "")).unwrap();
+        let plan = patch_for(&t, &suggestion("## Context\n\nDetails.", &[], ""));
 
         let merged = plan.patch.description.unwrap();
         assert!(merged.contains("### Context"), "got {merged:?}");
@@ -750,11 +922,10 @@ mod tests {
             criterion(2, false, "Existing and open"),
         ];
 
-        let plan = build_refine_patch(
+        let plan = patch_for(
             &t,
             &suggestion("", &["Brand new criterion", "Another new one"], ""),
-        )
-        .unwrap();
+        );
 
         assert_eq!(
             plan.patch.append_acceptance_criteria,
@@ -775,7 +946,7 @@ mod tests {
         let mut t = task();
         t.acceptance_criteria = vec![criterion(1, false, "Refine button applies additively")];
 
-        let plan = build_refine_patch(
+        let plan = patch_for(
             &t,
             &suggestion(
                 "",
@@ -786,8 +957,7 @@ mod tests {
                 ],
                 "",
             ),
-        )
-        .unwrap();
+        );
 
         assert_eq!(
             plan.patch.append_acceptance_criteria,
@@ -800,15 +970,14 @@ mod tests {
     fn build_refine_patch_dedupes_within_the_models_own_list() {
         let t = task();
 
-        let plan =
-            build_refine_patch(&t, &suggestion("", &["Same thing", "same thing."], "")).unwrap();
+        let plan = patch_for(&t, &suggestion("", &["Same thing", "same thing."], ""));
 
         assert_eq!(plan.patch.append_acceptance_criteria.len(), 1);
     }
 
     #[test]
     fn build_refine_patch_fills_an_empty_plan_and_appends_to_a_non_empty_one() {
-        let empty_plan = build_refine_patch(&task(), &suggestion("", &[], "1. Do it.")).unwrap();
+        let empty_plan = patch_for(&task(), &suggestion("", &[], "1. Do it."));
         assert_eq!(
             empty_plan.patch.implementation_plan.as_deref(),
             Some("1. Do it."),
@@ -817,7 +986,7 @@ mod tests {
 
         let mut t = task();
         t.implementation_plan = "1. Original step.".to_string();
-        let appended = build_refine_patch(&t, &suggestion("", &[], "2. New step.")).unwrap();
+        let appended = patch_for(&t, &suggestion("", &[], "2. New step."));
         let merged = appended.patch.implementation_plan.unwrap();
         assert!(merged.starts_with("1. Original step."));
         assert!(merged.contains("2. New step."));
@@ -829,7 +998,7 @@ mod tests {
         let mut t = task();
         t.description = format!("Original.\n\n{REFINED_MARKER}\n\nExtra context.");
 
-        let plan = build_refine_patch(&t, &suggestion("Extra context.", &[], "")).unwrap();
+        let plan = patch_for(&t, &suggestion("Extra context.", &[], ""));
 
         assert!(
             plan.patch.description.is_none(),
@@ -842,11 +1011,10 @@ mod tests {
         let mut t = task();
         t.acceptance_criteria = vec![criterion(1, false, "Already here")];
 
-        let plan = build_refine_patch(
+        let plan = patch_for(
             &t,
             &suggestion("The card is half-baked.", &["Already here"], ""),
-        )
-        .unwrap();
+        );
 
         assert!(plan.patch.is_empty());
         assert_eq!(plan.criteria_added, 0);
@@ -856,7 +1024,7 @@ mod tests {
 
     #[test]
     fn a_patch_carrying_only_appended_criteria_is_not_considered_empty() {
-        let plan = build_refine_patch(&task(), &suggestion("", &["Only this"], "")).unwrap();
+        let plan = patch_for(&task(), &suggestion("", &["Only this"], ""));
 
         assert!(
             !plan.patch.is_empty(),
@@ -875,6 +1043,7 @@ mod tests {
                 description_extended: true,
                 criteria_added: 3,
                 plan_extended: false,
+                prose_skipped: false,
             },
         );
         assert!(applied.contains("description"));
@@ -882,6 +1051,7 @@ mod tests {
 
         for result in [
             RefineResult::NothingToApply,
+            RefineResult::ProseWriteUnsafe,
             RefineResult::Unparseable {
                 message: "boom".to_string(),
             },
@@ -903,5 +1073,179 @@ mod tests {
     #[test]
     fn refine_log_stem_is_prefixed_and_lowercased_so_runs_are_greppable_by_kind() {
         assert_eq!(refine_log_stem("TASK-44", 1234), "refine-task-44-1234");
+    }
+
+    // ---- write-path guard (audit finding F1, layer 2) ----
+
+    /// The whole point of the guard: when the file does not round-trip, a
+    /// replace-write would delete whatever the reader could not see, so both
+    /// prose fields are withheld — even though the model had plenty to say.
+    #[test]
+    fn an_unsafe_file_withholds_both_prose_writes() {
+        let t = task();
+
+        let plan = build_refine_patch(
+            &t,
+            &suggestion("Lots of new context.", &[], "1. A whole new plan."),
+            false,
+        )
+        .unwrap();
+
+        assert!(plan.patch.description.is_none());
+        assert!(plan.patch.implementation_plan.is_none());
+        assert!(plan.prose_skipped);
+        assert!(!plan.description_extended);
+        assert!(!plan.plan_extended);
+    }
+
+    /// …but the criteria append still runs, because `--ac` adds to a list
+    /// rather than replacing a section. Withholding it too would punish the
+    /// user for a parser bug that cannot affect it.
+    #[test]
+    fn an_unsafe_file_still_allows_the_criteria_append() {
+        let plan = build_refine_patch(
+            &task(),
+            &suggestion("New context.", &["A new criterion"], ""),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.patch.append_acceptance_criteria,
+            vec!["A new criterion".to_string()]
+        );
+        assert!(!plan.patch.is_empty());
+        assert!(plan.prose_skipped);
+    }
+
+    #[test]
+    fn an_unsafe_file_with_nothing_appendable_reports_why_rather_than_nothing_to_add() {
+        let plan =
+            build_refine_patch(&task(), &suggestion("New context.", &[], ""), false).unwrap();
+
+        assert!(plan.patch.is_empty());
+        assert!(plan.prose_skipped);
+        // The distinction the status line must preserve: "there was nothing
+        // to add" and "we refused to write" are different facts.
+        let message = describe_refine_result("TASK-44", &RefineResult::ProseWriteUnsafe);
+        assert!(message.contains("cannot round-trip"), "{message}");
+        assert_ne!(
+            message,
+            describe_refine_result("TASK-44", &RefineResult::NothingToApply)
+        );
+    }
+
+    #[test]
+    fn a_partially_applied_write_says_so_in_the_status_line() {
+        let message = describe_refine_result(
+            "TASK-44",
+            &RefineResult::Applied {
+                description_extended: false,
+                criteria_added: 2,
+                plan_extended: false,
+                prose_skipped: true,
+            },
+        );
+
+        assert!(message.contains("2 acceptance criteria"));
+        assert!(message.contains("skipped"), "{message}");
+    }
+
+    // ---- blank-run normalization (audit finding F2) ----
+
+    /// The `backlog` CLI collapses blank runs on write, so an addition
+    /// carrying a triple newline comes back off disk with a double. Writing
+    /// the normalized form is what keeps the second refine a no-op instead of
+    /// appending a near-duplicate block.
+    #[test]
+    fn the_written_addition_is_already_in_the_clis_normal_form() {
+        let plan = patch_for(
+            &task(),
+            &suggestion("First para.\n\n\n\nSecond para.", &[], ""),
+        );
+
+        let merged = plan.patch.description.unwrap();
+        assert!(
+            !merged.contains("\n\n\n"),
+            "no run of more than one blank line should ever be written: {merged:?}"
+        );
+        assert!(merged.contains("First para.\n\nSecond para."));
+    }
+
+    #[test]
+    fn re_refining_text_the_cli_already_normalized_appends_nothing() {
+        let mut t = task();
+        // What the CLI leaves on disk after the first refine wrote a
+        // triple-newline addition.
+        t.description = format!("Original.\n\n{REFINED_MARKER}\n\nFirst para.\n\nSecond para.");
+
+        // The model, asked again, returns the same prose in its original
+        // un-normalized shape.
+        let plan = patch_for(&t, &suggestion("First para.\n\n\n\nSecond para.", &[], ""));
+
+        assert!(
+            plan.patch.description.is_none(),
+            "the idempotence guard must survive the CLI's blank-run collapsing"
+        );
+    }
+
+    #[test]
+    fn collapse_blank_runs_also_flattens_whitespace_only_lines() {
+        assert_eq!(collapse_blank_runs("a\n\n   \n\t\nb"), "a\n\nb");
+        assert_eq!(collapse_blank_runs("a\nb"), "a\nb");
+    }
+
+    // ---- headless invocation hardening (audit finding F4) ----
+
+    /// Pins the read-only posture as a *command string*, not just prose in
+    /// the module doc: plan mode, an explicit deny list, a turn bound, and no
+    /// permission bypass. A future edit that loosens any of these has to
+    /// change this assertion on purpose.
+    #[test]
+    fn the_headless_command_is_locked_down_on_every_axis() {
+        let opts = RefineOptions::default();
+        let command = headless_command(Path::new("/tmp/p.md"), &opts);
+
+        assert!(command.contains("--permission-mode plan"));
+        assert!(command.contains("--allowedTools Read,Grep,Glob"));
+        assert!(
+            command.contains("--disallowedTools Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch")
+        );
+        assert!(command.contains("--max-turns 30"));
+        assert!(!command.contains("dangerously"));
+        assert!(!command.contains("acceptEdits"));
+    }
+
+    // ---- log-path affordance (audit finding F6) ----
+
+    #[test]
+    fn a_failed_outcome_points_at_the_log_so_the_user_can_read_what_the_model_said() {
+        let outcome = RefineOutcome {
+            task_id: "TASK-44".to_string(),
+            log_path: PathBuf::from("/tmp/switchbard-logs/refine-task-44-1.log"),
+            result: RefineResult::Unparseable {
+                message: "no JSON object found".to_string(),
+            },
+        };
+
+        let message = describe_refine_outcome(&outcome);
+
+        assert!(message.contains("refine-task-44-1.log"), "{message}");
+    }
+
+    #[test]
+    fn a_successful_outcome_does_not_clutter_the_status_line_with_a_log_path() {
+        let outcome = RefineOutcome {
+            task_id: "TASK-44".to_string(),
+            log_path: PathBuf::from("/tmp/switchbard-logs/refine-task-44-1.log"),
+            result: RefineResult::Applied {
+                description_extended: true,
+                criteria_added: 0,
+                plan_extended: false,
+                prose_skipped: false,
+            },
+        };
+
+        assert!(!describe_refine_outcome(&outcome).contains(".log"));
     }
 }

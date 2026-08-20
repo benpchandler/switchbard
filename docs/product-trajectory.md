@@ -74,11 +74,12 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   A "Refine" button in the task detail rail, next to Dispatch. It feeds the task's
   current title/description/criteria/plan to a headless `claude -p` run at the repo
   root (no worktree — it writes no code) under a read-only permission posture
-  (`--permission-mode plan` + a Read/Grep/Glob allowlist), takes back one strict JSON
-  object, and applies it **additively** through the same `backlog` CLI path every
-  other mutation uses: the original description survives verbatim as a prefix,
-  existing acceptance criteria keep their text *and* checked state (new ones are
-  appended via `--ac`), an empty plan is filled and a non-empty one extended.
+  (`--permission-mode plan`, a Read/Grep/Glob allowlist, an explicit
+  Bash/Write/Edit/WebFetch/WebSearch deny list, and a turn cap), takes back one
+  strict JSON object, and applies it **additively** through the same `backlog` CLI
+  path every other mutation uses: the original description survives verbatim as a
+  prefix, existing acceptance criteria keep their text *and* checked state (new ones
+  are appended via `--ac`), an empty plan is filled and a non-empty one extended.
   Malformed or partial output applies nothing — parsing and merging both complete
   before the single `backlog task edit`. `switchbard_core::refine` owns the contract;
   see its module doc.
@@ -89,10 +90,34 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
     labels guard a long PR-opening pipeline from running twice. A refine run is one
     bounded call with an additive-only effect, so the "don't stack runs" guard is an
     in-memory set on `HiveApp` (`refining_tasks`), not state written into the repo.
+  - *"Verbatim" is a file-level claim, and it took a parser fix to make it true.*
+    `backlog::parse::extract_section` was lossy in the read direction — it ended a
+    section at any `## ` line, including one inside a code fence, and dropped every
+    `<!-- … -->` line — while every replace-write in the app (`-d`/`--plan`: the
+    detail rail's Save as well as Refine) writes back what that reader returned. So a
+    fenced heading, a hand-written HTML comment, or anything after such a fence was
+    deleted on the next save. The reader is now fence- and comment-aware, and any
+    replace-write is additionally gated on `task_file_round_trips`: if the parser
+    cannot reproduce the file's own content, the description and plan are skipped
+    (the criteria append still runs — `--ac` adds to a list rather than replacing a
+    section) and the status line says why. Unknown future lossy cases degrade to a
+    visible no-op, never a silent deletion. The one remaining qualification is the
+    CLI's own collapsing of blank runs, which it applies to every write regardless.
+  - *Accepted risk, named not mitigated — write amplification into dispatch.* Refine
+    output persists into a task's description and acceptance criteria; those are
+    exactly the fields `dispatch::build_dispatch_prompt` later embeds verbatim into a
+    run under `--permission-mode acceptEdits`. So text one model wrote can become the
+    instructions another model executes with edit rights. The gate is human review of
+    the marked "Refined by Switchbard" block before anyone flags the task for
+    dispatch — which is why the block is visibly marked rather than blended in, and
+    why Refine and Dispatch stayed two separate opt-in clicks. No further mitigation
+    is being built now; revisit if refine output ever reaches dispatch without a
+    human in between.
   - **Speculative, do NOT pre-build:** batch refine (refine a filtered set / a whole
     column) and auto-refine-on-dispatch (a thin card silently refined before its
-    dispatch run). Both are plausible; neither is approved. Ask the owner before
-    building either.
+    dispatch run). Both are plausible; neither is approved. Auto-refine-on-dispatch
+    in particular would remove the human gate named just above, so it is not a pure
+    convenience change. Ask the owner before building either.
 
 - **Standardized cross-repo status vocabulary (owner decision 2026-08-06).** Every
   tracked project offers the same statuses — `Icebox → To Do → In Progress →

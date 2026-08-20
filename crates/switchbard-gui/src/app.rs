@@ -1129,6 +1129,10 @@ impl HiveApp {
         let ctx = ctx.clone();
         status.set(format!("refining {task_id}…"));
         thread::spawn(move || {
+            let lease = RefineLease {
+                tasks: refining,
+                key,
+            };
             let msg = match load_refine_target(&projects, &project_root, &task_id) {
                 Some(task) => {
                     match switchbard_core::refine_task(
@@ -1141,7 +1145,7 @@ impl HiveApp {
                             kick.notify();
                             with_stale_warning(
                                 reload,
-                                switchbard_core::describe_refine_result(&task_id, &outcome.result),
+                                switchbard_core::describe_refine_outcome(&outcome),
                             )
                         }
                         Err(e) => format!("refine {task_id} failed to start: {e}"),
@@ -1149,8 +1153,11 @@ impl HiveApp {
                 }
                 None => format!("refine {task_id} failed: task not found in the loaded project"),
             };
-            refining.lock().unwrap().remove(&key);
             status.set(msg);
+            // Released *before* the repaint so the button re-enables in the
+            // same frame that shows the result, rather than waiting for
+            // whatever happens to request the next one.
+            drop(lease);
             ctx.request_repaint();
         });
     }
@@ -1670,6 +1677,36 @@ fn refresh_backlog_project_cache(
             Ok(())
         }
         Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Clears a task's `HiveApp::refining_tasks` entry on **every** exit path,
+/// including a panic inside the worker thread.
+///
+/// Without this the guard could outlive the run it guards: a thread that
+/// panicked between the insert and the remove would leave that task's Refine
+/// button disabled for the rest of the session, with no run in flight and no
+/// way to clear it short of a restart. A `Drop` impl is the only construct
+/// that survives unwinding, so the "cannot stack" property and the
+/// "eventually re-enables" property come from the same place.
+struct RefineLease {
+    tasks: Arc<Mutex<BTreeSet<BacklogTaskKey>>>,
+    key: BacklogTaskKey,
+}
+
+impl Drop for RefineLease {
+    fn drop(&mut self) {
+        // Deliberately not `.lock().unwrap()` like the rest of this file: a
+        // panic inside a `Drop` that is itself running during unwinding
+        // aborts the process. Recovering the set through the poison is both
+        // safe (a `BTreeSet` of keys has no invariant a panic could break)
+        // and strictly better than taking the whole app down over a
+        // bookkeeping remove.
+        let mut tasks = match self.tasks.lock() {
+            Ok(tasks) => tasks,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        tasks.remove(&self.key);
     }
 }
 
