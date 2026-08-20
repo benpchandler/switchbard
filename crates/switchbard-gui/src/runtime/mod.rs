@@ -55,6 +55,70 @@ pub enum ViewTab {
 /// different repos, so selection/bulk-selection must key on the pair.
 pub type BacklogTaskKey = (PathBuf, String);
 
+/// One in-flight board drag-drop, keyed by the moved task (task-42: "Board
+/// drag: optimistic move + drop feedback"). Lives on `BacklogViewState`
+/// rather than folded into `HiveApp::backlog_projects` — that cache is
+/// reloaded on its own cadence by `workers::spawn_backlog` and by a
+/// mutation's own targeted reload (`app::refresh_backlog_project_cache`),
+/// and there is no way to tell "a worker just clobbered this" from "the drop
+/// itself resolved" if an in-flight edit lived in the same map as real,
+/// disk-backed data. Keeping this a separate, render-time-only overlay means
+/// the cache never carries anything but real data; `board::render_column`
+/// folds this on top of it for exactly one purpose — bucketing the card into
+/// its destination column before the round trip through the `backlog` CLI
+/// resolves.
+///
+/// **Post-review revision (independent audit, F1/F3):** the first version of
+/// this type resolved off `BacklogProject::loaded_at_unix` advancing past a
+/// drop-time snapshot — "any reload, from any source, resolves it." That was
+/// wrong: an *unrelated* reload (the periodic backlog worker's own poll,
+/// woken early by `Kick::notify` right after a completely different save)
+/// would resolve a still-in-flight move early, snapping the card back to
+/// its stale real status mid-flight — exactly the confusing flicker this
+/// feature exists to kill, and *more* likely right after a prior drop since
+/// that's precisely when the worker gets woken. `generation` replaces that
+/// signal: an entry now resolves only off **its own drop's own save**
+/// completing (`HiveApp::board_move_outcomes`, written by
+/// `spawn_board_move_save`), never off an unrelated cache reload.
+#[derive(Debug, Clone)]
+pub struct PendingBoardMove {
+    /// The column the card was dropped on — what it renders under until
+    /// this entry resolves one way or the other.
+    pub target_status: String,
+    /// Monotonically increasing per-drop token (`BacklogViewState::
+    /// next_move_generation`), stamped at drop time and carried by
+    /// `spawn_board_move_save` into its completion report
+    /// (`BoardMoveOutcome`). `board::resolve_pending_moves` only ever
+    /// resolves an entry against an outcome whose generation matches this
+    /// one exactly — a later drop on the same task overwrites this whole
+    /// `PendingBoardMove` (a fresh generation), so a *stale* outcome for a
+    /// now-superseded generation is recognized and discarded rather than
+    /// incorrectly resolving the newer entry.
+    pub generation: u64,
+    /// Wall-clock fallback: if this generation's own outcome is never
+    /// reported (e.g. the save thread panics, or some future code path
+    /// forgets to report), this bounds how long a card can sit in the
+    /// optimistic "saving" state before the overlay gives up and clears
+    /// itself, falling back to whatever's actually on disk next render. A
+    /// stranded overlay entry — a card permanently claiming a status the
+    /// real data never confirmed — is a worse failure mode than an
+    /// occasional card that quietly reverts after a bounded wait. This is
+    /// now purely a last-resort backstop, not (as in the first version) the
+    /// thing standing in for a real completion signal.
+    pub queued_at: Instant,
+}
+
+/// The result `HiveApp::spawn_board_move_save`'s background thread reports
+/// for one drop, keyed by the moved task in `HiveApp::board_move_outcomes`.
+/// `board::resolve_pending_moves` drains this map every frame and only acts
+/// on an outcome whose `generation` matches the *current* `pending_moves`
+/// entry for that key — see `PendingBoardMove::generation`'s doc.
+#[derive(Debug, Clone, Copy)]
+pub struct BoardMoveOutcome {
+    pub generation: u64,
+    pub success: bool,
+}
+
 /// UI-local filters and edit buffers for the Backlog project-management view.
 ///
 /// `selected_project` doubles as the scope switch: `None` (the default) is
@@ -121,6 +185,25 @@ pub struct BacklogViewState {
     /// task's selection, so unlike the per-task confirms above it's cleared
     /// by its own Confirm/Cancel buttons only, not by selection changes.
     pub cleanup_confirm: bool,
+    /// task-42: render-time overlay for every in-flight Board drag-drop —
+    /// see `PendingBoardMove`'s doc for why this isn't folded into
+    /// `HiveApp::backlog_projects`. `board::resolve_pending_moves` is the
+    /// only place entries are cleared.
+    pub pending_moves: HashMap<BacklogTaskKey, PendingBoardMove>,
+    /// task-42: once a `pending_moves` entry resolves as a *success* (the
+    /// reloaded cache confirms the target status), the resolved key moves
+    /// here with the instant it landed — `board::paint_card` reads this to
+    /// paint a brief, one-shot "landing flash" on the card. Entries expire
+    /// (and remove themselves) once the flash's fixed duration elapses;
+    /// see `board::resolve_pending_moves`.
+    pub landing_flash: HashMap<BacklogTaskKey, Instant>,
+    /// task-42: the next `PendingBoardMove::generation` token —
+    /// `board::apply_drop` reads-then-increments this on every drop.
+    /// Session-only, single-threaded (only ever touched from the UI thread
+    /// during `render_board`); the background save thread only ever
+    /// receives a copy of the value stamped at drop time, never this
+    /// counter itself.
+    pub next_move_generation: u64,
 }
 
 impl Default for BacklogViewState {
@@ -150,6 +233,9 @@ impl Default for BacklogViewState {
             saved_view_name_draft: String::new(),
             dispatch_confirm: false,
             cleanup_confirm: false,
+            pending_moves: HashMap::new(),
+            landing_flash: HashMap::new(),
+            next_move_generation: 0,
         }
     }
 }
