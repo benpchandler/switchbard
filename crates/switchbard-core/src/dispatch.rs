@@ -52,18 +52,37 @@
 //!
 //! ## Bounding a runaway run
 //!
-//! Two limits apply, and they bound different failure modes. `opts.timeout`
-//! is wall-clock and external: the pipeline kills the process group once the
-//! run has hung for too long. [`DispatchOptions::max_turns`] is internal and
-//! passed to the agent itself as `--max-turns` — it bounds *looping*, which
-//! is what a runaway agent actually does, and ends the run as an ordinary
-//! exit the pipeline can report rather than a kill it can only infer.
+//! LED-580 post-mortem (2026-08-20): a genuinely productive 30-minute run —
+//! 29 files of real work — was hard-killed the instant it crossed
+//! `opts.timeout` (as it was then), stranding everything it had not yet
+//! committed. Owner decision: drop the strict wall clock entirely. There is
+//! no code path in this module (or anywhere else) that kills a run for
+//! taking too long. [`run_claude_headless`]'s wait on the agent is, for all
+//! practical purposes, unbounded — see [`NO_WALL_CLOCK_LIMIT`].
 //!
-//! Neither helps a human who is watching a run go wrong right now, so
-//! [`dispatch_one`] also writes a [`DispatchSidecar`] next to the run's log
+//! What still bounds a runaway agent, now that the timeout doesn't:
+//!
+//! - [`DispatchOptions::max_turns`], passed to the agent itself as
+//!   `--max-turns`. A runaway agent is a *turn-count* problem before it is a
+//!   wall-clock one — re-reading the same file, re-running the same failing
+//!   test, re-deciding the same fork — and this bounds it upstream, inside
+//!   the agent, ending the run as an ordinary exit the pipeline can report
+//!   rather than a kill it can only infer.
+//! - The identity-gated Kill button, for a human watching a run go wrong
+//!   *right now*. Manual, not automatic — see below.
+//! - [`DispatchOptions::stale_after`], which is **not a bound at all**. It is
+//!   an advisory threshold: a run past it keeps running exactly as before,
+//!   just flagged needs-attention in the top-bar chip and the Dispatch view
+//!   (`crate::dispatch_inspect::DispatchRun::looks_stalled`) so a human knows
+//!   to go check on it. `stale_after` carries the same 30-minute default the
+//!   removed wall-clock kill used — that number was never wrong as a "go
+//!   look" signal, only as a kill trigger.
+//!
+//! [`dispatch_one`] still writes a [`DispatchSidecar`] next to the run's log
 //! ([`dispatch_pid_path`]) between spawning the agent and blocking on it, and
-//! deletes it as the run releases. A UI that reads that file can signal the
-//! group directly with [`crate::kill_pgid`].
+//! deletes it as the run releases. That sidecar is what makes the Kill button
+//! possible: a UI that reads it can signal the group directly with
+//! [`crate::kill_pgid`].
 //!
 //! That file is a loaded gun, so it is **self-authenticating**. A pid is only
 //! meaningful within one boot and only supervised by the process that spawned
@@ -81,10 +100,10 @@
 //! Killing the group needs **no coordination with this module**, which is the
 //! property that makes the sidecar cheap: the pipeline is already blocked in
 //! `wait_for_exit` on that exact process, so the kill simply makes the wait
-//! return early. The run then walks its normal exit path — non-zero exit →
-//! [`DispatchResult::ClaudeFailed`] → `release_as_failed` → the task lands on
-//! `dispatch-failed` with a note. One signal in; the existing label state
-//! machine does all the bookkeeping.
+//! return early. The run then walks its normal exit path — non-zero (or
+//! signal) exit → [`DispatchResult::ClaudeFailed`] → `release_as_failed` →
+//! the task lands on `dispatch-failed` with a note. One signal in; the
+//! existing label state machine does all the bookkeeping.
 //!
 //! ## Why `drain_dispatch_queue` is serial, not parallel
 //!
@@ -98,6 +117,14 @@
 //! GUI's fifth worker thread polling this on its own cadence), running
 //! multiple short drain cycles back to back gets the queue-depth-limited
 //! throughput without the shared-rate-limit risk.
+//!
+//! Consequence, accepted as of TASK-46: since a run's own wait is no longer
+//! wall-clock bounded (see "Bounding a runaway run" above), a single long
+//! run also delays every other task queued behind it in the same drain call
+//! — there is no wall clock left to cap how long that delay can be. The
+//! caller that actually processes a live queue serially, one drain call at a
+//! time on its own worker thread, is the GUI's `workers::spawn_dispatch`;
+//! see that function's doc for the same tradeoff at that layer.
 //!
 //! ## For the future GUI wiring
 //!
@@ -113,6 +140,11 @@ use crate::backlog::{
     BacklogTask, BacklogTaskPatch, BacklogTaskSource,
 };
 use crate::git_env::git_cmd;
+// Only exercised by this module's own tests (the sidecar-kill mechanism
+// proof) — TASK-46 removed this module's production use of a kill. Gated
+// so a non-test build doesn't warn on an import nothing outside `mod tests`
+// reaches.
+#[cfg(test)]
 use crate::kill::kill_pgid;
 use crate::spawn::{spawn_in_session, wait_for_exit, WaitOutcome};
 use crate::worktree_create::{create_worktree, CreateBranchMode, CreateWorktreeOptions};
@@ -146,12 +178,39 @@ pub const DEFAULT_MAX_CONCURRENT: usize = 2;
 
 /// Default [`DispatchOptions::max_turns`]. 50 is well clear of what a real
 /// task-sized run takes (the runs this pipeline was built against land in the
-/// low tens) while still being a hard stop on a loop that would otherwise only
-/// end at the 30-minute timeout.
+/// low tens) while still being a hard stop on a loop that would otherwise
+/// have no automatic bound at all now that there is no wall-clock kill (see
+/// the module doc's "Bounding a runaway run" section).
 pub const DEFAULT_MAX_TURNS: u32 = 50;
 
+/// Default [`DispatchOptions::stale_after`]. The same 30-minute number
+/// `opts.timeout` used to carry before TASK-46 (LED-580) removed the
+/// wall-clock kill it armed — that threshold was never wrong as a "go check
+/// on this" signal, only as a kill trigger, so it survives unchanged even
+/// though its consequence doesn't.
+pub const DEFAULT_STALE_AFTER: Duration = Duration::from_secs(30 * 60);
+
+/// Grace period between SIGTERM and SIGKILL for a **manual** kill. TASK-46
+/// removed this module's own use of a kill — there is no more wall-clock
+/// kill to grace — so the only production caller reaching for this shape of
+/// grace period today is the identity-gated Kill button
+/// (`crate::dispatch_kill::kill_dispatch_run`), which takes its own grace
+/// duration from its caller rather than importing this constant. What still
+/// exercises this exact value is `killing_a_runs_process_group_via_its_
+/// sidecar_unblocks_the_pipelines_wait` below — the same sidecar-signalling
+/// mechanism a manual kill uses, proven against a real process group.
+#[cfg(test)]
 const KILL_GRACE: Duration = Duration::from_secs(10);
 const GH_SPACING: Duration = Duration::from_secs(2);
+
+/// `wait_for_exit` requires a finite deadline, but TASK-46 removed the
+/// wall-clock kill this pipeline used to enforce at that deadline — so this
+/// exists purely to satisfy the function's signature, not as a real limit.
+/// No dispatch run should ever plausibly reach it; picking a merely *very
+/// large* duration rather than `Duration::MAX` matters because
+/// `wait_for_exit` adds it to `Instant::now()`, and `Duration::MAX` would
+/// overflow that addition and panic.
+const NO_WALL_CLOCK_LIMIT: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 100);
 
 #[derive(Debug, Clone)]
 pub struct DispatchOptions {
@@ -161,23 +220,31 @@ pub struct DispatchOptions {
     pub claude_binary: String,
     /// Git remote the dispatch branch is pushed to.
     pub remote: String,
-    /// How long to let one `claude -p` run before killing it as stuck.
-    pub timeout: Duration,
+    /// How long a run can go before it is flagged as needing attention.
+    /// **Advisory only** — see [`DEFAULT_STALE_AFTER`] and the module doc's
+    /// "Bounding a runaway run" section. TASK-46 (LED-580, 2026-08-20)
+    /// removed the wall-clock kill this field used to arm: a genuinely
+    /// productive 30-minute run doing legitimate work across 29 files was
+    /// hard-killed at this exact threshold and stranded its uncommitted
+    /// work. Crossing `stale_after` today changes nothing about the run
+    /// itself; `crate::dispatch_inspect::DispatchRun::looks_stalled` just
+    /// flips the chip and the Dispatch view to needs-attention so a human
+    /// knows to go look, while the run keeps going.
+    pub stale_after: Duration,
     /// See [`DEFAULT_MAX_CONCURRENT`] and the module doc's "why serial" note.
     pub max_concurrent: usize,
     /// Hard cap on agent turns for one headless run, passed straight through
     /// as `claude -p --max-turns`.
     ///
     /// A runaway agent is a *turn-count* problem before it is a wall-clock
-    /// problem: the failure mode this bounds is a loop — re-reading the same
+    /// one: the failure mode this bounds is a loop — re-reading the same
     /// file, re-running the same failing test, re-deciding the same fork —
-    /// which burns tokens at full rate and produces nothing. `opts.timeout`
-    /// catches that too, but only after the full 30 minutes, and only by
-    /// killing the process from outside, leaving a log that ends mid-thought
-    /// with no statement of why. `--max-turns` bounds it upstream, inside the
-    /// agent, where the run ends as an ordinary exit the pipeline can report.
-    /// The two limits are complementary, not redundant: turns bound looping,
-    /// the timeout bounds hanging.
+    /// which burns tokens at full rate and produces nothing. Since TASK-46
+    /// removed the wall-clock kill, this is the *only* automatic bound left
+    /// on a runaway run — everything else past this point is either advisory
+    /// (`stale_after`) or requires a human to click Kill. `--max-turns` ends
+    /// the run as an ordinary exit the pipeline can report, from inside the
+    /// agent, rather than a kill inferred from outside.
     pub max_turns: u32,
 }
 
@@ -187,7 +254,7 @@ impl Default for DispatchOptions {
             base_branch: "main".to_string(),
             claude_binary: "claude".to_string(),
             remote: "origin".to_string(),
-            timeout: Duration::from_secs(30 * 60),
+            stale_after: DEFAULT_STALE_AFTER,
             max_concurrent: DEFAULT_MAX_CONCURRENT,
             max_turns: DEFAULT_MAX_TURNS,
         }
@@ -204,9 +271,14 @@ pub enum DispatchResult {
     },
     /// `claude -p` exited cleanly but left nothing to commit or push.
     NoChanges,
-    /// `None` means the run was killed for exceeding `opts.timeout`.
+    /// `claude -p` exited non-zero, or the run was killed from the Dispatch
+    /// view (`crate::dispatch_kill::kill_dispatch_run`) — a signal death
+    /// decodes to `-1` (see `spawn::decode_exit_status`). Both surface here
+    /// identically: either way the run didn't produce a PR, and this module
+    /// has no way (and no need) to tell a deliberate kill apart from an
+    /// ordinary failure once it's over.
     ClaudeFailed {
-        exit_code: Option<i32>,
+        exit_code: i32,
     },
     GitFailed {
         stage: &'static str,
@@ -324,9 +396,10 @@ pub const SIDECAR_VERSION: u32 = 2;
 /// - `pgid` — what to signal.
 /// - `supervisor_pid` — the Switchbard process that spawned the agent and is
 ///   blocked in `wait_for_exit` on it. When this is not the *current* process,
-///   there is no pipeline behind the run: no timeout will fire, and nothing
-///   will release the task when the agent exits. A UI that keeps promising
-///   either is lying (see [`crate::dispatch_inspect::DispatchRunLiveness`]).
+///   there is no pipeline behind the run: nothing will release the task when
+///   the agent exits (and, since TASK-46, there is no wall-clock timeout left
+///   to fire either way). A UI that keeps promising a release nobody will
+///   perform is lying (see [`crate::dispatch_inspect::DispatchRunLiveness`]).
 /// - `agent_started_unix` — the run's own start stamp, so a sidecar can be
 ///   matched against the log it belongs to rather than merely sitting near it.
 /// - `boot_epoch_unix` — the boot this pgid was minted under. macOS wraps pids
@@ -577,11 +650,12 @@ pub fn dispatch_one(
 
     let exit = run_claude_headless(&paths, opts);
     // The agent is gone either way by the time that returns — whether it
-    // exited on its own, hit `opts.timeout`, or was killed from the Dispatch
-    // view. Drop the kill handle here, at the release boundary, so a sidecar
-    // on disk never names a process group that is not this run's live one.
-    // (The remaining commit/push/PR tail is Switchbard's own work, not the
-    // agent's; there is deliberately nothing to signal for it.)
+    // exited on its own or was killed from the Dispatch view (TASK-46
+    // removed the third option, a wall-clock kill). Drop the kill handle
+    // here, at the release boundary, so a sidecar on disk never names a
+    // process group that is not this run's live one. (The remaining
+    // commit/push/PR tail is Switchbard's own work, not the agent's; there
+    // is deliberately nothing to signal for it.)
     remove_pid_sidecar(&paths.pid_path);
     let exit = match exit {
         Ok(exit) => exit,
@@ -592,7 +666,7 @@ pub fn dispatch_one(
     };
 
     let result = match exit {
-        Some(0) => finish_pipeline(task, &paths.worktree_path, &paths.branch, opts),
+        0 => finish_pipeline(task, &paths.worktree_path, &paths.branch, opts),
         other => DispatchResult::ClaudeFailed { exit_code: other },
     };
 
@@ -692,10 +766,16 @@ fn prepare_dispatch(
     })
 }
 
-/// Spawn the headless `claude -p` run and block until it exits or
-/// `opts.timeout` elapses. `Ok(None)` means it was killed for running too
-/// long; `Ok(Some(code))` is its real exit code.
-fn run_claude_headless(paths: &DispatchPaths, opts: &DispatchOptions) -> Result<Option<i32>> {
+/// Spawn the headless `claude -p` run and block until it exits. No wall-clock
+/// kill (TASK-46, LED-580): the wait is, for all practical purposes,
+/// unbounded — see [`NO_WALL_CLOCK_LIMIT`] — so this returns only once the
+/// agent itself exits, carrying its real exit code. From here on, the only
+/// things that can end a run early are [`DispatchOptions::max_turns`]
+/// (enforced by the agent, not this function) and a manual kill through
+/// `crate::dispatch_kill::kill_dispatch_run`, which ends this same blocking
+/// wait by signalling the process group directly — see the module doc's
+/// "Bounding a runaway run" section.
+fn run_claude_headless(paths: &DispatchPaths, opts: &DispatchOptions) -> Result<i32> {
     let command = build_claude_command(&paths.prompt_path, opts);
     let run = spawn_in_session(&command, &paths.worktree_path, &paths.log_path)
         .context("failed to spawn claude")?;
@@ -715,12 +795,18 @@ fn run_claude_headless(paths: &DispatchPaths, opts: &DispatchOptions) -> Result<
             boot_epoch_unix: crate::boot_time::boot_epoch_unix().unwrap_or(0),
         },
     );
-    match wait_for_exit(run.pid, opts.timeout).context("failed waiting on claude")? {
-        WaitOutcome::Exited(code) => Ok(Some(code)),
+    match wait_for_exit(run.pid, NO_WALL_CLOCK_LIMIT).context("failed waiting on claude")? {
+        WaitOutcome::Exited(code) => Ok(code),
         WaitOutcome::TimedOut => {
-            let _ = kill_pgid(run.pgid, KILL_GRACE);
-            let _ = wait_for_exit(run.pid, KILL_GRACE);
-            Ok(None)
+            // Reachable only if `NO_WALL_CLOCK_LIMIT` itself elapses — see
+            // its doc. That is not a real outcome for this pipeline; treating
+            // it as the internal-invariant violation it would be is more
+            // honest than silently killing the run to force an answer, which
+            // is exactly the wall-clock-kill behavior TASK-46 removed.
+            unreachable!(
+                "wait_for_exit reported TimedOut against a {}-year deadline — this should be unreachable",
+                NO_WALL_CLOCK_LIMIT.as_secs() / (60 * 60 * 24 * 365)
+            )
         }
     }
 }
@@ -872,7 +958,7 @@ fn describe_result(result: &DispatchResult) -> String {
     match result {
         DispatchResult::PrOpened { url } => format!("PR opened: {url}"),
         DispatchResult::NoChanges => "claude made no changes".to_string(),
-        DispatchResult::ClaudeFailed { exit_code } => format!("claude exited with {exit_code:?}"),
+        DispatchResult::ClaudeFailed { exit_code } => format!("claude exited with {exit_code}"),
         DispatchResult::GitFailed { stage, message } => format!("git {stage} failed: {message}"),
         DispatchResult::GhFailed { message } => format!("gh pr create failed: {message}"),
     }
@@ -1097,6 +1183,57 @@ mod tests {
 
         assert_eq!(DispatchOptions::default().max_turns, DEFAULT_MAX_TURNS);
         assert!(command.contains(&format!("--max-turns {DEFAULT_MAX_TURNS}")));
+    }
+
+    /// TASK-46, AC #1: no code path kills a dispatch run on wall-clock time.
+    ///
+    /// Proven directly against `run_claude_headless` rather than against
+    /// `stale_after`'s value alone: a stand-in "claude" binary outlives an
+    /// absurdly short `stale_after` and the run still comes back with its
+    /// real exit code. If any code path still enforced `stale_after` as a
+    /// deadline, this test would see the process killed (a signal exit,
+    /// decoding to `-1`) instead of the `7` the stand-in actually exits with.
+    #[test]
+    fn run_claude_headless_ignores_stale_after_and_returns_the_real_exit_code() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let fake_claude = dir.path().join("fake-claude.sh");
+        fs::write(
+            &fake_claude,
+            "#!/bin/sh\ncat >/dev/null\nsleep 0.3\nexit 7\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&fake_claude).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&fake_claude, perms).unwrap();
+
+        let prompt_path = dir.path().join("prompt.md");
+        fs::write(&prompt_path, "hi").unwrap();
+
+        let opts = DispatchOptions {
+            claude_binary: fake_claude.display().to_string(),
+            // Far shorter than the 300ms the stand-in sleeps for. A real
+            // wall-clock enforcement of this value would kill the run long
+            // before it reaches `exit 7`.
+            stale_after: Duration::from_millis(1),
+            ..Default::default()
+        };
+        let paths = DispatchPaths {
+            worktree_path: dir.path().to_path_buf(),
+            branch: "dispatch/task-x".to_string(),
+            log_path: dir.path().join("run.log"),
+            prompt_path,
+            pid_path: dir.path().join("run.pid"),
+            started_at_unix: unix_now(),
+        };
+
+        let exit = run_claude_headless(&paths, &opts).expect("run completes");
+
+        assert_eq!(
+            exit, 7,
+            "stale_after must not cut the run off — it should run to its own exit code"
+        );
     }
 
     #[test]
@@ -1338,7 +1475,7 @@ mod tests {
         let pid = run.pid;
         let pipeline = std::thread::spawn(move || wait_for_exit(pid, Duration::from_secs(10)));
 
-        let outcome = kill_pgid(sidecar.pgid, Duration::from_secs(2)).unwrap();
+        let outcome = kill_pgid(sidecar.pgid, KILL_GRACE).unwrap();
         assert!(
             matches!(
                 outcome,
@@ -1360,9 +1497,7 @@ mod tests {
     #[test]
     fn describe_result_is_human_readable_for_every_failure_variant() {
         assert!(describe_result(&DispatchResult::NoChanges).contains("no changes"));
-        assert!(
-            describe_result(&DispatchResult::ClaudeFailed { exit_code: Some(1) }).contains('1')
-        );
+        assert!(describe_result(&DispatchResult::ClaudeFailed { exit_code: 1 }).contains('1'));
         assert!(describe_result(&DispatchResult::GitFailed {
             stage: "push",
             message: "boom".to_string()

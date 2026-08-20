@@ -243,14 +243,16 @@ fn top_bar_chip_flips_to_attention_wording_when_a_run_failed() {
     );
 }
 
-/// A run past its own hard-kill deadline is reported as needing attention
-/// rather than as healthily running — the stalled case, end to end.
+/// A run past its own advisory staleness threshold is reported as needing
+/// attention rather than as healthily running — the stalled case, end to
+/// end. TASK-46: this is a *report*, not a kill — the run underneath is
+/// still going, and this test only asserts what the chip says about it.
 #[test]
-fn top_bar_chip_treats_a_run_past_its_timeout_as_needing_attention() {
-    let past_deadline = DispatchOptions::default().timeout.as_secs() + 60;
+fn top_bar_chip_treats_a_run_past_its_stale_after_threshold_as_needing_attention() {
+    let past_threshold = DispatchOptions::default().stale_after.as_secs() + 60;
     let harness = harness_with(
         vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
-        vec![run("TASK-1", past_deadline)],
+        vec![run("TASK-1", past_threshold)],
     );
 
     assert_eq!(
@@ -290,8 +292,11 @@ fn dispatches_tab_badge_counts_runs_not_queue_depth() {
 
 // ─── The Kill control ───────────────────────────────────────────────────────
 
+/// TASK-46: no code path promises a hard-kill deadline any more — an
+/// in-flight row just says how long it has been running, with no countdown
+/// to a kill that no longer happens.
 #[test]
-fn an_in_flight_row_shows_its_hard_kill_deadline() {
+fn an_in_flight_row_shows_its_running_time_and_no_hard_kill_deadline() {
     let mut app = app_with(
         vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
         vec![live_run("TASK-1", 300, 4242)],
@@ -300,17 +305,37 @@ fn an_in_flight_row_shows_its_hard_kill_deadline() {
     let mut harness = harness(app);
     harness.run();
 
-    let deadlines = text_containing(&harness, "hard kill in");
-    assert_eq!(deadlines.len(), 1, "{deadlines:?}");
-    // 30m timeout minus 5m elapsed. The window rather than an exact string
-    // because `elapsed` is recomputed from a live clock at render time, so
-    // the sub-second gap between seeding the fixture and painting the frame
-    // lands the remainder on either side of the 25m boundary.
     assert!(
-        deadlines[0].starts_with("· hard kill in 24m")
-            || deadlines[0].starts_with("· hard kill in 25m"),
-        "{:?}",
-        deadlines[0]
+        text_containing(&harness, "hard kill in").is_empty(),
+        "TASK-46 removed the wall-clock kill; nothing should promise one"
+    );
+    let running = text_containing(&harness, "running 5m");
+    assert_eq!(running.len(), 1, "{running:?}");
+}
+
+/// A run past its advisory staleness threshold still reads as *running* —
+/// just flagged for a human to go look — never as something about to be
+/// killed.
+#[test]
+fn a_stale_in_flight_row_still_reads_as_running_not_as_doomed() {
+    let mut app = app_with(
+        vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
+        vec![live_run("TASK-1", 31 * 60, 4242)],
+    );
+    app.view_tab = ViewTab::Dispatch;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        text_containing(&harness, "hard kill in").is_empty(),
+        "a stale run must not promise an automatic kill"
+    );
+    let check_on_it = text_containing(&harness, "check on it");
+    assert_eq!(check_on_it.len(), 1, "{check_on_it:?}");
+    assert!(
+        check_on_it[0].starts_with("running "),
+        "the stale copy must still lead with \"running\", not with a verdict about being killed: {:?}",
+        check_on_it[0]
     );
 }
 
@@ -350,12 +375,14 @@ fn the_kill_button_is_confirm_armed_and_cancellable() {
     assert!(harness.query_by_label("Kill run").is_some());
 }
 
-/// No verified process, no button — and, just as importantly, no deadline.
+/// No verified process, no button — and (TASK-46 made this universally true,
+/// but it is still worth pinning here) no deadline copy either.
 ///
 /// This is the state of every run started by a Switchbard that has since
-/// restarted. The app has no evidence any agent is out there, so it must stop
-/// counting down to a hard kill that nothing will perform (audit F3) as well
-/// as withholding the button.
+/// restarted. The app has no evidence any agent is out there, so it must not
+/// promise a hard kill that nothing performs any more (audit F3, and now
+/// true for every run, not just an unsupervised one) as well as withholding
+/// the button.
 #[test]
 fn a_run_without_a_verified_process_offers_no_kill_and_no_deadline() {
     let mut app = app_with(
@@ -369,7 +396,7 @@ fn a_run_without_a_verified_process_offers_no_kill_and_no_deadline() {
     assert!(harness.query_by_label("Kill run").is_none());
     assert!(
         text_containing(&harness, "hard kill in").is_empty(),
-        "no supervisor means no deadline to promise"
+        "no code path promises a hard-kill deadline any more"
     );
     assert!(
         !text_containing(&harness, "unsupervised").is_empty(),
@@ -458,7 +485,8 @@ fn a_run_whose_group_died_reads_as_abandoned_and_offers_no_kill() {
 /// The unsupervised-but-alive case (audit F3): the agent is verifiably still
 /// running, but the Switchbard that spawned it is gone. Killing is allowed —
 /// the process was positively identified — but the copy must not promise the
-/// bookkeeping that only a live pipeline can do.
+/// release bookkeeping that only a live pipeline can do (and, since TASK-46,
+/// must not promise a deadline either — there isn't one for any run).
 #[test]
 fn an_unsupervised_live_run_offers_an_honestly_labelled_kill() {
     let mut app = app_with(
@@ -478,11 +506,11 @@ fn an_unsupervised_live_run_offers_an_honestly_labelled_kill() {
 
     assert!(
         text_containing(&harness, "hard kill in").is_empty(),
-        "no supervisor is enforcing the timeout, so there is no deadline"
+        "no code path promises a hard-kill deadline any more"
     );
     assert!(
-        !text_containing(&harness, "no deadline applies").is_empty(),
-        "the row has to say the run can go on indefinitely"
+        !text_containing(&harness, "nothing will release the task when it ends").is_empty(),
+        "the row has to say the release step won't happen on its own"
     );
 
     harness.get_by_label("Kill run").click();

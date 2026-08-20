@@ -20,7 +20,12 @@
 //! Switchbard that died mid-run; see `sweep_sidecar_if_finished` for why that
 //! deliberately spares a sidecar whose task is still claimed. See its own doc for why one iteration can block far
 //! longer than the other workers' — this reuses `drain_dispatch_queue`'s
-//! serial-by-design batching rather than reimplementing it.
+//! serial-by-design batching rather than reimplementing it. TASK-46 removed
+//! the wall-clock kill inside that pipeline, so this is no longer "far longer,
+//! bounded by 30 minutes per queued task" — it is unbounded: a single long
+//! run blocks this thread's loop for as long as that run takes, and every
+//! other task queued behind it in the same drain call waits with it. Accepted
+//! consequence, not a bug — see `switchbard_core::dispatch`'s module doc.
 //!
 //! Centralizing the spawning here keeps `HiveApp::new` short and stops the
 //! "what does this anonymous closure do?" question from recurring.
@@ -39,7 +44,7 @@
 //! | detection | 60s (was 30s) | ~0.15s cold, ~0 steady-state (idempotent — skips worktrees already in `services`) | No urgency: a newly tracked worktree still gets detected within a minute. |
 //! | agent-context | 60s (was 30s), capped at `AGENT_CONTEXT_MAX_MISSING_PER_TICK` new worktrees per tick | ~47s in one unbroken burst pre-fix (cold scan of all 84 at once) | Recursive per-worktree filesystem walk; cheap in steady state (only rescans missing/>24h-stale entries) but a cold launch or adding several repos at once used to stall the thread for tens of seconds in a single tick. Capping the batch turns that into several bounded, interleaved ticks instead. |
 //! | backlog | 30s (unchanged) | ~0.15-0.2s over 6 repo *roots*, not per-worktree | Already cheap at this scale (one load per tracked repo, not per worktree) and users watch task state change in near-real-time — no evidence to slow this down. |
-//! | dispatch | 90s (unchanged) | negligible when the queue is empty (the common case) | Opt-in and rare by design — see its own doc. Unaffected by worktree count. |
+//! | dispatch | 90s (unchanged) | negligible when the queue is empty (the common case); unbounded while a run is in flight (TASK-46 removed the wall-clock kill — see `spawn_dispatch`'s own doc) | Opt-in and rare by design — see its own doc. Unaffected by worktree count. |
 //! | size (TASK-41) | 300s, bounded catch-up batch of 5 | ~650ms **per worktree** average (measured 2026-08-19 via `examples/scan_cadence_audit.rs`, sampled 20/84 real worktrees, `du -sk`; a manual sweep of `~/Dev/.worktrees`'s larger checkouts saw individual calls up to ~1.5s) — an order of magnitude past every other per-worktree probe | `du` walks the whole tree (node_modules/target/build artifacts); see `worktree_size.rs`'s own doc. Never runs inline with the git-probe tick — its own worker, own cadence, catches up a bounded batch of never-yet-sized worktrees per tick (same shape as agent-context's cold-start batching below) rather than blocking on a full sweep. |
 //! | reaper | 2s (unchanged) | negligible, in-memory PGID check only | Not part of the worktree-count scaling problem this audit targets. |
 //!
@@ -783,6 +788,14 @@ fn spawn_backlog(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
 /// dispatch run itself takes. Skips a project entirely when its queue is
 /// empty, which is the common case: dispatch is opt-in, so most polls do
 /// nothing.
+///
+/// TASK-46: `drain_dispatch_queue` no longer kills a run for taking too
+/// long, so this loop's own `wait(effective_period(DISPATCH_PERIOD, ...))`
+/// tick can be blocked, sometimes for a very long time, inside a single
+/// `drain_dispatch_queue` call rather than at `DISPATCH_PERIOD`'s usual
+/// cadence. That's fine: this thread has nothing else to publish while
+/// blocked (see the module doc above), and the GUI stays responsive because
+/// nothing else waits on this thread specifically.
 fn spawn_dispatch(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
     let opts = DispatchOptions::default();
     thread::spawn(move || {

@@ -49,7 +49,7 @@ Environment variables only — no CLI flags, no second config file:
 | `SWITCHBARD_DISPATCH_CLAUDE_BIN` | `claude` | `claude` binary to invoke (resolved via `$PATH` if bare). |
 | `SWITCHBARD_DISPATCH_REMOTE` | `origin` | Git remote the dispatch branch is pushed to. |
 | `SWITCHBARD_DISPATCH_MAX_CONCURRENT` | `2` | Cap on queued tasks drained per run. |
-| `SWITCHBARD_DISPATCH_TIMEOUT_SECS` | `1800` | How long one `claude -p` run gets before it's killed as stuck. |
+| `SWITCHBARD_DISPATCH_STALE_AFTER_SECS` | `1800` | Advisory only (TASK-46) — no longer a kill trigger. This binary itself does nothing with it beyond passing it through `DispatchOptions`; it only matters if a GUI reading the same tracked repos uses it to decide when a run's chip/Dispatch-view row flips to needs-attention. |
 
 A repo using a default branch other than `main` needs
 `SWITCHBARD_DISPATCH_BASE_BRANCH` set per invocation today — this binary has
