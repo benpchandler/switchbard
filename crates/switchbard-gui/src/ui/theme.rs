@@ -251,6 +251,25 @@ pub fn nav_bg() -> Color32 {
 pub fn rail_bg() -> Color32 {
     active_palette().rail_bg
 }
+/// Board lens: a drop-target column's fill while a drag is hovering over it
+/// *and* egui's `dnd_drop_zone` would actually accept the drop (task-42).
+/// `dnd_drop_zone` swaps in `visuals().widgets.active` for exactly that
+/// condition (`is_anything_being_dragged && can_accept_what_is_being_dragged
+/// && response.contains_pointer()` — see its own source) and `.inactive`
+/// otherwise; `board::render_column` used to point *both* slots at the same
+/// `faint_bg()`, which is why a drag hovering a column produced no visible
+/// feedback at all. Reuses `sky()` — this app's one "interactive accent" hue
+/// (selection stroke, hyperlinks) — at low alpha rather than minting a new
+/// hue: the semantic here ("you're about to interact with this") is the
+/// same one `sky()` already carries everywhere else it's used.
+pub fn drop_target_fill() -> Color32 {
+    scale_alpha(sky(), 0.22)
+}
+/// Pairs with [`drop_target_fill`] for the same hovered-drop-target column's
+/// border.
+pub fn drop_target_stroke() -> egui::Stroke {
+    egui::Stroke::new(2.0, sky())
+}
 /// "Idle" / "no activity" indicator dot — owner UX pass (2026-08-05):
 /// centralizes what was six duplicated `egui::Color32::GRAY` call sites
 /// (sidebar.rs, workspace/mod.rs, agent_context.rs). A flat, untethered
@@ -444,7 +463,9 @@ pub fn repo_rail_color(repo_name: &str) -> Color32 {
 }
 
 /// Multiply a Color32's alpha channel by `factor` (clamped to 0..=1).
-fn scale_alpha(c: Color32, factor: f32) -> Color32 {
+/// `pub(crate)` (not private) so `board::paint_card`'s task-42 landing-flash
+/// fade can reuse it instead of re-deriving the same alpha math locally.
+pub(crate) fn scale_alpha(c: Color32, factor: f32) -> Color32 {
     let f = factor.clamp(0.0, 1.0);
     let a = (c.a() as f32 * f).round() as u8;
     Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)

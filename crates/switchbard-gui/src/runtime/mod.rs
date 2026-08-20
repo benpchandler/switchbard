@@ -55,6 +55,46 @@ pub enum ViewTab {
 /// different repos, so selection/bulk-selection must key on the pair.
 pub type BacklogTaskKey = (PathBuf, String);
 
+/// One in-flight board drag-drop, keyed by the moved task (task-42: "Board
+/// drag: optimistic move + drop feedback"). Lives on `BacklogViewState`
+/// rather than folded into `HiveApp::backlog_projects` — that cache is
+/// reloaded on its own cadence by `workers::spawn_backlog` and by a
+/// mutation's own targeted reload (`app::refresh_backlog_project_cache`),
+/// and there is no way to tell "a worker just clobbered this" from "the drop
+/// itself resolved" if an in-flight edit lived in the same map as real,
+/// disk-backed data. Keeping this a separate, render-time-only overlay means
+/// the cache never carries anything but real data; `board::render_column`
+/// folds this on top of it for exactly one purpose — bucketing the card into
+/// its destination column before the round trip through the `backlog` CLI
+/// resolves.
+#[derive(Debug, Clone)]
+pub struct PendingBoardMove {
+    /// The column the card was dropped on — what it renders under until
+    /// this entry resolves one way or the other.
+    pub target_status: String,
+    /// `BacklogProject::loaded_at_unix` for this task's project, captured at
+    /// drop time. `HiveApp::spawn_backlog_save` reloads the project cache on
+    /// both its success *and* (task-42) error paths, and the periodic
+    /// backlog worker reloads it independently on its own cadence too — any
+    /// of those bumps this project's `loaded_at_unix` past this snapshot,
+    /// which is this overlay's signal that "the world has moved since this
+    /// drop optimistically rendered, go check whether it won or lost."
+    /// Reusing `loaded_at_unix` (rather than a bespoke generation counter)
+    /// means *any* reload resolves the overlay, from any source — the
+    /// concrete mechanism behind AC #4's "concurrent worker reloads cannot
+    /// strand a card."
+    pub since_loaded_at_unix: u64,
+    /// Wall-clock fallback: if no reload ever lands (e.g. the reload itself
+    /// errors, so `loaded_at_unix` never bumps — see `refresh_backlog_
+    /// project_cache`'s doc in app.rs), this bounds how long a card can sit
+    /// in the optimistic "saving" state before the overlay gives up and
+    /// clears itself, falling back to whatever's actually on disk next
+    /// render. A stranded overlay entry — a card permanently claiming a
+    /// status the real data never confirmed — is a worse failure mode than
+    /// an occasional card that quietly reverts after a bounded wait.
+    pub queued_at: Instant,
+}
+
 /// UI-local filters and edit buffers for the Backlog project-management view.
 ///
 /// `selected_project` doubles as the scope switch: `None` (the default) is
@@ -121,6 +161,18 @@ pub struct BacklogViewState {
     /// task's selection, so unlike the per-task confirms above it's cleared
     /// by its own Confirm/Cancel buttons only, not by selection changes.
     pub cleanup_confirm: bool,
+    /// task-42: render-time overlay for every in-flight Board drag-drop —
+    /// see `PendingBoardMove`'s doc for why this isn't folded into
+    /// `HiveApp::backlog_projects`. `board::resolve_pending_moves` is the
+    /// only place entries are cleared.
+    pub pending_moves: HashMap<BacklogTaskKey, PendingBoardMove>,
+    /// task-42: once a `pending_moves` entry resolves as a *success* (the
+    /// reloaded cache confirms the target status), the resolved key moves
+    /// here with the instant it landed — `board::paint_card` reads this to
+    /// paint a brief, one-shot "landing flash" on the card. Entries expire
+    /// (and remove themselves) once the flash's fixed duration elapses;
+    /// see `board::resolve_pending_moves`.
+    pub landing_flash: HashMap<BacklogTaskKey, Instant>,
 }
 
 impl Default for BacklogViewState {
@@ -150,6 +202,8 @@ impl Default for BacklogViewState {
             saved_view_name_draft: String::new(),
             dispatch_confirm: false,
             cleanup_confirm: false,
+            pending_moves: HashMap::new(),
+            landing_flash: HashMap::new(),
         }
     }
 }

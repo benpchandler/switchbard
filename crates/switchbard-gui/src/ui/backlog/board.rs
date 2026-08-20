@@ -14,16 +14,49 @@
 //! once cards needed a nested, independently-clickable checkbox). Only
 //! editable tasks (active source, CLI available) are drag sources —
 //! draft/completed/archived cards render as plain, non-draggable strips.
+//!
+//! ## Optimistic move + drop feedback (task-42)
+//!
+//! A drop's status change writes through the real `backlog` CLI
+//! (`HiveApp::spawn_backlog_save`), which is a 0.5-1.5s subprocess round
+//! trip — rendering strictly off `HiveApp::backlog_projects` would leave a
+//! dropped card sitting in its origin column, motionless, for that entire
+//! window. `apply_drop` instead writes a `PendingBoardMove` into
+//! `app.backlog_view.pending_moves` (see that type's doc, runtime/mod.rs)
+//! synchronously, same frame as the drop; `render_column`'s column
+//! membership check (`card_shows_in_column`) reads that overlay ahead of the
+//! task's real `status`, so the card jumps to its destination column
+//! immediately, painted with a dimmed/"saving" treatment
+//! (`CardMotion::Saving`, in `paint_card`). `resolve_pending_moves`, called
+//! once per frame before any column is built, is the only place an entry
+//! ever leaves `pending_moves` — see its doc for the resolution signal and
+//! the timeout fallback.
 
 use super::{dispatch_ui, format, list, scoped_projects, selection, Pending, Snapshot, TaskRow};
 use crate::app::HiveApp;
-use crate::runtime::BacklogTaskKey;
+use crate::runtime::{BacklogTaskKey, PendingBoardMove};
 use crate::ui::theme;
 use eframe::egui;
+use std::time::{Duration, Instant};
 use switchbard_core::{
     humanize_age, ordered_status_vocabulary, parse_backlog_datetime_unix, BacklogTask,
     BacklogTaskPatch,
 };
+
+/// How long a `PendingBoardMove` is allowed to sit without any project
+/// reload landing before it gives up and clears itself (see that type's doc,
+/// runtime/mod.rs, for why this exists as a fallback rather than the primary
+/// signal). Comfortably above the 0.5-1.5s CLI round trip this task's own
+/// mission brief names, so a normal save — success or failure — always
+/// resolves off the `loaded_at_unix` signal well before this fires; this is
+/// purely the "something went wrong in a way that never reloaded the cache"
+/// backstop.
+const PENDING_MOVE_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// One-shot "landing flash" duration once a `pending_moves` entry resolves
+/// as a success — kept short and subtle per the task-42 design brief, not a
+/// sustained highlight.
+const LANDING_FLASH_DURATION: Duration = Duration::from_millis(700);
 
 /// Column order: the shared status vocabulary (owner UX pass, 2026-08-05),
 /// scoped to whichever projects are currently in view. Declaring a status
@@ -42,6 +75,11 @@ pub(super) fn render_board(
     tasks: Vec<TaskRow<'_>>,
     pending: &mut Pending,
 ) {
+    // task-42: resolve every in-flight drag-drop against this frame's
+    // (possibly just-reloaded) cache before any column buckets a single
+    // card — see `resolve_pending_moves`'s own doc.
+    resolve_pending_moves(app, snap);
+
     // TASK-26: keeps bulk_selected_tasks consistent with whatever's
     // currently visible — same per-frame call `list::render_task_workspace`
     // already makes, since the two lenses share `bulk_selected_tasks`.
@@ -61,6 +99,73 @@ pub(super) fn render_board(
                 }
             });
         });
+}
+
+/// Resolve every `pending_moves` entry against `snap` (this frame's cache
+/// snapshot), and expire any `landing_flash` entry whose one-shot window has
+/// elapsed. The only place either map is mutated outside a drop itself.
+///
+/// An entry resolves once its project's `BacklogProject::loaded_at_unix` has
+/// advanced past the value captured at drop time (`PendingBoardMove::
+/// since_loaded_at_unix`) — a reload happened, from `spawn_backlog_save`'s
+/// own targeted reload (success *or* error path, task-42) or an unrelated
+/// periodic worker poll, either way "the world moved, go check reality"
+/// (see that field's doc). Once resolved: if the task's *current* status now
+/// matches the move's target, it won — the key moves into `landing_flash`
+/// for one subtle flash frame-range; either way it leaves `pending_moves`,
+/// so a loss silently and immediately falls back to rendering the task's
+/// real status (the rollback AC #2 asks for needs no separate code path —
+/// it falls out of the overlay simply no longer applying).
+///
+/// `PENDING_MOVE_TIMEOUT` is a fallback exit for the one case
+/// `loaded_at_unix` can't signal: the reload itself erroring (see
+/// `refresh_backlog_project_cache`'s doc in app.rs), which never bumps the
+/// timestamp. Without it a card could claim a status the real data never
+/// confirmed, indefinitely — worse than a rare card that quietly reverts
+/// after a bounded wait with no reload ever having landed.
+///
+/// Deliberately does *not* call `ctx.request_repaint_after` to proactively
+/// re-check the timeout — `spawn_backlog_save`'s background thread already
+/// calls `ctx.request_repaint()` the moment it resolves (success or error),
+/// which covers the overwhelming normal case immediately, and `workers.rs`'s
+/// own periodic cadences keep the app repainting every few seconds even
+/// otherwise, which is enough for an already-rare "reload itself errored"
+/// backstop to land within roughly its bound rather than to the millisecond.
+/// A UI that proactively schedules its own repaint doesn't settle inside
+/// `egui_kittest::Harness::run`'s bounded step loop (its own error message
+/// says as much) — this keeps `render_board` usable from the plain
+/// `harness.run()` idiom every other test in this crate already relies on,
+/// including immediately after a real drop.
+fn resolve_pending_moves(app: &mut HiveApp, snap: &Snapshot) {
+    let now = Instant::now();
+    let mut landed: Vec<BacklogTaskKey> = Vec::new();
+    app.backlog_view.pending_moves.retain(|key, mv| {
+        let Some(project) = snap.project(&key.0) else {
+            // The project vanished (untracked) mid-flight — nothing left to
+            // reconcile against.
+            return false;
+        };
+        let reloaded = project.project.loaded_at_unix > mv.since_loaded_at_unix;
+        let timed_out = now.duration_since(mv.queued_at) > PENDING_MOVE_TIMEOUT;
+        if !reloaded && !timed_out {
+            return true; // still genuinely in flight
+        }
+        let succeeded = project
+            .project
+            .tasks
+            .iter()
+            .any(|t| t.id == key.1 && t.status.eq_ignore_ascii_case(&mv.target_status));
+        if succeeded {
+            landed.push(key.clone());
+        }
+        false
+    });
+    for key in landed {
+        app.backlog_view.landing_flash.insert(key, now);
+    }
+    app.backlog_view
+        .landing_flash
+        .retain(|_, started| now.duration_since(*started) <= LANDING_FLASH_DURATION);
 }
 
 /// TASK-26 (owner-requested UX): the same "N selected · Clear" indicator
@@ -105,7 +210,7 @@ fn render_column(
 ) {
     let column_tasks: Vec<&TaskRow<'_>> = all_visible
         .iter()
-        .filter(|row| row.task.status.eq_ignore_ascii_case(column_status))
+        .filter(|row| card_shows_in_column(app, row, column_status))
         .collect();
 
     ui.vertical(|ui| {
@@ -125,8 +230,18 @@ fn render_column(
         // child `Ui` is the only way to actually land our tuned `faint_bg`
         // instead of stock egui's default widget gray, which is what a
         // "No tasks" label would otherwise render against.
+        //
+        // `.active` is specifically the state `dnd_drop_zone` swaps in when
+        // a drag carrying a compatible payload is hovering *this* column
+        // (`is_anything_being_dragged && can_accept_what_is_being_dragged &&
+        // response.contains_pointer()` — its own source). Pointing `.active`
+        // at the *same* `faint_bg()` as `.inactive` (as this used to) is
+        // exactly why a drag hovering a column produced no visible feedback
+        // at all (task-42, AC #3) — `.active` now gets its own themed
+        // accent fill/stroke instead.
         ui.visuals_mut().widgets.inactive.bg_fill = theme::faint_bg();
-        ui.visuals_mut().widgets.active.bg_fill = theme::faint_bg();
+        ui.visuals_mut().widgets.active.bg_fill = theme::drop_target_fill();
+        ui.visuals_mut().widgets.active.bg_stroke = theme::drop_target_stroke();
         let frame = egui::Frame::default().inner_margin(4.0);
         let (_, dropped) = ui.dnd_drop_zone::<BacklogTaskKey, ()>(frame, |ui| {
             ui.set_min_height(120.0);
@@ -148,6 +263,18 @@ fn render_column(
             apply_drop(app, all_visible, &dropped_key, column_status, pending);
         }
     });
+}
+
+/// Which column a card renders under: `pending_moves`' target status if an
+/// optimistic move for this task is in flight, else the task's real status.
+/// Compares directly (no owned-`String` allocation) rather than materializing
+/// an "effective status" per row — this runs once per row per column, every
+/// frame, for every visible card.
+fn card_shows_in_column(app: &HiveApp, row: &TaskRow<'_>, column_status: &str) -> bool {
+    match app.backlog_view.pending_moves.get(&row.key()) {
+        Some(mv) => mv.target_status.eq_ignore_ascii_case(column_status),
+        None => row.task.status.eq_ignore_ascii_case(column_status),
+    }
 }
 
 fn apply_drop(
@@ -176,6 +303,18 @@ fn apply_drop(
             ..Default::default()
         },
     ));
+    // task-42 AC #1: written synchronously, this same frame — see the
+    // module doc's "Optimistic move + drop feedback" section for how
+    // `render_column` reads it back before `spawn_backlog_save`'s CLI
+    // subprocess (queued via `pending.save` above) ever resolves.
+    app.backlog_view.pending_moves.insert(
+        dropped_key.clone(),
+        PendingBoardMove {
+            target_status: column_status.to_string(),
+            since_loaded_at_unix: row.project.project.loaded_at_unix,
+            queued_at: Instant::now(),
+        },
+    );
     app.backlog_status
         .set(format!("moving {} to {column_status}", row.task.id));
 }
@@ -253,8 +392,9 @@ fn render_strip(
         return;
     }
 
+    let motion = card_motion(app, &key);
     let (checkbox_resp, checked_now, content_rect) =
-        paint_card(ui, row, show_repo, selected, bulk_selected);
+        paint_card(ui, row, show_repo, selected, bulk_selected, motion);
     if checkbox_resp.changed() {
         // TASK-26 (owner-requested UX): bulk-select checkbox, reusing the
         // exact same `selection` state machine list.rs's row checkbox
@@ -301,10 +441,45 @@ fn render_strip(
     });
 }
 
+/// Drag-drop-driven visual state for one card (task-42), on top of the
+/// pre-existing `selected` treatment. `Normal` outside any pending/just-
+/// landed window. `Saving` for as long as this task's key is in
+/// `pending_moves` — dimmed frame, muted title, plus a small pulsing dot and
+/// "saving…" label so the in-flight state reads unambiguously (not just a
+/// subtler shade of normal). `Landing(progress)` is the one-shot flash right
+/// after a `pending_moves` entry resolves as a success, `progress` running
+/// 0.0 (flash start) to 1.0 (flash end) as `resolve_pending_moves` ages the
+/// `landing_flash` entry — `paint_card` fades a green border out over it.
+#[derive(Clone, Copy, PartialEq)]
+enum CardMotion {
+    Normal,
+    Saving,
+    Landing(f32),
+}
+
+/// Derive `row`'s current `CardMotion` from `app.backlog_view`'s two task-42
+/// overlays. Landing takes priority over Saving — they're mutually
+/// exclusive in practice (`resolve_pending_moves` only ever populates
+/// `landing_flash` for a key it simultaneously removes from
+/// `pending_moves`), but Landing is the more specific state if that ever
+/// changed.
+fn card_motion(app: &HiveApp, key: &BacklogTaskKey) -> CardMotion {
+    if let Some(started) = app.backlog_view.landing_flash.get(key) {
+        let progress = started.elapsed().as_secs_f32()
+            / LANDING_FLASH_DURATION.as_secs_f32().max(f32::EPSILON);
+        return CardMotion::Landing(progress.clamp(0.0, 1.0));
+    }
+    if app.backlog_view.pending_moves.contains_key(key) {
+        return CardMotion::Saving;
+    }
+    CardMotion::Normal
+}
+
 /// Paints one card's frame, checkbox, and content — pure function of its
 /// input, no `HiveApp` access, so it can be reused unchanged for both the
 /// normal in-place render and the mid-drag floating ghost
-/// (`render_drag_ghost`). Returns `(checkbox_response,
+/// (`render_drag_ghost`, always `CardMotion::Normal` — a card being actively
+/// dragged can't simultaneously be mid-save). Returns `(checkbox_response,
 /// checkbox_checked_after_paint, content_rect)`: `content_rect` is
 /// deliberately the "dot + vertical" sub-area only, excluding the
 /// checkbox, so the caller's click/drag interact call never overlaps the
@@ -315,6 +490,7 @@ fn paint_card(
     show_repo: bool,
     selected: bool,
     bulk_selected: bool,
+    motion: CardMotion,
 ) -> (egui::Response, bool, egui::Rect) {
     // The fill is always `theme::card_bg()` — every text color rendered
     // inside a strip is tuned against that exact card color (see
@@ -326,15 +502,32 @@ fn paint_card(
     // at partial alpha over the card produced a muddy composite that
     // failed WCAG AA on the dark theme — a stroke can't create that
     // problem since the audit only measures fills and text, never strokes.
-    let frame = egui::Frame::default()
+    //
+    // `Landing` reuses that same "stroke, not fill" reasoning for its own
+    // flash: a green border that fades out over `LANDING_FLASH_DURATION`
+    // (via `theme::scale_alpha`), rather than a translucent fill wash that
+    // would risk the identical WCAG problem `selected`'s doc above already
+    // ruled out a fill-based treatment for.
+    let stroke = match motion {
+        CardMotion::Landing(progress) => {
+            egui::Stroke::new(2.0, theme::scale_alpha(theme::green(), 1.0 - progress))
+        }
+        _ if selected => egui::Stroke::new(2.0, theme::sky()),
+        _ => ui.visuals().widgets.noninteractive.bg_stroke,
+    };
+    let mut frame = egui::Frame::default()
         .fill(theme::card_bg())
-        .stroke(if selected {
-            egui::Stroke::new(2.0, theme::sky())
-        } else {
-            ui.visuals().widgets.noninteractive.bg_stroke
-        })
+        .stroke(stroke)
         .corner_radius(3.0)
         .inner_margin(egui::Margin::symmetric(8, 6));
+    if motion == CardMotion::Saving {
+        // Dims the frame's own fill/stroke/shadow only (egui's own
+        // `Frame::multiply_with_opacity` — it never touches the *content*
+        // painted inside), so the card visibly recedes while its text stays
+        // legible; the title's color switches to `muted_text()` below for
+        // the matching "this isn't final yet" read on the text itself.
+        frame = frame.multiply_with_opacity(0.55);
+    }
     let mut checked = bulk_selected;
     let mut content_rect = egui::Rect::NOTHING;
     let checkbox_resp = frame
@@ -362,7 +555,17 @@ fn paint_card(
                                     .small()
                                     .color(theme::muted_text()),
                             );
-                            ui.label(egui::RichText::new(&row.task.title).strong().small());
+                            let title_color = if motion == CardMotion::Saving {
+                                theme::muted_text()
+                            } else {
+                                ui.visuals().text_color()
+                            };
+                            ui.label(
+                                egui::RichText::new(&row.task.title)
+                                    .strong()
+                                    .small()
+                                    .color(title_color),
+                            );
                             ui.horizontal(|ui| {
                                 ui.label(
                                     egui::RichText::new(format::priority_title(&row.task.priority))
@@ -396,6 +599,29 @@ fn paint_card(
                                     ui,
                                     &dispatch_ui::dispatch_state(row.task),
                                 );
+                                // task-42 AC #1: a clear, queryable in-flight
+                                // treatment — the dimmed frame alone reads as
+                                // "disabled" as easily as "in progress", so
+                                // this spells it out. A *static* dot, not
+                                // `theme::painted_dot_pulse`: that helper's
+                                // own `request_repaint_after` keeps
+                                // `egui_kittest::Harness::run` from ever
+                                // settling for as long as a card renders
+                                // Saving (its bounded step loop treats any
+                                // outstanding repaint request as "still
+                                // animating" and gives up) — which would
+                                // break the plain `harness.run()` idiom
+                                // every drag/drop test in this crate uses
+                                // immediately after a real drop.
+                                if motion == CardMotion::Saving {
+                                    theme::painted_dot(ui, theme::sky());
+                                    ui.label(
+                                        egui::RichText::new("saving…")
+                                            .small()
+                                            .italics()
+                                            .color(theme::muted_text()),
+                                    );
+                                }
                             });
                             render_labels_and_age(ui, row.task);
                         });
@@ -431,7 +657,14 @@ fn render_drag_ghost(
     let layer_id = egui::LayerId::new(egui::Order::Tooltip, card_id);
     let response = ui
         .scope_builder(egui::UiBuilder::new().layer_id(layer_id), |ui| {
-            paint_card(ui, row, show_repo, selected, bulk_selected);
+            paint_card(
+                ui,
+                row,
+                show_repo,
+                selected,
+                bulk_selected,
+                CardMotion::Normal,
+            );
         })
         .response;
     if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {

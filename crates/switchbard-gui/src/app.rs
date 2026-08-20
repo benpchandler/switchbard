@@ -981,7 +981,24 @@ impl HiveApp {
                     status.set(with_stale_warning(reload, format!("saved {task_id}")));
                     kick.notify();
                 }
-                Err(e) => status.set(format!("save {task_id} failed: {e}")),
+                Err(e) => {
+                    // task-42: the Board lens's optimistic-move overlay
+                    // (`PendingBoardMove`) resolves off `BacklogProject::
+                    // loaded_at_unix` advancing past the snapshot taken at
+                    // drop time. Without this reload, a *failed* drag-drop
+                    // save would leave that timestamp frozen and the
+                    // overlay — and the card it's optimistically
+                    // rendering — stranded in the "saving" state short of
+                    // its own timeout fallback. The reload can't change
+                    // what failed (the edit already didn't happen), only
+                    // confirm to the overlay that it's safe to check
+                    // reality and roll the card back.
+                    let reload = refresh_backlog_project_cache(&projects, &project_root);
+                    status.set(with_stale_warning(
+                        reload,
+                        format!("save {task_id} failed: {e}"),
+                    ));
+                }
             }
             ctx.request_repaint();
         });
