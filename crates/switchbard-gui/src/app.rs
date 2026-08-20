@@ -139,6 +139,15 @@ pub struct HiveApp {
     /// recomputes from the repo + task id, never a second source of truth —
     /// it exists only to keep `read_dir`/`metadata` calls off the render path.
     pub dispatch_runs: Arc<Mutex<HashMap<BacklogTaskKey, DispatchRun>>>,
+    /// Tasks with a Refine run currently in flight (TASK-44). Purely a
+    /// concurrency guard for the detail rail's Refine button, deliberately
+    /// *not* a label on the task: unlike dispatch, a refine run is one
+    /// bounded call whose only effect is an additive `backlog task edit`, so
+    /// nothing outside this process needs to know it is happening, and
+    /// nothing should be left behind on the task if the app dies mid-run.
+    /// Shared rather than plain view state only because the worker thread
+    /// that clears an entry cannot reach `&mut HiveApp`.
+    pub refining_tasks: Arc<Mutex<BTreeSet<BacklogTaskKey>>>,
     /// The cross-repo triage overlay, refreshed alongside `backlog_projects`.
     pub ordering: Arc<Mutex<OrderingState>>,
     pub active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
@@ -365,6 +374,7 @@ impl HiveApp {
             board_move_started: Arc::new(Mutex::new(HashMap::new())),
             task_write_locks: Arc::new(Mutex::new(HashMap::new())),
             dispatch_runs: Arc::new(Mutex::new(HashMap::new())),
+            refining_tasks: Arc::new(Mutex::new(BTreeSet::new())),
             ordering: Arc::new(Mutex::new(OrderingState::default())),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             sizes: Arc::new(Mutex::new(HashMap::new())),
@@ -455,6 +465,13 @@ impl HiveApp {
 
     pub fn dispatch_runs_snapshot(&self) -> HashMap<BacklogTaskKey, DispatchRun> {
         self.dispatch_runs.lock().unwrap().clone()
+    }
+
+    /// Whether a Refine run is in flight for this task right now — what the
+    /// detail rail's Refine button disables itself on. One lock, one lookup:
+    /// the render path asks only about the selected task, never the whole set.
+    pub fn is_refining(&self, key: &BacklogTaskKey) -> bool {
+        self.refining_tasks.lock().unwrap().contains(key)
     }
 
     pub fn ordering_snapshot(&self) -> OrderingState {
@@ -1261,6 +1278,74 @@ impl HiveApp {
         });
     }
 
+    /// TASK-44 grooming pass: hand one task's current content to a headless,
+    /// read-only `claude -p` run and apply what comes back additively
+    /// (`switchbard_core::refine_task` owns the whole contract — prompt,
+    /// timeout, strict parse, additive merge, single `backlog task edit`).
+    ///
+    /// Same fire-and-forget shape as every other `spawn_backlog_*` here, with
+    /// one addition: the task is inserted into `refining_tasks` *before* the
+    /// thread starts and removed when it exits, so the button can disable
+    /// itself for the duration. The insert is also the real guard — the
+    /// disabled button is UI affordance, this is what makes a second run
+    /// impossible if a click ever slips through.
+    ///
+    /// Nothing is written to the task on any failure path; `refine_task`
+    /// parses and merges before it touches the CLI, so the status line is the
+    /// only thing a failed run changes.
+    pub fn spawn_backlog_refine(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        ctx: &egui::Context,
+    ) {
+        let key: BacklogTaskKey = (project_root.clone(), task_id.clone());
+        {
+            let mut in_flight = self.refining_tasks.lock().unwrap();
+            if !in_flight.insert(key.clone()) {
+                return;
+            }
+        }
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let refining = self.refining_tasks.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        status.set(format!("refining {task_id}…"));
+        thread::spawn(move || {
+            let lease = RefineLease {
+                tasks: refining,
+                key,
+            };
+            let msg = match load_refine_target(&projects, &project_root, &task_id) {
+                Some(task) => {
+                    match switchbard_core::refine_task(
+                        &project_root,
+                        &task,
+                        &switchbard_core::RefineOptions::default(),
+                    ) {
+                        Ok(outcome) => {
+                            let reload = refresh_backlog_project_cache(&projects, &project_root);
+                            kick.notify();
+                            with_stale_warning(
+                                reload,
+                                switchbard_core::describe_refine_outcome(&outcome),
+                            )
+                        }
+                        Err(e) => format!("refine {task_id} failed to start: {e}"),
+                    }
+                }
+                None => format!("refine {task_id} failed: task not found in the loaded project"),
+            };
+            status.set(msg);
+            // Released *before* the repaint so the button re-enables in the
+            // same frame that shows the result, rather than waiting for
+            // whatever happens to request the next one.
+            drop(lease);
+            ctx.request_repaint();
+        });
+    }
+
     pub fn spawn_backlog_acceptance_toggle(
         &self,
         project_root: PathBuf,
@@ -1857,6 +1942,58 @@ fn refresh_backlog_project_cache(
         }
         Err(e) => Err(e.to_string()),
     }
+}
+
+/// Clears a task's `HiveApp::refining_tasks` entry on **every** exit path,
+/// including a panic inside the worker thread.
+///
+/// Without this the guard could outlive the run it guards: a thread that
+/// panicked between the insert and the remove would leave that task's Refine
+/// button disabled for the rest of the session, with no run in flight and no
+/// way to clear it short of a restart. A `Drop` impl is the only construct
+/// that survives unwinding, so the "cannot stack" property and the
+/// "eventually re-enables" property come from the same place.
+struct RefineLease {
+    tasks: Arc<Mutex<BTreeSet<BacklogTaskKey>>>,
+    key: BacklogTaskKey,
+}
+
+impl Drop for RefineLease {
+    fn drop(&mut self) {
+        // Deliberately not `.lock().unwrap()` like the rest of this file: a
+        // panic inside a `Drop` that is itself running during unwinding
+        // aborts the process. Recovering the set through the poison is both
+        // safe (a `BTreeSet` of keys has no invariant a panic could break)
+        // and strictly better than taking the whole app down over a
+        // bookkeeping remove.
+        let mut tasks = match self.tasks.lock() {
+            Ok(tasks) => tasks,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        tasks.remove(&self.key);
+    }
+}
+
+/// The task a Refine run should read its current content from, taken from
+/// the cache the views render — not from the click's own captured copy.
+/// `switchbard_core::refine_task` needs the *latest* description/criteria/plan
+/// to build a prompt and an additive merge against; a `BacklogTask` cloned at
+/// click time could already be stale by the time the thread runs (a
+/// concurrent AC toggle, a background reload), and merging against a stale
+/// copy is how an "additive" merge quietly re-appends something.
+fn load_refine_target(
+    projects: &Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
+    project_root: &Path,
+    task_id: &str,
+) -> Option<switchbard_core::BacklogTask> {
+    projects
+        .lock()
+        .unwrap()
+        .get(project_root)?
+        .tasks
+        .iter()
+        .find(|task| task.id == task_id)
+        .cloned()
 }
 
 /// Compose a mutation's success message with the [`refresh_backlog_project_cache`]

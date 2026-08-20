@@ -130,6 +130,78 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
        answers it can give are "killed it" and "nothing killed" — never
        "killed something".
 
+- **Refine — AI-assisted grooming, upstream of dispatch (owner-approved 2026-08-19).**
+  A "Refine" button in the task detail rail, next to Dispatch. It feeds the task's
+  current title/description/criteria/plan to a headless `claude -p` run at the repo
+  root (no worktree — it writes no code) under a read-only permission posture
+  (`--permission-mode plan`, a Read/Grep/Glob allowlist, an explicit
+  Bash/Write/Edit/WebFetch/WebSearch deny list, and a turn cap), takes back one
+  strict JSON object, and applies it **additively** through the same `backlog` CLI
+  path every other mutation uses: the original description survives verbatim as a
+  prefix, existing acceptance criteria keep their text *and* checked state (new ones
+  are appended via `--ac`), an empty plan is filled and a non-empty one extended.
+  Malformed or partial output applies nothing — parsing and merging both complete
+  before the single `backlog task edit`. `switchbard_core::refine` owns the contract;
+  see its module doc.
+  - *Why it exists:* a half-baked card dispatched as-is produces a weak agent run.
+    Refine is the grooming step that makes a card dispatch-ready; Dispatch is
+    unchanged and still strictly opt-in.
+  - *Deliberately no new label state machine.* Dispatch's `dispatch`/`dispatching`/…
+    labels guard a long PR-opening pipeline from running twice. A refine run is one
+    bounded call with an additive-only effect, so the "don't stack runs" guard is an
+    in-memory set on `HiveApp` (`refining_tasks`), not state written into the repo.
+  - *"Verbatim" is a file-level claim, and it took a parser fix to make it true.*
+    `backlog::parse::extract_section` was lossy in the read direction — it ended a
+    section at any `## ` line, including one inside a code fence, and dropped every
+    `<!-- … -->` line — while every replace-write in the app (`-d`/`--plan`: the
+    detail rail's Save as well as Refine) writes back what that reader returned. So a
+    fenced heading, a hand-written HTML comment, or anything after such a fence was
+    deleted on the next save. The reader is now fence-aware (with CommonMark's
+    closer-length rule) and drops only the CLI's own markers, and Refine's
+    replace-writes are additionally gated on `task_file_round_trips`: if the file's
+    structure isn't one a section-replace can be based on, the description and plan
+    are skipped (the criteria append still runs — `--ac` adds to a list rather than
+    replacing a section) and the status line says why.
+    - *What the guard is and isn't.* It requires balanced fences, and every `## `
+      heading to be one of the six the format defines and appear once, before it
+      compares content line by line. Those structural rules exist because the first
+      version checked conservation alone and was **circular** — it derived "which
+      lines are headings" with the same predicate the reader used, so a lossy read
+      that surfaced as a spurious heading was self-consistent and passed. It now
+      bounds that class; it is a strong check, not a proof of losslessness.
+    - *It fires on real data.* Across 345 real task files in three repos, 51 fail —
+      every one because it carries a human-written section the format has no field
+      for (`## Resolution`, `## Root Cause Hypothesis`, `## Reproduction Steps`).
+      `parse_task_file` extracts six sections; content under any other heading lands
+      in no field at all, so a replace-write really would delete it.
+    - **Residual (pre-existing, unfixed): the detail rail's Save does not consult
+      the guard.** It writes `-d` from the same parsed description, so on exactly
+      those 51 files it can still delete a custom section. Refine is guarded; Save
+      is not. Fix it when Save is next touched.
+    - Whitespace qualification: every non-blank line of the original survives in
+      order, byte for byte. Blank runs collapse to one (the CLI does this to every
+      write regardless) and whitespace-only lines lose their whitespace.
+  - *Residual, unfixable from here: hooks are not covered by the permission flags.*
+    `--permission-mode plan` and the tool deny list constrain the model's tool use,
+    not Claude Code's own hook machinery, which the **target** repo configures in its
+    `.claude/settings.json`. Refining a repo means trusting that repo's hooks —
+    "read-only" is a statement about the agent, not a sandbox.
+  - *Accepted risk, named not mitigated — write amplification into dispatch.* Refine
+    output persists into a task's description and acceptance criteria; those are
+    exactly the fields `dispatch::build_dispatch_prompt` later embeds verbatim into a
+    run under `--permission-mode acceptEdits`. So text one model wrote can become the
+    instructions another model executes with edit rights. The gate is human review of
+    the marked "Refined by Switchbard" block before anyone flags the task for
+    dispatch — which is why the block is visibly marked rather than blended in, and
+    why Refine and Dispatch stayed two separate opt-in clicks. No further mitigation
+    is being built now; revisit if refine output ever reaches dispatch without a
+    human in between.
+  - **Speculative, do NOT pre-build:** batch refine (refine a filtered set / a whole
+    column) and auto-refine-on-dispatch (a thin card silently refined before its
+    dispatch run). Both are plausible; neither is approved. Auto-refine-on-dispatch
+    in particular would remove the human gate named just above, so it is not a pure
+    convenience change. Ask the owner before building either.
+
 - **Standardized cross-repo status vocabulary (owner decision 2026-08-06).** Every
   tracked project offers the same statuses — `Icebox → To Do → In Progress →
   In Review → Done` (`switchbard_core::STANDARD_STATUSES`) — regardless of what its

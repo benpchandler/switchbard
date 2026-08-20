@@ -249,6 +249,13 @@ pub struct BacklogTaskPatch {
     /// the new entry appended, same shape as `labels`/`dependencies`.
     pub references: Option<Vec<String>>,
     pub implementation_plan: Option<String>,
+    /// Acceptance criteria to *append* (`--ac`, repeatable), leaving every
+    /// existing criterion's text and checked state alone. Distinct from the
+    /// CLI's `--acceptance-criteria`, which replaces the whole list — the
+    /// only writer today is `crate::refine`, whose entire contract is that a
+    /// human-authored, possibly already-checked criterion is never disturbed
+    /// by an agent's suggestions.
+    pub append_acceptance_criteria: Vec<String>,
     /// `Some(name)` assigns the milestone; `None` with `clear_milestone` unset
     /// leaves it untouched. Assign and clear are mutually exclusive — callers
     /// that want to clear set `clear_milestone` instead of this field.
@@ -271,6 +278,7 @@ impl BacklogTaskPatch {
             && self.dependencies.is_none()
             && self.references.is_none()
             && self.implementation_plan.is_none()
+            && self.append_acceptance_criteria.is_empty()
             && self.milestone.is_none()
             && !self.clear_milestone
     }

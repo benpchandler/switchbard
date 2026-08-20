@@ -17,6 +17,7 @@ pub mod git_probe;
 pub mod instance_lock;
 pub mod kill;
 pub mod open_url;
+pub mod refine;
 pub mod resolve;
 pub mod scanner;
 pub mod spawn;
@@ -35,13 +36,13 @@ pub use agent_context::{
 };
 pub use attribution::attribute;
 pub use backlog::{
-    append_backlog_notes, archive_backlog_task, backlog_cli_path, complete_backlog_task,
-    create_backlog_task, edit_backlog_task, is_backlog_project, load_backlog_project,
-    ordered_status_vocabulary, parse_backlog_day, parse_created_task_id,
+    append_backlog_notes, archive_backlog_task, backlog_cli_path, body_round_trips,
+    complete_backlog_task, create_backlog_task, edit_backlog_task, is_backlog_project,
+    load_backlog_project, ordered_status_vocabulary, parse_backlog_day, parse_created_task_id,
     set_backlog_acceptance_checked, set_backlog_dod_checked, set_backlog_label, swap_backlog_label,
-    BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskPatch, BacklogTaskSource,
-    NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES, CANONICAL_STATUS_ORDER,
-    STANDARD_STATUSES,
+    task_file_round_trips, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskPatch,
+    BacklogTaskSource, NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
+    CANONICAL_STATUS_ORDER, STANDARD_STATUSES,
 };
 pub use backlog_relations::{
     blocking_dependencies, blocks, children, dependency_statuses, is_blocked, is_newly_unblocked,
@@ -77,6 +78,12 @@ pub use git_probe::{
 };
 pub use kill::{kill_pgid, KillOutcome};
 pub use open_url::{open_url, url_for_port, BROWSER_APP_NAMES};
+pub use refine::{
+    build_refine_patch, build_refine_prompt, describe_refine_outcome, describe_refine_result,
+    normalize_criterion, parse_refine_response, refine_log_stem, refine_task, RefineOptions,
+    RefineOutcome, RefinePlan, RefineResult, RefineSuggestion, DEFAULT_REFINE_MAX_TURNS,
+    DEFAULT_REFINE_TIMEOUT, REFINED_MARKER,
+};
 pub use resolve::{resolve, ResolvedService};
 pub use scanner::scan_listeners;
 pub use spawn::{spawn_in_session, wait_for_exit, SpawnedRun, WaitOutcome};

@@ -381,6 +381,57 @@ pub(super) fn render_archive(
     }
 }
 
+/// Refine (TASK-44): the grooming step immediately upstream of Dispatch, and
+/// deliberately rendered next to it — a card you would not want to dispatch
+/// yet is exactly the card this button is for.
+///
+/// One click, no confirmation, unlike its neighbor: a refine run writes no
+/// code, opens no PR, and can only *add* to the task (see
+/// `switchbard_core::refine`'s additive-apply contract and its write-path
+/// guard — a section whose content the parser cannot round-trip is skipped,
+/// never overwritten), so the consequence bar that earns Dispatch its inline
+/// confirm isn't met here. The button disables itself while a run is in
+/// flight for this task — `HiveApp::is_refining` reads the same in-memory set
+/// `spawn_backlog_refine` guards on, so the affordance and the guard can't
+/// disagree.
+pub(super) fn render_refine(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    project_root: &Path,
+    task: &BacklogTask,
+    editable: bool,
+    pending: &mut Pending,
+) {
+    if !editable {
+        return;
+    }
+    ui.separator();
+    let in_flight = app.is_refining(&(project_root.to_path_buf(), task.id.clone()));
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(!in_flight, egui::Button::new("Refine"))
+            .on_hover_text(
+                "Explore the repo read-only with a headless agent and fill in the \
+                 description, acceptance criteria, and implementation plan. Your \
+                 existing text and checked criteria are kept: new content is \
+                 appended after a \"Refined by Switchbard\" marker, never replaced. \
+                 If this task's markdown contains anything the parser cannot safely \
+                 round-trip, the description and plan are skipped rather than \
+                 overwritten, and the status line says so.",
+            )
+            .clicked()
+        {
+            pending.refine = Some((project_root.to_path_buf(), task.id.clone()));
+        }
+        if in_flight {
+            ui.label(
+                egui::RichText::new("Refining… existing content is preserved.")
+                    .color(theme::muted_text()),
+            );
+        }
+    });
+}
+
 /// Dispatch (task-11 GUI wiring): a per-task, strictly opt-in affordance.
 /// Flagging a task only sets its `dispatch` label through the CLI
 /// (`Pending::dispatch_toggle` → `HiveApp::spawn_backlog_dispatch_toggle`);

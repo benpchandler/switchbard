@@ -24,10 +24,11 @@ use std::path::Path;
 use std::process::Command;
 
 use switchbard_core::{
-    append_backlog_notes, archive_backlog_task, claim_task_for_dispatch, complete_backlog_task,
-    create_backlog_task, edit_backlog_task, load_backlog_project, set_backlog_acceptance_checked,
-    set_backlog_dod_checked, set_backlog_label, swap_backlog_label, BacklogProject,
-    BacklogTaskPatch, BacklogTaskSource, NewBacklogTask,
+    append_backlog_notes, archive_backlog_task, build_refine_patch, claim_task_for_dispatch,
+    complete_backlog_task, create_backlog_task, edit_backlog_task, load_backlog_project,
+    set_backlog_acceptance_checked, set_backlog_dod_checked, set_backlog_label, swap_backlog_label,
+    task_file_round_trips, BacklogProject, BacklogTaskPatch, BacklogTaskSource, NewBacklogTask,
+    RefineSuggestion, REFINED_MARKER,
 };
 use tempfile::TempDir;
 
@@ -219,6 +220,7 @@ fn edit_backlog_task_persists_every_field_the_detail_pane_editor_exposes() {
         dependencies: Some(vec!["TASK-2".to_string()]),
         references: Some(vec!["https://example.com/spec".to_string()]),
         implementation_plan: Some("Step one, then step two.".to_string()),
+        append_acceptance_criteria: vec![],
         milestone: Some("v1".to_string()),
         clear_milestone: false,
     };
@@ -300,6 +302,153 @@ fn acceptance_and_definition_of_done_checkboxes_persist_through_the_cli() {
     assert!(
         task.definition_of_done[0].checked,
         "DoD #1 should be checked after set_backlog_dod_checked(true)"
+    );
+}
+
+/// TASK-44: the Refine feature's whole safety claim is that an agent's
+/// suggestions can never disturb a criterion a human wrote or checked. That
+/// claim rests on `BacklogTaskPatch::append_acceptance_criteria` mapping to
+/// the CLI's *additive* `--ac`, not its list-replacing
+/// `--acceptance-criteria`. Proving the distinction needs the real CLI —
+/// `refine.rs`'s own unit tests can only prove the patch it builds, not what
+/// the CLI does with it.
+#[test]
+fn appended_acceptance_criteria_extend_the_list_without_disturbing_existing_ones() {
+    let fixture = fixture_repo();
+    let root = fixture.path();
+    let task_id = create_fixture_task(root);
+    set_backlog_acceptance_checked(root, &task_id, 1, true).expect("check the first criterion");
+
+    let patch = BacklogTaskPatch {
+        append_acceptance_criteria: vec![
+            "Second criterion".to_string(),
+            "Third criterion".to_string(),
+        ],
+        ..Default::default()
+    };
+    edit_backlog_task(root, &task_id, &patch).expect("appending criteria should succeed");
+
+    let project = reload(root);
+    let task = project.tasks.iter().find(|t| t.id == task_id).unwrap();
+    let texts: Vec<&str> = task
+        .acceptance_criteria
+        .iter()
+        .map(|item| item.text.as_str())
+        .collect();
+    assert_eq!(
+        texts,
+        vec!["First criterion", "Second criterion", "Third criterion"],
+        "existing criteria keep their text and position; new ones land after them"
+    );
+    assert!(
+        task.acceptance_criteria[0].checked,
+        "the pre-existing criterion must keep its checked state across an append"
+    );
+    assert!(!task.acceptance_criteria[1].checked);
+}
+
+/// TASK-44 audit finding F2. The `backlog` CLI collapses runs of blank lines
+/// on write, so text handed to `-d` does not come back off disk byte for
+/// byte. `refine`'s idempotence guard is a `contains` check against what came
+/// off disk, so if it compared un-normalized text it would never match and a
+/// second refine would append a near-duplicate block. Only the real CLI can
+/// prove the normalization matches — hence a fixture round trip rather than a
+/// unit test.
+#[test]
+fn a_second_refine_appends_nothing_after_the_cli_normalized_the_first_ones_blank_runs() {
+    let fixture = fixture_repo();
+    let root = fixture.path();
+    let task_id = create_fixture_task(root);
+
+    // A model answer with a blank run the CLI is going to collapse.
+    let suggestion = RefineSuggestion {
+        description: "First refined paragraph.\n\n\n\nSecond refined paragraph.".to_string(),
+        acceptance_criteria: vec![],
+        implementation_plan: String::new(),
+    };
+
+    let before = reload(root);
+    let task = before.tasks.iter().find(|t| t.id == task_id).unwrap();
+    let first = build_refine_patch(task, &suggestion, true).expect("first merge");
+    assert!(first.description_extended, "the first refine should extend");
+    edit_backlog_task(root, &task_id, &first.patch).expect("first refine write");
+
+    // Round trip: this is where the CLI's own normalization happens.
+    let after = reload(root);
+    let task = after.tasks.iter().find(|t| t.id == task_id).unwrap();
+    assert!(
+        task.description.starts_with("Initial description"),
+        "the original must still lead the description: {:?}",
+        task.description
+    );
+    assert!(
+        !task.description.contains("\n\n\n"),
+        "the CLI collapsed the blank run, which is exactly why the guard must normalize"
+    );
+
+    let second = build_refine_patch(task, &suggestion, true).expect("second merge");
+
+    assert!(
+        second.patch.description.is_none(),
+        "re-refining identical prose must be a no-op, got {:?}",
+        second.patch.description
+    );
+    assert_eq!(
+        task.description.matches(REFINED_MARKER).count(),
+        1,
+        "exactly one refined block should exist on disk"
+    );
+}
+
+/// The write-path guard (audit finding F1, layer 2) against a real file the
+/// real CLI wrote — including one carrying a fenced `## ` heading, the shape
+/// that used to be silently truncated on the next save.
+#[test]
+fn a_cli_written_task_round_trips_through_the_parser_even_with_a_fenced_heading() {
+    let fixture = fixture_repo();
+    let root = fixture.path();
+    let task_id = create_fixture_task(root);
+
+    let patch = BacklogTaskPatch {
+        description: Some(
+            "Intro.\n\n```markdown\n## A heading inside a fence\n```\n\nOutro.".to_string(),
+        ),
+        ..Default::default()
+    };
+    edit_backlog_task(root, &task_id, &patch).expect("write a fenced description");
+
+    let project = reload(root);
+    let task = project.tasks.iter().find(|t| t.id == task_id).unwrap();
+
+    assert!(
+        task.description.contains("## A heading inside a fence"),
+        "a fenced heading is content: {:?}",
+        task.description
+    );
+    assert!(
+        task.description.contains("Outro."),
+        "content after the fence must survive the read: {:?}",
+        task.description
+    );
+    assert!(
+        task_file_round_trips(&task.path),
+        "a normal CLI-written task must pass the guard, or refine would skip every write"
+    );
+
+    // And the write path is now genuinely non-destructive: saving the parsed
+    // description straight back must not lose the fence.
+    let resave = BacklogTaskPatch {
+        description: Some(task.description.clone()),
+        ..Default::default()
+    };
+    edit_backlog_task(root, &task_id, &resave).expect("resave");
+    let project = reload(root);
+    let task = project.tasks.iter().find(|t| t.id == task_id).unwrap();
+    assert!(
+        task.description.contains("## A heading inside a fence")
+            && task.description.contains("Outro."),
+        "a read-then-write cycle must be lossless: {:?}",
+        task.description
     );
 }
 

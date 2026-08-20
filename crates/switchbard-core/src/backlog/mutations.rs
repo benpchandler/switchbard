@@ -61,6 +61,17 @@ pub fn edit_backlog_task(
         args.push("--plan".into());
         args.push(plan.into());
     }
+    // `--ac` is the CLI's *additive* criteria flag (verified against
+    // `backlog task edit --help`: "add acceptance criteria"), as opposed to
+    // `--acceptance-criteria`, which replaces the list. Appending is the only
+    // criteria write this patch offers on purpose — see the field's doc.
+    for criterion in &patch.append_acceptance_criteria {
+        if criterion.trim().is_empty() {
+            continue;
+        }
+        args.push("--ac".into());
+        args.push(criterion.into());
+    }
     if let Some(milestone) = &patch.milestone {
         args.push("-m".into());
         args.push(milestone.into());
