@@ -5,6 +5,7 @@
 use crate::app::{self, HiveApp};
 use crate::runtime::ViewTab;
 use crate::ui::components::action_status_label;
+use crate::ui::dispatch::{self, DispatchSummary};
 use crate::ui::theme;
 use crate::ui::theme::ThemeChoice;
 use crate::ui::workspace;
@@ -12,6 +13,10 @@ use eframe::egui;
 use switchbard_core::BROWSER_APP_NAMES;
 
 pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
+    // Counted once and shared by the chip and the tab badge: they are two
+    // renderings of the same fact, and computing it twice per frame would be
+    // two chances for them to disagree as well as twice the work.
+    let dispatch_summary = dispatch::summarize_dispatch(app);
     egui::TopBottomPanel::top("top").show(ctx, |ui| {
         ui.horizontal(|ui| {
             ui.heading("Switchbard");
@@ -31,11 +36,12 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
             ui.label(format!("{total} listeners"));
             ui.label(format!("({attributed} attributed)"));
             render_retired_worktrees_nudge(app, ui);
+            render_dispatch_chip(app, ui, dispatch_summary);
             ui.separator();
             render_actions(app, ui);
         });
         ui.horizontal(|ui| {
-            render_view_tabs(app, ui);
+            render_view_tabs(app, ui, dispatch_summary);
             ui.separator();
             render_filter_controls(app, ui);
         });
@@ -46,7 +52,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
 /// band, distinct from the plain panel background the filter row sits on
 /// right next to it — navigation should read as its own zone, not blend
 /// into the content controls beside it.
-fn render_view_tabs(app: &mut HiveApp, ui: &mut egui::Ui) {
+fn render_view_tabs(app: &mut HiveApp, ui: &mut egui::Ui, dispatch_summary: DispatchSummary) {
     egui::Frame::default()
         .fill(theme::nav_bg())
         .corner_radius(4.0)
@@ -63,7 +69,15 @@ fn render_view_tabs(app: &mut HiveApp, ui: &mut egui::Ui) {
                 // accessibility tree (see `detail_lists::render_dispatch`'s note
                 // on why it has no section header). The plural also reads as
                 // "the list of runs", which is what the view is.
-                ui.selectable_value(&mut app.view_tab, ViewTab::Dispatch, "Dispatches");
+                // TASK-43: the badge count is appended to the same string
+                // rather than drawn as a separate widget, so the tab keeps a
+                // single accessible name and a test can assert the count by
+                // reading the label it can already find.
+                let dispatch_label = match dispatch_summary.badge_count() {
+                    0 => "Dispatches".to_string(),
+                    n => format!("Dispatches ({n})"),
+                };
+                ui.selectable_value(&mut app.view_tab, ViewTab::Dispatch, dispatch_label);
             });
         });
 }
@@ -107,6 +121,61 @@ fn render_retired_worktrees_nudge(app: &HiveApp, ui: &mut egui::Ui) {
         if n == 1 { "" } else { "s" }
     ))
     .on_hover_text("Clean, fully-merged worktrees — see the Workspace view's Merged filter");
+}
+
+/// TASK-43: the ambient dispatch chip — the one place in the always-visible
+/// chrome that says a headless agent is running, from whichever tab the user
+/// is actually on.
+///
+/// Follows `render_retired_worktrees_nudge` exactly: silent when there is
+/// nothing to say (no "0 running"), one compact label, one hover explaining
+/// it. It differs in being *clickable*, because unlike a retired worktree an
+/// in-flight run has a destination — the Dispatches tab, which is where every
+/// control over it lives.
+///
+/// Two visual registers, not one with a variable color: accent for "this is
+/// working", danger for "this needs you". A run that failed, was orphaned, or
+/// blew past its timeout is not a louder version of a healthy run; it is a
+/// different message, so it gets different words as well as a different color
+/// (see `DispatchSummary::chip_text`).
+fn render_dispatch_chip(app: &mut HiveApp, ui: &mut egui::Ui, summary: DispatchSummary) {
+    if summary.is_idle() {
+        return;
+    }
+    ui.separator();
+    let color = if summary.needs_attention() {
+        theme::danger()
+    } else {
+        theme::dispatch_accent()
+    };
+    let hover = if summary.needs_attention() {
+        "Dispatch runs that failed, were never released, or are past their timeout — open the Dispatches view"
+    } else {
+        "Headless agent runs in flight — open the Dispatches view"
+    };
+    // `.frame(false)`: a *frameless* button so the text composites against the
+    // panel, not against egui's button fill. `theme::danger()` and
+    // `theme::dispatch_accent()` are both tuned for AA against `panel_fill`
+    // (see `theme::Palette`'s doc on why the danger *text* role and the danger
+    // *button fill* are deliberately different colors) — inside a filled
+    // button, danger-on-button-fill measures 3.9:1 in Operator's Console and
+    // `legibility_audit` fails the build. Frameless keeps this a clickable
+    // label, which is also what it reads as next to the retired-worktrees
+    // nudge it sits beside.
+    if ui
+        .add(
+            egui::Button::new(
+                egui::RichText::new(summary.chip_text())
+                    .strong()
+                    .color(color),
+            )
+            .frame(false),
+        )
+        .on_hover_text(hover)
+        .clicked()
+    {
+        app.view_tab = ViewTab::Dispatch;
+    }
 }
 
 fn scan_summary(app: &HiveApp) -> (Option<String>, usize, usize) {

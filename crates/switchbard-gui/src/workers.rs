@@ -12,7 +12,13 @@
 //! task itself (its label) via `switchbard_core::dispatch`. It publishes
 //! nothing new; it just runs the pipeline and kicks `backlog_kick` so the
 //! *existing* backlog worker's next (or forced) reload picks up the label
-//! and notes change. See its own doc for why one iteration can block far
+//! and notes change. (TASK-43's pgid sidecar does not change that: it is a
+//! file the *pipeline* writes and deletes within one run's lifetime, read
+//! back off disk by `refresh_dispatch_runs` like every other `DispatchRun`
+//! field — no worker state, nothing for this thread to publish or own.)
+//! The backlog worker additionally *sweeps* sidecars left behind by a
+//! Switchbard that died mid-run; see `sweep_sidecar_if_finished` for why that
+//! deliberately spares a sidecar whose task is still claimed. See its own doc for why one iteration can block far
 //! longer than the other workers' — this reuses `drain_dispatch_queue`'s
 //! serial-by-design batching rather than reimplementing it.
 //!
@@ -62,8 +68,9 @@ use switchbard_core::{
     probe_dirty_files, probe_fetch_age, probe_head_commit_time, probe_ignored_files,
     probe_main_drift, probe_recent_commits, probe_ref_drift_detail, probe_remote_drift,
     probe_worktree_size, probe_worktree_staleness, save_agent_context_cache, scan_agent_context,
-    scan_listeners, AgentContextMap, BacklogProject, DetectedService, DispatchOptions, DriftProbe,
-    Repo, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
+    scan_listeners, sweep_dead_sidecar, AgentContextMap, BacklogProject, DetectedService,
+    DispatchOptions, DriftProbe, Repo, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL,
+    DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
@@ -628,9 +635,11 @@ pub(crate) fn collect_backlog_projects(roots: &[PathBuf]) -> HashMap<PathBuf, Ba
 ///
 /// The filesystem work is deliberately done outside the `backlog_projects`
 /// lock: collecting the (root, id) pairs first keeps that mutex held for a map
-/// walk rather than for a `read_dir` per dispatched task.
+/// walk rather than for a `read_dir` per dispatched task. Whether each task is
+/// still *claimed* is collected in the same pass, because the sidecar sweep
+/// below needs it and re-locking to ask would be a second walk.
 fn refresh_dispatch_runs(ch: &Channels) {
-    let targets: Vec<(PathBuf, String)> = {
+    let targets: Vec<(PathBuf, String, bool)> = {
         let projects = ch.backlog_projects.lock().unwrap();
         projects
             .iter()
@@ -639,7 +648,10 @@ fn refresh_dispatch_runs(ch: &Channels) {
                     .tasks
                     .iter()
                     .filter(|task| task.labels.iter().any(|label| is_dispatch_label(label)))
-                    .map(|task| (root.clone(), task.id.clone()))
+                    .map(|task| {
+                        let claimed = task.labels.iter().any(|label| label == DISPATCHING_LABEL);
+                        (root.clone(), task.id.clone(), claimed)
+                    })
                     .collect::<Vec<_>>()
             })
             .collect()
@@ -647,12 +659,61 @@ fn refresh_dispatch_runs(ch: &Channels) {
 
     let runs = targets
         .into_iter()
-        .map(|(root, task_id)| {
+        .map(|(root, task_id, claimed)| {
             let run = inspect_dispatch_run(&root, &task_id);
+            sweep_sidecar_if_finished(&run, claimed);
             ((root, task_id), run)
         })
         .collect();
     *ch.dispatch_runs.lock().unwrap() = runs;
+}
+
+/// TASK-43: delete a pgid sidecar that can no longer name a live run — but
+/// only once the task is no longer claimed.
+///
+/// A Switchbard force-quit mid-run never reaches `dispatch_one`'s release
+/// boundary, so its sidecar outlives the run. `dispatch_inspect` already
+/// refuses to arm a Kill button from one, so this is hygiene rather than the
+/// safety mechanism — deleting a file never signals anything.
+///
+/// Two verdicts qualify, for the same reason from opposite directions:
+///
+/// - `Gone` — the group was positively identified as dead.
+/// - `Unverifiable(StaleBoot)` — the sidecar was minted under a previous boot,
+///   so its pgid names a number the kernel has since reissued. It can never
+///   authenticate again, however long it sits there, and after a reboot this
+///   is the whole surviving population (audit N2).
+///
+/// `LegacyFormat` is deliberately *not* swept: a pre-versioning sidecar
+/// carries no boot epoch, which is exactly why it cannot be dated — sweeping
+/// it would mean guessing that it is old, and the file is already inert.
+///
+/// The `!claimed` condition is the part worth reading twice. While a task is
+/// still labelled `dispatching`, a verified-dead group is the **only**
+/// evidence that the run died: the log is empty (which is also what a healthy
+/// in-flight run looks like), so `looks_orphaned` cannot see it, and deleting
+/// the sidecar would erase the one fact that lets the Dispatch view move that
+/// row out of "In flight" and into the attention section. So the file is kept
+/// exactly as long as it is load-bearing, and swept the moment the claim it
+/// belongs to is gone. (Recovering a claimed-but-dead run is TASK-39's
+/// reaper; this deliberately stops at not lying about it.)
+fn sweep_sidecar_if_finished(run: &DispatchRun, claimed: bool) {
+    if claimed || !sidecar_is_spent(run) {
+        return;
+    }
+    if let Some(started) = run.started_at_unix {
+        sweep_dead_sidecar(&run.task_id, started);
+    }
+}
+
+/// A sidecar that can never name a live run again — see
+/// [`sweep_sidecar_if_finished`] for why these two verdicts and no others.
+fn sidecar_is_spent(run: &DispatchRun) -> bool {
+    run.liveness.is_gone()
+        || matches!(
+            run.liveness.doubt(),
+            Some(switchbard_core::dispatch_inspect::SidecarDoubt::StaleBoot)
+        )
 }
 
 /// Any of the four labels that make up the dispatch state machine. A task
@@ -793,6 +854,50 @@ mod tests {
             effective_period(Duration::from_secs(60), true),
             Duration::from_secs(60)
         );
+    }
+
+    fn run_with(liveness: switchbard_core::dispatch_inspect::DispatchRunLiveness) -> DispatchRun {
+        DispatchRun {
+            task_id: "TASK-1".to_string(),
+            branch: "dispatch/task-1".to_string(),
+            worktree_path: PathBuf::from("/repo/.worktrees/dispatch-task-1"),
+            worktree_exists: false,
+            log_path: None,
+            prompt_path: None,
+            started_at_unix: Some(1_700_000_000),
+            log_bytes: 0,
+            log_modified_unix: None,
+            liveness,
+        }
+    }
+
+    /// Audit N2: after a reboot, every sidecar left on disk is `StaleBoot` —
+    /// permanently unauthenticatable litter. Deleting one signals nothing, so
+    /// it is safe to sweep alongside a positively-dead group.
+    #[test]
+    fn a_spent_sidecar_is_one_that_can_never_name_a_live_run_again() {
+        use switchbard_core::dispatch_inspect::{DispatchRunLiveness, SidecarDoubt};
+
+        assert!(sidecar_is_spent(&run_with(DispatchRunLiveness::Gone)));
+        assert!(sidecar_is_spent(&run_with(
+            DispatchRunLiveness::Unverifiable(SidecarDoubt::StaleBoot)
+        )));
+
+        // A legacy sidecar carries no boot epoch, so it cannot be dated —
+        // sweeping it would be guessing that it is old. It is already inert.
+        assert!(!sidecar_is_spent(&run_with(
+            DispatchRunLiveness::Unverifiable(SidecarDoubt::LegacyFormat)
+        )));
+        // A probe that failed this tick may well succeed next tick.
+        assert!(!sidecar_is_spent(&run_with(
+            DispatchRunLiveness::Unverifiable(SidecarDoubt::ProbeFailed)
+        )));
+        // And never the live ones.
+        assert!(!sidecar_is_spent(&run_with(DispatchRunLiveness::Alive {
+            pgid: 42,
+            supervised: true
+        })));
+        assert!(!sidecar_is_spent(&run_with(DispatchRunLiveness::NoSidecar)));
     }
 
     #[test]

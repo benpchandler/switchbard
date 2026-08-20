@@ -24,11 +24,11 @@ use std::path::Path;
 use std::process::Command;
 
 use switchbard_core::{
-    append_backlog_notes, archive_backlog_task, build_refine_patch, complete_backlog_task,
-    create_backlog_task, edit_backlog_task, load_backlog_project, set_backlog_acceptance_checked,
-    set_backlog_dod_checked, set_backlog_label, swap_backlog_label, task_file_round_trips,
-    BacklogProject, BacklogTaskPatch, BacklogTaskSource, NewBacklogTask, RefineSuggestion,
-    REFINED_MARKER,
+    append_backlog_notes, archive_backlog_task, build_refine_patch, claim_task_for_dispatch,
+    complete_backlog_task, create_backlog_task, edit_backlog_task, load_backlog_project,
+    set_backlog_acceptance_checked, set_backlog_dod_checked, set_backlog_label, swap_backlog_label,
+    task_file_round_trips, BacklogProject, BacklogTaskPatch, BacklogTaskSource, NewBacklogTask,
+    RefineSuggestion, REFINED_MARKER,
 };
 use tempfile::TempDir;
 
@@ -613,6 +613,84 @@ fn swap_backlog_label_atomically_replaces_one_label_with_another() {
     let task = project.tasks.iter().find(|t| t.id == task_id).unwrap();
     assert!(!task.labels.contains(&"dispatch".to_string()));
     assert!(task.labels.contains(&"dispatching".to_string()));
+}
+
+/// TASK-43 F4b: a task re-flagged after a failed run must not carry its old
+/// verdict into the new run.
+///
+/// The dispatch state machine is a priority ladder — `dispatched` beats
+/// `dispatch-failed` beats `dispatching` — so a task that kept
+/// `dispatch-failed` while `dispatching` rendered as a red "DISPATCH FAILED"
+/// pill for the entire length of a perfectly healthy agent run, and lit the
+/// top bar's attention chip with a warning nothing could clear. Claiming is
+/// the moment the previous attempt stops being the current truth, so claiming
+/// is where the stale labels go.
+#[test]
+fn claiming_a_task_clears_the_previous_attempts_terminal_labels() {
+    let fixture = fixture_repo();
+    let root = fixture.path();
+    let task_id = create_fixture_task(root);
+    // The exact on-disk state after one failed run followed by a re-flag.
+    set_backlog_label(root, &task_id, "dispatch-failed", true).unwrap();
+    set_backlog_label(root, &task_id, "keep-me", true).unwrap();
+    set_backlog_label(root, &task_id, "dispatch", true).unwrap();
+
+    claim_task_for_dispatch(root, &task_id).expect("claim should succeed");
+
+    let project = reload(root);
+    let task = project.tasks.iter().find(|t| t.id == task_id).unwrap();
+    assert!(
+        task.labels.contains(&"dispatching".to_string()),
+        "the claim itself must still happen: {:?}",
+        task.labels
+    );
+    assert!(
+        !task.labels.contains(&"dispatch-failed".to_string()),
+        "the previous run's verdict must not survive the new claim: {:?}",
+        task.labels
+    );
+    assert!(!task.labels.contains(&"dispatch".to_string()));
+    assert!(
+        task.labels.contains(&"keep-me".to_string()),
+        "unrelated labels are none of the claim's business: {:?}",
+        task.labels
+    );
+}
+
+/// The same guard for a task re-flagged after a *successful* run, which is
+/// the likelier real sequence (open a PR, decide it needs another pass).
+/// `dispatched` outranks everything, so leaving it behind would show a green
+/// "DISPATCHED" pill and a stale PR link over a live run.
+#[test]
+fn claiming_a_task_clears_a_previous_successful_runs_label() {
+    let fixture = fixture_repo();
+    let root = fixture.path();
+    let task_id = create_fixture_task(root);
+    set_backlog_label(root, &task_id, "dispatched", true).unwrap();
+    set_backlog_label(root, &task_id, "dispatch", true).unwrap();
+
+    claim_task_for_dispatch(root, &task_id).expect("claim should succeed");
+
+    let project = reload(root);
+    let task = project.tasks.iter().find(|t| t.id == task_id).unwrap();
+    assert!(task.labels.contains(&"dispatching".to_string()));
+    assert!(!task.labels.contains(&"dispatched".to_string()));
+}
+
+/// A first-ever claim has nothing to clear; the clearing step must be a
+/// silent no-op rather than an error that aborts the claim.
+#[test]
+fn claiming_a_never_dispatched_task_is_a_plain_swap() {
+    let fixture = fixture_repo();
+    let root = fixture.path();
+    let task_id = create_fixture_task(root);
+    set_backlog_label(root, &task_id, "dispatch", true).unwrap();
+
+    claim_task_for_dispatch(root, &task_id).expect("claim should succeed");
+
+    let project = reload(root);
+    let task = project.tasks.iter().find(|t| t.id == task_id).unwrap();
+    assert_eq!(task.labels, vec!["dispatching".to_string()]);
 }
 
 /// QA parity matrix LOW gap: labels/assignee/milestone/dependencies are now
