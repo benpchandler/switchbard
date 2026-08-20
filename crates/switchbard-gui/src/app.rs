@@ -47,10 +47,10 @@ use switchbard_core::dispatch_inspect::DispatchRun;
 use switchbard_core::instance_lock::{self, AcquireError, InstanceLock};
 use switchbard_core::{
     assess_branch_delete, collect_dirty_files, config, delete_branch, is_primary_worktree,
-    kill_pgid, load_agent_context_cache, load_backlog_project, open_url, remove_worktree,
-    spawn_in_session, url_for_port, AgentContextMap, AttributedListener, BacklogProject,
-    BacklogTaskPatch, DetectedService, KillOutcome, NewBacklogTask, Repo, WorktreeRef,
-    BROWSER_APP_NAMES,
+    kill_dispatch_run, kill_pgid, load_agent_context_cache, load_backlog_project, open_url,
+    remove_worktree, spawn_in_session, url_for_port, AgentContextMap, AttributedListener,
+    BacklogProject, BacklogTaskPatch, DetectedService, KillOutcome, NewBacklogTask, Repo,
+    WorktreeRef, BROWSER_APP_NAMES,
 };
 
 /// One `backlog` CLI writer's per-task serialization registry (task-42,
@@ -239,6 +239,13 @@ pub struct HiveApp {
     /// (test scripts, build wrappers, ship-gate runners, etc.).
     pub show_non_servers: bool,
     pub view_tab: ViewTab,
+    /// TASK-43: which in-flight dispatch run has its Kill button armed, if
+    /// any. Confirm state only — one at a time, cleared on confirm/cancel —
+    /// exactly like `backlog_view.dispatch_confirm` arms the Dispatch button
+    /// it is the inverse of. View-only: killing a run publishes nothing here,
+    /// because the run's own pipeline releases the task and the label stays
+    /// the state machine (see `switchbard_core::dispatch`'s module doc).
+    pub dispatch_kill_confirm: Option<BacklogTaskKey>,
     pub agent_context_view: AgentContextViewState,
     pub backlog_view: BacklogViewState,
     /// Shared render cache for the task detail pane's markdown description
@@ -379,6 +386,7 @@ impl HiveApp {
             server_status: Status::new(),
             backlog_status: Status::new(),
             filter: String::new(),
+            dispatch_kill_confirm: None,
             show_only_managed: false,
             confirm_kill_all: false,
             confirm_remove_repo: None,
@@ -890,6 +898,50 @@ impl HiveApp {
         let ctx = ctx.clone();
         thread::spawn(move || {
             status.set(describe_kill(pgid, kill_pgid(pgid, Duration::from_secs(3))));
+            kick.notify();
+            ctx.request_repaint();
+        });
+    }
+
+    /// TASK-43: pull the plug on one in-flight dispatch run by signalling the
+    /// process group recorded in its pgid sidecar.
+    ///
+    /// Deliberately *only* a signal. Nothing here touches the task's labels or
+    /// notes: `dispatch_one` is blocked in `wait_for_exit` on this exact
+    /// process, so killing it makes that wait return and the pipeline walks
+    /// its ordinary failure path — `dispatch-failed` plus a note — on its own.
+    /// Bookkeeping from this side would be a second writer racing the first.
+    ///
+    /// **No pgid is passed in, deliberately.** The run's identity is
+    /// re-established *on this thread, immediately before signalling*, by
+    /// `kill_dispatch_run` (which re-runs `dispatch_inspect::probe_liveness`,
+    /// the same authenticated path the worker uses). The verdict cached on a
+    /// `DispatchRun` is up to `BACKLOG_PERIOD` × `UNFOCUSED_BACKOFF_MULTIPLIER`
+    /// old — roughly four minutes with the window in the background — and
+    /// within that window the agent can exit and the OS can reissue its
+    /// process group id to something unrelated. Signalling a cached number is
+    /// the sidecar-authentication failure with a shorter fuse; the cached
+    /// verdict is fit to decide whether to *render* a button, never to decide
+    /// what to *signal*.
+    ///
+    /// A run that no longer authenticates is reported and left alone, so the
+    /// two answers this can give are "killed it" and "nothing killed" — never
+    /// "killed something". Supervision is read from the fresh probe too: when
+    /// the agent outlived the Switchbard that spawned it, the kill stops the
+    /// agent and nothing else (no release, no note, the task stays on
+    /// `dispatching`) and the status message says so rather than letting the
+    /// user infer a bookkeeping step that will never happen.
+    ///
+    /// The `backlog_kick` afterwards refreshes the labels the pipeline
+    /// rewrites in response, the same wake the dispatch worker uses for its
+    /// own outcomes.
+    pub fn spawn_kill_dispatch(&self, task_id: String, started_at_unix: u64, ctx: &egui::Context) {
+        let kick = self.backlog_kick.clone();
+        let status = self.backlog_status.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let outcome = kill_dispatch_run(&task_id, started_at_unix, Duration::from_secs(3));
+            status.set(outcome.describe(&task_id));
             kick.notify();
             ctx.request_repaint();
         });

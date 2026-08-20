@@ -69,6 +69,66 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
      "publishes no state of its own" property. The `dispatch_runs` map on `HiveApp`
      is a *cache* refreshed by the backlog worker purely to keep `read_dir` off the
      render path — the labels stay authoritative.
+  5. *Dispatch operability* (TASK-43, owner-approved 2026-08-19) — dispatch stops
+     being pull-only. An always-visible top-bar chip (`⚙ N running · <oldest
+     elapsed>`, in `theme::dispatch_accent`) says an agent is working from any tab,
+     flipping to danger styling **and different wording** when anything is failed,
+     orphaned, or past its timeout; clicking it goes to the Dispatches tab, which
+     also carries a badge counting runs (not queue depth). Silent when there is
+     nothing to say — the same "no ticking counters" rule as the removed last-scan
+     label. And a hand on the plug: `dispatch_one` writes a **pgid sidecar**
+     (`dispatch-<task>-<stamp>.pid`, beside the run's log) between spawning the
+     agent and blocking on it, deletes it as the run releases, and the Dispatch
+     view's in-flight rows get a confirm-armed Kill button plus a `hard kill in Ym`
+     deadline.
+     - The sidecar is **not a run store**: it is the one fact about a run that
+       cannot be rebuilt from repo root + task id (the kernel assigns the pgid), it
+       is named by the same stem convention as the log, and nothing reads it as
+       authority on pipeline state.
+     - The kill needs **no coordination with the worker thread**. `dispatch_one` is
+       already blocked in `wait_for_exit` on that process, so one signal makes the
+       wait return and the existing path releases the task as `dispatch-failed`
+       with a note. Writing state from the UI would be a second writer racing the
+       first.
+     - `DispatchOptions::max_turns` (default 50) is passed as `claude -p
+       --max-turns`. Complementary to `timeout`, not redundant: turns bound
+       *looping* from inside the agent, the timeout bounds *hanging* from outside.
+     - **The sidecar is self-authenticating** (adversarial review, 2026-08-19).
+       A bare pgid on disk is a loaded weapon: force-quit Switchbard mid-run and
+       the file survives, macOS recycles pids at 99999, and the Kill button then
+       aims at whatever inherited that number — under a dialog reassuring the
+       user it is safe. So the sidecar is versioned and records the boot epoch
+       (`switchbard_core::boot_time`), the supervisor's pid, and the run's start
+       stamp, and `dispatch_inspect` issues a `DispatchRunLiveness` verdict that
+       **fails closed**: a kill handle exists only when the sidecar was minted
+       this boot *and* a live process in that group still carries this run's own
+       prompt path. Legacy bare-pgid files, other-boot files, and failed probes
+       are all `Unverifiable` — no button, with the reason shown in its place.
+     - **Supervision is a first-class distinction.** When the Switchbard that
+       spawned an agent is gone, no `wait_for_exit` is enforcing the timeout and
+       nothing will release the task. Such a row stops claiming `hard kill in
+       Ym`, says the run has no deadline, and — if the agent is still
+       identifiable — offers a Kill labelled honestly ("task stays on
+       `dispatching`"). A verified-**dead** group under a still-claimed task
+       classifies as needs-attention rather than sitting under "In flight"
+       forever; that is the case file evidence alone cannot see, because an
+       empty log is also what a healthy run looks like.
+     - **Claiming clears the previous attempt's terminal labels**, and a live
+       `dispatching` claim outranks a stale terminal verdict in the ladder.
+       Previously the ladder ran `dispatched` > `dispatch-failed` >
+       `dispatching`, so a re-flagged task reported Failed for the whole length
+       of its new run and lit the attention chip with a warning nothing could
+       clear. `claim_task_for_dispatch` strips the stale labels; the reordered
+       ladder is the fallback for when that best-effort strip fails.
+     - **A cached verdict may render a button; only a fresh one may fire it.**
+       The liveness verdict on a `DispatchRun` is up to ~4 minutes stale (30s
+       worker cadence × the unfocused backoff), and in that window a pgid can
+       be reissued. `dispatch_kill::kill_dispatch_run` therefore re-runs the
+       *same* authenticated probe on the thread that signals, immediately
+       before signalling, and refuses ("run already ended — nothing killed")
+       rather than firing at a number it can no longer vouch for. The two
+       answers it can give are "killed it" and "nothing killed" — never
+       "killed something".
 
 - **Standardized cross-repo status vocabulary (owner decision 2026-08-06).** Every
   tracked project offers the same statuses — `Icebox → To Do → In Progress →

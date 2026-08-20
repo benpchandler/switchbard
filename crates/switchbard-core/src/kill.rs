@@ -21,6 +21,33 @@ pub enum KillOutcome {
 /// then escalate to SIGKILL if anything is still alive.
 ///
 /// `pgid` is the positive group id; we negate it for `libc::kill` to address the group.
+///
+/// ## The zombie caveat (measured 2026-08-19, TASK-43 audit)
+///
+/// [`group_alive`] maps `EPERM` to "alive", which is right for a group we
+/// genuinely may not signal — but macOS also answers `kill(-pgid, 0)` with
+/// `EPERM` for a group whose last member is an **unreaped zombie**. A caller
+/// that kills a child and never `waitpid`s it therefore sees this function
+/// burn the full `grace`, escalate, and return `Err(EPERM)` for a process it
+/// successfully killed.
+///
+/// There is no clean fix inside this function: `EPERM` from `kill(2)` carries
+/// no way to distinguish "not yours to signal" from "yours, and already dead",
+/// and cross-checking the process table here would put a `ps` subprocess in
+/// the middle of the app's most latency-sensitive destructive path. The
+/// correct fix is the caller's, and every production caller already does it —
+/// `dispatch_one` is parked in `wait_for_exit` on the same child while the UI
+/// kills, and `spawn_stop_run`/the reaper likewise reap what they spawn — so
+/// the zombie state is unreachable in the app. The visible cost is bounded to
+/// `wait_for_exit`'s 200ms poll interval, and only for a caller that reaps
+/// late or not at all; such a caller sees a user-facing "Operation not
+/// permitted" for what was in fact a successful kill.
+///
+/// Both `spawn::tests::spawn_then_kill_works` and
+/// `dispatch::tests::killing_a_runs_process_group_via_its_sidecar_unblocks_the_pipelines_wait`
+/// reproduce the production topology (a concurrent reaper) rather than
+/// working around this — an earlier `#[ignore]` on the former blamed a
+/// "sandbox quirk" and was simply wrong about the cause.
 pub fn kill_pgid(pgid: i32, grace: Duration) -> io::Result<KillOutcome> {
     // Liveness probe first: if no group exists, report NotFound without raising signals.
     match group_alive(pgid) {
