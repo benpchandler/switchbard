@@ -19,7 +19,7 @@ use eframe::egui;
 const MIN_WIDTH: f32 = 320.0;
 const DEFAULT_WIDTH: f32 = 420.0;
 const MAX_WIDTH: f32 = 720.0;
-const COLLAPSED_WIDTH: f32 = 28.0;
+const COLLAPSED_WIDTH: f32 = 36.0;
 
 /// Must render *before* the central panel (same ordering rule
 /// `HiveApp::render_ui` documents for every side panel) so it claims its
@@ -42,26 +42,36 @@ pub(super) fn render_detail_rail(
     // (`ctx.style()`'s own `side_top_panel` frame would otherwise match the
     // board's own `panel_fill`), so the rail reads as its own persistent
     // workspace tier rather than "more board."
-    let frame = egui::Frame::side_top_panel(&ctx.style()).fill(theme::rail_bg());
+    let frame = egui::Frame::side_top_panel(&ctx.style())
+        .fill(theme::rail_bg())
+        .stroke(theme::surface_stroke())
+        .inner_margin(egui::Margin::same(12));
     egui::SidePanel::right("backlog_detail_rail")
         .resizable(true)
         .default_width(DEFAULT_WIDTH)
         .width_range(MIN_WIDTH..=MAX_WIDTH)
         .frame(frame)
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Task details").strong());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .small_button("▶")
-                        .on_hover_text("Collapse the task-detail rail")
-                        .clicked()
-                    {
-                        app.backlog_view.detail_rail_collapsed = true;
-                    }
+            egui::Frame::default()
+                .fill(theme::card_bg())
+                .stroke(theme::surface_stroke())
+                .corner_radius(7.0)
+                .inner_margin(egui::Margin::symmetric(10, 7))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("Task details").strong().size(15.0));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .small_button("▶")
+                                .on_hover_text("Collapse the task-detail rail")
+                                .clicked()
+                            {
+                                app.backlog_view.detail_rail_collapsed = true;
+                            }
+                        });
+                    })
                 });
-            });
-            ui.separator();
+            ui.add_space(8.0);
             super::detail::render_task_detail(app, ui, snap, pending);
         });
 }
@@ -70,7 +80,10 @@ pub(super) fn render_detail_rail(
 /// panel id preserves the expanded panel's user-resized width in egui's
 /// persisted panel state instead of overwriting it with 28 points.
 fn render_collapsed(app: &mut HiveApp, ctx: &egui::Context) {
-    let frame = egui::Frame::side_top_panel(&ctx.style()).fill(theme::rail_bg());
+    let frame = egui::Frame::side_top_panel(&ctx.style())
+        .fill(theme::rail_bg())
+        .stroke(theme::surface_stroke())
+        .inner_margin(egui::Margin::same(6));
     egui::SidePanel::right("backlog_detail_rail_collapsed")
         .resizable(false)
         .exact_width(COLLAPSED_WIDTH)

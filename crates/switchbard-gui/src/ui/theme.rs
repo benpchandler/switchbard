@@ -2,10 +2,10 @@
 //! used across the GUI — the single source of truth `theme.rs` has always
 //! been, now serving **two** named palettes (task-14):
 //!
-//! - **Flight Strips** (light, direction B) — the default. Board `#DFE3E6`,
-//!   strip/card `#FBFBF9`, ink `#20262B`, overdue `#B3391F`.
-//! - **Operator's Console** (dark, direction A's lamp language) — chassis
-//!   `#221F1B`, lamp amber `#E8B04B`, jade `#57C26A`, hot `#E06C4F`.
+//! - **Flight Strips** (light, direction B) — the default. Cool board,
+//!   paper-white strips, ink `#20262B`, overdue `#B3391F`.
+//! - **Operator's Console** (dark, direction A's lamp language) — blue-black
+//!   chassis, lamp amber `#E8B04B`, jade `#57C26A`, hot `#E06C4F`.
 //!
 //! `ThemeChoice` (persisted on `Config::ui.theme`) selects which one is
 //! active; [`apply`] installs it into egui's `Visuals` and a thread-local so
@@ -127,11 +127,11 @@ const LIGHT: Palette = Palette {
     weak_text: Color32::from_rgb(0x20, 0x26, 0x2B), // design's "ink"
     muted_text: Color32::from_rgb(0x50, 0x5A, 0x63), // ~5.5:1
     primary_worktree_tint: Color32::from_rgba_premultiplied(28, 25, 11, 28),
-    panel_fill: Color32::from_rgb(0xDF, 0xE3, 0xE6), // "board"
-    faint_bg: Color32::from_rgb(0xE2, 0xE6, 0xE8),   // recess + input fields, between board/strip
-    card_bg: Color32::from_rgb(0xFB, 0xFB, 0xF9),    // "strip"
-    nav_bg: Color32::from_rgb(0xED, 0xF0, 0xF1),     // raised tab strip, near strip brightness
-    rail_bg: Color32::from_rgb(0xE3, 0xE7, 0xE9),    // detail rail, a shade off the board
+    panel_fill: Color32::from_rgb(0xE7, 0xEC, 0xF0), // cool workspace board
+    faint_bg: Color32::from_rgb(0xD9, 0xE1, 0xE7),   // recessed controls and column wells
+    card_bg: Color32::from_rgb(0xFF, 0xFF, 0xFD),    // clean paper strip
+    nav_bg: Color32::from_rgb(0xF4, 0xF7, 0xF9),     // elevated navigation surface
+    rail_bg: Color32::from_rgb(0xF0, 0xF3, 0xF5),    // quiet detail workspace
 };
 
 // Operator's Console (dark, direction A) — chassis #221F1B, lamp amber
@@ -161,14 +161,14 @@ const DARK: Palette = Palette {
     dispatch_accent: Color32::from_rgb(0xE8, 0xB0, 0x4B), // same as lamp amber, ~7.6:1
     warn_orange: Color32::from_rgb(0xE8, 0x7A, 0x5A), // brightened "line hot", ~5.2:1
     danger: Color32::from_rgb(0xE8, 0x7A, 0x5A), // text role; button fill is danger_fill()
-    weak_text: Color32::from_rgb(0xD8, 0xD2, 0xC6), // faceplate text, ~9.9:1
-    muted_text: Color32::from_rgb(0xAD, 0xA6, 0x97), // ~6.1:1
+    weak_text: Color32::from_rgb(0xE6, 0xE1, 0xD8), // crisp faceplate text
+    muted_text: Color32::from_rgb(0xB8, 0xB1, 0xA4), // readable secondary faceplate text
     primary_worktree_tint: Color32::from_rgba_premultiplied(28, 25, 11, 28),
-    panel_fill: Color32::from_rgb(0x22, 0x1F, 0x1B), // chassis
-    faint_bg: Color32::from_rgb(0x17, 0x15, 0x12),   // recessed + input fields, darker
-    card_bg: Color32::from_rgb(0x37, 0x31, 0x2A),    // lit panel / selected row, brighter
-    nav_bg: Color32::from_rgb(0x2C, 0x28, 0x22),     // raised tab strip
-    rail_bg: Color32::from_rgb(0x1E, 0x1B, 0x18),    // detail rail, a shade off the chassis
+    panel_fill: Color32::from_rgb(0x17, 0x1B, 0x21), // blue-black chassis
+    faint_bg: Color32::from_rgb(0x0F, 0x13, 0x18),   // recessed controls and column wells
+    card_bg: Color32::from_rgb(0x23, 0x29, 0x32),    // raised instrument panel
+    nav_bg: Color32::from_rgb(0x1E, 0x24, 0x2C),     // elevated navigation surface
+    rail_bg: Color32::from_rgb(0x14, 0x19, 0x1F),    // quiet detail workspace
 };
 
 fn palette_for(choice: ThemeChoice) -> &'static Palette {
@@ -250,6 +250,23 @@ pub fn nav_bg() -> Color32 {
 /// its cards.
 pub fn rail_bg() -> Color32 {
     active_palette().rail_bg
+}
+
+/// Hairline used to separate adjacent workspace surfaces without reverting
+/// to egui's heavy stock-gray borders.
+pub fn surface_stroke() -> egui::Stroke {
+    egui::Stroke::new(1.0, scale_alpha(weak_text(), 0.24))
+}
+
+/// A restrained shadow for raised content cards. It is intentionally subtle:
+/// hierarchy should come from surface value first and shadow second.
+pub fn card_shadow() -> egui::epaint::Shadow {
+    egui::epaint::Shadow {
+        offset: [0, 2],
+        blur: 6,
+        spread: 0,
+        color: Color32::from_black_alpha(28),
+    }
 }
 /// Board lens: a drop-target column's fill while a drag is hovering over it
 /// *and* egui's `dnd_drop_zone` would actually accept the drop (task-42).
@@ -656,6 +673,22 @@ pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
     // that; cards now read `theme::card_bg()` explicitly instead of this
     // egui slot (board.rs, digest.rs, stats.rs).
     visuals.extreme_bg_color = palette.faint_bg;
+    visuals.code_bg_color = palette.faint_bg;
+    visuals.window_corner_radius = egui::CornerRadius::same(8);
+    visuals.menu_corner_radius = egui::CornerRadius::same(7);
+    visuals.window_stroke = surface_stroke();
+    visuals.window_shadow = egui::epaint::Shadow {
+        offset: [0, 8],
+        blur: 20,
+        spread: 0,
+        color: Color32::from_black_alpha(64),
+    };
+    visuals.popup_shadow = egui::epaint::Shadow {
+        offset: [0, 6],
+        blur: 14,
+        spread: 0,
+        color: Color32::from_black_alpha(56),
+    };
     // Distinct focus ring: at rest, an input's border reads as `weak_text`
     // at low opacity (bringing back the "pop" egui's own TextEdit code
     // comments admit stock visuals lack — see `interact()`'s call site in
@@ -667,6 +700,29 @@ pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
         egui::Stroke::new(1.0, scale_alpha(palette.weak_text, 0.35));
     visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.5, palette.sky);
     visuals.widgets.active.bg_stroke = egui::Stroke::new(1.5, palette.sky);
+    visuals.widgets.inactive.weak_bg_fill = palette.nav_bg;
+    visuals.widgets.hovered.weak_bg_fill = palette.card_bg;
+    visuals.widgets.active.weak_bg_fill = palette.card_bg;
+    visuals.widgets.open.weak_bg_fill = palette.card_bg;
+    visuals.widgets.inactive.fg_stroke.color = palette.weak_text;
+    visuals.widgets.hovered.fg_stroke.color = palette.weak_text;
+    visuals.widgets.active.fg_stroke.color = palette.weak_text;
+    visuals.widgets.open.fg_stroke.color = palette.weak_text;
+    for widget in [
+        &mut visuals.widgets.noninteractive,
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+        &mut visuals.widgets.open,
+    ] {
+        widget.corner_radius = egui::CornerRadius::same(5);
+    }
+    // Selectable labels use this fill as a literal paint color. Keep it
+    // opaque (rather than an alpha-only accent) so both the rasterized UI
+    // and the legibility audit see the same high-contrast surface.
+    visuals.selection.bg_fill = palette.card_bg;
+    visuals.selection.stroke = egui::Stroke::new(1.5, palette.weak_text);
+    visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
     // `TextEdit` hint text and `Ui::disable()` both fade a color 50% toward
     // `Visuals::fade_out_to_color()`, which reads exactly this one field
     // (`widgets.noninteractive.weak_bg_fill` — no other visible widget uses
@@ -693,5 +749,10 @@ pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
             egui::TextStyle::Small,
             egui::FontId::proportional(legibility::MIN_FONT_POINTS),
         );
+        style.spacing.item_spacing = egui::vec2(7.0, 5.0);
+        style.spacing.button_padding = egui::vec2(8.0, 4.0);
+        style.spacing.interact_size.y = 24.0;
+        style.spacing.window_margin = egui::Margin::same(10);
+        style.spacing.menu_margin = egui::Margin::same(8);
     });
 }

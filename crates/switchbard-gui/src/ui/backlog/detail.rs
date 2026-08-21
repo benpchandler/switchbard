@@ -50,9 +50,21 @@ pub(super) fn render_task_detail(
         .id_salt("backlog_task_detail")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            render_detail_header(ui, project, task, editable);
+            egui::Frame::default()
+                .fill(theme::card_bg())
+                .stroke(theme::surface_stroke())
+                .corner_radius(7.0)
+                .inner_margin(egui::Margin::same(10))
+                .show(ui, |ui| render_detail_header(ui, project, task, editable));
             ui.add_space(8.0);
-            render_editor(app, ui, project, task, editable, pending);
+            egui::Frame::default()
+                .fill(theme::card_bg())
+                .stroke(theme::surface_stroke())
+                .corner_radius(7.0)
+                .inner_margin(egui::Margin::same(10))
+                .show(ui, |ui| {
+                    render_editor(app, ui, project, task, editable, pending);
+                });
             ui.add_space(10.0);
             detail_lists::render_subtasks(app, ui, &project.key, task, &project.project, editable);
             ui.add_space(10.0);
@@ -118,7 +130,7 @@ fn render_detail_header(
             );
         }
     });
-    ui.heading(&task.title);
+    ui.label(egui::RichText::new(&task.title).heading().strong());
     ui.label(
         egui::RichText::new(format!(
             "{} / {}",
@@ -163,7 +175,12 @@ fn render_editor(
     pending: &mut Pending,
 ) {
     let project_root = &project.key;
-    ui.label(egui::RichText::new("Task").strong());
+    ui.label(
+        egui::RichText::new("Task fields")
+            .strong()
+            .color(theme::weak_text()),
+    );
+    ui.add_space(3.0);
     let mut status_save: Option<String> = None;
     ui.add_enabled_ui(editable, |ui| {
         ui.label("title");
@@ -172,14 +189,14 @@ fn render_editor(
                 .desired_width(f32::INFINITY),
         );
 
-        ui.horizontal(|ui| {
-            ui.label("status");
+        ui.columns(2, |columns| {
+            columns[0].label("status");
             // Owner UX pass (2026-08-05): this task's own project's shared
             // vocabulary, not a fixed 3-entry list — matches what Board and
             // the List filter now offer for the same project.
             let statuses = ordered_status_vocabulary(std::iter::once(&project.project));
             if format::render_value_combo(
-                ui,
+                &mut columns[0],
                 "backlog_task_status",
                 &mut app.backlog_view.editor.status,
                 &statuses,
@@ -187,9 +204,9 @@ fn render_editor(
             ) {
                 status_save = Some(app.backlog_view.editor.status.trim().to_string());
             }
-            ui.label("priority");
+            columns[1].label("priority");
             format::render_value_combo(
-                ui,
+                &mut columns[1],
                 "backlog_task_priority",
                 &mut app.backlog_view.editor.priority,
                 &format::priority_options(),
@@ -197,25 +214,25 @@ fn render_editor(
             );
         });
 
-        ui.horizontal(|ui| {
-            ui.label("labels");
-            ui.add(
+        ui.columns(2, |columns| {
+            columns[0].label("labels");
+            columns[0].add(
                 egui::TextEdit::singleline(&mut app.backlog_view.editor.labels)
-                    .desired_width(260.0),
+                    .desired_width(f32::INFINITY),
             );
-            ui.label("assignees");
-            ui.add(
+            columns[1].label("assignees");
+            columns[1].add(
                 egui::TextEdit::singleline(&mut app.backlog_view.editor.assignees)
-                    .desired_width(180.0),
+                    .desired_width(f32::INFINITY),
             );
         });
 
+        ui.label("milestone");
         ui.horizontal(|ui| {
-            ui.label("milestone");
             ui.add(
                 egui::TextEdit::singleline(&mut app.backlog_view.editor.milestone)
                     .hint_text("none")
-                    .desired_width(200.0),
+                    .desired_width(ui.available_width() - 50.0),
             );
             if !app.backlog_view.editor.milestone.trim().is_empty()
                 && ui

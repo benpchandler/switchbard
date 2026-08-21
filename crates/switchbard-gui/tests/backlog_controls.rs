@@ -1416,32 +1416,13 @@ fn board_drag_and_drop_between_columns_queues_a_status_change() {
 /// assuming there's only one: the rail sits to the right of the board by
 /// construction, so the true column header is always the smaller-x node.
 ///
-/// Uses `_contains` rather than the exact-match query. Root cause, N5
-/// (post-review bounded investigation — confirmed by reading
-/// `accesskit_consumer`'s source, not guessed): a Board card's click/drag
-/// region (`ui.interact(content_rect, ...)`, board.rs's `render_strip`) has
-/// no explicit accessible label, so `accesskit_consumer::Node::
-/// labelled_by`'s `FromDescendants` fallback auto-derives one from that
-/// region's descendant Label nodes for interactive-role widgets — and with
-/// `CardMotion::Saving`'s extra "saving…" label also inside that region,
-/// which descendant(s) get picked up changes such that the card's own
-/// title fails `kittest`'s *exact*-match `label()` query (which excludes a
-/// node considered another matched node's `labelled_by` target), while
-/// `label_contains()` (same underlying `node_label`, per `kittest::filter::
-/// By::matches`) still finds it. This is a real accessibility trade, not
-/// just a test-query quirk — see the render-site comment right above that
-/// `ui.interact(...)` call for the fuller trace and why it isn't fixed here
-/// — this helper just routes around it for tests.
-///
-/// Substring matching has its own trap worth knowing about: `_contains`
-/// would also match `"TASK-2.1"` against a needle of `"TASK-2"` (a
-/// sub-task id, if this fixture ever grows one) — every label this helper
-/// is currently called with is specific enough on this screen that it
-/// can't pick up a false positive, but that's a property of today's call
-/// sites, not something this function enforces.
+/// Column headers are queried exactly: their new framed parent derives an
+/// accessible name from the entire column, so substring matching `"To Do"`
+/// would also match that parent and report the board's left edge instead of
+/// the header's own x-coordinate.
 fn column_left_x(harness: &Harness<'_, HiveApp>, column_label: &str) -> f32 {
     harness
-        .query_all_by_label_contains(column_label)
+        .query_all_by_label(column_label)
         .map(|n| n.raw_bounds().expect("column header should have bounds").x0 as f32)
         .fold(f32::INFINITY, f32::min)
 }
@@ -1454,6 +1435,13 @@ fn column_left_x(harness: &Harness<'_, HiveApp>, column_label: &str) -> f32 {
 /// default), so a board card's title is never assumed to be the only match
 /// for its own text — the rail sits to the right of the board by
 /// construction, so the board's own card is always the smaller-x node.
+///
+/// Uses `_contains` rather than the exact-match query. Root cause, N5
+/// (post-review bounded investigation): a Board card's click/drag region
+/// has no explicit accessible label, so AccessKit derives one from its
+/// descendant labels. While saving, the extra "saving…" descendant can
+/// make the title fail an exact-label query even though a contains query
+/// still finds it.
 fn leftmost_bounds(harness: &Harness<'_, HiveApp>, label: &str) -> egui::Rect {
     let b = harness
         .query_all_by_label_contains(label)

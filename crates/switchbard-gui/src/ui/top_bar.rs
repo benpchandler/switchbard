@@ -17,35 +17,42 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     // renderings of the same fact, and computing it twice per frame would be
     // two chances for them to disagree as well as twice the work.
     let dispatch_summary = dispatch::summarize_dispatch(app);
-    egui::TopBottomPanel::top("top").show(ctx, |ui| {
-        ui.horizontal(|ui| {
-            ui.heading("Switchbard");
-            ui.separator();
-            // Owner UX pass (2026-08-05): the "Ns since last scan" label is
-            // gone — staleness isn't actionable information on its own (the
-            // Refresh button next to it is), and the owner found it just
-            // added visual noise. If staleness ever needs to surface again,
-            // do it as a subtle indicator (e.g. dimming Refresh's icon),
-            // not a ticking counter competing for attention with the error
-            // label right after it.
-            let (last_error, total, attributed) = scan_summary(app);
-            if let Some(err) = &last_error {
-                ui.colored_label(theme::danger(), format!("error: {err}"));
-            }
-            ui.separator();
-            ui.label(format!("{total} listeners"));
-            ui.label(format!("({attributed} attributed)"));
-            render_retired_worktrees_nudge(app, ui);
-            render_dispatch_chip(app, ui, dispatch_summary);
-            ui.separator();
-            render_actions(app, ui);
+    let frame = egui::Frame::side_top_panel(&ctx.style())
+        .fill(theme::nav_bg())
+        .inner_margin(egui::Margin::symmetric(10, 7))
+        .stroke(theme::surface_stroke());
+    egui::TopBottomPanel::top("top")
+        .frame(frame)
+        .show(ctx, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new("Switchbard").heading().strong());
+                ui.separator();
+                // Owner UX pass (2026-08-05): the "Ns since last scan" label is
+                // gone — staleness isn't actionable information on its own (the
+                // Refresh button next to it is), and the owner found it just
+                // added visual noise. If staleness ever needs to surface again,
+                // do it as a subtle indicator (e.g. dimming Refresh's icon),
+                // not a ticking counter competing for attention with the error
+                // label right after it.
+                let (last_error, total, attributed) = scan_summary(app);
+                if let Some(err) = &last_error {
+                    ui.colored_label(theme::danger(), format!("error: {err}"));
+                }
+                ui.separator();
+                ui.label(format!("{total} listeners"));
+                ui.label(format!("({attributed} attributed)"));
+                render_retired_worktrees_nudge(app, ui);
+                render_dispatch_chip(app, ui, dispatch_summary);
+                ui.separator();
+                render_actions(app, ui);
+            });
+            ui.add_space(3.0);
+            ui.horizontal_wrapped(|ui| {
+                render_view_tabs(app, ui, dispatch_summary);
+                ui.separator();
+                render_filter_controls(app, ui);
+            });
         });
-        ui.horizontal(|ui| {
-            render_view_tabs(app, ui, dispatch_summary);
-            ui.separator();
-            render_filter_controls(app, ui);
-        });
-    });
 }
 
 /// Owner UX pass (2026-08-05): the view switcher gets its own `nav_bg()`
@@ -54,9 +61,10 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
 /// into the content controls beside it.
 fn render_view_tabs(app: &mut HiveApp, ui: &mut egui::Ui, dispatch_summary: DispatchSummary) {
     egui::Frame::default()
-        .fill(theme::nav_bg())
-        .corner_radius(4.0)
-        .inner_margin(egui::Margin::symmetric(8, 3))
+        .fill(theme::card_bg())
+        .stroke(theme::surface_stroke())
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::symmetric(9, 4))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("view:");
@@ -84,7 +92,8 @@ fn render_view_tabs(app: &mut HiveApp, ui: &mut egui::Ui, dispatch_summary: Disp
 
 fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
     ui.label("filter:");
-    ui.add(egui::TextEdit::singleline(&mut app.filter).desired_width(420.0));
+    let filter_width = ui.available_width().clamp(180.0, 420.0);
+    ui.add(egui::TextEdit::singleline(&mut app.filter).desired_width(filter_width));
     let hint = match app.view_tab {
         ViewTab::Servers => "matches repo, branch, service, command, port, listener cwd",
         ViewTab::AgentContext => "matches repo, path, title, or instruction text",
