@@ -157,6 +157,11 @@ pub struct BacklogViewState {
     pub lens: BacklogLens,
     pub editor: BacklogEditorState,
     pub new_task: BacklogNewTaskState,
+    /// Whether the persistent task-detail rail is reduced to its edge
+    /// toggle. Session-only like the current task selection: dragging the
+    /// expanded rail still persists its width in egui's panel memory, while
+    /// this flag owns the distinct open/closed state.
+    pub detail_rail_collapsed: bool,
     /// Global free-text search overlay (Cmd+K / Ctrl+K), task-15 AC #2.
     pub search: BacklogSearchState,
     /// Set to the task the user clicked "Archive" on; the detail pane shows
@@ -226,6 +231,7 @@ impl Default for BacklogViewState {
             lens: BacklogLens::default(),
             editor: BacklogEditorState::default(),
             new_task: BacklogNewTaskState::default(),
+            detail_rail_collapsed: false,
             search: BacklogSearchState::default(),
             archive_confirm: false,
             expanded_parents: BTreeSet::new(),

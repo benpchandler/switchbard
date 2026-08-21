@@ -6,7 +6,25 @@ use super::{detail_lists, format, Pending, Snapshot};
 use crate::app::HiveApp;
 use crate::ui::theme;
 use eframe::egui;
+use std::path::PathBuf;
 use switchbard_core::{ordered_status_vocabulary, NewBacklogTask};
+
+/// Open the top-level task composer, optionally preselecting a Board
+/// column's status. All entry points share this so the global "+ Task"
+/// control and per-column affordances cannot drift on project targeting or
+/// accidentally retain a subtask parent.
+pub(super) fn open_new_task(
+    app: &mut HiveApp,
+    target_project: Option<PathBuf>,
+    status: Option<&str>,
+) {
+    app.backlog_view.new_task.target_project = target_project;
+    app.backlog_view.new_task.parent = None;
+    if let Some(status) = status {
+        app.backlog_view.new_task.status = status.to_string();
+    }
+    app.backlog_view.new_task.open = true;
+}
 
 pub(super) fn render_create_modal(
     app: &mut HiveApp,

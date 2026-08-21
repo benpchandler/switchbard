@@ -1089,6 +1089,46 @@ fn board_shows_the_full_standard_vocabulary_even_when_a_project_declares_none() 
     }
 }
 
+#[test]
+fn board_column_add_task_opens_the_composer_with_that_columns_status() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Ordinary task", "To Do")]);
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.run();
+
+    let in_progress_x = column_left_x(&harness, "In Progress");
+    let add_in_progress = harness
+        .query_all_by_label_contains("Add task")
+        .min_by(|a, b| {
+            let ax = a.raw_bounds().expect("add-task control bounds").x0 as f32;
+            let bx = b.raw_bounds().expect("add-task control bounds").x0 as f32;
+            (ax - in_progress_x)
+                .abs()
+                .total_cmp(&(bx - in_progress_x).abs())
+        })
+        .expect("every Board column should expose an add-task control");
+    let add_bounds = add_in_progress
+        .raw_bounds()
+        .expect("empty-column add-task bounds");
+    assert!(
+        add_bounds.y1 - add_bounds.y0 >= 100.0,
+        "the empty column body should be the add target, not only its label"
+    );
+    add_in_progress.simulate_click();
+    harness.run();
+
+    assert!(harness.state().backlog_view.new_task.open);
+    assert_eq!(
+        harness.state().backlog_view.new_task.status,
+        "In Progress",
+        "the clicked column should preselect the new task's status"
+    );
+    assert_eq!(
+        harness.state().backlog_view.new_task.target_project,
+        Some(PathBuf::from(REPO_PATH))
+    );
+    assert!(harness.query_by_label("New Backlog Task").is_some());
+}
+
 // TASK-26/TASK-29: Board bulk select — the checkbox click was one of the
 // widgets TASK-29 fixed (see the "Board lens" section header above for the
 // full root-cause trace). Now that it's a non-overlapping sibling of the
@@ -2423,6 +2463,73 @@ fn rail_shows_the_quiet_empty_state_when_no_task_is_visible() {
     assert!(
         harness.query_all_by_label("Select a task").next().is_some(),
         "the rail should show the quiet empty state, not an empty editor"
+    );
+}
+
+#[test]
+fn detail_rail_can_collapse_and_expand_without_losing_the_task() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Rail task", "To Do")]);
+
+    assert!(harness.query_by_label("Task details").is_some());
+    harness.get_by_label("▶").click();
+    harness.run();
+
+    assert!(harness.state().backlog_view.detail_rail_collapsed);
+    assert!(harness.query_by_label("Task details").is_none());
+    assert!(harness.query_by_label("◀").is_some());
+
+    harness.get_by_label("◀").click();
+    harness.run();
+
+    assert!(!harness.state().backlog_view.detail_rail_collapsed);
+    assert!(harness.query_by_label("Task details").is_some());
+    assert!(
+        harness.query_all_by_label("TASK-1").next().is_some(),
+        "expanding should restore the selected task's detail"
+    );
+}
+
+#[test]
+fn detail_rail_width_changes_when_its_left_edge_is_dragged() {
+    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Rail task", "To Do")]);
+    let panel_id = egui::Id::new("backlog_detail_rail");
+    let initial = egui::containers::panel::PanelState::load(&harness.ctx, panel_id)
+        .expect("expanded detail rail panel state");
+    let source = egui::Pos2::new(initial.rect.left(), initial.rect.center().y);
+
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(source));
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: source,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::default(),
+    });
+    harness.run();
+
+    let target = source - egui::vec2(100.0, 0.0);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(target));
+    harness.run();
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: target,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::default(),
+    });
+    harness.run();
+
+    let resized = egui::containers::panel::PanelState::load(&harness.ctx, panel_id)
+        .expect("resized detail rail panel state");
+    assert!(
+        resized.rect.width() >= initial.rect.width() + 90.0,
+        "dragging the left edge left should expand the rail: {} -> {}",
+        initial.rect.width(),
+        resized.rect.width()
     );
 }
 

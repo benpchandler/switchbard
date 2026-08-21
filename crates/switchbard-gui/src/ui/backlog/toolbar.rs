@@ -2,7 +2,7 @@
 //! (project/scope picker, status/priority filters, completed/archived
 //! toggles).
 
-use super::{format, reset_task_selection, sort, Pending, Snapshot};
+use super::{create, format, reset_task_selection, sort, Pending, Snapshot};
 use crate::app::HiveApp;
 use crate::runtime::BacklogLens;
 use crate::ui::components::{status_pill, StatusKind};
@@ -103,8 +103,7 @@ pub(super) fn render_summary(
                     .selected_project
                     .clone()
                     .or_else(|| snap.projects.first().map(|row| row.key.clone()));
-                app.backlog_view.new_task.target_project = target;
-                app.backlog_view.new_task.open = true;
+                create::open_new_task(app, target, None);
             }
 
             render_cleanup_button(app, ui, snap, pending);

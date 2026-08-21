@@ -166,6 +166,19 @@ fn shots_for_theme(theme: ThemeChoice) {
         snapshot(&mut h, &format!("backlog_board{suffix}"));
     }
 
+    // Board with the task-detail rail collapsed to its edge toggle.
+    {
+        let mut app = app_with(
+            theme,
+            BacklogLens::Board,
+            vec![sample_task("TASK-1", "Board task", "To Do")],
+        );
+        app.backlog_view.detail_rail_collapsed = true;
+        let mut h = harness(app);
+        h.run();
+        snapshot(&mut h, &format!("backlog_board_rail_collapsed{suffix}"));
+    }
+
     // Milestones lens.
     {
         let app = app_with(
@@ -259,6 +272,22 @@ fn shots_for_theme(theme: ThemeChoice) {
         let mut h = harness(app);
         h.run();
         snapshot(&mut h, &format!("backlog_create_modal{suffix}"));
+    }
+
+    // Create modal as opened from the In Progress Board column: the Board
+    // stays in context and the destination status is already selected.
+    {
+        let mut app = app_with(
+            theme,
+            BacklogLens::Board,
+            vec![sample_task("TASK-1", "Existing board task", "To Do")],
+        );
+        app.backlog_view.new_task.open = true;
+        app.backlog_view.new_task.target_project = Some(PathBuf::from(REPO_PATH));
+        app.backlog_view.new_task.status = "In Progress".to_string();
+        let mut h = harness(app);
+        h.run();
+        snapshot(&mut h, &format!("backlog_board_column_create{suffix}"));
     }
 
     // Global search overlay, with a live query and a match.

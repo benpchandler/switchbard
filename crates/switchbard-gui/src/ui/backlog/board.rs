@@ -47,7 +47,9 @@
 //! same task can't leave on-disk state that doesn't match the user's last
 //! gesture. See `resolve_pending_moves` and `apply_drop` for the detail.
 
-use super::{dispatch_ui, format, list, scoped_projects, selection, Pending, Snapshot, TaskRow};
+use super::{
+    create, dispatch_ui, format, list, scoped_projects, selection, Pending, Snapshot, TaskRow,
+};
 use crate::app::HiveApp;
 use crate::runtime::{BacklogTaskKey, PendingBoardMove};
 use crate::ui::theme;
@@ -151,6 +153,11 @@ pub(super) fn render_board(
 
     let columns = column_order(app, snap);
     let show_repo = app.backlog_view.selected_project.is_none();
+    let create_target = app
+        .backlog_view
+        .selected_project
+        .clone()
+        .or_else(|| snap.projects.first().map(|row| row.key.clone()));
 
     egui::ScrollArea::horizontal()
         .id_salt("backlog_board")
@@ -158,7 +165,15 @@ pub(super) fn render_board(
         .show(ui, |ui| {
             ui.horizontal_top(|ui| {
                 for column_status in &columns {
-                    render_column(app, ui, &tasks, column_status, show_repo, pending);
+                    render_column(
+                        app,
+                        ui,
+                        &tasks,
+                        column_status,
+                        show_repo,
+                        create_target.as_deref(),
+                        pending,
+                    );
                 }
             });
         });
@@ -296,6 +311,7 @@ fn render_bulk_selection_bar(app: &mut HiveApp, ui: &mut egui::Ui) {
 }
 
 const COLUMN_WIDTH: f32 = 260.0;
+const EMPTY_COLUMN_ADD_HEIGHT: f32 = 112.0;
 
 fn render_column(
     app: &mut HiveApp,
@@ -303,6 +319,7 @@ fn render_column(
     all_visible: &[TaskRow<'_>],
     column_status: &str,
     show_repo: bool,
+    create_target: Option<&std::path::Path>,
     pending: &mut Pending,
 ) {
     let column_tasks: Vec<&TaskRow<'_>> = all_visible
@@ -350,8 +367,32 @@ fn render_column(
                         render_strip(app, ui, row, all_visible, show_repo, pending);
                         ui.add_space(4.0);
                     }
-                    if column_tasks.is_empty() {
-                        ui.label(egui::RichText::new("No tasks").color(theme::muted_text()));
+                    let add_label = if column_tasks.is_empty() {
+                        "No tasks  ·  + Add task"
+                    } else {
+                        "+ Add task"
+                    };
+                    let add_height = if column_tasks.is_empty() {
+                        EMPTY_COLUMN_ADD_HEIGHT
+                    } else {
+                        32.0
+                    };
+                    if ui
+                        .add_sized(
+                            [ui.available_width(), add_height],
+                            egui::Button::new(
+                                egui::RichText::new(add_label).color(theme::muted_text()),
+                            )
+                            .frame(false),
+                        )
+                        .on_hover_text(format!("Create a task in {column_status}"))
+                        .clicked()
+                    {
+                        create::open_new_task(
+                            app,
+                            create_target.map(std::path::Path::to_path_buf),
+                            Some(column_status),
+                        );
                     }
                 });
         });
