@@ -73,14 +73,15 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
      being pull-only. An always-visible top-bar chip (`⚙ N running · <oldest
      elapsed>`, in `theme::dispatch_accent`) says an agent is working from any tab,
      flipping to danger styling **and different wording** when anything is failed,
-     orphaned, or past its timeout; clicking it goes to the Dispatches tab, which
+     orphaned, or past its advisory staleness threshold (TASK-46 below — the run
+     itself keeps going either way); clicking it goes to the Dispatches tab, which
      also carries a badge counting runs (not queue depth). Silent when there is
      nothing to say — the same "no ticking counters" rule as the removed last-scan
      label. And a hand on the plug: `dispatch_one` writes a **pgid sidecar**
      (`dispatch-<task>-<stamp>.pid`, beside the run's log) between spawning the
      agent and blocking on it, deletes it as the run releases, and the Dispatch
-     view's in-flight rows get a confirm-armed Kill button plus a `hard kill in Ym`
-     deadline.
+     view's in-flight rows get a confirm-armed Kill button (identity-gated — see
+     below; no automatic deadline attached to it, see TASK-46).
      - The sidecar is **not a run store**: it is the one fact about a run that
        cannot be rebuilt from repo root + task id (the kernel assigns the pgid), it
        is named by the same stem convention as the log, and nothing reads it as
@@ -91,8 +92,10 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
        with a note. Writing state from the UI would be a second writer racing the
        first.
      - `DispatchOptions::max_turns` (default 50) is passed as `claude -p
-       --max-turns`. Complementary to `timeout`, not redundant: turns bound
-       *looping* from inside the agent, the timeout bounds *hanging* from outside.
+       --max-turns`, bounding *looping* from inside the agent. At the time this
+       bullet was written it was complementary to a wall-clock `timeout` that
+       bounded *hanging* from outside; TASK-46 (below) removed that timeout, so
+       `max_turns` is now the only automatic bound left on a runaway run.
      - **The sidecar is self-authenticating** (adversarial review, 2026-08-19).
        A bare pgid on disk is a loaded weapon: force-quit Switchbard mid-run and
        the file survives, macOS recycles pids at 99999, and the Kill button then
@@ -105,14 +108,15 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
        prompt path. Legacy bare-pgid files, other-boot files, and failed probes
        are all `Unverifiable` — no button, with the reason shown in its place.
      - **Supervision is a first-class distinction.** When the Switchbard that
-       spawned an agent is gone, no `wait_for_exit` is enforcing the timeout and
-       nothing will release the task. Such a row stops claiming `hard kill in
-       Ym`, says the run has no deadline, and — if the agent is still
+       spawned an agent is gone, no `wait_for_exit` is watching it and nothing
+       will release the task when it ends. Such a row — if the agent is still
        identifiable — offers a Kill labelled honestly ("task stays on
        `dispatching`"). A verified-**dead** group under a still-claimed task
        classifies as needs-attention rather than sitting under "In flight"
        forever; that is the case file evidence alone cannot see, because an
-       empty log is also what a healthy run looks like.
+       empty log is also what a healthy run looks like. (At the time this was
+       written, supervision also gated a `hard kill in Ym` deadline label;
+       TASK-46 removed that label along with the deadline it described.)
      - **Claiming clears the previous attempt's terminal labels**, and a live
        `dispatching` claim outranks a stale terminal verdict in the ladder.
        Previously the ladder ran `dispatched` > `dispatch-failed` >
@@ -129,6 +133,33 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
        rather than firing at a number it can no longer vouch for. The two
        answers it can give are "killed it" and "nothing killed" — never
        "killed something".
+
+  6. *Drop the strict wall-clock kill — advisory staleness only* (TASK-46,
+     owner-approved 2026-08-20, LED-580 post-mortem). A genuinely productive
+     30-minute run — 29 files of real work — was hard-killed the instant it
+     crossed `opts.timeout`, stranding everything it had not yet committed. No
+     code path kills a dispatch run on wall-clock time any more:
+     `DispatchOptions::timeout` is renamed `stale_after` and is now purely
+     advisory (`crate::dispatch::DEFAULT_STALE_AFTER`, still 30 minutes —
+     the number was never wrong as a "go check on this" signal, only as a
+     kill trigger). `run_claude_headless`'s wait is, for all practical
+     purposes, unbounded. What still bounds a runaway run: `--max-turns`
+     (default 50, unchanged) from inside the agent, and the identity-gated
+     Kill button for a human watching a run go wrong right now — both
+     pre-existing, neither weakened.
+     - A run past `stale_after` still counts as *running* in the chip and the
+       Dispatch view — needs-attention, not failed, not killed. Copy changed
+       to match: "running 47m — check on it" replaces "hard kill in Ym"; the
+       deadline label and the hover text promising a kill are gone entirely,
+       for both supervised and unsupervised runs.
+     - Accepted consequence: since `drain_dispatch_queue` processes its batch
+       serially (see that function's own "why serial" doc) and a run's wait
+       is no longer wall-clock bounded, one long run now delays every other
+       task queued behind it in the same drain call — and the GUI's dispatch
+       worker thread (`workers::spawn_dispatch`) blocks for exactly as long.
+       There is no wall clock left to cap that delay. Judged acceptable
+       because dispatch is opt-in, low-volume, and `max_concurrent` already
+       caps a single drain's batch size.
 
 - **Refine — AI-assisted grooming, upstream of dispatch (owner-approved 2026-08-19).**
   A "Refine" button in the task detail rail, next to Dispatch. It feeds the task's

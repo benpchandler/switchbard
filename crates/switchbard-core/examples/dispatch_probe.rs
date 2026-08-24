@@ -31,7 +31,7 @@ fn main() {
     };
 
     let now = now_unix();
-    let timeout = DispatchOptions::default().timeout;
+    let stale_after = DispatchOptions::default().stale_after;
     let mut found = 0;
 
     for task in &project.tasks {
@@ -79,7 +79,10 @@ fn main() {
             None => println!("  log           (none — never started)"),
         }
         println!("  elapsed       {elapsed}");
-        println!("  past timeout  {}", run.looks_stalled(now, timeout));
+        println!(
+            "  past stale_after (advisory — still running) {}",
+            run.looks_stalled(now, stale_after)
+        );
         println!("  agent output  {}", run.log_has_output());
 
         let still_claimed = task.labels.iter().any(|l| l == DISPATCHING_LABEL);
