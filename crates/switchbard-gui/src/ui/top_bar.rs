@@ -144,9 +144,11 @@ fn render_retired_worktrees_nudge(app: &HiveApp, ui: &mut egui::Ui) {
 ///
 /// Two visual registers, not one with a variable color: accent for "this is
 /// working", danger for "this needs you". A run that failed, was orphaned, or
-/// blew past its timeout is not a louder version of a healthy run; it is a
-/// different message, so it gets different words as well as a different color
-/// (see `DispatchSummary::chip_text`).
+/// blew past its advisory staleness threshold is not a louder version of a
+/// healthy run; it is a different message, so it gets different words as well
+/// as a different color (see `DispatchSummary::chip_text`). TASK-46: the
+/// staleness case is still a *running* run, never one about to be killed —
+/// nothing here (or anywhere) kills a run for wall-clock time.
 fn render_dispatch_chip(app: &mut HiveApp, ui: &mut egui::Ui, summary: DispatchSummary) {
     if summary.is_idle() {
         return;
@@ -158,7 +160,7 @@ fn render_dispatch_chip(app: &mut HiveApp, ui: &mut egui::Ui, summary: DispatchS
         theme::dispatch_accent()
     };
     let hover = if summary.needs_attention() {
-        "Dispatch runs that failed, were never released, or are past their timeout — open the Dispatches view"
+        "Dispatch runs that failed, were never released, or are past their advisory staleness threshold — open the Dispatches view"
     } else {
         "Headless agent runs in flight — open the Dispatches view"
     };

@@ -28,10 +28,13 @@
 //!
 //! Most of what it reports is **evidence**, not a verdict.
 //! [`DispatchRun::looks_stalled`] is expressed against the run's own
-//! configured timeout, not against process liveness. An empty log is normal
-//! for a healthy in-flight run: `claude -p --output-format text` emits nothing
-//! until it exits, which is the single most misleading signal a user looking
-//! at these files will hit.
+//! configured staleness threshold (`DispatchOptions::stale_after`), not
+//! against process liveness — and, since TASK-46 removed the wall-clock kill
+//! that threshold used to arm, it is now advisory *only*: a stalled run is
+//! still running, just flagged for a human to go check on. An empty log is
+//! normal for a healthy in-flight run either way: `claude -p --output-format
+//! text` emits nothing until it exits, which is the single most misleading
+//! signal a user looking at these files will hit.
 //!
 //! ## The one place this *does* adjudicate: [`DispatchRunLiveness`]
 //!
@@ -142,9 +145,10 @@ pub enum DispatchRunLiveness {
     ///
     /// `supervised` is the other half a UI needs: `true` means the Switchbard
     /// process that spawned the agent is this one, still blocked in
-    /// `wait_for_exit`, so the timeout will fire and the pipeline will release
-    /// the task. `false` means the agent outlived its supervisor — it will run
-    /// with **no deadline**, and killing it releases nothing.
+    /// `wait_for_exit`, so when the run ends the pipeline is there to release
+    /// the task. `false` means the agent outlived its supervisor — nothing is
+    /// blocked on it any more, so killing it releases nothing (there was
+    /// never a deadline to lose either way — see TASK-46).
     Alive { pgid: i32, supervised: bool },
 }
 
@@ -226,11 +230,13 @@ impl DispatchRun {
         Some(Duration::from_secs(now_unix.saturating_sub(started)))
     }
 
-    /// Whether the run has outlived `timeout`. Evidence for "go look", not a
-    /// claim that the process is gone — see the module doc.
-    pub fn looks_stalled(&self, now_unix: u64, timeout: Duration) -> bool {
+    /// Whether the run has outlived `stale_after`. Evidence for "go look", not
+    /// a claim that the process is gone, and — since TASK-46 removed the
+    /// wall-clock kill this threshold used to arm — never a reason anything
+    /// will kill the run either. See the module doc.
+    pub fn looks_stalled(&self, now_unix: u64, stale_after: Duration) -> bool {
         self.elapsed(now_unix)
-            .is_some_and(|elapsed| elapsed > timeout)
+            .is_some_and(|elapsed| elapsed > stale_after)
     }
 
     /// The log has content, which for `--output-format text` means the agent
@@ -250,9 +256,9 @@ impl DispatchRun {
     /// parent and the task sits on `dispatching` forever.
     ///
     /// Deliberately keyed on the log's *mtime* rather than on the run
-    /// exceeding its timeout. A run abandoned five minutes in is just as
+    /// exceeding `stale_after`. A run abandoned five minutes in is just as
     /// orphaned as one abandoned an hour in — waiting out the 30-minute
-    /// timeout to say so would hide the fast case for 25 minutes.
+    /// default threshold to say so would hide the fast case for 25 minutes.
     pub fn looks_orphaned(&self, now_unix: u64, still_claimed: bool) -> bool {
         if !still_claimed || !self.log_has_output() {
             return false;
@@ -495,11 +501,11 @@ mod tests {
     }
 
     #[test]
-    fn stalled_only_once_past_the_timeout() {
+    fn stalled_only_once_past_the_stale_after_threshold() {
         let run = run_with(Some(0), 0);
-        let timeout = Duration::from_secs(30 * 60);
-        assert!(!run.looks_stalled(29 * 60, timeout));
-        assert!(run.looks_stalled(31 * 60, timeout));
+        let stale_after = Duration::from_secs(30 * 60);
+        assert!(!run.looks_stalled(29 * 60, stale_after));
+        assert!(run.looks_stalled(31 * 60, stale_after));
     }
 
     /// A never-started run is not stalled, however long ago "now" is.
@@ -698,9 +704,9 @@ mod tests {
     }
 
     /// A run whose supervisor is gone: the agent may well still be running,
-    /// but no `wait_for_exit` is watching it, so no timeout will fire and
-    /// nothing will release the task. The verdict has to say so — the view
-    /// keys its "no deadline" treatment on exactly this bit.
+    /// but no `wait_for_exit` is watching it, so nothing will release the
+    /// task when it ends. The verdict has to say so — the view keys its
+    /// unsupervised-notice treatment on exactly this bit.
     #[test]
     fn a_live_run_whose_supervisor_died_is_alive_but_unsupervised() {
         let fixture = LiveRunFixture::spawn();
