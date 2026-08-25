@@ -39,7 +39,7 @@ When touching egui render paths (`crates/switchbard-gui/src/app.rs` or `crates/s
 
 ## Architecture
 
-Two-crate Cargo workspace. `switchbard-core` has **zero UI dependencies** and is heavily unit-tested; `switchbard-gui` is the only place egui appears.
+Three-crate Cargo workspace. `switchbard-core` has **zero UI dependencies** and is heavily unit-tested; `switchbard-gui` is the only place egui appears; `switchbard-dispatch` is a thin headless binary over `switchbard-core` that drains the dispatch queue with the GUI closed.
 
 ### `crates/switchbard-core` — domain layer
 

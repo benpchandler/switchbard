@@ -29,9 +29,12 @@ relax the Power-of-10 floor here; the public-craft bar can only make it stricter
 
 ## Known debt (NOT exceptions — pay down, don't grandfather)
 
-- **Rule 4 (functions/modules short) — two oversized UI files:**
-  `crates/switchbard-gui/src/ui/workspace/mod.rs` (~1778 LOC) and
-  `crates/switchbard-gui/src/ui/backlog.rs` (~1710 LOC) violate the repo's own
-  small-module ethos (standards Rule 6). These are **debt to split**, tracked in
-  `docs/product-trajectory.md` → Known gaps. Do not treat their existence as license
-  to add more; new UI work should carve toward smaller modules, not pile onto these.
+- **Rule 4 (functions/modules short) — one oversized UI file:**
+  `crates/switchbard-gui/src/ui/workspace/mod.rs` (~1818 LOC) violates the repo's own
+  small-module ethos (standards Rule 6). This is **debt to split**, tracked in
+  `docs/product-trajectory.md` → Known gaps. Do not treat its existence as license
+  to add more; new UI work should carve toward smaller modules, not pile onto it.
+
+  The former second entry here, `ui/backlog.rs` (~1710 LOC), has since been split
+  into `ui/backlog/` — 19 files, largest `board.rs` at ~883 LOC. That is the shape
+  the workspace split should aim for.

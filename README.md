@@ -110,7 +110,7 @@ started land in `$TMPDIR/switchbard-logs/`.
 
 ## How it works
 
-Switchbard is a two-crate Cargo workspace with no webview — a single native
+Switchbard is a three-crate Cargo workspace with no webview — a single native
 [egui](https://github.com/emilk/egui) /
 [eframe](https://github.com/emilk/egui/tree/master/crates/eframe) window:
 
@@ -121,6 +121,9 @@ Switchbard is a two-crate Cargo workspace with no webview — a single native
   (`lsof` on macOS, `/proc` on Linux, `git status`, `git log`) off the UI
   thread, so the window never blocks. The scanner kicks every 3s and the GUI
   re-renders only when state changes.
+- **`switchbard-dispatch`** — a thin headless binary reusing `switchbard-core`
+  that drains the dispatch queue with the GUI closed. See
+  [docs/INSTALL-DISPATCH.md](docs/INSTALL-DISPATCH.md).
 
 ## Development
 

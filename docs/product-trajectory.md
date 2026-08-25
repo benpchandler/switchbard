@@ -277,9 +277,10 @@ before building.
 
 ## Known gaps / debt
 
-- **Oversized UI files (Rule 4/6 debt):** `ui/workspace/mod.rs` (~1778 LOC) and
-  `ui/backlog.rs` (~1710 LOC) run against the repo's small-module ethos. Split them when
-  next touched; do not pile new UI onto them. (Mirrored in `power-of-10-overrides.md`.)
+- **Oversized UI file (Rule 4/6 debt):** `ui/workspace/mod.rs` (~1818 LOC) runs against
+  the repo's small-module ethos. Split it when next touched; do not pile new UI onto it.
+  (Mirrored in `power-of-10-overrides.md`.) The `ui/backlog.rs` half of this entry is
+  discharged: it is now `ui/backlog/`, 19 files, largest `board.rs` at ~883 LOC.
 - **Stale README hook reference (fixed on this branch):** `README.md` §Development
   previously referenced a tracked pre-push hook (`mise run hooks:install`) removed in
   commit `9ae32e2`, and described CI as macOS-only. Both corrected here: there is no
