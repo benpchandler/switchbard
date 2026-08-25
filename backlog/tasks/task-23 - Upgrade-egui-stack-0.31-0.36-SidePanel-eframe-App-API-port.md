@@ -1,9 +1,10 @@
 ---
 id: TASK-23
 title: 'Upgrade egui stack 0.31 -> 0.36 (SidePanel/eframe::App API port)'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-05 14:01'
+updated_date: '2026-08-25 17:26'
 labels:
   - tech-debt
   - egui
