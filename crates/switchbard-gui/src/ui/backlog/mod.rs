@@ -405,10 +405,10 @@ pub(in crate::ui::backlog) struct Pending {
     /// invocation per task, and those are scattered across every tracked
     /// project, not just one.
     pub cleanup: Option<Vec<(PathBuf, Vec<String>)>>,
-    /// The non-Done counterpart to `cleanup`: every currently *visible*
-    /// task, grouped by project, to be archived. Same cross-repo shape and
-    /// the same one-CLI-call-per-task cost.
-    pub bulk_archive: Option<Vec<(PathBuf, Vec<String>)>>,
+    /// A bulk clear off the active board, already split by disposition:
+    /// Done tasks are completed, the rest archived. See
+    /// `toolbar::ClearBatch` for why both halves travel together.
+    pub bulk_clear: Option<toolbar::ClearBatch>,
 }
 
 fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, pending: Pending) {
@@ -446,7 +446,7 @@ fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, pending: Pending) {
     if let Some(per_project) = pending.cleanup {
         app.spawn_backlog_cleanup(per_project, ctx);
     }
-    if let Some(per_project) = pending.bulk_archive {
-        app.spawn_backlog_bulk_archive(per_project, ctx);
+    if let Some(batch) = pending.bulk_clear {
+        app.spawn_backlog_bulk_clear(batch.archive, batch.complete, ctx);
     }
 }

@@ -3701,14 +3701,13 @@ fn bulk_archive_is_disabled_until_the_view_is_narrowed() {
     );
 }
 
-/// Done tasks are excluded from the batch.
+/// A mixed batch is named for what it will do, not for one of its halves.
 ///
-/// Backlog.md's two terminal states are not interchangeable and the real CLI
-/// refuses `task archive` on a Done task, so including one would half-fail
-/// the batch. The count in the button must reflect that exclusion, or the
-/// confirm would promise more than it delivers.
+/// Backlog.md's two terminal states are not interchangeable — Done tasks are
+/// completed, the rest archived — so a set spanning both cannot honestly be
+/// called "Archive". The button must never offer a verb it will not perform.
 #[test]
-fn bulk_archive_count_excludes_done_tasks() {
+fn a_mixed_batch_is_labelled_clear_and_counts_both_dispositions() {
     let mut app = list_app_with_tasks(vec![
         task("TASK-1", "Open one", "To Do"),
         task("TASK-2", "Finished", "Done"),
@@ -3722,8 +3721,8 @@ fn bulk_archive_count_excludes_done_tasks() {
     harness.run();
 
     assert!(
-        harness.query_by_label("Archive 2 showing").is_some(),
-        "the Done task must not be counted; expected 2 of the 3 visible tasks"
+        harness.query_by_label("Clear 3 showing").is_some(),
+        "a mixed batch names itself Clear, and counts the Done task it will complete"
     );
 }
 
@@ -3795,5 +3794,94 @@ fn a_live_bulk_run_replaces_the_bulk_buttons_with_a_progress_bar() {
     assert!(
         harness.query_by_label("Archive 2 showing").is_some(),
         "the buttons come back when the run ends"
+    );
+}
+
+/// A selection of only Done tasks is named "Complete", never "Archive".
+///
+/// The CLI refuses `task archive` on a Done task, so a button offering to
+/// archive them would promise something that cannot happen.
+#[test]
+fn a_selection_of_done_tasks_is_labelled_complete() {
+    let mut app = list_app_with_tasks(vec![
+        task("TASK-1", "Open", "To Do"),
+        task("TASK-2", "Finished", "Done"),
+    ]);
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.show_completed = true;
+    app.backlog_view
+        .bulk_selected_tasks
+        .insert((PathBuf::from(REPO_PATH), "TASK-2".to_string()));
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_by_label("Complete 1 selected").is_some(),
+        "a Done-only selection is completed, and says so"
+    );
+}
+
+/// An explicit selection lifts the narrowed-view gate.
+///
+/// That gate exists because "clear everything showing" on an unfiltered
+/// board is a foot-gun. Ticking cards one by one *is* the narrowing — the
+/// user named the set card by card — so it does not need the same guard.
+#[test]
+fn an_explicit_selection_enables_clearing_without_a_filter() {
+    let mut app = list_app_with_tasks(vec![
+        task("TASK-1", "One", "To Do"),
+        task("TASK-2", "Two", "To Do"),
+    ]);
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view
+        .bulk_selected_tasks
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+    let mut harness = harness(app);
+    harness.run();
+
+    let button = harness
+        .get_all_by_label("Archive 1 selected")
+        .next()
+        .expect("the clear button should name the selection");
+    assert!(
+        !button.accesskit_node().is_disabled(),
+        "an explicit selection is its own narrowing and must be actionable"
+    );
+}
+
+/// Selecting a column selects exactly that column, leaving other columns'
+/// selections intact — which is what makes building a mixed batch column by
+/// column possible.
+#[test]
+fn the_column_checkbox_selects_only_its_own_column() {
+    let mut app = list_app_with_tasks(vec![
+        task("TASK-1", "Open one", "To Do"),
+        task("TASK-2", "Open two", "To Do"),
+        task("TASK-3", "Working", "In Progress"),
+    ]);
+    app.backlog_view.lens = BacklogLens::Board;
+    // Pre-select a card in a different column.
+    app.backlog_view
+        .bulk_selected_tasks
+        .insert((PathBuf::from(REPO_PATH), "TASK-3".to_string()));
+    let mut harness = harness(app);
+    harness.run();
+
+    // The column toggle is a labelled button, so it is addressed by name
+    // rather than by an index that shifts whenever the board gains a widget.
+    // Toggles render one per column in column order (Icebox, To Do, ...);
+    // they share a glyph, so the column is selected by position among them.
+    harness.get_all_by_label("☐").nth(1).unwrap().click();
+    harness.run();
+
+    let selected = &harness.state().backlog_view.bulk_selected_tasks;
+    assert_eq!(
+        selected.len(),
+        3,
+        "To Do's two cards join the pre-selected one"
+    );
+    assert!(
+        selected.contains(&(PathBuf::from(REPO_PATH), "TASK-3".to_string())),
+        "the other column's selection must survive"
     );
 }

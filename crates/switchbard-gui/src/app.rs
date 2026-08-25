@@ -1542,26 +1542,31 @@ impl HiveApp {
         });
     }
 
-    /// Archive a batch of **non-Done** tasks, grouped by project.
+    /// Clear a batch off the active board, routing each task to the
+    /// disposition Backlog.md actually defines for it: Done tasks are
+    /// *completed* into `backlog/completed/`, everything else is *archived*
+    /// into `backlog/archive/tasks/`.
     ///
-    /// The mirror of `spawn_backlog_cleanup`, which completes Done tasks:
-    /// Backlog.md's two terminal states are not interchangeable, and the real
-    /// CLI refuses `task archive` on a Done task. The caller is responsible
-    /// for excluding Done tasks from the batch — see
-    /// `toolbar::bulk_archive_candidates`, which does so from the same
-    /// `visible_task_rows` the user is looking at.
+    /// One worker rather than two because it is one user action with one
+    /// progress bar and one summary. Splitting it would make a mixed batch
+    /// report twice and race its own two halves through the same reload.
     ///
-    /// Per-task failures do not abort the batch: a task the CLI rejects (a
-    /// read-only project, a file changed underneath us) leaves the rest to
-    /// succeed, and the first failure is reported. Reporting `archived N/M`
-    /// rather than a bare success is the point — a partial sweep must not
-    /// read as a complete one.
-    pub fn spawn_backlog_bulk_archive(
+    /// Per-task failures do not abort the batch: a task the CLI rejects
+    /// leaves the rest to succeed, and the first failure is reported.
+    /// Reporting `N/M` rather than a bare success is the point — a partial
+    /// sweep must not read as a complete one.
+    pub fn spawn_backlog_bulk_clear(
         &self,
-        per_project: Vec<(PathBuf, Vec<String>)>,
+        archive: Vec<(PathBuf, Vec<String>)>,
+        complete: Vec<(PathBuf, Vec<String>)>,
         ctx: &egui::Context,
     ) {
-        if per_project.is_empty() {
+        let total: usize = archive
+            .iter()
+            .chain(complete.iter())
+            .map(|(_, ids)| ids.len())
+            .sum();
+        if total == 0 {
             return;
         }
         let status = self.backlog_status.clone();
@@ -1570,50 +1575,73 @@ impl HiveApp {
         let progress = self.bulk_progress.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
-            let project_count = per_project.len();
-            let total: usize = per_project.iter().map(|(_, ids)| ids.len()).sum();
-            progress.begin("archiving", total);
+            let verb = match (archive.is_empty(), complete.is_empty()) {
+                (true, _) => "completing",
+                (_, true) => "archiving",
+                _ => "clearing",
+            };
+            progress.begin(verb, total);
             ctx.request_repaint();
+
             let mut archived = 0usize;
+            let mut completed = 0usize;
             let mut first_error: Option<String> = None;
             let mut first_reload_error: Result<(), String> = Ok(());
-            for (project_root, task_ids) in &per_project {
-                let mut touched = false;
-                for task_id in task_ids {
-                    match switchbard_core::archive_backlog_task(project_root, task_id) {
-                        Ok(_) => {
-                            archived += 1;
-                            touched = true;
-                        }
-                        Err(e) => {
-                            if first_error.is_none() {
-                                first_error = Some(format!("{task_id}: {e}"));
+            let mut touched_roots: BTreeSet<PathBuf> = BTreeSet::new();
+
+            // `false` = archive, `true` = complete. Both arms are the same
+            // loop over the same shape; only the CLI verb differs.
+            for (is_complete, per_project) in [(false, &archive), (true, &complete)] {
+                for (project_root, task_ids) in per_project {
+                    for task_id in task_ids {
+                        let outcome = if is_complete {
+                            switchbard_core::complete_backlog_task(project_root, task_id)
+                        } else {
+                            switchbard_core::archive_backlog_task(project_root, task_id)
+                        };
+                        match outcome {
+                            Ok(_) => {
+                                if is_complete {
+                                    completed += 1;
+                                } else {
+                                    archived += 1;
+                                }
+                                touched_roots.insert(project_root.clone());
+                            }
+                            Err(e) => {
+                                if first_error.is_none() {
+                                    first_error = Some(format!("{task_id}: {e}"));
+                                }
                             }
                         }
-                    }
-                    // Advances on failure too: this measures position in the
-                    // batch, not how much of it worked. A bar that stalled on
-                    // a failing task would read as a hang.
-                    progress.advance();
-                    ctx.request_repaint();
-                }
-                if touched {
-                    let reload = refresh_backlog_project_cache(&projects, project_root);
-                    if first_reload_error.is_ok() {
-                        first_reload_error = reload;
+                        // Advances on failure too: this measures position in
+                        // the batch, not how much of it worked.
+                        progress.advance();
+                        ctx.request_repaint();
                     }
                 }
             }
-            if archived > 0 {
+
+            // Reloaded once per project after *both* arms, not per arm — a
+            // mixed batch touching one repo would otherwise reload it twice.
+            for project_root in &touched_roots {
+                let reload = refresh_backlog_project_cache(&projects, project_root);
+                if first_reload_error.is_ok() {
+                    first_reload_error = reload;
+                }
+            }
+            if archived + completed > 0 {
                 kick.notify();
             }
+
+            let moved = match (archived, completed) {
+                (0, c) => format!("completed {c}"),
+                (a, 0) => format!("archived {a}"),
+                (a, c) => format!("archived {a} · completed {c}"),
+            };
             let summary = match first_error {
-                Some(error) => format!(
-                    "archived {archived}/{total} tasks across {project_count} projects; first failure: {error}"
-                ),
-                None => {
-                    format!("archived {archived}/{total} tasks across {project_count} projects")
-                }
+                Some(error) => format!("{moved} of {total} tasks; first failure: {error}"),
+                None => format!("{moved} of {total} tasks"),
             };
             progress.finish();
             status.set(with_stale_warning(first_reload_error, summary));

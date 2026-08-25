@@ -126,7 +126,7 @@ pub(super) fn render_summary(
                 render_bulk_progress(ui, &progress);
             } else {
                 render_cleanup_button(app, ui, snap, pending);
-                render_bulk_archive_button(app, ui, snap, pending);
+                render_bulk_clear_button(app, ui, snap, pending);
             }
         });
     });
@@ -219,62 +219,124 @@ fn render_bulk_progress(ui: &mut egui::Ui, progress: &BulkProgress) {
     .on_hover_text("A bulk Backlog action is running; it is safe to keep working elsewhere");
 }
 
-/// The visible, archivable tasks grouped by project root.
+/// A batch to clear off the active board, split by the disposition each
+/// task actually needs.
 ///
-/// Deliberately built from `sort::visible_task_rows` — the *same* function
-/// the lens renders from — so "archive what's showing" cannot drift from
-/// what is actually on screen. Excludes:
+/// Backlog.md's two terminal states are not interchangeable and the real CLI
+/// refuses `task archive` on a Done task. A selection can legitimately span
+/// both, so the batch carries both halves rather than silently dropping one.
+#[derive(Default)]
+pub(super) struct ClearBatch {
+    /// Open tasks → `backlog/archive/tasks/`.
+    pub archive: Vec<(PathBuf, Vec<String>)>,
+    /// Done tasks → `backlog/completed/`.
+    pub complete: Vec<(PathBuf, Vec<String>)>,
+}
+
+impl ClearBatch {
+    pub fn archive_count(&self) -> usize {
+        self.archive.iter().map(|(_, ids)| ids.len()).sum()
+    }
+
+    pub fn complete_count(&self) -> usize {
+        self.complete.iter().map(|(_, ids)| ids.len()).sum()
+    }
+
+    pub fn total(&self) -> usize {
+        self.archive_count() + self.complete_count()
+    }
+
+    /// The verb to name this batch by. The button must never offer a verb it
+    /// will not perform: an "Archive 15" that quietly completes three of them
+    /// is a lie even though the routing is correct. The single-task control in
+    /// the detail rail already renames itself this way; this is the same rule
+    /// applied to a set.
+    pub fn verb(&self) -> &'static str {
+        match (self.archive_count(), self.complete_count()) {
+            (0, _) => "Complete",
+            (_, 0) => "Archive",
+            _ => "Clear",
+        }
+    }
+
+    /// Lowercase present participle for the progress bar.
+    pub fn progress_verb(&self) -> &'static str {
+        match (self.archive_count(), self.complete_count()) {
+            (0, _) => "completing",
+            (_, 0) => "archiving",
+            _ => "clearing",
+        }
+    }
+}
+
+/// The tasks a bulk clear would act on, split by disposition.
 ///
-/// - **Done tasks**, which the real CLI refuses to archive (they must be
-///   completed instead, see `spawn_backlog_cleanup`); including them would
-///   half-fail the batch;
-/// - tasks already in `archive/` or `completed/`, which have nowhere to go;
-/// - projects whose `backlog` CLI is missing, since every write goes
-///   through it.
-pub(super) fn bulk_archive_candidates(
-    app: &HiveApp,
-    snap: &Snapshot,
-) -> Vec<(PathBuf, Vec<String>)> {
-    let mut per_project: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
+/// Sourced from `sort::visible_task_rows` — the *same* function the lens
+/// renders from — so the count can never drift from what is on screen. When
+/// cards are ticked the batch is those cards instead: an explicit selection
+/// is a narrower, more deliberate statement of intent than the filter, and it
+/// may legitimately include Done cards the filtered path would have skipped.
+///
+/// Excludes tasks already in `archive/` or `completed/` (nowhere left to go)
+/// and projects whose `backlog` CLI is missing (every write goes through it).
+pub(super) fn clear_batch(app: &HiveApp, snap: &Snapshot) -> ClearBatch {
+    let selection = &app.backlog_view.bulk_selected_tasks;
+    let mut archive: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
+    let mut complete: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
+
     for row in sort::visible_task_rows(app, snap) {
         if !row.project.project.cli_available() {
             continue;
         }
-        if row.task.is_done()
-            || matches!(
-                row.task.source,
-                BacklogTaskSource::Archived | BacklogTaskSource::Completed
-            )
-        {
+        if matches!(
+            row.task.source,
+            BacklogTaskSource::Archived | BacklogTaskSource::Completed
+        ) {
             continue;
         }
-        per_project
+        if !selection.is_empty() && !selection.contains(&row.key()) {
+            continue;
+        }
+        let bucket = if row.task.is_done() {
+            &mut complete
+        } else {
+            &mut archive
+        };
+        bucket
             .entry(row.project.key.clone())
             .or_default()
             .push(row.task.id.clone());
     }
-    per_project.into_iter().collect()
+
+    ClearBatch {
+        archive: archive.into_iter().collect(),
+        complete: complete.into_iter().collect(),
+    }
 }
 
-/// "Archive N showing" — the bulk counterpart to the per-task Archive in the
-/// detail rail.
+/// The bulk clear control — the set counterpart to the per-task
+/// Archive/Complete in the detail rail, and named the same way: by the verb
+/// it will actually perform.
 ///
-/// Only offered when the visible set is a strict subset of the scope. With
-/// no filter narrowing anything, "archive what's showing" means "archive the
-/// entire backlog", which is not an action anyone means to take from a
-/// toolbar button. Archiving is recoverable (files move to
-/// `backlog/archive/tasks/`, they are not deleted) but a thousand accidental
-/// moves across a dozen repos is still a bad afternoon.
-fn render_bulk_archive_button(
+/// Two guards:
+///
+/// - **Only on a lens that shows the filter row.** The header renders on
+///   every lens, but Digest/Portfolio/Statistics hide the filters, so the
+///   count would describe a set the user cannot inspect or adjust.
+/// - **With no selection, only when a filter narrows the view.** "Clear
+///   what's showing" against an unfiltered board means the whole backlog.
+///   An explicit tick-by-tick selection *is* that narrowing, so it lifts the
+///   gate — the user named the set card by card.
+///
+/// Both dispositions are recoverable (files move between backlog/
+/// directories, nothing is deleted), but a thousand accidental moves across
+/// a dozen repos is still a bad afternoon.
+fn render_bulk_clear_button(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
     snap: &Snapshot,
     pending: &mut Pending,
 ) {
-    // Only offered on a lens that actually shows the filter row. The header
-    // this button lives in renders on every lens, but on Digest/Portfolio/
-    // Statistics the filters are invisible — so the count would describe a
-    // set the user has no way to inspect or adjust before confirming.
     if !super::lens_filters(app.backlog_view.lens) {
         return;
     }
@@ -282,29 +344,47 @@ fn render_bulk_archive_button(
         .iter()
         .map(|row| row.project.tasks.len())
         .sum();
-    let candidates = bulk_archive_candidates(app, snap);
-    let total: usize = candidates.iter().map(|(_, ids)| ids.len()).sum();
-    let narrowed = total < scope_total;
+    let batch = clear_batch(app, snap);
+    let total = batch.total();
+    let selecting = !app.backlog_view.bulk_selected_tasks.is_empty();
+    let enabled = total > 0 && (selecting || total < scope_total);
+    let scope_word = if selecting { "selected" } else { "showing" };
 
     if app.backlog_view.bulk_archive_confirm {
-        ui.colored_label(theme::amber(), format!("Archive {total} shown tasks?"));
-        if ui.add(theme::danger_button("Confirm archive")).clicked() {
-            pending.bulk_archive = Some(candidates);
+        // The confirm always spells out the split, even when there is only
+        // one disposition — this is the last point before files move, and
+        // "Archive 12 · complete 3" is the sentence that catches a selection
+        // the user did not mean to make.
+        let detail = match (batch.archive_count(), batch.complete_count()) {
+            (0, complete) => format!("Complete {complete} Done tasks?"),
+            (archive, 0) => format!("Archive {archive} tasks?"),
+            (archive, complete) => {
+                format!("Archive {archive} · complete {complete} Done?")
+            }
+        };
+        ui.colored_label(theme::amber(), detail);
+        if ui.add(theme::danger_button("Confirm")).clicked() {
+            app.backlog_status
+                .set(format!("{} {total} tasks", batch.progress_verb()));
+            pending.bulk_clear = Some(batch);
             app.backlog_view.bulk_archive_confirm = false;
-            app.backlog_status.set(format!("archiving {total} tasks"));
+            app.backlog_view.bulk_selected_tasks.clear();
+            app.backlog_view.bulk_selection_anchor = None;
         }
         if ui.button("Cancel").clicked() {
             app.backlog_view.bulk_archive_confirm = false;
         }
     } else if ui
         .add_enabled(
-            total > 0 && narrowed,
-            egui::Button::new(format!("Archive {total} showing")),
+            enabled,
+            egui::Button::new(format!("{} {total} {scope_word}", batch.verb())),
         )
-        .on_hover_text(if narrowed {
-            "Move every task currently shown into backlog/archive/tasks (Done tasks are skipped)"
+        .on_hover_text(if enabled {
+            "Move these tasks off the active board — Done tasks are completed, the rest archived"
+        } else if selecting {
+            "Nothing in the selection can be cleared"
         } else {
-            "Narrow the view with a filter first — this archives everything currently shown"
+            "Select cards, or narrow the view with a filter — this clears everything currently shown"
         })
         .clicked()
     {

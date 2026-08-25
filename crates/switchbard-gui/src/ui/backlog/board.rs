@@ -343,6 +343,47 @@ fn render_column(
             .show(ui, |ui| {
                 ui.set_width(COLUMN_WIDTH - 20.0);
                 ui.horizontal(|ui| {
+                    // Select/deselect this whole column.
+                    //
+                    // A small glyph button rather than a bare
+                    // `Checkbox::without_text`: an unlabelled checkbox here
+                    // would be indistinguishable from a *card's* checkbox in
+                    // the accessibility tree, which is both a screen-reader
+                    // problem and the thing that silently shifts every
+                    // index-based test on this board. The column title stays
+                    // its own label so it remains queryable and readable.
+                    let keys: Vec<BacklogTaskKey> =
+                        column_tasks.iter().map(|row| row.key()).collect();
+                    let all_selected = !keys.is_empty()
+                        && keys
+                            .iter()
+                            .all(|key| app.backlog_view.bulk_selected_tasks.contains(key));
+                    let glyph = if all_selected { "☑" } else { "☐" };
+                    if ui
+                        .add_enabled(
+                            !keys.is_empty(),
+                            egui::Button::new(glyph).small().frame(false),
+                        )
+                        .on_hover_text(if all_selected {
+                            "Deselect every task in this column"
+                        } else {
+                            "Select every task in this column"
+                        })
+                        .clicked()
+                    {
+                        // Only this column's keys are touched — a selection
+                        // spanning other columns survives, which is what
+                        // makes building a mixed batch column by column
+                        // possible.
+                        for key in keys {
+                            if all_selected {
+                                app.backlog_view.bulk_selected_tasks.remove(&key);
+                            } else {
+                                app.backlog_view.bulk_selected_tasks.insert(key);
+                            }
+                        }
+                        app.backlog_view.bulk_selection_anchor = None;
+                    }
                     ui.label(egui::RichText::new(column_status).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
