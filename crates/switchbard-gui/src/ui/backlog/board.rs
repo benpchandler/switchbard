@@ -329,6 +329,7 @@ fn render_column(
 
     ui.vertical(|ui| {
         ui.set_width(COLUMN_WIDTH);
+
         egui::Frame::default()
             .fill(theme::nav_bg())
             .stroke(theme::surface_stroke())
@@ -383,6 +384,7 @@ fn render_column(
             .inner_margin(6.0);
         let (_, dropped) = ui.dnd_drop_zone::<BacklogTaskKey, ()>(frame, |ui| {
             ui.set_min_height(120.0);
+
             egui::ScrollArea::vertical()
                 .id_salt(format!("backlog_board_col_{column_status}"))
                 .max_height(ui.available_height().max(200.0))
@@ -923,18 +925,52 @@ fn render_labels_and_age(ui: &mut egui::Ui, task: &BacklogTask) {
     if task.labels.is_empty() && age.is_none() {
         return;
     }
+    // Both halves must be width-bounded. A `ui.horizontal` reports its
+    // content's intrinsic width as its own minimum, and an untruncated
+    // `labels.join(", ")` is unbounded — so one card with a long label list
+    // widened the whole column's scroll content past `COLUMN_WIDTH`, while
+    // every *other* card still painted at its own `set_width`. That gap
+    // between the narrow cards and the over-wide column is what showed up as
+    // dead space (measured on a real board: columns painting 262-468px
+    // against a nominal 260).
+    //
+    // The age is pinned right at its natural width; the label list truncates
+    // into whatever is left, with the full list on hover.
     ui.horizontal(|ui| {
-        if !task.labels.is_empty() {
-            ui.label(
-                egui::RichText::new(task.labels.join(", "))
-                    .small()
-                    .color(theme::muted_text()),
-            );
-        }
         if let Some(age) = age {
-            ui.label(egui::RichText::new(age).small().color(theme::muted_text()));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(egui::RichText::new(age).small().color(theme::muted_text()));
+                if !task.labels.is_empty() {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        render_label_list(ui, task);
+                    });
+                }
+            });
+        } else {
+            render_label_list(ui, task);
         }
     });
+}
+
+/// The comma-joined label list, truncated to the width it is given.
+///
+/// `truncate()` is what bounds the card: without it the label reports its
+/// full intrinsic width and drags the column out with it. The untruncated
+/// list stays reachable on hover.
+fn render_label_list(ui: &mut egui::Ui, task: &BacklogTask) {
+    if task.labels.is_empty() {
+        return;
+    }
+    let joined = task.labels.join(", ");
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(&joined)
+                .small()
+                .color(theme::muted_text()),
+        )
+        .truncate(),
+    )
+    .on_hover_text(joined);
 }
 
 /// Prefers `updated_date` (the webview's card age reflects last activity,

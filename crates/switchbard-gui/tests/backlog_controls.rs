@@ -3633,3 +3633,46 @@ fn run_cmd(cwd: &std::path::Path, cmd: &str, args: &[&str]) {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// A long label list must not drag its column wider than `COLUMN_WIDTH`.
+///
+/// `render_labels_and_age` puts the comma-joined labels in a `ui.horizontal`,
+/// which reports its content's intrinsic width as its own minimum. Untruncated,
+/// one card with several labels widened the whole column's scroll content while
+/// every other card still painted at its own `set_width` — the dead space to
+/// the right of the cards that owner review caught on a real board (columns
+/// painting 262-468px against a nominal 260).
+///
+/// Asserted against the "+ Add task" button, which is `add_sized` to
+/// `ui.available_width()` and so measures the column's own painted content
+/// width — the thing that actually stretched.
+#[test]
+fn a_long_label_list_does_not_widen_its_board_column() {
+    let mut wordy = task("TASK-1", "Short title", "To Do");
+    wordy.labels = vec![
+        "security".to_string(),
+        "incident-response".to_string(),
+        "ops".to_string(),
+        "frontend".to_string(),
+        "storybook".to_string(),
+        "observability".to_string(),
+    ];
+
+    let mut app = list_app_with_tasks(vec![wordy]);
+    app.backlog_view.lens = BacklogLens::Board;
+    let mut harness = harness(app);
+    harness.run();
+
+    let column_body = harness
+        .get_all_by_label("+ Add task")
+        .map(|n| n.rect().width())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        column_body > 0.0,
+        "the board should render at least one column"
+    );
+    assert!(
+        column_body < 280.0,
+        "a column must stay near COLUMN_WIDTH (260); the widest painted {column_body}"
+    );
+}
