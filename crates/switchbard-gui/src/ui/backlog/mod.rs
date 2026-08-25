@@ -242,44 +242,48 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         rail::render_detail_rail(app, ctx, &snap, &mut pending);
     }
 
-    egui::CentralPanel::default().show(ctx, |ui| {
-        if snap.projects.is_empty() {
-            render_empty(ui);
-            return;
-        }
-        toolbar::render_summary(app, ui, &snap, &mut pending);
-        ui.add_space(6.0);
-        toolbar::render_lens_tabs(app, ui);
-        saved_views::render_saved_views_bar(app, ui);
-        match app.backlog_view.lens {
-            BacklogLens::Digest => {
-                ui.separator();
-                digest::render_digest(app, ui, &snap);
+    let workspace_frame =
+        egui::Frame::central_panel(&ctx.style()).inner_margin(egui::Margin::same(12));
+    egui::CentralPanel::default()
+        .frame(workspace_frame)
+        .show(ctx, |ui| {
+            if snap.projects.is_empty() {
+                render_empty(ui);
+                return;
             }
-            BacklogLens::List => {
-                toolbar::render_project_toolbar(app, ui, &snap, tasks.len());
-                ui.separator();
-                list::render_task_workspace(app, ui, tasks, &mut pending);
+            toolbar::render_summary(app, ui, &snap, &mut pending);
+            ui.add_space(6.0);
+            toolbar::render_lens_tabs(app, ui);
+            saved_views::render_saved_views_bar(app, ui);
+            match app.backlog_view.lens {
+                BacklogLens::Digest => {
+                    ui.separator();
+                    digest::render_digest(app, ui, &snap);
+                }
+                BacklogLens::List => {
+                    toolbar::render_project_toolbar(app, ui, &snap, tasks.len());
+                    ui.separator();
+                    list::render_task_workspace(app, ui, tasks, &mut pending);
+                }
+                BacklogLens::Board => {
+                    toolbar::render_project_toolbar(app, ui, &snap, tasks.len());
+                    ui.separator();
+                    board::render_board(app, ui, &snap, tasks, &mut pending);
+                }
+                BacklogLens::Milestones => {
+                    ui.separator();
+                    milestones::render_milestones(app, ui, &snap, tasks);
+                }
+                BacklogLens::Portfolio => {
+                    ui.separator();
+                    portfolio::render_portfolio(app, ui, &snap);
+                }
+                BacklogLens::Statistics => {
+                    ui.separator();
+                    stats::render_statistics(app, ui, &snap);
+                }
             }
-            BacklogLens::Board => {
-                toolbar::render_project_toolbar(app, ui, &snap, tasks.len());
-                ui.separator();
-                board::render_board(app, ui, &snap, tasks, &mut pending);
-            }
-            BacklogLens::Milestones => {
-                ui.separator();
-                milestones::render_milestones(app, ui, &snap, tasks);
-            }
-            BacklogLens::Portfolio => {
-                ui.separator();
-                portfolio::render_portfolio(app, ui, &snap);
-            }
-            BacklogLens::Statistics => {
-                ui.separator();
-                stats::render_statistics(app, ui, &snap);
-            }
-        }
-    });
+        });
 
     search::render_overlay(app, ctx, &snap);
     create::render_create_modal(app, ctx, &snap, &mut pending);
