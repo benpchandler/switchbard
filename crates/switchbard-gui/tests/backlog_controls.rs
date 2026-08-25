@@ -3726,3 +3726,26 @@ fn bulk_archive_count_excludes_done_tasks() {
         "the Done task must not be counted; expected 2 of the 3 visible tasks"
     );
 }
+
+/// Bulk archive is absent on a lens that hides the filter row.
+///
+/// The header it lives in renders on every lens, but Digest, Portfolio and
+/// Statistics do not show the filters — so an "Archive N showing" button
+/// there would name a count the user cannot inspect or adjust before
+/// confirming.
+#[test]
+fn bulk_archive_is_absent_on_a_lens_without_the_filter_row() {
+    let mut app = list_app_with_tasks(vec![
+        task("TASK-1", "One", "To Do"),
+        task("TASK-2", "Two", "To Do"),
+    ]);
+    app.backlog_view.lens = BacklogLens::Statistics;
+    app.backlog_view.priority_filter = "medium".to_string();
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_by_label("Archive 2 showing").is_none(),
+        "no bulk archive on a lens whose filters are not visible"
+    );
+}

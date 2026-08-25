@@ -210,7 +210,7 @@ impl Snapshot {
 /// One definition, used both to decide whether to render the filters and
 /// whether the summary line may claim "N of M" — the two must not disagree
 /// or the header would describe a filter the user cannot see.
-fn lens_filters(lens: BacklogLens) -> bool {
+pub(super) fn lens_filters(lens: BacklogLens) -> bool {
     matches!(
         lens,
         BacklogLens::List | BacklogLens::Board | BacklogLens::Milestones
@@ -283,7 +283,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
                     toolbar::render_lens_tabs(app, ui);
                     if lens_filters(app.backlog_view.lens) {
                         ui.separator();
-                        toolbar::render_project_toolbar(app, ui, &snap, &mut pending);
+                        toolbar::render_project_toolbar(app, ui, &snap);
                     }
                     ui.separator();
                     saved_views::render_saved_views_bar(app, ui);

@@ -118,6 +118,7 @@ pub(super) fn render_summary(
             }
 
             render_cleanup_button(app, ui, snap, pending);
+            render_bulk_archive_button(app, ui, snap, pending);
         });
     });
 }
@@ -245,6 +246,13 @@ fn render_bulk_archive_button(
     snap: &Snapshot,
     pending: &mut Pending,
 ) {
+    // Only offered on a lens that actually shows the filter row. The header
+    // this button lives in renders on every lens, but on Digest/Portfolio/
+    // Statistics the filters are invisible — so the count would describe a
+    // set the user has no way to inspect or adjust before confirming.
+    if !super::lens_filters(app.backlog_view.lens) {
+        return;
+    }
     let scope_total: usize = super::scoped_projects(app, snap)
         .iter()
         .map(|row| row.project.tasks.len())
@@ -279,12 +287,7 @@ fn render_bulk_archive_button(
     }
 }
 
-pub(super) fn render_project_toolbar(
-    app: &mut HiveApp,
-    ui: &mut egui::Ui,
-    snap: &Snapshot,
-    pending: &mut Pending,
-) {
+pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
     {
         let compact = ui.available_width() < 640.0;
         let project_filter_width = if compact { 140.0 } else { 180.0 };
@@ -494,8 +497,6 @@ pub(super) fn render_project_toolbar(
                 app.backlog_view.bulk_archive_confirm = false;
                 app.save_config();
             }
-            ui.separator();
-            render_bulk_archive_button(app, ui, snap, pending);
         });
     }
 }
