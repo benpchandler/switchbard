@@ -317,7 +317,22 @@ pub(super) fn render_project_toolbar(
                 }
 
                 ui.label(egui::RichText::new("Milestone").color(theme::muted_text()));
-                let milestones = sort::milestone_options(&super::scoped_projects(app, snap));
+                // Both option lists are built here, before any combo can
+                // mutate `app`: they borrow it immutably via `ActiveFilters`,
+                // and each `selectable_value` below needs it mutably.
+                let (milestones, labels) = {
+                    let facet_filter_lc = app.filter.to_lowercase();
+                    let filters = sort::ActiveFilters::from_app(app, &facet_filter_lc);
+                    let scoped = super::scoped_projects(app, snap);
+                    (
+                        sort::milestone_options(
+                            &scoped,
+                            &filters,
+                            &app.backlog_view.milestone_filter,
+                        ),
+                        sort::label_options(&scoped, &filters, &app.backlog_view.label_filter),
+                    )
+                };
                 egui::ComboBox::from_id_salt("backlog_milestone_filter")
                     .selected_text(format::value_filter_label(
                         &app.backlog_view.milestone_filter,
@@ -328,17 +343,17 @@ pub(super) fn render_project_toolbar(
                             "all".to_string(),
                             "All",
                         );
-                        for milestone in milestones {
+                        for option in milestones {
+                            let label = format!("{}  ({})", option.value, option.count);
                             ui.selectable_value(
                                 &mut app.backlog_view.milestone_filter,
-                                milestone.clone(),
-                                milestone,
+                                option.value,
+                                label,
                             );
                         }
                     });
 
                 ui.label(egui::RichText::new("Label").color(theme::muted_text()));
-                let labels = sort::label_options(&super::scoped_projects(app, snap));
                 egui::ComboBox::from_id_salt("backlog_label_filter")
                     .selected_text(format::value_filter_label(&app.backlog_view.label_filter))
                     .show_ui(ui, |ui| {
@@ -347,10 +362,11 @@ pub(super) fn render_project_toolbar(
                             "all".to_string(),
                             "All",
                         );
-                        for label in labels {
+                        for option in labels {
+                            let label = format!("{}  ({})", option.value, option.count);
                             ui.selectable_value(
                                 &mut app.backlog_view.label_filter,
-                                label.clone(),
+                                option.value,
                                 label,
                             );
                         }

@@ -11,7 +11,7 @@ use super::{scoped_projects, ProjectRow, Snapshot, TaskRow};
 use crate::app::HiveApp;
 use crate::runtime::{BacklogTaskKey, BacklogTaskSortDirection, BacklogTaskSortKey};
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use switchbard_core::{
     triage_entry_from_task, triage_rank, BacklogProject, BacklogTask, BacklogTaskSource,
     BACKLOG_PRIORITIES, CANONICAL_STATUS_ORDER,
@@ -168,58 +168,107 @@ pub(super) fn cmp_ascii_case_insensitive(a: &str, b: &str) -> Ordering {
     }
 }
 
+/// One filter control in the toolbar's filter group.
+///
+/// Used to build a control's option list from the tasks that pass every
+/// *other* active filter — see [`ActiveFilters::matches`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Facet {
+    Milestone,
+    Label,
+}
+
+/// The toolbar's filter group as plain data.
+///
+/// Lifted out of `HiveApp` so the matching rule is a pure function of its
+/// inputs: the option builders below need to evaluate it with one facet
+/// suppressed, and the whole thing is otherwise only reachable by
+/// constructing a live app.
+pub(super) struct ActiveFilters<'a> {
+    pub show_completed: bool,
+    pub show_archived: bool,
+    pub show_drafts: bool,
+    pub status: &'a str,
+    pub priority: &'a str,
+    pub milestone: &'a str,
+    pub label: &'a str,
+    pub text_lc: &'a str,
+}
+
+impl<'a> ActiveFilters<'a> {
+    pub fn from_app(app: &'a HiveApp, text_lc: &'a str) -> Self {
+        Self {
+            show_completed: app.backlog_view.show_completed,
+            show_archived: app.backlog_view.show_archived,
+            show_drafts: app.backlog_view.show_drafts,
+            status: &app.backlog_view.status_filter,
+            priority: &app.backlog_view.priority_filter,
+            milestone: &app.backlog_view.milestone_filter,
+            label: &app.backlog_view.label_filter,
+            text_lc,
+        }
+    }
+
+    /// Whether `task` survives the group, optionally ignoring one facet's own
+    /// filter.
+    ///
+    /// The group is an AND chain, so a control offering values drawn from the
+    /// whole project scope can offer one that yields nothing once the *other*
+    /// filters apply — the user picks it and the board empties. Building each
+    /// control's options with its own facet excluded (and only its own —
+    /// excluding more would over-offer again) is what makes the group behave
+    /// as a single filter rather than five independent ones.
+    pub fn matches(&self, task: &BacklogTask, exclude: Option<Facet>) -> bool {
+        if task_is_completed(task) && !self.show_completed {
+            return false;
+        }
+        if task.source == BacklogTaskSource::Archived && !self.show_archived {
+            return false;
+        }
+        if task.source == BacklogTaskSource::Draft && !self.show_drafts {
+            return false;
+        }
+        if self.status != "all" && !task.status.eq_ignore_ascii_case(self.status) {
+            return false;
+        }
+        if self.priority != "all" && !task.priority.eq_ignore_ascii_case(self.priority) {
+            return false;
+        }
+        if exclude != Some(Facet::Milestone)
+            && self.milestone != "all"
+            && task.milestone.as_deref() != Some(self.milestone)
+        {
+            return false;
+        }
+        if exclude != Some(Facet::Label)
+            && self.label != "all"
+            && !task
+                .labels
+                .iter()
+                .any(|label| label.eq_ignore_ascii_case(self.label))
+        {
+            return false;
+        }
+        if self.text_lc.is_empty() {
+            return true;
+        }
+        let haystack = [
+            task.id.as_str(),
+            task.title.as_str(),
+            task.status.as_str(),
+            task.priority.as_str(),
+            task.description.as_str(),
+            &task.labels.join(" "),
+            &task.assignees.join(" "),
+        ]
+        .join(" ")
+        .to_lowercase();
+        haystack.contains(self.text_lc)
+    }
+}
+
 pub(super) fn task_visible(task: &BacklogTask, app: &HiveApp, filter_lc: &str) -> bool {
-    if task_is_completed(task) && !app.backlog_view.show_completed {
-        return false;
-    }
-    if task.source == BacklogTaskSource::Archived && !app.backlog_view.show_archived {
-        return false;
-    }
-    if task.source == BacklogTaskSource::Draft && !app.backlog_view.show_drafts {
-        return false;
-    }
-    if app.backlog_view.status_filter != "all"
-        && !task
-            .status
-            .eq_ignore_ascii_case(&app.backlog_view.status_filter)
-    {
-        return false;
-    }
-    if app.backlog_view.priority_filter != "all"
-        && !task
-            .priority
-            .eq_ignore_ascii_case(&app.backlog_view.priority_filter)
-    {
-        return false;
-    }
-    if app.backlog_view.milestone_filter != "all"
-        && task.milestone.as_deref() != Some(app.backlog_view.milestone_filter.as_str())
-    {
-        return false;
-    }
-    if app.backlog_view.label_filter != "all"
-        && !task
-            .labels
-            .iter()
-            .any(|label| label.eq_ignore_ascii_case(&app.backlog_view.label_filter))
-    {
-        return false;
-    }
-    if filter_lc.is_empty() {
-        return true;
-    }
-    let haystack = [
-        task.id.as_str(),
-        task.title.as_str(),
-        task.status.as_str(),
-        task.priority.as_str(),
-        task.description.as_str(),
-        &task.labels.join(" "),
-        &task.assignees.join(" "),
-    ]
-    .join(" ")
-    .to_lowercase();
-    haystack.contains(filter_lc)
+    ActiveFilters::from_app(app, filter_lc).matches(task, None)
 }
 
 pub(super) fn open_task_count(project: &BacklogProject) -> usize {
@@ -237,35 +286,70 @@ pub(super) fn task_is_completed(task: &BacklogTask) -> bool {
     task.is_done()
 }
 
-/// Every distinct milestone value in the current scope, alphabetical.
-/// Unlike `switchbard_core::ordered_status_vocabulary` there's no fixed
-/// baseline set — milestones are entirely project-defined — so an empty
-/// scope just offers no milestones beyond "All".
-pub(super) fn milestone_options(scoped: &[&ProjectRow]) -> Vec<String> {
-    let mut set = BTreeSet::new();
-    for project in scoped {
-        for task in &project.project.tasks {
-            if let Some(milestone) = &task.milestone {
-                set.insert(milestone.clone());
-            }
-        }
-    }
-    set.into_iter().collect()
+/// One option in a filter control: the value and how many tasks would remain
+/// if it were selected.
+pub(super) struct FacetOption {
+    pub value: String,
+    pub count: usize,
 }
 
-/// Every distinct label across every task in scope, alphabetical — QA
-/// parity matrix gap: the webview offers a dedicated label filter; before
-/// this, a label was only reachable through the free-text filter.
-pub(super) fn label_options(scoped: &[&ProjectRow]) -> Vec<String> {
-    let mut set = BTreeSet::new();
+/// Milestone values worth offering, alphabetical, each with the number of
+/// tasks that would survive selecting it.
+///
+/// Counted against tasks passing every *other* active filter, so a value is
+/// only offered when it actually leads somewhere. `current` is always kept
+/// even at zero — dropping the selected value would silently mutate the
+/// control the user is looking at, and they need a way back.
+pub(super) fn milestone_options(
+    scoped: &[&ProjectRow],
+    filters: &ActiveFilters<'_>,
+    current: &str,
+) -> Vec<FacetOption> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for project in scoped {
         for task in &project.project.tasks {
-            for label in &task.labels {
-                set.insert(label.clone());
+            if !filters.matches(task, Some(Facet::Milestone)) {
+                continue;
+            }
+            if let Some(milestone) = &task.milestone {
+                *counts.entry(milestone.clone()).or_default() += 1;
             }
         }
     }
-    set.into_iter().collect()
+    if current != "all" {
+        counts.entry(current.to_string()).or_insert(0);
+    }
+    counts
+        .into_iter()
+        .map(|(value, count)| FacetOption { value, count })
+        .collect()
+}
+
+/// Label values worth offering — see [`milestone_options`] for why these are
+/// counted with their own facet excluded.
+pub(super) fn label_options(
+    scoped: &[&ProjectRow],
+    filters: &ActiveFilters<'_>,
+    current: &str,
+) -> Vec<FacetOption> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for project in scoped {
+        for task in &project.project.tasks {
+            if !filters.matches(task, Some(Facet::Label)) {
+                continue;
+            }
+            for label in &task.labels {
+                *counts.entry(label.clone()).or_default() += 1;
+            }
+        }
+    }
+    if current != "all" {
+        counts.entry(current.to_string()).or_insert(0);
+    }
+    counts
+        .into_iter()
+        .map(|(value, count)| FacetOption { value, count })
+        .collect()
 }
 
 #[cfg(test)]
@@ -322,6 +406,124 @@ mod tests {
             source: BacklogTaskSource::Active,
             path: PathBuf::from("/tmp/project/backlog/tasks/task.md"),
         }
+    }
+
+    fn all_filters<'a>() -> ActiveFilters<'a> {
+        ActiveFilters {
+            show_completed: true,
+            show_archived: true,
+            show_drafts: true,
+            status: "all",
+            priority: "all",
+            milestone: "all",
+            label: "all",
+            text_lc: "",
+        }
+    }
+
+    fn project_row(tasks: Vec<BacklogTask>) -> ProjectRow {
+        ProjectRow {
+            key: PathBuf::from("/tmp/fixture"),
+            repo_name: "fixture".to_string(),
+            worktree_label: "main".to_string(),
+            branch: Some("main".to_string()),
+            project: BacklogProject {
+                root: PathBuf::from("/tmp/fixture"),
+                cli_path: None,
+                tasks,
+                warnings: vec![],
+                loaded_at_unix: 0,
+                configured_statuses: vec![],
+            },
+        }
+    }
+
+    fn milestone_task(id: &str, status: &str, milestone: &str) -> BacklogTask {
+        let mut task = task_with_fields(id, id, status, "medium", 0, 0);
+        task.milestone = Some(milestone.to_string());
+        task
+    }
+
+    /// A control must not offer a value that leads nowhere.
+    ///
+    /// The group is an AND chain, but each control used to draw its options
+    /// from the whole project scope, ignoring the other filters. With
+    /// Status=In Progress active, the Milestone picker still listed `v2` —
+    /// whose only task is To Do — and choosing it emptied the board.
+    #[test]
+    fn milestone_options_exclude_values_no_other_filter_would_leave() {
+        let row = project_row(vec![
+            milestone_task("TASK-1", "In Progress", "v1"),
+            milestone_task("TASK-2", "To Do", "v2"),
+        ]);
+        let mut filters = all_filters();
+        filters.status = "In Progress";
+
+        let options = milestone_options(&[&row], &filters, "all");
+        let values: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
+
+        assert_eq!(values, vec!["v1"], "v2 has no In Progress task to offer");
+        assert_eq!(options[0].count, 1, "the count is what selecting it yields");
+    }
+
+    /// The selected value survives even when the other filters reduce it to
+    /// zero: dropping it would mutate the control under the user and leave no
+    /// way back to a wider view.
+    #[test]
+    fn milestone_options_keep_the_current_selection_at_zero_matches() {
+        let row = project_row(vec![
+            milestone_task("TASK-1", "In Progress", "v1"),
+            milestone_task("TASK-2", "To Do", "v2"),
+        ]);
+        let mut filters = all_filters();
+        filters.status = "In Progress";
+        filters.milestone = "v2";
+
+        let options = milestone_options(&[&row], &filters, "v2");
+        let v2 = options
+            .iter()
+            .find(|o| o.value == "v2")
+            .expect("the active selection must stay listed");
+        assert_eq!(v2.count, 0, "and be shown honestly as empty");
+    }
+
+    /// A facet never constrains its own option list — otherwise selecting one
+    /// label would hide every other label and strand the user on it.
+    #[test]
+    fn label_options_ignore_the_label_filter_itself() {
+        let mut a = task_with_fields("TASK-1", "a", "To Do", "medium", 0, 0);
+        a.labels = vec!["frontend".to_string()];
+        let mut b = task_with_fields("TASK-2", "b", "To Do", "medium", 0, 0);
+        b.labels = vec!["backend".to_string()];
+        let row = project_row(vec![a, b]);
+
+        let mut filters = all_filters();
+        filters.label = "frontend";
+
+        let values: Vec<String> = label_options(&[&row], &filters, "frontend")
+            .into_iter()
+            .map(|o| o.value)
+            .collect();
+        assert_eq!(values, vec!["backend", "frontend"], "both stay switchable");
+    }
+
+    /// The other facets still apply to a label list.
+    #[test]
+    fn label_options_respect_a_status_filter() {
+        let mut a = task_with_fields("TASK-1", "a", "In Progress", "medium", 0, 0);
+        a.labels = vec!["frontend".to_string()];
+        let mut b = task_with_fields("TASK-2", "b", "To Do", "medium", 0, 0);
+        b.labels = vec!["backend".to_string()];
+        let row = project_row(vec![a, b]);
+
+        let mut filters = all_filters();
+        filters.status = "In Progress";
+
+        let values: Vec<String> = label_options(&[&row], &filters, "all")
+            .into_iter()
+            .map(|o| o.value)
+            .collect();
+        assert_eq!(values, vec!["frontend"]);
     }
 
     #[test]
