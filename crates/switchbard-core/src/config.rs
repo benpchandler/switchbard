@@ -60,6 +60,14 @@ pub struct UiConfig {
     /// Clamped to a legible band on apply (`app::clamp_ui_scale`).
     #[serde(default = "default_ui_scale")]
     pub ui_scale: f32,
+    /// How many days without an update before the Backlog's staleness filter
+    /// considers a task stale. Persisted rather than session-only because it
+    /// encodes a judgement about a particular backlog's pace — a repo whose
+    /// tasks turn over weekly and one that plans in quarters do not share a
+    /// threshold — and because it gates a bulk action, where re-picking it
+    /// from memory each session is exactly how the wrong set gets archived.
+    #[serde(default = "default_stale_after_days")]
+    pub stale_after_days: u32,
     /// Named Backlog filter+sort+lens combinations (task-20). Engagement
     /// state only — repos stay the system of record for task data, this is
     /// just "how I like to look at it" — so it's additive on the existing
@@ -84,6 +92,7 @@ impl Default for UiConfig {
             onboarding_dismissed: false,
             theme: ThemeChoice::default(),
             ui_scale: default_ui_scale(),
+            stale_after_days: default_stale_after_days(),
             saved_views: Vec::new(),
             sidebar_collapsed: false,
         }
@@ -165,6 +174,12 @@ fn default_version() -> u32 {
 
 fn default_ui_scale() -> f32 {
     1.0
+}
+
+/// A quarter. Long enough that ordinary in-flight work is never called stale,
+/// short enough to surface a backlog nobody has revisited in a planning cycle.
+fn default_stale_after_days() -> u32 {
+    90
 }
 
 /// The single canonical config path. Returns `None` only if `dirs::home_dir`
@@ -297,6 +312,7 @@ mod tests {
                 onboarding_dismissed: true,
                 theme: ThemeChoice::Dark,
                 ui_scale: 1.25,
+                stale_after_days: 45,
                 saved_views: vec![SavedView {
                     name: "My high-priority queue".into(),
                     selected_project: None,

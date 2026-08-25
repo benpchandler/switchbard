@@ -162,6 +162,17 @@ pub struct BacklogViewState {
     /// expanded rail still persists its width in egui's panel memory, while
     /// this flag owns the distinct open/closed state.
     pub detail_rail_collapsed: bool,
+    /// Whether the Backlog is narrowed to tasks untouched for at least
+    /// `Config::ui.stale_after_days`. Session-only, unlike the threshold
+    /// itself: the threshold is a standing judgement about this backlog's
+    /// pace, but *being* in a sweep is a thing you are doing right now, and
+    /// a filter that gates a bulk archive should not be silently still on
+    /// the next time the app opens.
+    pub stale_only: bool,
+    /// Whether the bulk-archive action is primed for its confirm click.
+    /// Cleared whenever the filtered set changes, so a confirm can never
+    /// apply to a different set than the one its count described.
+    pub bulk_archive_confirm: bool,
     /// Global free-text search overlay (Cmd+K / Ctrl+K), task-15 AC #2.
     pub search: BacklogSearchState,
     /// Set to the task the user clicked "Archive" on; the detail pane shows
@@ -232,6 +243,8 @@ impl Default for BacklogViewState {
             editor: BacklogEditorState::default(),
             new_task: BacklogNewTaskState::default(),
             detail_rail_collapsed: false,
+            stale_only: false,
+            bulk_archive_confirm: false,
             search: BacklogSearchState::default(),
             archive_confirm: false,
             expanded_parents: BTreeSet::new(),

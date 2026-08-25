@@ -1530,6 +1530,76 @@ impl HiveApp {
         });
     }
 
+    /// Archive a batch of **non-Done** tasks, grouped by project.
+    ///
+    /// The mirror of `spawn_backlog_cleanup`, which completes Done tasks:
+    /// Backlog.md's two terminal states are not interchangeable, and the real
+    /// CLI refuses `task archive` on a Done task. The caller is responsible
+    /// for excluding Done tasks from the batch — see
+    /// `toolbar::bulk_archive_candidates`, which does so from the same
+    /// `visible_task_rows` the user is looking at.
+    ///
+    /// Per-task failures do not abort the batch: a task the CLI rejects (a
+    /// read-only project, a file changed underneath us) leaves the rest to
+    /// succeed, and the first failure is reported. Reporting `archived N/M`
+    /// rather than a bare success is the point — a partial sweep must not
+    /// read as a complete one.
+    pub fn spawn_backlog_bulk_archive(
+        &self,
+        per_project: Vec<(PathBuf, Vec<String>)>,
+        ctx: &egui::Context,
+    ) {
+        if per_project.is_empty() {
+            return;
+        }
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let project_count = per_project.len();
+            let total: usize = per_project.iter().map(|(_, ids)| ids.len()).sum();
+            let mut archived = 0usize;
+            let mut first_error: Option<String> = None;
+            let mut first_reload_error: Result<(), String> = Ok(());
+            for (project_root, task_ids) in &per_project {
+                let mut touched = false;
+                for task_id in task_ids {
+                    match switchbard_core::archive_backlog_task(project_root, task_id) {
+                        Ok(_) => {
+                            archived += 1;
+                            touched = true;
+                        }
+                        Err(e) => {
+                            if first_error.is_none() {
+                                first_error = Some(format!("{task_id}: {e}"));
+                            }
+                        }
+                    }
+                }
+                if touched {
+                    let reload = refresh_backlog_project_cache(&projects, project_root);
+                    if first_reload_error.is_ok() {
+                        first_reload_error = reload;
+                    }
+                }
+            }
+            if archived > 0 {
+                kick.notify();
+            }
+            let summary = match first_error {
+                Some(error) => format!(
+                    "archived {archived}/{total} tasks across {project_count} projects; first failure: {error}"
+                ),
+                None => {
+                    format!("archived {archived}/{total} tasks across {project_count} projects")
+                }
+            };
+            status.set(with_stale_warning(first_reload_error, summary));
+            ctx.request_repaint();
+        });
+    }
+
     pub fn spawn_backlog_append_note(
         &self,
         project_root: PathBuf,

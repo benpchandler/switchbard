@@ -3676,3 +3676,53 @@ fn a_long_label_list_does_not_widen_its_board_column() {
         "a column must stay near COLUMN_WIDTH (260); the widest painted {column_body}"
     );
 }
+
+/// Bulk archive is unavailable until a filter narrows the view.
+///
+/// "Archive what's showing" with nothing filtered means "archive the entire
+/// backlog" — not an action anyone means to take from a toolbar button.
+#[test]
+fn bulk_archive_is_disabled_until_the_view_is_narrowed() {
+    let mut app = list_app_with_tasks(vec![
+        task("TASK-1", "One", "To Do"),
+        task("TASK-2", "Two", "To Do"),
+    ]);
+    app.backlog_view.lens = BacklogLens::List;
+    let mut harness = harness(app);
+    harness.run();
+
+    let button = harness
+        .get_all_by_label("Archive 2 showing")
+        .next()
+        .expect("the bulk archive button should render");
+    assert!(
+        button.accesskit_node().is_disabled(),
+        "with nothing filtered, bulk archive must not be clickable"
+    );
+}
+
+/// Done tasks are excluded from the batch.
+///
+/// Backlog.md's two terminal states are not interchangeable and the real CLI
+/// refuses `task archive` on a Done task, so including one would half-fail
+/// the batch. The count in the button must reflect that exclusion, or the
+/// confirm would promise more than it delivers.
+#[test]
+fn bulk_archive_count_excludes_done_tasks() {
+    let mut app = list_app_with_tasks(vec![
+        task("TASK-1", "Open one", "To Do"),
+        task("TASK-2", "Finished", "Done"),
+        task("TASK-3", "Open two", "To Do"),
+    ]);
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.show_completed = true;
+    // Narrow on something so the button is enabled at all.
+    app.backlog_view.priority_filter = "medium".to_string();
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_by_label("Archive 2 showing").is_some(),
+        "the Done task must not be counted; expected 2 of the 3 visible tasks"
+    );
+}

@@ -283,7 +283,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
                     toolbar::render_lens_tabs(app, ui);
                     if lens_filters(app.backlog_view.lens) {
                         ui.separator();
-                        toolbar::render_project_toolbar(app, ui, &snap);
+                        toolbar::render_project_toolbar(app, ui, &snap, &mut pending);
                     }
                     ui.separator();
                     saved_views::render_saved_views_bar(app, ui);
@@ -405,6 +405,10 @@ pub(in crate::ui::backlog) struct Pending {
     /// invocation per task, and those are scattered across every tracked
     /// project, not just one.
     pub cleanup: Option<Vec<(PathBuf, Vec<String>)>>,
+    /// The non-Done counterpart to `cleanup`: every currently *visible*
+    /// task, grouped by project, to be archived. Same cross-repo shape and
+    /// the same one-CLI-call-per-task cost.
+    pub bulk_archive: Option<Vec<(PathBuf, Vec<String>)>>,
 }
 
 fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, pending: Pending) {
@@ -441,5 +445,8 @@ fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, pending: Pending) {
     }
     if let Some(per_project) = pending.cleanup {
         app.spawn_backlog_cleanup(per_project, ctx);
+    }
+    if let Some(per_project) = pending.bulk_archive {
+        app.spawn_backlog_bulk_archive(per_project, ctx);
     }
 }

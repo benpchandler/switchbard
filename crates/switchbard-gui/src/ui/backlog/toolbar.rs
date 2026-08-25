@@ -8,8 +8,9 @@ use crate::runtime::BacklogLens;
 use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
-use switchbard_core::{ordered_status_vocabulary, BACKLOG_PRIORITIES};
+use switchbard_core::{ordered_status_vocabulary, BacklogTaskSource, BACKLOG_PRIORITIES};
 
 /// The lens tab strip shown under the summary line: List / Board /
 /// Milestones / Statistics. Switching lenses does not clear the current
@@ -192,7 +193,98 @@ fn cleanup_candidates(snap: &Snapshot) -> Vec<(PathBuf, Vec<String>)> {
 
 /// The filter controls. Like `render_lens_tabs`, renders bare inside the
 /// container `render_toolbar_group` provides.
-pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
+/// The visible, archivable tasks grouped by project root.
+///
+/// Deliberately built from `sort::visible_task_rows` — the *same* function
+/// the lens renders from — so "archive what's showing" cannot drift from
+/// what is actually on screen. Excludes:
+///
+/// - **Done tasks**, which the real CLI refuses to archive (they must be
+///   completed instead, see `spawn_backlog_cleanup`); including them would
+///   half-fail the batch;
+/// - tasks already in `archive/` or `completed/`, which have nowhere to go;
+/// - projects whose `backlog` CLI is missing, since every write goes
+///   through it.
+pub(super) fn bulk_archive_candidates(
+    app: &HiveApp,
+    snap: &Snapshot,
+) -> Vec<(PathBuf, Vec<String>)> {
+    let mut per_project: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
+    for row in sort::visible_task_rows(app, snap) {
+        if !row.project.project.cli_available() {
+            continue;
+        }
+        if row.task.is_done()
+            || matches!(
+                row.task.source,
+                BacklogTaskSource::Archived | BacklogTaskSource::Completed
+            )
+        {
+            continue;
+        }
+        per_project
+            .entry(row.project.key.clone())
+            .or_default()
+            .push(row.task.id.clone());
+    }
+    per_project.into_iter().collect()
+}
+
+/// "Archive N showing" — the bulk counterpart to the per-task Archive in the
+/// detail rail.
+///
+/// Only offered when the visible set is a strict subset of the scope. With
+/// no filter narrowing anything, "archive what's showing" means "archive the
+/// entire backlog", which is not an action anyone means to take from a
+/// toolbar button. Archiving is recoverable (files move to
+/// `backlog/archive/tasks/`, they are not deleted) but a thousand accidental
+/// moves across a dozen repos is still a bad afternoon.
+fn render_bulk_archive_button(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    snap: &Snapshot,
+    pending: &mut Pending,
+) {
+    let scope_total: usize = super::scoped_projects(app, snap)
+        .iter()
+        .map(|row| row.project.tasks.len())
+        .sum();
+    let candidates = bulk_archive_candidates(app, snap);
+    let total: usize = candidates.iter().map(|(_, ids)| ids.len()).sum();
+    let narrowed = total < scope_total;
+
+    if app.backlog_view.bulk_archive_confirm {
+        ui.colored_label(theme::amber(), format!("Archive {total} shown tasks?"));
+        if ui.add(theme::danger_button("Confirm archive")).clicked() {
+            pending.bulk_archive = Some(candidates);
+            app.backlog_view.bulk_archive_confirm = false;
+            app.backlog_status.set(format!("archiving {total} tasks"));
+        }
+        if ui.button("Cancel").clicked() {
+            app.backlog_view.bulk_archive_confirm = false;
+        }
+    } else if ui
+        .add_enabled(
+            total > 0 && narrowed,
+            egui::Button::new(format!("Archive {total} showing")),
+        )
+        .on_hover_text(if narrowed {
+            "Move every task currently shown into backlog/archive/tasks (Done tasks are skipped)"
+        } else {
+            "Narrow the view with a filter first — this archives everything currently shown"
+        })
+        .clicked()
+    {
+        app.backlog_view.bulk_archive_confirm = true;
+    }
+}
+
+pub(super) fn render_project_toolbar(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    snap: &Snapshot,
+    pending: &mut Pending,
+) {
     {
         let compact = ui.available_width() < 640.0;
         let project_filter_width = if compact { 140.0 } else { 180.0 };
@@ -373,6 +465,37 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
             ui.checkbox(&mut app.backlog_view.show_completed, "Done");
             ui.checkbox(&mut app.backlog_view.show_archived, "Archived");
             ui.checkbox(&mut app.backlog_view.show_drafts, "Drafts");
+            ui.separator();
+            let stale_days = app.config.ui.stale_after_days;
+            if ui
+                .checkbox(&mut app.backlog_view.stale_only, "Stale only")
+                .on_hover_text(format!(
+                    "Show only tasks untouched for {stale_days}+ days (by updated date, falling back to created)"
+                ))
+                .changed()
+            {
+                // Changing what is visible must disarm a primed bulk archive:
+                // its confirm names a count taken from the filtered set, and
+                // that set has just moved underneath it.
+                app.backlog_view.bulk_archive_confirm = false;
+            }
+            let mut days = app.config.ui.stale_after_days;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut days)
+                        .speed(1.0)
+                        .range(1..=3650)
+                        .suffix(" days"),
+                )
+                .on_hover_text("How long without an update counts as stale")
+                .changed()
+            {
+                app.config.ui.stale_after_days = days;
+                app.backlog_view.bulk_archive_confirm = false;
+                app.save_config();
+            }
+            ui.separator();
+            render_bulk_archive_button(app, ui, snap, pending);
         });
     }
 }
