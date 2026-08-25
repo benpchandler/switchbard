@@ -5,11 +5,13 @@
 use super::{create, format, reset_task_selection, sort, Pending, Snapshot};
 use crate::app::HiveApp;
 use crate::runtime::BacklogLens;
+use crate::sync::BulkProgress;
 use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
-use switchbard_core::{ordered_status_vocabulary, BACKLOG_PRIORITIES};
+use switchbard_core::{ordered_status_vocabulary, BacklogTaskSource, BACKLOG_PRIORITIES};
 
 /// The lens tab strip shown under the summary line: List / Board /
 /// Milestones / Statistics. Switching lenses does not clear the current
@@ -17,38 +19,41 @@ use switchbard_core::{ordered_status_vocabulary, BACKLOG_PRIORITIES};
 /// pass (2026-08-05): wrapped in its own `nav_bg()` band, matching the
 /// top bar's view-tab strip, so navigation reads as its own zone rather
 /// than blending into the toolbar/content around it.
+/// The lens tabs. Renders bare: `render_toolbar_group` owns the container
+/// these sit in, so tabs, filters, and saved views read as one control
+/// surface instead of three competing treatments (a bordered tab strip, an
+/// unframed saved-views row, and a second bordered filter panel).
 pub(super) fn render_lens_tabs(app: &mut HiveApp, ui: &mut egui::Ui) {
-    egui::Frame::default()
-        .fill(theme::card_bg())
-        .stroke(theme::surface_stroke())
-        .corner_radius(6.0)
-        .inner_margin(egui::Margin::symmetric(10, 5))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                for lens in [
-                    BacklogLens::Digest,
-                    BacklogLens::List,
-                    BacklogLens::Board,
-                    BacklogLens::Milestones,
-                    BacklogLens::Portfolio,
-                    BacklogLens::Statistics,
-                ] {
-                    if ui
-                        .selectable_label(app.backlog_view.lens == lens, lens.label())
-                        .clicked()
-                    {
-                        app.backlog_view.lens = lens;
-                    }
+    {
+        ui.horizontal(|ui| {
+            for lens in [
+                BacklogLens::Digest,
+                BacklogLens::List,
+                BacklogLens::Board,
+                BacklogLens::Milestones,
+                BacklogLens::Portfolio,
+                BacklogLens::Statistics,
+            ] {
+                if ui
+                    .selectable_label(app.backlog_view.lens == lens, lens.label())
+                    .clicked()
+                {
+                    app.backlog_view.lens = lens;
                 }
-            });
+            }
         });
+    }
 }
 
+/// The summary line. `visible_count` is the number of tasks the current
+/// filters leave — `None` for a lens that does not filter (Digest,
+/// Statistics), where "N of M" would be a claim about nothing.
 pub(super) fn render_summary(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
     snap: &Snapshot,
     pending: &mut Pending,
+    visible_count: Option<usize>,
 ) {
     let scoped = super::scoped_projects(app, snap);
     let task_count: usize = scoped.iter().map(|row| row.project.tasks.len()).sum();
@@ -58,15 +63,21 @@ pub(super) fn render_summary(
         .sum();
     let warning_count: usize = scoped.iter().map(|row| row.project.warnings.len()).sum();
     let ordering_warning = app.ordering_snapshot().warning;
-    let all_scope = app.backlog_view.selected_project.is_none();
 
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Backlog").heading().strong());
         ui.separator();
-        let count_label = if all_scope {
-            format!("All projects · {open_count} open · {task_count} total")
-        } else {
-            format!("{open_count} open · {task_count} total")
+        // One count, and when a filter is narrowing the view it explains the
+        // gap itself ("370 of 1509") rather than sitting next to a second,
+        // unrelated number further down the toolbar. The scope is not
+        // repeated here — the project picker directly below already states
+        // it, and saying "All projects" twice was the loudest redundancy in
+        // this header.
+        let count_label = match visible_count {
+            Some(visible) if visible != task_count => {
+                format!("{visible} of {task_count} · {open_count} open")
+            }
+            _ => format!("{task_count} tasks · {open_count} open"),
         };
         ui.label(egui::RichText::new(count_label).color(theme::weak_text()));
         if warning_count > 0 {
@@ -107,7 +118,16 @@ pub(super) fn render_summary(
                 create::open_new_task(app, target, None);
             }
 
-            render_cleanup_button(app, ui, snap, pending);
+            // While a bulk run is live the bar takes the buttons' place
+            // rather than sitting beside them: both actions mutate the same
+            // task set through the same one-CLI-call-per-task loop, so
+            // offering to start a second one mid-run is offering a race.
+            if let Some(progress) = app.bulk_progress.snapshot() {
+                render_bulk_progress(ui, &progress);
+            } else {
+                render_cleanup_button(app, ui, snap, pending);
+                render_bulk_clear_button(app, ui, snap, pending);
+            }
         });
     });
 }
@@ -181,209 +201,409 @@ fn cleanup_candidates(snap: &Snapshot) -> Vec<(PathBuf, Vec<String>)> {
         .collect()
 }
 
-pub(super) fn render_project_toolbar(
+/// The determinate bar for an in-flight bulk action.
+///
+/// Sized rather than left to fill the row: it lives inside the header's
+/// right-to-left layout, where an unsized `ProgressBar` claims all remaining
+/// width and shoves the heading off the other end.
+///
+/// Non-blocking by construction — it is an ordinary widget in a row that is
+/// already there, so the rest of the app stays live and scrollable while a
+/// sweep runs. No modal, no spinner overlay.
+fn render_bulk_progress(ui: &mut egui::Ui, progress: &BulkProgress) {
+    ui.add(
+        egui::ProgressBar::new(progress.fraction())
+            .desired_width(220.0)
+            .text(progress.label()),
+    )
+    .on_hover_text("A bulk Backlog action is running; it is safe to keep working elsewhere");
+}
+
+/// A batch to clear off the active board, split by the disposition each
+/// task actually needs.
+///
+/// Backlog.md's two terminal states are not interchangeable and the real CLI
+/// refuses `task archive` on a Done task. A selection can legitimately span
+/// both, so the batch carries both halves rather than silently dropping one.
+#[derive(Default)]
+pub(super) struct ClearBatch {
+    /// Open tasks → `backlog/archive/tasks/`.
+    pub archive: Vec<(PathBuf, Vec<String>)>,
+    /// Done tasks → `backlog/completed/`.
+    pub complete: Vec<(PathBuf, Vec<String>)>,
+}
+
+impl ClearBatch {
+    pub fn archive_count(&self) -> usize {
+        self.archive.iter().map(|(_, ids)| ids.len()).sum()
+    }
+
+    pub fn complete_count(&self) -> usize {
+        self.complete.iter().map(|(_, ids)| ids.len()).sum()
+    }
+
+    pub fn total(&self) -> usize {
+        self.archive_count() + self.complete_count()
+    }
+
+    /// The verb to name this batch by. The button must never offer a verb it
+    /// will not perform: an "Archive 15" that quietly completes three of them
+    /// is a lie even though the routing is correct. The single-task control in
+    /// the detail rail already renames itself this way; this is the same rule
+    /// applied to a set.
+    pub fn verb(&self) -> &'static str {
+        match (self.archive_count(), self.complete_count()) {
+            (0, _) => "Complete",
+            (_, 0) => "Archive",
+            _ => "Clear",
+        }
+    }
+
+    /// Lowercase present participle for the progress bar.
+    pub fn progress_verb(&self) -> &'static str {
+        match (self.archive_count(), self.complete_count()) {
+            (0, _) => "completing",
+            (_, 0) => "archiving",
+            _ => "clearing",
+        }
+    }
+}
+
+/// The tasks a bulk clear would act on, split by disposition.
+///
+/// Sourced from `sort::visible_task_rows` — the *same* function the lens
+/// renders from — so the count can never drift from what is on screen. When
+/// cards are ticked the batch is those cards instead: an explicit selection
+/// is a narrower, more deliberate statement of intent than the filter, and it
+/// may legitimately include Done cards the filtered path would have skipped.
+///
+/// Excludes tasks already in `archive/` or `completed/` (nowhere left to go)
+/// and projects whose `backlog` CLI is missing (every write goes through it).
+pub(super) fn clear_batch(app: &HiveApp, snap: &Snapshot) -> ClearBatch {
+    let selection = &app.backlog_view.bulk_selected_tasks;
+    let mut archive: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
+    let mut complete: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
+
+    for row in sort::visible_task_rows(app, snap) {
+        if !row.project.project.cli_available() {
+            continue;
+        }
+        if matches!(
+            row.task.source,
+            BacklogTaskSource::Archived | BacklogTaskSource::Completed
+        ) {
+            continue;
+        }
+        if !selection.is_empty() && !selection.contains(&row.key()) {
+            continue;
+        }
+        let bucket = if row.task.is_done() {
+            &mut complete
+        } else {
+            &mut archive
+        };
+        bucket
+            .entry(row.project.key.clone())
+            .or_default()
+            .push(row.task.id.clone());
+    }
+
+    ClearBatch {
+        archive: archive.into_iter().collect(),
+        complete: complete.into_iter().collect(),
+    }
+}
+
+/// The bulk clear control — the set counterpart to the per-task
+/// Archive/Complete in the detail rail, and named the same way: by the verb
+/// it will actually perform.
+///
+/// Two guards:
+///
+/// - **Only on a lens that shows the filter row.** The header renders on
+///   every lens, but Digest/Portfolio/Statistics hide the filters, so the
+///   count would describe a set the user cannot inspect or adjust.
+/// - **With no selection, only when a filter narrows the view.** "Clear
+///   what's showing" against an unfiltered board means the whole backlog.
+///   An explicit tick-by-tick selection *is* that narrowing, so it lifts the
+///   gate — the user named the set card by card.
+///
+/// Both dispositions are recoverable (files move between backlog/
+/// directories, nothing is deleted), but a thousand accidental moves across
+/// a dozen repos is still a bad afternoon.
+fn render_bulk_clear_button(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
     snap: &Snapshot,
-    visible_count: usize,
+    pending: &mut Pending,
 ) {
-    egui::Frame::default()
-        .fill(theme::nav_bg())
-        .stroke(theme::surface_stroke())
-        .corner_radius(6.0)
-        .inner_margin(egui::Margin::symmetric(10, 7))
-        .show(ui, |ui| {
-            let compact = ui.available_width() < 640.0;
-            let project_filter_width = if compact { 140.0 } else { 180.0 };
-            let project_picker_width = if compact { 160.0 } else { 280.0 };
-            ui.horizontal_wrapped(|ui| {
-                ui.label(egui::RichText::new("Project").color(theme::muted_text()));
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.backlog_view.project_filter)
-                        .hint_text("Filter projects")
-                        .desired_width(project_filter_width),
-                );
-                let project_filter_lc = app.backlog_view.project_filter.to_lowercase();
-                let combo_label = app
-                    .backlog_view
-                    .selected_project
-                    .as_deref()
-                    .and_then(|key| snap.project(key))
-                    .map(|row| row.label())
-                    .unwrap_or_else(|| "All projects".to_string());
-                egui::ComboBox::from_id_salt("backlog_project_picker")
-                    .selected_text(combo_label)
-                    .width(project_picker_width)
-                    .show_ui(ui, |ui| {
-                        let mut shown = 0usize;
-                        if project_filter_lc.is_empty()
-                            || "all projects".contains(&project_filter_lc)
+    if !super::lens_filters(app.backlog_view.lens) {
+        return;
+    }
+    let scope_total: usize = super::scoped_projects(app, snap)
+        .iter()
+        .map(|row| row.project.tasks.len())
+        .sum();
+    let batch = clear_batch(app, snap);
+    let total = batch.total();
+    let selecting = !app.backlog_view.bulk_selected_tasks.is_empty();
+    let enabled = total > 0 && (selecting || total < scope_total);
+    let scope_word = if selecting { "selected" } else { "showing" };
+
+    if app.backlog_view.bulk_archive_confirm {
+        // The confirm always spells out the split, even when there is only
+        // one disposition — this is the last point before files move, and
+        // "Archive 12 · complete 3" is the sentence that catches a selection
+        // the user did not mean to make.
+        let detail = match (batch.archive_count(), batch.complete_count()) {
+            (0, complete) => format!("Complete {complete} Done tasks?"),
+            (archive, 0) => format!("Archive {archive} tasks?"),
+            (archive, complete) => {
+                format!("Archive {archive} · complete {complete} Done?")
+            }
+        };
+        ui.colored_label(theme::amber(), detail);
+        if ui.add(theme::danger_button("Confirm")).clicked() {
+            app.backlog_status
+                .set(format!("{} {total} tasks", batch.progress_verb()));
+            pending.bulk_clear = Some(batch);
+            app.backlog_view.bulk_archive_confirm = false;
+            app.backlog_view.bulk_selected_tasks.clear();
+            app.backlog_view.bulk_selection_anchor = None;
+        }
+        if ui.button("Cancel").clicked() {
+            app.backlog_view.bulk_archive_confirm = false;
+        }
+    } else if ui
+        .add_enabled(
+            enabled,
+            egui::Button::new(format!("{} {total} {scope_word}", batch.verb())),
+        )
+        .on_hover_text(if enabled {
+            "Move these tasks off the active board — Done tasks are completed, the rest archived"
+        } else if selecting {
+            "Nothing in the selection can be cleared"
+        } else {
+            "Select cards, or narrow the view with a filter — this clears everything currently shown"
+        })
+        .clicked()
+    {
+        app.backlog_view.bulk_archive_confirm = true;
+    }
+}
+
+/// The filter controls. Like `render_lens_tabs`, renders bare inside the
+/// container the caller provides.
+pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
+    {
+        let compact = ui.available_width() < 640.0;
+        let project_filter_width = if compact { 140.0 } else { 180.0 };
+        let project_picker_width = if compact { 160.0 } else { 280.0 };
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("Project").color(theme::muted_text()));
+            ui.add(
+                egui::TextEdit::singleline(&mut app.backlog_view.project_filter)
+                    .hint_text("Filter projects")
+                    .desired_width(project_filter_width),
+            );
+            let project_filter_lc = app.backlog_view.project_filter.to_lowercase();
+            let combo_label = app
+                .backlog_view
+                .selected_project
+                .as_deref()
+                .and_then(|key| snap.project(key))
+                .map(|row| row.label())
+                .unwrap_or_else(|| "All projects".to_string());
+            egui::ComboBox::from_id_salt("backlog_project_picker")
+                .selected_text(combo_label)
+                .width(project_picker_width)
+                .show_ui(ui, |ui| {
+                    let mut shown = 0usize;
+                    if project_filter_lc.is_empty() || "all projects".contains(&project_filter_lc) {
+                        shown += 1;
+                        let selected = app.backlog_view.selected_project.is_none();
+                        let total_open: usize = snap
+                            .projects
+                            .iter()
+                            .map(|row| sort::open_task_count(&row.project))
+                            .sum();
+                        if ui
+                            .selectable_label(
+                                selected,
+                                format!("All projects  ·  {total_open} open"),
+                            )
+                            .clicked()
                         {
-                            shown += 1;
-                            let selected = app.backlog_view.selected_project.is_none();
-                            let total_open: usize = snap
-                                .projects
-                                .iter()
-                                .map(|row| sort::open_task_count(&row.project))
-                                .sum();
-                            if ui
-                                .selectable_label(
-                                    selected,
-                                    format!("All projects  ·  {total_open} open"),
-                                )
-                                .clicked()
-                            {
-                                app.backlog_view.selected_project = None;
-                                reset_task_selection(app);
-                            }
+                            app.backlog_view.selected_project = None;
+                            reset_task_selection(app);
                         }
-                        for row in &snap.projects {
-                            if !row.matches_filter(&project_filter_lc) {
-                                continue;
-                            }
-                            shown += 1;
-                            let selected =
-                                app.backlog_view.selected_project.as_deref() == Some(&row.key);
-                            let label = format!(
-                                "{}  ·  {} open",
-                                row.label(),
-                                sort::open_task_count(&row.project)
-                            );
-                            if ui.selectable_label(selected, label).clicked() {
-                                app.backlog_view.selected_project = Some(row.key.clone());
-                                reset_task_selection(app);
-                            }
+                    }
+                    for row in &snap.projects {
+                        if !row.matches_filter(&project_filter_lc) {
+                            continue;
                         }
-                        if shown == 0 {
-                            ui.label(
-                                egui::RichText::new("No matching projects")
-                                    .color(theme::muted_text()),
-                            );
+                        shown += 1;
+                        let selected =
+                            app.backlog_view.selected_project.as_deref() == Some(&row.key);
+                        let label = format!(
+                            "{}  ·  {} open",
+                            row.label(),
+                            sort::open_task_count(&row.project)
+                        );
+                        if ui.selectable_label(selected, label).clicked() {
+                            app.backlog_view.selected_project = Some(row.key.clone());
+                            reset_task_selection(app);
                         }
-                    });
+                    }
+                    if shown == 0 {
+                        ui.label(
+                            egui::RichText::new("No matching projects").color(theme::muted_text()),
+                        );
+                    }
+                });
 
-                if compact {
-                    ui.end_row();
-                }
+            if compact {
+                ui.end_row();
+            }
 
-                ui.separator();
-                ui.label(egui::RichText::new("Status").color(theme::muted_text()));
-                // Owner UX pass (2026-08-05): the same shared vocabulary Board's
-                // columns, the detail-pane editor, and Statistics all consume now,
-                // so this dropdown can no longer offer a different status set than
-                // what Board actually shows (previously this used a local union
-                // that omitted a project's declared-but-currently-empty statuses).
-                let scoped = super::scoped_projects(app, snap);
-                let statuses = ordered_status_vocabulary(scoped.iter().map(|row| &row.project));
-                egui::ComboBox::from_id_salt("backlog_status_filter")
-                    .selected_text(format::value_filter_label(&app.backlog_view.status_filter))
-                    .show_ui(ui, |ui| {
+            ui.separator();
+            ui.label(egui::RichText::new("Status").color(theme::muted_text()));
+            // Owner UX pass (2026-08-05): the same shared vocabulary Board's
+            // columns, the detail-pane editor, and Statistics all consume now,
+            // so this dropdown can no longer offer a different status set than
+            // what Board actually shows (previously this used a local union
+            // that omitted a project's declared-but-currently-empty statuses).
+            let scoped = super::scoped_projects(app, snap);
+            let statuses = ordered_status_vocabulary(scoped.iter().map(|row| &row.project));
+            egui::ComboBox::from_id_salt("backlog_status_filter")
+                .selected_text(format::value_filter_label(&app.backlog_view.status_filter))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut app.backlog_view.status_filter,
+                        "all".to_string(),
+                        "All",
+                    );
+                    for status in statuses {
                         ui.selectable_value(
                             &mut app.backlog_view.status_filter,
-                            "all".to_string(),
-                            "All",
+                            status.clone(),
+                            status,
                         );
-                        for status in statuses {
-                            ui.selectable_value(
-                                &mut app.backlog_view.status_filter,
-                                status.clone(),
-                                status,
-                            );
-                        }
-                    });
+                    }
+                });
 
-                ui.label(egui::RichText::new("Priority").color(theme::muted_text()));
-                egui::ComboBox::from_id_salt("backlog_priority_filter")
-                    .selected_text(format::priority_filter_label(
-                        &app.backlog_view.priority_filter,
-                    ))
-                    .show_ui(ui, |ui| {
+            ui.label(egui::RichText::new("Priority").color(theme::muted_text()));
+            egui::ComboBox::from_id_salt("backlog_priority_filter")
+                .selected_text(format::priority_filter_label(
+                    &app.backlog_view.priority_filter,
+                ))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut app.backlog_view.priority_filter,
+                        "all".to_string(),
+                        "All",
+                    );
+                    for priority in BACKLOG_PRIORITIES {
                         ui.selectable_value(
                             &mut app.backlog_view.priority_filter,
-                            "all".to_string(),
-                            "All",
+                            (*priority).to_string(),
+                            format::priority_title(priority),
                         );
-                        for priority in BACKLOG_PRIORITIES {
-                            ui.selectable_value(
-                                &mut app.backlog_view.priority_filter,
-                                (*priority).to_string(),
-                                format::priority_title(priority),
-                            );
-                        }
-                    });
+                    }
+                });
 
-                if compact {
-                    ui.end_row();
-                }
+            if compact {
+                ui.end_row();
+            }
 
-                ui.label(egui::RichText::new("Milestone").color(theme::muted_text()));
-                // Both option lists are built here, before any combo can
-                // mutate `app`: they borrow it immutably via `ActiveFilters`,
-                // and each `selectable_value` below needs it mutably.
-                let (milestones, labels) = {
-                    let facet_filter_lc = app.filter.to_lowercase();
-                    let filters = sort::ActiveFilters::from_app(app, &facet_filter_lc);
-                    let scoped = super::scoped_projects(app, snap);
-                    (
-                        sort::milestone_options(
-                            &scoped,
-                            &filters,
-                            &app.backlog_view.milestone_filter,
-                        ),
-                        sort::label_options(&scoped, &filters, &app.backlog_view.label_filter),
-                    )
-                };
-                egui::ComboBox::from_id_salt("backlog_milestone_filter")
-                    .selected_text(format::value_filter_label(
-                        &app.backlog_view.milestone_filter,
-                    ))
-                    .show_ui(ui, |ui| {
+            ui.label(egui::RichText::new("Milestone").color(theme::muted_text()));
+            // Both option lists are built here, before any combo can
+            // mutate `app`: they borrow it immutably via `ActiveFilters`,
+            // and each `selectable_value` below needs it mutably.
+            let (milestones, labels) = {
+                let facet_filter_lc = app.filter.to_lowercase();
+                let filters = sort::ActiveFilters::from_app(app, &facet_filter_lc);
+                let scoped = super::scoped_projects(app, snap);
+                (
+                    sort::milestone_options(&scoped, &filters, &app.backlog_view.milestone_filter),
+                    sort::label_options(&scoped, &filters, &app.backlog_view.label_filter),
+                )
+            };
+            egui::ComboBox::from_id_salt("backlog_milestone_filter")
+                .selected_text(format::value_filter_label(
+                    &app.backlog_view.milestone_filter,
+                ))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut app.backlog_view.milestone_filter,
+                        "all".to_string(),
+                        "All",
+                    );
+                    for option in milestones {
+                        let label = format!("{}  ({})", option.value, option.count);
                         ui.selectable_value(
                             &mut app.backlog_view.milestone_filter,
-                            "all".to_string(),
-                            "All",
+                            option.value,
+                            label,
                         );
-                        for option in milestones {
-                            let label = format!("{}  ({})", option.value, option.count);
-                            ui.selectable_value(
-                                &mut app.backlog_view.milestone_filter,
-                                option.value,
-                                label,
-                            );
-                        }
-                    });
+                    }
+                });
 
-                ui.label(egui::RichText::new("Label").color(theme::muted_text()));
-                egui::ComboBox::from_id_salt("backlog_label_filter")
-                    .selected_text(format::value_filter_label(&app.backlog_view.label_filter))
-                    .show_ui(ui, |ui| {
+            ui.label(egui::RichText::new("Label").color(theme::muted_text()));
+            egui::ComboBox::from_id_salt("backlog_label_filter")
+                .selected_text(format::value_filter_label(&app.backlog_view.label_filter))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut app.backlog_view.label_filter,
+                        "all".to_string(),
+                        "All",
+                    );
+                    for option in labels {
+                        let label = format!("{}  ({})", option.value, option.count);
                         ui.selectable_value(
                             &mut app.backlog_view.label_filter,
-                            "all".to_string(),
-                            "All",
+                            option.value,
+                            label,
                         );
-                        for option in labels {
-                            let label = format!("{}  ({})", option.value, option.count);
-                            ui.selectable_value(
-                                &mut app.backlog_view.label_filter,
-                                option.value,
-                                label,
-                            );
-                        }
-                    });
+                    }
+                });
 
-                if compact {
-                    ui.end_row();
-                }
+            if compact {
+                ui.end_row();
+            }
 
-                ui.checkbox(&mut app.backlog_view.show_completed, "Done");
-                ui.checkbox(&mut app.backlog_view.show_archived, "Archived");
-                ui.checkbox(&mut app.backlog_view.show_drafts, "Drafts");
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!("{visible_count} visible"))
-                        .color(theme::muted_text()),
-                );
-            })
+            ui.checkbox(&mut app.backlog_view.show_completed, "Done");
+            ui.checkbox(&mut app.backlog_view.show_archived, "Archived");
+            ui.checkbox(&mut app.backlog_view.show_drafts, "Drafts");
+            ui.separator();
+            let stale_days = app.config.ui.stale_after_days;
+            if ui
+                .checkbox(&mut app.backlog_view.stale_only, "Stale only")
+                .on_hover_text(format!(
+                    "Show only tasks untouched for {stale_days}+ days (by updated date, falling back to created)"
+                ))
+                .changed()
+            {
+                // Changing what is visible must disarm a primed bulk archive:
+                // its confirm names a count taken from the filtered set, and
+                // that set has just moved underneath it.
+                app.backlog_view.bulk_archive_confirm = false;
+            }
+            let mut days = app.config.ui.stale_after_days;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut days)
+                        .speed(1.0)
+                        .range(1..=3650)
+                        .suffix(" days"),
+                )
+                .on_hover_text("How long without an update counts as stale")
+                .changed()
+            {
+                app.config.ui.stale_after_days = days;
+                app.backlog_view.bulk_archive_confirm = false;
+                app.save_config();
+            }
         });
+    }
 }

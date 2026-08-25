@@ -13,8 +13,8 @@ use crate::runtime::{BacklogTaskKey, BacklogTaskSortDirection, BacklogTaskSortKe
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use switchbard_core::{
-    triage_entry_from_task, triage_rank, BacklogProject, BacklogTask, BacklogTaskSource,
-    BACKLOG_PRIORITIES, CANONICAL_STATUS_ORDER,
+    parse_backlog_datetime_unix, triage_entry_from_task, triage_rank, BacklogProject, BacklogTask,
+    BacklogTaskSource, BACKLOG_PRIORITIES, CANONICAL_STATUS_ORDER,
 };
 
 /// Filter + order every visible task across the current scope. The single
@@ -172,6 +172,38 @@ pub(super) fn cmp_ascii_case_insensitive(a: &str, b: &str) -> Ordering {
 ///
 /// Used to build a control's option list from the tasks that pass every
 /// *other* active filter — see [`ActiveFilters::matches`].
+/// Wall clock as unix seconds. `0` if the system clock predates the epoch,
+/// which makes every task look freshly touched rather than universally stale
+/// — failing toward "do not sweep".
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Seconds in a day, for the staleness threshold.
+const SECONDS_PER_DAY: u64 = 86_400;
+
+/// Whether a task has gone untouched for at least `stale_after_days`.
+///
+/// Uses the same date the card already shows — `updated_date`, falling back
+/// to `created_date` — so "6mo ago" on a card and "stale" in the filter can
+/// never disagree. A task whose dates are missing or unparseable is **not**
+/// stale: the filter gates a bulk archive, and "I could not read its date"
+/// must never mean "safe to sweep away".
+pub(super) fn task_is_stale(task: &BacklogTask, now_unix: u64, stale_after_days: u32) -> bool {
+    let Some(touched) = task
+        .updated_date
+        .as_deref()
+        .or(task.created_date.as_deref())
+        .and_then(parse_backlog_datetime_unix)
+    else {
+        return false;
+    };
+    now_unix.saturating_sub(touched) >= u64::from(stale_after_days) * SECONDS_PER_DAY
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Facet {
     Milestone,
@@ -193,6 +225,13 @@ pub(super) struct ActiveFilters<'a> {
     pub milestone: &'a str,
     pub label: &'a str,
     pub text_lc: &'a str,
+    /// Whether the staleness filter is on, and the threshold + clock it uses.
+    /// The clock is captured once per frame rather than read per task so a
+    /// batch cannot straddle a second boundary and classify two identical
+    /// tasks differently.
+    pub stale_only: bool,
+    pub stale_after_days: u32,
+    pub now_unix: u64,
 }
 
 impl<'a> ActiveFilters<'a> {
@@ -206,6 +245,9 @@ impl<'a> ActiveFilters<'a> {
             milestone: &app.backlog_view.milestone_filter,
             label: &app.backlog_view.label_filter,
             text_lc,
+            stale_only: app.backlog_view.stale_only,
+            stale_after_days: app.config.ui.stale_after_days,
+            now_unix: now_unix(),
         }
     }
 
@@ -247,6 +289,9 @@ impl<'a> ActiveFilters<'a> {
                 .iter()
                 .any(|label| label.eq_ignore_ascii_case(self.label))
         {
+            return false;
+        }
+        if self.stale_only && !task_is_stale(task, self.now_unix, self.stale_after_days) {
             return false;
         }
         if self.text_lc.is_empty() {
@@ -418,6 +463,9 @@ mod tests {
             milestone: "all",
             label: "all",
             text_lc: "",
+            stale_only: false,
+            stale_after_days: 90,
+            now_unix: 0,
         }
     }
 
@@ -442,6 +490,94 @@ mod tests {
         let mut task = task_with_fields(id, id, status, "medium", 0, 0);
         task.milestone = Some(milestone.to_string());
         task
+    }
+
+    const DAY: u64 = 86_400;
+
+    fn dated(id: &str, updated: Option<&str>, created: Option<&str>) -> BacklogTask {
+        let mut t = task_with_fields(id, id, "To Do", "medium", 0, 0);
+        t.updated_date = updated.map(str::to_string);
+        t.created_date = created.map(str::to_string);
+        t
+    }
+
+    /// Uses the same date the card shows, so "6mo ago" and "stale" cannot
+    /// disagree: `updated_date` wins, `created_date` is the fallback.
+    #[test]
+    fn staleness_prefers_updated_date_and_falls_back_to_created() {
+        let now = 400 * DAY;
+        let touched_recently = dated("TASK-1", Some("2026-01-01 00:00"), Some("2020-01-01 00:00"));
+        assert!(
+            !task_is_stale(
+                &touched_recently,
+                parse_backlog_datetime_unix("2026-01-10 00:00").unwrap(),
+                90
+            ),
+            "an old task edited recently is not stale"
+        );
+        let never_updated = dated("TASK-2", None, Some("1970-01-01 00:00"));
+        assert!(
+            task_is_stale(&never_updated, now, 90),
+            "with no updated_date the created_date decides"
+        );
+    }
+
+    /// The threshold is what makes this configurable, so it must actually
+    /// move the boundary rather than being decorative.
+    #[test]
+    fn the_threshold_moves_the_staleness_boundary() {
+        let created = parse_backlog_datetime_unix("2026-01-01 00:00").unwrap();
+        let task = dated("TASK-1", Some("2026-01-01 00:00"), None);
+        let now = created + 100 * DAY;
+        assert!(
+            task_is_stale(&task, now, 90),
+            "100 days is past a 90-day threshold"
+        );
+        assert!(
+            !task_is_stale(&task, now, 180),
+            "and short of a 180-day one"
+        );
+    }
+
+    /// A task whose dates cannot be read is NOT stale.
+    ///
+    /// This predicate gates a bulk archive; "I could not parse its date" must
+    /// never resolve to "safe to sweep away".
+    #[test]
+    fn an_undateable_task_is_never_stale() {
+        assert!(!task_is_stale(
+            &dated("TASK-1", None, None),
+            10_000 * DAY,
+            1
+        ));
+        assert!(!task_is_stale(
+            &dated("TASK-2", Some("not a date"), Some("also not a date")),
+            10_000 * DAY,
+            1
+        ));
+    }
+
+    /// The staleness filter composes with the rest of the group like any
+    /// other facet rather than replacing it.
+    #[test]
+    fn the_staleness_filter_ands_with_the_other_filters() {
+        let created = parse_backlog_datetime_unix("2026-01-01 00:00").unwrap();
+        let mut stale_high = dated("TASK-1", Some("2026-01-01 00:00"), None);
+        stale_high.priority = "high".to_string();
+        let mut stale_low = dated("TASK-2", Some("2026-01-01 00:00"), None);
+        stale_low.priority = "low".to_string();
+
+        let mut filters = all_filters();
+        filters.stale_only = true;
+        filters.stale_after_days = 90;
+        filters.now_unix = created + 200 * DAY;
+        filters.priority = "high";
+
+        assert!(filters.matches(&stale_high, None));
+        assert!(
+            !filters.matches(&stale_low, None),
+            "stale but wrong priority must still be filtered out"
+        );
     }
 
     /// A control must not offer a value that leads nowhere.

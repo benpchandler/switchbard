@@ -3,7 +3,9 @@
 //! never repeats the condvar dance or the lock/clone/set pattern.
 
 pub mod kick;
+pub mod progress;
 pub mod status;
 
 pub use kick::Kick;
+pub use progress::{BulkProgress, Progress};
 pub use status::Status;

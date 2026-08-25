@@ -30,7 +30,7 @@ use crate::runtime::{
     BoardMoveOutcome, ConfirmBulkRemoveWorktrees, ConfirmRemoveWorktree, OrderingState,
     PickerState, ViewTab, WorktreeMeta, WorktreeSizeEntry,
 };
-use crate::sync::{Kick, Status};
+use crate::sync::{Kick, Progress, Status};
 use crate::ui;
 use crate::ui::onboarding::DiscoveryState;
 use crate::ui::workspace::staleness::StalenessFilter;
@@ -179,6 +179,11 @@ pub struct HiveApp {
     pub kill_status: Status,
     pub server_status: Status,
     pub backlog_status: Status,
+    /// Live progress for a bulk Backlog action (archive / cleanup). Separate
+    /// from `backlog_status`: the status carries the completion *message*,
+    /// this carries the countable position, and only one of them is showing
+    /// at a time.
+    pub bulk_progress: Progress,
 
     // Persisted config (single source of truth for repos + UI defaults).
     pub config: Config,
@@ -395,6 +400,7 @@ impl HiveApp {
             kill_status: Status::new(),
             server_status: Status::new(),
             backlog_status: Status::new(),
+            bulk_progress: Progress::new(),
             filter: String::new(),
             dispatch_kill_confirm: None,
             show_only_managed: false,
@@ -1479,10 +1485,13 @@ impl HiveApp {
         let status = self.backlog_status.clone();
         let projects = self.backlog_projects.clone();
         let kick = self.backlog_kick.clone();
+        let progress = self.bulk_progress.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             let project_count = per_project.len();
             let total: usize = per_project.iter().map(|(_, ids)| ids.len()).sum();
+            progress.begin("completing", total);
+            ctx.request_repaint();
             let mut completed = 0usize;
             let mut first_error: Option<String> = None;
             let mut first_reload_error: Result<(), String> = Ok(());
@@ -1506,6 +1515,8 @@ impl HiveApp {
                             }
                         }
                     }
+                    progress.advance();
+                    ctx.request_repaint();
                 }
                 if touched {
                     let reload = refresh_backlog_project_cache(&projects, project_root);
@@ -1525,6 +1536,114 @@ impl HiveApp {
                     "cleaned up {completed}/{total} Done tasks across {project_count} projects"
                 ),
             };
+            progress.finish();
+            status.set(with_stale_warning(first_reload_error, summary));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Clear a batch off the active board, routing each task to the
+    /// disposition Backlog.md actually defines for it: Done tasks are
+    /// *completed* into `backlog/completed/`, everything else is *archived*
+    /// into `backlog/archive/tasks/`.
+    ///
+    /// One worker rather than two because it is one user action with one
+    /// progress bar and one summary. Splitting it would make a mixed batch
+    /// report twice and race its own two halves through the same reload.
+    ///
+    /// Per-task failures do not abort the batch: a task the CLI rejects
+    /// leaves the rest to succeed, and the first failure is reported.
+    /// Reporting `N/M` rather than a bare success is the point — a partial
+    /// sweep must not read as a complete one.
+    pub fn spawn_backlog_bulk_clear(
+        &self,
+        archive: Vec<(PathBuf, Vec<String>)>,
+        complete: Vec<(PathBuf, Vec<String>)>,
+        ctx: &egui::Context,
+    ) {
+        let total: usize = archive
+            .iter()
+            .chain(complete.iter())
+            .map(|(_, ids)| ids.len())
+            .sum();
+        if total == 0 {
+            return;
+        }
+        let status = self.backlog_status.clone();
+        let projects = self.backlog_projects.clone();
+        let kick = self.backlog_kick.clone();
+        let progress = self.bulk_progress.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let verb = match (archive.is_empty(), complete.is_empty()) {
+                (true, _) => "completing",
+                (_, true) => "archiving",
+                _ => "clearing",
+            };
+            progress.begin(verb, total);
+            ctx.request_repaint();
+
+            let mut archived = 0usize;
+            let mut completed = 0usize;
+            let mut first_error: Option<String> = None;
+            let mut first_reload_error: Result<(), String> = Ok(());
+            let mut touched_roots: BTreeSet<PathBuf> = BTreeSet::new();
+
+            // `false` = archive, `true` = complete. Both arms are the same
+            // loop over the same shape; only the CLI verb differs.
+            for (is_complete, per_project) in [(false, &archive), (true, &complete)] {
+                for (project_root, task_ids) in per_project {
+                    for task_id in task_ids {
+                        let outcome = if is_complete {
+                            switchbard_core::complete_backlog_task(project_root, task_id)
+                        } else {
+                            switchbard_core::archive_backlog_task(project_root, task_id)
+                        };
+                        match outcome {
+                            Ok(_) => {
+                                if is_complete {
+                                    completed += 1;
+                                } else {
+                                    archived += 1;
+                                }
+                                touched_roots.insert(project_root.clone());
+                            }
+                            Err(e) => {
+                                if first_error.is_none() {
+                                    first_error = Some(format!("{task_id}: {e}"));
+                                }
+                            }
+                        }
+                        // Advances on failure too: this measures position in
+                        // the batch, not how much of it worked.
+                        progress.advance();
+                        ctx.request_repaint();
+                    }
+                }
+            }
+
+            // Reloaded once per project after *both* arms, not per arm — a
+            // mixed batch touching one repo would otherwise reload it twice.
+            for project_root in &touched_roots {
+                let reload = refresh_backlog_project_cache(&projects, project_root);
+                if first_reload_error.is_ok() {
+                    first_reload_error = reload;
+                }
+            }
+            if archived + completed > 0 {
+                kick.notify();
+            }
+
+            let moved = match (archived, completed) {
+                (0, c) => format!("completed {c}"),
+                (a, 0) => format!("archived {a}"),
+                (a, c) => format!("archived {a} · completed {c}"),
+            };
+            let summary = match first_error {
+                Some(error) => format!("{moved} of {total} tasks; first failure: {error}"),
+                None => format!("{moved} of {total} tasks"),
+            };
+            progress.finish();
             status.set(with_stale_warning(first_reload_error, summary));
             ctx.request_repaint();
         });

@@ -3153,8 +3153,22 @@ fn saved_view_persists_across_a_simulated_restart() {
     harness.state_mut().backlog_view.label_filter = "frontend".to_string();
     harness.run();
 
+    // Enter commits the name now — the separate Save button is gone, since
+    // it spent almost all of its life disabled beside an empty field.
     harness.state_mut().backlog_view.saved_view_name_draft = "High priority".to_string();
-    harness.get_by_label("Save").click();
+    harness.run();
+    // The name field carries no accessible label of its own (the same
+    // documented limitation as the detail pane's inputs above), and on the
+    // Statistics lens the filter row is not rendered — so the saved-views
+    // draft is the *last* TextInput in the window. Located that way rather
+    // than by a fixed absolute index, which shifts per lens.
+    let name_field = harness
+        .query_all(kittest::by().role(egui::accesskit::Role::TextInput))
+        .last()
+        .expect("the saved-views name field should render");
+    name_field.focus();
+    harness.run();
+    harness.key_press(egui::Key::Enter);
     harness.run();
     harness.state_mut().save_config();
 
@@ -3617,5 +3631,257 @@ fn run_cmd(cwd: &std::path::Path, cmd: &str, args: &[&str]) {
         output.status.success(),
         "{cmd} {args:?} failed: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A long label list must not drag its column wider than `COLUMN_WIDTH`.
+///
+/// `render_labels_and_age` puts the comma-joined labels in a `ui.horizontal`,
+/// which reports its content's intrinsic width as its own minimum. Untruncated,
+/// one card with several labels widened the whole column's scroll content while
+/// every other card still painted at its own `set_width` — the dead space to
+/// the right of the cards that owner review caught on a real board (columns
+/// painting 262-468px against a nominal 260).
+///
+/// Asserted against the "+ Add task" button, which is `add_sized` to
+/// `ui.available_width()` and so measures the column's own painted content
+/// width — the thing that actually stretched.
+#[test]
+fn a_long_label_list_does_not_widen_its_board_column() {
+    let mut wordy = task("TASK-1", "Short title", "To Do");
+    wordy.labels = vec![
+        "security".to_string(),
+        "incident-response".to_string(),
+        "ops".to_string(),
+        "frontend".to_string(),
+        "storybook".to_string(),
+        "observability".to_string(),
+    ];
+
+    let mut app = list_app_with_tasks(vec![wordy]);
+    app.backlog_view.lens = BacklogLens::Board;
+    let mut harness = harness(app);
+    harness.run();
+
+    let column_body = harness
+        .get_all_by_label("+ Add task")
+        .map(|n| n.rect().width())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        column_body > 0.0,
+        "the board should render at least one column"
+    );
+    assert!(
+        column_body < 280.0,
+        "a column must stay near COLUMN_WIDTH (260); the widest painted {column_body}"
+    );
+}
+
+/// Bulk archive is unavailable until a filter narrows the view.
+///
+/// "Archive what's showing" with nothing filtered means "archive the entire
+/// backlog" — not an action anyone means to take from a toolbar button.
+#[test]
+fn bulk_archive_is_disabled_until_the_view_is_narrowed() {
+    let mut app = list_app_with_tasks(vec![
+        task("TASK-1", "One", "To Do"),
+        task("TASK-2", "Two", "To Do"),
+    ]);
+    app.backlog_view.lens = BacklogLens::List;
+    let mut harness = harness(app);
+    harness.run();
+
+    let button = harness
+        .get_all_by_label("Archive 2 showing")
+        .next()
+        .expect("the bulk archive button should render");
+    assert!(
+        button.accesskit_node().is_disabled(),
+        "with nothing filtered, bulk archive must not be clickable"
+    );
+}
+
+/// A mixed batch is named for what it will do, not for one of its halves.
+///
+/// Backlog.md's two terminal states are not interchangeable — Done tasks are
+/// completed, the rest archived — so a set spanning both cannot honestly be
+/// called "Archive". The button must never offer a verb it will not perform.
+#[test]
+fn a_mixed_batch_is_labelled_clear_and_counts_both_dispositions() {
+    let mut app = list_app_with_tasks(vec![
+        task("TASK-1", "Open one", "To Do"),
+        task("TASK-2", "Finished", "Done"),
+        task("TASK-3", "Open two", "To Do"),
+    ]);
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.show_completed = true;
+    // Narrow on something so the button is enabled at all.
+    app.backlog_view.priority_filter = "medium".to_string();
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_by_label("Clear 3 showing").is_some(),
+        "a mixed batch names itself Clear, and counts the Done task it will complete"
+    );
+}
+
+/// Bulk archive is absent on a lens that hides the filter row.
+///
+/// The header it lives in renders on every lens, but Digest, Portfolio and
+/// Statistics do not show the filters — so an "Archive N showing" button
+/// there would name a count the user cannot inspect or adjust before
+/// confirming.
+#[test]
+fn bulk_archive_is_absent_on_a_lens_without_the_filter_row() {
+    let mut app = list_app_with_tasks(vec![
+        task("TASK-1", "One", "To Do"),
+        task("TASK-2", "Two", "To Do"),
+    ]);
+    app.backlog_view.lens = BacklogLens::Statistics;
+    app.backlog_view.priority_filter = "medium".to_string();
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_by_label("Archive 2 showing").is_none(),
+        "no bulk archive on a lens whose filters are not visible"
+    );
+}
+
+/// While a bulk run is live the header shows its progress instead of the
+/// buttons that start one.
+///
+/// Both bulk actions mutate the same task set through the same
+/// one-CLI-call-per-task loop, so offering to start a second mid-run is
+/// offering a race.
+#[test]
+fn a_live_bulk_run_replaces_the_bulk_buttons_with_a_progress_bar() {
+    let mut app = list_app_with_tasks(vec![
+        task("TASK-1", "One", "To Do"),
+        task("TASK-2", "Two", "To Do"),
+    ]);
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.priority_filter = "medium".to_string();
+    let mut harness = harness(app);
+    harness.run();
+    assert!(
+        harness.query_by_label("Archive 2 showing").is_some(),
+        "precondition: the button is there when idle"
+    );
+
+    harness.state_mut().bulk_progress.begin("archiving", 43);
+    for _ in 0..12 {
+        harness.state_mut().bulk_progress.advance();
+    }
+    harness.run();
+
+    assert!(
+        harness.query_by_label("archiving 12/43").is_some(),
+        "the bar names its absolute position, not just a ratio"
+    );
+    assert!(
+        harness.query_by_label("Archive 2 showing").is_none(),
+        "no starting a second bulk run while one is in flight"
+    );
+    assert!(
+        harness.query_by_label("Clean Up Old Tasks").is_none(),
+        "the same applies to the other bulk action"
+    );
+
+    harness.state_mut().bulk_progress.finish();
+    harness.run();
+    assert!(
+        harness.query_by_label("Archive 2 showing").is_some(),
+        "the buttons come back when the run ends"
+    );
+}
+
+/// A selection of only Done tasks is named "Complete", never "Archive".
+///
+/// The CLI refuses `task archive` on a Done task, so a button offering to
+/// archive them would promise something that cannot happen.
+#[test]
+fn a_selection_of_done_tasks_is_labelled_complete() {
+    let mut app = list_app_with_tasks(vec![
+        task("TASK-1", "Open", "To Do"),
+        task("TASK-2", "Finished", "Done"),
+    ]);
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.show_completed = true;
+    app.backlog_view
+        .bulk_selected_tasks
+        .insert((PathBuf::from(REPO_PATH), "TASK-2".to_string()));
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_by_label("Complete 1 selected").is_some(),
+        "a Done-only selection is completed, and says so"
+    );
+}
+
+/// An explicit selection lifts the narrowed-view gate.
+///
+/// That gate exists because "clear everything showing" on an unfiltered
+/// board is a foot-gun. Ticking cards one by one *is* the narrowing — the
+/// user named the set card by card — so it does not need the same guard.
+#[test]
+fn an_explicit_selection_enables_clearing_without_a_filter() {
+    let mut app = list_app_with_tasks(vec![
+        task("TASK-1", "One", "To Do"),
+        task("TASK-2", "Two", "To Do"),
+    ]);
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view
+        .bulk_selected_tasks
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+    let mut harness = harness(app);
+    harness.run();
+
+    let button = harness
+        .get_all_by_label("Archive 1 selected")
+        .next()
+        .expect("the clear button should name the selection");
+    assert!(
+        !button.accesskit_node().is_disabled(),
+        "an explicit selection is its own narrowing and must be actionable"
+    );
+}
+
+/// Selecting a column selects exactly that column, leaving other columns'
+/// selections intact — which is what makes building a mixed batch column by
+/// column possible.
+#[test]
+fn the_column_checkbox_selects_only_its_own_column() {
+    let mut app = list_app_with_tasks(vec![
+        task("TASK-1", "Open one", "To Do"),
+        task("TASK-2", "Open two", "To Do"),
+        task("TASK-3", "Working", "In Progress"),
+    ]);
+    app.backlog_view.lens = BacklogLens::Board;
+    // Pre-select a card in a different column.
+    app.backlog_view
+        .bulk_selected_tasks
+        .insert((PathBuf::from(REPO_PATH), "TASK-3".to_string()));
+    let mut harness = harness(app);
+    harness.run();
+
+    // The column toggle is a labelled button, so it is addressed by name
+    // rather than by an index that shifts whenever the board gains a widget.
+    // Toggles render one per column in column order (Icebox, To Do, ...);
+    // they share a glyph, so the column is selected by position among them.
+    harness.get_all_by_label("☐").nth(1).unwrap().click();
+    harness.run();
+
+    let selected = &harness.state().backlog_view.bulk_selected_tasks;
+    assert_eq!(
+        selected.len(),
+        3,
+        "To Do's two cards join the pre-selected one"
+    );
+    assert!(
+        selected.contains(&(PathBuf::from(REPO_PATH), "TASK-3".to_string())),
+        "the other column's selection must survive"
     );
 }
