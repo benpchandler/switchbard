@@ -11,7 +11,8 @@ mod common;
 use std::path::PathBuf;
 
 use common::{app_with_items, harness, item, seeded_app, REPO_NAME, REPO_PATH};
-use egui_kittest::kittest::Queryable;
+use eframe::egui;
+use egui_kittest::kittest::{self, Queryable};
 use egui_kittest::Harness;
 use switchbard_core::config::Config;
 use switchbard_core::{
@@ -668,13 +669,22 @@ fn saved_view_can_be_saved_and_deleted() {
     harness.run();
 
     harness.state_mut().backlog_view.saved_view_name_draft = "High priority".to_string();
-    // Owner UX pass (2026-08-05, post-dates this test's own doc comment):
-    // the detail rail now renders regardless of lens (including
-    // Statistics, which this test picked specifically to avoid a detail
-    // pane), so "Save" is no longer unique — three render now, in order:
-    // the rail's field editor, the rail's Dependencies section, then the
-    // saved-views bar's own (index 2), which is the one this test means.
-    harness.get_all_by_label("Save").nth(2).unwrap().click();
+    // The saved-views bar no longer has a Save button — Enter in the name
+    // field commits, so the button no longer spends its life disabled beside
+    // an empty field. That also retires the index-2 disambiguation this test
+    // used to need against the detail rail's two other "Save" buttons.
+    //
+    // The field carries no accessible label of its own, so it is located as
+    // the last TextInput in the window rather than by a fixed index (see the
+    // same note in `backlog_controls.rs`).
+    harness.run();
+    harness
+        .query_all(kittest::by().role(egui::accesskit::Role::TextInput))
+        .last()
+        .expect("the saved-views name field should render")
+        .focus();
+    harness.run();
+    harness.key_press(egui::Key::Enter);
     harness.run();
 
     assert_eq!(

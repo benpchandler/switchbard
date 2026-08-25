@@ -49,17 +49,20 @@ pub(super) fn render_saved_views_bar(app: &mut HiveApp, ui: &mut egui::Ui) {
         }
 
         ui.separator();
-        ui.add(
+        // Enter commits, rather than a separate Save button that spends
+        // almost all of its life disabled next to an empty field. The name
+        // field is the whole input, so there is nothing else for a click to
+        // disambiguate; `lost_focus` + Enter is egui's idiom for it.
+        let response = ui.add(
             egui::TextEdit::singleline(&mut app.backlog_view.saved_view_name_draft)
-                .hint_text("Save current as…")
-                .desired_width(140.0),
+                .hint_text("Save current view as…  ⏎")
+                .desired_width(180.0),
         );
         let name = app.backlog_view.saved_view_name_draft.trim().to_string();
-        if ui
-            .add_enabled(!name.is_empty(), egui::Button::new("Save"))
-            .on_hover_text("Save the current filters, sort, and lens under this name")
-            .clicked()
-        {
+        let submitted = response.lost_focus()
+            && ui.input(|i| i.key_pressed(egui::Key::Enter))
+            && !name.is_empty();
+        if submitted {
             let view = current_as_saved_view(app, name.clone());
             // Saving under an existing name overwrites it — "Save" doubles
             // as "update", matching how most apps treat named-view saving.

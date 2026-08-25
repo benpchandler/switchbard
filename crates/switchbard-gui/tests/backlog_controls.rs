@@ -3153,8 +3153,22 @@ fn saved_view_persists_across_a_simulated_restart() {
     harness.state_mut().backlog_view.label_filter = "frontend".to_string();
     harness.run();
 
+    // Enter commits the name now — the separate Save button is gone, since
+    // it spent almost all of its life disabled beside an empty field.
     harness.state_mut().backlog_view.saved_view_name_draft = "High priority".to_string();
-    harness.get_by_label("Save").click();
+    harness.run();
+    // The name field carries no accessible label of its own (the same
+    // documented limitation as the detail pane's inputs above), and on the
+    // Statistics lens the filter row is not rendered — so the saved-views
+    // draft is the *last* TextInput in the window. Located that way rather
+    // than by a fixed absolute index, which shifts per lens.
+    let name_field = harness
+        .query_all(kittest::by().role(egui::accesskit::Role::TextInput))
+        .last()
+        .expect("the saved-views name field should render");
+    name_field.focus();
+    harness.run();
+    harness.key_press(egui::Key::Enter);
     harness.run();
     harness.state_mut().save_config();
 

@@ -205,6 +205,18 @@ impl Snapshot {
 
 /// The project rows the task list draws from for the current scope: every
 /// tracked project in "All projects" scope, or just the selected one.
+/// Whether a lens is driven by the filter row.
+///
+/// One definition, used both to decide whether to render the filters and
+/// whether the summary line may claim "N of M" — the two must not disagree
+/// or the header would describe a filter the user cannot see.
+fn lens_filters(lens: BacklogLens) -> bool {
+    matches!(
+        lens,
+        BacklogLens::List | BacklogLens::Board | BacklogLens::Milestones
+    )
+}
+
 pub(in crate::ui::backlog) fn scoped_projects<'a>(
     app: &HiveApp,
     snap: &'a Snapshot,
@@ -252,22 +264,40 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
                 render_empty(ui);
                 return;
             }
-            toolbar::render_summary(app, ui, &snap, &mut pending);
+            // Only the lenses that actually apply the filter bar can claim
+            // "N of M"; Digest and Statistics summarise the whole scope.
+            let visible_count = lens_filters(app.backlog_view.lens).then_some(tasks.len());
+            toolbar::render_summary(app, ui, &snap, &mut pending, visible_count);
             ui.add_space(6.0);
-            toolbar::render_lens_tabs(app, ui);
-            saved_views::render_saved_views_bar(app, ui);
+            // One container for the whole control surface: lens tabs, the
+            // filter row, and saved views. These used to carry three
+            // different treatments — a bordered tab strip, an unframed
+            // saved-views row, and a second bordered filter panel — which is
+            // most of what read as clutter above the board.
+            egui::Frame::default()
+                .fill(theme::nav_bg())
+                .stroke(theme::surface_stroke())
+                .corner_radius(6.0)
+                .inner_margin(egui::Margin::symmetric(10, 7))
+                .show(ui, |ui| {
+                    toolbar::render_lens_tabs(app, ui);
+                    if lens_filters(app.backlog_view.lens) {
+                        ui.separator();
+                        toolbar::render_project_toolbar(app, ui, &snap);
+                    }
+                    ui.separator();
+                    saved_views::render_saved_views_bar(app, ui);
+                });
             match app.backlog_view.lens {
                 BacklogLens::Digest => {
                     ui.separator();
                     digest::render_digest(app, ui, &snap);
                 }
                 BacklogLens::List => {
-                    toolbar::render_project_toolbar(app, ui, &snap, tasks.len());
                     ui.separator();
                     list::render_task_workspace(app, ui, tasks, &mut pending);
                 }
                 BacklogLens::Board => {
-                    toolbar::render_project_toolbar(app, ui, &snap, tasks.len());
                     ui.separator();
                     board::render_board(app, ui, &snap, tasks, &mut pending);
                 }
