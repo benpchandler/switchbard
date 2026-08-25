@@ -440,7 +440,7 @@ pub(super) fn render_task_context_menu(
     if ui.button("Clear selection").clicked() {
         app.backlog_view.bulk_selected_tasks.clear();
         app.backlog_view.bulk_selection_anchor = None;
-        ui.close_menu();
+        ui.close();
     }
 }
 
@@ -463,7 +463,7 @@ fn bulk_patch_button(
         }
         app.backlog_status
             .set(format!("{label}: updating {} task(s)", editable.len()));
-        ui.close_menu();
+        ui.close();
     }
 }
 

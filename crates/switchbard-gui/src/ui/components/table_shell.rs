@@ -8,7 +8,10 @@ use egui_extras::TableBuilder;
 
 /// Construct a `TableBuilder` with Switchbard's shared defaults. The `id_salt`
 /// scopes egui widget IDs so multiple stacked tables don't collide.
-pub fn table_shell<'a>(ui: &'a mut egui::Ui, id_salt: impl std::hash::Hash) -> TableBuilder<'a> {
+pub fn table_shell<'a>(
+    ui: &'a mut egui::Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+) -> TableBuilder<'a> {
     TableBuilder::new(ui)
         .id_salt(id_salt)
         .vscroll(false)

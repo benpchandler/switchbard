@@ -25,6 +25,7 @@
 
 mod common;
 
+use egui_kittest::kittest::NodeT;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -158,7 +159,7 @@ fn bulk_remove_confirm_auto_deselects_dirty_and_unmerged_into_needs_review() {
     let mut harness = harness(app);
     harness.run();
 
-    harness.get_by_label("Remove 4 selected…").simulate_click();
+    harness.get_by_label("Remove 4 selected…").click();
     harness.run();
 
     let state = harness
@@ -218,7 +219,7 @@ fn bulk_remove_button_is_disabled_with_nothing_selected() {
 
     let button = harness.get_by_label("Remove 0 selected…");
     assert!(
-        button.is_disabled(),
+        button.accesskit_node().is_disabled(),
         "the bulk-remove button should be disabled when nothing is selected"
     );
 }

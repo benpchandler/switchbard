@@ -13,7 +13,8 @@ use crate::runtime::PickerState;
 use crate::ui::theme;
 use eframe::egui;
 
-pub fn render_settings_window(app: &mut HiveApp, ctx: &egui::Context) {
+pub fn render_settings_window(app: &mut HiveApp, ui: &mut egui::Ui) {
+    let ctx = &ui.ctx().clone();
     if !app.settings_open {
         return;
     }

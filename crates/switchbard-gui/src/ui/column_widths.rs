@@ -39,8 +39,8 @@ impl CellFont {
 /// Measure the rendered width of `text` in the given cell font, using egui's
 /// own layout engine. Result has no padding.
 pub fn measure(ctx: &egui::Context, text: &str, font: CellFont) -> f32 {
-    let font_id = font.font_id(&ctx.style());
-    ctx.fonts(|f| {
+    let font_id = font.font_id(&ctx.style_of(ctx.theme()));
+    ctx.fonts_mut(|f| {
         f.layout_no_wrap(text.to_owned(), font_id, egui::Color32::WHITE)
             .rect
             .width()

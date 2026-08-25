@@ -19,9 +19,10 @@ use switchbard_core::WorktreeRef;
 /// need a separate "where did the repo list go" affordance elsewhere).
 const COLLAPSED_WIDTH: f32 = 28.0;
 
-pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
+pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
+    let ctx = &ui.ctx().clone();
     if app.config.ui.sidebar_collapsed {
-        render_collapsed(app, ctx);
+        render_collapsed(app, ui);
         return;
     }
 
@@ -35,10 +36,10 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     let mut want_pick = false;
     let mut move_request: Option<(usize, isize)> = None;
 
-    egui::SidePanel::left("repos")
+    egui::Panel::left("repos")
         .resizable(true)
-        .default_width(280.0)
-        .show(ctx, |ui| {
+        .default_size(280.0)
+        .show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui
                     .small_button("◀")
@@ -221,11 +222,11 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
 
 /// The collapsed rail (TASK-27): a fixed-width, non-resizable panel with
 /// only the expand toggle.
-fn render_collapsed(app: &mut HiveApp, ctx: &egui::Context) {
-    egui::SidePanel::left("repos")
+fn render_collapsed(app: &mut HiveApp, ui: &mut egui::Ui) {
+    egui::Panel::left("repos")
         .resizable(false)
-        .exact_width(COLLAPSED_WIDTH)
-        .show(ctx, |ui| {
+        .exact_size(COLLAPSED_WIDTH)
+        .show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(4.0);
                 if ui
@@ -245,7 +246,8 @@ fn render_collapsed(app: &mut HiveApp, ctx: &egui::Context) {
 /// Rendered unconditionally from `HiveApp::render_ui`, not tied to this
 /// panel's own visibility — the owner UX pass made "Tracked repos"
 /// Servers-only, but repo removal itself still needs to work from any view.
-pub(crate) fn render_remove_confirmation(app: &mut HiveApp, ctx: &egui::Context) {
+pub(crate) fn render_remove_confirmation(app: &mut HiveApp, ui: &mut egui::Ui) {
+    let ctx = &ui.ctx().clone();
     let Some((path, name)) = app.confirm_remove_repo.clone() else {
         return;
     };

@@ -20,6 +20,7 @@
 
 mod common;
 
+use egui_kittest::kittest::NodeT;
 use std::path::PathBuf;
 
 use common::{harness, isolated_config_save_path, seeded_app, REPO_NAME, REPO_PATH};
@@ -123,10 +124,13 @@ use eframe::egui;
 /// reach them: index 0 is always the header's select-all checkbox (it
 /// renders unconditionally); index `n` (n >= 1) is the bulk checkbox of the
 /// `n`th task row in render order.
-fn unlabeled_checkbox<'t>(harness: &'t Harness<'_, HiveApp>, index: usize) -> kittest::Node<'t> {
+fn unlabeled_checkbox<'t>(
+    harness: &'t Harness<'_, HiveApp>,
+    index: usize,
+) -> egui_kittest::Node<'t> {
     harness
         .query_all(kittest::by().role(egui::accesskit::Role::CheckBox))
-        .filter(|n| n.label().is_none_or(|l| l.is_empty()))
+        .filter(|n| n.accesskit_node().label().is_none_or(|l| l.is_empty()))
         .nth(index)
         .unwrap_or_else(|| panic!("no unlabeled checkbox at index {index}"))
 }
@@ -149,8 +153,8 @@ fn detail_text_input<'t>(
     harness: &'t Harness<'_, HiveApp>,
     task_title: &str,
     offset_from_title: usize,
-) -> kittest::Node<'t> {
-    let inputs: Vec<kittest::Node<'t>> = harness
+) -> egui_kittest::Node<'t> {
+    let inputs: Vec<egui_kittest::Node<'t>> = harness
         .query_all(kittest::by().role(egui::accesskit::Role::TextInput))
         .collect();
     let title_index = inputs
@@ -164,7 +168,10 @@ fn detail_text_input<'t>(
 }
 
 /// Same idea for the two multiline fields: implementation plan(0), notes(1).
-fn multiline_input_nth<'t>(harness: &'t Harness<'_, HiveApp>, index: usize) -> kittest::Node<'t> {
+fn multiline_input_nth<'t>(
+    harness: &'t Harness<'_, HiveApp>,
+    index: usize,
+) -> egui_kittest::Node<'t> {
     harness
         .query_all(kittest::by().role(egui::accesskit::Role::MultilineTextInput))
         .nth(index)
@@ -208,7 +215,7 @@ fn select_all_checkbox_selects_then_deselects_every_visible_task() {
         task("TASK-2", "Second", "To Do"),
     ]);
 
-    unlabeled_checkbox(&harness, 0).simulate_click();
+    unlabeled_checkbox(&harness, 0).click();
     harness.run();
     assert_eq!(
         harness.state().backlog_view.bulk_selected_tasks.len(),
@@ -216,7 +223,7 @@ fn select_all_checkbox_selects_then_deselects_every_visible_task() {
         "clicking select-all should select every visible task"
     );
 
-    unlabeled_checkbox(&harness, 0).simulate_click();
+    unlabeled_checkbox(&harness, 0).click();
     harness.run();
     assert!(
         harness.state().backlog_view.bulk_selected_tasks.is_empty(),
@@ -234,7 +241,7 @@ fn clear_button_clears_bulk_selection() {
         .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
     harness.run();
 
-    harness.get_by_label("Clear").simulate_click();
+    harness.get_by_label("Clear").click();
     harness.run();
     assert!(
         harness.state().backlog_view.bulk_selected_tasks.is_empty(),
@@ -250,7 +257,7 @@ fn row_bulk_checkbox_click_selects_the_task() {
     ]);
 
     // index 0 is the header's select-all checkbox; index 1 is the first row.
-    unlabeled_checkbox(&harness, 1).simulate_click();
+    unlabeled_checkbox(&harness, 1).click();
     harness.run();
 
     assert_eq!(
@@ -268,21 +275,17 @@ fn shift_click_on_a_second_row_checkbox_selects_the_contiguous_range() {
         task("TASK-3", "Third", "To Do"),
     ]);
 
-    unlabeled_checkbox(&harness, 1).simulate_click();
+    unlabeled_checkbox(&harness, 1).click();
     harness.run();
 
     // `ui.input(|i| i.modifiers.shift)` (the row's own modifier check) reads
-    // `egui::RawInput`'s top-level `modifiers` field, which is *not* the
-    // same thing `kittest::Node::key_down`/`key_up` maintain (that only
-    // tracks modifiers for constructing *subsequent kittest-originated*
-    // events' own `modifiers` field, e.g. what a keyboard shortcut match
-    // reads) — confirmed empirically the two don't automatically sync.
-    // Setting `RawInput.modifiers` directly is what the row's plain
-    // `ui.input()` read actually observes.
-    harness.input_mut().modifiers = egui::Modifiers::SHIFT;
-    unlabeled_checkbox(&harness, 3).simulate_click();
+    // egui 0.36 removed `RawInput`'s top-level `modifiers` field — modifiers
+    // now ride on the individual event rather than being ambient state the
+    // frame reads. `Node::click_modifiers` emits the click already carrying
+    // them, which is what the row's `ui.input()` read observes, and it needs
+    // no reset afterwards because nothing global was ever set.
+    unlabeled_checkbox(&harness, 3).click_modifiers(egui::Modifiers::SHIFT);
     harness.run();
-    harness.input_mut().modifiers = egui::Modifiers::default();
 
     assert_eq!(
         harness.state().backlog_view.bulk_selected_tasks.len(),
@@ -299,12 +302,12 @@ fn command_click_on_a_row_title_toggles_bulk_selection_without_opening_detail() 
     ]);
     let before = harness.state().backlog_view.selected_task.clone();
 
-    // See the shift-click test above for why `RawInput.modifiers` (not
-    // `Node::key_down`) is what the row's `ui.input()` read observes.
-    harness.input_mut().modifiers = egui::Modifiers::COMMAND;
-    harness.get_by_label("TASK-2  Second").simulate_click();
+    // See the shift-click test above for why the modifiers ride on the click
+    // itself under egui 0.36 rather than being set on `RawInput`.
+    harness
+        .get_by_label("TASK-2  Second")
+        .click_modifiers(egui::Modifiers::COMMAND);
     harness.run();
-    harness.input_mut().modifiers = egui::Modifiers::default();
 
     assert!(
         harness
@@ -428,7 +431,10 @@ fn sort_direction_button_toggles_between_ascending_and_descending() {
 fn cleanup_button_is_disabled_when_there_are_no_done_tasks() {
     let harness = list_harness_with_tasks(vec![task("TASK-1", "Open one", "To Do")]);
     assert!(
-        harness.get_by_label("Clean Up Old Tasks").is_disabled(),
+        harness
+            .get_by_label("Clean Up Old Tasks")
+            .accesskit_node()
+            .is_disabled(),
         "nothing to archive should leave the button disabled"
     );
 }
@@ -438,7 +444,10 @@ fn cleanup_button_confirms_then_cancel_reverts_to_the_plain_button() {
     let mut done = task("TASK-1", "Stale one", "Done");
     done.status = "Done".to_string();
     let mut harness = list_harness_with_tasks(vec![task("TASK-2", "Open one", "To Do"), done]);
-    assert!(!harness.get_by_label("Clean Up Old Tasks").is_disabled());
+    assert!(!harness
+        .get_by_label("Clean Up Old Tasks")
+        .accesskit_node()
+        .is_disabled());
 
     harness.get_by_label("Clean Up Old Tasks").click();
     harness.run();
@@ -489,7 +498,10 @@ fn cleanup_button_ignores_already_completed_sourced_tasks() {
     let harness =
         list_harness_with_tasks(vec![task("TASK-2", "Open one", "To Do"), already_completed]);
     assert!(
-        harness.get_by_label("Clean Up Old Tasks").is_disabled(),
+        harness
+            .get_by_label("Clean Up Old Tasks")
+            .accesskit_node()
+            .is_disabled(),
         "a Completed-sourced task should not count as a cleanup candidate"
     );
 }
@@ -590,7 +602,7 @@ fn create_modal_labels_assignee_milestone_and_dependencies_fields_reset_after_cr
     harness.run();
 
     // A TextInput's typed content is its accessible *value*, not its label
-    // (kittest's `by().label()` reads `Node::value` only for `Role::Label`
+    // (kittest's `by().accesskit_node().label()` reads `Node::value` only for `Role::Label`
     // widgets — see the doc on `By::label`), and both the TextInput node
     // and its inner TextRun glyph-run child carry that same value, hence
     // query_all rather than the exactly-one query.
@@ -763,7 +775,7 @@ fn escape_closes_the_search_overlay() {
     harness.state_mut().backlog_view.search.open = true;
     harness.run();
 
-    harness.press_key(egui::Key::Escape);
+    harness.key_press(egui::Key::Escape);
     harness.run();
     assert!(!harness.state().backlog_view.search.open);
 }
@@ -889,7 +901,10 @@ fn digest_card_click_selects_the_task_without_changing_lens() {
 fn click_at_node_center(harness: &mut Harness<'_, HiveApp>, label: &str) {
     let bounds = {
         let node = harness.get_by_label(label);
-        let b = node.raw_bounds().expect("node should have bounds");
+        let b = node
+            .accesskit_node()
+            .raw_bounds()
+            .expect("node should have bounds");
         egui::Rect::from_min_max(
             egui::Pos2::new(b.x0 as f32, b.y0 as f32),
             egui::Pos2::new(b.x1 as f32, b.y1 as f32),
@@ -1099,21 +1114,30 @@ fn board_column_add_task_opens_the_composer_with_that_columns_status() {
     let add_in_progress = harness
         .query_all_by_label_contains("Add task")
         .min_by(|a, b| {
-            let ax = a.raw_bounds().expect("add-task control bounds").x0 as f32;
-            let bx = b.raw_bounds().expect("add-task control bounds").x0 as f32;
+            let ax = a
+                .accesskit_node()
+                .raw_bounds()
+                .expect("add-task control bounds")
+                .x0 as f32;
+            let bx = b
+                .accesskit_node()
+                .raw_bounds()
+                .expect("add-task control bounds")
+                .x0 as f32;
             (ax - in_progress_x)
                 .abs()
                 .total_cmp(&(bx - in_progress_x).abs())
         })
         .expect("every Board column should expose an add-task control");
     let add_bounds = add_in_progress
+        .accesskit_node()
         .raw_bounds()
         .expect("empty-column add-task bounds");
     assert!(
         add_bounds.y1 - add_bounds.y0 >= 100.0,
         "the empty column body should be the add target, not only its label"
     );
-    add_in_progress.simulate_click();
+    add_in_progress.click();
     harness.run();
 
     assert!(harness.state().backlog_view.new_task.open);
@@ -1148,7 +1172,7 @@ fn board_card_checkbox_click_toggles_bulk_selection() {
         .bulk_selected_tasks
         .contains(&key));
 
-    unlabeled_checkbox(&harness, 0).simulate_click();
+    unlabeled_checkbox(&harness, 0).click();
     harness.run();
 
     assert!(
@@ -1162,7 +1186,7 @@ fn board_card_checkbox_click_toggles_bulk_selection() {
          shadowed"
     );
 
-    unlabeled_checkbox(&harness, 0).simulate_click();
+    unlabeled_checkbox(&harness, 0).click();
     harness.run();
     assert!(
         !harness
@@ -1204,7 +1228,10 @@ fn board_card_secondary_click_opens_the_bulk_context_menu() {
 
     let bounds = {
         let node = harness.get_by_label("Right click me");
-        let b = node.raw_bounds().expect("node should have bounds");
+        let b = node
+            .accesskit_node()
+            .raw_bounds()
+            .expect("node should have bounds");
         egui::Rect::from_min_max(
             egui::Pos2::new(b.x0 as f32, b.y0 as f32),
             egui::Pos2::new(b.x1 as f32, b.y1 as f32),
@@ -1253,7 +1280,7 @@ fn board_card_checkbox_reflects_bulk_selection_state() {
 
     let key = (PathBuf::from(REPO_PATH), "TASK-1".to_string());
     assert_eq!(
-        unlabeled_checkbox(&harness, 0).toggled(),
+        unlabeled_checkbox(&harness, 0).accesskit_node().toggled(),
         Some(egui::accesskit::Toggled::False),
         "unselected by default"
     );
@@ -1266,7 +1293,7 @@ fn board_card_checkbox_reflects_bulk_selection_state() {
     harness.run();
 
     assert_eq!(
-        unlabeled_checkbox(&harness, 0).toggled(),
+        unlabeled_checkbox(&harness, 0).accesskit_node().toggled(),
         Some(egui::accesskit::Toggled::True),
         "the card's own checkbox should render checked once the task is bulk-selected"
     );
@@ -1353,7 +1380,10 @@ fn board_drag_and_drop_between_columns_queues_a_status_change() {
 
     let source_center = {
         let node = harness.get_by_label("Draggable card");
-        let b = node.raw_bounds().expect("node should have bounds");
+        let b = node
+            .accesskit_node()
+            .raw_bounds()
+            .expect("node should have bounds");
         egui::Pos2::new(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32)
     };
     let target_center = {
@@ -1362,7 +1392,10 @@ fn board_drag_and_drop_between_columns_queues_a_status_change() {
         // itself isn't the intended gesture and the header has no
         // meaningful drop behavior of its own either way.
         let node = harness.get_by_label("In Progress");
-        let b = node.raw_bounds().expect("node should have bounds");
+        let b = node
+            .accesskit_node()
+            .raw_bounds()
+            .expect("node should have bounds");
         egui::Pos2::new(((b.x0 + b.x1) / 2.0) as f32, b.y1 as f32 + 80.0)
     };
 
@@ -1423,7 +1456,12 @@ fn board_drag_and_drop_between_columns_queues_a_status_change() {
 fn column_left_x(harness: &Harness<'_, HiveApp>, column_label: &str) -> f32 {
     harness
         .query_all_by_label(column_label)
-        .map(|n| n.raw_bounds().expect("column header should have bounds").x0 as f32)
+        .map(|n| {
+            n.accesskit_node()
+                .raw_bounds()
+                .expect("column header should have bounds")
+                .x0 as f32
+        })
         .fold(f32::INFINITY, f32::min)
 }
 
@@ -1445,7 +1483,11 @@ fn column_left_x(harness: &Harness<'_, HiveApp>, column_label: &str) -> f32 {
 fn leftmost_bounds(harness: &Harness<'_, HiveApp>, label: &str) -> egui::Rect {
     let b = harness
         .query_all_by_label_contains(label)
-        .map(|n| n.raw_bounds().expect("node should have bounds"))
+        .map(|n| {
+            n.accesskit_node()
+                .raw_bounds()
+                .expect("node should have bounds")
+        })
         .min_by(|a, b| a.x0.partial_cmp(&b.x0).unwrap())
         .unwrap_or_else(|| panic!("no node found matching label {label:?}"));
     egui::Rect::from_min_max(
@@ -2483,7 +2525,7 @@ fn detail_rail_width_changes_when_its_left_edge_is_dragged() {
     let panel_id = egui::Id::new("backlog_detail_rail");
     let initial = egui::containers::panel::PanelState::load(&harness.ctx, panel_id)
         .expect("expanded detail rail panel state");
-    let source = egui::Pos2::new(initial.rect.left(), initial.rect.center().y);
+    let source = egui::Pos2::new(initial.outer_rect.left(), initial.outer_rect.center().y);
 
     harness
         .input_mut()
@@ -2514,10 +2556,10 @@ fn detail_rail_width_changes_when_its_left_edge_is_dragged() {
     let resized = egui::containers::panel::PanelState::load(&harness.ctx, panel_id)
         .expect("resized detail rail panel state");
     assert!(
-        resized.rect.width() >= initial.rect.width() + 90.0,
+        resized.outer_rect.width() >= initial.outer_rect.width() + 90.0,
         "dragging the left edge left should expand the rail: {} -> {}",
-        initial.rect.width(),
-        resized.rect.width()
+        initial.outer_rect.width(),
+        resized.outer_rect.width()
     );
 }
 
@@ -2593,6 +2635,23 @@ fn detail_task_with_checklists() -> BacklogTask {
     t
 }
 
+// Detail-rail tests below use `click_accesskit()` rather than `click()`.
+//
+// The rail's content is a `ScrollArea` and, in the harness's 1280x860 window,
+// everything from the acceptance criteria down sits below the fold — the
+// Archive button lands around y=1333. Under egui_kittest 0.31 that did not
+// matter: `kittest` 0.1's `click()` dispatched an accesskit `Action::Click`
+// straight at the node, so visibility was irrelevant. 0.36's `click()` sends
+// real pointer events at the node's centre instead, which for an off-screen
+// widget lands outside the window and hits nothing.
+//
+// `click_accesskit()` is the direct equivalent of the old behaviour (its own
+// doc: "In contrast to `click()`, this can also click widgets that are not
+// currently visible"). These tests assert wiring — that the button reaches its
+// handler — not that the widget is reachable at this window size, so keeping
+// the old semantics is the honest port. A test that means to prove on-screen
+// reachability should scroll and use `click()`.
+
 fn detail_harness_on(t: BacklogTask) -> Harness<'static, HiveApp> {
     let id = t.id.clone();
     let mut app = list_app_with_tasks(vec![t]);
@@ -2605,7 +2664,7 @@ fn detail_harness_on(t: BacklogTask) -> Harness<'static, HiveApp> {
 #[test]
 fn acceptance_criterion_checkbox_click_sets_the_synchronous_updating_status() {
     let mut harness = detail_harness_on(detail_task_with_checklists());
-    harness.get_by_label("#1 Criterion one").click();
+    harness.get_by_label("#1 Criterion one").click_accesskit();
     harness.run();
     assert_action_status(
         &harness,
@@ -2622,7 +2681,7 @@ fn acceptance_criterion_checkbox_click_sets_the_synchronous_updating_status() {
 #[test]
 fn definition_of_done_checkbox_click_sets_the_synchronous_updating_status() {
     let mut harness = detail_harness_on(detail_task_with_checklists());
-    harness.get_by_label("#1 DoD one").click();
+    harness.get_by_label("#1 DoD one").click_accesskit();
     harness.run();
     assert_action_status(
         &harness,
@@ -2681,7 +2740,7 @@ fn references_add_button_clears_the_input_field() {
         "https://example.com/new-ref"
     );
 
-    harness.get_by_label("Add").click();
+    harness.get_by_label("Add").click_accesskit();
     harness.run();
     assert_eq!(
         harness.state().backlog_view.editor.new_reference,
@@ -2701,7 +2760,7 @@ fn append_note_button_clears_the_note_input() {
     harness.run();
     assert_eq!(harness.state().backlog_view.editor.note, "A new note");
 
-    harness.get_by_label("Append Note").click();
+    harness.get_by_label("Append Note").click_accesskit();
     harness.run();
     assert_eq!(
         harness.state().backlog_view.editor.note,
@@ -2725,6 +2784,7 @@ fn editing_the_title_enables_the_save_button() {
             .get_all_by_label("Save")
             .next()
             .unwrap()
+            .accesskit_node()
             .is_disabled(),
         "Save should start disabled with no pending edits"
     );
@@ -2741,6 +2801,7 @@ fn editing_the_title_enables_the_save_button() {
             .get_all_by_label("Save")
             .next()
             .unwrap()
+            .accesskit_node()
             .is_disabled(),
         "editing the title should enable Save (the click itself, and the CLI \
          round trip it triggers, are proven in \
@@ -2754,12 +2815,12 @@ fn archive_button_shows_confirm_then_cancel_reverts_to_the_plain_button() {
     let mut harness = detail_harness_on(detail_task_with_checklists());
     assert!(harness.query_by_label("Archive").is_some());
 
-    harness.get_by_label("Archive").click();
+    harness.get_by_label("Archive").click_accesskit();
     harness.run();
     assert!(harness.state().backlog_view.archive_confirm);
     assert!(harness.query_by_label("Archive TASK-1?").is_some());
 
-    harness.get_by_label("Cancel").click();
+    harness.get_by_label("Cancel").click_accesskit();
     harness.run();
     assert!(!harness.state().backlog_view.archive_confirm);
     assert!(harness.query_by_label("Archive").is_some());
@@ -2768,10 +2829,10 @@ fn archive_button_shows_confirm_then_cancel_reverts_to_the_plain_button() {
 #[test]
 fn archive_confirm_sets_the_synchronous_archiving_status() {
     let mut harness = detail_harness_on(detail_task_with_checklists());
-    harness.get_by_label("Archive").click();
+    harness.get_by_label("Archive").click_accesskit();
     harness.run();
 
-    harness.get_by_label("Confirm archive").click();
+    harness.get_by_label("Confirm archive").click_accesskit();
     harness.run();
 
     assert!(!harness.state().backlog_view.archive_confirm);
@@ -2813,12 +2874,12 @@ fn done_task_offers_complete_instead_of_archive() {
         "a Done task's detail pane should not offer Archive — the CLI refuses it"
     );
 
-    harness.get_by_label("Complete").click();
+    harness.get_by_label("Complete").click_accesskit();
     harness.run();
     assert!(harness.state().backlog_view.archive_confirm);
     assert!(harness.query_by_label("Complete TASK-1?").is_some());
 
-    harness.get_by_label("Confirm complete").click();
+    harness.get_by_label("Confirm complete").click_accesskit();
     harness.run();
     assert!(!harness.state().backlog_view.archive_confirm);
     assert_action_status(

@@ -219,7 +219,8 @@ pub(in crate::ui::backlog) fn scoped_projects<'a>(
     }
 }
 
-pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
+pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
+    let ctx = &ui.ctx().clone();
     let snap = Snapshot::collect(app);
     reconcile_selected_project(app, &snap);
     // Computed once per frame — it re-sorts (and, for the default Triage key,
@@ -239,14 +240,14 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     // nothing to ever select, matching the CentralPanel's own empty-scope
     // branch just below.
     if !snap.projects.is_empty() {
-        rail::render_detail_rail(app, ctx, &snap, &mut pending);
+        rail::render_detail_rail(app, ui, &snap, &mut pending);
     }
 
     let workspace_frame =
-        egui::Frame::central_panel(&ctx.style()).inner_margin(egui::Margin::same(12));
+        egui::Frame::central_panel(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(12));
     egui::CentralPanel::default()
         .frame(workspace_frame)
-        .show(ctx, |ui| {
+        .show(ui, |ui| {
             if snap.projects.is_empty() {
                 render_empty(ui);
                 return;
@@ -287,7 +288,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
 
     search::render_overlay(app, ctx, &snap);
     create::render_create_modal(app, ctx, &snap, &mut pending);
-    apply_pending(app, ctx, pending);
+    apply_pending(app, ui, pending);
 }
 
 /// Fall back to "All projects" if the scoped project vanished (repo
@@ -376,7 +377,8 @@ pub(in crate::ui::backlog) struct Pending {
     pub cleanup: Option<Vec<(PathBuf, Vec<String>)>>,
 }
 
-fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, pending: Pending) {
+fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, pending: Pending) {
+    let ctx = &ui.ctx().clone();
     if let Some((project_root, task_id, patch)) = pending.save {
         app.spawn_backlog_save(project_root, task_id, patch, ctx);
     }

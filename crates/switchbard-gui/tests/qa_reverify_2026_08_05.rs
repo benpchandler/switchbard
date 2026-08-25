@@ -14,6 +14,7 @@
 
 mod common;
 
+use egui_kittest::kittest::NodeT;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -195,6 +196,7 @@ fn sort_by_labels_actually_reorders_the_rendered_rows() {
 
     let y = |label: &str| -> f64 {
         h.get_by_label(label)
+            .accesskit_node()
             .raw_bounds()
             .expect("row should have bounds")
             .y0
@@ -222,8 +224,18 @@ fn sort_by_milestone_actually_reorders_the_rendered_rows() {
     let mut h = harness(app);
     h.run();
 
-    let y_v1 = h.get_by_label("TASK-2  V1 task").raw_bounds().unwrap().y0;
-    let y_v2 = h.get_by_label("TASK-1  V2 task").raw_bounds().unwrap().y0;
+    let y_v1 = h
+        .get_by_label("TASK-2  V1 task")
+        .accesskit_node()
+        .raw_bounds()
+        .unwrap()
+        .y0;
+    let y_v2 = h
+        .get_by_label("TASK-1  V2 task")
+        .accesskit_node()
+        .raw_bounds()
+        .unwrap()
+        .y0;
     assert!(
         y_v1 < y_v2,
         "ascending milestone sort should render v1 above v2"
@@ -350,7 +362,7 @@ fn create_modal_fields_typed_via_kittest_persist_through_a_real_cli_create() {
     // milestone(3), dependencies(4) — status/priority are ComboBoxes
     // (different role), acceptance-criteria is MultilineTextInput.
     let modal = h.get_by_label("New Backlog Task");
-    let fields: Vec<kittest::Node<'_>> = modal
+    let fields: Vec<egui_kittest::Node<'_>> = modal
         .query_all(kittest::by().role(egui::accesskit::Role::TextInput))
         .collect();
     assert_eq!(
@@ -381,7 +393,7 @@ fn create_modal_fields_typed_via_kittest_persist_through_a_real_cli_create() {
             .query_all(kittest::by().role(egui::accesskit::Role::TextInput))
             .nth(index)
             .unwrap_or_else(|| panic!("no TextInput at index {index}"));
-        field.simulate_click();
+        field.click();
         field.type_text(text);
         h.run();
     }

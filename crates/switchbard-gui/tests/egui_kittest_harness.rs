@@ -1,4 +1,5 @@
 use eframe::egui::{self, accesskit::Toggled};
+use egui_kittest::kittest::NodeT;
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
 
@@ -17,12 +18,12 @@ fn harness_queries_and_clicks_egui_widgets() {
         );
 
     let checkbox = harness.get_by_label("Kittest checkbox");
-    assert_eq!(checkbox.toggled(), Some(Toggled::False));
+    assert_eq!(checkbox.accesskit_node().toggled(), Some(Toggled::False));
     checkbox.click();
 
     harness.run();
 
     let checkbox = harness.get_by_label("Kittest checkbox");
-    assert_eq!(checkbox.toggled(), Some(Toggled::True));
+    assert_eq!(checkbox.accesskit_node().toggled(), Some(Toggled::True));
     assert!(harness.query_by_label("checked state").is_some());
 }

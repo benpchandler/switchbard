@@ -164,11 +164,18 @@ const DARK: Palette = Palette {
     weak_text: Color32::from_rgb(0xE6, 0xE1, 0xD8), // crisp faceplate text
     muted_text: Color32::from_rgb(0xB8, 0xB1, 0xA4), // readable secondary faceplate text
     primary_worktree_tint: Color32::from_rgba_premultiplied(28, 25, 11, 28),
-    panel_fill: Color32::from_rgb(0x17, 0x1B, 0x21), // blue-black chassis
-    faint_bg: Color32::from_rgb(0x0F, 0x13, 0x18),   // recessed controls and column wells
-    card_bg: Color32::from_rgb(0x23, 0x29, 0x32),    // raised instrument panel
-    nav_bg: Color32::from_rgb(0x1E, 0x24, 0x2C),     // elevated navigation surface
-    rail_bg: Color32::from_rgb(0x14, 0x19, 0x1F),    // quiet detail workspace
+    // Surface values are spread as far as the AA contract allows, not packed
+    // into a narrow band. The previous set squeezed all five into luminance
+    // 0.006-0.022 — rail vs panel measured 1.02:1, i.e. the same colour —
+    // which left `surface_stroke` doing all the separation work and read as
+    // lines drawn on a flat sheet. `card_bg` is the binding constraint: any
+    // lighter and `danger` text on a card drops below the 4.5:1 body floor
+    // (it sits at 4.52:1 here). See `legibility_audit`.
+    panel_fill: Color32::from_rgb(0x1B, 0x20, 0x28), // blue-black chassis
+    faint_bg: Color32::from_rgb(0x0A, 0x0D, 0x10),   // recessed controls and column wells
+    card_bg: Color32::from_rgb(0x2B, 0x32, 0x3E),    // raised instrument panel
+    nav_bg: Color32::from_rgb(0x25, 0x2C, 0x36),     // elevated navigation surface
+    rail_bg: Color32::from_rgb(0x11, 0x15, 0x1A),    // quiet detail workspace
 };
 
 fn palette_for(choice: ThemeChoice) -> &'static Palette {
@@ -255,17 +262,23 @@ pub fn rail_bg() -> Color32 {
 /// Hairline used to separate adjacent workspace surfaces without reverting
 /// to egui's heavy stock-gray borders.
 pub fn surface_stroke() -> egui::Stroke {
-    egui::Stroke::new(1.0, scale_alpha(weak_text(), 0.24))
+    egui::Stroke::new(1.0, scale_alpha(weak_text(), 0.40))
 }
 
-/// A restrained shadow for raised content cards. It is intentionally subtle:
-/// hierarchy should come from surface value first and shadow second.
+/// A shadow for raised content cards.
+///
+/// Deliberately stronger than the surface-value difference alone. Two large
+/// adjacent backgrounds (the detail rail against the board, say) cannot
+/// separate on value at AA-safe levels — the ceiling imposed by `card_bg` is
+/// only ~1.5:1 against its own well — so the edge has to carry what the fill
+/// cannot. Hierarchy still comes from value first; this is what makes the
+/// value difference legible rather than a substitute for it.
 pub fn card_shadow() -> egui::epaint::Shadow {
     egui::epaint::Shadow {
-        offset: [0, 2],
-        blur: 6,
+        offset: [0, 3],
+        blur: 10,
         spread: 0,
-        color: Color32::from_black_alpha(28),
+        color: Color32::from_black_alpha(72),
     }
 }
 /// Board lens: a drop-target column's fill while a drag is hovering over it
@@ -661,6 +674,15 @@ pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
     // `sky()` doubles as the hyperlink color in both themes — egui's own
     // default (light theme: #009BFF, 2.8:1) doesn't clear AA on a light panel.
     visuals.hyperlink_color = palette.sky;
+    // egui 0.36 routes `TextEdit`'s placeholder through
+    // `Visuals::weak_text_color()`, which by default is the body color gamma-
+    // multiplied by `weak_text_alpha` — the same blend-toward-the-panel
+    // problem this module's doc describes for `.weak()`, and it lands every
+    // hint at ~3.7:1 on the light board (caught by `legibility_audit`, 42
+    // runs across every lens). 0.36 also added this override, so the fix is
+    // to point it at the muted role that is already AA-verified rather than
+    // to restate an alpha.
+    visuals.weak_text_color = Some(palette.muted_text);
     visuals.panel_fill = palette.panel_fill;
     visuals.window_fill = palette.panel_fill;
     visuals.faint_bg_color = palette.faint_bg;
@@ -738,13 +760,13 @@ pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
     // frame must not flip it back on after a host turned it off (the
     // headless test harness disables it so a focused text field settles
     // instead of requesting an immediate repaint at each blink boundary).
-    visuals.text_cursor.blink = ctx.style().visuals.text_cursor.blink;
+    visuals.text_cursor.blink = ctx.style_of(ctx.theme()).visuals.text_cursor.blink;
     ctx.set_visuals(visuals);
 
     // egui ships `Small` at 9pt — below the legibility floor. Raise it to the
     // floor so every `.small()` call site clears the size contract in one move,
     // while staying a step below `Body` (12.5pt) so the hierarchy survives.
-    ctx.style_mut(|style| {
+    ctx.all_styles_mut(|style| {
         style.text_styles.insert(
             egui::TextStyle::Small,
             egui::FontId::proportional(legibility::MIN_FONT_POINTS),

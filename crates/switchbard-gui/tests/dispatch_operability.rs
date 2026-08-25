@@ -17,6 +17,7 @@
 
 mod common;
 
+use egui_kittest::kittest::NodeT;
 use std::path::PathBuf;
 
 use common::{harness, seeded_app, REPO_PATH};
@@ -130,7 +131,7 @@ fn harness_with(tasks: Vec<BacklogTask>, runs: Vec<DispatchRun>) -> Harness<'sta
 fn dispatch_chip(harness: &Harness<'_, HiveApp>) -> Option<String> {
     harness
         .query_all(kittest::by())
-        .filter_map(|node| node.label())
+        .filter_map(|node| node.accesskit_node().label())
         .find(|label| {
             (label.starts_with('⚙') || label.starts_with('⚠')) && !label.contains("Settings")
         })
@@ -151,7 +152,7 @@ fn dispatch_chip(harness: &Harness<'_, HiveApp>) -> Option<String> {
 fn text_containing(harness: &Harness<'_, HiveApp>, needle: &str) -> Vec<String> {
     let mut found: Vec<String> = harness
         .query_all(kittest::by())
-        .flat_map(|node| [node.label(), node.value()])
+        .flat_map(|node| [node.accesskit_node().label(), node.value()])
         .flatten()
         .filter(|text| text.contains(needle))
         .collect();

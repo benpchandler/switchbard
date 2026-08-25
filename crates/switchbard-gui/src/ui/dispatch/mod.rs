@@ -310,12 +310,12 @@ impl Section {
     ];
 }
 
-pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
+pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     let rows = collect_rows(app);
     let now = now_unix();
     let stale_after = DispatchOptions::default().stale_after;
 
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         if rows.is_empty() {
             render_empty(ui);
             return;

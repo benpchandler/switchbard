@@ -130,8 +130,12 @@ pub fn seeded_app() -> HiveApp {
 pub fn harness(app: HiveApp) -> Harness<'static, HiveApp> {
     Harness::builder()
         .with_size(egui::vec2(1280.0, 860.0))
-        .build_state(
-            |ctx, app| {
+        .build_ui_state(
+            // egui 0.36: the harness hands the app a `&mut Ui` rather than a
+            // `&Context`, mirroring `eframe::App::ui`. Production and test
+            // therefore still enter through the identical door — `render_ui`
+            // — which is what keeps this harness honest about what it proves.
+            |ui, app| {
                 // `render_ui` itself calls `theme::apply(ctx, self.config.ui.theme)`
                 // every frame now (needed in production for the live toggle), so
                 // the headless path — which skips `HiveApp::new`'s one-time font
@@ -143,8 +147,9 @@ pub fn harness(app: HiveApp) -> Harness<'static, HiveApp> {
                 // repaint at every blink boundary, which `Harness::run` can
                 // read as "never settles" and panic with max_steps exceeded
                 // (flaky on CI — see TASK-40). `theme::apply` preserves this.
-                ctx.style_mut(|style| style.visuals.text_cursor.blink = false);
-                app.render_ui(ctx);
+                ui.ctx()
+                    .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
+                app.render_ui(ui);
             },
             app,
         )

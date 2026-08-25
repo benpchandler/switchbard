@@ -12,47 +12,46 @@ use crate::ui::workspace;
 use eframe::egui;
 use switchbard_core::BROWSER_APP_NAMES;
 
-pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
+pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
+    let ctx = &ui.ctx().clone();
     // Counted once and shared by the chip and the tab badge: they are two
     // renderings of the same fact, and computing it twice per frame would be
     // two chances for them to disagree as well as twice the work.
     let dispatch_summary = dispatch::summarize_dispatch(app);
-    let frame = egui::Frame::side_top_panel(&ctx.style())
+    let frame = egui::Frame::side_top_panel(&ctx.style_of(ctx.theme()))
         .fill(theme::nav_bg())
         .inner_margin(egui::Margin::symmetric(10, 7))
         .stroke(theme::surface_stroke());
-    egui::TopBottomPanel::top("top")
-        .frame(frame)
-        .show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(egui::RichText::new("Switchbard").heading().strong());
-                ui.separator();
-                // Owner UX pass (2026-08-05): the "Ns since last scan" label is
-                // gone — staleness isn't actionable information on its own (the
-                // Refresh button next to it is), and the owner found it just
-                // added visual noise. If staleness ever needs to surface again,
-                // do it as a subtle indicator (e.g. dimming Refresh's icon),
-                // not a ticking counter competing for attention with the error
-                // label right after it.
-                let (last_error, total, attributed) = scan_summary(app);
-                if let Some(err) = &last_error {
-                    ui.colored_label(theme::danger(), format!("error: {err}"));
-                }
-                ui.separator();
-                ui.label(format!("{total} listeners"));
-                ui.label(format!("({attributed} attributed)"));
-                render_retired_worktrees_nudge(app, ui);
-                render_dispatch_chip(app, ui, dispatch_summary);
-                ui.separator();
-                render_actions(app, ui);
-            });
-            ui.add_space(3.0);
-            ui.horizontal_wrapped(|ui| {
-                render_view_tabs(app, ui, dispatch_summary);
-                ui.separator();
-                render_filter_controls(app, ui);
-            });
+    egui::Panel::top("top").frame(frame).show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("Switchbard").heading().strong());
+            ui.separator();
+            // Owner UX pass (2026-08-05): the "Ns since last scan" label is
+            // gone — staleness isn't actionable information on its own (the
+            // Refresh button next to it is), and the owner found it just
+            // added visual noise. If staleness ever needs to surface again,
+            // do it as a subtle indicator (e.g. dimming Refresh's icon),
+            // not a ticking counter competing for attention with the error
+            // label right after it.
+            let (last_error, total, attributed) = scan_summary(app);
+            if let Some(err) = &last_error {
+                ui.colored_label(theme::danger(), format!("error: {err}"));
+            }
+            ui.separator();
+            ui.label(format!("{total} listeners"));
+            ui.label(format!("({attributed} attributed)"));
+            render_retired_worktrees_nudge(app, ui);
+            render_dispatch_chip(app, ui, dispatch_summary);
+            ui.separator();
+            render_actions(app, ui);
         });
+        ui.add_space(3.0);
+        ui.horizontal_wrapped(|ui| {
+            render_view_tabs(app, ui, dispatch_summary);
+            ui.separator();
+            render_filter_controls(app, ui);
+        });
+    });
 }
 
 /// Owner UX pass (2026-08-05): the view switcher gets its own `nav_bg()`

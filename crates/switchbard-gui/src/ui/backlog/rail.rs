@@ -29,29 +29,30 @@ const COLLAPSED_WIDTH: f32 = 36.0;
 /// CLI dispatch per frame, not two.
 pub(super) fn render_detail_rail(
     app: &mut HiveApp,
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     snap: &Snapshot,
     pending: &mut Pending,
 ) {
+    let ctx = &ui.ctx().clone();
     if app.backlog_view.detail_rail_collapsed {
-        render_collapsed(app, ctx);
+        render_collapsed(app, ui);
         return;
     }
 
     // Owner UX pass: `theme::rail_bg()` instead of the default panel fill
-    // (`ctx.style()`'s own `side_top_panel` frame would otherwise match the
+    // (`ctx.style_of(ctx.theme())`'s own `side_top_panel` frame would otherwise match the
     // board's own `panel_fill`), so the rail reads as its own persistent
     // workspace tier rather than "more board."
-    let frame = egui::Frame::side_top_panel(&ctx.style())
+    let frame = egui::Frame::side_top_panel(&ctx.style_of(ctx.theme()))
         .fill(theme::rail_bg())
         .stroke(theme::surface_stroke())
         .inner_margin(egui::Margin::same(12));
-    egui::SidePanel::right("backlog_detail_rail")
+    egui::Panel::right("backlog_detail_rail")
         .resizable(true)
-        .default_width(DEFAULT_WIDTH)
-        .width_range(MIN_WIDTH..=MAX_WIDTH)
+        .default_size(DEFAULT_WIDTH)
+        .size_range(MIN_WIDTH..=MAX_WIDTH)
         .frame(frame)
-        .show(ctx, |ui| {
+        .show(ui, |ui| {
             egui::Frame::default()
                 .fill(theme::card_bg())
                 .stroke(theme::surface_stroke())
@@ -79,16 +80,17 @@ pub(super) fn render_detail_rail(
 /// Keep a discoverable edge control when the rail is collapsed. A distinct
 /// panel id preserves the expanded panel's user-resized width in egui's
 /// persisted panel state instead of overwriting it with 28 points.
-fn render_collapsed(app: &mut HiveApp, ctx: &egui::Context) {
-    let frame = egui::Frame::side_top_panel(&ctx.style())
+fn render_collapsed(app: &mut HiveApp, ui: &mut egui::Ui) {
+    let ctx = &ui.ctx().clone();
+    let frame = egui::Frame::side_top_panel(&ctx.style_of(ctx.theme()))
         .fill(theme::rail_bg())
         .stroke(theme::surface_stroke())
         .inner_margin(egui::Margin::same(6));
-    egui::SidePanel::right("backlog_detail_rail_collapsed")
+    egui::Panel::right("backlog_detail_rail_collapsed")
         .resizable(false)
-        .exact_width(COLLAPSED_WIDTH)
+        .exact_size(COLLAPSED_WIDTH)
         .frame(frame)
-        .show(ctx, |ui| {
+        .show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(4.0);
                 if ui

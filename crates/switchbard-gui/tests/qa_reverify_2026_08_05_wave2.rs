@@ -193,14 +193,18 @@ fn a_non_done_task_still_gets_a_working_archive_button_no_regression() {
     let mut h = harness(app);
     h.run();
 
+    // `click_accesskit()`, not `click()`: the rail's Archive control sits below
+    // the scroll fold at this window size, and egui_kittest 0.36's pointer-based
+    // `click()` cannot reach it. See the note above `detail_harness_on` in
+    // `backlog_controls.rs` for the full rationale.
     // The non-Done task must offer "Archive", not "Complete".
     assert!(h.query_by_label("Archive").is_some());
     assert!(h.query_by_label("Complete").is_none());
 
-    h.get_by_label("Archive").click();
+    h.get_by_label("Archive").click_accesskit();
     h.run();
     assert!(h.query_by_label("Archive TASK-1?").is_some());
-    h.get_by_label("Confirm archive").click();
+    h.get_by_label("Confirm archive").click_accesskit();
     h.run();
     assert_eq!(
         h.state().backlog_status.snapshot().as_deref(),

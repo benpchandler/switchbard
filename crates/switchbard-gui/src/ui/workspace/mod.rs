@@ -60,11 +60,12 @@ struct Pending {
     open_remove_worktree: Option<(String, PathBuf, Option<String>)>,
 }
 
-pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
+pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
+    let ctx = &ui.ctx().clone();
     let snap = Snapshot::collect(app);
     let mut pending = Pending::default();
 
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         render_summary(ui, &snap);
         ui.add_space(4.0);
         staleness::render_filter_bar(ui, app, &snap);
@@ -91,15 +92,16 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
             });
     });
 
-    apply_pending(app, ctx, pending);
-    render_kill_all_modal(app, ctx);
-    render_remove_worktree_modal(app, ctx);
-    bulk_remove::render_modal(app, ctx);
+    apply_pending(app, ui, pending);
+    render_kill_all_modal(app, ui);
+    render_remove_worktree_modal(app, ui);
+    bulk_remove::render_modal(app, ui);
     create_worktree::render_modal(app, ctx);
     rename_worktree::render_modal(app, ctx);
 }
 
-fn apply_pending(app: &mut HiveApp, ctx: &egui::Context, p: Pending) {
+fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, p: Pending) {
+    let ctx = &ui.ctx().clone();
     if let Some((path, svc)) = p.start {
         app.spawn_start(path, svc, ctx);
     }
@@ -1357,7 +1359,8 @@ pub fn unique_pgids_in_filter(app: &HiveApp) -> Vec<i32> {
 /// `Arc<Mutex<>>` once per frame; the worker thread driving the actual
 /// removal can flip `busy`/`error` between frames so the dialog stays
 /// responsive.
-fn render_remove_worktree_modal(app: &mut HiveApp, ctx: &egui::Context) {
+fn render_remove_worktree_modal(app: &mut HiveApp, ui: &mut egui::Ui) {
+    let ctx = &ui.ctx().clone();
     let state = match app.confirm_remove_worktree.lock().unwrap().clone() {
         Some(s) => s,
         None => return,
@@ -1544,7 +1547,8 @@ fn plural_s(n: u32) -> &'static str {
     }
 }
 
-fn render_kill_all_modal(app: &mut HiveApp, ctx: &egui::Context) {
+fn render_kill_all_modal(app: &mut HiveApp, ui: &mut egui::Ui) {
+    let ctx = &ui.ctx().clone();
     if !app.confirm_kill_all {
         return;
     }
