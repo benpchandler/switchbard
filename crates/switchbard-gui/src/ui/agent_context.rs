@@ -43,7 +43,7 @@ struct ContextEstimate {
     tokens: u64,
 }
 
-pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
+pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     let snap = Snapshot {
         repos: app.repos_snapshot(),
         worktrees: app.worktrees_snapshot(),
@@ -57,7 +57,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
         filter_lc: app.filter.to_lowercase(),
     };
 
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         render_summary(ui, &snap);
         ui.add_space(6.0);
         render_global_card(ui, app, &snap);

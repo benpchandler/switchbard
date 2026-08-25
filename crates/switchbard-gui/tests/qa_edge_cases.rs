@@ -12,6 +12,7 @@
 
 mod common;
 
+use egui_kittest::kittest::NodeT;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -220,7 +221,7 @@ fn missing_cli_shows_the_read_only_pill_and_disables_editing() {
         "a task in a CLI-unavailable project should show the read-only pill"
     );
     assert!(
-        h.get_by_label("title").is_disabled(),
+        h.get_by_label("title").accesskit_node().is_disabled(),
         "the title editor should be disabled when the CLI is unavailable"
     );
     assert!(

@@ -1745,7 +1745,9 @@ impl HiveApp {
     /// the window shows: `update` wraps this with per-frame bookkeeping
     /// (picker draining, config persistence) that has no place in a test, and
     /// the egui_kittest UI harness calls it directly against seeded state.
-    pub fn render_ui(&mut self, ctx: &egui::Context) {
+    pub fn render_ui(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let ctx = &ctx;
         let frame_start = Instant::now();
         if let Some(perf) = &mut self.perf {
             perf.begin_frame();
@@ -1757,7 +1759,7 @@ impl HiveApp {
         self.drain_remove_worktree_outcomes();
 
         let top_start = Instant::now();
-        ui::top_bar::render(self, ctx);
+        ui::top_bar::render(self, ui);
         if let Some(perf) = &mut self.perf {
             perf.record_top_bar(top_start.elapsed());
         }
@@ -1774,7 +1776,7 @@ impl HiveApp {
         // `Pending` the lens content does).
         let sidebar_start = Instant::now();
         if self.view_tab == ViewTab::Servers {
-            ui::sidebar::render(self, ctx);
+            ui::sidebar::render(self, ui);
         }
         if let Some(perf) = &mut self.perf {
             perf.record_sidebar(sidebar_start.elapsed());
@@ -1782,10 +1784,10 @@ impl HiveApp {
 
         let central_start = Instant::now();
         match self.view_tab {
-            ViewTab::Servers => ui::workspace::render(self, ctx),
-            ViewTab::AgentContext => ui::agent_context::render(self, ctx),
-            ViewTab::Dispatch => ui::dispatch::render(self, ctx),
-            ViewTab::Backlog => ui::backlog::render(self, ctx),
+            ViewTab::Servers => ui::workspace::render(self, ui),
+            ViewTab::AgentContext => ui::agent_context::render(self, ui),
+            ViewTab::Dispatch => ui::dispatch::render(self, ui),
+            ViewTab::Backlog => ui::backlog::render(self, ui),
         }
         let central_elapsed = central_start.elapsed();
         if let Some(perf) = &mut self.perf {
@@ -1798,13 +1800,13 @@ impl HiveApp {
         // Reachable from any view (not just Servers, where the repo list
         // itself now lives) and rendered unconditionally so it works no
         // matter which tab triggered it.
-        ui::settings::render_settings_window(self, ctx);
-        ui::sidebar::render_remove_confirmation(self, ctx);
+        ui::settings::render_settings_window(self, ui);
+        ui::sidebar::render_remove_confirmation(self, ui);
 
         // Onboarding overlay paints last so it sits on top of everything
         // else when shown. It no-ops when already dismissed.
         let onboarding_start = Instant::now();
-        ui::onboarding::render(self, ctx);
+        ui::onboarding::render(self, ui);
         if let Some(perf) = &mut self.perf {
             perf.record_onboarding(onboarding_start.elapsed());
         }
@@ -2008,7 +2010,15 @@ fn with_stale_warning(reload: Result<(), String>, success: String) -> String {
 }
 
 impl eframe::App for HiveApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    // egui 0.36 inverted the app loop: the trait hands us a `&mut Ui` for the
+    // whole window rather than the `&Context` 0.31's `update` took, because
+    // panels are now nested inside a parent `Ui` instead of claiming screen
+    // space off the context. `Window`/`Area` still take a `&Context`, so the
+    // handle is cloned out once here (it is an `Arc` internally — cheap) and
+    // passed alongside, rather than re-borrowed from `ui` at each call site
+    // where the borrow checker would fight the `&mut Ui` the panels need.
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         self.drain_picker();
 
         // Snapshot persistable UI state so we can save the config if any
@@ -2020,7 +2030,7 @@ impl eframe::App for HiveApp {
         let theme_before = self.config.ui.theme;
         let sidebar_collapsed_before = self.config.ui.sidebar_collapsed;
 
-        self.render_ui(ctx);
+        self.render_ui(ui);
 
         // Capture the live zoom (top-bar stepper or ⌘+/⌘−/⌘0) so it survives a
         // restart. egui's keyboard zoom lands one frame late, which the next

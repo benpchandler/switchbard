@@ -139,7 +139,8 @@ struct Pending {
 }
 
 /// Render the modal. Returns immediately if `should_show` says no.
-pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
+pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
+    let ctx = &ui.ctx().clone();
     if !should_show(app) {
         return;
     }
@@ -165,7 +166,7 @@ pub fn render(app: &mut HiveApp, ctx: &egui::Context) {
     // is the moment to engage. egui doesn't have a true modal primitive,
     // but a fullscreen painted overlay plus a centered Window is the
     // idiomatic approximation.
-    let screen_rect = ctx.screen_rect();
+    let screen_rect = ctx.input(|i| i.viewport_rect());
     egui::Area::new(egui::Id::new("onboarding-scrim"))
         .order(egui::Order::Background)
         .fixed_pos(screen_rect.min)

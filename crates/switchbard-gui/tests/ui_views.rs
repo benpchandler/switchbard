@@ -754,11 +754,15 @@ fn not_flagged_task_offers_a_dispatch_button_and_no_pill() {
 /// inline-confirm treatment as Archive. Confirming sets the synchronous
 /// status message (the CLI call itself runs on a spawned thread against
 /// this test's fixture path, same as the saved_views Save/Delete flow).
+// These two use `click_accesskit()`: the rail's dispatch controls sit below the
+// scroll fold at this window size, out of reach of egui_kittest 0.36's
+// pointer-based `click()`. See the note above `detail_harness_on` in
+// `backlog_controls.rs`.
 #[test]
 fn dispatch_button_confirms_before_flagging() {
     let mut harness = harness_on_task(seeded_backlog_task());
 
-    harness.get_by_label("Dispatch").click();
+    harness.get_by_label("Dispatch").click_accesskit();
     harness.run();
     assert!(
         harness
@@ -767,7 +771,7 @@ fn dispatch_button_confirms_before_flagging() {
         "clicking Dispatch should show the confirm prompt"
     );
 
-    harness.get_by_label("Cancel").click();
+    harness.get_by_label("Cancel").click_accesskit();
     harness.run();
     assert!(
         harness.query_by_label("Dispatch").is_some(),
@@ -775,9 +779,9 @@ fn dispatch_button_confirms_before_flagging() {
     );
     assert!(!harness.state().backlog_view.dispatch_confirm);
 
-    harness.get_by_label("Dispatch").click();
+    harness.get_by_label("Dispatch").click_accesskit();
     harness.run();
-    harness.get_by_label("Confirm dispatch").click();
+    harness.get_by_label("Confirm dispatch").click_accesskit();
     harness.run();
     assert_eq!(
         harness.state().backlog_status.snapshot().as_deref(),
@@ -803,7 +807,7 @@ fn queued_task_shows_pill_and_offers_unflag() {
         harness.query_by_label("Dispatch").is_none(),
         "a queued task should not re-offer the initial Dispatch button"
     );
-    harness.get_by_label("Unflag").click();
+    harness.get_by_label("Unflag").click_accesskit();
     harness.run();
     assert_eq!(
         harness.state().backlog_status.snapshot().as_deref(),

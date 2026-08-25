@@ -674,6 +674,15 @@ pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
     // `sky()` doubles as the hyperlink color in both themes — egui's own
     // default (light theme: #009BFF, 2.8:1) doesn't clear AA on a light panel.
     visuals.hyperlink_color = palette.sky;
+    // egui 0.36 routes `TextEdit`'s placeholder through
+    // `Visuals::weak_text_color()`, which by default is the body color gamma-
+    // multiplied by `weak_text_alpha` — the same blend-toward-the-panel
+    // problem this module's doc describes for `.weak()`, and it lands every
+    // hint at ~3.7:1 on the light board (caught by `legibility_audit`, 42
+    // runs across every lens). 0.36 also added this override, so the fix is
+    // to point it at the muted role that is already AA-verified rather than
+    // to restate an alpha.
+    visuals.weak_text_color = Some(palette.muted_text);
     visuals.panel_fill = palette.panel_fill;
     visuals.window_fill = palette.panel_fill;
     visuals.faint_bg_color = palette.faint_bg;
@@ -751,13 +760,13 @@ pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
     // frame must not flip it back on after a host turned it off (the
     // headless test harness disables it so a focused text field settles
     // instead of requesting an immediate repaint at each blink boundary).
-    visuals.text_cursor.blink = ctx.style().visuals.text_cursor.blink;
+    visuals.text_cursor.blink = ctx.style_of(ctx.theme()).visuals.text_cursor.blink;
     ctx.set_visuals(visuals);
 
     // egui ships `Small` at 9pt — below the legibility floor. Raise it to the
     // floor so every `.small()` call site clears the size contract in one move,
     // while staying a step below `Body` (12.5pt) so the hierarchy survives.
-    ctx.style_mut(|style| {
+    ctx.all_styles_mut(|style| {
         style.text_styles.insert(
             egui::TextStyle::Small,
             egui::FontId::proportional(legibility::MIN_FONT_POINTS),

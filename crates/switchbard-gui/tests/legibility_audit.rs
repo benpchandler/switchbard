@@ -35,6 +35,7 @@
 
 mod common;
 
+use egui_kittest::kittest::NodeT;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
@@ -60,6 +61,9 @@ struct TextRun {
     /// Premultiplied color as painted (before compositing over the background).
     color: Color32,
     pos: Pos2,
+    /// Position in the draw list. Used to tell whether a covering scrim was
+    /// painted *after* this run, i.e. whether the run is behind a modal.
+    seq: usize,
 }
 
 /// A run that failed the contract, with the perceived contrast and why.
@@ -77,11 +81,13 @@ struct Violation {
 struct FilledRect {
     rect: Rect,
     fill: Color32,
+    /// Position in the draw list; see [`TextRun::seq`].
+    seq: usize,
 }
 
 /// Recursively pull `Shape::Text` runs and `Shape::Rect` fills out of the draw
 /// list. egui sometimes nests shapes inside `Shape::Vec`, so we descend too.
-fn collect(shape: &Shape, runs: &mut Vec<TextRun>, rects: &mut Vec<FilledRect>) {
+fn collect(shape: &Shape, runs: &mut Vec<TextRun>, rects: &mut Vec<FilledRect>, seq: &mut usize) {
     match shape {
         Shape::Text(t) => {
             for section in &t.galley.job.sections {
@@ -112,28 +118,33 @@ fn collect(shape: &Shape, runs: &mut Vec<TextRun>, rects: &mut Vec<FilledRect>) 
                     .galley
                     .job
                     .text
-                    .get(section.byte_range.clone())
+                    .as_str()
+                    .get(section.byte_range.start.0..section.byte_range.end.0)
                     .unwrap_or_default();
                 if text.trim().is_empty() {
                     continue;
                 }
+                *seq += 1;
                 runs.push(TextRun {
                     text: text.to_string(),
                     size: section.format.font_id.size,
                     color,
                     pos: t.pos,
+                    seq: *seq,
                 });
             }
         }
         Shape::Rect(r) if r.fill.a() > 0 => {
+            *seq += 1;
             rects.push(FilledRect {
                 rect: r.rect,
                 fill: r.fill,
+                seq: *seq,
             });
         }
         Shape::Vec(shapes) => {
             for s in shapes {
-                collect(s, runs, rects);
+                collect(s, runs, rects, seq);
             }
         }
         _ => {}
@@ -155,14 +166,46 @@ fn background_at(pos: Pos2, rects: &[FilledRect], base: Color32) -> Color32 {
         .fold(base, |bg, r| legibility::composite_over(r.fill, bg))
 }
 
+/// Rects that are a floating window's **drop shadow**: a pure-black
+/// translucent fill egui paints under a `Window`/`Area` before the window
+/// itself.
+///
+/// WCAG 1.4.3 exempts text that is part of an inactive component. Text lying
+/// under an open dialog's shadow is background content the dialog has
+/// deliberately pushed back — the same category, and the same reason, as the
+/// disabled controls the module doc already exempts.
+///
+/// Deliberately narrow, because this is an exemption from a safety contract
+/// and a loose rule here would silently stop auditing real text:
+/// - the fill must be **pure black with partial alpha**, which is what
+///   `Shadow::color` produces; a themed translucent fill (a hover highlight, a
+///   selected row, a tinted card) is not a shadow and is not exempt;
+/// - it only exempts runs painted **before** the shadow. Anything drawn after
+///   it is on top of the dialog and stays fully in scope.
+fn shadow_rects(rects: &[FilledRect]) -> Vec<&FilledRect> {
+    rects
+        .iter()
+        .filter(|r| {
+            let f = r.fill;
+            f.a() > 0 && f.a() < 255 && f.r() == 0 && f.g() == 0 && f.b() == 0
+        })
+        .collect()
+}
+
 /// Every disabled node's bounds in `harness`'s accessibility tree, converted
 /// to `egui::Rect` — see the module doc's "Disabled controls are exempt"
 /// section for why this is the correct exemption rather than a gap.
 fn disabled_rects(harness: &Harness<'_, HiveApp>) -> Vec<Rect> {
     harness
         .query_all(by())
-        .filter(|node| node.is_disabled())
-        .filter_map(|node| node.raw_bounds())
+        .filter(|node| node.accesskit_node().is_disabled())
+        // `bounding_box()`, not `raw_bounds()`: the latter is the node's own
+        // untransformed rect, while this exemption is compared against painted
+        // screen coordinates. Under egui 0.36 panels nest inside a parent
+        // `Ui`, so a non-identity transform is now the normal case and the two
+        // no longer coincide — using the raw rect silently stopped exempting
+        // controls inside a panel.
+        .filter_map(|node| node.accesskit_node().bounding_box())
         .map(|r| {
             Rect::from_min_max(
                 Pos2::new(r.x0 as f32, r.y0 as f32),
@@ -176,19 +219,30 @@ fn disabled_rects(harness: &Harness<'_, HiveApp>) -> Vec<Rect> {
 /// rather than `&'static str` because the theme-parameterized `views()`
 /// formats each name with a `[Light]`/`[Dark]` suffix.
 fn audit_owned(view: String, harness: &Harness<'_, HiveApp>) -> Vec<Violation> {
-    let panel = harness.ctx.style().visuals.panel_fill;
+    let panel = harness.ctx.style_of(harness.ctx.theme()).visuals.panel_fill;
     let disabled = disabled_rects(harness);
 
     let mut runs = Vec::new();
     let mut rects = Vec::new();
+    let mut seq = 0usize;
     for clipped in &harness.output().shapes {
-        collect(&clipped.shape, &mut runs, &mut rects);
+        collect(&clipped.shape, &mut runs, &mut rects, &mut seq);
     }
+
+    let shadows = shadow_rects(&rects);
 
     let mut violations = Vec::new();
     for run in runs {
         // WCAG 1.4.3 exempts inactive-component text — see the module doc.
         if disabled.iter().any(|r| r.contains(run.pos)) {
+            continue;
+        }
+        // Same exemption, same clause: this run sits under a dialog's drop
+        // shadow, i.e. it is background content. See `shadow_rects`.
+        if shadows
+            .iter()
+            .any(|s| s.seq > run.seq && s.rect.contains(run.pos))
+        {
             continue;
         }
         let bg = background_at(run.pos, &rects, panel);

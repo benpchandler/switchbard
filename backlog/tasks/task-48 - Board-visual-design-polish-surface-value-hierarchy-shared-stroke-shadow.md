@@ -4,6 +4,7 @@ title: 'Board visual design polish: surface-value hierarchy, shared stroke/shado
 status: In Progress
 assignee: []
 created_date: '2026-08-25 00:19'
+updated_date: '2026-08-25 15:16'
 labels: []
 dependencies: []
 priority: medium
@@ -23,3 +24,15 @@ Surface hierarchy was coming from egui's stock gray strokes rather than from the
 - [ ] #3 Corner radii and window/popup shadows centralized in theme.rs
 - [ ] #4 WCAG-AA legibility contract still passes on both themes
 <!-- AC:END -->
+
+## Definition of Done
+<!-- DOD:BEGIN -->
+- [ ] #1 VERIFY GATE — mise run ci green on the branch (fmt, clippy -D warnings, 581 tests)
+- [ ] #2 VERIFY BEHAVIOR — each acceptance criterion holds; name the evidence for each
+- [ ] #3 APPROVE VISUAL — theme.rs retuned both palettes; needs your eye on board-to-card separation in light AND dark
+- [ ] #4 VERIFY PERF — ui/** touched, so run the SWITCHBARD_PERF smoke and compare p95 against the previous build
+- [x] #5 N/A SAFETY — no destructive op, untrusted input, or git invocation touched (theme/ui only)
+- [ ] #6 VERIFY DOCS — theme.rs module doc names the palettes by hex; confirm it still matches the new values
+- [ ] #7 VERIFY SCOPE — nothing speculative pre-built; change stays inside the stated design pass
+- [ ] #8 APPROVE JUDGMENT — is the cooler light board the right direction, or should it stay warm?
+<!-- DOD:END -->

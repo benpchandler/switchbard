@@ -19,6 +19,7 @@
 
 mod common;
 
+use egui_kittest::kittest::NodeT;
 use std::path::PathBuf;
 
 use common::{harness, seeded_app, REPO_PATH};
@@ -89,7 +90,10 @@ fn an_editable_task_offers_an_enabled_refine_button() {
     let harness = rail_harness(rail_app(task(BacklogTaskSource::Active), true));
 
     assert!(
-        !harness.get_by_label("Refine").is_disabled(),
+        !harness
+            .get_by_label("Refine")
+            .accesskit_node()
+            .is_disabled(),
         "an editable task with the backlog CLI available should offer Refine"
     );
 }
@@ -137,7 +141,10 @@ fn refine_disables_itself_while_a_run_is_in_flight_for_that_task() {
     let harness = rail_harness(app);
 
     assert!(
-        harness.get_by_label("Refine").is_disabled(),
+        harness
+            .get_by_label("Refine")
+            .accesskit_node()
+            .is_disabled(),
         "a second refine must be unclickable while the first is running"
     );
 }
@@ -155,7 +162,10 @@ fn an_in_flight_run_in_another_project_does_not_disable_this_ones_button() {
 
     let harness = rail_harness(app);
 
-    assert!(!harness.get_by_label("Refine").is_disabled());
+    assert!(!harness
+        .get_by_label("Refine")
+        .accesskit_node()
+        .is_disabled());
 }
 
 #[test]
