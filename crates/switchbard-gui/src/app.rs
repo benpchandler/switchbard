@@ -30,7 +30,7 @@ use crate::runtime::{
     BoardMoveOutcome, ConfirmBulkRemoveWorktrees, ConfirmRemoveWorktree, OrderingState,
     PickerState, ViewTab, WorktreeMeta, WorktreeSizeEntry,
 };
-use crate::sync::{Kick, Status};
+use crate::sync::{Kick, Progress, Status};
 use crate::ui;
 use crate::ui::onboarding::DiscoveryState;
 use crate::ui::workspace::staleness::StalenessFilter;
@@ -179,6 +179,11 @@ pub struct HiveApp {
     pub kill_status: Status,
     pub server_status: Status,
     pub backlog_status: Status,
+    /// Live progress for a bulk Backlog action (archive / cleanup). Separate
+    /// from `backlog_status`: the status carries the completion *message*,
+    /// this carries the countable position, and only one of them is showing
+    /// at a time.
+    pub bulk_progress: Progress,
 
     // Persisted config (single source of truth for repos + UI defaults).
     pub config: Config,
@@ -395,6 +400,7 @@ impl HiveApp {
             kill_status: Status::new(),
             server_status: Status::new(),
             backlog_status: Status::new(),
+            bulk_progress: Progress::new(),
             filter: String::new(),
             dispatch_kill_confirm: None,
             show_only_managed: false,
@@ -1479,10 +1485,13 @@ impl HiveApp {
         let status = self.backlog_status.clone();
         let projects = self.backlog_projects.clone();
         let kick = self.backlog_kick.clone();
+        let progress = self.bulk_progress.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             let project_count = per_project.len();
             let total: usize = per_project.iter().map(|(_, ids)| ids.len()).sum();
+            progress.begin("completing", total);
+            ctx.request_repaint();
             let mut completed = 0usize;
             let mut first_error: Option<String> = None;
             let mut first_reload_error: Result<(), String> = Ok(());
@@ -1506,6 +1515,8 @@ impl HiveApp {
                             }
                         }
                     }
+                    progress.advance();
+                    ctx.request_repaint();
                 }
                 if touched {
                     let reload = refresh_backlog_project_cache(&projects, project_root);
@@ -1525,6 +1536,7 @@ impl HiveApp {
                     "cleaned up {completed}/{total} Done tasks across {project_count} projects"
                 ),
             };
+            progress.finish();
             status.set(with_stale_warning(first_reload_error, summary));
             ctx.request_repaint();
         });
@@ -1555,10 +1567,13 @@ impl HiveApp {
         let status = self.backlog_status.clone();
         let projects = self.backlog_projects.clone();
         let kick = self.backlog_kick.clone();
+        let progress = self.bulk_progress.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             let project_count = per_project.len();
             let total: usize = per_project.iter().map(|(_, ids)| ids.len()).sum();
+            progress.begin("archiving", total);
+            ctx.request_repaint();
             let mut archived = 0usize;
             let mut first_error: Option<String> = None;
             let mut first_reload_error: Result<(), String> = Ok(());
@@ -1576,6 +1591,11 @@ impl HiveApp {
                             }
                         }
                     }
+                    // Advances on failure too: this measures position in the
+                    // batch, not how much of it worked. A bar that stalled on
+                    // a failing task would read as a hang.
+                    progress.advance();
+                    ctx.request_repaint();
                 }
                 if touched {
                     let reload = refresh_backlog_project_cache(&projects, project_root);
@@ -1595,6 +1615,7 @@ impl HiveApp {
                     format!("archived {archived}/{total} tasks across {project_count} projects")
                 }
             };
+            progress.finish();
             status.set(with_stale_warning(first_reload_error, summary));
             ctx.request_repaint();
         });

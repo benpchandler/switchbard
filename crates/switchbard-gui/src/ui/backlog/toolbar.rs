@@ -5,6 +5,7 @@
 use super::{create, format, reset_task_selection, sort, Pending, Snapshot};
 use crate::app::HiveApp;
 use crate::runtime::BacklogLens;
+use crate::sync::BulkProgress;
 use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
@@ -117,8 +118,16 @@ pub(super) fn render_summary(
                 create::open_new_task(app, target, None);
             }
 
-            render_cleanup_button(app, ui, snap, pending);
-            render_bulk_archive_button(app, ui, snap, pending);
+            // While a bulk run is live the bar takes the buttons' place
+            // rather than sitting beside them: both actions mutate the same
+            // task set through the same one-CLI-call-per-task loop, so
+            // offering to start a second one mid-run is offering a race.
+            if let Some(progress) = app.bulk_progress.snapshot() {
+                render_bulk_progress(ui, &progress);
+            } else {
+                render_cleanup_button(app, ui, snap, pending);
+                render_bulk_archive_button(app, ui, snap, pending);
+            }
         });
     });
 }
@@ -192,8 +201,24 @@ fn cleanup_candidates(snap: &Snapshot) -> Vec<(PathBuf, Vec<String>)> {
         .collect()
 }
 
-/// The filter controls. Like `render_lens_tabs`, renders bare inside the
-/// container `render_toolbar_group` provides.
+/// The determinate bar for an in-flight bulk action.
+///
+/// Sized rather than left to fill the row: it lives inside the header's
+/// right-to-left layout, where an unsized `ProgressBar` claims all remaining
+/// width and shoves the heading off the other end.
+///
+/// Non-blocking by construction — it is an ordinary widget in a row that is
+/// already there, so the rest of the app stays live and scrollable while a
+/// sweep runs. No modal, no spinner overlay.
+fn render_bulk_progress(ui: &mut egui::Ui, progress: &BulkProgress) {
+    ui.add(
+        egui::ProgressBar::new(progress.fraction())
+            .desired_width(220.0)
+            .text(progress.label()),
+    )
+    .on_hover_text("A bulk Backlog action is running; it is safe to keep working elsewhere");
+}
+
 /// The visible, archivable tasks grouped by project root.
 ///
 /// Deliberately built from `sort::visible_task_rows` — the *same* function
@@ -287,6 +312,8 @@ fn render_bulk_archive_button(
     }
 }
 
+/// The filter controls. Like `render_lens_tabs`, renders bare inside the
+/// container the caller provides.
 pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
     {
         let compact = ui.available_width() < 640.0;

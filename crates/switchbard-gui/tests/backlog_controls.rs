@@ -3749,3 +3749,51 @@ fn bulk_archive_is_absent_on_a_lens_without_the_filter_row() {
         "no bulk archive on a lens whose filters are not visible"
     );
 }
+
+/// While a bulk run is live the header shows its progress instead of the
+/// buttons that start one.
+///
+/// Both bulk actions mutate the same task set through the same
+/// one-CLI-call-per-task loop, so offering to start a second mid-run is
+/// offering a race.
+#[test]
+fn a_live_bulk_run_replaces_the_bulk_buttons_with_a_progress_bar() {
+    let mut app = list_app_with_tasks(vec![
+        task("TASK-1", "One", "To Do"),
+        task("TASK-2", "Two", "To Do"),
+    ]);
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.priority_filter = "medium".to_string();
+    let mut harness = harness(app);
+    harness.run();
+    assert!(
+        harness.query_by_label("Archive 2 showing").is_some(),
+        "precondition: the button is there when idle"
+    );
+
+    harness.state_mut().bulk_progress.begin("archiving", 43);
+    for _ in 0..12 {
+        harness.state_mut().bulk_progress.advance();
+    }
+    harness.run();
+
+    assert!(
+        harness.query_by_label("archiving 12/43").is_some(),
+        "the bar names its absolute position, not just a ratio"
+    );
+    assert!(
+        harness.query_by_label("Archive 2 showing").is_none(),
+        "no starting a second bulk run while one is in flight"
+    );
+    assert!(
+        harness.query_by_label("Clean Up Old Tasks").is_none(),
+        "the same applies to the other bulk action"
+    );
+
+    harness.state_mut().bulk_progress.finish();
+    harness.run();
+    assert!(
+        harness.query_by_label("Archive 2 showing").is_some(),
+        "the buttons come back when the run ends"
+    );
+}
