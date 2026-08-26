@@ -25,6 +25,7 @@
 
 mod common;
 
+use eframe::egui;
 use egui_kittest::kittest::NodeT;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -129,6 +130,13 @@ fn app_with_worktrees(repo: PathBuf, worktrees: Vec<WorktreeRef>) -> HiveApp {
     }];
     let mut cfg = Config::default();
     cfg.ui.onboarding_dismissed = true;
+    // `Config` is the source of truth for repos and the runtime `repos` mutex
+    // is kept in lock-step with it (see CLAUDE.md). A fixture that seeds only
+    // the mutex is not a state the app can reach, and it silently disables
+    // every path that resolves a repo by name — `apply_pending`'s
+    // `open_remove_worktree` lookup among them, which is why the trash button
+    // looked dead in tests while working in the app.
+    cfg.repos = repos.clone();
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     // MUST be set on every test-constructed HiveApp — see `common::
     // isolated_config_save_path`'s doc (this is exactly how TASK-22 happened).
@@ -348,15 +356,180 @@ fn progress_advances_once_per_candidate_including_failures() {
     );
 }
 
-/// Clicking a row's empty space selects it, and the row's own buttons keep
-/// their clicks.
+/// A real positional left-click at `pos`.
 ///
-/// The second half is the point. The row-select interaction is registered
-/// after the children, so it works only because egui resolves an overlapping
-/// click to the most recently registered widget. That is a property of
-/// interaction ordering rather than of our code, so it gets pinned here — a
-/// refactor that moves the `interact` earlier would silently start swallowing
-/// Rename and the trash button.
+/// `Node::click()` can only click something kittest can see, so it cannot
+/// express "the user clicked *there*" — and "there" is exactly what these
+/// tests are about: the blank parts of a row that no widget claims.
+fn click_at(harness: &egui_kittest::Harness<'static, HiveApp>, pos: egui::Pos2) {
+    harness.event(egui::Event::PointerMoved(pos));
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        });
+    }
+}
+
+/// A point inside the linked row's header that no widget occupies: the gap
+/// between the left cluster (name + health chips) and the right-aligned
+/// action cluster. Asserts the point really is blank, so the test can never
+/// pass by accidentally hitting a widget.
+fn blank_spot_in_row(harness: &egui_kittest::Harness<'static, HiveApp>) -> egui::Pos2 {
+    let name = harness.get_by_label("wt-clean-merged").rect();
+    // Right-to-left trailing cluster: SHA is furthest right, so its left edge
+    // is the far side of the gap we want. Two rows render one; index 1 is the
+    // linked row's.
+    let sha: Vec<_> = harness.get_all_by_label("abc1234").collect();
+    let sha_rect = sha[1].rect();
+    let pos = egui::pos2((name.right() + sha_rect.left()) / 2.0, name.center().y);
+    assert!(
+        !name.contains(pos) && !sha_rect.contains(pos),
+        "the probe point must be blank row space, not a widget: {pos:?} \
+         (name {name:?}, sha {sha_rect:?})"
+    );
+    pos
+}
+
+/// Centre of the row's expand/collapse triangle.
+///
+/// `CollapsingState` draws it with a bare `ui.interact`, so it carries no
+/// accesskit label to query by — but it is the only widget on the row's line
+/// left of the name, and it is exactly one `spacing.indent` wide. Locating it
+/// that way (rather than by a pixel offset) keeps the test honest if the
+/// row's left cluster ever changes.
+fn expand_triangle_center(
+    harness: &egui_kittest::Harness<'static, HiveApp>,
+    name: egui::Rect,
+) -> egui::Pos2 {
+    fn walk(node: &egui_kittest::Node<'_>, row_y: f32, left_of: f32, out: &mut Vec<egui::Rect>) {
+        if let Some(b) = node.accesskit_node().raw_bounds() {
+            let (x0, x1) = (b.x0 as f32, b.x1 as f32);
+            if (b.y0 as f32) <= row_y && row_y <= (b.y1 as f32) && x1 <= left_of {
+                out.push(egui::Rect::from_min_max(
+                    egui::pos2(x0, b.y0 as f32),
+                    egui::pos2(x1, b.y1 as f32),
+                ));
+            }
+        }
+        for child in node.children() {
+            walk(&child, row_y, left_of, out);
+        }
+    }
+    let mut found = Vec::new();
+    walk(&harness.root(), name.center().y, name.left(), &mut found);
+    let toggle = found
+        .into_iter()
+        .max_by(|a, b| a.right().total_cmp(&b.right()))
+        .expect("the row must have a widget left of its name");
+    assert_eq!(
+        toggle.width(),
+        egui::Style::default().spacing.indent,
+        "expected the collapsing toggle (one indent wide), got {toggle:?}"
+    );
+    toggle.center()
+}
+
+/// The ask: clicking *anywhere* in the row selects it, not just the name.
+/// This clicks the dead space between the two clusters — the largest target
+/// in the row and, before this, the only part of it that did nothing.
+#[test]
+fn clicking_blank_row_space_selects_the_worktree() {
+    let (_tmp, repo, clean_merged, _dirty, _unmerged) = setup_repo_with_three_worktrees();
+    let worktrees = vec![
+        wt("demo", repo.clone(), "main"),
+        wt("demo", clean_merged.clone(), "feat/clean-merged"),
+    ];
+    let mut harness = harness(app_with_worktrees(repo.clone(), worktrees));
+    harness.run();
+    assert!(
+        harness.state().bulk_selected_worktrees.is_empty(),
+        "precondition: nothing selected"
+    );
+
+    let pos = blank_spot_in_row(&harness);
+    click_at(&harness, pos);
+    harness.run();
+    assert!(
+        harness
+            .state()
+            .bulk_selected_worktrees
+            .contains(&clean_merged),
+        "clicking blank row space should select the row"
+    );
+
+    // Toggle, not a one-way latch.
+    click_at(&harness, pos);
+    harness.run();
+    assert!(
+        harness.state().bulk_selected_worktrees.is_empty(),
+        "clicking blank row space again should deselect it"
+    );
+}
+
+/// A hover-only label inside the row (here the head SHA, which carries a
+/// tooltip) must select the row rather than swallow the click. This is the
+/// case the previous implementation got wrong: it assumed a non-clickable
+/// widget sitting on top would absorb the gesture, so it put the gesture on
+/// the name alone. egui's hit test filters click candidates by
+/// `Sense::senses_click`, so a hover-only label is never a click target and
+/// cannot absorb anything.
+#[test]
+fn clicking_a_hover_only_label_in_the_row_selects_the_worktree() {
+    let (_tmp, repo, clean_merged, _dirty, _unmerged) = setup_repo_with_three_worktrees();
+    let worktrees = vec![
+        wt("demo", repo.clone(), "main"),
+        wt("demo", clean_merged.clone(), "feat/clean-merged"),
+    ];
+    let mut harness = harness(app_with_worktrees(repo.clone(), worktrees));
+    harness.run();
+
+    let sha: Vec<_> = harness.get_all_by_label("abc1234").collect();
+    assert_eq!(sha.len(), 2, "primary and linked rows each render one");
+    sha[1].click();
+    harness.run();
+    assert!(
+        harness
+            .state()
+            .bulk_selected_worktrees
+            .contains(&clean_merged),
+        "clicking a hover-only label in the row should select the row"
+    );
+}
+
+/// The row's name keeps working as a select target — the behaviour this
+/// change widens rather than replaces.
+#[test]
+fn clicking_the_row_name_still_selects_the_worktree() {
+    let (_tmp, repo, clean_merged, _dirty, _unmerged) = setup_repo_with_three_worktrees();
+    let worktrees = vec![
+        wt("demo", repo.clone(), "main"),
+        wt("demo", clean_merged.clone(), "feat/clean-merged"),
+    ];
+    let mut harness = harness(app_with_worktrees(repo.clone(), worktrees));
+    harness.run();
+
+    harness.get_by_label("wt-clean-merged").click();
+    harness.run();
+    assert!(
+        harness
+            .state()
+            .bulk_selected_worktrees
+            .contains(&clean_merged),
+        "clicking the row name should still select it"
+    );
+}
+
+/// The half that keeps the row honest. A full-row click target is only safe
+/// because egui resolves an overlapping click to the *last-registered*
+/// click-sensing widget, and the row's sensed `Ui` registers before its
+/// children (`Ui::remember_min_rect` re-registers with `move_to_top: false`,
+/// so correcting the rect at the end does not reorder it). That is a property
+/// of egui's interaction ordering, not of our code, so it gets pinned: a
+/// refactor that registers the row rect after the children would silently
+/// start swallowing every button in it.
 #[test]
 fn row_click_selects_but_buttons_still_win() {
     let (_tmp, repo, clean_merged, _dirty, _unmerged) = setup_repo_with_three_worktrees();
@@ -367,32 +540,6 @@ fn row_click_selects_but_buttons_still_win() {
     let mut harness = harness(app_with_worktrees(repo.clone(), worktrees));
     harness.run();
 
-    assert!(
-        harness.state().bulk_selected_worktrees.is_empty(),
-        "precondition: nothing selected"
-    );
-
-    // The worktree's own name is row space no widget claims.
-    harness.get_by_label("wt-clean-merged").click();
-    harness.run();
-    assert!(
-        harness
-            .state()
-            .bulk_selected_worktrees
-            .contains(&clean_merged),
-        "clicking the row should select it"
-    );
-
-    // Clicking it again releases it — a toggle, not a one-way latch.
-    harness.get_by_label("wt-clean-merged").click();
-    harness.run();
-    assert!(
-        harness.state().bulk_selected_worktrees.is_empty(),
-        "clicking a selected row should deselect it"
-    );
-
-    // A real button inside the row must still be the thing that gets the
-    // click, and must not also toggle selection on its way through.
     // Two rows render a Rename button (primary + linked); take the linked
     // row's, which is the one sitting inside the row-select target.
     let rename: Vec<_> = harness.get_all_by_label("Rename").collect();
@@ -406,6 +553,163 @@ fn row_click_selects_but_buttons_still_win() {
     assert!(
         harness.state().bulk_selected_worktrees.is_empty(),
         "clicking Rename must not also select the row"
+    );
+}
+
+/// The row's own checkbox must toggle selection exactly once. A full-row
+/// click target that also fired would cancel it out and leave the checkbox
+/// looking broken.
+#[test]
+fn the_row_checkbox_toggles_selection_exactly_once() {
+    let (_tmp, repo, clean_merged, _dirty, _unmerged) = setup_repo_with_three_worktrees();
+    let worktrees = vec![
+        wt("demo", repo.clone(), "main"),
+        wt("demo", clean_merged.clone(), "feat/clean-merged"),
+    ];
+    let mut harness = harness(app_with_worktrees(repo.clone(), worktrees));
+    harness.run();
+
+    // The view has other checkboxes (top-bar toggles), so pick the one sitting
+    // on the linked row's line — the primary row renders none, being no
+    // candidate for removal.
+    let row_y = harness.get_by_label("wt-clean-merged").rect().center().y;
+    let boxes: Vec<_> = harness
+        .get_all_by_role(egui::accesskit::Role::CheckBox)
+        .filter(|n| n.rect().y_range().contains(row_y))
+        .collect();
+    assert_eq!(boxes.len(), 1, "exactly one checkbox on the linked row");
+    boxes[0].click();
+    harness.run();
+    assert!(
+        harness
+            .state()
+            .bulk_selected_worktrees
+            .contains(&clean_merged),
+        "the checkbox must select the row, not select-then-deselect it"
+    );
+}
+
+/// The expand/collapse triangle is `show_header`'s own widget, laid out to
+/// the left of the sensed row `Ui` and outside its rect. It must keep
+/// toggling the row open without also selecting it — otherwise widening the
+/// click target would have taken expansion away.
+#[test]
+fn the_expand_triangle_still_toggles_without_selecting() {
+    let (_tmp, repo, clean_merged, _dirty, _unmerged) = setup_repo_with_three_worktrees();
+    let worktrees = vec![
+        wt("demo", repo.clone(), "main"),
+        wt("demo", clean_merged.clone(), "feat/clean-merged"),
+    ];
+    let mut harness = harness(app_with_worktrees(repo.clone(), worktrees));
+    harness.run();
+
+    let name = harness.get_by_label("wt-clean-merged").rect();
+    assert!(
+        harness.query_by_label("nothing detected here").is_none(),
+        "precondition: the row starts collapsed"
+    );
+
+    click_at(&harness, expand_triangle_center(&harness, name));
+    harness.run();
+
+    assert!(
+        harness.query_by_label("nothing detected here").is_some(),
+        "the triangle must still expand the row"
+    );
+    assert!(
+        harness.state().bulk_selected_worktrees.is_empty(),
+        "expanding a row must not also select it"
+    );
+}
+
+/// The gesture is scoped to the header, not the whole frame. An expanded
+/// row's body holds its own actions (start/stop a service, open a port), and
+/// clicking around in there must not silently arm a removal.
+#[test]
+fn clicking_an_expanded_rows_body_does_not_select_it() {
+    let (_tmp, repo, clean_merged, _dirty, _unmerged) = setup_repo_with_three_worktrees();
+    let worktrees = vec![
+        wt("demo", repo.clone(), "main"),
+        wt("demo", clean_merged.clone(), "feat/clean-merged"),
+    ];
+    let mut harness = harness(app_with_worktrees(repo.clone(), worktrees));
+    harness.run();
+
+    let name = harness.get_by_label("wt-clean-merged").rect();
+    click_at(&harness, expand_triangle_center(&harness, name));
+    harness.run();
+    assert!(
+        harness.state().bulk_selected_worktrees.is_empty(),
+        "precondition: expanding did not select"
+    );
+
+    harness.get_by_label("nothing detected here").click();
+    harness.run();
+    assert!(
+        harness.state().bulk_selected_worktrees.is_empty(),
+        "clicking the row body must not select the row"
+    );
+}
+
+/// The trash button opens the single-row removal dialog. It sits inside the
+/// sensed row, so it is the other half of "buttons still win".
+#[test]
+fn the_trash_button_still_wins_its_own_click() {
+    let (_tmp, repo, clean_merged, _dirty, _unmerged) = setup_repo_with_three_worktrees();
+    let worktrees = vec![
+        wt("demo", repo.clone(), "main"),
+        wt("demo", clean_merged.clone(), "feat/clean-merged"),
+    ];
+    let mut harness = harness(app_with_worktrees(repo.clone(), worktrees));
+    harness.run();
+
+    // Right-to-left trailing cluster: SHA, Rename, trash, checkbox. The trash
+    // button is the icon between Rename and the checkbox on the linked row.
+    let rename = harness.get_all_by_label("Rename").nth(1).unwrap().rect();
+    let row_y = rename.center().y;
+    let boxes: Vec<_> = harness
+        .get_all_by_role(egui::accesskit::Role::CheckBox)
+        .filter(|n| n.rect().y_range().contains(row_y))
+        .collect();
+    let checkbox = boxes[0].rect();
+    let trash = egui::pos2((rename.left() + checkbox.right()) / 2.0, row_y);
+
+    click_at(&harness, trash);
+    harness.run();
+    assert!(
+        harness
+            .state()
+            .confirm_remove_worktree
+            .lock()
+            .unwrap()
+            .is_some(),
+        "the trash button must still open the removal dialog"
+    );
+    assert!(
+        harness.state().bulk_selected_worktrees.is_empty(),
+        "clicking the trash button must not also select the row"
+    );
+}
+
+/// The primary worktree renders no checkbox and is dropped from the candidate
+/// list, so a row-click that selected it would offer a selection that
+/// evaporates.
+#[test]
+fn clicking_the_primary_row_selects_nothing() {
+    let (_tmp, repo, clean_merged, _dirty, _unmerged) = setup_repo_with_three_worktrees();
+    let worktrees = vec![
+        wt("demo", repo.clone(), "main"),
+        wt("demo", clean_merged.clone(), "feat/clean-merged"),
+    ];
+    let mut harness = harness(app_with_worktrees(repo.clone(), worktrees));
+    harness.run();
+
+    let sha: Vec<_> = harness.get_all_by_label("abc1234").collect();
+    sha[0].click(); // the primary row's
+    harness.run();
+    assert!(
+        harness.state().bulk_selected_worktrees.is_empty(),
+        "the primary row must not be selectable by clicking it"
     );
 }
 
