@@ -40,7 +40,8 @@
 //! | scanner | 3s | ~0.2s, 1 subprocess, independent of worktree count | UX-critical: the Servers view's whole point is "what's listening right now." Kept snappy. |
 //! | git probe | 120s (was 60s) | ~6-8s once `probe_ignored_files` is decoupled (was ~37-40s every tick — see below) | Real git-subprocess cost (~10/worktree) that scales with worktree count; drift/dirty/recent-commits data is useful within a couple minutes' staleness, not seconds. |
 //! | — ignored-files sub-probe | every 5th probe tick (~10 min) | ~32s of the ~37s pre-fix tick (measured in isolation) — `git status --ignored` can't prune subtrees the way plain status does | Tooltip-only cosmetic data (see `IGNORED_FILES_PREVIEW_LIMIT`'s own doc); by far the single most expensive call in this module. Decoupling it from the main probe cadence is the highest-leverage fix found by this audit. |
-//! | — staleness sub-probe (TASK-41) | every probe tick (no decoupling needed) | ~2.0s isolated over 84 worktrees (~24ms each, measured 2026-08-19 via `examples/scan_cadence_audit.rs`) | Same cost class as `probe_main_drift`/`probe_remote_drift` (2-3 git subprocesses each) — cheap enough to compute alongside `DriftProbe` on every tick, unlike size below. |
+//! | — staleness sub-probe (TASK-41) | every probe tick | **free** — derived, not probed | Was ~1.9s / ~2-3 subprocesses per worktree (61 worktrees, re-measured 2026-08-26). It asked git the same three questions `probe_trunk_divergence` asks, so `staleness_from_trunk` now derives the Merged/Orphan/Live badge from that one comparison. Removes the duplicate calls *and* makes badge-vs-chip disagreement unrepresentable rather than merely unlikely. |
+//! | — trunk comparison | every probe tick | ~1.5-1.7s over 61 worktrees (~25-28ms each, measured 2026-08-26 via `examples/scan_cadence_audit.rs`) | Replaced `probe_main_drift` (~0.6s): it resolves the trunk via `default_branch` instead of assuming local `main`, and counts by patch-equivalence rather than ancestry, so it is ~3 subprocesses rather than 2. The staleness derivation above more than pays for it — the whole tick went 21.5s → 21.1s. |
 //! | detection | 60s (was 30s) | ~0.15s cold, ~0 steady-state (idempotent — skips worktrees already in `services`) | No urgency: a newly tracked worktree still gets detected within a minute. |
 //! | agent-context | 60s (was 30s), capped at `AGENT_CONTEXT_MAX_MISSING_PER_TICK` new worktrees per tick | ~47s in one unbroken burst pre-fix (cold scan of all 84 at once) | Recursive per-worktree filesystem walk; cheap in steady state (only rescans missing/>24h-stale entries) but a cold launch or adding several repos at once used to stall the thread for tens of seconds in a single tick. Capping the batch turns that into several bounded, interleaved ticks instead. |
 //! | backlog | 30s (unchanged) | ~0.15-0.2s over 6 repo *roots*, not per-worktree | Already cheap at this scale (one load per tracked repo, not per worktree) and users watch task state change in near-real-time — no evidence to slow this down. |
@@ -71,11 +72,11 @@ use switchbard_core::{
     agent_context_needs_rescan, attribute, detect_services, drain_dispatch_queue, find_hub_repo,
     is_backlog_project, list_dispatch_queue, load_backlog_project, load_ordering_overlay,
     probe_dirty_files, probe_fetch_age, probe_head_commit_time, probe_ignored_files,
-    probe_main_drift, probe_recent_commits, probe_ref_drift_detail, probe_remote_drift,
-    probe_worktree_lock, probe_worktree_size, probe_worktree_staleness, save_agent_context_cache,
-    scan_agent_context, scan_listeners, sweep_dead_sidecar, AgentContextMap, BacklogProject,
-    DetectedService, DispatchOptions, DriftProbe, Fact, Repo, WorktreeRef, DISPATCHED_LABEL,
-    DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
+    probe_recent_commits, probe_ref_drift_detail, probe_remote_drift, probe_trunk_detail,
+    probe_trunk_divergence, probe_worktree_lock, probe_worktree_size, save_agent_context_cache,
+    scan_agent_context, scan_listeners, staleness_from_trunk, sweep_dead_sidecar, AgentContextMap,
+    BacklogProject, DetectedService, DispatchOptions, DriftProbe, Fact, Repo, WorktreeRef,
+    DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
@@ -326,9 +327,7 @@ fn spawn_probe(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
             // all instead of recomputed per-frame by the top bar.
             let mut retired = 0usize;
             for w in &wts {
-                let main_drift = probe_main_drift(&w.path);
                 let remote_drift = probe_remote_drift(&w.path);
-                let main_drift_detail = drift_detail_for_probe(&w.path, main_drift.as_ref());
                 let remote_drift_detail = drift_detail_for_probe(&w.path, remote_drift.as_ref());
                 let ignored_files = if refresh_ignored {
                     probe_ignored_files(&w.path).map(|files| {
@@ -342,8 +341,19 @@ fn spawn_probe(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
                         .and_then(|m| m.ignored_files.clone())
                 };
                 let repo_path = repo_paths.get(&w.repo_name);
+                // One trunk comparison, two surfaces. The Merged/Orphan/Live
+                // badge and the row's unlanded chip are the same question
+                // asked twice, so they are derived from one probe rather than
+                // run as two — which costs three fewer git subprocesses per
+                // worktree per tick, and makes "badge and chip disagree"
+                // unrepresentable rather than merely unlikely.
+                let trunk =
+                    repo_path.and_then(|repo_path| probe_trunk_divergence(repo_path, &w.path));
                 let staleness =
-                    repo_path.map(|repo_path| probe_worktree_staleness(repo_path, &w.path));
+                    repo_path.map(|_| staleness_from_trunk(trunk.as_ref(), remote_drift.as_ref()));
+                let trunk_detail = trunk
+                    .as_ref()
+                    .and_then(|d| probe_trunk_detail(&w.path, d, DRIFT_DETAIL_LIMIT));
                 // Same tick as `staleness`: a lock is a removal precondition
                 // that changes about as often, and pairing them means the
                 // row's badge never shows a lock state from a different
@@ -358,9 +368,9 @@ fn spawn_probe(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
                 let m = WorktreeMeta {
                     dirty_files: probe_dirty_files(&w.path),
                     ignored_files,
-                    main_drift,
+                    trunk,
                     remote_drift,
-                    main_drift_detail,
+                    trunk_detail,
                     remote_drift_detail,
                     head_commit_unix: probe_head_commit_time(&w.path),
                     fetch_unix: probe_fetch_age(&w.path),

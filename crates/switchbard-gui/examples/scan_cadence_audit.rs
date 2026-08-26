@@ -12,9 +12,9 @@ use std::time::Instant;
 use switchbard_core::{
     config, detect_services, enumerate_worktrees, is_backlog_project, load_backlog_project,
     probe_dirty_files, probe_fetch_age, probe_head_commit_time, probe_ignored_files,
-    probe_main_drift, probe_recent_commits, probe_ref_drift_detail, probe_remote_drift,
-    probe_worktree_size, probe_worktree_staleness, scan_agent_context, scan_listeners, DriftProbe,
-    Repo, WorktreeRef,
+    probe_recent_commits, probe_ref_drift_detail, probe_remote_drift, probe_trunk_detail,
+    probe_trunk_divergence, probe_worktree_size, probe_worktree_staleness, scan_agent_context,
+    scan_listeners, staleness_from_trunk, DriftProbe, Repo, WorktreeRef,
 };
 
 /// `du` measured ~0.8-1.5s per real worktree in the 2026-08-19 audit (see
@@ -96,12 +96,20 @@ fn main() {
     // ---- git-probe tick step 2: full per-worktree probe suite ----
     let mut subprocess_count = 0usize;
     let t0 = Instant::now();
+    let repo_paths_for_trunk: std::collections::HashMap<String, std::path::PathBuf> = cfg
+        .repos
+        .iter()
+        .map(|r| (r.name.clone(), r.path.clone()))
+        .collect();
     for w in &worktrees {
-        let main_drift = probe_main_drift(&w.path);
-        subprocess_count += match &main_drift {
-            Some(DriftProbe::MissingBase { .. }) => 1,
-            _ => 2,
-        };
+        // `probe_trunk_divergence` replaced `probe_main_drift`: same shape,
+        // but it resolves the trunk via `default_branch` and counts by
+        // patch-equivalence, so it is 3 subprocesses (base lookup + two
+        // rev-lists) rather than 2.
+        let trunk = repo_paths_for_trunk
+            .get(&w.repo_name)
+            .and_then(|repo| probe_trunk_divergence(repo, &w.path));
+        subprocess_count += if trunk.is_some() { 3 } else { 1 };
 
         let remote_drift = probe_remote_drift(&w.path);
         subprocess_count += match &remote_drift {
@@ -110,10 +118,10 @@ fn main() {
             None => 1,
         };
 
-        if let Some(d) = &main_drift {
-            if d.is_drifted() {
-                let _ = probe_ref_drift_detail(&w.path, d.base().unwrap_or("main"), 5);
-                subprocess_count += 2;
+        if let Some(d) = &trunk {
+            if d.unlanded + d.behind > 0 {
+                let _ = probe_trunk_detail(&w.path, d, 5);
+                subprocess_count += 3;
             }
         }
         if let Some(d) = &remote_drift {
@@ -133,6 +141,12 @@ fn main() {
         subprocess_count += 1;
         let _ = probe_recent_commits(&w.path, 10);
         subprocess_count += 1;
+        // Free: the Merged/Orphan/Live badge is derived from the trunk
+        // comparison already made above rather than re-probed. It used to be
+        // its own ~2-3 subprocess call per worktree — see the [staleness]
+        // section below, which still times the standalone probe so the saving
+        // stays visible.
+        let _ = staleness_from_trunk(trunk.as_ref(), remote_drift.as_ref());
     }
     let probe_elapsed = t0.elapsed();
     println!(
@@ -156,9 +170,17 @@ fn main() {
         "\n[git-probe breakdown] each isolated over all {} worktrees:",
         worktrees.len()
     );
-    time_probe!("probe_main_drift", |w: &WorktreeRef| probe_main_drift(
-        &w.path
-    ));
+    time_probe!("probe_trunk_divergence", |w: &WorktreeRef| {
+        repo_paths_for_trunk
+            .get(&w.repo_name)
+            .and_then(|repo| probe_trunk_divergence(repo, &w.path))
+    });
+    time_probe!("probe_trunk_detail", |w: &WorktreeRef| {
+        repo_paths_for_trunk
+            .get(&w.repo_name)
+            .and_then(|repo| probe_trunk_divergence(repo, &w.path))
+            .and_then(|d| probe_trunk_detail(&w.path, &d, 5))
+    });
     time_probe!("probe_remote_drift", |w: &WorktreeRef| probe_remote_drift(
         &w.path
     ));
@@ -268,7 +290,7 @@ fn main() {
     }
     let staleness_elapsed = t0.elapsed();
     println!(
-        "\n[staleness] probe_worktree_staleness over {} worktrees: {:?} (~2-3 git subprocess spawns each, same class as probe_main_drift/probe_remote_drift)",
+        "\n[staleness] standalone probe_worktree_staleness over {} worktrees: {:?} (~2-3 git subprocess spawns each). NOT part of the tick any more: `spawn_probe` derives the badge from the trunk comparison via `staleness_from_trunk`, so this is the cost that derivation removes.",
         worktrees.len(),
         staleness_elapsed
     );

@@ -23,8 +23,8 @@ use switchbard_core::dispatch_inspect::{DispatchRun, DispatchRunLiveness};
 use switchbard_core::{
     AgentKind, AttachedProcesses, AttributedListener, BranchDeleteAssessment, CommitSummary,
     ContextKind, ContextScope, DirtyFile, DriftDetail, DriftProbe, Fact, Landed, OrderingOverlay,
-    RemovalFacts, RemovalIntent, RemovalSafety, RemovalVerdict, Repo, WorktreeRef,
-    WorktreeStaleness,
+    RemovalFacts, RemovalIntent, RemovalSafety, RemovalVerdict, Repo, TrunkDetail, TrunkDivergence,
+    WorktreeRef, WorktreeStaleness,
 };
 
 /// The cross-repo triage overlay (`<hub repo>/ordering.yml`), refreshed by
@@ -667,12 +667,22 @@ pub struct WorktreeMeta {
     /// still delete them from disk. Store only a preview so dependency/build
     /// directories do not make every UI frame clone thousands of strings.
     pub ignored_files: Option<FileListSummary>,
-    /// `HEAD` compared with the repo's local `main` branch.
-    pub main_drift: Option<DriftProbe>,
+    /// What a branch delete here would discard, measured against the repo's
+    /// trunk the same way `removal_safety`'s `WorkLanded` check measures it.
+    ///
+    /// Replaces a `DriftProbe` against the local `main`. Two things were wrong
+    /// with that: the base (the removal checks compare against
+    /// `default_branch()`, usually `origin/main`, so a stale local trunk made
+    /// the row read `+16` next to `remove ok`), and the method (ancestry
+    /// counts rebase-merged commits as ahead, so the row offered a list of
+    /// "at risk" commits that were already upstream).
+    pub trunk: Option<TrunkDivergence>,
     /// `HEAD` compared with the current branch's configured upstream remote.
+    /// Still a `DriftProbe`: for "am I in sync with my upstream", ancestry is
+    /// the right question and patch-equivalence is not.
     pub remote_drift: Option<DriftProbe>,
-    /// Commit lists behind the local-main comparison, capped for tooltip use.
-    pub main_drift_detail: Option<DriftDetail>,
+    /// Commit lists behind the trunk comparison, capped for tooltip use.
+    pub trunk_detail: Option<TrunkDetail>,
     /// Commit lists behind the remote-upstream comparison, capped for tooltip use.
     pub remote_drift_detail: Option<DriftDetail>,
     pub head_commit_unix: Option<u64>,
@@ -687,7 +697,7 @@ pub struct WorktreeMeta {
     #[allow(dead_code)]
     pub probed_at: Option<Instant>,
     /// Merged/Orphan/Live classification (TASK-41), computed by the same
-    /// git-probe worker tick as `main_drift`/`remote_drift`. `None` while the
+    /// git-probe worker tick as `trunk`/`remote_drift`. `None` while the
     /// probe hasn't returned yet.
     pub staleness: Option<WorktreeStaleness>,
     /// Whether git holds a lock on this worktree, and why. A locked worktree
@@ -1133,7 +1143,16 @@ mod tests {
         let meta = WorktreeMeta {
             dirty_files: Some(vec![]),
             ignored_files: Some(FileListSummary::from_lines(vec![], 4)),
-            main_drift: ready_probe(4, 3, "main"),
+            // 0 unlanded, matching the Merged staleness below. The old
+            // fixture said "4 ahead" here while claiming Merged - a state the
+            // app can no longer produce, now that both come from the same
+            // patch-equivalence probe against the same base.
+            trunk: Some(TrunkDivergence {
+                base: "main".into(),
+                unlanded: 0,
+                ancestry_ahead: 0,
+                behind: 3,
+            }),
             remote_drift: ready_probe(2, 1, "origin/feature"),
             staleness: Some(WorktreeStaleness::Merged {
                 base: "main".into(),

@@ -79,6 +79,73 @@ impl DriftProbe {
     }
 }
 
+/// Ahead/behind of `HEAD` relative to the current branch's configured upstream.
+/// Returns `NoUpstream` when `@{u}` is not configured.
+pub fn probe_remote_drift(path: &Path) -> Option<DriftProbe> {
+    let Some(upstream) = upstream_ref(path) else {
+        return Some(DriftProbe::NoUpstream);
+    };
+    probe_ref_drift(path, &upstream)
+}
+
+/// (ahead, behind) relative to `<upstream>` if one is configured. None when
+/// there's no upstream or git fails.
+pub fn probe_ahead_behind(path: &Path) -> Option<(u32, u32)> {
+    probe_remote_drift(path)?.counts()
+}
+
+/// Ahead/behind of `HEAD` relative to an arbitrary comparison ref.
+pub fn probe_ref_drift(path: &Path, base_ref: &str) -> Option<DriftProbe> {
+    if !ref_exists(path, base_ref) {
+        return Some(DriftProbe::MissingBase {
+            base: base_ref.to_string(),
+        });
+    }
+    let raw = git(
+        path,
+        &[
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("HEAD...{base_ref}"),
+        ],
+    )?;
+    let mut parts = raw.split_whitespace();
+    let ahead: u32 = parts.next()?.parse().ok()?;
+    let behind: u32 = parts.next()?.parse().ok()?;
+    Some(DriftProbe::Ready {
+        base: base_ref.to_string(),
+        ahead,
+        behind,
+    })
+}
+
+/// Lists of commits the local branch is ahead of and behind its upstream by,
+/// each capped at `limit`. Returns None when there's no upstream or git fails;
+/// returns an empty Default when in sync (both lists empty).
+pub fn probe_drift_detail(path: &Path, limit: usize) -> Option<DriftDetail> {
+    let upstream = upstream_ref(path)?;
+    probe_ref_drift_detail(path, &upstream, limit)
+}
+
+/// Lists of commits the local branch is ahead of and behind a named ref by,
+/// each capped at `limit`.
+pub fn probe_ref_drift_detail(path: &Path, base_ref: &str, limit: usize) -> Option<DriftDetail> {
+    let ahead = log_commits(path, &format!("{base_ref}..HEAD"), limit)?;
+    let behind = log_commits(path, &format!("HEAD..{base_ref}"), limit)?;
+    // Truncation flags: the rev-list count probe is authoritative, but here we
+    // can detect "we filled the bucket" — caller compares against ahead/behind
+    // counts to refine.
+    let ahead_truncated = ahead.len() == limit;
+    let behind_truncated = behind.len() == limit;
+    Some(DriftDetail {
+        ahead,
+        behind,
+        ahead_truncated,
+        behind_truncated,
+    })
+}
+
 /// Where a worktree sits relative to the repo's cleanup lifecycle — computed
 /// alongside `DriftProbe` by the same git-probe worker (see `workers.rs`'s
 /// cadence table). Orthogonal to dirty state: a worktree can be `Merged` and
@@ -194,77 +261,158 @@ pub fn probe_ignored_files(path: &Path) -> Option<Vec<String>> {
     )
 }
 
-/// Ahead/behind of `HEAD` relative to the local `main` ref. Returns
-/// `MissingBase` when this repo does not have a local `main` branch.
-pub fn probe_main_drift(path: &Path) -> Option<DriftProbe> {
-    probe_ref_drift(path, "main")
+/// What removing this worktree's branch would actually cost.
+///
+/// Deliberately *not* a [`DriftProbe`]. `DriftProbe::ahead` counts by
+/// ancestry, which is the right question for "am I in sync with my upstream"
+/// and the wrong one for "what would I lose", because a rebase-merged commit
+/// is ahead by ancestry and already upstream by content. Giving one field both
+/// meanings is how the row ends up contradicting its own removal badge - on
+/// one real machine the two disagreed for 16 of 41 worktrees, 9 of which were
+/// entirely rebase-merged and would have rendered `+N` next to `remove ok`.
+///
+/// So this measures the way `removal_safety`'s `WorkLanded` check measures:
+/// [`crate::worktree_remove::unlanded_commits`], patch-equivalence aware,
+/// against [`crate::worktree_remove::default_branch`]. One question, one
+/// answer, whichever surface asks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrunkDivergence {
+    /// The trunk this was measured against (`origin/main`, `main`, …).
+    pub base: String,
+    /// Commits whose content is not upstream. These are what a branch delete
+    /// would discard, and the number the removal badge reports.
+    pub unlanded: u32,
+    /// Commits ahead by plain ancestry. Not a risk measure - it is kept
+    /// because it is the difference between the two kinds of "landed"
+    /// (`git branch -d` agrees only when this is zero) and because
+    /// `already_upstream` falls out of it for free rather than costing
+    /// another rev-list.
+    pub ancestry_ahead: u32,
+    /// Commits on the trunk this worktree doesn't have. Ancestry is the right
+    /// measure here - being behind is about position, not about risk.
+    pub behind: u32,
 }
 
-/// Ahead/behind of `HEAD` relative to the current branch's configured upstream.
-/// Returns `NoUpstream` when `@{u}` is not configured.
-pub fn probe_remote_drift(path: &Path) -> Option<DriftProbe> {
-    let Some(upstream) = upstream_ref(path) else {
-        return Some(DriftProbe::NoUpstream);
-    };
-    probe_ref_drift(path, &upstream)
+/// The commits behind a [`TrunkDivergence`], for the row's hover.
+///
+/// `unlanded` is the list form of the same rev-walk that produced
+/// [`TrunkDivergence::unlanded`], so the count and the list cannot disagree -
+/// they must move together if either changes.
+#[derive(Debug, Clone)]
+pub struct TrunkDetail {
+    pub unlanded: Vec<CommitSummary>,
+    pub unlanded_truncated: bool,
+    pub behind: Vec<CommitSummary>,
+    pub behind_truncated: bool,
+    /// Commits ahead by ancestry whose content is already upstream - i.e.
+    /// rebase-merged. Reported so the tooltip can account for every commit
+    /// the user might expect to see, without counting them as at risk.
+    pub already_upstream: u32,
 }
 
-/// (ahead, behind) relative to `<upstream>` if one is configured. None when
-/// there's no upstream or git fails.
-pub fn probe_ahead_behind(path: &Path) -> Option<(u32, u32)> {
-    probe_remote_drift(path)?.counts()
+/// Measure a worktree against the repo's trunk the way the removal checks do.
+///
+/// `None` when there is no trunk to compare against, or git failed - callers
+/// render that as an explicit unknown rather than as zero.
+pub fn probe_trunk_divergence(repo_path: &Path, worktree_path: &Path) -> Option<TrunkDivergence> {
+    let base = crate::worktree_remove::default_branch(repo_path)?;
+    // Both run at the worktree, not the repo: `HEAD` has to resolve to *this*
+    // checkout, and a detached worktree has no branch ref to ask about at the
+    // repo. Same reasoning as `probe_worktree_staleness`.
+    let unlanded = crate::worktree_remove::unlanded_commits(worktree_path, &base, "HEAD")?;
+    let ancestry_ahead = crate::worktree_remove::commits_ahead(worktree_path, &base, "HEAD")?;
+    let behind = crate::worktree_remove::commits_ahead(worktree_path, "HEAD", &base)?;
+    Some(TrunkDivergence {
+        base,
+        unlanded,
+        ancestry_ahead,
+        behind,
+    })
 }
 
-/// Ahead/behind of `HEAD` relative to an arbitrary comparison ref.
-pub fn probe_ref_drift(path: &Path, base_ref: &str) -> Option<DriftProbe> {
-    if !ref_exists(path, base_ref) {
-        return Some(DriftProbe::MissingBase {
-            base: base_ref.to_string(),
-        });
+/// Classify a worktree's place in the cleanup lifecycle from a trunk
+/// comparison that has already been made.
+///
+/// Pure, and deliberately so. [`probe_worktree_staleness`] used to re-run
+/// `default_branch`, `commits_ahead` and `unlanded_commits` for itself, which
+/// meant the git-probe worker asked git the same three questions twice per
+/// worktree per tick - and left open the possibility of the badge and the
+/// trunk chip landing on answers from different moments. Deriving both from
+/// one [`TrunkDivergence`] costs nothing and makes disagreement unrepresentable.
+///
+/// `remote` is the worktree's already-probed upstream drift, for the same
+/// reason: the fallback classification needs it, and the worker has it.
+pub fn staleness_from_trunk(
+    trunk: Option<&TrunkDivergence>,
+    remote: Option<&DriftProbe>,
+) -> WorktreeStaleness {
+    use crate::removal_safety::LandedEvidence;
+    if let Some(t) = trunk {
+        if t.unlanded == 0 {
+            return WorktreeStaleness::Merged {
+                base: t.base.clone(),
+                // Ancestry is the stronger claim and the one `git branch -d`
+                // will accept; patch-equivalence means the content landed but
+                // the SHAs did not, so a plain `-d` still refuses.
+                evidence: if t.ancestry_ahead == 0 {
+                    LandedEvidence::Ancestry
+                } else {
+                    LandedEvidence::PatchEquivalent
+                },
+            };
+        }
     }
-    let raw = git(
+    match remote {
+        Some(DriftProbe::NoUpstream) => WorktreeStaleness::Orphan,
+        Some(_) => WorktreeStaleness::Live,
+        None => WorktreeStaleness::Unknown,
+    }
+}
+
+/// The commit lists behind a [`TrunkDivergence`], capped at `limit` per side.
+pub fn probe_trunk_detail(
+    worktree_path: &Path,
+    divergence: &TrunkDivergence,
+    limit: usize,
+) -> Option<TrunkDetail> {
+    let base = &divergence.base;
+    let unlanded = unlanded_commit_list(worktree_path, base, "HEAD", limit)?;
+    let behind = log_commits(worktree_path, &format!("HEAD..{base}"), limit)?;
+    Some(TrunkDetail {
+        unlanded_truncated: unlanded.len() == limit,
+        unlanded,
+        behind_truncated: behind.len() == limit,
+        behind,
+        // Both counts come from the same divergence, so this needs no git at
+        // all. Saturating anyway: the invariant is `unlanded <=
+        // ancestry_ahead`, and an arithmetic panic is not how we would want to
+        // learn it was violated.
+        already_upstream: divergence
+            .ancestry_ahead
+            .saturating_sub(divergence.unlanded),
+    })
+}
+
+/// The list form of [`crate::worktree_remove::unlanded_commits`].
+///
+/// The rev-walk flags are identical to the count's on purpose: `--right-only
+/// --cherry-pick` over the symmetric difference. If one changes, both change,
+/// or the row will list a different set of commits than it counted.
+fn unlanded_commit_list(
+    path: &Path,
+    base_ref: &str,
+    head_ref: &str,
+    limit: usize,
+) -> Option<Vec<CommitSummary>> {
+    log_commits_with(
         path,
         &[
-            "rev-list",
-            "--left-right",
-            "--count",
-            &format!("HEAD...{base_ref}"),
+            "--right-only",
+            "--cherry-pick",
+            &format!("{base_ref}...{head_ref}"),
         ],
-    )?;
-    let mut parts = raw.split_whitespace();
-    let ahead: u32 = parts.next()?.parse().ok()?;
-    let behind: u32 = parts.next()?.parse().ok()?;
-    Some(DriftProbe::Ready {
-        base: base_ref.to_string(),
-        ahead,
-        behind,
-    })
-}
-
-/// Lists of commits the local branch is ahead of and behind its upstream by,
-/// each capped at `limit`. Returns None when there's no upstream or git fails;
-/// returns an empty Default when in sync (both lists empty).
-pub fn probe_drift_detail(path: &Path, limit: usize) -> Option<DriftDetail> {
-    let upstream = upstream_ref(path)?;
-    probe_ref_drift_detail(path, &upstream, limit)
-}
-
-/// Lists of commits the local branch is ahead of and behind a named ref by,
-/// each capped at `limit`.
-pub fn probe_ref_drift_detail(path: &Path, base_ref: &str, limit: usize) -> Option<DriftDetail> {
-    let ahead = log_commits(path, &format!("{base_ref}..HEAD"), limit)?;
-    let behind = log_commits(path, &format!("HEAD..{base_ref}"), limit)?;
-    // Truncation flags: the rev-list count probe is authoritative, but here we
-    // can detect "we filled the bucket" — caller compares against ahead/behind
-    // counts to refine.
-    let ahead_truncated = ahead.len() == limit;
-    let behind_truncated = behind.len() == limit;
-    Some(DriftDetail {
-        ahead,
-        behind,
-        ahead_truncated,
-        behind_truncated,
-    })
+        limit,
+    )
 }
 
 /// Unix epoch seconds of the HEAD commit, or None if git fails.
@@ -362,18 +510,25 @@ fn ref_exists(path: &Path, reference: &str) -> bool {
 }
 
 fn log_commits(path: &Path, range: &str, limit: usize) -> Option<Vec<CommitSummary>> {
+    log_commits_with(path, &[range], limit)
+}
+
+/// `git log` over an arbitrary rev-walk, parsed into [`CommitSummary`].
+///
+/// Split out so the unlanded list can pass the same `--right-only
+/// --cherry-pick` flags its count uses instead of re-implementing the parse.
+fn log_commits_with(path: &Path, revs: &[&str], limit: usize) -> Option<Vec<CommitSummary>> {
     // Format: `<short-sha>\t<unix-time>\t<subject>` — tab-separated so subjects
     // containing arbitrary characters don't confuse the parser.
-    let out = git(
-        path,
-        &[
-            "log",
-            &format!("-n{limit}"),
-            "--format=%h%x09%ct%x09%s",
-            range,
-            "--",
-        ],
-    )?;
+    let mut args = vec![
+        "log".to_string(),
+        format!("-n{limit}"),
+        "--format=%h%x09%ct%x09%s".to_string(),
+    ];
+    args.extend(revs.iter().map(|r| r.to_string()));
+    args.push("--".to_string());
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = git(path, &arg_refs)?;
     Some(
         out.lines()
             .filter_map(|l| {
@@ -424,37 +579,6 @@ mod tests {
         assert!(humanize_age(now - 86_400 * 30).ends_with("w ago"));
         assert!(humanize_age(now - 86_400 * 90).ends_with("mo ago"));
         assert!(humanize_age(now - 86_400 * 400).ends_with("y ago"));
-    }
-
-    #[test]
-    fn main_drift_compares_head_to_local_main() {
-        let (_tmp, repo) = setup_repo("main");
-        commit_file(&repo, "base.txt", "base", "base");
-        run_git(&repo, &["checkout", "-b", "feature"]);
-        commit_file(&repo, "feature.txt", "one", "feature one");
-        commit_file(&repo, "feature-2.txt", "two", "feature two");
-
-        assert_eq!(
-            probe_main_drift(&repo),
-            Some(DriftProbe::Ready {
-                base: "main".into(),
-                ahead: 2,
-                behind: 0,
-            })
-        );
-    }
-
-    #[test]
-    fn main_drift_reports_missing_local_main() {
-        let (_tmp, repo) = setup_repo("trunk");
-        commit_file(&repo, "base.txt", "base", "base");
-
-        assert_eq!(
-            probe_main_drift(&repo),
-            Some(DriftProbe::MissingBase {
-                base: "main".into(),
-            })
-        );
     }
 
     #[test]
@@ -611,6 +735,111 @@ mod tests {
             !dirty.is_empty(),
             "scratch file should still show up as dirty"
         );
+    }
+
+    /// A repo whose worktree is 3 commits "ahead" of `main` by ancestry, but
+    /// whose first two commits are already on `main` under different SHAs -
+    /// i.e. rebase-merged. This is the shape that made the drift chip and the
+    /// removal badge contradict each other: ancestry says 3 at risk, content
+    /// says 1.
+    fn repo_with_rebase_merged_worktree() -> (TempDir, PathBuf, PathBuf) {
+        let (tmp, repo) = setup_repo("main");
+        commit_file(&repo, "base.txt", "base", "base");
+
+        let wt = tmp.path().join("wt");
+        run_git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feature",
+                wt.to_str().unwrap(),
+            ],
+        );
+        commit_file(&wt, "a.txt", "a", "landed one");
+        commit_file(&wt, "b.txt", "b", "landed two");
+        commit_file(&wt, "c.txt", "c", "still mine");
+
+        // Replay the first two onto main, which is exactly what a rebase merge
+        // does: same patches, new SHAs. `-x` appends a provenance line to the
+        // message, which is what forces new SHAs — without it git produces
+        // byte-identical commits (same tree, parent, identity and second) and
+        // `main` simply fast-forwards onto the originals, which is not the
+        // shape under test.
+        run_git(&repo, &["cherry-pick", "-x", "feature~2", "feature~1"]);
+        (tmp, repo, wt)
+    }
+
+    /// The whole reason `TrunkDivergence` is not a `DriftProbe`: it must count
+    /// what a branch delete would *discard*, not what is ahead by ancestry.
+    #[test]
+    fn trunk_divergence_counts_content_not_ancestry() {
+        let (_tmp, repo, wt) = repo_with_rebase_merged_worktree();
+
+        let ancestry = crate::worktree_remove::commits_ahead(&wt, "main", "HEAD").unwrap();
+        assert_eq!(ancestry, 3, "precondition: 3 commits ahead by ancestry");
+
+        let d = probe_trunk_divergence(&repo, &wt).unwrap();
+        assert_eq!(d.base, "main");
+        assert_eq!(
+            d.unlanded, 1,
+            "only the commit whose content is not upstream is at risk"
+        );
+    }
+
+    /// The row's hover and the row's number come from the same rev-walk, so a
+    /// chip reading `+1` can never list three commits.
+    #[test]
+    fn the_unlanded_list_matches_the_unlanded_count() {
+        let (_tmp, repo, wt) = repo_with_rebase_merged_worktree();
+        let d = probe_trunk_divergence(&repo, &wt).unwrap();
+        let detail = probe_trunk_detail(&wt, &d, 10).unwrap();
+
+        assert_eq!(detail.unlanded.len(), d.unlanded as usize);
+        assert_eq!(detail.unlanded[0].subject, "still mine");
+        assert!(!detail.unlanded_truncated);
+    }
+
+    /// The rebase-merged commits are still accounted for, just not as risk -
+    /// otherwise the tooltip silently drops two commits the user knows exist.
+    #[test]
+    fn rebase_merged_commits_are_reported_as_already_upstream() {
+        let (_tmp, repo, wt) = repo_with_rebase_merged_worktree();
+        let d = probe_trunk_divergence(&repo, &wt).unwrap();
+        let detail = probe_trunk_detail(&wt, &d, 10).unwrap();
+
+        assert_eq!(
+            detail.already_upstream, 2,
+            "3 ahead by ancestry, 1 at risk, so 2 landed under new SHAs"
+        );
+    }
+
+    /// A detached worktree has no branch ref, and this must still answer -
+    /// same fix as `removal_safety::probe_landed`. It runs at the worktree so
+    /// `HEAD` resolves to this checkout.
+    #[test]
+    fn a_detached_worktree_still_gets_a_trunk_comparison() {
+        let (tmp, repo) = setup_repo("main");
+        commit_file(&repo, "base.txt", "base", "base");
+        let wt = tmp.path().join("wt");
+        run_git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                wt.to_str().unwrap(),
+                "main",
+            ],
+        );
+        commit_file(&wt, "mine.txt", "mine", "detached work");
+
+        let d = probe_trunk_divergence(&repo, &wt).unwrap();
+        assert_eq!(d.unlanded, 1);
+        assert_eq!(d.behind, 0);
     }
 
     fn setup_repo(initial_branch: &str) -> (TempDir, PathBuf) {
