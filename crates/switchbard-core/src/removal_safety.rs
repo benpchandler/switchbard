@@ -610,7 +610,7 @@ pub fn probe_facts(
         lock: probe_worktree_lock(repo_path, worktree_path),
         dirty_files: probe_dirty_count(worktree_path),
         ignored_files: crate::git_probe::probe_ignored_files(worktree_path).map(|f| f.len()),
-        landed: probe_landed(repo_path, branch),
+        landed: probe_landed(repo_path, worktree_path, branch),
         attached,
     }
 }
@@ -652,29 +652,39 @@ fn probe_dirty_count(worktree_path: &Path) -> Fact<usize> {
     }
 }
 
-fn probe_landed(repo_path: &Path, branch: Option<&str>) -> Fact<Landed> {
-    let Some(branch) = branch else {
-        return Fact::Unavailable(
-            "Detached HEAD - there's no branch to prove the work landed on".to_string(),
-        );
-    };
+fn probe_landed(repo_path: &Path, worktree_path: &Path, branch: Option<&str>) -> Fact<Landed> {
     let Some(base) = default_branch(repo_path) else {
         return Fact::Unavailable("No local main or master branch to compare against".to_string());
     };
-    if base == branch {
-        return Fact::Known(Landed::Yes {
-            base,
-            evidence: LandedEvidence::Ancestry,
-        });
-    }
-    // Named branch, so this runs at the repo: branch refs are shared across
-    // every linked worktree. `git_probe::probe_worktree_staleness` asks the
-    // same question of `HEAD` and must run at the worktree instead, but both
-    // go through `commits_ahead` - one primitive answers "how far ahead" for
-    // the whole crate, so the badge and this check cannot disagree.
+    // Where to ask, and about what.
+    //
+    // A named branch is a repo-wide ref, so the question is asked at the repo.
+    // A *detached* worktree has no branch ref - but it does have its own HEAD,
+    // and that is a perfectly good thing to compare. It is also exactly what
+    // `git_probe::probe_worktree_staleness` asks about to paint the
+    // Merged/Orphan/Live badge, which is the point: this function used to give
+    // up on `branch: None` and report "there's no branch to prove the work
+    // landed on", so a detached worktree parked on `main` read `remove ok` on
+    // the row and was routed to the bulk sweep's needs-review list in the same
+    // frame. Two sources for one fact, disagreeing - the thing this module
+    // exists to prevent.
+    //
+    // "Detached" is not the same as "unprovable". Removing a detached worktree
+    // drops the only ref reaching its commits, so the check still has to fail
+    // when those commits are not in the base - it just has to *answer*.
+    let (ask_in, head_ref) = match branch {
+        Some(branch) if branch == base => {
+            return Fact::Known(Landed::Yes {
+                base,
+                evidence: LandedEvidence::Ancestry,
+            })
+        }
+        Some(branch) => (repo_path, branch),
+        None => (worktree_path, "HEAD"),
+    };
     // Ancestry first: it is the cheaper query, and when it says "landed" the
     // answer is the strongest kind — `git branch -d` will agree.
-    match commits_ahead(repo_path, &base, branch) {
+    match commits_ahead(ask_in, &base, head_ref) {
         Some(0) => {
             return Fact::Known(Landed::Yes {
                 base,
@@ -682,12 +692,12 @@ fn probe_landed(repo_path: &Path, branch: Option<&str>) -> Fact<Landed> {
             })
         }
         Some(_) => {}
-        None => return Fact::Unavailable(format!("Couldn't compare the branch against {base}")),
+        None => return Fact::Unavailable(format!("Couldn't compare {head_ref} against {base}")),
     }
     // Ancestry says no. Ask the question that actually matters — is the
     // *content* upstream — before calling work unlanded. A rebase-merged
     // branch fails the first check and passes this one.
-    match unlanded_commits(repo_path, &base, branch) {
+    match unlanded_commits(ask_in, &base, head_ref) {
         Some(0) => Fact::Known(Landed::Yes {
             base,
             evidence: LandedEvidence::PatchEquivalent,
@@ -696,13 +706,118 @@ fn probe_landed(repo_path: &Path, branch: Option<&str>) -> Fact<Landed> {
             commits: Some(count),
             base: Some(base),
         }),
-        None => Fact::Unavailable(format!("Couldn't compare the branch against {base}")),
+        None => Fact::Unavailable(format!("Couldn't compare {head_ref} against {base}")),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    use crate::git_env::git_cmd;
+
+    fn git(cwd: &Path, args: &[&str]) {
+        let status = git_cmd()
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .status()
+            .expect("git");
+        assert!(status.success(), "git {args:?} failed in {cwd:?}");
+    }
+
+    /// A repo whose linked worktree sits on a **detached HEAD** parked at a
+    /// commit already on `main` — the shape a treehouse/agent tool leaves
+    /// behind, and the one that had the row and the dialogs disagreeing.
+    fn repo_with_detached_worktree_on_main() -> (TempDir, PathBuf, PathBuf) {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["config", "user.email", "test@example.com"]);
+        git(&repo, &["config", "user.name", "Test"]);
+        fs::write(repo.join("README.md"), "hello\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-qm", "init"]);
+
+        let wt = tmp.path().join("wt-detached");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                wt.to_str().unwrap(),
+                "main",
+            ],
+        );
+        (tmp, repo, wt)
+    }
+
+    /// The invariant this module was built to hold, checked against real git
+    /// rather than hand-built facts: the Workspace row's badge and the
+    /// dialogs' `probe_facts` must reach the same verdict for the same
+    /// worktree.
+    ///
+    /// They did not, for a detached HEAD. The badge
+    /// (`probe_worktree_staleness`) asks `commits_ahead` about the
+    /// *worktree's own HEAD* and answers "merged"; `probe_landed` asked about
+    /// a *branch name* and gave up when there wasn't one. So a detached
+    /// worktree parked on `main` read "remove ok" on the row and landed in
+    /// the bulk sweep's needs-review list with "Detached HEAD — there's no
+    /// branch to prove the work landed on".
+    #[test]
+    fn a_detached_worktree_parked_on_main_is_landed_not_unprovable() {
+        let (_tmp, repo, wt) = repo_with_detached_worktree_on_main();
+
+        let facts = probe_facts(&repo, &wt, None, Fact::Known(AttachedProcesses::default()));
+        assert!(
+            matches!(facts.landed, Fact::Known(Landed::Yes { .. })),
+            "a detached HEAD sitting on main has demonstrably landed; got {:?}",
+            facts.landed
+        );
+        assert_eq!(
+            RemovalSafety::evaluate(&facts, RemovalIntent::WorktreeAndBranch).verdict(),
+            RemovalVerdict::Safe,
+            "the removal path must agree with the row badge"
+        );
+
+        // ...and the badge, the other source of the same fact, must say so too.
+        assert!(
+            matches!(
+                crate::git_probe::probe_worktree_staleness(&repo, &wt),
+                crate::git_probe::WorktreeStaleness::Merged { .. }
+            ),
+            "precondition: the badge calls this merged"
+        );
+    }
+
+    /// The flip side, so the fix cannot become "detached always passes":
+    /// a detached worktree carrying a commit that is *not* on `main` still
+    /// blocks, because removing it drops the only ref reaching that commit.
+    #[test]
+    fn a_detached_worktree_with_unlanded_commits_still_blocks() {
+        let (_tmp, repo, wt) = repo_with_detached_worktree_on_main();
+        fs::write(wt.join("scratch.txt"), "work\n").unwrap();
+        git(&wt, &["add", "."]);
+        git(&wt, &["commit", "-qm", "unlanded work"]);
+
+        let facts = probe_facts(&repo, &wt, None, Fact::Known(AttachedProcesses::default()));
+        assert!(
+            matches!(facts.landed, Fact::Known(Landed::No { .. })),
+            "an unlanded detached HEAD must fail the check, not be unprovable; got {:?}",
+            facts.landed
+        );
+        assert_eq!(
+            RemovalSafety::evaluate(&facts, RemovalIntent::WorktreeAndBranch).verdict(),
+            RemovalVerdict::Blocked
+        );
+    }
 
     /// A worktree that passes everything, for tests to spoil one field at a
     /// time. Built explicitly rather than via a `..Default` so that adding a
