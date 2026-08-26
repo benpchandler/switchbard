@@ -3885,3 +3885,22 @@ fn the_column_checkbox_selects_only_its_own_column() {
         "the other column's selection must survive"
     );
 }
+
+/// The sort control is available on every lens that shows the filter row,
+/// not just List.
+///
+/// Board and Milestones already drew from the same sorted
+/// `visible_task_rows`; only the control was List-only, which left them
+/// sorted by a key their user could neither see nor change.
+#[test]
+fn the_sort_control_renders_on_the_board_lens() {
+    let mut app = list_app_with_tasks(vec![task("TASK-1", "One", "To Do")]);
+    app.backlog_view.lens = BacklogLens::Board;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_by_label("Sort").is_some(),
+        "Board must expose the sort key it is already using"
+    );
+}
