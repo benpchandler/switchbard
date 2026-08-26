@@ -261,7 +261,9 @@ fn main() {
             Some(switchbard_core::WorktreeStaleness::Merged { .. }) => merged += 1,
             Some(switchbard_core::WorktreeStaleness::Orphan) => orphan += 1,
             Some(switchbard_core::WorktreeStaleness::Live) => live += 1,
-            None => unclassified += 1,
+            // `Unknown` is git declining to answer; `None` is the repo not
+            // being tracked. Neither is a classification, so both land here.
+            Some(switchbard_core::WorktreeStaleness::Unknown) | None => unclassified += 1,
         }
     }
     let staleness_elapsed = t0.elapsed();

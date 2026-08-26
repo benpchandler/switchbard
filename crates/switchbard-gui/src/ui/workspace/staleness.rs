@@ -76,7 +76,18 @@ pub(super) fn render_staleness_badge(ui: &mut egui::Ui, m: &WorktreeMeta) {
     match &m.staleness {
         None => {
             ui.label(egui::RichText::new("staleness ...").color(theme::weak_text()))
-                .on_hover_text("Merged/Orphan/Live probe pending or failed");
+                .on_hover_text("Merged/Orphan/Live probe hasn't returned yet");
+        }
+        // Distinct from `None`: the probe ran and git could not answer. It
+        // used to fall through to `orphan`, quietly nominating a worktree for
+        // retirement on no evidence at all.
+        Some(WorktreeStaleness::Unknown) => {
+            status_pill(
+                ui,
+                StatusKind::Warn,
+                "staleness ?",
+                Some("git couldn't say whether this branch is merged or tracked"),
+            );
         }
         Some(WorktreeStaleness::Merged { base }) => {
             status_pill(
@@ -169,7 +180,9 @@ pub(super) fn compute_counts(snap: &Snapshot) -> StalenessCounts {
             Some(WorktreeStaleness::Merged { .. }) => counts.merged += 1,
             Some(WorktreeStaleness::Orphan) => counts.orphan += 1,
             Some(WorktreeStaleness::Live) => counts.live += 1,
-            None => {}
+            // An unclassifiable worktree is claimed by no chip: putting it
+            // under one would assert the very thing the probe couldn't.
+            Some(WorktreeStaleness::Unknown) | None => {}
         }
         if m.is_dirty() == Some(true) {
             counts.dirty += 1;

@@ -21,8 +21,8 @@
 use crate::app::HiveApp;
 use crate::runtime::worktree_names::worktree_display_name;
 use crate::runtime::{
-    delete_safety_criteria, ActiveRun, ActivityLevel, ConfirmRemoveWorktree, DeleteSafetyCriterion,
-    DeleteSafetyCriterionKind, RowState, WorktreeMeta, WorktreeSizeEntry,
+    dispatch_run_holds_worktree, removal_facts, ActiveRun, ActivityLevel, ConfirmRemoveWorktree,
+    RowState, WorktreeMeta, WorktreeSizeEntry,
 };
 use crate::ui::components::{
     branch_label, mono_label, path_cell, status_pill, weak_dots, Chip, StatusKind,
@@ -33,8 +33,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use switchbard_core::{
-    default_port_for_service, humanize_age, resolve, AttributedListener, DetectedService,
-    DriftProbe, Repo, ResolvedService, ServerLikelihood, ServiceSource, WorktreeRef,
+    default_port_for_service, humanize_age, resolve, AttachedProcesses, AttributedListener,
+    CheckOutcome, DetectedService, DriftProbe, RemovalCheck, RemovalIntent, RemovalSafety,
+    RemovalVerdict, Repo, ResolvedService, ServerLikelihood, ServiceSource, WorktreeRef,
 };
 
 mod bulk_remove;
@@ -146,6 +147,12 @@ struct Snapshot {
     listeners_by_wt: HashMap<PathBuf, Vec<AttributedListener>>,
     unattributed: Vec<AttributedListener>,
     active_runs: HashMap<i32, ActiveRun>,
+    /// How many dispatch agent runs still hold each worktree. A count rather
+    /// than the runs themselves: `HiveApp::dispatch_runs` is rebuilt per
+    /// frame and cloning every `DispatchRun` into the snapshot would put a
+    /// pile of `PathBuf`s on the render path for a number the row needs one
+    /// integer of. Only worktrees with a live run appear at all.
+    dispatch_holds_by_wt: HashMap<PathBuf, usize>,
     by_port: HashMap<u16, AttributedListener>,
     ports_by_pgid: HashMap<i32, Vec<u16>>,
     filter_lc: String,
@@ -186,6 +193,15 @@ impl Snapshot {
             v.dedup();
         }
 
+        let mut dispatch_holds_by_wt: HashMap<PathBuf, usize> = HashMap::new();
+        for run in app.dispatch_runs.lock().unwrap().values() {
+            if dispatch_run_holds_worktree(&run.liveness) {
+                *dispatch_holds_by_wt
+                    .entry(run.worktree_path.clone())
+                    .or_default() += 1;
+            }
+        }
+
         Self {
             repos: app.repos_snapshot(),
             worktrees: app.worktrees_snapshot(),
@@ -195,6 +211,7 @@ impl Snapshot {
             listeners_by_wt,
             unattributed,
             active_runs,
+            dispatch_holds_by_wt,
             by_port,
             ports_by_pgid,
             filter_lc: app.filter.to_lowercase(),
@@ -547,8 +564,7 @@ fn render_worktree_summary_line(ui: &mut egui::Ui, summary: WorktreeSummary<'_>,
         ui,
         summary.is_primary,
         summary.meta,
-        summary.listener_count,
-        active_run_count_for_worktree(snap, &summary.worktree.path),
+        attached_processes(snap, &summary.worktree.path, summary.listener_count),
     );
 }
 
@@ -758,50 +774,53 @@ fn render_activity_inline(ui: &mut egui::Ui, m: &WorktreeMeta) {
     status_pill(ui, kind, full, Some(&tip));
 }
 
+/// The row's one-word answer to "can this go", plus the full check list on
+/// hover. Every rule behind it lives in `switchbard_core::removal_safety`;
+/// this function only picks a colour.
+///
+/// The intent is [`RemovalIntent::WorktreeAndBranch`] because that is what
+/// the bulk sweep does - it defaults its "also delete branches" box on - and
+/// a row that reads green while the sweep routes it to "needs review" is the
+/// exact disagreement this whole module was collapsed to remove.
 fn render_delete_safety_inline(
     ui: &mut egui::Ui,
     is_primary: bool,
     m: &WorktreeMeta,
-    listener_count: usize,
-    active_run_count: usize,
+    attached: AttachedProcesses,
 ) {
     ui.add_space(4.0);
-    let criteria = delete_safety_criteria(is_primary, m, listener_count, active_run_count);
-    let passed = criteria
-        .iter()
-        .filter(|criterion| criterion.satisfied)
-        .count();
-    let total = criteria.len();
-    let linked = criteria
-        .iter()
-        .find(|criterion| criterion.kind == DeleteSafetyCriterionKind::LinkedWorktree)
-        .is_some_and(|criterion| criterion.satisfied);
-    let (kind, label) = if !linked {
-        (StatusKind::Neutral, "primary".to_string())
-    } else if passed == total {
-        (StatusKind::Good, "remove ok".to_string())
-    } else {
-        (StatusKind::Danger, format!("remove {passed}/{total}"))
+    let facts = removal_facts(is_primary, m, attached);
+    let safety = RemovalSafety::evaluate(&facts, RemovalIntent::WorktreeAndBranch);
+    // Blocked is amber, not red. For a worktree someone is actively working
+    // in, "you can't delete this" is the correct and expected state, not an
+    // error - the old badge painted that case in danger red every time. Red
+    // here would train the eye to ignore it.
+    let kind = match safety.verdict() {
+        RemovalVerdict::Primary | RemovalVerdict::Checking => StatusKind::Neutral,
+        RemovalVerdict::Safe => StatusKind::Good,
+        RemovalVerdict::Blocked => StatusKind::Warn,
     };
-    let tooltip = delete_safety_tooltip(&criteria);
-    status_pill(ui, kind, label, Some(&tooltip));
+    status_pill(ui, kind, safety.headline(), Some(&safety.tooltip()));
 }
 
-fn delete_safety_tooltip(criteria: &[DeleteSafetyCriterion]) -> String {
-    let mut lines = Vec::with_capacity(criteria.len() + 1);
-    lines.push("Safe-delete checks".to_string());
-    for criterion in criteria {
-        let checkbox = if criterion.satisfied { "[x]" } else { "[ ]" };
-        lines.push(format!("{checkbox} {}", criterion.tooltip));
+/// Everything holding on to this worktree, from the three independent places
+/// that know: the port scanner, this instance's started services, and the
+/// dispatch run table.
+///
+/// The dispatch half is the one the old check could not see at all. A
+/// dispatched agent writes into a worktree without necessarily listening on
+/// any port and without having been started by `spawn_start`, so a run in
+/// flight read as "nothing running here".
+fn attached_processes(snap: &Snapshot, wt_path: &Path, listener_count: usize) -> AttachedProcesses {
+    AttachedProcesses {
+        listeners: listener_count,
+        switchbard_runs: snap
+            .active_runs
+            .values()
+            .filter(|run| run.worktree_path == wt_path)
+            .count(),
+        dispatch_runs: snap.dispatch_holds_by_wt.get(wt_path).copied().unwrap_or(0),
     }
-    lines.join("\n")
-}
-
-fn active_run_count_for_worktree(snap: &Snapshot, wt_path: &Path) -> usize {
-    snap.active_runs
-        .values()
-        .filter(|run| run.worktree_path == wt_path)
-        .count()
 }
 
 // ── services strip ──────────────────────────────────────────────────────
@@ -1394,6 +1413,10 @@ fn render_remove_worktree_modal(app: &mut HiveApp, ui: &mut egui::Ui) {
                 ))
                 .strong(),
             );
+            // The same five lines the row badge shows on hover. Rendered
+            // before the detail sections so the user reads the verdict first
+            // and the enumeration second.
+            render_shared_checks(ui, &state);
             render_branch_delete_section(ui, &state, &mut delete_branch);
 
             if has_runs {
@@ -1482,12 +1505,43 @@ fn render_remove_worktree_modal(app: &mut HiveApp, ui: &mut egui::Ui) {
     }
 }
 
-/// The branch-cleanup row of the remove-worktree dialog. Mirrors the worktree's
-/// own "safe to remove" reasoning for the branch behind it:
+/// The shared `RemovalSafety` check list - the same sentences the Workspace
+/// row shows on hover, so a user who saw "remove blocked" there reads the
+/// identical reason here instead of a second opinion.
+///
+/// Deliberately [`RemovalIntent::WorktreeOnly`]: the `WorkLanded` line is
+/// owned by the branch checkbox immediately below, which has to state it
+/// anyway to explain what ticking the box would cost. Including it here too
+/// would print the same sentence twice.
+///
+/// Failures are shown, not enforced. This dialog can force past a dirty tree
+/// (that is what it is for), so its job is to make sure the user knows
+/// exactly what they are forcing past.
+fn render_shared_checks(ui: &mut egui::Ui, state: &ConfirmRemoveWorktree) {
+    let safety = RemovalSafety::evaluate(&state.removal_facts, RemovalIntent::WorktreeOnly);
+    ui.add_space(6.0);
+    for check in safety.checks() {
+        let color = match check.outcome {
+            CheckOutcome::Pass => theme::weak_text(),
+            CheckOutcome::Fail | CheckOutcome::Unknown => theme::amber(),
+            CheckOutcome::Pending => theme::weak_text(),
+        };
+        ui.colored_label(
+            color,
+            format!("{} {}", check.outcome.marker(), check.detail),
+        );
+    }
+}
+
+/// The branch-cleanup row of the remove-worktree dialog:
 ///   - detached HEAD → nothing to offer;
 ///   - checked out elsewhere → git refuses, so show why instead of a checkbox;
-///   - fully landed → a plain opt-in checkbox;
-///   - unlanded commits → a loud, force-delete checkbox that spells out the loss.
+///   - otherwise a checkbox, loud when the shared `WorkLanded` check says the
+///     work has not landed.
+///
+/// "Has it landed" is read from the shared evaluation, never re-derived here.
+/// `BranchDeleteAssessment` is consulted only for `is_blocked` - a different
+/// question (would git accept the command) that is not a safety check.
 fn render_branch_delete_section(
     ui: &mut egui::Ui,
     state: &ConfirmRemoveWorktree,
@@ -1517,33 +1571,30 @@ fn render_branch_delete_section(
         return;
     }
 
-    if assessment.needs_force() {
-        let base = assessment.compared_against.as_deref().unwrap_or("main");
-        let n = assessment.unmerged_count();
-        let detail = if n > 0 {
-            format!("{n} commit{} not in {base} will be lost", plural_s(n))
-        } else {
-            format!("can't confirm it's merged into {base}")
-        };
-        ui.checkbox(
-            delete_branch,
-            egui::RichText::new(format!("⚠ Force-delete branch '{branch}' ({detail})"))
-                .color(theme::danger()),
-        );
-    } else {
-        let base = assessment.compared_against.as_deref().unwrap_or("main");
-        ui.checkbox(
-            delete_branch,
-            format!("Also delete branch '{branch}' (merged into {base})"),
-        );
-    }
-}
+    // One question, one answer: does the shared `WorkLanded` check pass?
+    let landed = RemovalSafety::evaluate(&state.removal_facts, RemovalIntent::WorktreeAndBranch)
+        .checks()
+        .iter()
+        .find(|c| c.check == RemovalCheck::WorkLanded)
+        .map(|c| (c.outcome, c.detail.clone()));
 
-fn plural_s(n: u32) -> &'static str {
-    if n == 1 {
-        ""
-    } else {
-        "s"
+    match landed {
+        Some((CheckOutcome::Pass, detail)) => {
+            ui.checkbox(
+                delete_branch,
+                format!("Also delete branch '{branch}' ({})", detail.to_lowercase()),
+            );
+        }
+        Some((_, detail)) => {
+            ui.checkbox(
+                delete_branch,
+                egui::RichText::new(format!("⚠ Force-delete branch '{branch}' - {detail}"))
+                    .color(theme::danger()),
+            );
+        }
+        None => {
+            ui.label(format!("Branch '{branch}' will remain after removal."));
+        }
     }
 }
 
@@ -1664,27 +1715,6 @@ mod tests {
         assert!(!is_noteworthy(&[], &meta, false));
     }
 
-    #[test]
-    fn delete_safety_tooltip_uses_checkbox_lines() {
-        let criteria = vec![
-            DeleteSafetyCriterion {
-                kind: DeleteSafetyCriterionKind::LinkedWorktree,
-                satisfied: true,
-                tooltip: "Linked worktree can be removed without dropping the repo".to_string(),
-            },
-            DeleteSafetyCriterion {
-                kind: DeleteSafetyCriterionKind::FilesClear,
-                satisfied: false,
-                tooltip: "2 changed/untracked files need review".to_string(),
-            },
-        ];
-
-        assert_eq!(
-            delete_safety_tooltip(&criteria),
-            "Safe-delete checks\n[x] Linked worktree can be removed without dropping the repo\n[ ] 2 changed/untracked files need review"
-        );
-    }
-
     fn empty_snap() -> Snapshot {
         Snapshot {
             repos: Vec::new(),
@@ -1695,6 +1725,7 @@ mod tests {
             listeners_by_wt: HashMap::new(),
             unattributed: Vec::new(),
             active_runs: HashMap::new(),
+            dispatch_holds_by_wt: HashMap::new(),
             by_port: HashMap::new(),
             ports_by_pgid: HashMap::new(),
             filter_lc: String::new(),

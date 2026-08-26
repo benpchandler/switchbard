@@ -19,10 +19,11 @@ pub mod worktrees;
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use switchbard_core::dispatch_inspect::DispatchRunLiveness;
 use switchbard_core::{
-    AgentKind, AttributedListener, BranchDeleteAssessment, CommitSummary, ContextKind,
-    ContextScope, DirtyFile, DriftDetail, DriftProbe, OrderingOverlay, Repo, WorktreeRef,
-    WorktreeStaleness,
+    AgentKind, AttachedProcesses, AttributedListener, BranchDeleteAssessment, CommitSummary,
+    ContextKind, ContextScope, DirtyFile, DriftDetail, DriftProbe, Fact, Landed, OrderingOverlay,
+    RemovalFacts, Repo, WorktreeRef, WorktreeStaleness,
 };
 
 /// The cross-repo triage overlay (`<hub repo>/ordering.yml`), refreshed by
@@ -573,7 +574,18 @@ pub struct ConfirmRemoveWorktree {
     /// Local git facts about deleting `branch`, computed when the dialog opens.
     /// `None` when the worktree has no branch (detached HEAD) — no deletion
     /// option is offered in that case.
+    ///
+    /// Narrower than it looks: the only question this still answers for the
+    /// dialog is [`BranchDeleteAssessment::is_blocked`] - would git accept
+    /// `branch -d` at all. Whether the work *landed* comes from
+    /// `removal_facts` like everywhere else, so the dialog cannot disagree
+    /// with the row badge that sent the user here.
     pub branch_assessment: Option<BranchDeleteAssessment>,
+    /// The shared safety facts, probed synchronously at open time. Evaluated
+    /// per-frame at the intent the checkbox currently implies, so ticking
+    /// "also delete the branch" re-reads the same rule set rather than
+    /// switching to a parallel one.
+    pub removal_facts: RemovalFacts,
     /// The "also delete the branch" checkbox. Defaults off; only meaningful
     /// when `branch_assessment` is present and not blocked.
     pub delete_branch: bool,
@@ -677,6 +689,11 @@ pub struct WorktreeMeta {
     /// git-probe worker tick as `main_drift`/`remote_drift`. `None` while the
     /// probe hasn't returned yet.
     pub staleness: Option<WorktreeStaleness>,
+    /// Whether git holds a lock on this worktree, and why. A locked worktree
+    /// is one `git worktree remove` refuses outright, so the row's badge has
+    /// to know before it can promise a removal will work. Defaults to
+    /// [`Fact::Pending`].
+    pub lock: Fact<Option<String>>,
 }
 
 /// Cached on-disk size for one worktree (TASK-41). Lives in its own
@@ -827,133 +844,85 @@ impl WorktreeMeta {
     }
 }
 
-/// One locally-verifiable criterion behind "safe to delete this worktree".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeleteSafetyCriterionKind {
-    LinkedWorktree,
-    FilesClear,
-    NoProcesses,
-}
-
-impl DeleteSafetyCriterionKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::LinkedWorktree => "linked worktree",
-            Self::FilesClear => "files clear",
-            Self::NoProcesses => "no processes",
-        }
+/// Whether a dispatch agent run still has a claim on its worktree.
+///
+/// The one rule, because two places count these: the Workspace row (from its
+/// per-frame snapshot) and `HiveApp::attached_processes` (from the live
+/// locks). They read different sources for good reason; they must not apply
+/// different rules to what they read.
+///
+/// Fails closed on [`DispatchRunLiveness::Unverifiable`]. A sidecar that
+/// cannot be authenticated is not proof the agent is gone, and treating
+/// "can't tell" as "finished" is exactly how a live agent's worktree gets
+/// swept out from under it.
+pub fn dispatch_run_holds_worktree(liveness: &DispatchRunLiveness) -> bool {
+    match liveness {
+        DispatchRunLiveness::Alive { .. } | DispatchRunLiveness::Unverifiable(_) => true,
+        DispatchRunLiveness::NoSidecar | DispatchRunLiveness::Gone => false,
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeleteSafetyCriterion {
-    pub kind: DeleteSafetyCriterionKind,
-    pub satisfied: bool,
-    pub tooltip: String,
-}
-
-pub fn delete_safety_criteria(
+/// Adapt this worktree's *cached* probe state into the shared
+/// [`RemovalFacts`], so the Workspace row's badge is the exact same rule set
+/// the two confirm dialogs run - see `switchbard_core::removal_safety`.
+///
+/// The row is the one caller that legitimately has no answer yet: its facts
+/// come from background workers on a cadence, not from a synchronous git
+/// call. Every `None` here therefore maps to [`Fact::Pending`], which renders
+/// as "checking" rather than as a blocker.
+///
+/// Known limitation, deliberate and bounded: [`WorktreeMeta`]'s fields use
+/// `None` for *both* "not probed yet" and "the probe failed", a convention
+/// that predates this module. A persistently failing probe therefore reads as
+/// perpetually checking on the row instead of as blocked. That is a cosmetic
+/// degradation and never a false green - and the surfaces that actually
+/// remove things do not come through here at all. They call
+/// `removal_safety::probe_facts`, which distinguishes the two properly.
+pub fn removal_facts(
     is_primary: bool,
     meta: &WorktreeMeta,
-    listener_count: usize,
-    active_run_count: usize,
-) -> Vec<DeleteSafetyCriterion> {
-    let (files_clear, files_tip) =
-        files_safe_to_delete(meta.dirty_files.as_deref(), meta.ignored_files.as_ref());
-    let no_processes = listener_count == 0 && active_run_count == 0;
-    let process_tip = match (listener_count, active_run_count) {
-        (0, 0) => "No attributed listeners or Switchbard runs".to_string(),
-        (listeners, runs) => format!(
-            "{listeners} attributed listener{} and {runs} Switchbard run{} still tied here",
-            plural(listeners),
-            plural(runs)
-        ),
-    };
-
-    vec![
-        DeleteSafetyCriterion {
-            kind: DeleteSafetyCriterionKind::LinkedWorktree,
-            satisfied: !is_primary,
-            tooltip: if is_primary {
-                "Primary checkout cannot be removed here".to_string()
-            } else {
-                "Linked worktree can be removed without dropping the repo".to_string()
-            },
+    attached: AttachedProcesses,
+) -> RemovalFacts {
+    RemovalFacts {
+        is_primary,
+        lock: meta.lock.clone(),
+        dirty_files: match &meta.dirty_files {
+            Some(files) => Fact::Known(files.len()),
+            None => Fact::Pending,
         },
-        DeleteSafetyCriterion {
-            kind: DeleteSafetyCriterionKind::FilesClear,
-            satisfied: files_clear,
-            tooltip: files_tip,
-        },
-        DeleteSafetyCriterion {
-            kind: DeleteSafetyCriterionKind::NoProcesses,
-            satisfied: no_processes,
-            tooltip: process_tip,
-        },
-    ]
-}
-
-fn files_safe_to_delete(
-    dirty_files: Option<&[String]>,
-    ignored_files: Option<&FileListSummary>,
-) -> (bool, String) {
-    let Some(dirty) = dirty_files else {
-        return (false, "File check pending or failed".to_string());
-    };
-    let ignored = ignored_files;
-    if dirty.is_empty() {
-        let ignored_note = ignored_summary_note(ignored, " would also be removed");
-        return (
-            true,
-            format!("No uncommitted or untracked files{ignored_note}"),
-        );
+        ignored_files: meta.ignored_files.as_ref().map(|i| i.total),
+        landed: landed_from_staleness(meta),
+        // Listener and run counts are always available: they come from an
+        // in-memory scan the caller has already done, not from a probe that
+        // can be outstanding.
+        attached: Fact::Known(attached),
     }
-
-    let ignored_note = ignored_summary_note(ignored, " also present");
-    let review_verb = if dirty.len() == 1 { "needs" } else { "need" };
-    (
-        false,
-        format!(
-            "{} changed/untracked file{} {review_verb} review{}",
-            format_count(dirty.len()),
-            plural(dirty.len()),
-            ignored_note
-        ),
-    )
 }
 
-fn ignored_summary_note(ignored: Option<&FileListSummary>, suffix: &str) -> String {
-    let Some(ignored) = ignored else {
-        return String::new();
-    };
-    if ignored.is_empty() {
-        return String::new();
-    }
-    format!(
-        "; {} ignored file{}{}",
-        format_count(ignored.total),
-        plural(ignored.total),
-        suffix
-    )
-}
-
-fn format_count(count: usize) -> String {
-    let digits = count.to_string();
-    let mut reversed = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, ch) in digits.chars().rev().enumerate() {
-        if index > 0 && index % 3 == 0 {
-            reversed.push(',');
+/// Reuse the Merged/Orphan/Live badge's own probe as the row's "did the work
+/// land" fact, rather than issuing a second git call per row per frame.
+///
+/// The two cannot disagree: `probe_worktree_staleness` and
+/// `assess_branch_delete` both go through `worktree_remove::commits_ahead`.
+/// The badge only records *whether* the ahead-count was zero, so a non-merged
+/// worktree reports [`Landed::No`] with no count attached: enough to fail the
+/// check honestly, without printing a number nothing measured. The dialogs,
+/// which have room for it, call `probe_facts` and get the real count.
+fn landed_from_staleness(meta: &WorktreeMeta) -> Fact<Landed> {
+    match &meta.staleness {
+        None => Fact::Pending,
+        Some(WorktreeStaleness::Unknown) => {
+            Fact::Unavailable("Couldn't work out whether this branch landed".to_string())
         }
-        reversed.push(ch);
-    }
-    reversed.chars().rev().collect()
-}
-
-fn plural(count: usize) -> &'static str {
-    if count == 1 {
-        ""
-    } else {
-        "s"
+        Some(WorktreeStaleness::Merged { base }) => Fact::Known(Landed::Yes { base: base.clone() }),
+        // Orphan and Live are both "probed, and not contained in the base".
+        // Neither carries a commit count - the badge only ever recorded
+        // whether the count was zero - so both report an unmeasured `No`
+        // rather than inventing a number the row could print.
+        Some(WorktreeStaleness::Orphan | WorktreeStaleness::Live) => Fact::Known(Landed::No {
+            commits: None,
+            base: None,
+        }),
     }
 }
 
@@ -1087,47 +1056,6 @@ mod tests {
     }
 
     #[test]
-    fn delete_safety_criteria_are_green_for_linked_clean_idle_worktree() {
-        let meta = WorktreeMeta {
-            dirty_files: Some(vec![]),
-            ignored_files: Some(FileListSummary::from_lines(vec![], 4)),
-            main_drift: ready_probe(4, 3, "main"),
-            remote_drift: ready_probe(2, 1, "origin/feature"),
-            ..Default::default()
-        };
-
-        let criteria = delete_safety_criteria(false, &meta, 0, 0);
-
-        assert_eq!(criteria.len(), 3);
-        assert!(criteria.iter().all(|criterion| criterion.satisfied));
-        assert!(criteria
-            .iter()
-            .any(|criterion| criterion.kind == DeleteSafetyCriterionKind::LinkedWorktree));
-        assert!(criteria
-            .iter()
-            .any(|criterion| criterion.kind == DeleteSafetyCriterionKind::FilesClear));
-    }
-
-    #[test]
-    fn delete_safety_criteria_treat_ignored_files_as_context_not_blockers() {
-        let meta = WorktreeMeta {
-            dirty_files: Some(vec![]),
-            ignored_files: Some(FileListSummary::from_lines(vec!["!! .env".to_string()], 4)),
-            ..Default::default()
-        };
-
-        let criteria = delete_safety_criteria(false, &meta, 0, 0);
-        let files = criteria
-            .iter()
-            .find(|criterion| criterion.kind == DeleteSafetyCriterionKind::FilesClear)
-            .unwrap();
-
-        assert!(files.satisfied);
-        assert!(files.tooltip.contains("No uncommitted or untracked files"));
-        assert!(files.tooltip.contains("1 ignored"));
-    }
-
-    #[test]
     fn ignored_file_summary_keeps_total_and_bounded_preview() {
         let summary = FileListSummary::from_lines(
             vec![
@@ -1142,77 +1070,167 @@ mod tests {
         assert_eq!(summary.preview, vec!["!! target/", "!! node_modules/"]);
     }
 
+    /// A worktree whose cached probes all came back clean must evaluate to
+    /// the same verdict the sweep would reach - that agreement is the whole
+    /// reason this adapter exists.
     #[test]
-    fn delete_safety_ignored_file_message_is_count_only() {
+    fn cached_probes_for_a_clean_merged_idle_worktree_evaluate_to_safe() {
+        let meta = WorktreeMeta {
+            dirty_files: Some(vec![]),
+            ignored_files: Some(FileListSummary::from_lines(vec![], 4)),
+            main_drift: ready_probe(4, 3, "main"),
+            remote_drift: ready_probe(2, 1, "origin/feature"),
+            staleness: Some(WorktreeStaleness::Merged {
+                base: "main".into(),
+            }),
+            lock: Fact::Known(None),
+            ..Default::default()
+        };
+
+        let facts = removal_facts(false, &meta, AttachedProcesses::default());
+        let safety = switchbard_core::RemovalSafety::evaluate(
+            &facts,
+            switchbard_core::RemovalIntent::WorktreeAndBranch,
+        );
+        assert_eq!(
+            safety.verdict(),
+            switchbard_core::RemovalVerdict::Safe,
+            "{}",
+            safety.tooltip()
+        );
+    }
+
+    /// `WorktreeMeta`'s `None` means "no answer yet", and the adapter must
+    /// carry that through as `Pending`. A half-probed row that evaluated to
+    /// `Safe` would be a green light nothing verified.
+    #[test]
+    fn an_unprobed_worktree_defers_rather_than_passing() {
+        let facts = removal_facts(
+            false,
+            &WorktreeMeta::default(),
+            AttachedProcesses::default(),
+        );
+        assert_eq!(facts.dirty_files, Fact::Pending);
+        assert_eq!(facts.landed, Fact::Pending);
+        assert_eq!(facts.lock, Fact::Pending);
+        let safety = switchbard_core::RemovalSafety::evaluate(
+            &facts,
+            switchbard_core::RemovalIntent::WorktreeAndBranch,
+        );
+        assert_eq!(safety.verdict(), switchbard_core::RemovalVerdict::Checking);
+    }
+
+    /// The bug the row badge shipped with: merged-ness was not one of its
+    /// checks, so an unlanded worktree read "remove ok" on the row while the
+    /// sweep routed it to "needs review" in the same frame.
+    #[test]
+    fn an_unlanded_worktree_no_longer_reads_as_removable() {
+        let meta = WorktreeMeta {
+            dirty_files: Some(vec![]),
+            staleness: Some(WorktreeStaleness::Live),
+            lock: Fact::Known(None),
+            ..Default::default()
+        };
+
+        let facts = removal_facts(false, &meta, AttachedProcesses::default());
+        let safety = switchbard_core::RemovalSafety::evaluate(
+            &facts,
+            switchbard_core::RemovalIntent::WorktreeAndBranch,
+        );
+        assert_eq!(safety.verdict(), switchbard_core::RemovalVerdict::Blocked);
+        assert!(safety
+            .blocking_reason()
+            .unwrap()
+            .contains("Not fully merged"));
+    }
+
+    /// The badge never measured a commit count, so the adapter must not
+    /// invent one for the row to print.
+    #[test]
+    fn an_unlanded_worktree_reports_no_commit_count_it_never_measured() {
+        let meta = WorktreeMeta {
+            staleness: Some(WorktreeStaleness::Orphan),
+            ..Default::default()
+        };
+        assert_eq!(
+            removal_facts(false, &meta, AttachedProcesses::default()).landed,
+            Fact::Known(Landed::No {
+                commits: None,
+                base: None
+            })
+        );
+    }
+
+    /// A failed staleness probe must block, not silently pass and not be
+    /// mistaken for "still loading".
+    #[test]
+    fn an_unclassifiable_worktree_blocks_rather_than_passing() {
+        let meta = WorktreeMeta {
+            dirty_files: Some(vec![]),
+            staleness: Some(WorktreeStaleness::Unknown),
+            lock: Fact::Known(None),
+            ..Default::default()
+        };
+
+        let facts = removal_facts(false, &meta, AttachedProcesses::default());
+        assert!(matches!(facts.landed, Fact::Unavailable(_)));
+        let safety = switchbard_core::RemovalSafety::evaluate(
+            &facts,
+            switchbard_core::RemovalIntent::WorktreeAndBranch,
+        );
+        assert_eq!(safety.verdict(), switchbard_core::RemovalVerdict::Blocked);
+    }
+
+    #[test]
+    fn ignored_files_reach_the_shared_rules_as_a_count_only() {
         let meta = WorktreeMeta {
             dirty_files: Some(vec![]),
             ignored_files: Some(FileListSummary::from_lines(
                 vec!["!! target/".to_string(), "!! node_modules/".to_string()],
                 2,
             )),
+            staleness: Some(WorktreeStaleness::Merged {
+                base: "main".into(),
+            }),
+            lock: Fact::Known(None),
             ..Default::default()
         };
 
-        let criteria = delete_safety_criteria(false, &meta, 0, 0);
-        let files = criteria
-            .iter()
-            .find(|criterion| criterion.kind == DeleteSafetyCriterionKind::FilesClear)
-            .unwrap();
-
-        assert_eq!(
-            files.tooltip,
-            "No uncommitted or untracked files; 2 ignored files would also be removed"
+        let facts = removal_facts(false, &meta, AttachedProcesses::default());
+        assert_eq!(facts.ignored_files, Some(2));
+        let safety = switchbard_core::RemovalSafety::evaluate(
+            &facts,
+            switchbard_core::RemovalIntent::WorktreeAndBranch,
         );
+        assert_eq!(safety.verdict(), switchbard_core::RemovalVerdict::Safe);
+        assert!(safety
+            .tooltip()
+            .contains("2 ignored files would also be deleted"));
     }
 
+    /// A dispatched agent holds its worktree; an unauthenticatable sidecar is
+    /// not proof it let go.
     #[test]
-    fn delete_safety_criteria_block_on_dirty_or_untracked_files() {
-        let meta = WorktreeMeta {
-            dirty_files: Some(vec![
-                " M src/main.rs".to_string(),
-                "?? scratch.txt".to_string(),
-            ]),
-            ignored_files: Some(FileListSummary::from_lines(
-                vec!["!! target/".to_string()],
-                4,
+    fn a_dispatch_run_holds_its_worktree_unless_proven_gone() {
+        use switchbard_core::dispatch_inspect::{DispatchRunLiveness, SidecarDoubt};
+
+        assert!(dispatch_run_holds_worktree(&DispatchRunLiveness::Alive {
+            pgid: 42,
+            supervised: true
+        }));
+        assert!(dispatch_run_holds_worktree(&DispatchRunLiveness::Alive {
+            pgid: 42,
+            supervised: false
+        }));
+        assert!(
+            dispatch_run_holds_worktree(&DispatchRunLiveness::Unverifiable(
+                SidecarDoubt::ProbeFailed
             )),
-            ..Default::default()
-        };
-
-        let criteria = delete_safety_criteria(false, &meta, 0, 0);
-        let files = criteria
-            .iter()
-            .find(|criterion| criterion.kind == DeleteSafetyCriterionKind::FilesClear)
-            .unwrap();
-
-        assert!(!files.satisfied);
-        assert!(files.tooltip.contains("2 changed/untracked"));
-    }
-
-    #[test]
-    fn primary_or_busy_worktree_is_not_safe_to_delete() {
-        let meta = WorktreeMeta {
-            dirty_files: Some(vec![]),
-            ignored_files: Some(FileListSummary::from_lines(vec![], 4)),
-            ..Default::default()
-        };
-
-        let criteria = delete_safety_criteria(true, &meta, 1, 1);
-
-        assert_eq!(criteria.len(), 3);
-        assert!(
-            !criteria
-                .iter()
-                .find(|criterion| criterion.kind == DeleteSafetyCriterionKind::LinkedWorktree)
-                .unwrap()
-                .satisfied
+            "a sidecar we can't authenticate is not proof the agent is gone"
         );
-        assert!(
-            !criteria
-                .iter()
-                .find(|criterion| criterion.kind == DeleteSafetyCriterionKind::NoProcesses)
-                .unwrap()
-                .satisfied
-        );
+        assert!(!dispatch_run_holds_worktree(&DispatchRunLiveness::Gone));
+        assert!(!dispatch_run_holds_worktree(
+            &DispatchRunLiveness::NoSidecar
+        ));
     }
 }

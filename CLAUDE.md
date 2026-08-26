@@ -49,6 +49,7 @@ Re-exports are **explicit in `src/lib.rs`** (no glob re-exports). Module map:
 - `attribution` — joins listeners to `WorktreeRef`s by longest-prefix match on `cwd`.
 - `worktree` — `enumerate_worktrees()` shells out to `git worktree list`.
 - `worktree_remove` — dirty-file collection + `remove_worktree()`. The only destructive git op in core.
+- `removal_safety` — **the** definition of "safe to remove a worktree": five named checks, tri-state facts, one verdict. The Workspace row badge, the bulk sweep, and the single-row confirm dialog all evaluate this and nothing else. Only `RemovalVerdict::Safe` may be acted on without an explicit force gesture; an unanswered check never counts as a passed one.
 - `worktree_create` — `validate_refish()` rejects empty / whitespace / leading-dash refish before `git worktree add` (the repo's one true untrusted-input boundary — Rule 5).
 - `workflow` — `detect_services()`: parses Procfile/package.json/Makefile/compose/scripts into `DetectedService`.
 - `classify` — heuristic `Server` / `Maybe` / `NotServer` verdict per entry point.

@@ -26,9 +26,9 @@ use crate::runtime::worktree_create::{CreateWorktreeDialog, CreateWorktreeOutcom
 use crate::runtime::worktree_rename::RenameWorktreeDialog;
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
-    ActiveRun, ActiveRunSummary, AgentContextViewState, BacklogTaskKey, BacklogViewState,
-    BoardMoveOutcome, ConfirmBulkRemoveWorktrees, ConfirmRemoveWorktree, OrderingState,
-    PickerState, ViewTab, WorktreeMeta, WorktreeSizeEntry,
+    dispatch_run_holds_worktree, ActiveRun, ActiveRunSummary, AgentContextViewState,
+    BacklogTaskKey, BacklogViewState, BoardMoveOutcome, ConfirmBulkRemoveWorktrees,
+    ConfirmRemoveWorktree, OrderingState, PickerState, ViewTab, WorktreeMeta, WorktreeSizeEntry,
 };
 use crate::sync::{Kick, Progress, Status};
 use crate::ui;
@@ -48,9 +48,9 @@ use switchbard_core::instance_lock::{self, AcquireError, InstanceLock};
 use switchbard_core::{
     assess_branch_delete, collect_dirty_files, config, delete_branch, is_primary_worktree,
     kill_dispatch_run, kill_pgid, load_agent_context_cache, load_backlog_project, open_url,
-    remove_worktree, spawn_in_session, url_for_port, AgentContextMap, AttributedListener,
-    BacklogProject, BacklogTaskPatch, DetectedService, KillOutcome, NewBacklogTask, Repo,
-    WorktreeRef, BROWSER_APP_NAMES,
+    probe_facts, remove_worktree, spawn_in_session, url_for_port, AgentContextMap,
+    AttachedProcesses, AttributedListener, BacklogProject, BacklogTaskPatch, DetectedService, Fact,
+    KillOutcome, NewBacklogTask, Repo, WorktreeRef, BROWSER_APP_NAMES,
 };
 
 /// One `backlog` CLI writer's per-task serialization registry (task-42,
@@ -630,6 +630,16 @@ impl HiveApp {
         let branch_assessment = branch
             .as_ref()
             .map(|b| assess_branch_delete(&repo_path, b, &worktree_path));
+        // The shared safety facts, probed fresh at open time like everything
+        // else here. The dialog renders the same check list the Workspace row
+        // shows on hover, so a user who saw "remove blocked" on the row reads
+        // the identical sentence here rather than a second opinion.
+        let removal_facts = probe_facts(
+            &repo_path,
+            &worktree_path,
+            branch.as_deref(),
+            Fact::Known(self.attached_processes(&worktree_path)),
+        );
         *self.confirm_remove_worktree.lock().unwrap() = Some(ConfirmRemoveWorktree {
             repo_path,
             worktree_path,
@@ -637,6 +647,7 @@ impl HiveApp {
             dirty_files,
             active_runs,
             branch_assessment,
+            removal_facts,
             delete_branch: false,
             busy: false,
             error: None,
@@ -646,6 +657,43 @@ impl HiveApp {
     /// Active runs whose `worktree_path` matches, projected to the lightweight
     /// summary the dialog renders. Used at dialog-open time AND at confirm
     /// time so the worker thread can detect drift before signaling anything.
+    /// Everything currently holding on to `worktree_path`, gathered from the
+    /// three independent places that know: the port scanner's attribution,
+    /// this instance's started services, and the dispatch run table.
+    ///
+    /// The single source for the confirm dialogs' `NoProcesses` check. The
+    /// dispatch third is the one the old listener-only check could not see at
+    /// all: a dispatched agent writes into a worktree without necessarily
+    /// listening on any port and without having been started by
+    /// `spawn_start`, so a run in flight read as "nothing running here".
+    pub(crate) fn attached_processes(&self, worktree_path: &Path) -> AttachedProcesses {
+        AttachedProcesses {
+            listeners: self
+                .state
+                .lock()
+                .unwrap()
+                .listeners
+                .iter()
+                .filter(|l| l.worktree_path.as_deref() == Some(worktree_path))
+                .count(),
+            switchbard_runs: self
+                .active_runs
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|r| r.worktree_path == worktree_path)
+                .count(),
+            dispatch_runs: self
+                .dispatch_runs
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|r| r.worktree_path == worktree_path)
+                .filter(|r| dispatch_run_holds_worktree(&r.liveness))
+                .count(),
+        }
+    }
+
     pub(crate) fn snapshot_runs_for_worktree(&self, worktree_path: &Path) -> Vec<ActiveRunSummary> {
         self.active_runs
             .lock()

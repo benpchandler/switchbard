@@ -277,6 +277,21 @@ before building.
 
 ## Known gaps / debt
 
+- **"Safe to remove" now has exactly one definition** (`switchbard-core/src/removal_safety.rs`).
+  It previously had three that disagreed: the Workspace row badge ran three checks, the bulk
+  sweep ran five, and the single-row confirm dialog re-derived merged-ness from
+  `BranchDeleteAssessment::needs_force()`. The same worktree could read "remove ok" on the row
+  and land in the sweep's "needs review" list in the same frame. Two remaining sharp edges,
+  both deliberate and both documented at their sites:
+  - `WorktreeMeta`'s probe fields use `None` for *both* "not probed yet" and "the probe
+    failed", a convention older than this module. The Workspace row therefore shows a
+    persistently failing probe as perpetually `checking…` rather than as blocked. Never a
+    false green, and the surfaces that actually remove things call `probe_facts` instead,
+    which distinguishes the two. Fixing it properly means moving `WorktreeMeta` onto `Fact<T>`.
+  - `WorkLanded` compares against the **local** `main`/`master`, never `origin/main`. An
+    unfetched repo reads a landed branch as unlanded, and a squash-merged branch never reads
+    as landed at all (its commits are not reachable). Fails toward refusing to remove, which
+    is the right direction, but it is a false negative users will hit.
 - **Oversized UI file (Rule 4/6 debt):** `ui/workspace/mod.rs` (~1818 LOC) runs against
   the repo's small-module ethos. Split it when next touched; do not pile new UI onto it.
   (Mirrored in `power-of-10-overrides.md`.) The `ui/backlog.rs` half of this entry is

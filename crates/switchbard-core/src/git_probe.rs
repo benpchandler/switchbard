@@ -99,6 +99,12 @@ pub enum WorktreeStaleness {
     /// Neither of the above: still ahead of/behind an upstream, i.e.
     /// probably active work.
     Live,
+    /// The classification could not be made - git failed on the comparison
+    /// itself. Its own variant because the alternative is to guess, and both
+    /// guesses lie: `Live` claims active work nobody verified, and `Orphan`
+    /// nominates a worktree for retirement on no evidence at all. The badge
+    /// renders this as an explicit unknown and no filter chip claims it.
+    Unknown,
 }
 
 /// Pure fn of `(repo_path, worktree_path)`: is this worktree's branch merged
@@ -115,9 +121,12 @@ pub enum WorktreeStaleness {
 /// commits ahead" for the whole crate, not two similar-but-distinct git
 /// queries that happen to usually agree.
 ///
-/// Never panics; on any git failure this falls back to `Live` (the least
-/// destructive classification — an unclassifiable worktree should never look
-/// like a safe bulk-remove candidate).
+/// Never panics; on any git failure this returns [`WorktreeStaleness::Unknown`]
+/// rather than guessing. It previously documented a `Live` fallback while the
+/// code actually fell through to `Orphan` - the single most retire-me-looking
+/// badge - so a failed git call nominated a worktree for cleanup on no
+/// evidence. An unclassifiable worktree must never look like a safe
+/// bulk-remove candidate, and must never look like a stale one either.
 pub fn probe_worktree_staleness(repo_path: &Path, worktree_path: &Path) -> WorktreeStaleness {
     if let Some(base) = crate::worktree_remove::default_branch(repo_path) {
         // Invoked at `worktree_path` (not `repo_path`) so `HEAD` resolves to
@@ -128,8 +137,9 @@ pub fn probe_worktree_staleness(repo_path: &Path, worktree_path: &Path) -> Workt
         }
     }
     match probe_remote_drift(worktree_path) {
-        Some(DriftProbe::NoUpstream) | None => WorktreeStaleness::Orphan,
+        Some(DriftProbe::NoUpstream) => WorktreeStaleness::Orphan,
         Some(_) => WorktreeStaleness::Live,
+        None => WorktreeStaleness::Unknown,
     }
 }
 
