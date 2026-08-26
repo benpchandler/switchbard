@@ -4,6 +4,12 @@ All notable changes to Switchbard are documented here. Switchbard is alpha
 software; versions follow [Semantic Versioning](https://semver.org/) loosely
 within the `0.x` line (minor = new features, patch = fixes).
 
+Hand-written at release time, alongside the `Cargo.toml` version bump. There is
+no generator, and no `[Unreleased]` section to keep current — a feature PR does
+not need to touch this file. Entries say *why* a change exists and what it means
+for the user; do not replace them with generated commit subjects, which `git log`
+already gives you.
+
 ## [0.4.0] - 2026-08-26
 
 Backlog and Dispatch release. Switchbard grew from a worktree/process dashboard
