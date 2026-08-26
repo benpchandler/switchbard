@@ -297,8 +297,17 @@ fn saved_view_round_trips_milestone_and_label_filters_through_a_real_reload() {
     h.state_mut().backlog_view.label_filter = "needs-triage".to_string();
     h.run();
 
+    // Enter commits the name; the separate Save button is gone. The field
+    // has no accessible label of its own, so it is located as the last
+    // TextInput rather than by a fixed index (see `backlog_controls.rs`).
     h.state_mut().backlog_view.saved_view_name_draft = "Release triage".to_string();
-    h.get_by_label("Save").click();
+    h.run();
+    h.query_all(kittest::by().role(egui::accesskit::Role::TextInput))
+        .last()
+        .expect("the saved-views name field should render")
+        .focus();
+    h.run();
+    h.key_press(egui::Key::Enter);
     h.run();
     h.state_mut().save_config();
 
