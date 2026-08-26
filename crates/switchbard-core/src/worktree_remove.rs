@@ -53,11 +53,28 @@ pub fn is_primary_worktree(repo_path: &Path, worktree_path: &Path) -> bool {
 /// fails — unlike `git_probe`'s probes, we want the caller to know, because
 /// the confirm dialog can't truthfully say "no uncommitted changes" if the
 /// status call errored.
+///
+/// `--untracked-files=all` is pinned, not left to git's default, for two
+/// reasons — this is the probe the removal path trusts, so it may not be
+/// configurable and it may not disagree with the row:
+///
+///   - **It must not be configurable.** Plain `--porcelain=v1` honours
+///     `status.showUntrackedFiles`, so a repo (or a user) setting it to `no`
+///     makes this return an empty vec for a worktree full of untracked work.
+///     `removal_safety` then reports `[x] No uncommitted or untracked files`,
+///     the confirm dialog lists nothing to lose, and
+///     `execute_remove_worktree` computes `force = false` — but `git worktree
+///     remove` reads the same config, so it agrees the tree is clean and
+///     deletes those files. Silent data loss, with every check green.
+///   - **It must match the row.** `git_probe::probe_dirty_files` already
+///     pins `-uall`. Under git's default, an untracked *directory* counts as
+///     one entry here and as N entries there, so the row's tooltip and the
+///     dialog's list disagreed about how much work was at stake.
 pub fn collect_dirty_files(worktree_path: &Path) -> Result<Vec<DirtyFile>> {
     let output = git_cmd()
         .arg("-C")
         .arg(worktree_path)
-        .args(["status", "--porcelain=v1"])
+        .args(["status", "--porcelain=v1", "--untracked-files=all"])
         .output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -413,6 +430,56 @@ mod tests {
             .status()
             .expect("git");
         assert!(status.success(), "git {:?} failed in {:?}", args, cwd);
+    }
+
+    /// `status.showUntrackedFiles=no` must not be able to talk this probe out
+    /// of reporting untracked work.
+    ///
+    /// It is the probe the destructive path trusts. Under git's default
+    /// `--untracked-files` handling this returned an empty vec for a worktree
+    /// full of untracked files, `removal_safety` reported `[x] No uncommitted
+    /// or untracked files`, and `execute_remove_worktree` set `force = false`
+    /// — which does not save anything, because `git worktree remove` reads the
+    /// same config, agrees the tree is clean, and deletes the files. Verified
+    /// against real git: the removal succeeds and the file is gone.
+    #[test]
+    fn untracked_files_are_reported_even_when_git_config_hides_them() {
+        let (_tmp, repo, wt) = setup_repo_with_worktree();
+        run(&repo, &["config", "status.showUntrackedFiles", "no"]);
+        fs::write(wt.join("notes.md"), "precious uncommitted work\n").unwrap();
+
+        let dirty = collect_dirty_files(&wt).unwrap();
+        assert_eq!(
+            dirty.len(),
+            1,
+            "an untracked file must be reported regardless of status.showUntrackedFiles; got {dirty:?}"
+        );
+        assert_eq!(dirty[0].path, PathBuf::from("notes.md"));
+    }
+
+    /// The row (`git_probe::probe_dirty_files`) and this probe must count the
+    /// same thing. Under git's default an untracked *directory* is one entry
+    /// here and N entries there, so the row's tooltip and the confirm
+    /// dialog's list disagreed about how much work was at stake.
+    #[test]
+    fn an_untracked_directory_is_counted_file_by_file_like_the_row_probe() {
+        let (_tmp, _repo, wt) = setup_repo_with_worktree();
+        fs::create_dir(wt.join("newdir")).unwrap();
+        for i in 0..5 {
+            fs::write(wt.join("newdir").join(format!("f{i}.txt")), "x\n").unwrap();
+        }
+
+        let dirty = collect_dirty_files(&wt).unwrap();
+        assert_eq!(
+            dirty.len(),
+            5,
+            "expected one entry per untracked file, not one for the directory; got {dirty:?}"
+        );
+        assert_eq!(
+            dirty.len(),
+            crate::git_probe::probe_dirty_files(&wt).unwrap().len(),
+            "the removal probe and the row probe must agree on the count"
+        );
     }
 
     #[test]
