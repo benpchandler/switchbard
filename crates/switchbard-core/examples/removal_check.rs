@@ -25,9 +25,30 @@ fn main() {
     println!("worktree: {}", worktree.display());
     println!("branch:   {branch:?}\n");
 
-    // What the Workspace row's badge sees.
+    // What the Workspace row shows: one trunk comparison, from which both the
+    // unlanded chip and the Merged/Orphan/Live badge are derived.
+    match switchbard_core::probe_trunk_divergence(&repo, &worktree) {
+        Some(d) => {
+            println!("row chip: {} +{}/-{}", d.base, d.unlanded, d.behind);
+            println!("  (ancestry ahead: {})", d.ancestry_ahead);
+            if let Some(detail) = switchbard_core::probe_trunk_detail(&worktree, &d, 10) {
+                println!(
+                    "  already upstream (rebase-merged): {}",
+                    detail.already_upstream
+                );
+                for c in &detail.unlanded {
+                    println!("  at risk: {}  {}", c.short_sha, c.subject);
+                }
+            }
+            println!(
+                "row badge: {:?}",
+                switchbard_core::staleness_from_trunk(Some(&d), None)
+            );
+        }
+        None => println!("row chip: no trunk to compare against"),
+    }
     println!(
-        "row badge (probe_worktree_staleness): {:?}\n",
+        "row badge (standalone probe, must match the derived one above): {:?}\n",
         probe_worktree_staleness(&repo, &worktree)
     );
 

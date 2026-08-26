@@ -35,7 +35,8 @@ use std::time::Instant;
 use switchbard_core::{
     default_port_for_service, humanize_age, resolve, AttachedProcesses, AttributedListener,
     CheckOutcome, DetectedService, DriftProbe, RemovalCheck, RemovalIntent, RemovalSafety,
-    RemovalVerdict, Repo, ResolvedService, ServerLikelihood, ServiceSource, WorktreeRef,
+    RemovalVerdict, Repo, ResolvedService, ServerLikelihood, ServiceSource, TrunkDivergence,
+    WorktreeRef,
 };
 
 mod bulk_remove;
@@ -44,7 +45,7 @@ pub mod rename_worktree;
 pub mod staleness;
 pub mod tooltips;
 use staleness::StalenessFilter;
-use tooltips::{activity_tooltip, dirty_tooltip, ref_drift_tooltip};
+use tooltips::{activity_tooltip, dirty_tooltip, ref_drift_tooltip, trunk_tooltip};
 
 /// Actions queued during the walk; applied after the central panel
 /// closure exits so we don't double-borrow `app`.
@@ -300,7 +301,7 @@ fn render_repo_card(
 ) {
     let mut listening = 0usize;
     let mut dirty = 0usize;
-    let mut main_drifted = 0usize;
+    let mut unlanded_worktrees = 0usize;
     let mut remote_attention = 0usize;
     for w in wts {
         listening += snap
@@ -312,8 +313,8 @@ fn render_repo_card(
             if m.is_dirty() == Some(true) {
                 dirty += 1;
             }
-            if drift_is_drifted(&m.main_drift) {
-                main_drifted += 1;
+            if has_unlanded_work(&m.trunk) {
+                unlanded_worktrees += 1;
             }
             if drift_needs_attention(&m.remote_drift) {
                 remote_attention += 1;
@@ -339,7 +340,7 @@ fn render_repo_card(
                 // worktrees than the eye can summarize at a glance. Listener
                 // count is on the dot's pulse, no chip needed.
                 if wts.len() > 3 {
-                    let chip_storage = build_chips(dirty, main_drifted, remote_attention);
+                    let chip_storage = build_chips(dirty, unlanded_worktrees, remote_attention);
                     let chips: Vec<Chip<'_>> = chip_storage
                         .iter()
                         .map(|(c, t)| Chip {
@@ -386,15 +387,15 @@ fn render_repo_card(
 
 fn build_chips(
     dirty: usize,
-    main_drifted: usize,
+    unlanded_worktrees: usize,
     remote_attention: usize,
 ) -> Vec<(egui::Color32, String)> {
     let mut chips = Vec::new();
     if dirty > 0 {
         chips.push((theme::amber(), format!("{dirty} dirty")));
     }
-    if main_drifted > 0 {
-        chips.push((theme::lavender(), format!("{main_drifted} vs main")));
+    if unlanded_worktrees > 0 {
+        chips.push((theme::lavender(), format!("{unlanded_worktrees} unlanded")));
     }
     if remote_attention > 0 {
         chips.push((theme::sky(), format!("{remote_attention} remote")));
@@ -402,8 +403,14 @@ fn build_chips(
     chips
 }
 
-fn drift_is_drifted(probe: &Option<DriftProbe>) -> bool {
-    probe.as_ref().is_some_and(DriftProbe::is_drifted)
+/// Does this worktree hold work the trunk doesn't?
+///
+/// Content, not ancestry: a rebase-merged branch is "ahead" of the trunk by
+/// ancestry and holds nothing at risk, so counting it here made the row's
+/// lavender dot and the repo card's "N vs main" chip disagree with the row's
+/// own `remove ok` badge.
+fn has_unlanded_work(trunk: &Option<TrunkDivergence>) -> bool {
+    trunk.as_ref().is_some_and(|t| t.unlanded > 0)
 }
 
 fn drift_needs_attention(probe: &Option<DriftProbe>) -> bool {
@@ -590,7 +597,7 @@ fn is_noteworthy(
     if m.is_dirty() == Some(true) {
         return true;
     }
-    if drift_is_drifted(&m.main_drift) || drift_needs_attention(&m.remote_drift) {
+    if has_unlanded_work(&m.trunk) || drift_needs_attention(&m.remote_drift) {
         return true;
     }
     if let Some(act) = m.activity() {
@@ -735,7 +742,7 @@ fn headline_dot(
     if m.is_dirty() == Some(true) {
         return (theme::amber(), 0);
     }
-    if drift_is_drifted(&m.main_drift) {
+    if has_unlanded_work(&m.trunk) {
         return (theme::lavender(), 0);
     }
     if drift_needs_attention(&m.remote_drift) {
@@ -749,14 +756,7 @@ fn headline_dot(
 /// clean or in sync.
 fn render_health_inline(ui: &mut egui::Ui, m: &WorktreeMeta) {
     render_dirty_inline(ui, m);
-    render_drift_inline(
-        ui,
-        "main",
-        m.main_drift.as_ref(),
-        m.main_drift_detail.as_ref(),
-        None,
-        theme::lavender(),
-    );
+    render_trunk_inline(ui, m.trunk.as_ref(), m.trunk_detail.as_ref());
     render_drift_inline(
         ui,
         "remote",
@@ -785,6 +785,37 @@ fn render_dirty_inline(ui: &mut egui::Ui, m: &WorktreeMeta) {
             ui.label(egui::RichText::new("dirty ...").color(theme::weak_text()))
                 .on_hover_text("Dirty probe pending or failed");
         }
+    }
+}
+
+/// The trunk chip: how much of this worktree's work isn't upstream yet.
+///
+/// Reads `+N/-M` like the remote chip beside it, but `N` is unlanded commits
+/// rather than commits ahead by ancestry — see `TrunkDivergence` for why the
+/// two are not the same question. `N == 0` therefore means "nothing here would
+/// be lost", which is exactly what the row's `remove ok` badge is claiming a
+/// few pixels to the right.
+fn render_trunk_inline(
+    ui: &mut egui::Ui,
+    divergence: Option<&TrunkDivergence>,
+    detail: Option<&switchbard_core::TrunkDetail>,
+) {
+    let Some(d) = divergence else {
+        ui.label(egui::RichText::new("trunk ...").color(theme::weak_text()))
+            .on_hover_text("Trunk comparison pending, or no local main/master to compare against");
+        return;
+    };
+    let text = format!("{} +{}/-{}", d.base, d.unlanded, d.behind);
+    let tip = trunk_tooltip(d, detail);
+    if d.unlanded + d.behind > 0 {
+        mono_label(ui, &text, Some(theme::lavender())).on_hover_text(tip);
+    } else {
+        ui.label(
+            egui::RichText::new(text)
+                .monospace()
+                .color(theme::weak_text()),
+        )
+        .on_hover_text(tip);
     }
 }
 
@@ -1728,6 +1759,72 @@ mod tests {
     use crate::runtime::ActiveRun;
     use std::time::Instant;
     use switchbard_core::types::LocalListener;
+
+    /// The row's lavender "this holds work" signal and its `remove ok` badge
+    /// must never contradict each other.
+    ///
+    /// They used to: the signal counted commits ahead of the *local* `main` by
+    /// ancestry, while the badge asked whether the content was on
+    /// `default_branch()`. A rebase-merged worktree therefore lit the drift
+    /// chip, the repo card's count, the lavender dot and the auto-expand rule,
+    /// all while its own badge said the work was safely upstream. On one real
+    /// machine that was 9 of 41 worktrees.
+    ///
+    /// Both now read the same patch-equivalence probe, so this walks the two
+    /// states that matter and asserts they agree in each.
+    #[test]
+    fn the_rows_unlanded_signal_agrees_with_its_removal_badge() {
+        use switchbard_core::{Fact, LandedEvidence, TrunkDivergence, WorktreeStaleness};
+
+        let meta = |unlanded: u32, staleness: WorktreeStaleness| crate::runtime::WorktreeMeta {
+            dirty_files: Some(vec![]),
+            lock: Fact::Known(None),
+            trunk: Some(TrunkDivergence {
+                base: "origin/main".into(),
+                unlanded,
+                // Ahead by two more than are at risk: the rebase-merged case
+                // this test exists for.
+                ancestry_ahead: unlanded + 2,
+                behind: 12,
+            }),
+            staleness: Some(staleness),
+            ..Default::default()
+        };
+
+        // Rebase-merged: ahead by ancestry, nothing at risk.
+        let landed = meta(
+            0,
+            WorktreeStaleness::Merged {
+                base: "origin/main".into(),
+                evidence: LandedEvidence::PatchEquivalent,
+            },
+        );
+        assert!(
+            !has_unlanded_work(&landed.trunk),
+            "a rebase-merged worktree holds nothing the trunk lacks"
+        );
+        assert_eq!(
+            RemovalSafety::evaluate(
+                &crate::runtime::removal_facts(false, &landed, AttachedProcesses::default()),
+                RemovalIntent::WorktreeAndBranch,
+            )
+            .verdict(),
+            RemovalVerdict::Safe,
+            "…and the badge has to say so too"
+        );
+
+        // Genuinely unlanded: both surfaces must flag it.
+        let at_risk = meta(5, WorktreeStaleness::Orphan);
+        assert!(has_unlanded_work(&at_risk.trunk));
+        assert_eq!(
+            RemovalSafety::evaluate(
+                &crate::runtime::removal_facts(false, &at_risk, AttachedProcesses::default()),
+                RemovalIntent::WorktreeAndBranch,
+            )
+            .verdict(),
+            RemovalVerdict::Blocked,
+        );
+    }
 
     fn wt_path() -> PathBuf {
         PathBuf::from("/repo/wt")

@@ -73,9 +73,10 @@ pub use expected_port::{default_port_for_service, expected_port};
 pub use git_env::git_cmd;
 pub use git_probe::{
     humanize_age, probe_ahead_behind, probe_dirty_files, probe_drift_detail, probe_fetch_age,
-    probe_head_commit_time, probe_ignored_files, probe_main_drift, probe_recent_commits,
-    probe_ref_drift, probe_ref_drift_detail, probe_remote_drift, probe_worktree_staleness,
-    CommitSummary, DriftDetail, DriftProbe, WorktreeStaleness,
+    probe_head_commit_time, probe_ignored_files, probe_recent_commits, probe_ref_drift,
+    probe_ref_drift_detail, probe_remote_drift, probe_trunk_detail, probe_trunk_divergence,
+    probe_worktree_staleness, staleness_from_trunk, CommitSummary, DriftDetail, DriftProbe,
+    TrunkDetail, TrunkDivergence, WorktreeStaleness,
 };
 pub use kill::{kill_pgid, KillOutcome};
 pub use open_url::{open_url, url_for_port, BROWSER_APP_NAMES};

@@ -3,7 +3,9 @@
 //! path.
 
 use crate::runtime::Activity;
-use switchbard_core::{humanize_age, CommitSummary, DriftDetail, DriftProbe};
+use switchbard_core::{
+    humanize_age, CommitSummary, DriftDetail, DriftProbe, TrunkDetail, TrunkDivergence,
+};
 
 /// Format the dirty-cell tooltip: "N changed files" header + first ~10 raw
 /// porcelain lines verbatim.
@@ -55,6 +57,57 @@ pub fn drift_tooltip(
             for c in &d.behind {
                 s.push_str(&format!("  {}  {}\n", c.short_sha, c.subject));
             }
+        }
+    }
+    s
+}
+
+/// The row's answer to "what would I lose if this branch went away".
+///
+/// Every commit the user might expect to see is accounted for: the ones at
+/// risk are listed, and the ones already upstream under a different SHA are
+/// counted rather than silently dropped. Without that line a rebase-merged
+/// branch reads as "0 unlanded" while `git log` shows 11 commits ahead, and
+/// the row looks like it is hiding something.
+pub fn trunk_tooltip(divergence: &TrunkDivergence, detail: Option<&TrunkDetail>) -> String {
+    let mut s = format!(
+        "Measured against `{}` — the same comparison the removal checks use.\n{} unlanded, {} behind\n",
+        divergence.base, divergence.unlanded, divergence.behind
+    );
+    let Some(d) = detail else {
+        return s;
+    };
+    if !d.unlanded.is_empty() {
+        s.push_str(&format!(
+            "\nAt risk if the branch goes{}:\n",
+            truncation_suffix(
+                d.unlanded.len(),
+                divergence.unlanded as usize,
+                d.unlanded_truncated
+            )
+        ));
+        for c in &d.unlanded {
+            s.push_str(&format!("  {}  {}\n", c.short_sha, c.subject));
+        }
+    }
+    if d.already_upstream > 0 {
+        s.push_str(&format!(
+            "\n{} further commit{} already upstream under a different SHA (rebase-merged) — not at risk.\n",
+            d.already_upstream,
+            if d.already_upstream == 1 { " is" } else { "s are" }
+        ));
+    }
+    if !d.behind.is_empty() {
+        s.push_str(&format!(
+            "\nBehind{}:\n",
+            truncation_suffix(
+                d.behind.len(),
+                divergence.behind as usize,
+                d.behind_truncated
+            )
+        ));
+        for c in &d.behind {
+            s.push_str(&format!("  {}  {}\n", c.short_sha, c.subject));
         }
     }
     s

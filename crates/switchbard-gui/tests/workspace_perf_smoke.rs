@@ -97,9 +97,10 @@ fn build_fixture() -> HiveApp {
                     } else {
                         vec![]
                     }),
-                    main_drift: Some(DriftProbe::Ready {
-                        base: "main".to_string(),
-                        ahead: (i % 4) as u32,
+                    trunk: Some(switchbard_core::TrunkDivergence {
+                        base: "origin/main".to_string(),
+                        unlanded: (i % 4) as u32,
+                        ancestry_ahead: (i % 4) as u32,
                         behind: 0,
                     }),
                     remote_drift: Some(DriftProbe::Ready {
