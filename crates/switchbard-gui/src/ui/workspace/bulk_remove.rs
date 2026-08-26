@@ -145,11 +145,37 @@ pub(super) fn render_modal(app: &mut HiveApp, ctx: &egui::Context) {
     }
 }
 
+/// One candidate line. Carries name, branch, and (on hover) the full path.
+///
+/// The branch is not decoration here. A worktree's display name comes from its
+/// directory, and some layouts name that directory after the *repo* rather
+/// than the worktree — which rendered several identical lines in this dialog,
+/// reading as an offer to delete the repo itself. `worktree_display_name` now
+/// disambiguates at the source, but this is the one dialog that deletes
+/// things, so it states the identity twice over rather than trusting a single
+/// string to be unique.
 fn render_candidate_line(ui: &mut egui::Ui, c: &BulkRemoveCandidate, dot_color: egui::Color32) {
     ui.horizontal(|ui| {
         theme::painted_dot(ui, dot_color);
         ui.add_space(2.0);
-        ui.label(&c.display_name);
+        ui.label(&c.display_name)
+            .on_hover_text(c.worktree_path.display().to_string());
+        match &c.branch {
+            Some(branch) => {
+                ui.label(
+                    egui::RichText::new(branch)
+                        .monospace()
+                        .color(theme::muted_text()),
+                );
+            }
+            None => {
+                ui.label(
+                    egui::RichText::new("detached")
+                        .monospace()
+                        .color(theme::weak_text()),
+                );
+            }
+        }
         if let Some(reason) = &c.review_reason {
             ui.label(egui::RichText::new(format!("— {reason}")).color(theme::weak_text()));
         }
