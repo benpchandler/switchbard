@@ -3,7 +3,7 @@ rust = "1.95.0"
 # Node + Backlog.md CLI: `crates/switchbard-core/tests/backlog_cli_mutations.rs`
 # drives the real `backlog` binary against a throwaway fixture project, so
 # CI (and a fresh clone) must have it on PATH.
-node = "22"
+node = "24"
 "npm:backlog.md" = "1.49.3"
 
 [tasks.fmt]
