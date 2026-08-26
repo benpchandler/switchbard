@@ -468,56 +468,89 @@ fn render_worktree_row(
     } else if is_primary {
         frame = frame.fill(theme::primary_worktree_tint());
     }
-    // Clicking the row's *name* selects it for bulk removal — see
-    // `render_worktree_summary_line`, which owns that widget.
+    // Clicking anywhere in the row's header selects it for bulk removal.
     //
-    // Two approaches were tried and rejected, both measured rather than
-    // reasoned about, because the obvious ones are wrong in opposite ways:
+    // The gesture lives on the header's own `Ui`, made click-sensing at
+    // creation via `UiBuilder::sense`. That ordering is the whole trick, and
+    // it is not incidental:
     //
-    //   - `ui.interact` on the finished row rect swallows every button in the
-    //     row. egui resolves an overlapping click to the most recently
-    //     registered widget, and that registers last, so Rename stopped
-    //     opening its dialog.
-    //   - Sensing the row's `Ui` at creation fixes that, but then the click
-    //     never arrives: the hover-only labels sitting on top absorb it rather
-    //     than letting it fall through to the parent.
+    //   - egui resolves an overlapping click to the *last-registered*
+    //     click-sensing widget (`hit_test_on_close`). A row rect registered
+    //     after its contents therefore swallows every button in the row.
+    //   - A `Ui` sensed at creation registers *before* its children, so
+    //     Rename, the trash button and the checkbox all still win their own
+    //     clicks. `Ui::remember_min_rect` re-registers it at the end only to
+    //     correct the rect, with `move_to_top: false`, so it keeps its early
+    //     position.
+    //   - Hover-only labels sitting on top cannot absorb the click: the hit
+    //     test filters candidates by `Sense::senses_click`, so a plain
+    //     `Label` is never a click target in the first place. An earlier pass
+    //     assumed otherwise and put the gesture on the name alone, which left
+    //     the rest of the row dead.
     //
-    // So the gesture lives on a real widget. `row_click_selects_but_buttons_
-    // still_win` pins both halves — the name selects, and Rename still wins
-    // its own click.
+    // Scoped to the header, not the frame, so clicking inside an expanded
+    // row's body (service and listener actions) does not select. The
+    // expand/collapse triangle is `show_header`'s own widget, laid out to the
+    // left of this `Ui` and outside its rect, so it keeps toggling.
     //
-    // None of this takes anything away: `CollapsingState::show_header` wires
-    // expand/collapse to the triangle alone and lays the header out without
-    // sensing it, so the row body was dead space.
+    // `row_click_selects_but_buttons_still_win` and its neighbours in
+    // `bulk_remove_worktrees.rs` pin each half.
     //
     // Primaries are excluded — they render no checkbox and are dropped from
     // the candidate list, so selecting one offers a selection that evaporates.
-    let mut name_clicked = false;
+    let mut row_clicked = false;
     frame.show(ui, |ui| {
         let id = ui.make_persistent_id(format!("wt_row_{}", w.path.display()));
         let state = CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
         app.perf_count_worktree_row(state.is_open(), svcs.len(), listeners.len());
         state
             .show_header(ui, |ui| {
-                let display_name = worktree_display_name(&app.config, repo, w);
-                let summary = WorktreeSummary {
-                    worktree: w,
-                    display_name: &display_name,
-                    is_primary,
-                    meta: m,
-                    listener_count: listeners.len(),
-                    services: svcs,
-                    size: snap.sizes.get(&w.path),
-                };
-                name_clicked = render_worktree_summary_line(ui, summary, snap);
-                render_worktree_row_trailing(
-                    ui,
-                    repo,
-                    w,
-                    is_primary,
-                    pending,
-                    &mut app.bulk_selected_worktrees,
-                );
+                let row =
+                    ui.scope_builder(egui::UiBuilder::new().sense(egui::Sense::click()), |ui| {
+                        // Claim the full remaining width so the dead space
+                        // between the two clusters — the row's largest target
+                        // — is part of the gesture, not a hole in it.
+                        ui.set_min_width(ui.available_width());
+                        // Labels are selectable by default, and a selectable
+                        // `Label` senses click *and* drag (egui's
+                        // `Label::layout_in_ui`) — so every name and chip in
+                        // the row would register after this `Ui` and win the
+                        // click, leaving only the gaps between them clickable.
+                        // Row-select and drag-to-select-text want the same
+                        // gesture on the same pixels; the row wins, because
+                        // selecting an 8-char SHA or the word "clean" is not
+                        // a thing anyone comes here to do. Tooltips still
+                        // carry the full values.
+                        ui.style_mut().interaction.selectable_labels = false;
+                        let display_name = worktree_display_name(&app.config, repo, w);
+                        let summary = WorktreeSummary {
+                            worktree: w,
+                            display_name: &display_name,
+                            is_primary,
+                            meta: m,
+                            listener_count: listeners.len(),
+                            services: svcs,
+                            size: snap.sizes.get(&w.path),
+                        };
+                        render_worktree_summary_line(ui, summary, snap);
+                        render_worktree_row_trailing(
+                            ui,
+                            repo,
+                            w,
+                            is_primary,
+                            pending,
+                            &mut app.bulk_selected_worktrees,
+                        );
+                    });
+                if !is_primary {
+                    // The only standing hint that the whole row is a target.
+                    // A row-wide tooltip would fire over every chip that has
+                    // one of its own, so the cursor carries it instead.
+                    row_clicked = row
+                        .response
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked();
+                }
             })
             .body(|ui| {
                 ui.add_space(2.0);
@@ -539,7 +572,7 @@ fn render_worktree_row(
             });
     });
 
-    if !is_primary && name_clicked && !app.bulk_selected_worktrees.remove(&w.path) {
+    if row_clicked && !app.bulk_selected_worktrees.remove(&w.path) {
         app.bulk_selected_worktrees.insert(w.path.clone());
     }
 }
@@ -578,13 +611,7 @@ struct WorktreeSummary<'a> {
     size: Option<&'a WorktreeSizeEntry>,
 }
 
-/// Returns `true` when the user clicked the row's name, which is the row's
-/// bulk-select gesture.
-fn render_worktree_summary_line(
-    ui: &mut egui::Ui,
-    summary: WorktreeSummary<'_>,
-    snap: &Snapshot,
-) -> bool {
+fn render_worktree_summary_line(ui: &mut egui::Ui, summary: WorktreeSummary<'_>, snap: &Snapshot) {
     let (dot_color, pulse_count) = headline_dot(
         summary.services,
         summary.worktree,
@@ -598,18 +625,10 @@ fn render_worktree_summary_line(
         theme::painted_dot(ui, dot_color);
     }
     ui.add_space(2.0);
-    // The name is the row's select target. A `Label` senses nothing by
-    // default, and a hover-only widget sitting on top of the row absorbs the
-    // click rather than letting it fall through to the row's own sense — so
-    // "click the row" has to be spelled out on a real widget rather than
-    // relied on as ambient behaviour.
-    let name_clicked = ui
-        .add(
-            egui::Label::new(egui::RichText::new(summary.display_name).strong())
-                .sense(egui::Sense::click()),
-        )
-        .on_hover_text("Click to select for bulk removal")
-        .clicked();
+    // Plain label: the select gesture belongs to the row's `Ui`, which senses
+    // the whole header (see `render_worktree_row`). One authority for "what
+    // selects this row", not two.
+    ui.label(egui::RichText::new(summary.display_name).strong());
     // Branch name lives in the expanded body (`render_branch_inline`), not
     // here: long branches pushed the left cluster into the right-aligned
     // Rename/trash actions and overlapped them.
@@ -627,7 +646,6 @@ fn render_worktree_summary_line(
         summary.meta,
         attached_processes(snap, &summary.worktree.path, summary.listener_count),
     );
-    name_clicked
 }
 
 /// Branch name for the expanded body. Kept off the collapsed header so a long
