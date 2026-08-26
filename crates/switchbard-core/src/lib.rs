@@ -18,6 +18,7 @@ pub mod instance_lock;
 pub mod kill;
 pub mod open_url;
 pub mod refine;
+pub mod removal_safety;
 pub mod resolve;
 pub mod scanner;
 pub mod spawn;
@@ -83,6 +84,10 @@ pub use refine::{
     normalize_criterion, parse_refine_response, refine_log_stem, refine_task, RefineOptions,
     RefineOutcome, RefinePlan, RefineResult, RefineSuggestion, DEFAULT_REFINE_MAX_TURNS,
     DEFAULT_REFINE_TIMEOUT, REFINED_MARKER,
+};
+pub use removal_safety::{
+    probe_facts, probe_worktree_lock, AttachedProcesses, CheckOutcome, CheckResult, Fact, Landed,
+    LandedEvidence, RemovalCheck, RemovalFacts, RemovalIntent, RemovalSafety, RemovalVerdict,
 };
 pub use resolve::{resolve, ResolvedService};
 pub use scanner::scan_listeners;

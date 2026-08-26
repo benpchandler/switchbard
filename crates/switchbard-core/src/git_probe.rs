@@ -87,10 +87,19 @@ impl DriftProbe {
 /// chip each) rather than folding one into the other.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorktreeStaleness {
-    /// HEAD has no commits unique to it relative to `base` (the repo's local
-    /// `main`/`master`) — everything on this branch already landed. Safe
-    /// candidate for the bulk-remove sweep once dirty state is also clean.
-    Merged { base: String },
+    /// Everything on this branch is already in `base` — safe candidate for the
+    /// bulk-remove sweep once dirty state is also clean.
+    ///
+    /// `evidence` records *how* we know, because the two kinds are not
+    /// interchangeable downstream: an ancestry match means `git branch -d`
+    /// will agree, a patch-equivalent match (a rebase merge) means it will
+    /// refuse even though the work is genuinely upstream. Carrying it here
+    /// keeps this badge and `removal_safety`'s `WorkLanded` check in lockstep
+    /// — they must never be able to disagree about whether a branch landed.
+    Merged {
+        base: String,
+        evidence: crate::removal_safety::LandedEvidence,
+    },
     /// The worktree's branch has no configured upstream (`@{u}` unset,
     /// including a detached HEAD). Common right after a squash-merged PR
     /// whose remote branch was deleted — still worth surfacing distinctly
@@ -99,6 +108,12 @@ pub enum WorktreeStaleness {
     /// Neither of the above: still ahead of/behind an upstream, i.e.
     /// probably active work.
     Live,
+    /// The classification could not be made - git failed on the comparison
+    /// itself. Its own variant because the alternative is to guess, and both
+    /// guesses lie: `Live` claims active work nobody verified, and `Orphan`
+    /// nominates a worktree for retirement on no evidence at all. The badge
+    /// renders this as an explicit unknown and no filter chip claims it.
+    Unknown,
 }
 
 /// Pure fn of `(repo_path, worktree_path)`: is this worktree's branch merged
@@ -115,21 +130,39 @@ pub enum WorktreeStaleness {
 /// commits ahead" for the whole crate, not two similar-but-distinct git
 /// queries that happen to usually agree.
 ///
-/// Never panics; on any git failure this falls back to `Live` (the least
-/// destructive classification — an unclassifiable worktree should never look
-/// like a safe bulk-remove candidate).
+/// Never panics; on any git failure this returns [`WorktreeStaleness::Unknown`]
+/// rather than guessing. It previously documented a `Live` fallback while the
+/// code actually fell through to `Orphan` - the single most retire-me-looking
+/// badge - so a failed git call nominated a worktree for cleanup on no
+/// evidence. An unclassifiable worktree must never look like a safe
+/// bulk-remove candidate, and must never look like a stale one either.
 pub fn probe_worktree_staleness(repo_path: &Path, worktree_path: &Path) -> WorktreeStaleness {
+    use crate::removal_safety::LandedEvidence;
     if let Some(base) = crate::worktree_remove::default_branch(repo_path) {
         // Invoked at `worktree_path` (not `repo_path`) so `HEAD` resolves to
         // *this* worktree's checkout — each linked worktree has its own HEAD
         // file even though branch refs themselves are shared repo-wide.
         if let Some(0) = crate::worktree_remove::commits_ahead(worktree_path, &base, "HEAD") {
-            return WorktreeStaleness::Merged { base };
+            return WorktreeStaleness::Merged {
+                base,
+                evidence: LandedEvidence::Ancestry,
+            };
+        }
+        // Ancestry says no, which is not the same as "not landed". A
+        // rebase-merged branch keeps its patches under new SHAs, so asking
+        // only about reachability called a third of this machine's worktrees
+        // unmerged when their work was already in the trunk.
+        if let Some(0) = crate::worktree_remove::unlanded_commits(worktree_path, &base, "HEAD") {
+            return WorktreeStaleness::Merged {
+                base,
+                evidence: LandedEvidence::PatchEquivalent,
+            };
         }
     }
     match probe_remote_drift(worktree_path) {
-        Some(DriftProbe::NoUpstream) | None => WorktreeStaleness::Orphan,
+        Some(DriftProbe::NoUpstream) => WorktreeStaleness::Orphan,
         Some(_) => WorktreeStaleness::Live,
+        None => WorktreeStaleness::Unknown,
     }
 }
 
@@ -511,7 +544,8 @@ mod tests {
         assert_eq!(
             probe_worktree_staleness(&repo, &repo),
             WorktreeStaleness::Merged {
-                base: "main".into()
+                base: "main".into(),
+                evidence: crate::removal_safety::LandedEvidence::Ancestry,
             }
         );
     }
@@ -568,7 +602,8 @@ mod tests {
         assert_eq!(
             probe_worktree_staleness(&repo, &repo),
             WorktreeStaleness::Merged {
-                base: "main".into()
+                base: "main".into(),
+                evidence: crate::removal_safety::LandedEvidence::Ancestry,
             }
         );
         let dirty = probe_dirty_files(&repo).unwrap();

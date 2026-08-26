@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use switchbard_core::BranchDeleteAssessment;
+use switchbard_core::{BranchDeleteAssessment, RemovalFacts};
 use switchbard_gui::runtime::ConfirmRemoveWorktree;
 
 fn dialog(
@@ -20,6 +20,10 @@ fn dialog(
         dirty_files: vec![],
         active_runs: vec![],
         branch_assessment: assessment,
+        // Irrelevant to what these tests pin (whether the dialog *offers*
+        // deletion, and whether Confirm acts on it). An all-pending facts set
+        // is the right filler precisely because it can never read as safe.
+        removal_facts: RemovalFacts::pending(false),
         delete_branch,
         busy: false,
         error: None,

@@ -11,8 +11,9 @@ use eframe::egui;
 use std::path::PathBuf;
 use std::thread;
 use switchbard_core::{
-    assess_branch_delete, collect_dirty_files, create_worktree, delete_branch, is_primary_worktree,
-    remove_worktree, Repo, WorktreeRef,
+    assess_branch_delete, create_worktree, delete_branch, is_primary_worktree, probe_facts,
+    remove_worktree, AttachedProcesses, Fact, RemovalIntent, RemovalSafety, RemovalVerdict, Repo,
+    WorktreeRef,
 };
 
 /// Payload pushed onto `remove_worktree_outcomes` by the worker thread on a
@@ -148,10 +149,9 @@ impl HiveApp {
     }
 
     /// TASK-41: classify every currently bulk-selected worktree into
-    /// "removable" (clean + merged + nothing running here) vs "needs
-    /// review", reusing the exact same primitives the single-row Remove
-    /// dialog uses (`collect_dirty_files` + `assess_branch_delete`) — never
-    /// a parallel "is this safe" check. Primary worktrees are dropped
+    /// "removable" (every safety check passed) vs "needs review", through the
+    /// one shared `RemovalSafety` evaluation — never a parallel "is this
+    /// safe" check. Primary worktrees are dropped
     /// silently: `is_primary_worktree` (the real, canonicalizing check, not
     /// the cheap `w.path == repo.path` the checkbox/chip-count use) is the
     /// defense in depth against a primary ever reaching the dialog at all.
@@ -173,17 +173,8 @@ impl HiveApp {
                 continue;
             }
             let display_name = worktree_display_name(&self.config, repo, w);
-            let active_run_count = self.snapshot_runs_for_worktree(&wt_path).len();
-            let listener_count = self
-                .state
-                .lock()
-                .unwrap()
-                .listeners
-                .iter()
-                .filter(|l| l.worktree_path.as_deref() == Some(wt_path.as_path()))
-                .count();
             let candidate =
-                classify_bulk_candidate(repo, w, &display_name, active_run_count, listener_count);
+                classify_bulk_candidate(repo, w, &display_name, self.attached_processes(&wt_path));
             if candidate.is_removable() {
                 removable.push(candidate);
             } else {
@@ -302,6 +293,13 @@ pub struct BulkRemovalSummary {
     /// (as the very first cut of this function did) left the status line's
     /// "N branches deleted" undercount unexplained.
     pub first_branch_error: Option<String>,
+    /// Branches deliberately left in place because their work landed under
+    /// *different commits* (a rebase merge). Nothing is at risk — the content
+    /// is already in the base — but git's own `branch -d` guard is
+    /// ancestry-based and would refuse, and this sweep does not force-delete.
+    /// Counted so the status line explains the shortfall rather than leaving
+    /// "N branches deleted" quietly short of the worktrees removed.
+    pub branch_left_rebase_merged: usize,
 }
 
 impl BulkRemovalSummary {
@@ -329,6 +327,17 @@ impl BulkRemovalSummary {
         if let Some(err) = &self.first_error {
             msg.push_str(&format!("; first failure: {err}"));
         }
+        if self.branch_left_rebase_merged > 0 {
+            msg.push_str(&format!(
+                "; {} branch{} kept (rebase-merged, so `branch -d` would refuse)",
+                self.branch_left_rebase_merged,
+                if self.branch_left_rebase_merged == 1 {
+                    ""
+                } else {
+                    "es"
+                }
+            ));
+        }
         if let Some(err) = &self.first_branch_error {
             msg.push_str(&format!("; branch delete failed: {err}"));
         }
@@ -339,10 +348,18 @@ impl BulkRemovalSummary {
 /// Removes every candidate in `removable` — never `--force`, matching the
 /// invariant that nothing in the bulk sweep is ever force-removed — and,
 /// when `delete_branches` is set, deletes each one's branch with a plain,
-/// non-force `git branch -d`. Safe because `removable` only ever contains
-/// candidates `assess_branch_delete` already confirmed are fully merged
-/// (`classify_bulk_candidate`'s doc). `needs_review` candidates are never
-/// passed in here at all.
+/// non-force `git branch -d`.
+///
+/// The branch step is gated on `assess_branch_delete`'s **ancestry** verdict,
+/// not on the worktree being removable. Those came apart when `WorkLanded`
+/// started accepting patch equivalence: a rebase-merged branch is now
+/// correctly safe to remove (its content is in the base) while git's own
+/// `branch -d` guard, which only looks at reachability, would still refuse.
+/// Rather than reach for `-D` on our own authority, the sweep removes the
+/// worktree and leaves the branch, counting it in
+/// `branch_left_rebase_merged` so the status line says so.
+///
+/// `needs_review` candidates are never passed in here at all.
 ///
 /// Deliberately synchronous and free of any `Arc<Mutex<..>>`/`egui::Context`
 /// — the real git I/O this needs to prove ("5 selected worktrees really
@@ -363,7 +380,14 @@ pub fn run_bulk_removal(
                     if let (Some(branch), Some(assessment)) =
                         (&candidate.branch, &candidate.branch_assessment)
                     {
-                        if !assessment.is_blocked() {
+                        if assessment.is_blocked() {
+                            // Checked out elsewhere; git would refuse either way.
+                        } else if assessment.needs_force() {
+                            // Safe to remove, but only patch-equivalent to the
+                            // base. Leave the branch rather than force past
+                            // git's guard on our own say-so.
+                            summary.branch_left_rebase_merged += 1;
+                        } else {
                             match delete_branch(&candidate.repo_path, branch, false) {
                                 Ok(()) => summary.branch_deleted += 1,
                                 Err(e) => {
@@ -386,44 +410,58 @@ pub fn run_bulk_removal(
     summary
 }
 
-/// TASK-41: classify one selected worktree for the bulk-remove dialog.
-/// `review_reason` is `None` iff every safety check passed — a worktree with
-/// zero attributed listeners/Switchbard runs, no uncommitted changes, and a
-/// branch `assess_branch_delete` already confirmed is fully merged into the
-/// repo's default branch. The active-run/listener check has no equivalent in
-/// the single-row dialog (which can stop services as part of removal); bulk
-/// removal deliberately never does that — a batch action shouldn't silently
-/// kill running agent processes across N worktrees, so any of them route to
-/// "needs review" instead.
+/// Classify one selected worktree for the bulk-remove dialog.
+///
+/// The rules are not here: they are
+/// `switchbard_core::removal_safety::RemovalSafety`, the same evaluation the
+/// Workspace row's badge and the single-row dialog run. This function only
+/// gathers facts and translates a verdict into the dialog's two lists. That
+/// is the point - this used to hold its own five-gate ladder while the row
+/// held a three-check one, so the same worktree could read "remove ok" on the
+/// row and land in "needs review" here in the same frame.
+///
+/// The intent is [`RemovalIntent::WorktreeAndBranch`] because
+/// `ConfirmBulkRemoveWorktrees::delete_branches` defaults on, so an unmerged
+/// branch really would lose commits. `run_bulk_removal` then only ever runs a
+/// plain `git branch -d`, which is safe precisely because nothing reaches it
+/// without `WorkLanded` having passed.
+///
+/// Facts come from `probe_facts` - fresh, synchronous git at the moment the
+/// dialog opens - never from the cached `WorktreeMeta` the row reads. A
+/// confirmation has to describe the worktree as it is now.
 fn classify_bulk_candidate(
     repo: &Repo,
     w: &WorktreeRef,
     display_name: &str,
-    active_run_count: usize,
-    listener_count: usize,
+    attached: AttachedProcesses,
 ) -> BulkRemoveCandidate {
-    let dirty = collect_dirty_files(&w.path).ok();
-    let is_dirty = dirty.as_ref().is_some_and(|files| !files.is_empty());
+    let facts = probe_facts(
+        &repo.path,
+        &w.path,
+        w.branch.as_deref(),
+        Fact::Known(attached),
+    );
+    let safety = RemovalSafety::evaluate(&facts, RemovalIntent::WorktreeAndBranch);
+    // Still needed after the verdict, and for a different question: whether
+    // git would even accept `branch -d`. A branch checked out in another
+    // worktree is not *unsafe* to leave behind, it is simply undeletable, so
+    // it is not one of the safety checks - `run_bulk_removal` skips the
+    // branch step for it and removes the worktree anyway.
     let branch_assessment = w
         .branch
         .as_ref()
         .map(|b| assess_branch_delete(&repo.path, b, &w.path));
-    let is_merged = branch_assessment.as_ref().is_some_and(|a| !a.needs_force());
 
-    let review_reason = if dirty.is_none() {
-        Some("could not verify git status".to_string())
-    } else if is_dirty {
-        Some("has uncommitted changes".to_string())
-    } else if w.branch.is_none() {
-        Some("detached HEAD".to_string())
-    } else if !is_merged {
-        Some("branch not fully merged".to_string())
-    } else if active_run_count > 0 || listener_count > 0 {
-        Some(format!(
-            "{active_run_count} switchbard run(s), {listener_count} attributed listener(s) still here"
-        ))
-    } else {
-        None
+    let review_reason = match safety.verdict() {
+        RemovalVerdict::Safe => None,
+        // `probe_facts` answers every check synchronously, so `Checking` is
+        // unreachable here. Refuse rather than assume: a verdict this code
+        // cannot explain must not become a removal.
+        _ => Some(
+            safety
+                .blocking_reason()
+                .unwrap_or_else(|| "couldn't establish that this is safe to remove".to_string()),
+        ),
     };
 
     BulkRemoveCandidate {

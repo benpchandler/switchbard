@@ -72,10 +72,10 @@ use switchbard_core::{
     is_backlog_project, list_dispatch_queue, load_backlog_project, load_ordering_overlay,
     probe_dirty_files, probe_fetch_age, probe_head_commit_time, probe_ignored_files,
     probe_main_drift, probe_recent_commits, probe_ref_drift_detail, probe_remote_drift,
-    probe_worktree_size, probe_worktree_staleness, save_agent_context_cache, scan_agent_context,
-    scan_listeners, sweep_dead_sidecar, AgentContextMap, BacklogProject, DetectedService,
-    DispatchOptions, DriftProbe, Repo, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL,
-    DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
+    probe_worktree_lock, probe_worktree_size, probe_worktree_staleness, save_agent_context_cache,
+    scan_agent_context, scan_listeners, sweep_dead_sidecar, AgentContextMap, BacklogProject,
+    DetectedService, DispatchOptions, DriftProbe, Fact, Repo, WorktreeRef, DISPATCHED_LABEL,
+    DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
@@ -325,9 +325,20 @@ fn spawn_probe(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
                         .get(&w.path)
                         .and_then(|m| m.ignored_files.clone())
                 };
-                let staleness = repo_paths
-                    .get(&w.repo_name)
-                    .map(|repo_path| probe_worktree_staleness(repo_path, &w.path));
+                let repo_path = repo_paths.get(&w.repo_name);
+                let staleness =
+                    repo_path.map(|repo_path| probe_worktree_staleness(repo_path, &w.path));
+                // Same tick as `staleness`: a lock is a removal precondition
+                // that changes about as often, and pairing them means the
+                // row's badge never shows a lock state from a different
+                // moment than the merged state it sits beside.
+                let lock = match repo_path {
+                    Some(repo_path) => probe_worktree_lock(repo_path, &w.path),
+                    None => Fact::Unavailable(
+                        "This worktree's repo isn't tracked, so its lock state can't be read"
+                            .to_string(),
+                    ),
+                };
                 let m = WorktreeMeta {
                     dirty_files: probe_dirty_files(&w.path),
                     ignored_files,
@@ -340,6 +351,7 @@ fn spawn_probe(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
                     recent_commits: probe_recent_commits(&w.path, RECENT_COMMITS_LIMIT),
                     probed_at: Some(Instant::now()),
                     staleness,
+                    lock,
                 };
                 if is_retired_worktree(w, &repos, Some(&m)) {
                     retired += 1;

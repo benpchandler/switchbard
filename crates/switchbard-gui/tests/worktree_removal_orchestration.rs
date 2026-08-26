@@ -112,6 +112,9 @@ fn snapshot_for_branch_delete(
         dirty_files: vec![],
         active_runs: vec![],
         branch_assessment: assessment,
+        // Not what this file pins (it drives the removal orchestration
+        // itself). All-pending is the safe filler: it can never read as safe.
+        removal_facts: switchbard_core::RemovalFacts::pending(false),
         delete_branch,
         busy: false,
         error: None,

@@ -277,6 +277,30 @@ before building.
 
 ## Known gaps / debt
 
+- **"Safe to remove" now has exactly one definition** (`switchbard-core/src/removal_safety.rs`).
+  It previously had three that disagreed: the Workspace row badge ran three checks, the bulk
+  sweep ran five, and the single-row confirm dialog re-derived merged-ness from
+  `BranchDeleteAssessment::needs_force()`. The same worktree could read "remove ok" on the row
+  and land in the sweep's "needs review" list in the same frame. Two remaining sharp edges,
+  both deliberate and both documented at their sites:
+  - `WorktreeMeta`'s probe fields use `None` for *both* "not probed yet" and "the probe
+    failed", a convention older than this module. The Workspace row therefore shows a
+    persistently failing probe as perpetually `checking…` rather than as blocked. Never a
+    false green, and the surfaces that actually remove things call `probe_facts` instead,
+    which distinguishes the two. Fixing it properly means moving `WorktreeMeta` onto `Fact<T>`.
+  - **"Has it landed" is content-based, but only per-commit.** `unlanded_commits` uses
+    `rev-list --cherry-pick`, so a rebase merge (patches preserved under new SHAs) is
+    correctly detected as landed, and the base prefers `origin/main` over a stale local
+    trunk. Measured on an 11-repo machine, those two together took removable worktrees from
+    8 to 19. A **true multi-commit squash merge is still a false negative**: patch-ids are
+    per-commit, so N commits squashed into one match none of them. It fails toward refusing
+    to remove, which is the right direction, but users will hit it. Detecting it would need
+    a different signal (a merged-PR lookup, or a tree comparison against the merge base).
+  - **A rebase-merged branch outlives its worktree.** The work is safe to remove, but
+    `git branch -d` is ancestry-based and refuses it. Rather than reach for `-D` on
+    Switchbard's own authority, the sweep removes the worktree, keeps the branch, and says
+    so in the status line (`branch_left_rebase_merged`). Upgrading that to `-D` on the
+    strength of patch equivalence is a deliberate, un-taken decision, not an oversight.
 - **Oversized UI file (Rule 4/6 debt):** `ui/workspace/mod.rs` (~1818 LOC) runs against
   the repo's small-module ethos. Split it when next touched; do not pile new UI onto it.
   (Mirrored in `power-of-10-overrides.md`.) The `ui/backlog.rs` half of this entry is

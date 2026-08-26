@@ -14,7 +14,7 @@ use crate::ui::components::{mono_label, status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
 use std::path::PathBuf;
-use switchbard_core::{humanize_size, WorktreeStaleness};
+use switchbard_core::{humanize_size, LandedEvidence, WorktreeStaleness};
 
 /// Which staleness class the Workspace filter chips currently narrow to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -76,17 +76,35 @@ pub(super) fn render_staleness_badge(ui: &mut egui::Ui, m: &WorktreeMeta) {
     match &m.staleness {
         None => {
             ui.label(egui::RichText::new("staleness ...").color(theme::weak_text()))
-                .on_hover_text("Merged/Orphan/Live probe pending or failed");
+                .on_hover_text("Merged/Orphan/Live probe hasn't returned yet");
         }
-        Some(WorktreeStaleness::Merged { base }) => {
+        // Distinct from `None`: the probe ran and git could not answer. It
+        // used to fall through to `orphan`, quietly nominating a worktree for
+        // retirement on no evidence at all.
+        Some(WorktreeStaleness::Unknown) => {
             status_pill(
                 ui,
-                StatusKind::Good,
-                "merged",
-                Some(&format!(
-                    "Fully merged into {base} — a candidate for the bulk-remove sweep once clean"
-                )),
+                StatusKind::Warn,
+                "staleness ?",
+                Some("git couldn't say whether this branch is merged or tracked"),
             );
+        }
+        Some(WorktreeStaleness::Merged { base, evidence }) => {
+            // Same badge either way — the work is in the base and the worktree
+            // is a sweep candidate — but the hover distinguishes them, because
+            // a rebase-merged branch outlives its worktree: `git branch -d` is
+            // ancestry-based and refuses it.
+            let tip = match evidence {
+                LandedEvidence::Ancestry => format!(
+                    "Fully merged into {base} — a candidate for the bulk-remove sweep once clean"
+                ),
+                LandedEvidence::PatchEquivalent => format!(
+                    "Already in {base} under different commits (rebase-merged) — a sweep \
+                     candidate once clean, though the branch itself is kept, since \
+                     `git branch -d` only looks at reachability"
+                ),
+            };
+            status_pill(ui, StatusKind::Good, "merged", Some(&tip));
         }
         Some(WorktreeStaleness::Orphan) => {
             status_pill(
@@ -169,7 +187,9 @@ pub(super) fn compute_counts(snap: &Snapshot) -> StalenessCounts {
             Some(WorktreeStaleness::Merged { .. }) => counts.merged += 1,
             Some(WorktreeStaleness::Orphan) => counts.orphan += 1,
             Some(WorktreeStaleness::Live) => counts.live += 1,
-            None => {}
+            // An unclassifiable worktree is claimed by no chip: putting it
+            // under one would assert the very thing the probe couldn't.
+            Some(WorktreeStaleness::Unknown) | None => {}
         }
         if m.is_dirty() == Some(true) {
             counts.dirty += 1;
@@ -285,6 +305,7 @@ mod tests {
     fn merged_filter_only_matches_merged_and_never_unprobed() {
         let merged = meta_with_staleness(Some(WorktreeStaleness::Merged {
             base: "main".into(),
+            evidence: LandedEvidence::Ancestry,
         }));
         assert!(passes_staleness_filter(
             StalenessFilter::Merged,
@@ -321,6 +342,7 @@ mod tests {
         // Merged + dirty at once — the filter must key off dirty state only.
         let mut m = meta_with_staleness(Some(WorktreeStaleness::Merged {
             base: "main".into(),
+            evidence: LandedEvidence::Ancestry,
         }));
         m.dirty_files = Some(vec!["?? scratch.txt".to_string()]);
         assert!(passes_staleness_filter(StalenessFilter::Dirty, Some(&m)));

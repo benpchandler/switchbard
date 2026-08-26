@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 use common::{harness, isolated_config_save_path};
 use egui_kittest::kittest::Queryable;
 use switchbard_core::config::Config;
+use switchbard_core::dispatch_inspect::{DispatchRun, DispatchRunLiveness};
 use switchbard_core::git_cmd;
 use switchbard_core::{Repo, WorktreeRef};
 use switchbard_gui::app::HiveApp;
@@ -207,6 +208,104 @@ fn bulk_remove_confirm_auto_deselects_dirty_and_unmerged_into_needs_review() {
     assert!(
         harness.state().bulk_selected_worktrees.is_empty(),
         "the working selection should be cleared once the dialog opens"
+    );
+}
+
+/// The two blockers the sweep gained when "safe to remove" was collapsed into
+/// one shared definition (`switchbard_core::removal_safety`).
+///
+/// Both were previously invisible here. A locked worktree passed
+/// classification and then failed at `git worktree remove`, because the
+/// `locked` porcelain line was parsed and thrown away. A dispatched agent
+/// holding the worktree passed too, because the old check counted only
+/// attributed listeners and services this instance had started - and a
+/// headless agent is neither.
+#[test]
+fn a_locked_worktree_and_a_live_dispatch_run_both_route_to_needs_review() {
+    let (_tmp, repo, clean_merged, dirty, _unmerged) = setup_repo_with_three_worktrees();
+    // `dirty` is clean apart from its scratch file; lock it and clear the file
+    // so the *only* thing left to object to is the lock itself.
+    std::fs::remove_file(dirty.join("scratch.txt")).ok();
+    run(
+        &repo,
+        &[
+            "worktree",
+            "lock",
+            "--reason",
+            "held",
+            dirty.to_str().unwrap(),
+        ],
+    );
+
+    let worktrees = vec![
+        wt("demo", repo.clone(), "main"),
+        wt("demo", clean_merged.clone(), "feat/clean-merged"),
+        wt("demo", dirty.clone(), "feat/dirty"),
+    ];
+    let mut app = app_with_worktrees(repo.clone(), worktrees);
+
+    // A dispatch agent alive in the otherwise-perfect worktree.
+    app.dispatch_runs.lock().unwrap().insert(
+        (repo.clone(), "TASK-1".to_string()),
+        DispatchRun {
+            task_id: "TASK-1".to_string(),
+            branch: "feat/clean-merged".to_string(),
+            worktree_path: clean_merged.clone(),
+            worktree_exists: true,
+            log_path: None,
+            prompt_path: None,
+            started_at_unix: Some(1),
+            log_bytes: 0,
+            log_modified_unix: None,
+            liveness: DispatchRunLiveness::Alive {
+                pgid: 4242,
+                supervised: true,
+            },
+        },
+    );
+    app.bulk_selected_worktrees = [clean_merged.clone(), dirty.clone()].into_iter().collect();
+
+    let mut harness = harness(app);
+    harness.run();
+    harness.get_by_label("Remove 2 selected…").click();
+    harness.run();
+
+    let state = harness
+        .state()
+        .confirm_bulk_remove_worktrees
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("confirming should open the bulk-remove dialog");
+
+    assert!(
+        state.removable.is_empty(),
+        "neither worktree is safe; got removable {:?}",
+        state
+            .removable
+            .iter()
+            .map(|c| c.worktree_path.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(state.needs_review.len(), 2);
+
+    let reason_for = |path: &PathBuf| {
+        state
+            .needs_review
+            .iter()
+            .find(|c| &c.worktree_path == path)
+            .and_then(|c| c.review_reason.clone())
+            .unwrap_or_default()
+    };
+    assert!(
+        reason_for(&dirty).contains("Locked by git: held"),
+        "a locked worktree must say so; got {:?}",
+        reason_for(&dirty)
+    );
+    assert!(
+        reason_for(&clean_merged).contains("1 dispatch run still running here"),
+        "a live dispatch run must block the sweep; got {:?}",
+        reason_for(&clean_merged)
     );
 }
 
