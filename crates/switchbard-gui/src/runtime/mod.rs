@@ -914,7 +914,10 @@ fn landed_from_staleness(meta: &WorktreeMeta) -> Fact<Landed> {
         Some(WorktreeStaleness::Unknown) => {
             Fact::Unavailable("Couldn't work out whether this branch landed".to_string())
         }
-        Some(WorktreeStaleness::Merged { base }) => Fact::Known(Landed::Yes { base: base.clone() }),
+        Some(WorktreeStaleness::Merged { base, evidence }) => Fact::Known(Landed::Yes {
+            base: base.clone(),
+            evidence: *evidence,
+        }),
         // Orphan and Live are both "probed, and not contained in the base".
         // Neither carries a commit count - the badge only ever recorded
         // whether the count was zero - so both report an unmeasured `No`
@@ -1082,6 +1085,7 @@ mod tests {
             remote_drift: ready_probe(2, 1, "origin/feature"),
             staleness: Some(WorktreeStaleness::Merged {
                 base: "main".into(),
+                evidence: switchbard_core::LandedEvidence::Ancestry,
             }),
             lock: Fact::Known(None),
             ..Default::default()
@@ -1191,6 +1195,7 @@ mod tests {
             )),
             staleness: Some(WorktreeStaleness::Merged {
                 base: "main".into(),
+                evidence: switchbard_core::LandedEvidence::Ancestry,
             }),
             lock: Fact::Known(None),
             ..Default::default()

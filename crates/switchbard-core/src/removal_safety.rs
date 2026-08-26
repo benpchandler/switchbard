@@ -41,7 +41,7 @@
 
 use std::path::Path;
 
-use crate::worktree_remove::{commits_ahead, default_branch};
+use crate::worktree_remove::{commits_ahead, default_branch, unlanded_commits};
 
 /// A fact the safety rules need, which the caller may not be able to supply.
 ///
@@ -202,6 +202,23 @@ pub enum RemovalVerdict {
 /// Workspace row reuses the Merged/Orphan/Live badge, which only records
 /// whether the ahead-count was zero. Encoding that as `count: 1` would have
 /// put a number on screen that nothing measured.
+/// What proves a branch's work is already in the base.
+///
+/// The distinction is load-bearing because git's own `branch -d` guard is
+/// ancestry-based and will refuse a branch whose *content* landed under
+/// different SHAs. Recording which kind of proof we have is what keeps the
+/// tool from promising a deletion git will reject.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LandedEvidence {
+    /// The commits themselves are reachable from the base. `git branch -d`
+    /// will agree.
+    Ancestry,
+    /// The commits are not reachable, but every patch has an equivalent in
+    /// the base — a rebase merge. The work is safe; `git branch -d` will
+    /// nonetheless refuse, because it does not look at content.
+    PatchEquivalent,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Landed {
     /// Every commit is already in `base`; deleting the branch loses nothing.
@@ -210,6 +227,9 @@ pub enum Landed {
         /// reads says what "landed" was measured against rather than implying
         /// a universal truth.
         base: String,
+        /// How we know. This is not decoration: it decides whether
+        /// `git branch -d` will agree with us — see [`LandedEvidence`].
+        evidence: LandedEvidence,
     },
     /// Work exists outside the base and would go with the branch.
     No {
@@ -469,7 +489,17 @@ fn eval_work_landed(facts: &RemovalFacts) -> (CheckOutcome, String) {
         &facts.landed,
         "Checking whether the branch landed…",
         |landed| match landed {
-            Landed::Yes { base } => (CheckOutcome::Pass, format!("Fully merged into {base}")),
+            Landed::Yes {
+                base,
+                evidence: LandedEvidence::Ancestry,
+            } => (CheckOutcome::Pass, format!("Fully merged into {base}")),
+            Landed::Yes {
+                base,
+                evidence: LandedEvidence::PatchEquivalent,
+            } => (
+                CheckOutcome::Pass,
+                format!("Already in {base} under different commits (rebase-merged)"),
+            ),
             Landed::No { commits, base } => {
                 let base = base.as_deref().unwrap_or("the default branch");
                 let detail = match commits {
@@ -632,15 +662,36 @@ fn probe_landed(repo_path: &Path, branch: Option<&str>) -> Fact<Landed> {
         return Fact::Unavailable("No local main or master branch to compare against".to_string());
     };
     if base == branch {
-        return Fact::Known(Landed::Yes { base });
+        return Fact::Known(Landed::Yes {
+            base,
+            evidence: LandedEvidence::Ancestry,
+        });
     }
     // Named branch, so this runs at the repo: branch refs are shared across
     // every linked worktree. `git_probe::probe_worktree_staleness` asks the
     // same question of `HEAD` and must run at the worktree instead, but both
     // go through `commits_ahead` - one primitive answers "how far ahead" for
     // the whole crate, so the badge and this check cannot disagree.
+    // Ancestry first: it is the cheaper query, and when it says "landed" the
+    // answer is the strongest kind — `git branch -d` will agree.
     match commits_ahead(repo_path, &base, branch) {
-        Some(0) => Fact::Known(Landed::Yes { base }),
+        Some(0) => {
+            return Fact::Known(Landed::Yes {
+                base,
+                evidence: LandedEvidence::Ancestry,
+            })
+        }
+        Some(_) => {}
+        None => return Fact::Unavailable(format!("Couldn't compare the branch against {base}")),
+    }
+    // Ancestry says no. Ask the question that actually matters — is the
+    // *content* upstream — before calling work unlanded. A rebase-merged
+    // branch fails the first check and passes this one.
+    match unlanded_commits(repo_path, &base, branch) {
+        Some(0) => Fact::Known(Landed::Yes {
+            base,
+            evidence: LandedEvidence::PatchEquivalent,
+        }),
         Some(count) => Fact::Known(Landed::No {
             commits: Some(count),
             base: Some(base),
@@ -664,6 +715,7 @@ mod tests {
             ignored_files: None,
             landed: Fact::Known(Landed::Yes {
                 base: "main".into(),
+                evidence: LandedEvidence::Ancestry,
             }),
             attached: Fact::Known(AttachedProcesses::default()),
         }
@@ -923,7 +975,8 @@ mod tests {
         assert_eq!(
             facts.landed,
             Fact::Known(Landed::Yes {
-                base: "main".into()
+                base: "main".into(),
+                evidence: LandedEvidence::Ancestry,
             })
         );
         assert_eq!(facts.lock, Fact::Known(None));
@@ -977,5 +1030,196 @@ mod tests {
             .status()
             .expect("git");
         assert!(status.success(), "git {args:?} failed in {cwd:?}");
+    }
+}
+
+/// Landed-detection against real git, exercising the two ways work reaches a
+/// base and the one way it does not.
+#[cfg(test)]
+mod landed_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn git(cwd: &Path, args: &[&str]) -> String {
+        let out = crate::git_cmd()
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .output()
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn commit(repo: &Path, file: &str, body: &str) {
+        fs::write(repo.join(file), body).unwrap();
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-qm", file]);
+    }
+
+    /// A repo on `main` with one commit, plus a `feat` branch.
+    fn repo_with_feature() -> (TempDir, PathBuf) {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["config", "user.email", "t@example.com"]);
+        git(&repo, &["config", "user.name", "T"]);
+        commit(&repo, "base.txt", "base");
+        git(&repo, &["checkout", "-q", "-b", "feat"]);
+        commit(&repo, "feature.txt", "work");
+        git(&repo, &["checkout", "-q", "main"]);
+        (tmp, repo)
+    }
+
+    /// The bug this whole change exists to fix. A rebase merge replays the
+    /// branch's patches onto the trunk under new SHAs, so ancestry says the
+    /// work is unlanded while the content is sitting in `main`. On a real
+    /// 11-repo machine this was 15 of 46 blocked worktrees.
+    #[test]
+    fn a_rebase_merged_branch_counts_as_landed() {
+        let (_tmp, repo) = repo_with_feature();
+        // Move main forward so the replay produces a different SHA, then
+        // replay feat's patch onto it — exactly what a rebase merge does.
+        commit(&repo, "trunk.txt", "meanwhile");
+        git(&repo, &["cherry-pick", "feat"]);
+
+        // Ancestry still insists there is unlanded work...
+        assert_eq!(
+            crate::worktree_remove::commits_ahead(&repo, "main", "feat"),
+            Some(1),
+            "precondition: the commit object is genuinely unreachable from main"
+        );
+        // ...but the patch is upstream, so nothing would be lost.
+        let facts = probe_facts(&repo, &repo, Some("feat"), Fact::Known(Default::default()));
+        assert_eq!(
+            facts.landed,
+            Fact::Known(Landed::Yes {
+                base: "main".into(),
+                evidence: LandedEvidence::PatchEquivalent,
+            })
+        );
+        let safety = RemovalSafety::evaluate(&facts, RemovalIntent::WorktreeAndBranch);
+        assert!(safety
+            .checks()
+            .iter()
+            .any(|c| c.check == RemovalCheck::WorkLanded && c.outcome == CheckOutcome::Pass));
+    }
+
+    /// The evidence has to survive to the caller, because `git branch -d` is
+    /// ancestry-based and will refuse a rebase-merged branch. A caller that
+    /// cannot tell the two apart promises a deletion git rejects.
+    #[test]
+    fn patch_equivalence_is_reported_distinctly_from_ancestry() {
+        let (_tmp, repo) = repo_with_feature();
+        git(
+            &repo,
+            &["merge", "-q", "--no-ff", "-m", "merge feat", "feat"],
+        );
+        let facts = probe_facts(&repo, &repo, Some("feat"), Fact::Known(Default::default()));
+        assert_eq!(
+            facts.landed,
+            Fact::Known(Landed::Yes {
+                base: "main".into(),
+                evidence: LandedEvidence::Ancestry,
+            }),
+            "a real merge keeps the commits reachable, so ancestry is the proof"
+        );
+    }
+
+    /// Genuinely unlanded work must still block. A content check that says
+    /// "landed" too eagerly is far worse than the ancestry check it replaces.
+    #[test]
+    fn genuinely_unlanded_work_still_blocks() {
+        let (_tmp, repo) = repo_with_feature();
+        let facts = probe_facts(&repo, &repo, Some("feat"), Fact::Known(Default::default()));
+        assert_eq!(
+            facts.landed,
+            Fact::Known(Landed::No {
+                commits: Some(1),
+                base: Some("main".into()),
+            })
+        );
+        // The fixture's worktree *is* the repo root, so the verdict is
+        // `Primary` (which outranks everything). Assert on the check itself,
+        // which is what this test is about.
+        let safety = RemovalSafety::evaluate(&facts, RemovalIntent::WorktreeAndBranch);
+        let landed = safety
+            .checks()
+            .iter()
+            .find(|c| c.check == RemovalCheck::WorkLanded)
+            .unwrap();
+        assert_eq!(landed.outcome, CheckOutcome::Fail);
+        assert!(landed.detail.contains("1 commit not in main"));
+    }
+
+    /// The second cause, worth 8 more of that machine's 46: the local trunk is
+    /// whatever was last pulled. Work that landed upstream reads as unlanded
+    /// until the user happens to fetch, so the comparison prefers the
+    /// remote-tracking ref when one exists.
+    #[test]
+    fn the_base_prefers_origin_main_over_a_stale_local_main() {
+        let tmp = TempDir::new().unwrap();
+        let origin = tmp.path().join("origin.git");
+        let repo = tmp.path().join("repo");
+        crate::git_cmd()
+            .args(["init", "-q", "--bare", origin.to_str().unwrap()])
+            .status()
+            .unwrap();
+        fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["config", "user.email", "t@example.com"]);
+        git(&repo, &["config", "user.name", "T"]);
+        git(
+            &repo,
+            &["remote", "add", "origin", origin.to_str().unwrap()],
+        );
+        commit(&repo, "base.txt", "base");
+        git(&repo, &["push", "-q", "-u", "origin", "main"]);
+
+        git(&repo, &["checkout", "-q", "-b", "feat"]);
+        commit(&repo, "feature.txt", "work");
+
+        // The branch lands upstream, and the local `main` is left behind —
+        // the ordinary state of a machine that dispatches agents.
+        git(&repo, &["push", "-q", "origin", "feat:main"]);
+        git(&repo, &["fetch", "-q", "origin"]);
+        assert_eq!(
+            crate::worktree_remove::commits_ahead(&repo, "main", "feat"),
+            Some(1),
+            "precondition: local main really is stale"
+        );
+
+        let facts = probe_facts(&repo, &repo, Some("feat"), Fact::Known(Default::default()));
+        assert_eq!(
+            facts.landed,
+            Fact::Known(Landed::Yes {
+                base: "origin/main".into(),
+                evidence: LandedEvidence::Ancestry,
+            }),
+            "the comparison must use origin/main, and must say so on screen"
+        );
+    }
+
+    /// No remote-tracking ref (never fetched, offline clone) must fall back to
+    /// the local trunk rather than refusing to answer.
+    #[test]
+    fn the_base_falls_back_to_local_main_without_a_remote() {
+        let (_tmp, repo) = repo_with_feature();
+        git(
+            &repo,
+            &["merge", "-q", "--no-ff", "-m", "merge feat", "feat"],
+        );
+        let facts = probe_facts(&repo, &repo, Some("feat"), Fact::Known(Default::default()));
+        assert!(matches!(
+            facts.landed,
+            Fact::Known(Landed::Yes { ref base, .. }) if base == "main"
+        ));
     }
 }

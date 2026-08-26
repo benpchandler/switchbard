@@ -87,7 +87,7 @@ pub use refine::{
 };
 pub use removal_safety::{
     probe_facts, probe_worktree_lock, AttachedProcesses, CheckOutcome, CheckResult, Fact, Landed,
-    RemovalCheck, RemovalFacts, RemovalIntent, RemovalSafety, RemovalVerdict,
+    LandedEvidence, RemovalCheck, RemovalFacts, RemovalIntent, RemovalSafety, RemovalVerdict,
 };
 pub use resolve::{resolve, ResolvedService};
 pub use scanner::scan_listeners;

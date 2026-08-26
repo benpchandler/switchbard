@@ -83,6 +83,7 @@ fn build_fixture() -> HiveApp {
             let staleness = match i % 3 {
                 0 => WorktreeStaleness::Merged {
                     base: "main".to_string(),
+                    evidence: switchbard_core::LandedEvidence::Ancestry,
                 },
                 1 => WorktreeStaleness::Orphan,
                 _ => WorktreeStaleness::Live,

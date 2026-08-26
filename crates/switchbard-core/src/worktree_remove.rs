@@ -212,19 +212,51 @@ fn other_worktrees_on_branch(
         .collect()
 }
 
-/// The repo's default branch, preferring `main` over `master`. Returns `None`
-/// when neither local branch exists (e.g. a repo using some other trunk name —
-/// we'd rather decline to claim "landed" than guess wrong).
+/// The ref to measure "has this landed" against, preferring the remote-tracking
+/// `origin/main` over the local `main`, and `main` over `master`.
 ///
-/// `pub(crate)` — `git_probe::probe_worktree_staleness` reuses this instead of
-/// re-deriving "what's the default branch" a second way (DRY: one place
-/// answers that question for both the single-row remove dialog and the
-/// staleness badge/bulk-remove sweep).
+/// Remote-first because the local trunk is whatever the user last pulled, and
+/// on a machine that dispatches agents it is routinely behind. Measured on a
+/// real 11-repo machine: 8 of 46 blocked worktrees held work that *had*
+/// landed, and only `origin/main` knew it. Comparing against a stale local
+/// `main` calls that work unlanded and hides a worktree the user could have
+/// cleaned up.
+///
+/// Falls back to the local branch when there is no remote-tracking ref (never
+/// fetched, no remote, offline clone) rather than declining to answer, since
+/// a local trunk still answers the question correctly for anything that
+/// landed before the last pull. Returns `None` when neither trunk name exists
+/// at all — we would rather decline to claim "landed" than guess wrong.
+///
+/// The returned string is a real ref name and is shown to the user, so
+/// "merged into origin/main" and "merged into main" are distinguishable on
+/// screen. That distinction matters: they are different claims with different
+/// staleness.
+///
+/// `pub(crate)` — `git_probe::probe_worktree_staleness` and
+/// `removal_safety::probe_facts` both reuse this instead of re-deriving "what
+/// is the default branch" a second way.
 pub(crate) fn default_branch(repo_path: &Path) -> Option<String> {
-    ["main", "master"]
-        .into_iter()
-        .find(|cand| branch_exists(repo_path, cand))
-        .map(str::to_string)
+    for cand in ["main", "master"] {
+        let remote = format!("origin/{cand}");
+        if ref_exists(repo_path, &format!("refs/remotes/{remote}")) {
+            return Some(remote);
+        }
+        if branch_exists(repo_path, cand) {
+            return Some(cand.to_string());
+        }
+    }
+    None
+}
+
+fn ref_exists(repo_path: &Path, reference: &str) -> bool {
+    git_cmd()
+        .arg("-C")
+        .arg(repo_path)
+        .args(["rev-parse", "--verify", "--quiet", reference])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn branch_exists(repo_path: &Path, branch: &str) -> bool {
@@ -253,11 +285,57 @@ fn branch_exists(repo_path: &Path, branch: &str) -> bool {
 /// two subtly different queries that could disagree.
 ///
 /// `None` if the git call fails.
+///
+/// **Ancestry, not content.** This answers "would `git branch -d` accept
+/// this", which is the question the branch-delete affordance needs. It is the
+/// wrong question for "is this work already upstream" — see
+/// [`unlanded_commits`], which is what the safety rules use.
 pub(crate) fn commits_ahead(path: &Path, base_ref: &str, head_ref: &str) -> Option<u32> {
     let output = git_cmd()
         .arg("-C")
         .arg(path)
         .args(["rev-list", "--count", &format!("{base_ref}..{head_ref}")])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
+/// Commits on `head_ref` whose *content* is not already in `base_ref` — the
+/// honest answer to "would deleting this branch lose work".
+///
+/// [`commits_ahead`] asks whether the commit objects are reachable, which is a
+/// different question and the wrong one here. A branch that was rebase-merged
+/// keeps its patches but gets new SHAs, so ancestry says "3 commits unlanded"
+/// about work that is sitting in the trunk already. Measured on a real 11-repo
+/// machine: 15 of 46 worktrees the safety rules blocked were blocked on
+/// exactly this, i.e. the check was hiding a third of the available cleanup.
+///
+/// `--cherry-pick` drops commits from the symmetric difference that have a
+/// patch-equivalent on the other side; `--right-only` then keeps just the
+/// `head_ref` side. One rev-list, so it stays in the same cost class as the
+/// ancestry count (measured: ~26ms vs ~15ms per branch across 46 branches).
+///
+/// **Known limit: this catches rebase merges, not true squash merges.**
+/// Patch-ids are per-commit, so N commits squashed into one produce a patch-id
+/// that matches none of them and the branch still reads as unlanded. That is a
+/// remaining false negative, in the safe direction (refusing to remove), and
+/// it is recorded in the trajectory doc rather than papered over.
+///
+/// `None` if the git call fails.
+pub(crate) fn unlanded_commits(path: &Path, base_ref: &str, head_ref: &str) -> Option<u32> {
+    let output = git_cmd()
+        .arg("-C")
+        .arg(path)
+        .args([
+            "rev-list",
+            "--count",
+            "--right-only",
+            "--cherry-pick",
+            &format!("{base_ref}...{head_ref}"),
+        ])
         .output()
         .ok()?;
     if !output.status.success() {

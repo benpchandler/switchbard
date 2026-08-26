@@ -293,6 +293,13 @@ pub struct BulkRemovalSummary {
     /// (as the very first cut of this function did) left the status line's
     /// "N branches deleted" undercount unexplained.
     pub first_branch_error: Option<String>,
+    /// Branches deliberately left in place because their work landed under
+    /// *different commits* (a rebase merge). Nothing is at risk — the content
+    /// is already in the base — but git's own `branch -d` guard is
+    /// ancestry-based and would refuse, and this sweep does not force-delete.
+    /// Counted so the status line explains the shortfall rather than leaving
+    /// "N branches deleted" quietly short of the worktrees removed.
+    pub branch_left_rebase_merged: usize,
 }
 
 impl BulkRemovalSummary {
@@ -320,6 +327,17 @@ impl BulkRemovalSummary {
         if let Some(err) = &self.first_error {
             msg.push_str(&format!("; first failure: {err}"));
         }
+        if self.branch_left_rebase_merged > 0 {
+            msg.push_str(&format!(
+                "; {} branch{} kept (rebase-merged, so `branch -d` would refuse)",
+                self.branch_left_rebase_merged,
+                if self.branch_left_rebase_merged == 1 {
+                    ""
+                } else {
+                    "es"
+                }
+            ));
+        }
         if let Some(err) = &self.first_branch_error {
             msg.push_str(&format!("; branch delete failed: {err}"));
         }
@@ -330,10 +348,18 @@ impl BulkRemovalSummary {
 /// Removes every candidate in `removable` — never `--force`, matching the
 /// invariant that nothing in the bulk sweep is ever force-removed — and,
 /// when `delete_branches` is set, deletes each one's branch with a plain,
-/// non-force `git branch -d`. Safe because `removable` only ever contains
-/// candidates `assess_branch_delete` already confirmed are fully merged
-/// (`classify_bulk_candidate`'s doc). `needs_review` candidates are never
-/// passed in here at all.
+/// non-force `git branch -d`.
+///
+/// The branch step is gated on `assess_branch_delete`'s **ancestry** verdict,
+/// not on the worktree being removable. Those came apart when `WorkLanded`
+/// started accepting patch equivalence: a rebase-merged branch is now
+/// correctly safe to remove (its content is in the base) while git's own
+/// `branch -d` guard, which only looks at reachability, would still refuse.
+/// Rather than reach for `-D` on our own authority, the sweep removes the
+/// worktree and leaves the branch, counting it in
+/// `branch_left_rebase_merged` so the status line says so.
+///
+/// `needs_review` candidates are never passed in here at all.
 ///
 /// Deliberately synchronous and free of any `Arc<Mutex<..>>`/`egui::Context`
 /// — the real git I/O this needs to prove ("5 selected worktrees really
@@ -354,7 +380,14 @@ pub fn run_bulk_removal(
                     if let (Some(branch), Some(assessment)) =
                         (&candidate.branch, &candidate.branch_assessment)
                     {
-                        if !assessment.is_blocked() {
+                        if assessment.is_blocked() {
+                            // Checked out elsewhere; git would refuse either way.
+                        } else if assessment.needs_force() {
+                            // Safe to remove, but only patch-equivalent to the
+                            // base. Leave the branch rather than force past
+                            // git's guard on our own say-so.
+                            summary.branch_left_rebase_merged += 1;
+                        } else {
                             match delete_branch(&candidate.repo_path, branch, false) {
                                 Ok(()) => summary.branch_deleted += 1,
                                 Err(e) => {
