@@ -3,9 +3,10 @@ id: TASK-56
 title: >-
   Board drag/drop test can exceed max_steps when its save thread lands
   mid-settle
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-26 01:40'
+updated_date: '2026-08-26 13:20'
 labels:
   - flaky-test
   - backlog-board
@@ -33,3 +34,15 @@ If it recurs, the fix is probably to stop using plain run() for the post-release
 - [ ] #1 The test no longer trips max_steps under repeated full-suite CI runs
 - [ ] #2 The fix addresses the cross-thread repaint rather than raising max_steps
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed. Mechanism confirmed by deterministic reproduction rather than inference: a thread hammering ctx.request_repaint() makes Harness::run exceed max_steps, while run_steps under identical conditions does not. That matches the CI panic's 'Repaint causes: []' exactly - a cross-thread repaint zeroes repaint_delay (run()'s keep-stepping condition) without registering an in-frame cause.
+
+Recurred on CI 2026-08-26 in PR #37, which touches only CHANGELOG.md/Cargo.toml/Cargo.lock - proving it a flake, not a regression.
+
+Fix: drag_and_drop's post-release step uses run_steps(4) instead of run(). Four because run() was already bounded to max_steps=4, so no settling is lost, and the downstream assertions read state directly and accept either the in-flight or terminal status - they never needed the save thread to finish, only the drop to register.
+
+Deliberately NOT raising max_steps: that widens the race window instead of removing it. The other run() calls in the helper are untouched; only the release spawns a thread.
+<!-- SECTION:NOTES:END -->
