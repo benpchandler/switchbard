@@ -33,6 +33,18 @@ Prefer plain Cargo? Each `mise` task maps to the obvious `cargo fmt` / `cargo cl
 
 CI (`.github/workflows/ci.yml`) runs the `fmt`, `clippy`, and `test` mise tasks on both **macos-latest and ubuntu-latest** on every PR. The `clippy` and `test` tasks set `RUSTFLAGS=-D warnings`, so **any compiler warning fails the build — fix it, don't `#[allow]` it.** Run `mise run ci` green before pushing.
 
+## Releases and CHANGELOG
+
+`CHANGELOG.md` is **hand-written prose with no generator** — no git-cliff, no
+changesets, nothing in `scripts/` or `.github/` reads it. Do not look for an
+owning tool and do not generate it from commit subjects: the value is in entries
+that say *why* a change exists, which a generator flattens away.
+
+It is written **at release time**, not per-PR — one act alongside the
+`Cargo.toml` version bump, matching how `v0.3.0` landed. Between releases there
+is no `[Unreleased]` section to keep current, so a feature PR does not need to
+touch this file. Regenerate `Cargo.lock` with `cargo update -w`, never by hand.
+
 ## Render-path perf
 
 When touching egui render paths (`crates/switchbard-gui/src/app.rs` or `crates/switchbard-gui/src/ui/**`), run a perf smoke before calling the work done: `SWITCHBARD_PERF=1` with `SWITCHBARD_PERF_LOG=/tmp/switchbard-perf.csv`, exercise Servers scrolling, compare p95 frame/workspace time against the previous build. Avoid full snapshot rebuilds, per-row clones, and unbounded per-frame file lists. Perf-ledger discipline: `docs/perf/README.md`.
