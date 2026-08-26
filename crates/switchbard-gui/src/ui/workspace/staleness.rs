@@ -206,7 +206,18 @@ pub(super) fn compute_counts(snap: &Snapshot) -> StalenessCounts {
 fn merged_and_clean_paths(snap: &Snapshot) -> Vec<PathBuf> {
     snap.worktrees
         .iter()
-        .filter(|w| is_retired_worktree(w, &snap.repos, snap.meta.get(&w.path)))
+        .filter(|w| {
+            is_retired_worktree(
+                w,
+                &snap.repos,
+                snap.meta.get(&w.path),
+                super::attached_processes(
+                    snap,
+                    &w.path,
+                    snap.listeners_by_wt.get(&w.path).map_or(0, Vec::len),
+                ),
+            )
+        })
         .map(|w| w.path.clone())
         .collect()
 }
@@ -374,5 +385,106 @@ mod tests {
             Some(&meta_dirty(false))
         ));
         assert!(!passes_staleness_filter(StalenessFilter::Dirty, None));
+    }
+}
+
+#[cfg(test)]
+mod select_all_agrees_with_the_badge {
+    use super::*;
+    use crate::runtime::{is_retired_worktree, WorktreeMeta};
+    use switchbard_core::{AttachedProcesses, Fact, LandedEvidence};
+
+    fn merged_and_clean() -> WorktreeMeta {
+        WorktreeMeta {
+            dirty_files: Some(vec![]),
+            staleness: Some(WorktreeStaleness::Merged {
+                base: "main".into(),
+                evidence: LandedEvidence::Ancestry,
+            }),
+            lock: Fact::Known(None),
+            ..Default::default()
+        }
+    }
+
+    fn wt() -> switchbard_core::WorktreeRef {
+        switchbard_core::WorktreeRef {
+            repo_name: "demo".into(),
+            path: PathBuf::from("/repo/wt"),
+            branch: Some("feat/x".into()),
+            head: "abc1234".into(),
+        }
+    }
+
+    fn repos() -> Vec<switchbard_core::Repo> {
+        vec![switchbard_core::Repo {
+            name: "demo".into(),
+            path: PathBuf::from("/repo"),
+        }]
+    }
+
+    #[test]
+    fn a_clean_merged_idle_worktree_is_retired() {
+        assert!(is_retired_worktree(
+            &wt(),
+            &repos(),
+            Some(&merged_and_clean()),
+            AttachedProcesses::default(),
+        ));
+    }
+
+    /// The reported bug: "Select all merged+clean" picked a worktree whose own
+    /// badge read `remove blocked`, because the selector only knew about
+    /// merged-ness and dirt while the badge also knows what is running there.
+    #[test]
+    fn a_worktree_with_something_running_is_not_retired() {
+        for attached in [
+            AttachedProcesses {
+                listeners: 1,
+                ..Default::default()
+            },
+            AttachedProcesses {
+                switchbard_runs: 1,
+                ..Default::default()
+            },
+            AttachedProcesses {
+                dispatch_runs: 1,
+                ..Default::default()
+            },
+        ] {
+            assert!(
+                !is_retired_worktree(&wt(), &repos(), Some(&merged_and_clean()), attached),
+                "still busy ({attached:?}) — the badge would say blocked, so this must not \
+                 be offered for bulk selection"
+            );
+        }
+    }
+
+    /// The other check the old predicate could not see.
+    #[test]
+    fn a_locked_worktree_is_not_retired() {
+        let mut meta = merged_and_clean();
+        meta.lock = Fact::Known(Some("rebasing".into()));
+        assert!(!is_retired_worktree(
+            &wt(),
+            &repos(),
+            Some(&meta),
+            AttachedProcesses::default()
+        ));
+    }
+
+    #[test]
+    fn an_unprobed_worktree_is_never_retired() {
+        assert!(!is_retired_worktree(
+            &wt(),
+            &repos(),
+            Some(&WorktreeMeta::default()),
+            AttachedProcesses::default()
+        ));
+        assert!(!is_retired_worktree(
+            &wt(),
+            &repos(),
+            None,
+            AttachedProcesses::default()
+        ));
     }
 }

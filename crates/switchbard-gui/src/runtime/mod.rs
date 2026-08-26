@@ -17,13 +17,14 @@ pub mod worktree_rename;
 pub mod worktrees;
 
 use std::collections::{BTreeSet, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use switchbard_core::dispatch_inspect::DispatchRunLiveness;
+use switchbard_core::dispatch_inspect::{DispatchRun, DispatchRunLiveness};
 use switchbard_core::{
     AgentKind, AttachedProcesses, AttributedListener, BranchDeleteAssessment, CommitSummary,
     ContextKind, ContextScope, DirtyFile, DriftDetail, DriftProbe, Fact, Landed, OrderingOverlay,
-    RemovalFacts, Repo, WorktreeRef, WorktreeStaleness,
+    RemovalFacts, RemovalIntent, RemovalSafety, RemovalVerdict, Repo, WorktreeRef,
+    WorktreeStaleness,
 };
 
 /// The cross-repo triage overlay (`<hub repo>/ordering.yml`), refreshed by
@@ -726,19 +727,70 @@ pub fn worktree_is_primary(w: &WorktreeRef, repos: &[Repo]) -> bool {
         .any(|r| r.name == w.repo_name && r.path == w.path)
 }
 
-/// A worktree counts as "retired" — the top-bar nudge, the "Select all
-/// merged+clean" bulk-select action, and the Merged filter chip's implicit
-/// "safe to remove" reading all agree on this definition — when it's
-/// non-primary, cleanly merged into its repo's default branch, and has no
-/// uncommitted changes. `None` (staleness/dirty not probed yet) never counts
-/// as retired.
-pub fn is_retired_worktree(w: &WorktreeRef, repos: &[Repo], meta: Option<&WorktreeMeta>) -> bool {
+/// Is this worktree one the user could retire right now?
+///
+/// Powers the top-bar "N retired worktrees" nudge and the "Select all
+/// merged+clean" bulk-select action, so what the nudge counts is exactly what
+/// the button selects.
+///
+/// **This is not a separate definition of "safe to remove".** It used to be:
+/// non-primary, merged, and not dirty — two of the five checks
+/// `removal_safety` actually applies. So "Select all merged+clean" would
+/// happily select a worktree whose own badge read `remove blocked`, because
+/// the badge also knows about locks and about processes still running there.
+/// A bulk-select that hands you rows the app then refuses to remove is worse
+/// than no bulk-select.
+///
+/// It now evaluates the same `RemovalSafety` every other surface does, and
+/// only a `Safe` verdict counts. An unprobed worktree yields `Checking`, so it
+/// is still never counted — for the right reason this time, rather than as a
+/// side effect of two `Option`s being `None`.
+pub fn is_retired_worktree(
+    w: &WorktreeRef,
+    repos: &[Repo],
+    meta: Option<&WorktreeMeta>,
+    attached: AttachedProcesses,
+) -> bool {
     if worktree_is_primary(w, repos) {
         return false;
     }
-    meta.is_some_and(|m| {
-        matches!(m.staleness, Some(WorktreeStaleness::Merged { .. })) && m.is_dirty() == Some(false)
-    })
+    let Some(meta) = meta else {
+        return false;
+    };
+    // `is_primary` is `false` here, not recomputed: the primary case already
+    // returned above, and it uses the cheap path-equality check the rest of
+    // the render path uses. The canonicalizing check stays where it belongs —
+    // on the paths that actually remove things.
+    let facts = removal_facts(false, meta, attached);
+    RemovalSafety::evaluate(&facts, RemovalIntent::WorktreeAndBranch).verdict()
+        == RemovalVerdict::Safe
+}
+
+/// Everything holding on to `worktree` in one place, from the three
+/// collections that know.
+///
+/// The one derivation, so the git-probe worker's "N retired" count and
+/// `HiveApp::attached_processes` cannot disagree about what counts as busy.
+/// Takes borrowed collections rather than `&HiveApp` because the worker holds
+/// its own channel handles and never sees the app.
+pub fn attached_processes_for(
+    worktree: &Path,
+    listener_count: usize,
+    active_runs: &HashMap<i32, ActiveRun>,
+    dispatch_runs: &HashMap<BacklogTaskKey, DispatchRun>,
+) -> AttachedProcesses {
+    AttachedProcesses {
+        listeners: listener_count,
+        switchbard_runs: active_runs
+            .values()
+            .filter(|r| r.worktree_path == worktree)
+            .count(),
+        dispatch_runs: dispatch_runs
+            .values()
+            .filter(|r| r.worktree_path == worktree)
+            .filter(|r| dispatch_run_holds_worktree(&r.liveness))
+            .count(),
+    }
 }
 
 /// How much an agent has been committing lately. The thresholds are tuned for

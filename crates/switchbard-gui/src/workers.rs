@@ -61,8 +61,8 @@
 
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
-    is_retired_worktree, ActiveRun, BacklogTaskKey, FileListSummary, OrderingState, WorktreeMeta,
-    WorktreeSizeEntry,
+    attached_processes_for, is_retired_worktree, ActiveRun, BacklogTaskKey, FileListSummary,
+    OrderingState, WorktreeMeta, WorktreeSizeEntry,
 };
 use crate::sync::Kick;
 use eframe::egui;
@@ -303,6 +303,22 @@ fn spawn_probe(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
             // local default branch to compare against.
             let repo_paths = repo_paths_by_name(&repos);
             let wts = ch.worktrees.lock().unwrap().clone();
+            // Snapshot the three process sources once per tick, not once per
+            // worktree: the retired count needs them for every worktree, and
+            // re-locking 75 times a tick to answer the same question is a
+            // contention source the render thread would feel.
+            let runs_now = ch.active_runs.lock().unwrap().clone();
+            let dispatch_now = ch.dispatch_runs.lock().unwrap().clone();
+            let listener_counts: HashMap<PathBuf, usize> = {
+                let state = ch.state.lock().unwrap();
+                let mut counts: HashMap<PathBuf, usize> = HashMap::new();
+                for listener in &state.listeners {
+                    if let Some(path) = &listener.worktree_path {
+                        *counts.entry(path.clone()).or_default() += 1;
+                    }
+                }
+                counts
+            };
             let refresh_ignored = should_refresh_ignored_files(tick);
             // TASK-41: accumulated alongside the per-worktree probe loop
             // rather than in a second pass over `wts` — see
@@ -353,7 +369,13 @@ fn spawn_probe(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
                     staleness,
                     lock,
                 };
-                if is_retired_worktree(w, &repos, Some(&m)) {
+                let attached = attached_processes_for(
+                    &w.path,
+                    listener_counts.get(&w.path).copied().unwrap_or(0),
+                    &runs_now,
+                    &dispatch_now,
+                );
+                if is_retired_worktree(w, &repos, Some(&m), attached) {
                     retired += 1;
                 }
                 ch.meta.lock().unwrap().insert(w.path.clone(), m);
