@@ -78,6 +78,17 @@ struct Palette {
     muted_text: Color32,
     /// The "highlighter on a page" tint marking a repo's primary worktree.
     primary_worktree_tint: Color32,
+    /// Fill behind a bulk-selected worktree row. Deliberately a *cool* wash
+    /// where `primary_worktree_tint` is warm, so the two never read as the
+    /// same state, and low-alpha so it tints the row rather than repainting
+    /// it — every label on the row still has to clear AA against the result,
+    /// which `legibility_audit` measures from the real draw list.
+    selected_row_tint: Color32,
+    /// The outline on a bulk-selected row. The fill alone is too quiet to
+    /// answer "which rows did 'Select all merged + clean' just take?" at a
+    /// glance, and an outline carries that at any alpha without touching the
+    /// contrast of the text inside it.
+    selected_row_stroke: Color32,
     /// The window/central-panel background — Flight Strips' "board" /
     /// Operator's Console's "chassis". The nav strip (`nav_bg`) and rail
     /// (`rail_bg`) sit visually *above* this; recessed surfaces (`faint_bg`,
@@ -127,11 +138,13 @@ const LIGHT: Palette = Palette {
     weak_text: Color32::from_rgb(0x20, 0x26, 0x2B), // design's "ink"
     muted_text: Color32::from_rgb(0x50, 0x5A, 0x63), // ~5.5:1
     primary_worktree_tint: Color32::from_rgba_premultiplied(28, 25, 11, 28),
-    panel_fill: Color32::from_rgb(0xE7, 0xEC, 0xF0), // cool workspace board
-    faint_bg: Color32::from_rgb(0xD9, 0xE1, 0xE7),   // recessed controls and column wells
-    card_bg: Color32::from_rgb(0xFF, 0xFF, 0xFD),    // clean paper strip
-    nav_bg: Color32::from_rgb(0xF4, 0xF7, 0xF9),     // elevated navigation surface
-    rail_bg: Color32::from_rgb(0xF0, 0xF3, 0xF5),    // quiet detail workspace
+    selected_row_tint: Color32::from_rgba_premultiplied(10, 30, 46, 40),
+    selected_row_stroke: Color32::from_rgb(0x15, 0x5A, 0x8A), // matches `sky`
+    panel_fill: Color32::from_rgb(0xE7, 0xEC, 0xF0),          // cool workspace board
+    faint_bg: Color32::from_rgb(0xD9, 0xE1, 0xE7),            // recessed controls and column wells
+    card_bg: Color32::from_rgb(0xFF, 0xFF, 0xFD),             // clean paper strip
+    nav_bg: Color32::from_rgb(0xF4, 0xF7, 0xF9),              // elevated navigation surface
+    rail_bg: Color32::from_rgb(0xF0, 0xF3, 0xF5),             // quiet detail workspace
 };
 
 // Operator's Console (dark, direction A) — chassis #221F1B, lamp amber
@@ -164,6 +177,8 @@ const DARK: Palette = Palette {
     weak_text: Color32::from_rgb(0xE6, 0xE1, 0xD8), // crisp faceplate text
     muted_text: Color32::from_rgb(0xB8, 0xB1, 0xA4), // readable secondary faceplate text
     primary_worktree_tint: Color32::from_rgba_premultiplied(28, 25, 11, 28),
+    selected_row_tint: Color32::from_rgba_premultiplied(20, 42, 60, 52),
+    selected_row_stroke: Color32::from_rgb(0x6F, 0xB8, 0xE8), // matches `sky`
     // Surface values are spread as far as the AA contract allows, not packed
     // into a narrow band. The previous set squeezed all five into luminance
     // 0.006-0.022 — rail vs panel measured 1.02:1, i.e. the same colour —
@@ -230,6 +245,14 @@ pub fn muted_text() -> Color32 {
 }
 pub fn primary_worktree_tint() -> Color32 {
     active_palette().primary_worktree_tint
+}
+
+pub fn selected_row_tint() -> Color32 {
+    active_palette().selected_row_tint
+}
+
+pub fn selected_row_stroke() -> egui::Stroke {
+    egui::Stroke::new(1.0, active_palette().selected_row_stroke)
 }
 /// Recessed background (kanban column bodies, code/notes blocks, and every
 /// text input's fill via `apply()`'s `visuals.extreme_bg_color`). See

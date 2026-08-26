@@ -258,13 +258,36 @@ pub(super) fn render_filter_bar(ui: &mut egui::Ui, app: &mut HiveApp, snap: &Sna
             app.bulk_selected_worktrees.clear();
         }
         ui.separator();
-        let n = app.bulk_selected_worktrees.len();
-        let remove_label = format!("Remove {n} selected…");
-        if ui
-            .add_enabled(n > 0, theme::danger_button(&remove_label))
-            .clicked()
-        {
-            app.open_bulk_remove_worktree_confirm();
+        // While a sweep is live the bar takes the button's place rather than
+        // sitting beside it — the same rule the Backlog toolbar uses, and for
+        // the same reason: offering to start a second removal mid-run is
+        // offering a race over the same worktree list.
+        //
+        // Each removal is its own `git worktree remove`, so a nine-worktree
+        // sweep is many seconds during which the dialog has already closed and
+        // the rows have not gone yet. Without this the run is
+        // indistinguishable from a hang.
+        match app.worktree_bulk_progress.snapshot() {
+            Some(progress) => {
+                ui.add(
+                    egui::ProgressBar::new(progress.fraction())
+                        .desired_width(220.0)
+                        .text(progress.label()),
+                )
+                .on_hover_text(
+                    "Removing worktrees; it is safe to keep working elsewhere in the app",
+                );
+            }
+            None => {
+                let n = app.bulk_selected_worktrees.len();
+                let remove_label = format!("Remove {n} selected…");
+                if ui
+                    .add_enabled(n > 0, theme::danger_button(&remove_label))
+                    .clicked()
+                {
+                    app.open_bulk_remove_worktree_confirm();
+                }
+            }
         }
     });
 }

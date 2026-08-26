@@ -370,6 +370,27 @@ fn write_preview_fixture() {
 /// to a genuinely low-contrast label. WCAG 1.4.3 exempts inactive controls, but
 /// the draw list carries no "disabled" flag, so the audit can't tell them
 /// apart. Rather than special-case it, we audit a realistic enabled state.
+/// A Workspace harness with a *linked* worktree that is bulk-selected.
+///
+/// The selection tint and outline only paint in this state, and `seeded_app`
+/// gives every harness a single worktree that is also the repo root — i.e. the
+/// primary, which is deliberately never selectable. Without this fixture the
+/// audit would pass over the selected row without ever measuring text against
+/// it, which is exactly the kind of green that proves nothing.
+fn seed_selected_linked_worktree(app: &mut HiveApp) {
+    let linked = std::path::PathBuf::from("/tmp/switchbard-ui-test/demo-feature");
+    app.worktrees
+        .lock()
+        .unwrap()
+        .push(switchbard_core::WorktreeRef {
+            repo_name: REPO_NAME.to_string(),
+            path: linked.clone(),
+            branch: Some("feat/selected".to_string()),
+            head: "def5678".to_string(),
+        });
+    app.bulk_selected_worktrees.insert(linked);
+}
+
 fn seed_live_listener(app: &HiveApp) {
     app.state
         .lock()
@@ -557,6 +578,14 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     // ("◀", the expand toggle) only ever paints in this state — every other
     // harness here has the default expanded sidebar, which already covers
     // the "▶" collapse toggle.
+    // The bulk-selection tint + outline paint only on a selected linked
+    // worktree, so it gets its own harness rather than riding on one of the
+    // others — see `seed_selected_linked_worktree`.
+    let mut selected_app = seeded_app();
+    selected_app.config.ui.theme = theme;
+    seed_selected_linked_worktree(&mut selected_app);
+    let selected_row = harness(selected_app);
+
     let mut sidebar_collapsed_app = seeded_app();
     sidebar_collapsed_app.config.ui.theme = theme;
     sidebar_collapsed_app.config.ui.sidebar_collapsed = true;
@@ -752,6 +781,10 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
         (
             format!("Onboarding · repo picker (one selected){suffix}"),
             onboarding_picker,
+        ),
+        (
+            format!("Workspace · bulk-selected worktree row{suffix}"),
+            selected_row,
         ),
         (format!("Agent Context view{suffix}"), agent),
         (

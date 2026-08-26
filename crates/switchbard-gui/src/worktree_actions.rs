@@ -212,6 +212,7 @@ impl HiveApp {
         }
 
         let status = self.config_status.clone();
+        let progress = self.worktree_bulk_progress.clone();
         let remove_outcomes = self.remove_worktree_outcomes.clone();
         let worktrees = self.worktrees.clone();
         let scanner_kick = self.scanner_kick.clone();
@@ -223,7 +224,18 @@ impl HiveApp {
 
         thread::spawn(move || {
             let needs_review_count = state.needs_review.len();
-            let summary = run_bulk_removal(&state.removable, state.delete_branches);
+            // Each candidate is its own `git worktree remove` (plus maybe a
+            // `git branch -d`), so a nine-worktree sweep is many seconds during
+            // which the dialog has already closed and the list has not changed
+            // yet. Without this the run is indistinguishable from a hang.
+            progress.begin("removing", state.removable.len());
+            let summary = run_bulk_removal(&state.removable, state.delete_branches, || {
+                progress.advance();
+                // Repaint per item: the bar lives on the render path, and the
+                // worker is the only thing that knows it moved.
+                ctx.request_repaint();
+            });
+            progress.finish();
 
             for path in &summary.removed {
                 worktrees.lock().unwrap().retain(|w| &w.path != path);
@@ -367,9 +379,17 @@ impl BulkRemovalSummary {
 /// directly, the same way `worktree_remove.rs` and
 /// `worktree_removal_orchestration.rs` test `remove_worktree`/
 /// `delete_branch` themselves rather than the threaded wrapper around them.
+///
+/// `on_item_done` fires once per candidate, on **every** exit path including a
+/// failed removal — it measures how far through the batch we are, not how much
+/// of it worked, and a bar that stalls on the first failure is worse than no
+/// bar. It is a plain callback rather than a `Progress` handle so this stays
+/// free of shared state: the caller owns the wiring, and a test can count
+/// invocations without standing up a channel.
 pub fn run_bulk_removal(
     removable: &[BulkRemoveCandidate],
     delete_branches: bool,
+    mut on_item_done: impl FnMut(),
 ) -> BulkRemovalSummary {
     let mut summary = BulkRemovalSummary::default();
     for candidate in removable {
@@ -406,6 +426,7 @@ pub fn run_bulk_removal(
                 }
             }
         }
+        on_item_done();
     }
     summary
 }

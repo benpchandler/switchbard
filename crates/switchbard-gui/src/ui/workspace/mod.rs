@@ -449,8 +449,23 @@ fn render_worktree_row(
     // their row heights stay consistent; only the fill differs. This
     // keeps the swimlane visually rhythmic when scanning down the
     // list.
+    //
+    // Selection wins over the primary tint, and the two can never actually
+    // collide: primaries render no bulk checkbox and are dropped from the
+    // candidate list, so a primary is never selected. The ordering is written
+    // out anyway rather than left implicit, because "selected" is the state
+    // the user just acted on and it should never be the one that loses.
+    //
+    // Highlighting the row itself, not just the checkbox: "Select all merged
+    // + clean" ticks an arbitrary subset of a long list, and a 14px checkbox
+    // is not an answer to "what did that just take?" at a glance.
+    let selected = app.bulk_selected_worktrees.contains(&w.path);
     let mut frame = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(4, 1));
-    if is_primary {
+    if selected {
+        frame = frame
+            .fill(theme::selected_row_tint())
+            .stroke(theme::selected_row_stroke());
+    } else if is_primary {
         frame = frame.fill(theme::primary_worktree_tint());
     }
     frame.show(ui, |ui| {
