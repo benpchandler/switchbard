@@ -91,7 +91,7 @@ pub(crate) enum DispatchState {
 pub(crate) fn dispatch_state(task: &BacklogTask) -> DispatchState {
     match dispatch_category(task) {
         DispatchCategory::Dispatched => DispatchState::Dispatched {
-            pr_url: find_note_suffix(&task.implementation_notes, "Dispatch PR: "),
+            pr_url: find_note_token(&task.implementation_notes, "Dispatch PR: "),
         },
         DispatchCategory::Failed => DispatchState::Failed {
             reason: find_note_suffix(&task.implementation_notes, "Dispatch failed: "),
@@ -105,6 +105,11 @@ pub(crate) fn dispatch_state(task: &BacklogTask) -> DispatchState {
 /// The text after the last line starting with `prefix` in `notes` — notes
 /// are append-only, so the *last* match is the most recent dispatch attempt
 /// if a task was ever re-flagged after a prior failure.
+/// The whole remainder of the last line carrying `prefix`.
+///
+/// For prose values — `Dispatch failed: <reason>` is a sentence, and cutting
+/// it at the first space would render "worktree already exists" as
+/// "worktree".
 fn find_note_suffix(notes: &str, prefix: &str) -> Option<String> {
     notes
         .lines()
@@ -112,6 +117,29 @@ fn find_note_suffix(notes: &str, prefix: &str) -> Option<String> {
         .find_map(|line| line.strip_prefix(prefix))
         .map(str::trim)
         .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// The **first whitespace-delimited token** after `prefix` on the last line
+/// carrying it.
+///
+/// For values that are a single word — a URL. `release_as_dispatched` writes
+/// `Dispatch PR: <url>`, but a human editing the task afterwards may append
+/// prose to that same line: one real task reads `Dispatch PR: https://…/847
+/// — follow-up fixing a review-blocked…`, and taking the rest of the line
+/// made the whole paragraph the "URL". `render_outcome` passes that value as
+/// both a hyperlink's label *and* its target, so the result was a wall of
+/// blue text wrapped across the row and a link that opened nothing.
+///
+/// A URL cannot contain unescaped whitespace, so the first token is all of it
+/// and anything after is commentary.
+fn find_note_token(notes: &str, prefix: &str) -> Option<String> {
+    notes
+        .lines()
+        .rev()
+        .find_map(|line| line.strip_prefix(prefix))
+        .and_then(|rest| rest.split_whitespace().next())
+        .filter(|token| !token.is_empty())
         .map(str::to_string)
 }
 
@@ -156,6 +184,46 @@ mod tests {
             definition_of_done: vec![],
             source: BacklogTaskSource::Active,
             path: std::path::PathBuf::from("/repo/backlog/tasks/task-1.md"),
+        }
+    }
+
+    /// A PR note with prose appended after the URL yields just the URL.
+    ///
+    /// Real data from the budget repo: `release_as_dispatched` writes
+    /// `Dispatch PR: <url>`, and a human later appended a paragraph of review
+    /// context to the same line. `render_outcome` uses this value as both a
+    /// hyperlink's label and its target, so taking the rest of the line
+    /// produced a wall of blue text *and* a link that opened nothing.
+    #[test]
+    fn a_pr_note_with_trailing_prose_yields_only_the_url() {
+        let mut task = task_labelled(&["dispatched"]);
+        task.implementation_notes =
+            "Dispatch PR: https://github.com/o/r/pull/847 — follow-up fixing a review-blocked \
+             HIGH-confirmed finding on PR #843"
+                .to_string();
+        match dispatch_state(&task) {
+            DispatchState::Dispatched { pr_url } => assert_eq!(
+                pr_url.as_deref(),
+                Some("https://github.com/o/r/pull/847"),
+                "the URL ends at the first whitespace; the rest is commentary"
+            ),
+            other => panic!("expected Dispatched, got {other:?}"),
+        }
+    }
+
+    /// A failure *reason* is prose and keeps its whole line — the opposite
+    /// rule from the URL above, which is why the two extractors are separate.
+    #[test]
+    fn a_failure_reason_keeps_its_whole_sentence() {
+        let mut task = task_labelled(&["dispatch-failed"]);
+        task.implementation_notes = "Dispatch failed: worktree already exists".to_string();
+        match dispatch_state(&task) {
+            DispatchState::Failed { reason } => assert_eq!(
+                reason.as_deref(),
+                Some("worktree already exists"),
+                "a reason cut at the first space would report only 'worktree'"
+            ),
+            other => panic!("expected Failed, got {other:?}"),
         }
     }
 

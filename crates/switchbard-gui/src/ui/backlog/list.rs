@@ -44,8 +44,6 @@ fn render_task_list(
     tasks: Vec<TaskRow<'_>>,
     pending: &mut Pending,
 ) {
-    render_task_sort_controls(app, ui);
-    ui.add_space(4.0);
     selection::retain_visible_bulk_selection(app, &tasks);
     let show_repo = app.backlog_view.selected_project.is_none();
     let visible_keys: Vec<BacklogTaskKey> = tasks.iter().map(TaskRow::key).collect();
@@ -157,7 +155,14 @@ fn render_select_all_checkbox(app: &mut HiveApp, ui: &mut egui::Ui, tasks: &[Tas
     }
 }
 
-fn render_task_sort_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
+/// Sort key + direction.
+///
+/// Rendered by the shared toolbar rather than by any one lens: every lens
+/// draws from the same `sort::visible_task_rows`, so the ordering already
+/// applied everywhere — only the *control* was List-only, which left Board
+/// and Milestones silently sorted by a key their user could not see or
+/// change.
+pub(super) fn render_task_sort_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Sort").color(theme::muted_text()));
         egui::ComboBox::from_id_salt("backlog_task_sort_key")

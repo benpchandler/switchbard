@@ -281,7 +281,8 @@ fn resolve_pending_moves(app: &mut HiveApp, snap: &Snapshot, ctx: &egui::Context
 }
 
 /// TASK-26 (owner-requested UX): the same "N selected · Clear" indicator
-/// `list::render_task_sort_controls` shows, since Board shares the identical
+/// `list::render_task_sort_controls` shows (now rendered by the shared
+/// toolbar for every lens), since Board shares the identical
 /// `bulk_selected_tasks` state. Its own row rather than folded into an
 /// existing one — Board has no sort/toolbar row of its own to attach to.
 fn render_bulk_selection_bar(app: &mut HiveApp, ui: &mut egui::Ui) {

@@ -225,9 +225,30 @@ pub const RELEASE_GRACE: Duration = Duration::from_secs(120);
 impl DispatchRun {
     /// How long the run has been going, or ran for, as of `now_unix`.
     /// `None` when no log exists yet (nothing has started).
+    ///
+    /// A *finished* run's clock stops. `--output-format text` buffers until
+    /// exit, so `log_modified_unix` is effectively when the agent finished
+    /// (see that field's own doc) — measuring to `now_unix` regardless was
+    /// why a 30-minute run that ended five days ago rendered as "ran 132h
+    /// 33m" under "Awaiting review", a section that by definition only holds
+    /// runs whose agent is already done.
+    ///
+    /// "Finished" is `log_has_output()`, the same evidence
+    /// [`Self::looks_orphaned`] already trusts for it. A live run has an
+    /// empty log and keeps counting.
     pub fn elapsed(&self, now_unix: u64) -> Option<Duration> {
         let started = self.started_at_unix?;
-        Some(Duration::from_secs(now_unix.saturating_sub(started)))
+        let end = if self.log_has_output() {
+            // A clock that ran backwards (log stamped before the name's own
+            // start stamp — clock skew, a copied file) would otherwise
+            // saturate to zero and claim the run took no time at all.
+            self.log_modified_unix
+                .filter(|finished| *finished >= started)
+                .unwrap_or(now_unix)
+        } else {
+            now_unix
+        };
+        Some(Duration::from_secs(end.saturating_sub(started)))
     }
 
     /// Whether the run has outlived `stale_after`. Evidence for "go look", not
@@ -498,6 +519,39 @@ mod tests {
     fn elapsed_saturates_rather_than_underflowing() {
         let run = run_with(Some(2_000), 0);
         assert_eq!(run.elapsed(1_000), Some(Duration::ZERO));
+    }
+
+    /// A finished run's clock stops when the agent finished, not when the
+    /// UI happens to render.
+    ///
+    /// Regression: LED-580 ran for exactly 30 minutes and ended five days
+    /// before it was looked at, yet showed "ran 132h 33m" under "Awaiting
+    /// review" — a section that by definition only holds finished runs.
+    #[test]
+    fn a_finished_runs_clock_stops_at_the_log_write() {
+        let mut run = run_with(Some(1_000), 42);
+        run.log_modified_unix = Some(1_000 + 30 * 60);
+        assert_eq!(
+            run.elapsed(1_000 + 5 * 86_400),
+            Some(Duration::from_secs(30 * 60)),
+            "elapsed must be the run's own duration, not time since it started"
+        );
+    }
+
+    /// A live run has an empty log and keeps counting.
+    #[test]
+    fn a_live_runs_clock_still_counts_to_now() {
+        let run = run_with(Some(1_000), 0);
+        assert_eq!(run.elapsed(1_420), Some(Duration::from_secs(420)));
+    }
+
+    /// A log stamped before the run's own start (clock skew, a copied file)
+    /// must not claim the run took no time at all.
+    #[test]
+    fn a_log_older_than_the_start_stamp_falls_back_to_now() {
+        let mut run = run_with(Some(1_000), 42);
+        run.log_modified_unix = Some(500);
+        assert_eq!(run.elapsed(1_600), Some(Duration::from_secs(600)));
     }
 
     #[test]

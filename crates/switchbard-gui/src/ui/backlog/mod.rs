@@ -284,6 +284,8 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
                     if lens_filters(app.backlog_view.lens) {
                         ui.separator();
                         toolbar::render_project_toolbar(app, ui, &snap);
+                        ui.separator();
+                        list::render_task_sort_controls(app, ui);
                     }
                     ui.separator();
                     saved_views::render_saved_views_bar(app, ui);
