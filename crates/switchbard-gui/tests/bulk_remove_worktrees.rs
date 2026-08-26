@@ -309,6 +309,106 @@ fn a_locked_worktree_and_a_live_dispatch_run_both_route_to_needs_review() {
     );
 }
 
+/// The bar has to move once per candidate, including for a candidate that
+/// fails, because it measures position in the batch rather than success. A bar
+/// that stalls on the first failure is worse than no bar: it says "still
+/// working" about work that already stopped.
+#[test]
+fn progress_advances_once_per_candidate_including_failures() {
+    let (_tmp, repo, clean_merged, _dirty, _unmerged) = setup_repo_with_three_worktrees();
+
+    let real = switchbard_gui::runtime::BulkRemoveCandidate {
+        repo_path: repo.clone(),
+        worktree_path: clean_merged.clone(),
+        display_name: "clean".into(),
+        branch: Some("feat/clean-merged".into()),
+        branch_assessment: None,
+        review_reason: None,
+    };
+    // A path git has never heard of: `worktree remove` fails, and the sweep
+    // must still count it as one item finished.
+    let doomed = switchbard_gui::runtime::BulkRemoveCandidate {
+        repo_path: repo.clone(),
+        worktree_path: repo.join("does-not-exist"),
+        display_name: "ghost".into(),
+        branch: None,
+        branch_assessment: None,
+        review_reason: None,
+    };
+
+    let mut ticks = 0usize;
+    let summary =
+        switchbard_gui::worktree_actions::run_bulk_removal(&[real, doomed], false, || ticks += 1);
+
+    assert_eq!(ticks, 2, "one tick per candidate, not per success");
+    assert_eq!(summary.removed.len(), 1);
+    assert!(
+        summary.first_error.is_some(),
+        "the doomed candidate should have recorded a failure"
+    );
+}
+
+/// Clicking a row's empty space selects it, and the row's own buttons keep
+/// their clicks.
+///
+/// The second half is the point. The row-select interaction is registered
+/// after the children, so it works only because egui resolves an overlapping
+/// click to the most recently registered widget. That is a property of
+/// interaction ordering rather than of our code, so it gets pinned here — a
+/// refactor that moves the `interact` earlier would silently start swallowing
+/// Rename and the trash button.
+#[test]
+fn row_click_selects_but_buttons_still_win() {
+    let (_tmp, repo, clean_merged, _dirty, _unmerged) = setup_repo_with_three_worktrees();
+    let worktrees = vec![
+        wt("demo", repo.clone(), "main"),
+        wt("demo", clean_merged.clone(), "feat/clean-merged"),
+    ];
+    let mut harness = harness(app_with_worktrees(repo.clone(), worktrees));
+    harness.run();
+
+    assert!(
+        harness.state().bulk_selected_worktrees.is_empty(),
+        "precondition: nothing selected"
+    );
+
+    // The worktree's own name is row space no widget claims.
+    harness.get_by_label("wt-clean-merged").click();
+    harness.run();
+    assert!(
+        harness
+            .state()
+            .bulk_selected_worktrees
+            .contains(&clean_merged),
+        "clicking the row should select it"
+    );
+
+    // Clicking it again releases it — a toggle, not a one-way latch.
+    harness.get_by_label("wt-clean-merged").click();
+    harness.run();
+    assert!(
+        harness.state().bulk_selected_worktrees.is_empty(),
+        "clicking a selected row should deselect it"
+    );
+
+    // A real button inside the row must still be the thing that gets the
+    // click, and must not also toggle selection on its way through.
+    // Two rows render a Rename button (primary + linked); take the linked
+    // row's, which is the one sitting inside the row-select target.
+    let rename: Vec<_> = harness.get_all_by_label("Rename").collect();
+    assert_eq!(rename.len(), 2, "primary and linked rows each have one");
+    rename[1].click();
+    harness.run();
+    assert!(
+        harness.state().rename_worktree_dialog.is_some(),
+        "Rename must still open its dialog"
+    );
+    assert!(
+        harness.state().bulk_selected_worktrees.is_empty(),
+        "clicking Rename must not also select the row"
+    );
+}
+
 #[test]
 fn bulk_remove_button_is_disabled_with_nothing_selected() {
     let (_tmp, repo, _clean_merged, _dirty, _unmerged) = setup_repo_with_three_worktrees();
@@ -413,8 +513,11 @@ fn run_bulk_removal_deletes_all_removable_worktrees_and_their_branches() {
     );
     assert!(state.delete_branches, "delete_branches defaults on");
 
-    let summary =
-        switchbard_gui::worktree_actions::run_bulk_removal(&state.removable, state.delete_branches);
+    let summary = switchbard_gui::worktree_actions::run_bulk_removal(
+        &state.removable,
+        state.delete_branches,
+        || {},
+    );
 
     assert_eq!(summary.removed.len(), 5, "all 5 should report removed");
     assert_eq!(
@@ -487,7 +590,7 @@ fn run_bulk_removal_reports_a_branch_delete_failure_without_swallowing_it() {
         review_reason: None,
     };
 
-    let summary = switchbard_gui::worktree_actions::run_bulk_removal(&[candidate], true);
+    let summary = switchbard_gui::worktree_actions::run_bulk_removal(&[candidate], true, || {});
 
     assert_eq!(
         summary.removed,

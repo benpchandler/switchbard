@@ -184,6 +184,14 @@ pub struct HiveApp {
     /// this carries the countable position, and only one of them is showing
     /// at a time.
     pub bulk_progress: Progress,
+    /// Determinate progress for the Workspace's bulk worktree removal.
+    ///
+    /// A second channel rather than sharing `bulk_progress`: these are two
+    /// independent surfaces, and one shared value would render a Backlog bar
+    /// reading "removing 3/9 worktrees" (or the reverse) whenever both were
+    /// touched in a session. `Progress::begin` resets, so sharing would also
+    /// let one sweep silently reset the other's bar.
+    pub worktree_bulk_progress: Progress,
 
     // Persisted config (single source of truth for repos + UI defaults).
     pub config: Config,
@@ -401,6 +409,7 @@ impl HiveApp {
             server_status: Status::new(),
             backlog_status: Status::new(),
             bulk_progress: Progress::new(),
+            worktree_bulk_progress: Progress::new(),
             filter: String::new(),
             dispatch_kill_confirm: None,
             show_only_managed: false,
