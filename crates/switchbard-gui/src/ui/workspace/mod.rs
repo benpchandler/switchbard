@@ -468,6 +468,31 @@ fn render_worktree_row(
     } else if is_primary {
         frame = frame.fill(theme::primary_worktree_tint());
     }
+    // Clicking the row's *name* selects it for bulk removal — see
+    // `render_worktree_summary_line`, which owns that widget.
+    //
+    // Two approaches were tried and rejected, both measured rather than
+    // reasoned about, because the obvious ones are wrong in opposite ways:
+    //
+    //   - `ui.interact` on the finished row rect swallows every button in the
+    //     row. egui resolves an overlapping click to the most recently
+    //     registered widget, and that registers last, so Rename stopped
+    //     opening its dialog.
+    //   - Sensing the row's `Ui` at creation fixes that, but then the click
+    //     never arrives: the hover-only labels sitting on top absorb it rather
+    //     than letting it fall through to the parent.
+    //
+    // So the gesture lives on a real widget. `row_click_selects_but_buttons_
+    // still_win` pins both halves — the name selects, and Rename still wins
+    // its own click.
+    //
+    // None of this takes anything away: `CollapsingState::show_header` wires
+    // expand/collapse to the triangle alone and lays the header out without
+    // sensing it, so the row body was dead space.
+    //
+    // Primaries are excluded — they render no checkbox and are dropped from
+    // the candidate list, so selecting one offers a selection that evaporates.
+    let mut name_clicked = false;
     frame.show(ui, |ui| {
         let id = ui.make_persistent_id(format!("wt_row_{}", w.path.display()));
         let state = CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
@@ -484,7 +509,7 @@ fn render_worktree_row(
                     services: svcs,
                     size: snap.sizes.get(&w.path),
                 };
-                render_worktree_summary_line(ui, summary, snap);
+                name_clicked = render_worktree_summary_line(ui, summary, snap);
                 render_worktree_row_trailing(
                     ui,
                     repo,
@@ -513,6 +538,10 @@ fn render_worktree_row(
                 ui.add_space(4.0);
             });
     });
+
+    if !is_primary && name_clicked && !app.bulk_selected_worktrees.remove(&w.path) {
+        app.bulk_selected_worktrees.insert(w.path.clone());
+    }
 }
 
 /// "Noteworthy" worktree (auto-expand). The rule: anything the user
@@ -549,7 +578,13 @@ struct WorktreeSummary<'a> {
     size: Option<&'a WorktreeSizeEntry>,
 }
 
-fn render_worktree_summary_line(ui: &mut egui::Ui, summary: WorktreeSummary<'_>, snap: &Snapshot) {
+/// Returns `true` when the user clicked the row's name, which is the row's
+/// bulk-select gesture.
+fn render_worktree_summary_line(
+    ui: &mut egui::Ui,
+    summary: WorktreeSummary<'_>,
+    snap: &Snapshot,
+) -> bool {
     let (dot_color, pulse_count) = headline_dot(
         summary.services,
         summary.worktree,
@@ -563,7 +598,18 @@ fn render_worktree_summary_line(ui: &mut egui::Ui, summary: WorktreeSummary<'_>,
         theme::painted_dot(ui, dot_color);
     }
     ui.add_space(2.0);
-    ui.label(egui::RichText::new(summary.display_name).strong());
+    // The name is the row's select target. A `Label` senses nothing by
+    // default, and a hover-only widget sitting on top of the row absorbs the
+    // click rather than letting it fall through to the row's own sense — so
+    // "click the row" has to be spelled out on a real widget rather than
+    // relied on as ambient behaviour.
+    let name_clicked = ui
+        .add(
+            egui::Label::new(egui::RichText::new(summary.display_name).strong())
+                .sense(egui::Sense::click()),
+        )
+        .on_hover_text("Click to select for bulk removal")
+        .clicked();
     // Branch name lives in the expanded body (`render_branch_inline`), not
     // here: long branches pushed the left cluster into the right-aligned
     // Rename/trash actions and overlapped them.
@@ -581,6 +627,7 @@ fn render_worktree_summary_line(ui: &mut egui::Ui, summary: WorktreeSummary<'_>,
         summary.meta,
         attached_processes(snap, &summary.worktree.path, summary.listener_count),
     );
+    name_clicked
 }
 
 /// Branch name for the expanded body. Kept off the collapsed header so a long
