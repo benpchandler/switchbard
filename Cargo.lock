@@ -3718,7 +3718,7 @@ dependencies = [
 
 [[package]]
 name = "switchbard-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3733,14 +3733,14 @@ dependencies = [
 
 [[package]]
 name = "switchbard-dispatch"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "switchbard-core",
 ]
 
 [[package]]
 name = "switchbard-gui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",

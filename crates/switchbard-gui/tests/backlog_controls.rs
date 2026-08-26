@@ -1549,7 +1549,24 @@ fn drag_and_drop(harness: &mut Harness<'_, HiveApp>, source: egui::Pos2, target:
         pressed: false,
         modifiers: egui::Modifiers::default(),
     });
-    harness.run();
+    // A fixed step count, NOT `run()` — this is the one call in this helper
+    // that races a background thread (TASK-56).
+    //
+    // The drop spawns a real `backlog` CLI save, and that thread calls
+    // `ctx.request_repaint()` when it finishes. `Harness::run`'s settle loop
+    // breaks only on a *non-zero* `repaint_delay`, and a cross-thread repaint
+    // sets it to zero while registering no in-frame cause — which is exactly
+    // the `Repaint causes: []` in the CI panic. Land it inside the settle
+    // window and `run()` spins to `max_steps`. Reproduced deterministically by
+    // hammering `request_repaint` from another thread: `run()` fails, this
+    // does not.
+    //
+    // Four steps because that is what `run()` was already bounded to
+    // (`max_steps`), so nothing this helper used to settle is lost. The
+    // assertions downstream read state directly and accept either the
+    // in-flight or the terminal status, so they never needed the save to
+    // finish — only the drop to register.
+    harness.run_steps(4);
 }
 
 /// task-42 AC #1 ("dropped card renders in the destination column on the
