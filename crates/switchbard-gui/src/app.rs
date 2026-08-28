@@ -28,7 +28,8 @@ use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
     dispatch_run_holds_worktree, ActiveRun, ActiveRunSummary, AgentContextViewState,
     BacklogTaskKey, BacklogViewState, BoardMoveOutcome, ConfirmBulkRemoveWorktrees,
-    ConfirmRemoveWorktree, OrderingState, PickerState, ViewTab, WorktreeMeta, WorktreeSizeEntry,
+    ConfirmRemoveWorktree, LandingEntry, OrderingState, PickerState, ViewTab, WorktreeMeta,
+    WorktreeSizeEntry,
 };
 use crate::sync::{Kick, Progress, Status};
 use crate::ui;
@@ -155,6 +156,11 @@ pub struct HiveApp {
     /// on its own slow cadence (see that worker's doc for why it's not part
     /// of `meta`/the git-probe tick).
     pub sizes: Arc<Mutex<HashMap<PathBuf, WorktreeSizeEntry>>>,
+    /// feat/landing-stage: why each unlanded worktree is still unlanded,
+    /// refreshed by `workers::spawn_landing` on its own slow cadence (see
+    /// that worker's doc for why it can't share the git-probe tick or
+    /// `sizes`' own cadence's Mutex).
+    pub landing: Arc<Mutex<HashMap<PathBuf, LandingEntry>>>,
     /// TASK-41: count of non-primary, clean, fully-merged worktrees, written
     /// once per git-probe tick by `workers::spawn_probe`. The top bar's "N
     /// retired worktrees" nudge reads this directly rather than recomputing
@@ -171,6 +177,7 @@ pub struct HiveApp {
     /// the worker's normal poll period before the queue is drained.
     pub dispatch_kick: Kick,
     pub size_kick: Kick,
+    pub landing_kick: Kick,
     pub picker: Arc<Mutex<PickerState>>,
 
     // Per-view feedback channels. One per UI surface so messages don't
@@ -391,6 +398,7 @@ impl HiveApp {
             ordering: Arc::new(Mutex::new(OrderingState::default())),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             sizes: Arc::new(Mutex::new(HashMap::new())),
+            landing: Arc::new(Mutex::new(HashMap::new())),
             retired_worktree_count: Arc::new(Mutex::new(0)),
             state: Arc::new(Mutex::new(ScanState::default())),
             scanner_kick: Kick::new(),
@@ -400,6 +408,7 @@ impl HiveApp {
             backlog_kick: Kick::new(),
             dispatch_kick: Kick::new(),
             size_kick: Kick::new(),
+            landing_kick: Kick::new(),
             config: cfg,
             config_save_path: None,
             _instance_lock: None,
@@ -454,6 +463,7 @@ impl HiveApp {
                 ordering: self.ordering.clone(),
                 active_runs: self.active_runs.clone(),
                 sizes: self.sizes.clone(),
+                landing: self.landing.clone(),
                 retired_worktree_count: self.retired_worktree_count.clone(),
                 scanner_kick: self.scanner_kick.clone(),
                 probe_kick: self.probe_kick.clone(),
@@ -462,6 +472,7 @@ impl HiveApp {
                 backlog_kick: self.backlog_kick.clone(),
                 dispatch_kick: self.dispatch_kick.clone(),
                 size_kick: self.size_kick.clone(),
+                landing_kick: self.landing_kick.clone(),
             },
         );
     }
@@ -500,6 +511,7 @@ impl HiveApp {
         self.agent_context_kick.notify();
         self.backlog_kick.notify();
         self.size_kick.notify();
+        self.landing_kick.notify();
     }
 
     pub fn mark_agent_contexts_stale(&self) {
@@ -762,6 +774,7 @@ impl HiveApp {
         let detection_kick = self.detection_kick.clone();
         let agent_context_kick = self.agent_context_kick.clone();
         let size_kick = self.size_kick.clone();
+        let landing_kick = self.landing_kick.clone();
         let config_status = self.config_status.clone();
         let remove_outcomes = self.remove_worktree_outcomes.clone();
         let ctx = ctx.clone();
@@ -873,6 +886,7 @@ impl HiveApp {
                     detection_kick.notify();
                     agent_context_kick.notify();
                     size_kick.notify();
+                    landing_kick.notify();
                 }
                 Err(e) => {
                     if let Some(state) = confirm.lock().unwrap().as_mut() {
