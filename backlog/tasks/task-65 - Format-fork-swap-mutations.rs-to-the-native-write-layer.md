@@ -1,7 +1,7 @@
 ---
 id: TASK-65
 title: 'Format fork: swap mutations.rs to the native write layer'
-status: In Review
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-28 18:40'

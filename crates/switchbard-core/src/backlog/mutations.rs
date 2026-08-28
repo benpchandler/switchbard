@@ -197,6 +197,24 @@ pub fn append_backlog_notes(project_root: &Path, task_id: &str, note: &str) -> R
     Ok(outcome_message(task_id, outcome))
 }
 
+/// Replace the task's Final Summary section wholesale — the wrap-up field
+/// the task lifecycle requires before Done. Not part of
+/// [`BacklogTaskPatch`] because no editing surface composes it with other
+/// fields; it is written once, at the end, by whoever finishes the task
+/// (today: the `switchbard-task` CLI).
+pub fn set_backlog_final_summary(
+    project_root: &Path,
+    task_id: &str,
+    summary: &str,
+) -> Result<String> {
+    if summary.trim().is_empty() {
+        bail!("final summary is empty");
+    }
+    let path = resolve_task_file(project_root, task_id)?;
+    let outcome = replace_task_section(&path, TaskSection::FinalSummary, summary)?;
+    Ok(outcome_message(task_id, outcome))
+}
+
 /// Create a task in `backlog/tasks`, allocating its id natively (see
 /// `super::allocate`). Returns the new id — `"TASK-42"` — as the output
 /// string; callers build their own status messages from it.

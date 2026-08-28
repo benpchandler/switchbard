@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/switchbard-core", "crates/switchbard-gui", "crates/switchbard-dispatch"]
+members = [
+    "crates/switchbard-core",
+    "crates/switchbard-gui",
+    "crates/switchbard-dispatch",
+    "crates/switchbard-task",
+]
 
 [workspace.package]
 edition = "2021"
@@ -17,6 +22,7 @@ categories = ["development-tools", "gui"]
 
 [workspace.dependencies]
 anyhow = "1"
+clap = { version = "4", features = ["derive", "wrap_help"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"

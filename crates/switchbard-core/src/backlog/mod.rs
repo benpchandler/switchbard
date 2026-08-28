@@ -17,8 +17,8 @@ pub use allocate::{create_task_allocating_id, next_task_id, ACTIVE_BRANCH_DAYS};
 
 pub use mutations::{
     append_backlog_notes, archive_backlog_task, complete_backlog_task, create_backlog_task,
-    edit_backlog_task, set_backlog_acceptance_checked, set_backlog_dod_checked, set_backlog_label,
-    swap_backlog_label,
+    edit_backlog_task, set_backlog_acceptance_checked, set_backlog_dod_checked,
+    set_backlog_final_summary, set_backlog_label, swap_backlog_label,
 };
 pub use parse::{
     backlog_cli_path, body_round_trips, is_backlog_project, load_backlog_project,
