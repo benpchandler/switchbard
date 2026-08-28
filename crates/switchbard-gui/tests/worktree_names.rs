@@ -17,6 +17,7 @@ fn persisted_worktree_name_wins_over_folder_leaf() {
     };
     let cfg = Config {
         version: 1,
+        status_standardization_declined: Vec::new(),
         repos: vec![repo.clone()],
         worktrees: vec![WorktreeAlias {
             repo_path: repo.path.clone(),
@@ -50,6 +51,7 @@ fn duplicate_worktree_names_are_rejected_per_repo() {
     let repo = repo();
     let cfg = Config {
         version: 1,
+        status_standardization_declined: Vec::new(),
         repos: vec![repo.clone()],
         worktrees: vec![WorktreeAlias {
             repo_path: repo.path.clone(),
@@ -81,6 +83,7 @@ fn remove_worktree_alias_prunes_matching_entry_and_leaves_others() {
     let removed_path = PathBuf::from("/Users/me/Dev/.worktrees/switchbard/agents");
     let mut cfg = Config {
         version: 1,
+        status_standardization_declined: Vec::new(),
         repos: vec![repo.clone()],
         worktrees: vec![
             WorktreeAlias {

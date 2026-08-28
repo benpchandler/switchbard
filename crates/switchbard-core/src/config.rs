@@ -29,6 +29,16 @@ pub struct Config {
     pub worktrees: Vec<WorktreeAlias>,
     #[serde(default)]
     pub ui: UiConfig,
+    /// Repos whose status list the user has explicitly chosen to leave as it
+    /// is, so the standardization offer stops asking.
+    ///
+    /// A decline is per-repo and sticky by design: the alternative is a
+    /// prompt that reappears every time the Backlog view opens, which trains
+    /// people to dismiss dialogs without reading them. The board still shows
+    /// exactly what such a repo declares — declining changes what we *ask*,
+    /// never what we *show*.
+    #[serde(default)]
+    pub status_standardization_declined: Vec<PathBuf>,
 }
 
 // Note: not `Eq` — `ui_scale` is an `f32`. `PartialEq` is all the tests (and
@@ -306,6 +316,7 @@ mod tests {
                 },
             ],
             worktrees: vec![],
+            status_standardization_declined: Vec::new(),
             ui: UiConfig {
                 browser: Some("Safari".into()),
                 show_non_servers: true,
@@ -350,6 +361,7 @@ mod tests {
                 worktree_path: PathBuf::from("/Users/me/Dev/.worktrees/switchbard/agents"),
                 name: "agents".into(),
             }],
+            status_standardization_declined: Vec::new(),
             ui: UiConfig::default(),
         };
 
@@ -420,6 +432,7 @@ path = "/Users/me/Dev/switchbard"
                 path: PathBuf::from("/Users/me/myrepo"),
             }],
             worktrees: vec![],
+            status_standardization_declined: Vec::new(),
             ui: UiConfig::default(),
         };
         save_to(&path, &second).unwrap();
@@ -448,6 +461,7 @@ path = "/Users/me/Dev/switchbard"
                 path: PathBuf::from("/Users/me/Dev/switchbard"),
             }],
             worktrees: vec![],
+            status_standardization_declined: Vec::new(),
             ui: UiConfig::default(),
         };
         save_to(&path, &populated).unwrap();
@@ -502,6 +516,7 @@ path = "/Users/me/Dev/switchbard"
                 path: PathBuf::from("/Users/me/Dev/switchbard"),
             }],
             worktrees: vec![],
+            status_standardization_declined: Vec::new(),
             ui: UiConfig::default(),
         };
         save_to(&path, &cfg).unwrap();

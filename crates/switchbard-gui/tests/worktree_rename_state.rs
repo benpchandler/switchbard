@@ -11,6 +11,7 @@ fn rename_validation_allows_current_name_for_same_worktree() {
     let path = PathBuf::from("/Users/me/Dev/.worktrees/switchbard/agents");
     let cfg = Config {
         version: 1,
+        status_standardization_declined: Vec::new(),
         repos: vec![repo.clone()],
         worktrees: vec![WorktreeAlias {
             repo_path: repo.path.clone(),
@@ -29,6 +30,7 @@ fn rename_validation_rejects_duplicate_name_on_other_worktree() {
     let repo = repo();
     let cfg = Config {
         version: 1,
+        status_standardization_declined: Vec::new(),
         repos: vec![repo.clone()],
         worktrees: vec![WorktreeAlias {
             repo_path: repo.path.clone(),

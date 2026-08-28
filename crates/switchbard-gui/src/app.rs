@@ -32,6 +32,7 @@ use crate::runtime::{
 };
 use crate::sync::{Kick, Progress, Status};
 use crate::ui;
+use crate::ui::backlog::status_migration::StatusMigrationPrompt;
 use crate::ui::onboarding::DiscoveryState;
 use crate::ui::workspace::staleness::StalenessFilter;
 use crate::workers::{self, Channels};
@@ -256,6 +257,14 @@ pub struct HiveApp {
     pub remove_worktree_outcomes: Arc<Mutex<Vec<RemovedWorktree>>>,
     /// Modal state for renaming the Switchbard-local worktree label.
     pub rename_worktree_dialog: Option<RenameWorktreeDialog>,
+    /// The standardization offer, raised when a repo's `backlog/config.yml`
+    /// omits statuses the shared vocabulary expects.
+    ///
+    /// UI-thread-only (a plain field, not an `Arc<Mutex<>>`): unlike the
+    /// worktree dialogs, nothing here is driven by a worker — the check is a
+    /// cheap comparison of two already-loaded lists, and the migration is a
+    /// single small file write.
+    pub status_migration_prompt: Option<StatusMigrationPrompt>,
     pub expanded_repos: BTreeSet<String>,
     /// When false (default), hide rows whose classifier verdict is NotServer
     /// (test scripts, build wrappers, ship-gate runners, etc.).
@@ -424,6 +433,7 @@ impl HiveApp {
             create_worktree_outcomes: Arc::new(Mutex::new(Vec::new())),
             remove_worktree_outcomes: Arc::new(Mutex::new(Vec::new())),
             rename_worktree_dialog: None,
+            status_migration_prompt: None,
             expanded_repos: BTreeSet::new(),
             show_non_servers,
             view_tab: ViewTab::Servers,
@@ -2106,7 +2116,7 @@ fn save_one_task(
 /// status bar says "saved", while the cache the views render from still holds
 /// the pre-mutation snapshot — the user sees their edit apparently do nothing
 /// and has no clue why. Callers pair this with [`with_stale_warning`].
-fn refresh_backlog_project_cache(
+pub(crate) fn refresh_backlog_project_cache(
     projects: &Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
     project_root: &Path,
 ) -> Result<(), String> {

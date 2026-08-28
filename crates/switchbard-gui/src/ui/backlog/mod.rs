@@ -76,6 +76,7 @@ mod search;
 mod selection;
 mod sort;
 mod stats;
+pub mod status_migration;
 mod toolbar;
 mod tree;
 
@@ -268,6 +269,19 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
             // "N of M"; Digest and Statistics summarise the whole scope.
             let visible_count = lens_filters(app.backlog_view.lens).then_some(tasks.len());
             toolbar::render_summary(app, ui, &snap, &mut pending, visible_count);
+            // Above the controls, not over them: the offer is information the
+            // user can act on or ignore, and nothing below it is gated on an
+            // answer — the board is already showing the truth either way.
+            let roots: Vec<std::path::PathBuf> = snap
+                .projects
+                .iter()
+                .map(|p| p.project.root.clone())
+                .collect();
+            status_migration::detect(app, &roots);
+            if app.status_migration_prompt.is_some() {
+                ui.add_space(6.0);
+                status_migration::render(app, ui);
+            }
             ui.add_space(6.0);
             // One container for the whole control surface: lens tabs, the
             // filter row, and saved views. These used to carry three
