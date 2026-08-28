@@ -427,6 +427,41 @@ fn hooks_facets_compose_and_clear_from_the_shared_filter_bar() {
 }
 
 #[test]
+fn hooks_page_explains_itself_when_facets_hide_every_repo() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Agents;
+    app.agent_context_view.section = AgentsSection::Hooks;
+    app.agent_context_view.hook_scope = Some(ContextScope::Directory);
+    app.agent_contexts
+        .lock()
+        .expect("invariant: seeded context cache lock")
+        .get_mut(&PathBuf::from(REPO_PATH))
+        .expect("invariant: seeded repo context")
+        .hooks
+        .push(AgentHook {
+            id: "local-stop".to_string(),
+            agent: AgentKind::Claude,
+            scope: ContextScope::Local,
+            source_path: PathBuf::from(format!("{REPO_PATH}/.claude/settings.json")),
+            event: "Stop".to_string(),
+            matcher: None,
+            hook_type: "command".to_string(),
+            action: "./scripts/notify.sh".to_string(),
+            arguments: Vec::new(),
+            condition: None,
+            asynchronous: false,
+            timeout_seconds: None,
+        });
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(harness.query_by_label(REPO_NAME).is_none());
+    assert!(harness
+        .query_by_label("No hooks match the current filters.")
+        .is_some());
+}
+
+#[test]
 fn clicking_backlog_tab_switches_view() {
     let mut harness = harness(seeded_app());
 

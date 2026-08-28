@@ -402,16 +402,10 @@ impl HiveApp {
         let show_only_managed = server_filters
             .and_then(|memory| memory.facets.get("attributed_only"))
             .is_some_and(|value| value == "true");
-        let staleness_filter = match server_filters
+        let staleness_filter = server_filters
             .and_then(|memory| memory.facets.get("staleness"))
-            .map(String::as_str)
-        {
-            Some("merged") => StalenessFilter::Merged,
-            Some("orphan") => StalenessFilter::Orphan,
-            Some("live") => StalenessFilter::Live,
-            Some("dirty") => StalenessFilter::Dirty,
-            _ => StalenessFilter::All,
-        };
+            .and_then(|value| StalenessFilter::from_facet(value))
+            .unwrap_or_default();
 
         Self {
             repos: Arc::new(Mutex::new(repos)),
@@ -620,7 +614,7 @@ impl HiveApp {
         } else {
             servers.facets.insert(
                 "staleness".to_string(),
-                self.staleness_filter.label().to_lowercase(),
+                self.staleness_filter.facet_value().to_string(),
             );
         }
     }

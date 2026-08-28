@@ -177,7 +177,7 @@ fn render_global_card(ui: &mut egui::Ui, app: &mut HiveApp, snap: &Snapshot) {
                 return;
             }
 
-            let selected_items = selected_global_items(app, &items);
+            let selected_items = selected_global_items(app, &items, &snap.filter_lc);
             let selected = selected_global_item(app, &selected_items);
             ui.add_space(4.0);
             ui.horizontal_top(|ui| {
@@ -793,12 +793,13 @@ fn count_for_visible(
 fn selected_global_items<'a>(
     app: &HiveApp,
     items: &[&'a AgentContextItem],
+    filter_lc: &str,
 ) -> Vec<&'a AgentContextItem> {
     let mut selected: Vec<&AgentContextItem> = items
         .iter()
         .copied()
         .filter(|i| agent_visible(app.agent_context_view.agent, i.agent))
-        .filter(|i| item_matches_filter(i, &app.filter().to_lowercase()))
+        .filter(|i| item_matches_filter(i, filter_lc))
         .filter(|i| {
             app.agent_context_view
                 .global_kind

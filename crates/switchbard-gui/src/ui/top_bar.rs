@@ -105,11 +105,19 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
             ui.separator();
             ui.checkbox(&mut app.show_only_managed, "only attributed listeners");
             ui.checkbox(&mut app.show_non_servers, "show non-server scripts");
-            let active = !app.filter().is_empty() || app.show_only_managed || !app.show_non_servers;
+            // "Default" means the shipped `UiConfig` defaults: non-server
+            // scripts hidden, no staleness narrowing. The staleness chips
+            // render in the workspace body below, but they are still this
+            // page's filter state, so the page-wide reset covers them too.
+            let active = !app.filter().is_empty()
+                || app.show_only_managed
+                || app.show_non_servers
+                || app.staleness_filter != workspace::staleness::StalenessFilter::All;
             if filter_bar::clear(ui, active) {
                 app.filter_mut().clear();
                 app.show_only_managed = false;
-                app.show_non_servers = true;
+                app.show_non_servers = false;
+                app.staleness_filter = workspace::staleness::StalenessFilter::All;
             }
         }
         ViewTab::Backlog | ViewTab::Dispatch => {

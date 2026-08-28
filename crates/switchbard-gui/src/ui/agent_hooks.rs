@@ -77,6 +77,7 @@ fn render_summary(ui: &mut egui::Ui, snap: &Snapshot) {
 }
 
 fn render_repos(ui: &mut egui::Ui, app: &HiveApp, snap: &Snapshot) {
+    let mut any_rendered = false;
     for repo in &snap.repos {
         let worktrees: Vec<&WorktreeRef> = snap
             .worktrees
@@ -86,9 +87,43 @@ fn render_repos(ui: &mut egui::Ui, app: &HiveApp, snap: &Snapshot) {
         let Some(worktree) = selected_worktree(repo, &worktrees, snap) else {
             continue;
         };
-        render_repo(ui, app, repo, worktree, snap);
-        ui.add_space(8.0);
+        if render_repo(ui, app, repo, worktree, snap) {
+            any_rendered = true;
+            ui.add_space(8.0);
+        }
     }
+    if !any_rendered && hooks_filters_active(app, snap) {
+        render_no_matching_repos(ui);
+    }
+}
+
+fn hooks_filters_active(app: &HiveApp, snap: &Snapshot) -> bool {
+    !snap.filter_lc.is_empty()
+        || app.agent_context_view.hook_scope.is_some()
+        || app.agent_context_view.hook_event.is_some()
+        || app.agent_context_view.hook_type.is_some()
+}
+
+/// Page-level guidance for when the active search or facets hide every repo
+/// card - without it the body below the summary line would render nothing at
+/// all, indistinguishable from a broken view.
+fn render_no_matching_repos(ui: &mut egui::Ui) {
+    egui::Frame::NONE
+        .fill(ui.visuals().faint_bg_color)
+        .inner_margin(egui::Margin::symmetric(10, 10))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new("No hooks match the current filters.")
+                    .color(theme::muted_text()),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "Clear the search or facets to see every detected registration.",
+                )
+                .small()
+                .color(theme::muted_text()),
+            );
+        });
 }
 
 fn selected_worktree<'a>(
@@ -115,7 +150,7 @@ fn render_repo(
     repo: &Repo,
     worktree: &WorktreeRef,
     snap: &Snapshot,
-) {
+) -> bool {
     let map = snap.maps.get(&worktree.path);
     let repo_text_matches = snap.filter_lc.is_empty()
         || repo.name.to_lowercase().contains(&snap.filter_lc)
@@ -138,7 +173,7 @@ fn render_repo(
         app.agent_context_view.hook_event.as_deref(),
         app.agent_context_view.hook_type.as_deref(),
     ) {
-        return;
+        return false;
     }
     egui::Frame::group(ui.style())
         .inner_margin(egui::Margin::symmetric(10, 8))
@@ -162,6 +197,7 @@ fn render_repo(
                 }
             }
         });
+    true
 }
 
 fn render_repo_header(

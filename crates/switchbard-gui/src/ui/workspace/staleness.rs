@@ -45,6 +45,23 @@ impl StalenessFilter {
             Self::Dirty => "Dirty",
         }
     }
+
+    /// Stable token stored in `FilterMemory` facets. Persist and restore in
+    /// `HiveApp` both go through this pair - never through `label()`, whose
+    /// wording is free to change without stranding saved filter state.
+    pub fn facet_value(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Merged => "merged",
+            Self::NoUpstream => "no-upstream",
+            Self::Live => "live",
+            Self::Dirty => "dirty",
+        }
+    }
+
+    pub fn from_facet(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|f| f.facet_value() == value)
+    }
 }
 
 /// Does `meta` belong to the current filter? `None` (probe hasn't returned
@@ -315,6 +332,17 @@ mod tests {
             staleness,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn staleness_facet_vocabulary_round_trips() {
+        for filter in StalenessFilter::ALL {
+            assert_eq!(
+                StalenessFilter::from_facet(filter.facet_value()),
+                Some(filter)
+            );
+        }
+        assert_eq!(StalenessFilter::from_facet("orphan"), None);
     }
 
     fn meta_dirty(dirty: bool) -> WorktreeMeta {

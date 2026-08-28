@@ -250,10 +250,15 @@ fn suffix_after(value: &str, prefix: &str) -> String {
 }
 
 fn humanize_matcher(matcher: &str) -> String {
-    if matcher == "*" || matcher.is_empty() {
+    let parts: Vec<&str> = matcher
+        .split(['|', ','])
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    if matcher == "*" || parts.is_empty() {
         "any tool".to_string()
     } else {
-        matcher.replace('|', " or ").replace(',', " or")
+        parts.join(" or ")
     }
 }
 
@@ -355,16 +360,26 @@ fn scope_rank(scope: ContextScope) -> u8 {
 }
 
 pub fn scan_agent_context(worktree: &Path) -> AgentContextMap {
+    scan_agent_context_with_home(worktree, dirs::home_dir())
+}
+
+/// Home injection seam: tests scan a temp worktree without also reading the
+/// developer's real `~/.claude`, whose settings (e.g. `disableAllHooks`)
+/// would otherwise leak into the result.
+fn scan_agent_context_with_home(worktree: &Path, home: Option<PathBuf>) -> AgentContextMap {
     let mut items = Vec::new();
     let mut hooks = Vec::new();
     let mut hook_warnings = Vec::new();
     let mut disable_setting = None;
-    scan_global(
-        &mut items,
-        &mut hooks,
-        &mut hook_warnings,
-        &mut disable_setting,
-    );
+    if let Some(home) = home {
+        scan_global(
+            &home,
+            &mut items,
+            &mut hooks,
+            &mut hook_warnings,
+            &mut disable_setting,
+        );
+    }
     scan_worktree(
         worktree,
         &mut items,
@@ -451,12 +466,12 @@ pub fn agent_context_needs_rescan(
 }
 
 fn scan_global(
+    home: &Path,
     items: &mut Vec<AgentContextItem>,
     hooks: &mut Vec<AgentHook>,
     warnings: &mut Vec<AgentHookWarning>,
     disable_setting: &mut Option<(bool, PathBuf)>,
 ) {
-    let Some(home) = dirs::home_dir() else { return };
     add_if_file(
         items,
         AgentKind::Claude,
@@ -1077,7 +1092,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("apps/web")).unwrap();
         write_file(&dir.path().join("apps/CLAUDE.md"));
 
-        let map = scan_agent_context(dir.path());
+        let map = scan_agent_context_with_home(dir.path(), None);
         assert!(map.scanned_at.is_some());
         assert!(map.items.iter().any(|i| i.title == "CLAUDE.md"));
         assert!(map.items.iter().any(|i| i.title == "AGENTS.md"));
@@ -1111,7 +1126,7 @@ mod tests {
             }"#,
         );
 
-        let map = scan_agent_context(dir.path());
+        let map = scan_agent_context_with_home(dir.path(), None);
         let local_hooks: Vec<&AgentHook> = map
             .hooks
             .iter()
@@ -1135,7 +1150,7 @@ mod tests {
             r#"{"hooks":{"Stop":[{"hooks":[{"type":"unknown","payload":true}]}]}}"#,
         );
 
-        let map = scan_agent_context(dir.path());
+        let map = scan_agent_context_with_home(dir.path(), None);
 
         assert!(map.hooks.iter().all(|hook| hook.source_path != settings));
         assert!(map.hook_warnings.iter().any(|warning| {
@@ -1157,7 +1172,7 @@ mod tests {
         );
         write_text(&local, r#"{"disableAllHooks": false}"#);
 
-        let map = scan_agent_context(dir.path());
+        let map = scan_agent_context_with_home(dir.path(), None);
 
         assert!(map.hooks_disabled_by.is_none());
         assert!(map
@@ -1177,7 +1192,7 @@ mod tests {
         );
         write_text(&local, r#"{"disableAllHooks": true}"#);
 
-        let map = scan_agent_context(dir.path());
+        let map = scan_agent_context_with_home(dir.path(), None);
 
         assert!(map.hooks.is_empty());
         assert_eq!(map.hooks_disabled_by.as_deref(), Some(local.as_path()));
@@ -1192,7 +1207,7 @@ mod tests {
         write_text(&shared, config);
         write_text(&local, config);
 
-        let map = scan_agent_context(dir.path());
+        let map = scan_agent_context_with_home(dir.path(), None);
         let matching: Vec<&AgentHook> = map
             .hooks
             .iter()
@@ -1231,7 +1246,7 @@ mod tests {
             }"#,
         );
 
-        let map = scan_agent_context(dir.path());
+        let map = scan_agent_context_with_home(dir.path(), None);
         let command = map
             .hooks
             .iter()
@@ -1271,6 +1286,26 @@ mod tests {
             hook.trigger_summary(),
             "After Claude uses Write or Edit; only for Edit calls matching *.rs"
         );
+    }
+
+    #[test]
+    fn hook_summary_reads_comma_separated_matchers_as_or_lists() {
+        let hook = AgentHook {
+            id: "comma-matcher".to_string(),
+            agent: AgentKind::Claude,
+            scope: ContextScope::Local,
+            source_path: PathBuf::from(".claude/settings.json"),
+            event: "PreToolUse".to_string(),
+            matcher: Some("Write,Edit".to_string()),
+            hook_type: "command".to_string(),
+            action: "./check.sh".to_string(),
+            arguments: Vec::new(),
+            condition: None,
+            asynchronous: false,
+            timeout_seconds: None,
+        };
+
+        assert_eq!(hook.trigger_summary(), "Before Claude uses Write or Edit");
     }
 
     #[test]
@@ -1322,7 +1357,7 @@ mod tests {
     fn context_cache_round_trips() {
         let dir = tempfile::tempdir().unwrap();
         write_file(&dir.path().join("CLAUDE.md"));
-        let map = scan_agent_context(dir.path());
+        let map = scan_agent_context_with_home(dir.path(), None);
         let cache_path = dir.path().join("cache/agent-context-cache.json");
 
         save_agent_context_cache_to(&cache_path, std::slice::from_ref(&map)).unwrap();
