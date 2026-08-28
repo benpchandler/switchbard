@@ -199,7 +199,7 @@ pub enum RemovalVerdict {
 ///
 /// Two variants rather than a bare count, because a caller can honestly
 /// establish *that* a branch is unlanded without establishing *how far*: the
-/// Workspace row reuses the Merged/Orphan/Live badge, which only records
+/// Workspace row reuses the Merged/NoUpstream/Live badge, which only records
 /// whether the ahead-count was zero. Encoding that as `count: 1` would have
 /// put a number on screen that nothing measured.
 /// What proves a branch's work is already in the base.
@@ -662,7 +662,7 @@ fn probe_landed(repo_path: &Path, worktree_path: &Path, branch: Option<&str>) ->
     // A *detached* worktree has no branch ref - but it does have its own HEAD,
     // and that is a perfectly good thing to compare. It is also exactly what
     // `git_probe::probe_worktree_staleness` asks about to paint the
-    // Merged/Orphan/Live badge, which is the point: this function used to give
+    // Merged/NoUpstream/Live badge, which is the point: this function used to give
     // up on `branch: None` and report "there's no branch to prove the work
     // landed on", so a detached worktree parked on `main` read `remove ok` on
     // the row and was routed to the bulk sweep's needs-review list in the same

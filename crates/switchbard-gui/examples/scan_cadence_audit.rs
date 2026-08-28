@@ -273,7 +273,8 @@ fn main() {
         .iter()
         .map(|r| (r.name.clone(), r.path.clone()))
         .collect();
-    let (mut merged, mut orphan, mut live, mut unclassified) = (0usize, 0usize, 0usize, 0usize);
+    let (mut merged, mut no_upstream, mut live, mut unclassified) =
+        (0usize, 0usize, 0usize, 0usize);
     let t0 = Instant::now();
     for w in &worktrees {
         match repo_paths
@@ -281,7 +282,7 @@ fn main() {
             .map(|repo_path| probe_worktree_staleness(repo_path, &w.path))
         {
             Some(switchbard_core::WorktreeStaleness::Merged { .. }) => merged += 1,
-            Some(switchbard_core::WorktreeStaleness::Orphan) => orphan += 1,
+            Some(switchbard_core::WorktreeStaleness::NoUpstream) => no_upstream += 1,
             Some(switchbard_core::WorktreeStaleness::Live) => live += 1,
             // `Unknown` is git declining to answer; `None` is the repo not
             // being tracked. Neither is a classification, so both land here.
@@ -295,7 +296,7 @@ fn main() {
         staleness_elapsed
     );
     println!(
-        "  -> merged {merged}, orphan {orphan}, live {live}, unclassified (no repo path found) {unclassified}"
+        "  -> merged {merged}, no-upstream {no_upstream}, live {live}, unclassified (no repo path found) {unclassified}"
     );
 
     // ---- TASK-41 size probe (`du`): the outlier — see SIZE_SAMPLE_LIMIT's doc ----

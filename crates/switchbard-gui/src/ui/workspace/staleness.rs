@@ -1,5 +1,5 @@
-//! TASK-41: the Merged/Orphan/Live staleness badge, the on-disk size label,
-//! and the All/Merged/Orphan/Live/Dirty filter chip row.
+//! TASK-41: the Merged/NoUpstream/Live staleness badge, the on-disk size label,
+//! and the All/Merged/NoUpstream/Live/Dirty filter chip row.
 //!
 //! Split out of `mod.rs` on purpose — see `power-of-10-overrides.md`'s "Known
 //! debt" note on that file's size; new Workspace work should carve toward
@@ -22,7 +22,7 @@ pub enum StalenessFilter {
     #[default]
     All,
     Merged,
-    Orphan,
+    NoUpstream,
     Live,
     Dirty,
 }
@@ -31,7 +31,7 @@ impl StalenessFilter {
     pub const ALL: [StalenessFilter; 5] = [
         Self::All,
         Self::Merged,
-        Self::Orphan,
+        Self::NoUpstream,
         Self::Live,
         Self::Dirty,
     ];
@@ -40,7 +40,7 @@ impl StalenessFilter {
         match self {
             Self::All => "All",
             Self::Merged => "Merged",
-            Self::Orphan => "Orphan",
+            Self::NoUpstream => "No upstream",
             Self::Live => "Live",
             Self::Dirty => "Dirty",
         }
@@ -61,8 +61,8 @@ pub(super) fn passes_staleness_filter(
         StalenessFilter::Merged => {
             meta.is_some_and(|m| matches!(m.staleness, Some(WorktreeStaleness::Merged { .. })))
         }
-        StalenessFilter::Orphan => {
-            meta.is_some_and(|m| matches!(m.staleness, Some(WorktreeStaleness::Orphan)))
+        StalenessFilter::NoUpstream => {
+            meta.is_some_and(|m| matches!(m.staleness, Some(WorktreeStaleness::NoUpstream)))
         }
         StalenessFilter::Live => {
             meta.is_some_and(|m| matches!(m.staleness, Some(WorktreeStaleness::Live)))
@@ -76,10 +76,10 @@ pub(super) fn render_staleness_badge(ui: &mut egui::Ui, m: &WorktreeMeta) {
     match &m.staleness {
         None => {
             ui.label(egui::RichText::new("staleness ...").color(theme::weak_text()))
-                .on_hover_text("Merged/Orphan/Live probe hasn't returned yet");
+                .on_hover_text("Merged/NoUpstream/Live probe hasn't returned yet");
         }
         // Distinct from `None`: the probe ran and git could not answer. It
-        // used to fall through to `orphan`, quietly nominating a worktree for
+        // used to fall through to the no-upstream class, quietly nominating a worktree for
         // retirement on no evidence at all.
         Some(WorktreeStaleness::Unknown) => {
             status_pill(
@@ -106,14 +106,12 @@ pub(super) fn render_staleness_badge(ui: &mut egui::Ui, m: &WorktreeMeta) {
             };
             status_pill(ui, StatusKind::Good, "merged", Some(&tip));
         }
-        Some(WorktreeStaleness::Orphan) => {
-            status_pill(
-                ui,
-                StatusKind::Neutral,
-                "orphan",
-                Some("No upstream configured — nothing is tracking this branch anymore"),
-            );
-        }
+        // Deliberately renders nothing. The condition is real, but the
+        // remote-drift chip a few pixels to the left already says exactly
+        // "no upstream" for it. This badge used to say "orphan" instead,
+        // which is how one fact came to have two names on one row; renaming
+        // it to match the chip would have printed the same phrase twice.
+        Some(WorktreeStaleness::NoUpstream) => {}
         Some(WorktreeStaleness::Live) => {
             status_pill(
                 ui,
@@ -151,7 +149,7 @@ pub(super) fn render_size_label(ui: &mut egui::Ui, entry: Option<&WorktreeSizeEn
 pub(super) struct StalenessCounts {
     pub all: usize,
     pub merged: usize,
-    pub orphan: usize,
+    pub no_upstream: usize,
     pub live: usize,
     pub dirty: usize,
 }
@@ -161,7 +159,7 @@ impl StalenessCounts {
         match filter {
             StalenessFilter::All => self.all,
             StalenessFilter::Merged => self.merged,
-            StalenessFilter::Orphan => self.orphan,
+            StalenessFilter::NoUpstream => self.no_upstream,
             StalenessFilter::Live => self.live,
             StalenessFilter::Dirty => self.dirty,
         }
@@ -185,7 +183,7 @@ pub(super) fn compute_counts(snap: &Snapshot) -> StalenessCounts {
         };
         match &m.staleness {
             Some(WorktreeStaleness::Merged { .. }) => counts.merged += 1,
-            Some(WorktreeStaleness::Orphan) => counts.orphan += 1,
+            Some(WorktreeStaleness::NoUpstream) => counts.no_upstream += 1,
             Some(WorktreeStaleness::Live) => counts.live += 1,
             // An unclassifiable worktree is claimed by no chip: putting it
             // under one would assert the very thing the probe couldn't.
@@ -353,21 +351,21 @@ mod tests {
     }
 
     #[test]
-    fn orphan_and_live_filters_are_mutually_exclusive() {
-        let orphan = meta_with_staleness(Some(WorktreeStaleness::Orphan));
+    fn no_upstream_and_live_filters_are_mutually_exclusive() {
+        let no_upstream = meta_with_staleness(Some(WorktreeStaleness::NoUpstream));
         let live = meta_with_staleness(Some(WorktreeStaleness::Live));
         assert!(passes_staleness_filter(
-            StalenessFilter::Orphan,
-            Some(&orphan)
+            StalenessFilter::NoUpstream,
+            Some(&no_upstream)
         ));
         assert!(!passes_staleness_filter(
-            StalenessFilter::Orphan,
+            StalenessFilter::NoUpstream,
             Some(&live)
         ));
         assert!(passes_staleness_filter(StalenessFilter::Live, Some(&live)));
         assert!(!passes_staleness_filter(
             StalenessFilter::Live,
-            Some(&orphan)
+            Some(&no_upstream)
         ));
     }
 

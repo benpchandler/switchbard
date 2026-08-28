@@ -642,7 +642,7 @@ fn render_worktree_summary_line(ui: &mut egui::Ui, summary: WorktreeSummary<'_>,
     // Health zone: dirty appears only when dirty; drift only when non-zero;
     // listener count is on the dot tooltip already (no inline tag).
     render_health_inline(ui, summary.meta);
-    // TASK-41: Merged/Orphan/Live badge + on-disk size, right after the
+    // TASK-41: Merged/NoUpstream/Live badge + on-disk size, right after the
     // existing dirty/drift health pills — same "one inline zone" pattern.
     staleness::render_staleness_badge(ui, summary.meta);
     staleness::render_size_label(ui, summary.size);
@@ -684,15 +684,14 @@ fn render_worktree_row_trailing(
     pending: &mut Pending,
     bulk_selected: &mut BTreeSet<PathBuf>,
 ) {
+    // No head SHA here any more. It was the row's only element that answered
+    // no question the row is for — every other one maps to an action (dirty →
+    // commit, unlanded → land, size → reclaim, the badges → can this go) —
+    // and its one real use, copy-paste, had already been taken away by the
+    // row-click gesture, which turns off `selectable_labels` for this whole
+    // header. A string you can neither act on nor copy is decoration, and it
+    // was occupying the far-right slot the landing-stage chip wants.
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        ui.label(
-            egui::RichText::new(w.head.chars().take(8).collect::<String>())
-                .monospace()
-                .color(theme::weak_text())
-                .small(),
-        )
-        .on_hover_text(&w.head);
-        ui.add_space(2.0);
         if ui
             .small_button("Rename")
             .on_hover_text("Rename Switchbard label")
@@ -1814,7 +1813,7 @@ mod tests {
         );
 
         // Genuinely unlanded: both surfaces must flag it.
-        let at_risk = meta(5, WorktreeStaleness::Orphan);
+        let at_risk = meta(5, WorktreeStaleness::NoUpstream);
         assert!(has_unlanded_work(&at_risk.trunk));
         assert_eq!(
             RemovalSafety::evaluate(
