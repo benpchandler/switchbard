@@ -45,6 +45,23 @@ impl StalenessFilter {
             Self::Dirty => "Dirty",
         }
     }
+
+    /// Stable token stored in `FilterMemory` facets. Persist and restore in
+    /// `HiveApp` both go through this pair - never through `label()`, whose
+    /// wording is free to change without stranding saved filter state.
+    pub fn facet_value(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Merged => "merged",
+            Self::NoUpstream => "no-upstream",
+            Self::Live => "live",
+            Self::Dirty => "dirty",
+        }
+    }
+
+    pub fn from_facet(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|f| f.facet_value() == value)
+    }
 }
 
 /// Does `meta` belong to the current filter? `None` (probe hasn't returned
@@ -234,8 +251,9 @@ pub fn retired_worktree_count(app: &HiveApp) -> usize {
 /// below the workspace summary line.
 pub(super) fn render_filter_bar(ui: &mut egui::Ui, app: &mut HiveApp, snap: &Snapshot) {
     let counts = compute_counts(snap);
-    ui.horizontal_wrapped(|ui| {
-        ui.label(egui::RichText::new("staleness:").color(theme::weak_text()));
+    let active_count = usize::from(app.staleness_filter != StalenessFilter::All);
+    crate::ui::filter_bar::bar(ui, active_count, |ui| {
+        crate::ui::filter_bar::facet_label(ui, "Staleness");
         for filter in StalenessFilter::ALL {
             let label = format!("{} ({})", filter.label(), counts.for_filter(filter));
             if ui
@@ -298,6 +316,9 @@ pub(super) fn render_filter_bar(ui: &mut egui::Ui, app: &mut HiveApp, snap: &Sna
                 }
             }
         }
+        if crate::ui::filter_bar::clear(ui, active_count > 0) {
+            app.staleness_filter = StalenessFilter::All;
+        }
     });
 }
 
@@ -311,6 +332,17 @@ mod tests {
             staleness,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn staleness_facet_vocabulary_round_trips() {
+        for filter in StalenessFilter::ALL {
+            assert_eq!(
+                StalenessFilter::from_facet(filter.facet_value()),
+                Some(filter)
+            );
+        }
+        assert_eq!(StalenessFilter::from_facet("orphan"), None);
     }
 
     fn meta_dirty(dirty: bool) -> WorktreeMeta {

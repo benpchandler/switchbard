@@ -51,7 +51,7 @@ use switchbard_core::{
     LocalListener, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{BacklogLens, ViewTab};
+use switchbard_gui::runtime::{AgentsSection, BacklogLens, ViewTab};
 use switchbard_gui::ui::legibility;
 
 /// One painted run of text with a single resolved size + color.
@@ -562,7 +562,7 @@ fn seed_backlog_project(app: &HiveApp) {
 }
 
 /// Build the harnesses for every view we audit, under `theme`. Covers the top
-/// bar + sidebar + each central view, the Agent Context drawer with a file
+/// bar + sidebar + each central view, the Agents Context drawer with a file
 /// selected (the exact surface in the reported screenshot: small gray paths +
 /// preview body), and every task-15/16 Backlog lens with a real, non-empty
 /// task selected.
@@ -599,13 +599,19 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
 
     let mut agent_app = seeded_app();
     agent_app.config.ui.theme = theme;
-    agent_app.view_tab = ViewTab::AgentContext;
+    agent_app.view_tab = ViewTab::Agents;
     seed_live_listener(&agent_app);
     let agent = harness(agent_app);
 
+    let mut hooks_app = seeded_app();
+    hooks_app.config.ui.theme = theme;
+    hooks_app.view_tab = ViewTab::Agents;
+    hooks_app.agent_context_view.section = AgentsSection::Hooks;
+    let hooks = harness(hooks_app);
+
     let mut drawer_app = seeded_app();
     drawer_app.config.ui.theme = theme;
-    drawer_app.view_tab = ViewTab::AgentContext;
+    drawer_app.view_tab = ViewTab::Agents;
     drawer_app.agent_context_view.selected_id = Some("claude-md".to_string());
     seed_live_listener(&drawer_app);
     let drawer = harness(drawer_app);
@@ -792,9 +798,10 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
             format!("Workspace · bulk-selected worktree row{suffix}"),
             selected_row,
         ),
-        (format!("Agent Context view{suffix}"), agent),
+        (format!("Agents · Context{suffix}"), agent),
+        (format!("Agents · Hooks empty state{suffix}"), hooks),
         (
-            format!("Agent Context · file selected (path + preview){suffix}"),
+            format!("Agents · Context file selected (path + preview){suffix}"),
             drawer,
         ),
         (format!("Backlog · Digest lens (default){suffix}"), digest),

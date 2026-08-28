@@ -225,7 +225,7 @@ impl Snapshot {
             dispatch_holds_by_wt,
             by_port,
             ports_by_pgid,
-            filter_lc: app.filter.to_lowercase(),
+            filter_lc: app.filter().to_lowercase(),
             show_only_managed: app.show_only_managed,
             raw_detected_total,
             staleness_filter: app.staleness_filter,
@@ -1497,7 +1497,7 @@ fn worktree_matches(w: &WorktreeRef, snap: &Snapshot, filter_lc: &str) -> bool {
 // ── kill-all confirm modal + accessor for top bar ───────────────────────
 
 pub fn unique_pgids_in_filter(app: &HiveApp) -> Vec<i32> {
-    let filter_lc = app.filter.to_lowercase();
+    let filter_lc = app.filter().to_lowercase();
     let show_only_managed = app.show_only_managed;
     let listeners = app.state.lock().unwrap().listeners.clone();
     let mut set: BTreeSet<i32> = BTreeSet::new();

@@ -1,4 +1,4 @@
-//! Agent Context view.
+//! Context surface within the Agents view.
 //!
 //! This is a compact scope-first explorer: pick Global / Local / Nested on the
 //! left, browse matching files in the middle, and preview the selected item in
@@ -21,13 +21,12 @@ const EXPLORER_BODY_PADDING: f32 = 14.0;
 const MIN_EXPLORER_BODY_HEIGHT: f32 = 96.0;
 const MAX_EXPLORER_BODY_HEIGHT: f32 = 360.0;
 const REPO_SCOPES: [ContextScope; 2] = [ContextScope::Local, ContextScope::Directory];
-const KINDS: [ContextKind; 6] = [
+const KINDS: [ContextKind; 5] = [
     ContextKind::Instruction,
     ContextKind::Command,
     ContextKind::Skill,
     ContextKind::Config,
     ContextKind::Doc,
-    ContextKind::Hook,
 ];
 
 struct Snapshot {
@@ -54,44 +53,42 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
             .clone()
             .into_iter()
             .collect(),
-        filter_lc: app.filter.to_lowercase(),
+        filter_lc: app.filter().to_lowercase(),
     };
 
-    egui::CentralPanel::default().show(ui, |ui| {
-        render_summary(ui, &snap);
-        ui.add_space(6.0);
-        render_global_card(ui, app, &snap);
-        ui.add_space(6.0);
-        let mut visible_repo = None;
-        let scroll_output = egui::ScrollArea::vertical()
-            .id_salt("agent_context_scroll")
-            .auto_shrink([false, false])
-            .show_viewport(ui, |ui, _viewport| {
-                for repo in &snap.repos {
-                    let wts: Vec<&WorktreeRef> = snap
-                        .worktrees
-                        .iter()
-                        .filter(|w| w.repo_name == repo.name)
-                        .collect();
-                    if wts.is_empty() {
-                        continue;
-                    }
-                    let response = render_repo(ui, app, repo, &wts, &snap);
-                    if visible_repo.is_none() && response.rect.intersects(ui.clip_rect()) {
-                        visible_repo = Some(format!("{}  ·  {}", repo.name, repo.path.display()));
-                    }
-                    ui.add_space(8.0);
+    render_summary(ui, &snap);
+    ui.add_space(6.0);
+    render_global_card(ui, app, &snap);
+    ui.add_space(6.0);
+    let mut visible_repo = None;
+    let scroll_output = egui::ScrollArea::vertical()
+        .id_salt("agent_context_scroll")
+        .auto_shrink([false, false])
+        .show_viewport(ui, |ui, _viewport| {
+            for repo in &snap.repos {
+                let wts: Vec<&WorktreeRef> = snap
+                    .worktrees
+                    .iter()
+                    .filter(|w| w.repo_name == repo.name)
+                    .collect();
+                if wts.is_empty() {
+                    continue;
                 }
-            });
-        if let Some(repo) = visible_repo {
-            app.agent_context_view.pinned_repo = Some(repo);
-        }
-        paint_sticky_repo_header(
-            ui,
-            scroll_output.inner_rect,
-            app.agent_context_view.pinned_repo.as_deref(),
-        );
-    });
+                let response = render_repo(ui, app, repo, &wts, &snap);
+                if visible_repo.is_none() && response.rect.intersects(ui.clip_rect()) {
+                    visible_repo = Some(format!("{}  ·  {}", repo.name, repo.path.display()));
+                }
+                ui.add_space(8.0);
+            }
+        });
+    if let Some(repo) = visible_repo {
+        app.agent_context_view.pinned_repo = Some(repo);
+    }
+    paint_sticky_repo_header(
+        ui,
+        scroll_output.inner_rect,
+        app.agent_context_view.pinned_repo.as_deref(),
+    );
 }
 
 fn paint_sticky_repo_header(ui: &egui::Ui, scroll_rect: egui::Rect, label: Option<&str>) {
@@ -132,7 +129,7 @@ fn render_summary(ui: &mut egui::Ui, snap: &Snapshot) {
     let items = unique_items.len();
     let warnings = warning_items.len();
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Agent Context").strong());
+        ui.label(egui::RichText::new("Context").strong());
         ui.label(egui::RichText::new(format!("{items} assets")).color(theme::lavender()));
         if warnings > 0 {
             ui.colored_label(theme::amber(), format!("{warnings} warnings"));
@@ -142,7 +139,7 @@ fn render_summary(ui: &mut egui::Ui, snap: &Snapshot) {
 }
 
 fn render_global_card(ui: &mut egui::Ui, app: &mut HiveApp, snap: &Snapshot) {
-    let items = global_items(snap);
+    let items = global_items(app, snap);
     if items.is_empty() {
         return;
     }
@@ -180,7 +177,7 @@ fn render_global_card(ui: &mut egui::Ui, app: &mut HiveApp, snap: &Snapshot) {
                 return;
             }
 
-            let selected_items = selected_global_items(app, &items);
+            let selected_items = selected_global_items(app, &items, &snap.filter_lc);
             let selected = selected_global_item(app, &selected_items);
             ui.add_space(4.0);
             ui.horizontal_top(|ui| {
@@ -199,10 +196,13 @@ fn render_global_card(ui: &mut egui::Ui, app: &mut HiveApp, snap: &Snapshot) {
         });
 }
 
-fn global_items(snap: &Snapshot) -> Vec<&AgentContextItem> {
+fn global_items<'a>(app: &HiveApp, snap: &'a Snapshot) -> Vec<&'a AgentContextItem> {
     let mut by_id = BTreeMap::new();
     for item in snap.maps.values().flat_map(|m| &m.items) {
-        if item.scope == ContextScope::Global {
+        if item.scope == ContextScope::Global
+            && agent_visible(app.agent_context_view.agent, item.agent)
+            && item_matches_filter(item, &snap.filter_lc)
+        {
             by_id.entry(item.id.as_str()).or_insert(item);
         }
     }
@@ -211,10 +211,10 @@ fn global_items(snap: &Snapshot) -> Vec<&AgentContextItem> {
     items
 }
 
-fn repo_item_count(app: &HiveApp, map: &AgentContextMap) -> usize {
+fn repo_item_count(app: &HiveApp, map: &AgentContextMap, filter_lc: &str) -> usize {
     map.items
         .iter()
-        .filter(|i| visible_repo_item(app, i))
+        .filter(|i| visible_repo_item(app, i) && item_matches_filter(i, filter_lc))
         .count()
 }
 
@@ -276,18 +276,34 @@ fn render_repo(
     wts: &[&WorktreeRef],
     snap: &Snapshot,
 ) -> egui::Response {
+    let selected = selected_worktree(repo, wts, snap);
+    let selected_map = selected.and_then(|w| snap.maps.get(&w.path));
+    let repo_text_matches = snap.filter_lc.is_empty()
+        || repo.name.to_lowercase().contains(&snap.filter_lc)
+        || repo
+            .path
+            .to_string_lossy()
+            .to_lowercase()
+            .contains(&snap.filter_lc);
+    let item_filter = if repo_text_matches {
+        ""
+    } else {
+        &snap.filter_lc
+    };
+    if !repo_text_matches && selected_map.is_none_or(|map| !matches_filter(app, map, item_filter)) {
+        return ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover());
+    }
+
     egui::Frame::group(ui.style())
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
-            let selected = selected_worktree(repo, wts, snap);
             ui.horizontal(|ui| {
                 ui.heading(&repo.name);
-                ui.label(egui::RichText::new("Agent Context").color(theme::muted_text()));
-                let selected_map = selected.and_then(|w| snap.maps.get(&w.path));
+                ui.label(egui::RichText::new("Context").color(theme::muted_text()));
                 let total = wts
                     .iter()
                     .filter_map(|w| snap.maps.get(&w.path))
-                    .map(|m| repo_item_count(app, m))
+                    .map(|m| repo_item_count(app, m, item_filter))
                     .sum::<usize>();
                 ui.colored_label(theme::lavender(), format!("{total} assets"));
                 if let (Some(w), Some(map)) = (selected, selected_map) {
@@ -324,9 +340,7 @@ fn render_repo(
                 );
                 return;
             };
-            if matches_filter(map, &snap.filter_lc) {
-                render_worktree(ui, app, w, map);
-            }
+            render_worktree(ui, app, w, map, item_filter);
         })
         .response
 }
@@ -347,13 +361,19 @@ fn selected_worktree<'a>(
         .or_else(|| wts.first().copied())
 }
 
-fn render_worktree(ui: &mut egui::Ui, app: &mut HiveApp, w: &WorktreeRef, map: &AgentContextMap) {
+fn render_worktree(
+    ui: &mut egui::Ui,
+    app: &mut HiveApp,
+    w: &WorktreeRef,
+    map: &AgentContextMap,
+    filter_lc: &str,
+) {
     let namespace = scroll_namespace(&w.path);
     ui.horizontal(|ui| {
         theme::painted_dot(ui, headline_color(map));
         ui.label(egui::RichText::new(branch(w)).monospace().strong());
         ui.label(
-            egui::RichText::new(format!("{} items", repo_item_count(app, map)))
+            egui::RichText::new(format!("{} items", repo_item_count(app, map, filter_lc)))
                 .color(theme::muted_text()),
         );
         ui.label(
@@ -377,7 +397,7 @@ fn render_worktree(ui: &mut egui::Ui, app: &mut HiveApp, w: &WorktreeRef, map: &
     render_effective_stack(ui, map, app.agent_context_view.agent, &w.path);
     ui.add_space(4.0);
 
-    let selected_items = selected_items(app, map);
+    let selected_items = selected_items(app, map, filter_lc);
     let selected = selected_item(app, &selected_items);
     let body_height = explorer_body_height(app, map, selected_items.len());
 
@@ -399,29 +419,10 @@ fn render_worktree(ui: &mut egui::Ui, app: &mut HiveApp, w: &WorktreeRef, map: &
     render_detail_drawer(ui, selected, &namespace);
 }
 
-fn render_context_target(ui: &mut egui::Ui, app: &mut HiveApp, cwd: &Path, namespace: &str) {
+fn render_context_target(ui: &mut egui::Ui, app: &mut HiveApp, cwd: &Path, _namespace: &str) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Context target:").strong());
-        ui.label("Agent");
-        egui::ComboBox::from_id_salt(format!("agent_context_agent_{namespace}"))
-            .selected_text(app.agent_context_view.agent.label())
-            .show_ui(ui, |ui| {
-                ui.selectable_value(
-                    &mut app.agent_context_view.agent,
-                    AgentContextAgent::Claude,
-                    "Claude",
-                );
-                ui.selectable_value(
-                    &mut app.agent_context_view.agent,
-                    AgentContextAgent::Codex,
-                    "Codex",
-                );
-                ui.selectable_value(
-                    &mut app.agent_context_view.agent,
-                    AgentContextAgent::All,
-                    "All agents",
-                );
-            });
+        ui.label(app.agent_context_view.agent.label());
         ui.label("Working path");
         ui.label(
             egui::RichText::new(cwd.display().to_string())
@@ -792,10 +793,13 @@ fn count_for_visible(
 fn selected_global_items<'a>(
     app: &HiveApp,
     items: &[&'a AgentContextItem],
+    filter_lc: &str,
 ) -> Vec<&'a AgentContextItem> {
     let mut selected: Vec<&AgentContextItem> = items
         .iter()
         .copied()
+        .filter(|i| agent_visible(app.agent_context_view.agent, i.agent))
+        .filter(|i| item_matches_filter(i, filter_lc))
         .filter(|i| {
             app.agent_context_view
                 .global_kind
@@ -816,11 +820,16 @@ fn selected_global_item<'a>(
         .and_then(|id| selected_items.iter().copied().find(|i| i.id == id))
 }
 
-fn selected_items<'a>(app: &HiveApp, map: &'a AgentContextMap) -> Vec<&'a AgentContextItem> {
+fn selected_items<'a>(
+    app: &HiveApp,
+    map: &'a AgentContextMap,
+    filter_lc: &str,
+) -> Vec<&'a AgentContextItem> {
     let mut items: Vec<&AgentContextItem> = map
         .items
         .iter()
         .filter(|i| visible_repo_item(app, i))
+        .filter(|i| item_matches_filter(i, filter_lc))
         .filter(|i| i.scope == app.agent_context_view.scope)
         .filter(|i| {
             app.agent_context_view
@@ -830,6 +839,18 @@ fn selected_items<'a>(app: &HiveApp, map: &'a AgentContextMap) -> Vec<&'a AgentC
         .collect();
     items.sort_by(|a, b| a.kind.cmp(&b.kind).then(a.title.cmp(&b.title)));
     items
+}
+
+fn item_matches_filter(item: &AgentContextItem, filter_lc: &str) -> bool {
+    filter_lc.is_empty()
+        || item.title.to_lowercase().contains(filter_lc)
+        || item
+            .path
+            .to_string_lossy()
+            .to_lowercase()
+            .contains(filter_lc)
+        || item.agent.label().to_lowercase().contains(filter_lc)
+        || item.kind.label().to_lowercase().contains(filter_lc)
 }
 
 fn selected_item<'a>(
@@ -872,15 +893,12 @@ fn selection_title(app: &HiveApp) -> String {
     }
 }
 
-fn matches_filter(map: &AgentContextMap, filter_lc: &str) -> bool {
+fn matches_filter(app: &HiveApp, map: &AgentContextMap, filter_lc: &str) -> bool {
     filter_lc.is_empty()
-        || map.items.iter().any(|i| {
-            i.scope != ContextScope::Global
-                && (i.title.to_lowercase().contains(filter_lc)
-                    || i.path.to_string_lossy().to_lowercase().contains(filter_lc)
-                    || i.agent.label().to_lowercase().contains(filter_lc)
-                    || i.kind.label().to_lowercase().contains(filter_lc))
-        })
+        || map
+            .items
+            .iter()
+            .any(|i| visible_repo_item(app, i) && item_matches_filter(i, filter_lc))
 }
 
 fn has_warning(

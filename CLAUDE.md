@@ -80,7 +80,7 @@ Re-exports are **explicit in `src/lib.rs`** (no glob re-exports). Module map:
 
 ## Threading & state ownership
 
-- Worker-visible state lives behind `Arc<Mutex<>>` on `HiveApp`; pure view state (filters, expansion toggles, browser choice) is owned directly by the struct.
+- Worker-visible state lives behind `Arc<Mutex<>>` on `HiveApp`; pure view state (expansion toggles, browser choice) is owned directly by the struct. Filter queries and facets persist per surface through `Config.ui.filters` (`HiveApp::filter`/`filter_mut`) instead of a struct field.
 - `Config` is the **single source of truth** for repos + UI defaults; the runtime `repos` Mutex is kept in lock-step by calling `rebuild_worktrees` after every mutation (a genuine DRY invariant — don't add a second store).
 
 ## Git invocation safety (named threat — keep it)

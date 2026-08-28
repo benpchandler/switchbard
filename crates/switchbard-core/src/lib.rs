@@ -33,8 +33,8 @@ pub mod worktree_size;
 pub use agent_context::{
     agent_context_cache_path, agent_context_needs_rescan, load_agent_context_cache,
     load_agent_context_cache_from, read_context_preview, save_agent_context_cache,
-    save_agent_context_cache_to, scan_agent_context, AgentContextItem, AgentContextMap, AgentKind,
-    ContextKind, ContextScope,
+    save_agent_context_cache_to, scan_agent_context, AgentContextItem, AgentContextMap, AgentHook,
+    AgentHookWarning, AgentKind, ContextKind, ContextScope,
 };
 pub use attribution::attribute;
 pub use backlog::{

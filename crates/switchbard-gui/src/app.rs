@@ -3,8 +3,10 @@
 //!
 //! Design rules in here:
 //! - Anything a worker thread needs goes in an `Arc<Mutex<>>` field.
-//! - Anything purely view-state (filters, expansion toggles, view tab) is
-//!   owned directly by the struct.
+//! - Anything purely view-state (expansion toggles, view tab) is owned
+//!   directly by the struct. Filter queries and facets persist per surface
+//!   through `Config.ui.filters` instead — see `filter`/`filter_mut` and
+//!   `persist_filter_facets`.
 //! - The persisted `Config` is the single source of truth for repos +
 //!   user-visible UI defaults; the runtime `repos` Mutex is kept in lock-step
 //!   via `rebuild_worktrees` after every mutation.
@@ -26,7 +28,7 @@ use crate::runtime::worktree_create::{CreateWorktreeDialog, CreateWorktreeOutcom
 use crate::runtime::worktree_rename::RenameWorktreeDialog;
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
-    dispatch_run_holds_worktree, ActiveRun, ActiveRunSummary, AgentContextViewState,
+    dispatch_run_holds_worktree, ActiveRun, ActiveRunSummary, AgentContextViewState, AgentsSection,
     BacklogTaskKey, BacklogViewState, BoardMoveOutcome, ConfirmBulkRemoveWorktrees,
     ConfirmRemoveWorktree, LandingEntry, OrderingState, PickerState, ViewTab, WorktreeMeta,
     WorktreeSizeEntry,
@@ -223,8 +225,6 @@ pub struct HiveApp {
     _instance_lock: Option<InstanceLock>,
 
     // View-only state.
-    /// One workspace-wide filter. Each section's match function reads it.
-    pub filter: String,
     /// When on, the workspace hides unattributed listeners.
     pub show_only_managed: bool,
     pub confirm_kill_all: bool,
@@ -247,7 +247,7 @@ pub struct HiveApp {
     /// worker thread) is running.
     pub confirm_bulk_remove_worktrees: Arc<Mutex<Option<ConfirmBulkRemoveWorktrees>>>,
     /// TASK-41: which staleness class the Workspace filter chips currently
-    /// show (`All` by default). View-only — not persisted, same as `filter`.
+    /// show (`All` by default). Persisted through the shared filter memory.
     pub staleness_filter: StalenessFilter,
     /// TASK-41: worktrees the user has checked for the bulk-remove sweep.
     /// View-only; cleared whenever a selected path stops being visible or
@@ -391,6 +391,23 @@ impl HiveApp {
             })
             .unwrap_or(0);
         let show_non_servers = cfg.ui.show_non_servers;
+        let agent_context_view = AgentContextViewState::restore_filters(&cfg.ui);
+        let mut backlog_view = BacklogViewState::restore_filters(&cfg.ui);
+        if backlog_view
+            .selected_project
+            .as_ref()
+            .is_some_and(|selected| !repos.iter().any(|repo| repo.path == *selected))
+        {
+            backlog_view.selected_project = None;
+        }
+        let server_filters = cfg.ui.filters.get("servers");
+        let show_only_managed = server_filters
+            .and_then(|memory| memory.facets.get("attributed_only"))
+            .is_some_and(|value| value == "true");
+        let staleness_filter = server_filters
+            .and_then(|memory| memory.facets.get("staleness"))
+            .and_then(|value| StalenessFilter::from_facet(value))
+            .unwrap_or_default();
 
         Self {
             repos: Arc::new(Mutex::new(repos)),
@@ -428,15 +445,14 @@ impl HiveApp {
             backlog_status: Status::new(),
             bulk_progress: Progress::new(),
             worktree_bulk_progress: Progress::new(),
-            filter: String::new(),
             dispatch_kill_confirm: None,
-            show_only_managed: false,
+            show_only_managed,
             confirm_kill_all: false,
             confirm_remove_repo: None,
             settings_open: false,
             confirm_remove_worktree: Arc::new(Mutex::new(None)),
             confirm_bulk_remove_worktrees: Arc::new(Mutex::new(None)),
-            staleness_filter: StalenessFilter::All,
+            staleness_filter,
             bulk_selected_worktrees: BTreeSet::new(),
             create_worktree_dialog: Arc::new(Mutex::new(None)),
             create_worktree_outcomes: Arc::new(Mutex::new(Vec::new())),
@@ -446,8 +462,8 @@ impl HiveApp {
             expanded_repos: BTreeSet::new(),
             show_non_servers,
             view_tab: ViewTab::Servers,
-            agent_context_view: AgentContextViewState::default(),
-            backlog_view: BacklogViewState::default(),
+            agent_context_view,
+            backlog_view,
             commonmark_cache: egui_commonmark::CommonMarkCache::default(),
             browser_choice,
             onboarding: Arc::new(Mutex::new(DiscoveryState::default())),
@@ -548,6 +564,60 @@ impl HiveApp {
         };
         if let Err(e) = result {
             self.config_status.set(format!("config save failed: {e}"));
+        }
+    }
+
+    /// Stable key for the filter surface currently on screen. Queries live
+    /// directly in persisted config, so switching views restores each page's
+    /// own last-used search instead of carrying one global string everywhere.
+    pub fn active_filter_key(&self) -> &'static str {
+        match self.view_tab {
+            ViewTab::Servers => "servers",
+            ViewTab::Agents => match self.agent_context_view.section {
+                AgentsSection::Context => "agents.context",
+                AgentsSection::Hooks => "agents.hooks",
+            },
+            ViewTab::Backlog => "backlog",
+            ViewTab::Dispatch => "dispatch",
+        }
+    }
+
+    pub fn filter(&self) -> &str {
+        self.config
+            .ui
+            .filters
+            .get(self.active_filter_key())
+            .map_or("", |memory| memory.query.as_str())
+    }
+
+    pub fn filter_mut(&mut self) -> &mut String {
+        let key = self.active_filter_key().to_string();
+        &mut self.config.ui.filters.entry(key).or_default().query
+    }
+
+    fn persist_filter_facets(&mut self) {
+        self.agent_context_view.persist_filters(&mut self.config.ui);
+        self.backlog_view.persist_filters(&mut self.config.ui);
+        let servers = self
+            .config
+            .ui
+            .filters
+            .entry("servers".to_string())
+            .or_default();
+        if self.show_only_managed {
+            servers
+                .facets
+                .insert("attributed_only".to_string(), "true".to_string());
+        } else {
+            servers.facets.remove("attributed_only");
+        }
+        if self.staleness_filter == StalenessFilter::All {
+            servers.facets.remove("staleness");
+        } else {
+            servers.facets.insert(
+                "staleness".to_string(),
+                self.staleness_filter.facet_value().to_string(),
+            );
         }
     }
 
@@ -1985,7 +2055,7 @@ impl HiveApp {
         let central_start = Instant::now();
         match self.view_tab {
             ViewTab::Servers => ui::workspace::render(self, ui),
-            ViewTab::AgentContext => ui::agent_context::render(self, ui),
+            ViewTab::Agents => ui::agents::render(self, ui),
             ViewTab::Dispatch => ui::dispatch::render(self, ui),
             ViewTab::Backlog => ui::backlog::render(self, ui),
         }
@@ -2229,8 +2299,10 @@ impl eframe::App for HiveApp {
         let ui_before = (self.browser_choice, self.show_non_servers);
         let theme_before = self.config.ui.theme;
         let sidebar_collapsed_before = self.config.ui.sidebar_collapsed;
+        let filters_before = self.config.ui.filters.clone();
 
         self.render_ui(ui);
+        self.persist_filter_facets();
 
         // Capture the live zoom (top-bar stepper or ⌘+/⌘−/⌘0) so it survives a
         // restart. egui's keyboard zoom lands one frame late, which the next
@@ -2245,7 +2317,13 @@ impl eframe::App for HiveApp {
         let theme_changed = self.config.ui.theme != theme_before;
         let sidebar_collapsed_changed =
             self.config.ui.sidebar_collapsed != sidebar_collapsed_before;
-        if ui_before != ui_after || zoom_changed || theme_changed || sidebar_collapsed_changed {
+        let filters_changed = self.config.ui.filters != filters_before;
+        if ui_before != ui_after
+            || zoom_changed
+            || theme_changed
+            || sidebar_collapsed_changed
+            || filters_changed
+        {
             self.save_ui_to_config();
         }
     }

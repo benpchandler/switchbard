@@ -4,10 +4,13 @@
 //! disclosure (worktree rows auto-expand when noteworthy).
 
 pub mod agent_context;
+pub mod agent_hooks;
+pub mod agents;
 pub mod backlog;
 pub mod column_widths;
 pub mod components;
 pub mod dispatch;
+pub mod filter_bar;
 pub mod legibility;
 pub mod onboarding;
 pub mod path_display;

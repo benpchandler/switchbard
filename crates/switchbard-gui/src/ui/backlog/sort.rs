@@ -22,7 +22,7 @@ use switchbard_core::{
 /// `mod::ensure_selection` all share, so "what's currently on screen" only
 /// has one definition.
 pub(super) fn visible_task_rows<'a>(app: &HiveApp, snap: &'a Snapshot) -> Vec<TaskRow<'a>> {
-    let filter_lc = app.filter.to_lowercase();
+    let filter_lc = app.filter().to_lowercase();
     let mut rows: Vec<TaskRow<'a>> = Vec::new();
     for project in scoped_projects(app, snap) {
         for task in &project.project.tasks {

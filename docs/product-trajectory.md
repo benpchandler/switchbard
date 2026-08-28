@@ -50,6 +50,30 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 - Worktree-first model (one repo → many worktrees) remains foundational; never collapse.
 - Per-surface `Status` feedback and progressive-disclosure workspace cards continue as
   the UI direction.
+- **Agents context + hooks (owner-approved 2026-08-28).** The former `Agent Context`
+  top-level tab is `Agents`, with sibling `Context` and `Hooks` surfaces. Context keeps
+  the existing file explorer. Hooks parses Claude user, shared-project, and
+  local-project settings and leads with an inferred plain-English purpose and trigger,
+  followed by event, matcher, handler type, action, arguments, condition, timeout, scope,
+  and source for the selected repo. Unsupported matcher/condition combinations are called
+  out instead of being presented as runnable. Hook arrays merge across
+  settings levels, exact duplicate registrations render once, and `disableAllHooks`
+  follows user < project < local precedence so configured-but-disabled hooks are not
+  presented as active. This remains a best-effort local settings scan, not session-state
+  proof: managed policy, plugin-provided hooks, and skill/subagent session hooks are not
+  yet visible.
+- **Shared filter controls (owner-approved 2026-08-28).** Search fields, facet labels,
+  wrapping filter containers, active-count treatment, and clear/reset behavior live in
+  `ui/filter_bar.rs`. Agents, Workspace, the top-level view filter, and Backlog consume
+  those primitives while retaining domain-specific predicates and state. Agents places
+  the shared bar directly below Context/Hooks: Context exposes agent, scope, and asset
+  type; Hooks exposes agent, scope, event, and handler type. Text search must narrow the
+  individual rows/cards it claims to match, not merely leave an entire repository card
+  visible because one hidden child matched.
+  Last-used queries and ordinary facets persist per surface in `UiConfig.filters`; adding
+  another filter surface uses the same query-plus-named-facets record rather than adding
+  page-specific config fields. Confirmation state, bulk selections, open editors, and
+  in-flight actions remain session-only.
 - **Unified task hub (owner-approved 2026-08-04).** Switchbard becomes the single pane
   of glass for every tracked repo's Backlog.md tasks. Repos stay the system of record
   (all mutations still write through the `backlog` CLI); Switchbard is the system of

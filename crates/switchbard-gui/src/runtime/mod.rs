@@ -45,9 +45,17 @@ pub struct OrderingState {
 pub enum ViewTab {
     #[default]
     Servers,
-    AgentContext,
+    Agents,
     Backlog,
     Dispatch,
+}
+
+/// Sibling surfaces within the top-level Agents view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AgentsSection {
+    #[default]
+    Context,
+    Hooks,
 }
 
 /// Identifies one task across every tracked Backlog project: the project's
@@ -165,11 +173,8 @@ pub struct BacklogViewState {
     /// this flag owns the distinct open/closed state.
     pub detail_rail_collapsed: bool,
     /// Whether the Backlog is narrowed to tasks untouched for at least
-    /// `Config::ui.stale_after_days`. Session-only, unlike the threshold
-    /// itself: the threshold is a standing judgement about this backlog's
-    /// pace, but *being* in a sweep is a thing you are doing right now, and
-    /// a filter that gates a bulk archive should not be silently still on
-    /// the next time the app opens.
+    /// `Config::ui.stale_after_days`. Persisted with the other ordinary
+    /// filters; bulk archive still requires its separate explicit confirm.
     pub stale_only: bool,
     /// Whether the bulk-archive action is primed for its confirm click.
     /// Cleared whenever the filtered set changes, so a confirm can never
@@ -259,6 +264,101 @@ impl Default for BacklogViewState {
             next_move_generation: 0,
         }
     }
+}
+
+impl BacklogViewState {
+    pub fn restore_filters(ui: &switchbard_core::config::UiConfig) -> Self {
+        let mut state = Self::default();
+        let Some(memory) = ui.filters.get("backlog") else {
+            return state;
+        };
+        state.project_filter = memory
+            .facets
+            .get("project_query")
+            .cloned()
+            .unwrap_or_default();
+        state.selected_project = memory.facets.get("project").map(PathBuf::from);
+        state.status_filter = memory
+            .facets
+            .get("status")
+            .cloned()
+            .unwrap_or_else(|| "all".to_string());
+        state.priority_filter = memory
+            .facets
+            .get("priority")
+            .cloned()
+            .unwrap_or_else(|| "all".to_string());
+        state.milestone_filter = memory
+            .facets
+            .get("milestone")
+            .cloned()
+            .unwrap_or_else(|| "all".to_string());
+        state.label_filter = memory
+            .facets
+            .get("label")
+            .cloned()
+            .unwrap_or_else(|| "all".to_string());
+        state.show_completed = facet_bool(memory, "completed", false);
+        state.show_archived = facet_bool(memory, "archived", false);
+        state.show_drafts = facet_bool(memory, "drafts", true);
+        state.stale_only = facet_bool(memory, "stale", false);
+        state
+    }
+
+    pub fn persist_filters(&self, ui: &mut switchbard_core::config::UiConfig) {
+        let memory = ui.filters.entry("backlog".to_string()).or_default();
+        set_optional_facet(
+            &mut memory.facets,
+            "project_query",
+            (!self.project_filter.is_empty()).then(|| self.project_filter.clone()),
+        );
+        set_optional_facet(
+            &mut memory.facets,
+            "project",
+            self.selected_project
+                .as_ref()
+                .map(|path| path.display().to_string()),
+        );
+        persist_non_default(&mut memory.facets, "status", &self.status_filter, "all");
+        persist_non_default(&mut memory.facets, "priority", &self.priority_filter, "all");
+        persist_non_default(
+            &mut memory.facets,
+            "milestone",
+            &self.milestone_filter,
+            "all",
+        );
+        persist_non_default(&mut memory.facets, "label", &self.label_filter, "all");
+        persist_bool(&mut memory.facets, "completed", self.show_completed, false);
+        persist_bool(&mut memory.facets, "archived", self.show_archived, false);
+        persist_bool(&mut memory.facets, "drafts", self.show_drafts, true);
+        persist_bool(&mut memory.facets, "stale", self.stale_only, false);
+    }
+}
+
+fn facet_bool(memory: &switchbard_core::config::FilterMemory, key: &str, default: bool) -> bool {
+    memory
+        .facets
+        .get(key)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
+fn persist_non_default(
+    facets: &mut std::collections::BTreeMap<String, String>,
+    key: &str,
+    value: &str,
+    default: &str,
+) {
+    set_optional_facet(facets, key, (value != default).then(|| value.to_string()));
+}
+
+fn persist_bool(
+    facets: &mut std::collections::BTreeMap<String, String>,
+    key: &str,
+    value: bool,
+    default: bool,
+) {
+    set_optional_facet(facets, key, (value != default).then(|| value.to_string()));
 }
 
 /// The Backlog view's central-panel lens. `List` is the pre-existing
@@ -500,7 +600,7 @@ impl Default for BacklogNewTaskState {
     }
 }
 
-/// Agent target selected in the Agent Context explorer.
+/// Agent target selected in the Agents view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentContextAgent {
     Claude,
@@ -525,9 +625,10 @@ impl AgentContextAgent {
     }
 }
 
-/// UI-local selection state for the Agent Context explorer.
+/// UI-local selection state for the Agents view.
 #[derive(Debug, Clone)]
 pub struct AgentContextViewState {
+    pub section: AgentsSection,
     pub scope: ContextScope,
     pub kind: Option<ContextKind>,
     pub selected_id: Option<String>,
@@ -536,11 +637,17 @@ pub struct AgentContextViewState {
     pub global_selected_id: Option<String>,
     pub global_open: bool,
     pub pinned_repo: Option<String>,
+    /// Hook-only facets. `None` means all values; options are derived from the
+    /// detected registrations so stale or custom event names remain visible.
+    pub hook_scope: Option<ContextScope>,
+    pub hook_event: Option<String>,
+    pub hook_type: Option<String>,
 }
 
 impl Default for AgentContextViewState {
     fn default() -> Self {
         Self {
+            section: AgentsSection::Context,
             scope: ContextScope::Local,
             kind: None,
             selected_id: None,
@@ -549,6 +656,126 @@ impl Default for AgentContextViewState {
             global_selected_id: None,
             global_open: false,
             pinned_repo: None,
+            hook_scope: None,
+            hook_event: None,
+            hook_type: None,
+        }
+    }
+}
+
+impl AgentContextViewState {
+    /// Restore durable filter choices while leaving selection, expansion, and
+    /// navigation state at their safe session defaults.
+    pub fn restore_filters(ui: &switchbard_core::config::UiConfig) -> Self {
+        let mut state = Self::default();
+        let shared = ui.filters.get("agents");
+        state.agent = match shared
+            .and_then(|memory| memory.facets.get("agent"))
+            .map(String::as_str)
+        {
+            Some("codex") => AgentContextAgent::Codex,
+            Some("all") => AgentContextAgent::All,
+            _ => AgentContextAgent::Claude,
+        };
+        if let Some(memory) = ui.filters.get("agents.context") {
+            state.scope = match memory.facets.get("scope").map(String::as_str) {
+                Some("directory") => ContextScope::Directory,
+                _ => ContextScope::Local,
+            };
+            state.kind = memory
+                .facets
+                .get("type")
+                .and_then(|value| match value.as_str() {
+                    "instruction" => Some(ContextKind::Instruction),
+                    "command" => Some(ContextKind::Command),
+                    "skill" => Some(ContextKind::Skill),
+                    "config" => Some(ContextKind::Config),
+                    "doc" => Some(ContextKind::Doc),
+                    _ => None,
+                });
+        }
+        if let Some(memory) = ui.filters.get("agents.hooks") {
+            state.hook_scope = memory
+                .facets
+                .get("scope")
+                .and_then(|value| match value.as_str() {
+                    "global" => Some(ContextScope::Global),
+                    "local" => Some(ContextScope::Local),
+                    "directory" => Some(ContextScope::Directory),
+                    _ => None,
+                });
+            state.hook_event = memory.facets.get("event").cloned();
+            state.hook_type = memory.facets.get("handler").cloned();
+        }
+        state
+    }
+
+    pub fn persist_filters(&self, ui: &mut switchbard_core::config::UiConfig) {
+        let shared = ui.filters.entry("agents".to_string()).or_default();
+        shared.facets.insert(
+            "agent".to_string(),
+            match self.agent {
+                AgentContextAgent::Claude => "claude",
+                AgentContextAgent::Codex => "codex",
+                AgentContextAgent::All => "all",
+            }
+            .to_string(),
+        );
+
+        let context = ui.filters.entry("agents.context".to_string()).or_default();
+        context.facets.insert(
+            "scope".to_string(),
+            match self.scope {
+                ContextScope::Directory => "directory",
+                ContextScope::Global | ContextScope::Local => "local",
+            }
+            .to_string(),
+        );
+        match self.kind {
+            Some(kind) => {
+                context.facets.insert(
+                    "type".to_string(),
+                    match kind {
+                        ContextKind::Instruction => "instruction",
+                        ContextKind::Command => "command",
+                        ContextKind::Skill => "skill",
+                        ContextKind::Config => "config",
+                        ContextKind::Doc => "doc",
+                    }
+                    .to_string(),
+                );
+            }
+            None => {
+                context.facets.remove("type");
+            }
+        }
+
+        let hooks = ui.filters.entry("agents.hooks".to_string()).or_default();
+        set_optional_facet(
+            &mut hooks.facets,
+            "scope",
+            self.hook_scope.map(|scope| match scope {
+                ContextScope::Global => "global".to_string(),
+                ContextScope::Local => "local".to_string(),
+                ContextScope::Directory => "directory".to_string(),
+            }),
+        );
+        set_optional_facet(&mut hooks.facets, "event", self.hook_event.clone());
+        set_optional_facet(&mut hooks.facets, "handler", self.hook_type.clone());
+    }
+}
+
+fn set_optional_facet(
+    facets: &mut std::collections::BTreeMap<String, String>,
+    key: &str,
+    value: Option<String>,
+) {
+    match value {
+        Some(value) => {
+            facets.insert(key.to_string(), value);
+        }
+        None => {
+            facets.remove(key);
         }
     }
 }
@@ -1124,6 +1351,55 @@ impl RowState {
 mod tests {
     use super::*;
     use switchbard_core::DriftProbe;
+
+    #[test]
+    fn agent_filter_facets_round_trip_through_generic_memory() {
+        let mut ui = switchbard_core::config::UiConfig::default();
+        let state = AgentContextViewState {
+            agent: AgentContextAgent::All,
+            scope: ContextScope::Directory,
+            kind: Some(ContextKind::Skill),
+            hook_scope: Some(ContextScope::Global),
+            hook_event: Some("PostToolUse".to_string()),
+            hook_type: Some("command".to_string()),
+            ..AgentContextViewState::default()
+        };
+
+        state.persist_filters(&mut ui);
+        let restored = AgentContextViewState::restore_filters(&ui);
+
+        assert_eq!(restored.agent, AgentContextAgent::All);
+        assert_eq!(restored.scope, ContextScope::Directory);
+        assert_eq!(restored.kind, Some(ContextKind::Skill));
+        assert_eq!(restored.hook_scope, Some(ContextScope::Global));
+        assert_eq!(restored.hook_event.as_deref(), Some("PostToolUse"));
+        assert_eq!(restored.hook_type.as_deref(), Some("command"));
+    }
+
+    #[test]
+    fn backlog_filter_facets_round_trip_without_transient_actions() {
+        let mut ui = switchbard_core::config::UiConfig::default();
+        let state = BacklogViewState {
+            selected_project: Some(PathBuf::from("/tmp/demo")),
+            status_filter: "In Progress".to_string(),
+            priority_filter: "high".to_string(),
+            show_completed: true,
+            stale_only: true,
+            bulk_archive_confirm: true,
+            ..BacklogViewState::default()
+        };
+
+        state.persist_filters(&mut ui);
+        let restored = BacklogViewState::restore_filters(&ui);
+
+        assert_eq!(restored.selected_project, Some(PathBuf::from("/tmp/demo")));
+        assert_eq!(restored.status_filter, "In Progress");
+        assert_eq!(restored.priority_filter, "high");
+        assert!(restored.show_completed);
+        assert!(restored.stale_only);
+        assert!(!restored.bulk_archive_confirm);
+        assert!(restored.bulk_selected_tasks.is_empty());
+    }
 
     fn ready_probe(ahead: u32, behind: u32, base: &str) -> Option<DriftProbe> {
         Some(DriftProbe::Ready {
