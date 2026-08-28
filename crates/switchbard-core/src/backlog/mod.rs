@@ -8,6 +8,7 @@
 
 mod mutations;
 mod parse;
+pub mod status_config;
 mod types;
 
 pub use mutations::{
@@ -20,7 +21,8 @@ pub use parse::{
     parse_backlog_day, parse_created_task_id, task_file_round_trips,
 };
 pub use types::{
-    ordered_status_vocabulary, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskPatch,
-    BacklogTaskSource, NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
-    CANONICAL_STATUS_ORDER, STANDARD_STATUSES,
+    assignable_statuses, missing_standard_statuses, ordered_status_vocabulary,
+    BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskPatch, BacklogTaskSource,
+    NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES, CANONICAL_STATUS_ORDER,
+    STANDARD_STATUSES,
 };

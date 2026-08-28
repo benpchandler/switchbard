@@ -146,7 +146,13 @@ fn malformed_ordering_yaml_app() -> switchbard_gui::app::HiveApp {
             tasks: vec![],
             warnings: vec![],
             loaded_at_unix: 0,
-            configured_statuses: vec![],
+            configured_statuses: vec![
+                "Icebox".into(),
+                "To Do".into(),
+                "In Progress".into(),
+                "In Review".into(),
+                "Done".into(),
+            ],
         },
     );
     *app.ordering.lock().unwrap() = OrderingState {
@@ -205,7 +211,13 @@ fn missing_cli_app() -> switchbard_gui::app::HiveApp {
             tasks: vec![task],
             warnings: vec!["Backlog CLI not found on PATH".to_string()],
             loaded_at_unix: 0,
-            configured_statuses: vec![],
+            configured_statuses: vec![
+                "Icebox".into(),
+                "To Do".into(),
+                "In Progress".into(),
+                "In Review".into(),
+                "Done".into(),
+            ],
         },
     );
     app

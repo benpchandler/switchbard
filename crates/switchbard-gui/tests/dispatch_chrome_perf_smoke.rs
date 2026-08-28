@@ -142,7 +142,13 @@ fn build_fixture() -> HiveApp {
                 tasks: (0..TASKS_PER_REPO).map(|i| task(r, i)).collect(),
                 warnings: vec![],
                 loaded_at_unix: 0,
-                configured_statuses: vec![],
+                configured_statuses: vec![
+                    "Icebox".into(),
+                    "To Do".into(),
+                    "In Progress".into(),
+                    "In Review".into(),
+                    "Done".into(),
+                ],
             },
         ));
     }
