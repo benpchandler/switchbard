@@ -31,7 +31,12 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
 fn render_filters(app: &mut HiveApp, ui: &mut egui::Ui) {
     let section = app.agent_context_view.section;
     let (events, hook_types) = hook_options(app);
-    let active_count = usize::from(!app.filter.is_empty())
+    let active_count = usize::from(!app.filter().is_empty())
+        + usize::from(
+            section == AgentsSection::Context
+                && app.agent_context_view.scope != ContextScope::Local,
+        )
+        + usize::from(section == AgentsSection::Context && app.agent_context_view.kind.is_some())
         + usize::from(
             section == AgentsSection::Hooks && app.agent_context_view.hook_scope.is_some(),
         )
@@ -47,7 +52,7 @@ fn render_filters(app: &mut HiveApp, ui: &mut egui::Ui) {
             AgentsSection::Context => "repo, title, path, agent, or asset type",
             AgentsSection::Hooks => "repo, event, matcher, command, or source",
         };
-        filter_bar::search(ui, "agents_local_filter", &mut app.filter, hint);
+        filter_bar::search(ui, "agents_local_filter", app.filter_mut(), hint);
 
         filter_bar::facet_label(ui, "Agent");
         egui::ComboBox::from_id_salt("agents_filter_agent")
@@ -76,10 +81,18 @@ fn render_filters(app: &mut HiveApp, ui: &mut egui::Ui) {
         }
 
         if filter_bar::clear(ui, active_count > 0) {
-            app.filter.clear();
-            app.agent_context_view.hook_scope = None;
-            app.agent_context_view.hook_event = None;
-            app.agent_context_view.hook_type = None;
+            app.filter_mut().clear();
+            match section {
+                AgentsSection::Context => {
+                    app.agent_context_view.scope = ContextScope::Local;
+                    app.agent_context_view.kind = None;
+                }
+                AgentsSection::Hooks => {
+                    app.agent_context_view.hook_scope = None;
+                    app.agent_context_view.hook_event = None;
+                    app.agent_context_view.hook_type = None;
+                }
+            }
         }
     });
 }

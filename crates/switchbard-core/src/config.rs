@@ -11,6 +11,7 @@
 
 use crate::types::{Repo, WorktreeAlias};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -90,6 +91,11 @@ pub struct UiConfig {
     /// loads exactly as it did before this field existed.
     #[serde(default)]
     pub sidebar_collapsed: bool,
+    /// Last-used filter state by stable UI surface key. The generic query +
+    /// named-facet shape lets a new view participate without another config
+    /// migration or a dependency from core onto GUI enums.
+    #[serde(default)]
+    pub filters: BTreeMap<String, FilterMemory>,
 }
 
 // Hand-written so the default scale is 1.0, not the f32 `Default` of 0.0 (which
@@ -105,8 +111,18 @@ impl Default for UiConfig {
             stale_after_days: default_stale_after_days(),
             saved_views: Vec::new(),
             sidebar_collapsed: false,
+            filters: BTreeMap::new(),
         }
     }
+}
+
+/// Persisted last-used state for one filter surface.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FilterMemory {
+    #[serde(default)]
+    pub query: String,
+    #[serde(default)]
+    pub facets: BTreeMap<String, String>,
 }
 
 /// One named Backlog view: the filter/sort/lens combination task-20 lets a
@@ -339,6 +355,13 @@ mod tests {
                     show_drafts: true,
                 }],
                 sidebar_collapsed: true,
+                filters: BTreeMap::from([(
+                    "agents.hooks".into(),
+                    FilterMemory {
+                        query: "format".into(),
+                        facets: BTreeMap::from([("event".into(), "PostToolUse".into())]),
+                    },
+                )]),
             },
         };
         save_to(&path, &cfg).unwrap();

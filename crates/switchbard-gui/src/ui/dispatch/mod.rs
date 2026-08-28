@@ -342,7 +342,7 @@ fn collect_rows(app: &HiveApp) -> Vec<DispatchRow> {
     let projects = app.backlog_projects_snapshot();
     let runs = app.dispatch_runs_snapshot();
     let repos = app.repos_snapshot();
-    let filter = app.filter.to_lowercase();
+    let filter = app.filter().to_lowercase();
 
     let mut rows: Vec<DispatchRow> = Vec::new();
     for (root, project) in &projects {

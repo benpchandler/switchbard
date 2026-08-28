@@ -92,7 +92,7 @@ fn agents_hooks_active_filters_narrow_snapshot() {
     app.agent_context_view.section = AgentsSection::Hooks;
     app.agent_context_view.hook_scope = Some(ContextScope::Local);
     app.agent_context_view.hook_event = Some("PostToolUse".to_string());
-    app.filter = "after-edit".to_string();
+    *app.filter_mut() = "after-edit".to_string();
     app.agent_contexts
         .lock()
         .expect("invariant: seeded agent context cache")

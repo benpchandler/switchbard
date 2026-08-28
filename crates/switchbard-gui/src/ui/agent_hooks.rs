@@ -42,7 +42,7 @@ fn snapshot(app: &HiveApp) -> Snapshot {
             .clone()
             .into_iter()
             .collect(),
-        filter_lc: app.filter.to_lowercase(),
+        filter_lc: app.filter().to_lowercase(),
     }
 }
 

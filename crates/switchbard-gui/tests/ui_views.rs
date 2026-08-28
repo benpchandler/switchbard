@@ -300,13 +300,73 @@ fn context_search_filters_individual_assets_not_just_repo_cards() {
         ),
     ]);
     app.view_tab = ViewTab::Agents;
-    app.filter = "alpha".to_string();
+    *app.filter_mut() = "alpha".to_string();
     let mut harness = harness(app);
     harness.run();
 
     assert!(harness.query_by_label("alpha-notes.md").is_some());
     assert!(harness.query_by_label("beta-notes.md").is_none());
     assert!(harness.query_by_label("1 active").is_some());
+}
+
+#[test]
+fn agents_queries_are_scoped_per_section_and_restore_on_return() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Agents;
+    *app.filter_mut() = "context-query".to_string();
+    assert_eq!(app.filter(), "context-query");
+
+    app.agent_context_view.section = AgentsSection::Hooks;
+    assert_eq!(app.filter(), "");
+    *app.filter_mut() = "hooks-query".to_string();
+
+    app.agent_context_view.section = AgentsSection::Context;
+    assert_eq!(app.filter(), "context-query");
+    app.agent_context_view.section = AgentsSection::Hooks;
+    assert_eq!(app.filter(), "hooks-query");
+}
+
+#[test]
+fn context_clear_restores_the_persistable_filter_defaults() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Agents;
+    app.agent_context_view.scope = ContextScope::Directory;
+    app.agent_context_view.kind = Some(ContextKind::Skill);
+    *app.filter_mut() = "review".to_string();
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(harness.query_by_label("3 active").is_some());
+    harness.get_by_label("Clear filters").click();
+    harness.run();
+
+    assert_eq!(harness.state().filter(), "");
+    assert_eq!(
+        harness.state().agent_context_view.scope,
+        ContextScope::Local
+    );
+    assert_eq!(harness.state().agent_context_view.kind, None);
+}
+
+#[test]
+fn restart_drops_a_persisted_backlog_project_that_is_no_longer_tracked() {
+    let mut cfg = Config::default();
+    cfg.ui
+        .filters
+        .entry("backlog".to_string())
+        .or_default()
+        .facets
+        .insert("project".to_string(), "/tmp/removed-repo".to_string());
+    let app = HiveApp::new_headless(
+        cfg,
+        vec![Repo {
+            name: REPO_NAME.to_string(),
+            path: PathBuf::from(REPO_PATH),
+        }],
+        Vec::new(),
+    );
+
+    assert_eq!(app.backlog_view.selected_project, None);
 }
 
 #[test]

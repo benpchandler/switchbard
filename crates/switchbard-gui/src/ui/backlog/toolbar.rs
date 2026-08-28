@@ -396,7 +396,7 @@ fn render_bulk_clear_button(
 /// container the caller provides.
 pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
     {
-        let active_count = usize::from(!app.filter.is_empty())
+        let active_count = usize::from(!app.filter().is_empty())
             + usize::from(!app.backlog_view.project_filter.is_empty())
             + usize::from(app.backlog_view.selected_project.is_some())
             + usize::from(app.backlog_view.status_filter != "all")
@@ -542,7 +542,7 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
             // mutate `app`: they borrow it immutably via `ActiveFilters`,
             // and each `selectable_value` below needs it mutably.
             let (milestones, labels) = {
-                let facet_filter_lc = app.filter.to_lowercase();
+                let facet_filter_lc = app.filter().to_lowercase();
                 let filters = sort::ActiveFilters::from_app(app, &facet_filter_lc);
                 let scoped = super::scoped_projects(app, snap);
                 (
@@ -626,7 +626,7 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
                 app.save_config();
             }
             if crate::ui::filter_bar::clear(ui, active_count > 0) {
-                app.filter.clear();
+                app.filter_mut().clear();
                 app.backlog_view.project_filter.clear();
                 app.backlog_view.selected_project = None;
                 app.backlog_view.status_filter = "all".to_string();

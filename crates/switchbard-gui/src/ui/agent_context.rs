@@ -53,7 +53,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
             .clone()
             .into_iter()
             .collect(),
-        filter_lc: app.filter.to_lowercase(),
+        filter_lc: app.filter().to_lowercase(),
     };
 
     render_summary(ui, &snap);
@@ -798,7 +798,7 @@ fn selected_global_items<'a>(
         .iter()
         .copied()
         .filter(|i| agent_visible(app.agent_context_view.agent, i.agent))
-        .filter(|i| item_matches_filter(i, &app.filter.to_lowercase()))
+        .filter(|i| item_matches_filter(i, &app.filter().to_lowercase()))
         .filter(|i| {
             app.agent_context_view
                 .global_kind

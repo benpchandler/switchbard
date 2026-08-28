@@ -70,6 +70,10 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   type; Hooks exposes agent, scope, event, and handler type. Text search must narrow the
   individual rows/cards it claims to match, not merely leave an entire repository card
   visible because one hidden child matched.
+  Last-used queries and ordinary facets persist per surface in `UiConfig.filters`; adding
+  another filter surface uses the same query-plus-named-facets record rather than adding
+  page-specific config fields. Confirmation state, bulk selections, open editors, and
+  in-flight actions remain session-only.
 - **Unified task hub (owner-approved 2026-08-04).** Switchbard becomes the single pane
   of glass for every tracked repo's Backlog.md tasks. Repos stay the system of record
   (all mutations still write through the `backlog` CLI); Switchbard is the system of

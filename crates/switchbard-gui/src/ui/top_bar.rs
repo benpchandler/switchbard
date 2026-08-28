@@ -99,22 +99,22 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
         ViewTab::Backlog => "matches task id, title, labels, assignee, or description",
         ViewTab::Dispatch => "matches task id, title, repo, or branch",
     };
-    filter_bar::search(ui, "top_bar_filter", &mut app.filter, hint);
+    filter_bar::search(ui, "top_bar_filter", app.filter_mut(), hint);
     match app.view_tab {
         ViewTab::Servers => {
             ui.separator();
             ui.checkbox(&mut app.show_only_managed, "only attributed listeners");
             ui.checkbox(&mut app.show_non_servers, "show non-server scripts");
-            let active = !app.filter.is_empty() || app.show_only_managed || !app.show_non_servers;
+            let active = !app.filter().is_empty() || app.show_only_managed || !app.show_non_servers;
             if filter_bar::clear(ui, active) {
-                app.filter.clear();
+                app.filter_mut().clear();
                 app.show_only_managed = false;
                 app.show_non_servers = true;
             }
         }
         ViewTab::Backlog | ViewTab::Dispatch => {
-            if filter_bar::clear(ui, !app.filter.is_empty()) {
-                app.filter.clear();
+            if filter_bar::clear(ui, !app.filter().is_empty()) {
+                app.filter_mut().clear();
             }
         }
         ViewTab::Agents => {}
