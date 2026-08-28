@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use common::{app_with_items, harness, item, seeded_app, REPO_NAME, REPO_PATH};
 use eframe::egui;
-use egui_kittest::kittest::{self, Queryable};
+use egui_kittest::kittest::{self, NodeT, Queryable};
 use egui_kittest::Harness;
 use switchbard_core::config::Config;
 use switchbard_core::{
@@ -324,6 +324,56 @@ fn agents_queries_are_scoped_per_section_and_restore_on_return() {
     assert_eq!(app.filter(), "context-query");
     app.agent_context_view.section = AgentsSection::Hooks;
     assert_eq!(app.filter(), "hooks-query");
+}
+
+/// Regression for the Servers page's top-bar Clear: it must treat the
+/// shipped `UiConfig` default (`show_non_servers: false`) as "nothing
+/// filtered", not as an active filter to reset away from. Two widgets share
+/// the "Clear filters" label on this page - this one in the top bar (painted
+/// first) and the staleness bar's own narrower Clear (painted second, inside
+/// the central panel) - so `get_all_by_label` plus paint order picks the
+/// page-wide one, matching the pattern `clicking_agents_tab_switches_view`
+/// already documents for disambiguating a shared label.
+#[test]
+fn servers_clear_filters_matches_the_shipped_defaults() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Servers;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness
+            .get_all_by_label("Clear filters")
+            .next()
+            .unwrap()
+            .accesskit_node()
+            .is_disabled(),
+        "fresh install has nothing narrowed from the shipped defaults, so Clear should start disabled"
+    );
+
+    harness.state_mut().show_non_servers = true;
+    harness.run();
+    assert!(!harness
+        .get_all_by_label("Clear filters")
+        .next()
+        .unwrap()
+        .accesskit_node()
+        .is_disabled());
+
+    harness
+        .get_all_by_label("Clear filters")
+        .next()
+        .unwrap()
+        .click();
+    harness.run();
+
+    assert!(!harness.state().show_non_servers);
+    assert!(harness
+        .get_all_by_label("Clear filters")
+        .next()
+        .unwrap()
+        .accesskit_node()
+        .is_disabled());
 }
 
 #[test]

@@ -3,8 +3,10 @@
 //!
 //! Design rules in here:
 //! - Anything a worker thread needs goes in an `Arc<Mutex<>>` field.
-//! - Anything purely view-state (filters, expansion toggles, view tab) is
-//!   owned directly by the struct.
+//! - Anything purely view-state (expansion toggles, view tab) is owned
+//!   directly by the struct. Filter queries and facets persist per surface
+//!   through `Config.ui.filters` instead — see `filter`/`filter_mut` and
+//!   `persist_filter_facets`.
 //! - The persisted `Config` is the single source of truth for repos +
 //!   user-visible UI defaults; the runtime `repos` Mutex is kept in lock-step
 //!   via `rebuild_worktrees` after every mutation.
