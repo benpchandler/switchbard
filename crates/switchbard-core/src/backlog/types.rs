@@ -312,6 +312,40 @@ pub struct NewBacklogTask {
 mod tests {
     use super::*;
 
+    /// This repo's own `backlog/config.yml` must declare every status the app
+    /// offers for it.
+    ///
+    /// `STANDARD_STATUSES` says "every tracked project offers exactly these,
+    /// whatever its own `backlog/config.yml` happens to declare" — but the
+    /// `backlog` CLI validates a write against that file, so offering a
+    /// status the file omits produces `Invalid status: Icebox. Valid statuses
+    /// are: To Do, In Progress, Done` and the move silently doesn't happen.
+    /// The constant was standardized in 2026-08-06; the config files were
+    /// not, and the two drifted for three weeks before a board drag hit it.
+    ///
+    /// Pinned here so switchbard's own config can never drift from the
+    /// vocabulary again. Other repos' configs are outside this repo and
+    /// cannot be asserted from here — see `docs/product-trajectory.md` for
+    /// the runtime check that covers them.
+    #[test]
+    fn this_repos_backlog_config_declares_every_standard_status() {
+        let config = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../backlog/config.yml"),
+        )
+        .expect("switchbard has a backlog config");
+        let declared = config
+            .lines()
+            .find_map(|l| l.strip_prefix("statuses:"))
+            .expect("config.yml declares statuses");
+        for status in STANDARD_STATUSES {
+            assert!(
+                declared.contains(status),
+                "backlog/config.yml omits `{status}`, so the board would offer \
+                 it and the CLI would refuse the write. Declared: {declared}"
+            );
+        }
+    }
+
     fn project(configured_statuses: &[&str], task_statuses: &[&str]) -> BacklogProject {
         BacklogProject {
             root: PathBuf::from("/fixture"),
