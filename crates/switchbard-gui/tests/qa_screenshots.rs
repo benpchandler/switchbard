@@ -90,7 +90,13 @@ fn project_with(tasks: Vec<BacklogTask>) -> BacklogProject {
         tasks,
         warnings: vec![],
         loaded_at_unix: 0,
-        configured_statuses: vec![],
+        configured_statuses: vec![
+            "Icebox".into(),
+            "To Do".into(),
+            "In Progress".into(),
+            "In Review".into(),
+            "Done".into(),
+        ],
     }
 }
 

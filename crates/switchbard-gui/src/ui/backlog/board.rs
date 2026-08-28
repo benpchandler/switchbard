@@ -537,6 +537,34 @@ fn apply_drop(
             .set(format!("{} is read-only; drag ignored", row.task.id));
         return;
     }
+    // A cross-repo board shows the union of every scoped repo's columns, so a
+    // column can exist because *another* repo declares it. The `backlog` CLI
+    // validates against this task's own project, so refuse here rather than
+    // let the save fail — and turn the refusal into the offer to fix it,
+    // since the user has just demonstrated they want that status.
+    if !switchbard_core::assignable_statuses(&row.project.project)
+        .iter()
+        .any(|s| s == column_status)
+    {
+        let repo_root = row.project.project.root.clone();
+        let repo_name = crate::ui::backlog::status_migration::repo_label(&repo_root);
+        app.backlog_status.set(format!(
+            "{} can't move to {column_status}: {repo_name} doesn't declare it",
+            row.task.id
+        ));
+        app.status_migration_prompt = Some(
+            crate::ui::backlog::status_migration::StatusMigrationPrompt {
+                missing: switchbard_core::missing_standard_statuses(&row.project.project),
+                blocked_move: Some(crate::ui::backlog::status_migration::BlockedMove {
+                    task_id: row.task.id.clone(),
+                    target_status: column_status.to_string(),
+                }),
+                repo_root,
+                repo_name,
+            },
+        );
+        return;
+    }
     let generation = app.backlog_view.next_move_generation;
     app.backlog_view.next_move_generation += 1;
     // task-42 AC #1: written synchronously, this same frame — see the

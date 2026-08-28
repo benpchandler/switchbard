@@ -50,34 +50,31 @@ pub const CANONICAL_STATUS_ORDER: &[&str] = &[
     "Done",
 ];
 
-/// Owner-requested UX (2026-08-05): "all projects should share a common set
-/// of statuses across every view" — this is the single source of truth
-/// every status-listing UI surface (Board columns, the List status filter,
-/// the detail-pane status editor, the Create modal, Statistics
-/// distributions) must consume instead of hardcoding or locally re-deriving
-/// its own list. Before this, Board's own local union (TASK-25) included a
-/// project's declared-but-currently-empty statuses (e.g. "Icebox") while
-/// List's filter dropdown didn't, so the two lenses silently disagreed on
-/// what statuses existed.
+/// Every status the scoped projects *actually have* — their declared
+/// `backlog/config.yml` lists, plus any status a task in scope currently
+/// carries (so an ad hoc value still gets a column rather than vanishing).
 ///
-/// Union of [`STANDARD_STATUSES`] (always present, so the offered vocabulary
-/// does not depend on which project happens to be in scope), every given
-/// project's own `configured_statuses` (`backlog/config.yml`'s declared list),
-/// and any status actually carried by a task in scope (covers a repo with
-/// genuinely ad hoc values outside both of the above) — ordered per
-/// `CANONICAL_STATUS_ORDER` first, anything else alphabetically after.
+/// # Why this no longer seeds [`STANDARD_STATUSES`]
 ///
-/// Seeding from `STANDARD_STATUSES` rather than the narrower
-/// `BACKLOG_STATUSES` is what makes standardization hold at every call site
-/// *without* each one having to pass all tracked projects: the detail rail
-/// scopes to a single project (`once(&project)`), so with the old trio as the
-/// seed a repo whose `config.yml` omitted `In Review` could never offer it —
-/// which is exactly how the dispatch lifecycle's target status became
-/// unreachable in four of the five backlog-bearing repos.
+/// It used to, under the 2026-08-05 request that "all projects should share a
+/// common set of statuses across every view". Offering a shared vocabulary is
+/// a fine goal; asserting one the repos don't have is not. The `backlog` CLI
+/// validates every write against the project's own config, so seeding here
+/// made the Board offer `Icebox` for a repo declaring only the standard trio,
+/// and the drop failed with `Invalid status: Icebox. Valid statuses are: To
+/// Do, In Progress, Done`. Worse, `dispatch` releases finished runs to `In
+/// Review` and swallows the write error by design, so in three of four
+/// tracked repos that move silently never happened.
+///
+/// **What the board shows now matches what the repo declares** (owner
+/// decision, 2026-08-28). Standardization did not go away — it moved from an
+/// assertion to an offer: [`missing_standard_statuses`] finds the gap and the
+/// UI proposes writing it into the repo, which makes the shared vocabulary
+/// true rather than assumed.
 pub fn ordered_status_vocabulary<'a>(
     projects: impl IntoIterator<Item = &'a BacklogProject>,
 ) -> Vec<String> {
-    let mut set: BTreeSet<String> = STANDARD_STATUSES.iter().map(|s| (*s).to_string()).collect();
+    let mut set: BTreeSet<String> = BTreeSet::new();
     for project in projects {
         for status in &project.configured_statuses {
             set.insert(status.clone());
@@ -87,6 +84,18 @@ pub fn ordered_status_vocabulary<'a>(
         }
     }
 
+    order_statuses(set)
+}
+
+/// `CANONICAL_STATUS_ORDER` first, anything else alphabetically after, so a
+/// repo's genuinely nonstandard status still gets a stable position rather
+/// than being dropped. Shared by every list of statuses this crate hands out —
+/// two orderings would be two vocabularies again.
+pub(super) fn order_statuses_public(set: BTreeSet<String>) -> Vec<String> {
+    order_statuses(set)
+}
+
+fn order_statuses(set: BTreeSet<String>) -> Vec<String> {
     let mut canonical: Vec<String> = Vec::new();
     let mut extra: Vec<String> = Vec::new();
     for status in set {
@@ -108,6 +117,34 @@ pub fn ordered_status_vocabulary<'a>(
     extra.sort();
     canonical.extend(extra);
     canonical
+}
+
+/// The statuses a task in this project may legally be moved *to*.
+///
+/// Deliberately narrower than [`ordered_status_vocabulary`], which also
+/// includes statuses tasks merely carry: a stray `Backlog` value on one task
+/// is a thing to render, not a destination to offer. The `backlog` CLI is the
+/// authority and it accepts exactly the config's list, so this mirrors it.
+pub fn assignable_statuses(project: &BacklogProject) -> Vec<String> {
+    order_statuses(project.configured_statuses.iter().cloned().collect())
+}
+
+/// Which of [`STANDARD_STATUSES`] this project's `backlog/config.yml` omits.
+///
+/// Empty means the repo already offers the shared vocabulary. Non-empty is
+/// the gap the UI offers to close — see `ordered_status_vocabulary` for why
+/// closing it is now an offer rather than an assumption.
+pub fn missing_standard_statuses(project: &BacklogProject) -> Vec<String> {
+    STANDARD_STATUSES
+        .iter()
+        .filter(|standard| {
+            !project
+                .configured_statuses
+                .iter()
+                .any(|declared| declared.eq_ignore_ascii_case(standard))
+        })
+        .map(|s| (*s).to_string())
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -382,30 +419,52 @@ mod tests {
         }
     }
 
-    /// The standardization guarantee: the offered vocabulary is the full
-    /// `STANDARD_STATUSES` set even with nothing in scope, so a surface that
-    /// scopes to one project (the detail rail) still offers `In Review` for a
-    /// repo whose own `config.yml` never declared it.
+    /// Both of the next two tests assert the *reverse* of what they used to
+    /// (owner decision, 2026-08-28). They previously pinned the
+    /// standardization guarantee — the vocabulary was seeded from
+    /// `STANDARD_STATUSES`, so every surface offered `Icebox` and `In Review`
+    /// whatever a repo declared. That made the app confident about statuses
+    /// the `backlog` CLI would then refuse to write, which is how a board drag
+    /// produced `Invalid status: Icebox` and how `dispatch` silently failed to
+    /// release runs to `In Review` in three of four repos.
+    ///
+    /// What shows now matches what the repo declares. The standardization goal
+    /// survives as [`missing_standard_statuses`] plus a UI offer to write the
+    /// gap into `config.yml` — making the shared vocabulary true rather than
+    /// assumed.
     #[test]
-    fn always_includes_the_standard_statuses_even_with_no_projects() {
-        let vocab = ordered_status_vocabulary(std::iter::empty());
-        assert_eq!(
-            vocab,
-            vec!["Icebox", "To Do", "In Progress", "In Review", "Done"]
+    fn nothing_in_scope_offers_nothing() {
+        assert!(
+            ordered_status_vocabulary(std::iter::empty()).is_empty(),
+            "with no project in scope there is no repo to be truthful about"
         );
     }
 
-    /// Regression guard for the bug this standardization fixed: a project
-    /// declaring only the narrow trio must still offer the dispatch
-    /// lifecycle's `In Review`, or `release_as_dispatched` writes a status the
-    /// user can never select back out of by hand.
     #[test]
-    fn a_project_declaring_only_the_narrow_trio_still_offers_in_review() {
+    fn a_project_declaring_only_the_narrow_trio_offers_only_the_trio() {
         let p = project(&["To Do", "In Progress", "Done"], &[]);
-        let vocab = ordered_status_vocabulary([&p]);
+        assert_eq!(
+            ordered_status_vocabulary([&p]),
+            vec!["To Do", "In Progress", "Done"],
+        );
+        assert_eq!(
+            missing_standard_statuses(&p),
+            vec!["Icebox", "In Review"],
+            "and the gap is reported, so the UI can offer to close it"
+        );
+    }
+
+    /// The move targets a task in this project may legally take: the config's
+    /// list and nothing else, because that is exactly what the CLI accepts.
+    /// A status merely *carried* by some task is not a destination — offering
+    /// it would recreate the rejected-write bug in a subtler place.
+    #[test]
+    fn assignable_statuses_are_the_configs_and_not_a_tasks_stray_value() {
+        let p = project(&["To Do", "Done"], &["Blocked"]);
+        assert_eq!(assignable_statuses(&p), vec!["To Do", "Done"]);
         assert!(
-            vocab.iter().any(|s| s == "In Review"),
-            "In Review must be offered regardless of the project's own config.yml, got {vocab:?}"
+            ordered_status_vocabulary([&p]).contains(&"Blocked".to_string()),
+            "the stray value still gets a column so its task stays visible"
         );
     }
 
@@ -426,18 +485,10 @@ mod tests {
     #[test]
     fn includes_a_nonstandard_status_actually_present_on_a_task() {
         let p = project(&[], &["Blocked"]);
-        let vocab = ordered_status_vocabulary([&p]);
         assert_eq!(
-            vocab,
-            vec![
-                "Icebox",
-                "To Do",
-                "In Progress",
-                "In Review",
-                "Done",
-                "Blocked"
-            ],
-            "a genuinely ad hoc task status should still be offered, sorted after the canonical set"
+            ordered_status_vocabulary([&p]),
+            vec!["Blocked"],
+            "a genuinely ad hoc task status still gets a column, or its task vanishes"
         );
     }
 
@@ -450,35 +501,16 @@ mod tests {
         // tail, which is what keeps that task sensibly sorted until it moves.
         let a = project(&["Backlog"], &[]);
         let b = project(&["In Review"], &[]);
-        let vocab = ordered_status_vocabulary([&a, &b]);
         assert_eq!(
-            vocab,
-            vec![
-                "Backlog",
-                "Icebox",
-                "To Do",
-                "In Progress",
-                "In Review",
-                "Done"
-            ]
+            ordered_status_vocabulary([&a, &b]),
+            vec!["Backlog", "In Review"],
         );
     }
 
     #[test]
     fn extra_nonstandard_statuses_sort_alphabetically_after_the_canonical_set() {
-        let p = project(&[], &["Zeta", "Alpha"]);
+        let p = project(&["To Do"], &["Zeta", "Alpha"]);
         let vocab = ordered_status_vocabulary([&p]);
-        assert_eq!(
-            vocab,
-            vec![
-                "Icebox",
-                "To Do",
-                "In Progress",
-                "In Review",
-                "Done",
-                "Alpha",
-                "Zeta"
-            ]
-        );
+        assert_eq!(vocab, vec!["To Do", "Alpha", "Zeta"]);
     }
 }

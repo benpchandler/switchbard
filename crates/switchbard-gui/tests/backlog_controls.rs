@@ -77,7 +77,13 @@ fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
             tasks,
             warnings: vec![],
             loaded_at_unix: 0,
-            configured_statuses: vec![],
+            configured_statuses: vec![
+                "Icebox".into(),
+                "To Do".into(),
+                "In Progress".into(),
+                "In Review".into(),
+                "Done".into(),
+            ],
         },
     );
     app
@@ -827,7 +833,13 @@ fn digest_harness_with(tasks: Vec<BacklogTask>) -> Harness<'static, HiveApp> {
             tasks,
             warnings: vec![],
             loaded_at_unix: 0,
-            configured_statuses: vec![],
+            configured_statuses: vec![
+                "Icebox".into(),
+                "To Do".into(),
+                "In Progress".into(),
+                "In Review".into(),
+                "Done".into(),
+            ],
         },
     );
     let mut harness = harness(app);
@@ -1074,32 +1086,36 @@ fn board_shows_the_icebox_column_even_with_zero_icebox_tasks() {
 //      column headers, which — unlike a ComboBox's popup — are plain,
 //      always-rendered labels and so are directly queryable.
 
-/// **Deliberate reversal (owner decision 2026-08-06, cross-repo status
-/// standardization).** This test previously asserted the opposite — that a
-/// project declaring no statuses got "no phantom columns beyond the standard
-/// three". That was correct under the old per-project vocabulary, where
-/// `ordered_status_vocabulary` seeded from `BACKLOG_STATUSES`.
+/// **Reversed again (owner decision, 2026-08-28).** This assertion has now
+/// been all three ways, so the history is worth keeping.
 ///
-/// Standardizing means the offered set no longer depends on which project is
-/// in scope: every project shows all of `STANDARD_STATUSES`. The concrete bug
-/// that forced this is the dispatch lifecycle — `release_as_dispatched` moves
-/// a task to `In Review`, and under the old rule four of the five
-/// backlog-bearing repos could never display or select that status, so a
-/// dispatched task landed in a column that did not exist.
+/// Originally: a project declaring no statuses got "no phantom columns beyond
+/// the standard three". Then 2026-08-06 standardized the vocabulary and this
+/// test was flipped to assert every project shows all of `STANDARD_STATUSES`,
+/// because `dispatch` releases to `In Review` and four of five repos could
+/// neither display nor select it.
 ///
-/// The empty-column cost is real and accepted: an unused `Icebox` column is
-/// the visible price of every board meaning the same thing.
+/// That fix asserted a vocabulary the repos didn't have. The `backlog` CLI
+/// validates writes against each project's own `config.yml`, so the board
+/// offered columns the CLI then refused — a drag to `Icebox` failed with
+/// `Invalid status`, and dispatch's own `In Review` write failed silently in
+/// three of four repos because `set_dispatch_status` discards the error.
+///
+/// So: **what the board shows matches what the repo declares.** The
+/// standardization goal is kept, but as an offer — `missing_standard_statuses`
+/// finds the gap and the UI proposes writing it into `config.yml`, which makes
+/// the shared vocabulary true instead of assumed. The empty-`Icebox`-column
+/// cost the 2026-08-06 note accepted is gone with it.
 #[test]
-fn board_shows_the_full_standard_vocabulary_even_when_a_project_declares_none() {
+fn board_columns_are_exactly_what_the_project_declares() {
     let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Ordinary task", "To Do")]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
     harness.run();
 
-    for status in ["Icebox", "To Do", "In Progress", "In Review", "Done"] {
+    for status in ["To Do", "In Progress", "Done"] {
         assert!(
             harness.query_all_by_label(status).next().is_some(),
-            "{status} should be a column even though this project declares no statuses — \
-             the standardized vocabulary is scope-independent"
+            "{status} is declared by the fixture and must have a column"
         );
     }
 }
@@ -1714,9 +1730,35 @@ fn board_drag_failure_rolls_back_the_card_and_reloads_the_cache() {
     let mut harness = harness(app);
     harness.run();
 
+    // How this drag is made to fail, and why it changed.
+    //
+    // It used to drop onto `Icebox` — a column the board offered for every
+    // repo whatever its `config.yml` declared, so the CLI refused the write
+    // and the rollback path ran. That offer was the bug (see
+    // `ordered_status_vocabulary`): a column a repo cannot accept is no
+    // longer rendered for it, so this fixture, a real `backlog init` with the
+    // default trio, has no Icebox to drop onto.
+    //
+    // The failure now comes from the task file being unwritable — another
+    // process holding it, a checkout that landed it read-only. Deleting it
+    // instead would work too, but the task has to *survive* the failed save:
+    // this test's last assertion is that the card rolled back to its original
+    // column, and a card whose task no longer exists doesn't roll back, it
+    // vanishes. (Learned the hard way: that version failed on the final
+    // assertion, not the drag.)
+    let task_file = std::fs::read_dir(root.join("backlog/tasks"))
+        .expect("the fixture has a tasks dir")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|e| e == "md"))
+        .expect("TASK-1 is on disk");
+    let mut perms = std::fs::metadata(&task_file).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&task_file, perms).expect("make the task unwritable");
+
     let source_center = leftmost_bounds(&harness, "Draggable card").center();
     let target_center = {
-        let b = leftmost_bounds(&harness, "Icebox");
+        let b = leftmost_bounds(&harness, "In Progress");
         egui::Pos2::new(b.center().x, b.max.y + 80.0)
     };
 
@@ -2213,7 +2255,13 @@ fn board_unrelated_project_reload_does_not_resolve_a_pending_move() {
             ],
             warnings: vec![],
             loaded_at_unix: 999_999,
-            configured_statuses: vec![],
+            configured_statuses: vec![
+                "Icebox".into(),
+                "To Do".into(),
+                "In Progress".into(),
+                "In Review".into(),
+                "Done".into(),
+            ],
         },
     );
     harness.run();
@@ -3920,4 +3968,202 @@ fn the_sort_control_renders_on_the_board_lens() {
         harness.query_by_label("Sort").is_some(),
         "Board must expose the sort key it is already using"
     );
+}
+
+// ── status standardization offer ────────────────────────────────────────
+//
+// The board shows what a repo declares. Where that's less than the shared
+// vocabulary, the app offers to close the gap instead of pretending it isn't
+// there — see `ui::backlog::status_migration` for why that's an offer.
+
+/// A project declaring only the default trio, i.e. what `backlog init` writes.
+fn trio_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
+    let mut app = list_app_with_tasks(tasks);
+    app.backlog_view.lens = BacklogLens::Board;
+    app.backlog_projects
+        .lock()
+        .unwrap()
+        .get_mut(&PathBuf::from(REPO_PATH))
+        .expect("the fixture project")
+        .configured_statuses = vec!["To Do".into(), "In Progress".into(), "Done".into()];
+    app
+}
+
+/// The passive half of the runtime check: a repo missing shared statuses is
+/// told so, once, without anything being blocked on the answer.
+#[test]
+fn a_repo_missing_shared_statuses_is_offered_the_migration() {
+    let mut harness = harness(trio_app_with_tasks(vec![task(
+        "TASK-1",
+        "Ordinary task",
+        "To Do",
+    )]));
+    harness.run();
+
+    let prompt = harness
+        .state()
+        .status_migration_prompt
+        .clone()
+        .expect("the gap should raise the offer");
+    assert_eq!(prompt.missing, vec!["Icebox", "In Review"]);
+    assert!(
+        prompt.blocked_move.is_none(),
+        "this one came from the passive check, not a refused drop"
+    );
+    // And the board is already correct without an answer — the offer is not
+    // a gate.
+    assert!(
+        harness.query_all_by_label("Icebox").next().is_none(),
+        "a status the repo doesn't declare must not have a column"
+    );
+}
+
+/// Declining is sticky. A prompt that reappears every time the view opens
+/// trains people to dismiss dialogs unread, which is worse than not asking.
+#[test]
+fn keeping_a_repos_own_statuses_is_remembered_and_stops_asking() {
+    let mut harness = harness(trio_app_with_tasks(vec![task(
+        "TASK-1",
+        "Ordinary task",
+        "To Do",
+    )]));
+    harness.run();
+    assert!(harness.state().status_migration_prompt.is_some());
+
+    harness.get_by_label_contains("Keep").click();
+    harness.run();
+
+    assert!(
+        harness.state().status_migration_prompt.is_none(),
+        "answering closes the offer"
+    );
+    assert_eq!(
+        harness.state().config.status_standardization_declined,
+        vec![PathBuf::from(REPO_PATH)],
+        "the decline is persisted per repo"
+    );
+
+    // Several more frames: it must not come back.
+    for _ in 0..3 {
+        harness.run();
+    }
+    assert!(
+        harness.state().status_migration_prompt.is_none(),
+        "a declined repo is never asked again"
+    );
+}
+
+/// Accepting writes the repo's own config and the column appears — the whole
+/// point being that the shared vocabulary becomes true rather than assumed.
+#[test]
+fn accepting_the_offer_writes_the_config_and_the_column_appears() {
+    let fixture = tempfile::tempdir().expect("create temp dir");
+    let root = fixture.path();
+    run_cmd(root, "git", &["init", "-q"]);
+    run_cmd(root, "git", &["config", "user.email", "qa@example.com"]);
+    run_cmd(root, "git", &["config", "user.name", "QA Fixture"]);
+    run_cmd(
+        root,
+        "backlog",
+        &["init", "--defaults", "--agent-instructions", "none", "qa"],
+    );
+    run_cmd(root, "backlog", &["task", "create", "Ordinary task"]);
+
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::Board;
+    app.backlog_view.selected_project = Some(root.to_path_buf());
+    app.backlog_projects.lock().unwrap().insert(
+        root.to_path_buf(),
+        switchbard_core::load_backlog_project(root).expect("load the real fixture"),
+    );
+
+    let mut harness = harness(app);
+    harness.run();
+    assert!(
+        harness.query_all_by_label("In Review").next().is_none(),
+        "precondition: a freshly `backlog init`ed repo declares only the trio"
+    );
+
+    harness
+        .get_by_label_contains("Add the missing statuses")
+        .click();
+    harness.run();
+
+    let config = std::fs::read_to_string(root.join("backlog/config.yml")).unwrap();
+    assert!(
+        config.contains("In Review") && config.contains("Icebox"),
+        "the repo's own config is what changed, got: {config}"
+    );
+    assert!(
+        harness.query_all_by_label("In Review").next().is_some(),
+        "and the column appears without a restart — the cache is reloaded"
+    );
+}
+
+/// The case that started this: a cross-repo board shows the union of every
+/// scoped repo's columns, so `Icebox` exists because *budget* declares it —
+/// and a switchbard card dropped there used to reach the CLI and fail with
+/// `Invalid status: Icebox`.
+///
+/// Now the drop is refused before the write, and the refusal carries the
+/// offer, because the user has just demonstrated they want that status.
+#[test]
+fn a_drop_onto_a_column_this_repo_lacks_is_refused_and_offers_the_fix() {
+    const OTHER: &str = "/tmp/switchbard-ui-test/other";
+    let mut app = trio_app_with_tasks(vec![task("TASK-1", "Draggable card", "To Do")]);
+    // A second repo that *does* declare Icebox, which is the only reason the
+    // column is on screen at all.
+    app.backlog_projects.lock().unwrap().insert(
+        PathBuf::from(OTHER),
+        BacklogProject {
+            root: PathBuf::from(OTHER),
+            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
+            tasks: vec![task("OTHER-1", "Someone else's task", "Icebox")],
+            warnings: vec![],
+            loaded_at_unix: 0,
+            configured_statuses: vec![
+                "Icebox".into(),
+                "To Do".into(),
+                "In Progress".into(),
+                "Done".into(),
+            ],
+        },
+    );
+    app.backlog_view.selected_project = None; // all repos in scope
+    app.backlog_view.sort_key = BacklogTaskSortKey::Task;
+    // The passive offer would otherwise fire first and mask the drop's own.
+    app.config
+        .status_standardization_declined
+        .push(PathBuf::from(REPO_PATH));
+
+    let mut harness = harness(app);
+    harness.run();
+    assert!(
+        harness.query_all_by_label("Icebox").next().is_some(),
+        "precondition: the other repo puts an Icebox column on the board"
+    );
+
+    let source = leftmost_bounds(&harness, "Draggable card").center();
+    let target = {
+        let b = leftmost_bounds(&harness, "Icebox");
+        egui::Pos2::new(b.center().x, b.max.y + 80.0)
+    };
+    drag_and_drop(&mut harness, source, target);
+    harness.run();
+
+    assert!(
+        harness.state().backlog_view.pending_moves.is_empty(),
+        "the move must be refused before it is ever queued, not rolled back after"
+    );
+    let prompt = harness
+        .state()
+        .status_migration_prompt
+        .clone()
+        .expect("the refusal should carry the offer");
+    let blocked = prompt
+        .blocked_move
+        .expect("raised by the drop, not the sweep");
+    assert_eq!(blocked.task_id, "TASK-1");
+    assert_eq!(blocked.target_status, "Icebox");
 }

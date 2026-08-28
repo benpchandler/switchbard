@@ -33,6 +33,7 @@ fn validation_rejects_duplicate_names_within_repo() {
     let repo = repo();
     let cfg = Config {
         version: 1,
+        status_standardization_declined: Vec::new(),
         repos: vec![repo.clone()],
         worktrees: vec![WorktreeAlias {
             repo_path: repo.path.clone(),
