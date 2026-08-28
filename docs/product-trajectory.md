@@ -75,9 +75,11 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   page-specific config fields. Confirmation state, bulk selections, open editors, and
   in-flight actions remain session-only.
 - **Unified task hub (owner-approved 2026-08-04).** Switchbard becomes the single pane
-  of glass for every tracked repo's Backlog.md tasks. Repos stay the system of record
-  (all mutations still write through the `backlog` CLI); Switchbard is the system of
-  engagement. Three slices, in order:
+  of glass for every tracked repo's Backlog.md tasks. Repos stay the system of record;
+  Switchbard is the system of engagement. (The "all mutations still write through the
+  `backlog` CLI" half of the original decision is superseded by the *Backlog format
+  fork* entry below, 2026-08-28 — repos-as-system-of-record is unchanged.) Three
+  slices, in order:
   1. *Unified view + global triage queue* — merge all repos into one ranked list
      (`backlog_projects_snapshot()` already aggregates); triage order overdue →
      priority → age → repo, overridable by the `ordering.yml` overlay in the
@@ -194,6 +196,35 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
        There is no wall clock left to cap that delay. Judged acceptable
        because dispatch is opt-in, low-volume, and `max_concurrent` already
        caps a single drain's batch size.
+
+- **Backlog format fork (owner-approved 2026-08-28).** Switchbard forks the Backlog.md
+  task format at its current on-disk shape and becomes its owning tool. The 2026-08-04
+  "all mutations write through the `backlog` CLI" decision is superseded: the external
+  CLI and MCP writers are deprecated for tracked repos, because keeping them alongside
+  native writes would mean two writer *implementations* for the same files — exactly
+  the one-fact-two-sources shape this project keeps re-learning. The invariant that
+  replaces it: **one writer implementation** (`switchbard-core`'s write layer), many
+  frontends (GUI, `switchbard-dispatch`, a thin `switchbard task` CLI for terminals
+  and agents). Files stay where they are and stay readable by anything that speaks
+  Backlog.md until a divergence task explicitly says otherwise. Sequencing
+  (TASK-62…68, each gated on its predecessor):
+  1. *This decision record* (TASK-62).
+  2. *Native write layer* (TASK-63) — surgical, atomic task-file mutations in
+     `backlog::write`; byte-preservation gate over every real task file; no-op edits
+     write nothing; body edits fail closed on `!body_round_trips`.
+  3. *Native ID allocation* (TASK-64) — replaces the CLI's `check_active_branches`
+     scan, worktree-aware because switchbard already enumerates worktrees.
+  4. *The swap* (TASK-65) — `mutations.rs` reimplemented on the write layer behind
+     unchanged signatures; this is when module docs here and in `dispatch`/`refine`
+     that name the CLI as write authority get rewritten, and when
+     `parse_created_task_id` stdout scraping dies.
+  5. *Thin CLI frontend* (TASK-66) — preserves dispatch's "flaggable from a plain
+     terminal" property and gives agents their write path.
+  6. *Deprecation* (TASK-67) — CLI probing, degraded modes, and the mise pin removed.
+  7. *Divergence on named wins only* (TASK-68) — parent-key collapse, dispatch state
+     as a first-class field, status validation in the write layer. Compatibility is
+     no longer owed, but every divergence must still name its win and land in this
+     doc.
 
 - **Refine — AI-assisted grooming, upstream of dispatch (owner-approved 2026-08-19).**
   A "Refine" button in the task detail rail, next to Dispatch. It feeds the task's
