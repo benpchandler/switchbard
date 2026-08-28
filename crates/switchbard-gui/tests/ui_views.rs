@@ -282,6 +282,91 @@ fn hooks_section_explains_empty_registration_state() {
 }
 
 #[test]
+fn context_search_filters_individual_assets_not_just_repo_cards() {
+    let mut app = app_with_items(vec![
+        item(
+            "alpha-doc",
+            AgentKind::Claude,
+            ContextScope::Local,
+            ContextKind::Doc,
+            "alpha-notes.md",
+        ),
+        item(
+            "beta-doc",
+            AgentKind::Claude,
+            ContextScope::Local,
+            ContextKind::Doc,
+            "beta-notes.md",
+        ),
+    ]);
+    app.view_tab = ViewTab::Agents;
+    app.filter = "alpha".to_string();
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(harness.query_by_label("alpha-notes.md").is_some());
+    assert!(harness.query_by_label("beta-notes.md").is_none());
+    assert!(harness.query_by_label("1 active").is_some());
+}
+
+#[test]
+fn hooks_facets_compose_and_clear_from_the_shared_filter_bar() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Agents;
+    app.agent_context_view.section = AgentsSection::Hooks;
+    app.agent_context_view.hook_event = Some("PostToolUse".to_string());
+    app.agent_context_view.hook_type = Some("command".to_string());
+    app.agent_contexts
+        .lock()
+        .expect("invariant: seeded context cache lock")
+        .get_mut(&PathBuf::from(REPO_PATH))
+        .expect("invariant: seeded repo context")
+        .hooks = vec![
+        AgentHook {
+            id: "post-command".to_string(),
+            agent: AgentKind::Claude,
+            scope: ContextScope::Local,
+            source_path: PathBuf::from(format!("{REPO_PATH}/.claude/settings.json")),
+            event: "PostToolUse".to_string(),
+            matcher: Some("Edit".to_string()),
+            hook_type: "command".to_string(),
+            action: "./scripts/after-edit.sh".to_string(),
+            arguments: Vec::new(),
+            condition: None,
+            asynchronous: false,
+            timeout_seconds: None,
+        },
+        AgentHook {
+            id: "stop-prompt".to_string(),
+            agent: AgentKind::Claude,
+            scope: ContextScope::Global,
+            source_path: PathBuf::from("/Users/demo/.claude/settings.json"),
+            event: "Stop".to_string(),
+            matcher: None,
+            hook_type: "prompt".to_string(),
+            action: "Review the response".to_string(),
+            arguments: Vec::new(),
+            condition: None,
+            asynchronous: false,
+            timeout_seconds: None,
+        },
+    ];
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(harness.query_by_label("./scripts/after-edit.sh").is_some());
+    assert!(harness.query_by_label("Review the response").is_none());
+    assert!(harness.query_by_label("2 active").is_some());
+
+    harness.get_by_label("Clear filters").click();
+    harness.run();
+
+    assert_eq!(harness.state().agent_context_view.hook_event, None);
+    assert_eq!(harness.state().agent_context_view.hook_type, None);
+    assert!(harness.query_by_label("Review the response").is_some());
+}
+
+#[test]
 fn clicking_backlog_tab_switches_view() {
     let mut harness = harness(seeded_app());
 

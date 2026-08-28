@@ -62,6 +62,14 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   presented as active. This remains a best-effort local settings scan, not session-state
   proof: managed policy, plugin-provided hooks, and skill/subagent session hooks are not
   yet visible.
+- **Shared filter controls (owner-approved 2026-08-28).** Search fields, facet labels,
+  wrapping filter containers, active-count treatment, and clear/reset behavior live in
+  `ui/filter_bar.rs`. Agents, Workspace, the top-level view filter, and Backlog consume
+  those primitives while retaining domain-specific predicates and state. Agents places
+  the shared bar directly below Context/Hooks: Context exposes agent, scope, and asset
+  type; Hooks exposes agent, scope, event, and handler type. Text search must narrow the
+  individual rows/cards it claims to match, not merely leave an entire repository card
+  visible because one hidden child matched.
 - **Unified task hub (owner-approved 2026-08-04).** Switchbard becomes the single pane
   of glass for every tracked repo's Backlog.md tasks. Repos stay the system of record
   (all mutations still write through the `backlog` CLI); Switchbard is the system of

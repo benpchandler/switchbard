@@ -396,13 +396,34 @@ fn render_bulk_clear_button(
 /// container the caller provides.
 pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
     {
+        let active_count = usize::from(!app.filter.is_empty())
+            + usize::from(!app.backlog_view.project_filter.is_empty())
+            + usize::from(app.backlog_view.selected_project.is_some())
+            + usize::from(app.backlog_view.status_filter != "all")
+            + usize::from(app.backlog_view.priority_filter != "all")
+            + usize::from(app.backlog_view.milestone_filter != "all")
+            + usize::from(app.backlog_view.label_filter != "all")
+            + usize::from(app.backlog_view.show_completed)
+            + usize::from(app.backlog_view.show_archived)
+            + usize::from(!app.backlog_view.show_drafts)
+            + usize::from(app.backlog_view.stale_only);
         let compact = ui.available_width() < 640.0;
         let project_filter_width = if compact { 140.0 } else { 180.0 };
         let project_picker_width = if compact { 160.0 } else { 280.0 };
         ui.horizontal_wrapped(|ui| {
-            ui.label(egui::RichText::new("Project").color(theme::muted_text()));
+            ui.label(egui::RichText::new("Filters").strong());
+            if active_count > 0 {
+                ui.label(
+                    egui::RichText::new(format!("{active_count} active"))
+                        .small()
+                        .color(theme::lavender()),
+                );
+            }
+            ui.separator();
+            crate::ui::filter_bar::facet_label(ui, "Project");
             ui.add(
                 egui::TextEdit::singleline(&mut app.backlog_view.project_filter)
+                    .id_salt("backlog_project_filter")
                     .hint_text("Filter projects")
                     .desired_width(project_filter_width),
             );
@@ -467,7 +488,7 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
             }
 
             ui.separator();
-            ui.label(egui::RichText::new("Status").color(theme::muted_text()));
+            crate::ui::filter_bar::facet_label(ui, "Status");
             // Owner UX pass (2026-08-05): the same shared vocabulary Board's
             // columns, the detail-pane editor, and Statistics all consume now,
             // so this dropdown can no longer offer a different status set than
@@ -492,7 +513,7 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
                     }
                 });
 
-            ui.label(egui::RichText::new("Priority").color(theme::muted_text()));
+            crate::ui::filter_bar::facet_label(ui, "Priority");
             egui::ComboBox::from_id_salt("backlog_priority_filter")
                 .selected_text(format::priority_filter_label(
                     &app.backlog_view.priority_filter,
@@ -516,7 +537,7 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
                 ui.end_row();
             }
 
-            ui.label(egui::RichText::new("Milestone").color(theme::muted_text()));
+            crate::ui::filter_bar::facet_label(ui, "Milestone");
             // Both option lists are built here, before any combo can
             // mutate `app`: they borrow it immutably via `ActiveFilters`,
             // and each `selectable_value` below needs it mutably.
@@ -549,7 +570,7 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
                     }
                 });
 
-            ui.label(egui::RichText::new("Label").color(theme::muted_text()));
+            crate::ui::filter_bar::facet_label(ui, "Label");
             egui::ComboBox::from_id_salt("backlog_label_filter")
                 .selected_text(format::value_filter_label(&app.backlog_view.label_filter))
                 .show_ui(ui, |ui| {
@@ -603,6 +624,21 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
                 app.config.ui.stale_after_days = days;
                 app.backlog_view.bulk_archive_confirm = false;
                 app.save_config();
+            }
+            if crate::ui::filter_bar::clear(ui, active_count > 0) {
+                app.filter.clear();
+                app.backlog_view.project_filter.clear();
+                app.backlog_view.selected_project = None;
+                app.backlog_view.status_filter = "all".to_string();
+                app.backlog_view.priority_filter = "all".to_string();
+                app.backlog_view.milestone_filter = "all".to_string();
+                app.backlog_view.label_filter = "all".to_string();
+                app.backlog_view.show_completed = false;
+                app.backlog_view.show_archived = false;
+                app.backlog_view.show_drafts = true;
+                app.backlog_view.stale_only = false;
+                app.backlog_view.bulk_archive_confirm = false;
+                reset_task_selection(app);
             }
         });
     }

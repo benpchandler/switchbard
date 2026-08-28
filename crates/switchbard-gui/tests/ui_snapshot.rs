@@ -83,3 +83,38 @@ fn agents_hooks_view_snapshot() {
     harness.run();
     harness.snapshot("agents_hooks_view");
 }
+
+#[test]
+#[ignore = "wgpu image snapshot: machine-specific, run explicitly with `-- --ignored` (see module docs)"]
+fn agents_hooks_active_filters_narrow_snapshot() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Agents;
+    app.agent_context_view.section = AgentsSection::Hooks;
+    app.agent_context_view.hook_scope = Some(ContextScope::Local);
+    app.agent_context_view.hook_event = Some("PostToolUse".to_string());
+    app.filter = "after-edit".to_string();
+    app.agent_contexts
+        .lock()
+        .expect("invariant: seeded agent context cache")
+        .values_mut()
+        .next()
+        .expect("invariant: seeded worktree context")
+        .hooks = vec![AgentHook {
+        id: "repo-post-tool".to_string(),
+        agent: AgentKind::Claude,
+        scope: ContextScope::Local,
+        source_path: PathBuf::from("/tmp/switchbard-ui-test/demo/.claude/settings.local.json"),
+        event: "PostToolUse".to_string(),
+        matcher: Some("Write|Edit".to_string()),
+        hook_type: "command".to_string(),
+        action: "./scripts/after-edit-with-a-long-unbroken-action-name.sh".to_string(),
+        arguments: Vec::new(),
+        condition: None,
+        asynchronous: false,
+        timeout_seconds: Some(30),
+    }];
+    let mut harness = harness(app);
+    harness.set_size(eframe::egui::vec2(720.0, 620.0));
+    harness.run();
+    harness.snapshot("agents_hooks_active_filters_narrow");
+}

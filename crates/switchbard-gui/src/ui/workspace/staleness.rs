@@ -234,8 +234,9 @@ pub fn retired_worktree_count(app: &HiveApp) -> usize {
 /// below the workspace summary line.
 pub(super) fn render_filter_bar(ui: &mut egui::Ui, app: &mut HiveApp, snap: &Snapshot) {
     let counts = compute_counts(snap);
-    ui.horizontal_wrapped(|ui| {
-        ui.label(egui::RichText::new("staleness:").color(theme::weak_text()));
+    let active_count = usize::from(app.staleness_filter != StalenessFilter::All);
+    crate::ui::filter_bar::bar(ui, active_count, |ui| {
+        crate::ui::filter_bar::facet_label(ui, "Staleness");
         for filter in StalenessFilter::ALL {
             let label = format!("{} ({})", filter.label(), counts.for_filter(filter));
             if ui
@@ -297,6 +298,9 @@ pub(super) fn render_filter_bar(ui: &mut egui::Ui, app: &mut HiveApp, snap: &Sna
                     app.open_bulk_remove_worktree_confirm();
                 }
             }
+        }
+        if crate::ui::filter_bar::clear(ui, active_count > 0) {
+            app.staleness_filter = StalenessFilter::All;
         }
     });
 }

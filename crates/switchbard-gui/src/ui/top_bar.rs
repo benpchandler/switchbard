@@ -6,6 +6,7 @@ use crate::app::{self, HiveApp};
 use crate::runtime::ViewTab;
 use crate::ui::components::action_status_label;
 use crate::ui::dispatch::{self, DispatchSummary};
+use crate::ui::filter_bar;
 use crate::ui::theme;
 use crate::ui::theme::ThemeChoice;
 use crate::ui::workspace;
@@ -48,8 +49,10 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
         ui.add_space(3.0);
         ui.horizontal_wrapped(|ui| {
             render_view_tabs(app, ui, dispatch_summary);
-            ui.separator();
-            render_filter_controls(app, ui);
+            if app.view_tab != ViewTab::Agents {
+                ui.separator();
+                render_filter_controls(app, ui);
+            }
         });
     });
 }
@@ -90,25 +93,31 @@ fn render_view_tabs(app: &mut HiveApp, ui: &mut egui::Ui, dispatch_summary: Disp
 }
 
 fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
-    ui.label("filter:");
-    let filter_width = ui.available_width().clamp(180.0, 420.0);
-    ui.add(egui::TextEdit::singleline(&mut app.filter).desired_width(filter_width));
     let hint = match app.view_tab {
         ViewTab::Servers => "matches repo, branch, service, command, port, listener cwd",
         ViewTab::Agents => "matches repo, context path, hook event, matcher, or command",
         ViewTab::Backlog => "matches task id, title, labels, assignee, or description",
         ViewTab::Dispatch => "matches task id, title, repo, or branch",
     };
-    ui.label(egui::RichText::new(hint).color(theme::muted_text()));
+    filter_bar::search(ui, "top_bar_filter", &mut app.filter, hint);
     match app.view_tab {
         ViewTab::Servers => {
             ui.separator();
             ui.checkbox(&mut app.show_only_managed, "only attributed listeners");
             ui.checkbox(&mut app.show_non_servers, "show non-server scripts");
+            let active = !app.filter.is_empty() || app.show_only_managed || !app.show_non_servers;
+            if filter_bar::clear(ui, active) {
+                app.filter.clear();
+                app.show_only_managed = false;
+                app.show_non_servers = true;
+            }
         }
-        ViewTab::Backlog => {}
+        ViewTab::Backlog | ViewTab::Dispatch => {
+            if filter_bar::clear(ui, !app.filter.is_empty()) {
+                app.filter.clear();
+            }
+        }
         ViewTab::Agents => {}
-        ViewTab::Dispatch => {}
     }
 }
 

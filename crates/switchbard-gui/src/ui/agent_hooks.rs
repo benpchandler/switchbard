@@ -10,7 +10,9 @@ use crate::ui::theme;
 use eframe::egui;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use switchbard_core::{AgentContextMap, AgentHook, AgentHookWarning, AgentKind, Repo, WorktreeRef};
+use switchbard_core::{
+    AgentContextMap, AgentHook, AgentHookWarning, AgentKind, ContextScope, Repo, WorktreeRef,
+};
 
 struct Snapshot {
     repos: Vec<Repo>,
@@ -22,8 +24,6 @@ struct Snapshot {
 pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     let snap = snapshot(app);
     render_summary(ui, &snap);
-    ui.add_space(6.0);
-    render_agent_selector(ui, app);
     ui.add_space(6.0);
     egui::ScrollArea::vertical()
         .id_salt("agent_hooks_scroll")
@@ -76,35 +76,6 @@ fn render_summary(ui: &mut egui::Ui, snap: &Snapshot) {
     });
 }
 
-fn render_agent_selector(ui: &mut egui::Ui, app: &mut HiveApp) {
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Agent:").strong());
-        egui::ComboBox::from_id_salt("agent_hooks_agent")
-            .selected_text(app.agent_context_view.agent.label())
-            .show_ui(ui, |ui| {
-                ui.selectable_value(
-                    &mut app.agent_context_view.agent,
-                    AgentContextAgent::Claude,
-                    "Claude",
-                );
-                ui.selectable_value(
-                    &mut app.agent_context_view.agent,
-                    AgentContextAgent::Codex,
-                    "Codex",
-                );
-                ui.selectable_value(
-                    &mut app.agent_context_view.agent,
-                    AgentContextAgent::All,
-                    "All agents",
-                );
-            });
-        ui.label(
-            egui::RichText::new("registrations are detected from agent settings")
-                .color(theme::muted_text()),
-        );
-    });
-}
-
 fn render_repos(ui: &mut egui::Ui, app: &HiveApp, snap: &Snapshot) {
     for repo in &snap.repos {
         let worktrees: Vec<&WorktreeRef> = snap
@@ -146,18 +117,44 @@ fn render_repo(
     snap: &Snapshot,
 ) {
     let map = snap.maps.get(&worktree.path);
-    if !repo_matches(repo, map, app.agent_context_view.agent, &snap.filter_lc) {
+    let repo_text_matches = snap.filter_lc.is_empty()
+        || repo.name.to_lowercase().contains(&snap.filter_lc)
+        || repo
+            .path
+            .to_string_lossy()
+            .to_lowercase()
+            .contains(&snap.filter_lc);
+    let hook_filter = if repo_text_matches {
+        ""
+    } else {
+        &snap.filter_lc
+    };
+    if !repo_matches(
+        map,
+        app.agent_context_view.agent,
+        hook_filter,
+        repo_text_matches,
+        app.agent_context_view.hook_scope,
+        app.agent_context_view.hook_event.as_deref(),
+        app.agent_context_view.hook_type.as_deref(),
+    ) {
         return;
     }
     egui::Frame::group(ui.style())
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
-            render_repo_header(ui, app, repo, worktree, map);
+            render_repo_header(ui, app, repo, worktree, map, hook_filter);
             ui.add_space(6.0);
             match map {
-                Some(map) => {
-                    render_hook_list(ui, app.agent_context_view.agent, map, &snap.filter_lc)
-                }
+                Some(map) => render_hook_list(
+                    ui,
+                    app.agent_context_view.agent,
+                    map,
+                    hook_filter,
+                    app.agent_context_view.hook_scope,
+                    app.agent_context_view.hook_event.as_deref(),
+                    app.agent_context_view.hook_type.as_deref(),
+                ),
                 None => {
                     ui.label(
                         egui::RichText::new("hook settings scanning...").color(theme::muted_text()),
@@ -173,9 +170,18 @@ fn render_repo_header(
     repo: &Repo,
     worktree: &WorktreeRef,
     map: Option<&AgentContextMap>,
+    filter_lc: &str,
 ) {
     let hooks = map.map_or(0, |map| {
-        visible_hook_count(map, app.agent_context_view.agent)
+        visible_hooks(
+            map,
+            app.agent_context_view.agent,
+            filter_lc,
+            app.agent_context_view.hook_scope,
+            app.agent_context_view.hook_event.as_deref(),
+            app.agent_context_view.hook_type.as_deref(),
+        )
+        .len()
     });
     ui.horizontal(|ui| {
         theme::painted_dot(
@@ -207,15 +213,22 @@ fn render_hook_list(
     agent: AgentContextAgent,
     map: &AgentContextMap,
     filter_lc: &str,
+    scope: Option<ContextScope>,
+    event: Option<&str>,
+    hook_type: Option<&str>,
 ) {
     render_warnings(ui, &map.hook_warnings);
     if let Some(source) = &map.hooks_disabled_by {
         render_disabled(ui, source);
         return;
     }
-    let hooks = visible_hooks(map, agent, filter_lc);
+    let hooks = visible_hooks(map, agent, filter_lc, scope, event, hook_type);
     if hooks.is_empty() {
-        render_empty(ui, agent, filter_lc);
+        render_empty(
+            ui,
+            agent,
+            !filter_lc.is_empty() || scope.is_some() || event.is_some() || hook_type.is_some(),
+        );
         return;
     }
     for hook in hooks {
@@ -260,14 +273,14 @@ fn render_warnings(ui: &mut egui::Ui, warnings: &[AgentHookWarning]) {
     }
 }
 
-fn render_empty(ui: &mut egui::Ui, agent: AgentContextAgent, filter_lc: &str) {
-    let message = if filter_lc.is_empty() {
+fn render_empty(ui: &mut egui::Ui, agent: AgentContextAgent, filters_active: bool) {
+    let message = if filters_active {
+        "No hooks match the current filters.".to_string()
+    } else {
         format!(
             "No configured hooks detected for {} in this worktree.",
             agent.label()
         )
-    } else {
-        "No hooks match the current filter.".to_string()
     };
     egui::Frame::NONE
         .fill(ui.visuals().faint_bg_color)
@@ -360,11 +373,17 @@ fn visible_hooks<'a>(
     map: &'a AgentContextMap,
     agent: AgentContextAgent,
     filter_lc: &str,
+    scope: Option<ContextScope>,
+    event: Option<&str>,
+    hook_type: Option<&str>,
 ) -> Vec<&'a AgentHook> {
     let mut hooks: Vec<&AgentHook> = map
         .hooks
         .iter()
         .filter(|hook| agent_visible(agent, hook.agent))
+        .filter(|hook| scope.is_none_or(|scope| hook.scope == scope))
+        .filter(|hook| event.is_none_or(|event| hook.event == event))
+        .filter(|hook| hook_type.is_none_or(|hook_type| hook.hook_type == hook_type))
         .filter(|hook| hook_matches_filter(hook, filter_lc))
         .collect();
     hooks.sort_by(|a, b| {
@@ -402,26 +421,23 @@ fn hook_matches_filter(hook: &AgentHook, filter_lc: &str) -> bool {
 }
 
 fn repo_matches(
-    repo: &Repo,
     map: Option<&AgentContextMap>,
     agent: AgentContextAgent,
     filter_lc: &str,
+    repo_text_matches: bool,
+    scope: Option<ContextScope>,
+    event: Option<&str>,
+    hook_type: Option<&str>,
 ) -> bool {
-    filter_lc.is_empty()
-        || repo.name.to_lowercase().contains(filter_lc)
-        || repo
-            .path
-            .to_string_lossy()
-            .to_lowercase()
-            .contains(filter_lc)
-        || map.is_some_and(|map| !visible_hooks(map, agent, filter_lc).is_empty())
-}
-
-fn visible_hook_count(map: &AgentContextMap, agent: AgentContextAgent) -> usize {
-    map.hooks
-        .iter()
-        .filter(|hook| agent_visible(agent, hook.agent))
-        .count()
+    let facets_active = scope.is_some() || event.is_some() || hook_type.is_some();
+    let hooks_match = map.is_some_and(|map| {
+        !visible_hooks(map, agent, filter_lc, scope, event, hook_type).is_empty()
+    });
+    if facets_active || !repo_text_matches {
+        hooks_match
+    } else {
+        true
+    }
 }
 
 fn agent_visible(selected: AgentContextAgent, hook_agent: AgentKind) -> bool {

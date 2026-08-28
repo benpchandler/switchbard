@@ -545,6 +545,11 @@ pub struct AgentContextViewState {
     pub global_selected_id: Option<String>,
     pub global_open: bool,
     pub pinned_repo: Option<String>,
+    /// Hook-only facets. `None` means all values; options are derived from the
+    /// detected registrations so stale or custom event names remain visible.
+    pub hook_scope: Option<ContextScope>,
+    pub hook_event: Option<String>,
+    pub hook_type: Option<String>,
 }
 
 impl Default for AgentContextViewState {
@@ -559,6 +564,9 @@ impl Default for AgentContextViewState {
             global_selected_id: None,
             global_open: false,
             pinned_repo: None,
+            hook_scope: None,
+            hook_event: None,
+            hook_type: None,
         }
     }
 }
