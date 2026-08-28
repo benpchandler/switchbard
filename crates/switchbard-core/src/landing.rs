@@ -150,6 +150,74 @@ impl LandingStage {
     }
 }
 
+/// Ask GitHub whether this branch has ever had a pull request.
+///
+/// The only network call in this module, and the reason [`PrState`] is a
+/// separate fact from [`PushState`]: `gh` costs roughly a second per branch,
+/// needs auth, and fails for reasons that say nothing about the worktree.
+/// **Never call this from the git-probe tick** — it belongs on its own low
+/// cadence with a cache, the same shape as the size worker.
+///
+/// `Ok(None)` means GitHub answered and there is no PR. `Err` means the
+/// question could not be asked. Callers must keep those apart: collapsing
+/// them renders an in-review branch as an un-offered stall.
+///
+/// Runs `gh` in the repo so it infers the remote itself rather than us
+/// re-deriving a slug from a URL — one fewer thing to get wrong for SSH
+/// remotes, enterprise hosts, and forks.
+pub fn probe_pr_state(
+    repo_path: &Path,
+    branch: &str,
+) -> std::result::Result<Option<PrState>, String> {
+    let output = std::process::Command::new("gh")
+        .current_dir(repo_path)
+        .args([
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "all",
+            "--limit",
+            "1",
+            "--json",
+            "number,state,url",
+        ])
+        .output()
+        .map_err(|e| format!("couldn't run gh: {e}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    parse_pr_list(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Split from the subprocess so the shapes `gh` can return are testable
+/// without a network or an auth token.
+fn parse_pr_list(json: &str) -> std::result::Result<Option<PrState>, String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(json.trim()).map_err(|e| format!("unreadable gh output: {e}"))?;
+    let Some(first) = parsed.as_array().and_then(|a| a.first()) else {
+        return Ok(None);
+    };
+    let number = first
+        .get("number")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "gh returned a PR with no number".to_string())? as u32;
+    let url = first
+        .get("url")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    match first.get("state").and_then(serde_json::Value::as_str) {
+        Some("OPEN") => Ok(Some(PrState::Open { number, url })),
+        Some("MERGED") => Ok(Some(PrState::Merged { number, url })),
+        Some("CLOSED") => Ok(Some(PrState::Closed { number, url })),
+        // An unrecognised state is not "no PR". Erroring keeps the row on
+        // "unknown" rather than promoting a PR we failed to read into a stall.
+        other => Err(format!("unrecognised PR state from gh: {other:?}")),
+    }
+}
+
 /// Local: has the remote seen this branch, and is it current?
 ///
 /// Reads remote-tracking refs already on disk, so it costs one `rev-parse`
@@ -296,6 +364,38 @@ mod tests {
         let stage = LandingStage::derive(5, &PushState::Unknown, None);
         assert!(matches!(stage, LandingStage::PrStateUnknown { .. }));
         assert!(!stage.is_stalled());
+    }
+
+    /// The three shapes `gh` returns, plus the two failure shapes that must
+    /// not be mistaken for "no PR".
+    #[test]
+    fn gh_output_maps_to_pr_states_and_refuses_to_guess() {
+        assert_eq!(parse_pr_list("[]").unwrap(), None, "no PR is a real answer");
+        assert_eq!(
+            parse_pr_list(r#"[{"number":452,"state":"OPEN","url":"u"}]"#).unwrap(),
+            Some(PrState::Open {
+                number: 452,
+                url: "u".into()
+            })
+        );
+        assert_eq!(
+            parse_pr_list(r#"[{"number":857,"state":"MERGED","url":"u"}]"#).unwrap(),
+            Some(PrState::Merged {
+                number: 857,
+                url: "u".into()
+            })
+        );
+        assert_eq!(
+            parse_pr_list(r#"[{"number":18,"state":"CLOSED","url":"u"}]"#).unwrap(),
+            Some(PrState::Closed {
+                number: 18,
+                url: "u".into()
+            })
+        );
+        // A state we don't know must error, not silently read as "no PR" —
+        // that would turn a real PR into an un-offered stall on the row.
+        assert!(parse_pr_list(r#"[{"number":1,"state":"DRAFTED","url":"u"}]"#).is_err());
+        assert!(parse_pr_list("not json").is_err());
     }
 
     fn git(cwd: &std::path::Path, args: &[&str]) {
