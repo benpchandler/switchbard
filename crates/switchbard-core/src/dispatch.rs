@@ -1017,7 +1017,6 @@ mod tests {
     fn list_dispatch_queue_only_returns_dispatch_labeled_active_tasks() {
         let project = BacklogProject {
             root: PathBuf::from("/repo"),
-            cli_path: None,
             tasks: vec![
                 task("TASK-2", &["dispatch"]),
                 task("TASK-1", &["dispatch", "hub"]),
@@ -1045,7 +1044,6 @@ mod tests {
         done.source = BacklogTaskSource::Completed;
         let project = BacklogProject {
             root: PathBuf::from("/repo"),
-            cli_path: None,
             tasks: vec![done],
             warnings: vec![],
             loaded_at_unix: 0,

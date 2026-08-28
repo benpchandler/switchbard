@@ -138,7 +138,6 @@ fn build_fixture() -> HiveApp {
             repo_path.clone(),
             BacklogProject {
                 root: repo_path,
-                cli_path: None,
                 tasks: (0..TASKS_PER_REPO).map(|i| task(r, i)).collect(),
                 warnings: vec![],
                 loaded_at_unix: 0,

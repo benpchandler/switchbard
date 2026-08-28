@@ -12,14 +12,13 @@
 
 mod common;
 
-use egui_kittest::kittest::NodeT;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use common::{harness, seeded_app, REPO_PATH};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::SnapshotOptions;
-use switchbard_core::{BacklogProject, BacklogTaskSource, OrderingOverlay};
+use switchbard_core::{BacklogProject, OrderingOverlay};
 use switchbard_gui::runtime::{BacklogLens, OrderingState, ViewTab};
 
 fn output_dir() -> PathBuf {
@@ -142,7 +141,6 @@ fn malformed_ordering_yaml_app() -> switchbard_gui::app::HiveApp {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -173,80 +171,7 @@ fn malformed_ordering_yaml_warning_renders_as_a_toolbar_pill() {
     );
 }
 
-/// Missing CLI (`cli_path: None`) — the detail pane's "read-only" pill and
-/// the field editors becoming non-interactive.
-fn missing_cli_app() -> switchbard_gui::app::HiveApp {
-    let task = switchbard_core::BacklogTask {
-        id: "TASK-1".to_string(),
-        title: "No CLI task".to_string(),
-        status: "To Do".to_string(),
-        priority: "medium".to_string(),
-        assignees: vec![],
-        labels: vec![],
-        dependencies: vec![],
-        references: vec![],
-        milestone: None,
-        parent: None,
-        created_date: None,
-        updated_date: None,
-        description: String::new(),
-        implementation_plan: String::new(),
-        implementation_notes: String::new(),
-        final_summary: String::new(),
-        acceptance_criteria: vec![],
-        definition_of_done: vec![],
-        source: BacklogTaskSource::Active,
-        path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-1.md")),
-    };
-    let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
-    app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
-    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
-    app.backlog_projects.lock().unwrap().insert(
-        PathBuf::from(REPO_PATH),
-        BacklogProject {
-            root: PathBuf::from(REPO_PATH),
-            cli_path: None, // <- the edge case: CLI genuinely unavailable
-            tasks: vec![task],
-            warnings: vec!["Backlog CLI not found on PATH".to_string()],
-            loaded_at_unix: 0,
-            configured_statuses: vec![
-                "Icebox".into(),
-                "To Do".into(),
-                "In Progress".into(),
-                "In Review".into(),
-                "Done".into(),
-            ],
-        },
-    );
-    app
-}
-
-#[test]
-fn missing_cli_shows_the_read_only_pill_and_disables_editing() {
-    let mut h = harness(missing_cli_app());
-    h.run();
-
-    assert!(
-        h.query_by_label("read-only").is_some(),
-        "a task in a CLI-unavailable project should show the read-only pill"
-    );
-    assert!(
-        h.get_by_label("title").accesskit_node().is_disabled(),
-        "the title editor should be disabled when the CLI is unavailable"
-    );
-    assert!(
-        h.query_by_label("Archive").is_none(),
-        "render_archive returns early (no button at all) when the task isn't editable"
-    );
-    assert!(
-        h.query_by_label("Dispatch").is_none(),
-        "render_dispatch returns early (no button at all) when the task isn't editable"
-    );
-}
-
-/// Screenshot capture for the two synthetic edge cases above, split out from
+/// Screenshot capture for the synthetic edge case above, split out from
 /// their (always-run) assertion tests and `#[ignore]`d — `try_wgpu_snapshot_
 /// options` unconditionally writes a `.new.png` scratch file even when the
 /// canonical snapshot isn't being updated, and this repo's convention (see
@@ -260,8 +185,4 @@ fn generate_edge_case_screenshots() {
     let mut h = harness(malformed_ordering_yaml_app());
     h.run();
     let _ = h.try_snapshot_options("backlog_malformed_ordering_yaml_warning", &options);
-
-    let mut h = harness(missing_cli_app());
-    h.run();
-    let _ = h.try_snapshot_options("backlog_missing_cli_read_only", &options);
 }

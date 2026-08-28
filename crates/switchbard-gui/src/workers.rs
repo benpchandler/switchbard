@@ -1283,7 +1283,6 @@ mod tests {
     fn fixture_project(root: &Path, loaded_at_unix: u64, task_titles: &[&str]) -> BacklogProject {
         BacklogProject {
             root: root.to_path_buf(),
-            cli_path: None,
             tasks: task_titles
                 .iter()
                 .enumerate()

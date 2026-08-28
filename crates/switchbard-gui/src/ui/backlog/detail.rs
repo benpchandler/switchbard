@@ -44,7 +44,7 @@ pub(super) fn render_task_detail(
     };
 
     sync_editor(app, &project.key, task);
-    let editable = task.editable() && project.project.cli_available();
+    let editable = task.editable();
 
     egui::ScrollArea::vertical()
         .id_salt("backlog_task_detail")

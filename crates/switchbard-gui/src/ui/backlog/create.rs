@@ -158,8 +158,7 @@ pub(super) fn render_create_modal(
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                let can_create = project.project.cli_available()
-                    && !app.backlog_view.new_task.title.trim().is_empty();
+                let can_create = !app.backlog_view.new_task.title.trim().is_empty();
                 if ui
                     .add_enabled(can_create, egui::Button::new("Create"))
                     .clicked()
@@ -198,11 +197,6 @@ pub(super) fn render_create_modal(
                 }
                 if ui.button("Cancel").clicked() {
                     close = true;
-                }
-                if !project.project.cli_available() {
-                    ui.label(
-                        egui::RichText::new("Backlog CLI is not available").color(theme::amber()),
-                    );
                 }
             });
         });

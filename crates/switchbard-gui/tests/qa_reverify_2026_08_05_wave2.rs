@@ -29,30 +29,53 @@ use switchbard_core::{BacklogTaskSource, Repo, WorktreeRef};
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{BacklogLens, ViewTab};
 
-fn run_cmd(cwd: &std::path::Path, cmd: &str, args: &[&str]) {
-    let output = std::process::Command::new(cmd)
-        .current_dir(cwd)
-        .args(args)
-        .output()
-        .unwrap_or_else(|e| panic!("failed to run {cmd}: {e}"));
-    assert!(
-        output.status.success(),
-        "{cmd} {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+/// Native fixture init — the directory shape plus a config declaring the
+/// standard trio, matching what `backlog init --defaults` used to produce
+/// before the format fork retired the external CLI (TASK-67).
+fn native_backlog_init(root: &std::path::Path) {
+    std::fs::create_dir_all(root.join("backlog/tasks")).expect("fixture layout");
+    std::fs::write(
+        root.join("backlog/config.yml"),
+        "statuses: [\"To Do\", \"In Progress\", \"Done\"]\n",
+    )
+    .expect("fixture config");
+}
+
+fn native_task_create(root: &std::path::Path, title: &str) -> String {
+    switchbard_core::create_backlog_task(
+        root,
+        &switchbard_core::NewBacklogTask {
+            title: title.to_string(),
+            description: String::new(),
+            status: String::new(),
+            priority: String::new(),
+            acceptance_criteria: vec![],
+            parent: None,
+            labels: vec![],
+            assignees: vec![],
+            milestone: None,
+            dependencies: vec![],
+        },
+    )
+    .expect("native fixture create")
+}
+
+fn native_task_status(root: &std::path::Path, id: &str, status: &str) {
+    switchbard_core::edit_backlog_task(
+        root,
+        id,
+        &switchbard_core::BacklogTaskPatch {
+            status: Some(status.to_string()),
+            ..Default::default()
+        },
+    )
+    .expect("native fixture status edit");
 }
 
 fn init_fixture_repo() -> tempfile::TempDir {
     let fixture = tempfile::tempdir().expect("create temp dir");
     let root = fixture.path();
-    run_cmd(root, "git", &["init", "-q"]);
-    run_cmd(root, "git", &["config", "user.email", "qa@example.com"]);
-    run_cmd(root, "git", &["config", "user.name", "QA Fixture"]);
-    run_cmd(
-        root,
-        "backlog",
-        &["init", "--defaults", "--agent-instructions", "none", "qa"],
-    );
+    native_backlog_init(root);
     fixture
 }
 
@@ -91,8 +114,8 @@ fn single_repo_app(root: &std::path::Path) -> HiveApp {
 fn completing_a_done_task_moves_its_file_to_the_completed_directory_on_disk() {
     let fixture = init_fixture_repo();
     let root = fixture.path();
-    run_cmd(root, "backlog", &["task", "create", "Finished work"]);
-    run_cmd(root, "backlog", &["task", "edit", "TASK-1", "-s", "Done"]);
+    native_task_create(root, "Finished work");
+    native_task_status(root, "TASK-1", "Done");
 
     let before_path = root.join("backlog/tasks/task-1 - Finished-work.md");
     assert!(
@@ -100,7 +123,7 @@ fn completing_a_done_task_moves_its_file_to_the_completed_directory_on_disk() {
         "sanity: the task file should exist under backlog/tasks/ before completing"
     );
 
-    run_cmd(root, "backlog", &["task", "complete", "TASK-1"]);
+    switchbard_core::complete_backlog_task(root, "TASK-1").expect("native fixture complete");
 
     assert!(
         !before_path.exists(),
@@ -141,10 +164,10 @@ fn completing_a_done_task_moves_its_file_to_the_completed_directory_on_disk() {
 fn a_completed_task_is_visible_only_when_show_completed_is_on_same_as_any_done_task() {
     let fixture = init_fixture_repo();
     let root = fixture.path();
-    run_cmd(root, "backlog", &["task", "create", "Finished work"]);
-    run_cmd(root, "backlog", &["task", "edit", "TASK-1", "-s", "Done"]);
-    run_cmd(root, "backlog", &["task", "complete", "TASK-1"]);
-    run_cmd(root, "backlog", &["task", "create", "Still open"]);
+    native_task_create(root, "Finished work");
+    native_task_status(root, "TASK-1", "Done");
+    switchbard_core::complete_backlog_task(root, "TASK-1").expect("native fixture complete");
+    native_task_create(root, "Still open");
 
     let project = switchbard_core::load_backlog_project(root).expect("reload");
     let completed_task = project
@@ -181,12 +204,8 @@ fn a_completed_task_is_visible_only_when_show_completed_is_on_same_as_any_done_t
 fn a_non_done_task_still_gets_a_working_archive_button_no_regression() {
     let fixture = init_fixture_repo();
     let root = fixture.path();
-    run_cmd(root, "backlog", &["task", "create", "Abandoned idea"]);
-    run_cmd(
-        root,
-        "backlog",
-        &["task", "edit", "TASK-1", "-s", "In Progress"],
-    );
+    native_task_create(root, "Abandoned idea");
+    native_task_status(root, "TASK-1", "In Progress");
 
     let mut app = single_repo_app(root);
     app.backlog_view.selected_task = Some((root.to_path_buf(), "TASK-1".to_string()));
@@ -265,24 +284,16 @@ fn clean_up_old_tasks_completes_multiple_done_tasks_per_repo_across_two_real_rep
     let repo_b = init_fixture_repo();
 
     for title in ["Done one", "Done two", "Done three"] {
-        run_cmd(repo_a.path(), "backlog", &["task", "create", title]);
+        native_task_create(repo_a.path(), title);
     }
-    run_cmd(repo_a.path(), "backlog", &["task", "create", "Open in A"]);
+    native_task_create(repo_a.path(), "Open in A");
     for id in ["TASK-1", "TASK-2", "TASK-3"] {
-        run_cmd(
-            repo_a.path(),
-            "backlog",
-            &["task", "edit", id, "-s", "Done"],
-        );
+        native_task_status(repo_a.path(), id, "Done");
     }
 
-    run_cmd(repo_b.path(), "backlog", &["task", "create", "Done in B"]);
-    run_cmd(repo_b.path(), "backlog", &["task", "create", "Open in B"]);
-    run_cmd(
-        repo_b.path(),
-        "backlog",
-        &["task", "edit", "TASK-1", "-s", "Done"],
-    );
+    native_task_create(repo_b.path(), "Done in B");
+    native_task_create(repo_b.path(), "Open in B");
+    native_task_status(repo_b.path(), "TASK-1", "Done");
 
     let repos = vec![
         Repo {

@@ -477,7 +477,6 @@ mod tests {
             branch: Some("main".to_string()),
             project: BacklogProject {
                 root: PathBuf::from("/tmp/fixture"),
-                cli_path: None,
                 tasks,
                 warnings: vec![],
                 loaded_at_unix: 0,
@@ -673,7 +672,6 @@ mod tests {
     fn open_task_count_excludes_done_and_archived_tasks() {
         let project = BacklogProject {
             root: PathBuf::from("/tmp/project"),
-            cli_path: None,
             tasks: vec![
                 task_with_status("To Do", BacklogTaskSource::Active),
                 task_with_status("In Progress", BacklogTaskSource::Active),

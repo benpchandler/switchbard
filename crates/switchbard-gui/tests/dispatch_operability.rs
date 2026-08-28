@@ -101,7 +101,6 @@ fn app_with(tasks: Vec<BacklogTask>, runs: Vec<DispatchRun>) -> HiveApp {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: None,
             tasks,
             warnings: vec![],
             loaded_at_unix: 0,

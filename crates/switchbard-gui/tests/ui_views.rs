@@ -65,7 +65,6 @@ fn board_lens_renders_kanban_columns_with_the_seeded_task() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -123,7 +122,6 @@ fn global_search_overlay_finds_the_matching_task_across_repos() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -287,7 +285,6 @@ fn backlog_view_surfaces_seeded_task() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -371,7 +368,6 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
             repo_path(repo_name),
             BacklogProject {
                 root: repo_path(repo_name),
-                cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
                 tasks: vec![BacklogTask {
                     id: "TASK-1".to_string(),
                     title: title.to_string(),
@@ -445,7 +441,6 @@ fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![in_progress_task],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -507,7 +502,6 @@ fn portfolio_lens_renders_per_repo_health() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -564,7 +558,6 @@ fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![blocker, dependent],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -630,7 +623,6 @@ fn parent_task_shows_rollup_and_expands_to_reveal_children() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![parent, done_child, open_child],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -706,7 +698,6 @@ fn saved_view_can_be_saved_and_deleted() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -845,7 +836,6 @@ fn harness_on_task(task: BacklogTask) -> Harness<'static, HiveApp> {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![task],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -1042,7 +1032,6 @@ fn list_row_shows_the_dispatch_pill_for_a_queued_task() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![queued, plain],
             warnings: vec![],
             loaded_at_unix: 0,

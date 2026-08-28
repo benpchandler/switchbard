@@ -314,7 +314,6 @@ mod tests {
     fn project(root: &str, tasks: Vec<BacklogTask>) -> BacklogProject {
         BacklogProject {
             root: PathBuf::from(root),
-            cli_path: None,
             tasks,
             warnings: vec![],
             loaded_at_unix: 0,

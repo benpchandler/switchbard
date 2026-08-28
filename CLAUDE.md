@@ -41,7 +41,7 @@ When touching egui render paths (`crates/switchbard-gui/src/app.rs` or `crates/s
 
 Four-crate Cargo workspace. `switchbard-core` has **zero UI dependencies** and is heavily unit-tested; `switchbard-gui` is the only place egui appears; `switchbard-dispatch` is a thin headless binary over `switchbard-core` that drains the dispatch queue with the GUI closed; `switchbard-task` is the terminal/agent frontend for Backlog-format tasks over the same native write layer (format fork, TASK-66).
 
-**Managing this repo's backlog tasks:** use `cargo run -q -p switchbard-task --` (`list`, `view <id>`, `create`, `edit <id> --check-ac N / --append-notes / --final-summary / -s Done`, `archive`, `complete`) — its `--help` is the output contract. It writes through the same `switchbard-core` layer as the GUI, which is the fork's one-writer invariant. The external `backlog` CLI still works against these files until TASK-67 retires it; prefer `switchbard-task`.
+**Managing this repo's backlog tasks:** use `cargo run -q -p switchbard-task --` (`list`, `view <id>`, `create`, `edit <id> --check-ac N / --append-notes / --final-summary / -s Done`, `archive`, `complete`) — its `--help` is the output contract. It writes through the same `switchbard-core` layer as the GUI, which is the fork's one-writer invariant. The external `backlog` CLI is retired here (TASK-67): nothing in this repo invokes it, it is not on the toolchain, and task mutations must go through `switchbard-task` (or the GUI) — never hand-edit task markdown.
 
 ### `crates/switchbard-core` — domain layer
 

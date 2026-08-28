@@ -8,7 +8,7 @@ use serde_yaml::{Mapping, Value};
 use std::cmp::Ordering;
 use std::ffi::OsStr;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn is_backlog_project(root: &Path) -> bool {
@@ -17,26 +17,12 @@ pub fn is_backlog_project(root: &Path) -> bool {
         || root.join("backlog/drafts").is_dir()
 }
 
-pub fn backlog_cli_path() -> Option<PathBuf> {
-    find_on_path("backlog").or_else(|| {
-        ["/opt/homebrew/bin/backlog", "/usr/local/bin/backlog"]
-            .into_iter()
-            .map(PathBuf::from)
-            .find(|path| path.is_file())
-    })
-}
-
 pub fn load_backlog_project(root: &Path) -> Result<BacklogProject> {
     if !is_backlog_project(root) {
         bail!("{} is not a Backlog project", root.display());
     }
 
-    let cli_path = backlog_cli_path();
     let mut warnings = Vec::new();
-    if cli_path.is_none() {
-        warnings.push("Backlog CLI not found on PATH".to_string());
-    }
-
     let mut tasks = Vec::new();
     for (rel, source) in [
         ("tasks", BacklogTaskSource::Active),
@@ -66,7 +52,6 @@ pub fn load_backlog_project(root: &Path) -> Result<BacklogProject> {
     tasks.sort_by(compare_tasks);
     Ok(BacklogProject {
         root: root.to_path_buf(),
-        cli_path,
         tasks,
         warnings,
         loaded_at_unix: unix_now(),
@@ -105,13 +90,6 @@ pub fn task_file_round_trips(path: &Path) -> bool {
     };
     let (_, body) = split_frontmatter(&text);
     body_round_trips(body)
-}
-
-fn find_on_path(name: &str) -> Option<PathBuf> {
-    let path_var = std::env::var_os("PATH")?;
-    std::env::split_paths(&path_var)
-        .map(|dir| dir.join(name))
-        .find(|path| path.is_file())
 }
 
 pub(super) fn parse_task_file(path: &Path, source: BacklogTaskSource) -> Result<BacklogTask> {

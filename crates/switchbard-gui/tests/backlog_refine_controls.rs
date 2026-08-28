@@ -56,8 +56,8 @@ fn task(source: BacklogTaskSource) -> BacklogTask {
 
 /// A detail rail showing one task, with the project's `backlog` CLI reported
 /// as available — `editable` in the detail pane is `task.editable() &&
-/// project.cli_available()`, and both halves matter to this button.
-fn rail_app(task: BacklogTask, cli_available: bool) -> HiveApp {
+/// project`, and editability matters to this button.
+fn rail_app(task: BacklogTask) -> HiveApp {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
@@ -69,7 +69,6 @@ fn rail_app(task: BacklogTask, cli_available: bool) -> HiveApp {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: cli_available.then(|| PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![task],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -93,7 +92,7 @@ fn rail_harness(app: HiveApp) -> Harness<'static, HiveApp> {
 
 #[test]
 fn an_editable_task_offers_an_enabled_refine_button() {
-    let harness = rail_harness(rail_app(task(BacklogTaskSource::Active), true));
+    let harness = rail_harness(rail_app(task(BacklogTaskSource::Active)));
 
     assert!(
         !harness
@@ -106,7 +105,7 @@ fn an_editable_task_offers_an_enabled_refine_button() {
 
 #[test]
 fn refine_sits_beside_dispatch_in_the_detail_rail() {
-    let harness = rail_harness(rail_app(task(BacklogTaskSource::Active), true));
+    let harness = rail_harness(rail_app(task(BacklogTaskSource::Active)));
 
     // Both grooming and execution affordances render for the same task —
     // Refine is the step upstream of Dispatch, not a replacement for it.
@@ -116,7 +115,7 @@ fn refine_sits_beside_dispatch_in_the_detail_rail() {
 
 #[test]
 fn a_read_only_task_offers_no_refine_button_at_all() {
-    let harness = rail_harness(rail_app(task(BacklogTaskSource::Archived), true));
+    let harness = rail_harness(rail_app(task(BacklogTaskSource::Archived)));
 
     assert!(
         harness.query_by_label("Refine").is_none(),
@@ -124,21 +123,11 @@ fn a_read_only_task_offers_no_refine_button_at_all() {
     );
 }
 
-#[test]
-fn refine_is_hidden_when_the_backlog_cli_is_unavailable() {
-    let harness = rail_harness(rail_app(task(BacklogTaskSource::Active), false));
-
-    assert!(
-        harness.query_by_label("Refine").is_none(),
-        "without the CLI there is no way to write the refined content back"
-    );
-}
-
 /// AC #4's "cannot stack" half, at the affordance level: a task already
 /// being refined cannot be clicked into a second run.
 #[test]
 fn refine_disables_itself_while_a_run_is_in_flight_for_that_task() {
-    let app = rail_app(task(BacklogTaskSource::Active), true);
+    let app = rail_app(task(BacklogTaskSource::Active));
     app.refining_tasks
         .lock()
         .unwrap()
@@ -160,7 +149,7 @@ fn refine_disables_itself_while_a_run_is_in_flight_for_that_task() {
 /// TASK-1 must stay refinable.
 #[test]
 fn an_in_flight_run_in_another_project_does_not_disable_this_ones_button() {
-    let app = rail_app(task(BacklogTaskSource::Active), true);
+    let app = rail_app(task(BacklogTaskSource::Active));
     app.refining_tasks
         .lock()
         .unwrap()
@@ -176,7 +165,7 @@ fn an_in_flight_run_in_another_project_does_not_disable_this_ones_button() {
 
 #[test]
 fn is_refining_reports_only_the_keys_actually_in_flight() {
-    let app = rail_app(task(BacklogTaskSource::Active), true);
+    let app = rail_app(task(BacklogTaskSource::Active));
     let key = (PathBuf::from(REPO_PATH), "TASK-1".to_string());
 
     assert!(!app.is_refining(&key));

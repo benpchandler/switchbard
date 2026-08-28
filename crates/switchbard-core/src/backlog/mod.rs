@@ -21,8 +21,8 @@ pub use mutations::{
     set_backlog_final_summary, set_backlog_label, swap_backlog_label,
 };
 pub use parse::{
-    backlog_cli_path, body_round_trips, is_backlog_project, load_backlog_project,
-    parse_backlog_day, task_file_round_trips,
+    body_round_trips, is_backlog_project, load_backlog_project, parse_backlog_day,
+    task_file_round_trips,
 };
 pub use types::{
     assignable_statuses, missing_standard_statuses, ordered_status_vocabulary,

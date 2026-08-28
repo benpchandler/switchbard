@@ -538,7 +538,6 @@ fn seed_backlog_project(app: &HiveApp) {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![
                 legibility_backlog_task(),
                 legibility_blocking_task(),
