@@ -81,6 +81,9 @@ pub fn app_with_items(items: Vec<AgentContextItem>) -> HiveApp {
         AgentContextMap {
             worktree: PathBuf::from(REPO_PATH),
             items,
+            hooks: Vec::new(),
+            hook_warnings: Vec::new(),
+            hooks_disabled_by: None,
             scanned_at: Some(SystemTime::UNIX_EPOCH),
         },
     );

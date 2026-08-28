@@ -1,4 +1,4 @@
-//! Agent Context view.
+//! Context surface within the Agents view.
 //!
 //! This is a compact scope-first explorer: pick Global / Local / Nested on the
 //! left, browse matching files in the middle, and preview the selected item in
@@ -21,13 +21,12 @@ const EXPLORER_BODY_PADDING: f32 = 14.0;
 const MIN_EXPLORER_BODY_HEIGHT: f32 = 96.0;
 const MAX_EXPLORER_BODY_HEIGHT: f32 = 360.0;
 const REPO_SCOPES: [ContextScope; 2] = [ContextScope::Local, ContextScope::Directory];
-const KINDS: [ContextKind; 6] = [
+const KINDS: [ContextKind; 5] = [
     ContextKind::Instruction,
     ContextKind::Command,
     ContextKind::Skill,
     ContextKind::Config,
     ContextKind::Doc,
-    ContextKind::Hook,
 ];
 
 struct Snapshot {
@@ -57,41 +56,39 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
         filter_lc: app.filter.to_lowercase(),
     };
 
-    egui::CentralPanel::default().show(ui, |ui| {
-        render_summary(ui, &snap);
-        ui.add_space(6.0);
-        render_global_card(ui, app, &snap);
-        ui.add_space(6.0);
-        let mut visible_repo = None;
-        let scroll_output = egui::ScrollArea::vertical()
-            .id_salt("agent_context_scroll")
-            .auto_shrink([false, false])
-            .show_viewport(ui, |ui, _viewport| {
-                for repo in &snap.repos {
-                    let wts: Vec<&WorktreeRef> = snap
-                        .worktrees
-                        .iter()
-                        .filter(|w| w.repo_name == repo.name)
-                        .collect();
-                    if wts.is_empty() {
-                        continue;
-                    }
-                    let response = render_repo(ui, app, repo, &wts, &snap);
-                    if visible_repo.is_none() && response.rect.intersects(ui.clip_rect()) {
-                        visible_repo = Some(format!("{}  ·  {}", repo.name, repo.path.display()));
-                    }
-                    ui.add_space(8.0);
+    render_summary(ui, &snap);
+    ui.add_space(6.0);
+    render_global_card(ui, app, &snap);
+    ui.add_space(6.0);
+    let mut visible_repo = None;
+    let scroll_output = egui::ScrollArea::vertical()
+        .id_salt("agent_context_scroll")
+        .auto_shrink([false, false])
+        .show_viewport(ui, |ui, _viewport| {
+            for repo in &snap.repos {
+                let wts: Vec<&WorktreeRef> = snap
+                    .worktrees
+                    .iter()
+                    .filter(|w| w.repo_name == repo.name)
+                    .collect();
+                if wts.is_empty() {
+                    continue;
                 }
-            });
-        if let Some(repo) = visible_repo {
-            app.agent_context_view.pinned_repo = Some(repo);
-        }
-        paint_sticky_repo_header(
-            ui,
-            scroll_output.inner_rect,
-            app.agent_context_view.pinned_repo.as_deref(),
-        );
-    });
+                let response = render_repo(ui, app, repo, &wts, &snap);
+                if visible_repo.is_none() && response.rect.intersects(ui.clip_rect()) {
+                    visible_repo = Some(format!("{}  ·  {}", repo.name, repo.path.display()));
+                }
+                ui.add_space(8.0);
+            }
+        });
+    if let Some(repo) = visible_repo {
+        app.agent_context_view.pinned_repo = Some(repo);
+    }
+    paint_sticky_repo_header(
+        ui,
+        scroll_output.inner_rect,
+        app.agent_context_view.pinned_repo.as_deref(),
+    );
 }
 
 fn paint_sticky_repo_header(ui: &egui::Ui, scroll_rect: egui::Rect, label: Option<&str>) {
@@ -132,7 +129,7 @@ fn render_summary(ui: &mut egui::Ui, snap: &Snapshot) {
     let items = unique_items.len();
     let warnings = warning_items.len();
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Agent Context").strong());
+        ui.label(egui::RichText::new("Context").strong());
         ui.label(egui::RichText::new(format!("{items} assets")).color(theme::lavender()));
         if warnings > 0 {
             ui.colored_label(theme::amber(), format!("{warnings} warnings"));
@@ -282,7 +279,7 @@ fn render_repo(
             let selected = selected_worktree(repo, wts, snap);
             ui.horizontal(|ui| {
                 ui.heading(&repo.name);
-                ui.label(egui::RichText::new("Agent Context").color(theme::muted_text()));
+                ui.label(egui::RichText::new("Context").color(theme::muted_text()));
                 let selected_map = selected.and_then(|w| snap.maps.get(&w.path));
                 let total = wts
                     .iter()

@@ -45,9 +45,17 @@ pub struct OrderingState {
 pub enum ViewTab {
     #[default]
     Servers,
-    AgentContext,
+    Agents,
     Backlog,
     Dispatch,
+}
+
+/// Sibling surfaces within the top-level Agents view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AgentsSection {
+    #[default]
+    Context,
+    Hooks,
 }
 
 /// Identifies one task across every tracked Backlog project: the project's
@@ -500,7 +508,7 @@ impl Default for BacklogNewTaskState {
     }
 }
 
-/// Agent target selected in the Agent Context explorer.
+/// Agent target selected in the Agents view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentContextAgent {
     Claude,
@@ -525,9 +533,10 @@ impl AgentContextAgent {
     }
 }
 
-/// UI-local selection state for the Agent Context explorer.
+/// UI-local selection state for the Agents view.
 #[derive(Debug, Clone)]
 pub struct AgentContextViewState {
+    pub section: AgentsSection,
     pub scope: ContextScope,
     pub kind: Option<ContextKind>,
     pub selected_id: Option<String>,
@@ -541,6 +550,7 @@ pub struct AgentContextViewState {
 impl Default for AgentContextViewState {
     fn default() -> Self {
         Self {
+            section: AgentsSection::Context,
             scope: ContextScope::Local,
             kind: None,
             selected_id: None,

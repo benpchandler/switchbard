@@ -1,4 +1,4 @@
-//! Opt-in pixel snapshot of the Agent Context view, for visual-regression work.
+//! Opt-in pixel snapshots of the Agents view, for visual-regression work.
 //!
 //! This is `#[ignore]`d on purpose. It renders through `wgpu` (a real GPU
 //! adapter) and compares against a committed PNG baseline — which is sensitive
@@ -20,15 +20,66 @@
 
 mod common;
 
+use std::path::PathBuf;
+
 use common::{harness, seeded_app};
-use switchbard_gui::runtime::ViewTab;
+use switchbard_core::{AgentHook, AgentKind, ContextScope};
+use switchbard_gui::runtime::{AgentsSection, ViewTab};
 
 #[test]
 #[ignore = "wgpu image snapshot: machine-specific, run explicitly with `-- --ignored` (see module docs)"]
-fn agent_context_view_snapshot() {
+fn agents_context_view_snapshot() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::AgentContext;
+    app.view_tab = ViewTab::Agents;
     let mut harness = harness(app);
     harness.run();
     harness.snapshot("agent_context_view");
+}
+
+#[test]
+#[ignore = "wgpu image snapshot: machine-specific, run explicitly with `-- --ignored` (see module docs)"]
+fn agents_hooks_view_snapshot() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Agents;
+    app.agent_context_view.section = AgentsSection::Hooks;
+    let hooks = vec![
+        AgentHook {
+            id: "global-pre-tool".to_string(),
+            agent: AgentKind::Claude,
+            scope: ContextScope::Global,
+            source_path: PathBuf::from("/Users/demo/.claude/settings.json"),
+            event: "PreToolUse".to_string(),
+            matcher: Some("Write|Edit".to_string()),
+            hook_type: "command".to_string(),
+            action: "python3".to_string(),
+            arguments: vec!["/Users/demo/.claude/hooks/check-write.py".to_string()],
+            condition: Some("Edit(*.rs)".to_string()),
+            asynchronous: false,
+            timeout_seconds: Some(30),
+        },
+        AgentHook {
+            id: "repo-stop".to_string(),
+            agent: AgentKind::Claude,
+            scope: ContextScope::Local,
+            source_path: PathBuf::from("/tmp/switchbard-ui-test/demo/.claude/settings.local.json"),
+            event: "Stop".to_string(),
+            matcher: None,
+            hook_type: "command".to_string(),
+            action: "./scripts/rebuild-and-reload.sh".to_string(),
+            arguments: Vec::new(),
+            condition: None,
+            asynchronous: true,
+            timeout_seconds: None,
+        },
+    ];
+    app.agent_contexts
+        .lock()
+        .expect("invariant: seeded agent context cache")
+        .values_mut()
+        .next()
+        .expect("invariant: seeded worktree context")
+        .hooks = hooks;
+    let mut harness = harness(app);
+    harness.run();
+    harness.snapshot("agents_hooks_view");
 }

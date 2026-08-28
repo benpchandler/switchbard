@@ -16,12 +16,12 @@ use egui_kittest::kittest::{self, Queryable};
 use egui_kittest::Harness;
 use switchbard_core::config::Config;
 use switchbard_core::{
-    AgentKind, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource, ContextKind,
-    ContextScope, Repo, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL,
-    DISPATCH_LABEL,
+    AgentHook, AgentKind, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource,
+    ContextKind, ContextScope, Repo, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL,
+    DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{BacklogLens, ViewTab};
+use switchbard_gui::runtime::{AgentsSection, BacklogLens, ViewTab};
 
 fn seeded_backlog_task() -> BacklogTask {
     BacklogTask {
@@ -106,6 +106,28 @@ fn board_lens_renders_kanban_columns_with_the_seeded_task() {
     );
 }
 
+#[test]
+fn hooks_section_surfaces_disabled_state_instead_of_registrations() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Agents;
+    app.agent_context_view.section = AgentsSection::Hooks;
+    app.agent_contexts
+        .lock()
+        .expect("invariant: seeded context cache lock")
+        .get_mut(&PathBuf::from(REPO_PATH))
+        .expect("invariant: seeded repo context")
+        .hooks_disabled_by = Some(PathBuf::from(format!(
+        "{REPO_PATH}/.claude/settings.local.json"
+    )));
+    let mut harness = harness(app);
+    harness.set_size(egui::vec2(900.0, 620.0));
+    harness.run();
+
+    assert!(harness
+        .query_by_label("Hooks are disabled for this worktree")
+        .is_some());
+}
+
 /// Global search overlay (task-15 AC #2): opening it and matching a query
 /// should surface results across every tracked repo, prefixed with the
 /// repo id the same way the All-projects list rows are.
@@ -172,8 +194,8 @@ fn window_defaults_to_servers_view() {
         "Servers tab should be present"
     );
     assert!(
-        harness.query_by_label("Agent Context").is_some(),
-        "Agent Context tab should be present"
+        harness.query_by_label("Agents").is_some(),
+        "Agents tab should be present"
     );
     assert!(
         harness.query_by_label("Backlog").is_some(),
@@ -182,15 +204,81 @@ fn window_defaults_to_servers_view() {
 }
 
 #[test]
-fn clicking_agent_context_tab_switches_view() {
+fn clicking_agents_tab_switches_view() {
     let mut harness = harness(seeded_app());
 
-    // In the default Servers view the only "Agent Context" widget is the tab,
+    // In the default Servers view the only "Agents" widget is the tab,
     // so this is unambiguous.
-    harness.get_by_label("Agent Context").click();
+    harness.get_by_label("Agents").click();
     harness.run();
 
-    assert_eq!(harness.state().view_tab, ViewTab::AgentContext);
+    assert_eq!(harness.state().view_tab, ViewTab::Agents);
+    assert!(harness.query_all_by_label("Context").next().is_some());
+    assert!(harness.query_by_label("Hooks").is_some());
+}
+
+#[test]
+fn hooks_section_surfaces_configured_repo_hook() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Agents;
+    app.agent_context_view.section = AgentsSection::Hooks;
+    app.agent_contexts
+        .lock()
+        .expect("invariant: seeded context cache lock")
+        .get_mut(&PathBuf::from(REPO_PATH))
+        .expect("invariant: seeded repo context")
+        .hooks
+        .push(AgentHook {
+            id: "repo-stop-hook".to_string(),
+            agent: AgentKind::Claude,
+            scope: ContextScope::Local,
+            source_path: PathBuf::from(format!("{REPO_PATH}/.claude/settings.local.json")),
+            event: "Stop".to_string(),
+            matcher: Some("format|check".to_string()),
+            hook_type: "command".to_string(),
+            action:
+                "./scripts/rebuild-and-reload.sh --verify-this-very-long-command-without-overflow"
+                    .to_string(),
+            arguments: vec!["--from-test".to_string()],
+            condition: None,
+            asynchronous: false,
+            timeout_seconds: Some(30),
+        });
+    let mut harness = harness(app);
+    harness.set_size(egui::vec2(900.0, 620.0));
+    harness.run();
+
+    assert!(harness.query_all_by_label("Hooks").next().is_some());
+    assert!(harness.query_all_by_label("1 configured").next().is_some());
+    assert!(harness.query_by_label("Stop").is_some());
+    assert!(harness
+        .query_by_label("Rebuilds and reloads the app")
+        .is_some());
+    assert!(harness
+        .query_by_label("After Claude finishes responding")
+        .is_some());
+    assert!(harness
+        .query_by_label("Claude ignores matchers for Stop")
+        .is_some());
+    assert!(harness.query_by_label("format|check").is_some());
+    assert!(harness
+        .query_by_label(
+            "./scripts/rebuild-and-reload.sh --verify-this-very-long-command-without-overflow"
+        )
+        .is_some());
+}
+
+#[test]
+fn hooks_section_explains_empty_registration_state() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Agents;
+    app.agent_context_view.section = AgentsSection::Hooks;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(harness
+        .query_by_label("No configured hooks detected for Claude in this worktree.")
+        .is_some());
 }
 
 #[test]
@@ -206,7 +294,7 @@ fn clicking_backlog_tab_switches_view() {
 #[test]
 fn agent_context_view_surfaces_seeded_assets() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::AgentContext;
+    app.view_tab = ViewTab::Agents;
     let mut harness = harness(app);
     harness.run();
 
@@ -258,7 +346,7 @@ fn agent_context_estimate_uses_effective_instructions_not_all_assets() {
     nested_instruction.applies_to = Some(PathBuf::from(format!("{REPO_PATH}/apps/web")));
 
     let mut app = app_with_items(vec![instruction, skill, nested_instruction]);
-    app.view_tab = ViewTab::AgentContext;
+    app.view_tab = ViewTab::Agents;
     let mut harness = harness(app);
     harness.run();
 

@@ -68,7 +68,7 @@ fn render_view_tabs(app: &mut HiveApp, ui: &mut egui::Ui, dispatch_summary: Disp
             ui.horizontal(|ui| {
                 ui.label("view:");
                 ui.selectable_value(&mut app.view_tab, ViewTab::Servers, "Servers");
-                ui.selectable_value(&mut app.view_tab, ViewTab::AgentContext, "Agent Context");
+                ui.selectable_value(&mut app.view_tab, ViewTab::Agents, "Agents");
                 ui.selectable_value(&mut app.view_tab, ViewTab::Backlog, "Backlog");
                 // "Dispatches", not "Dispatch": the per-task flag button in the
                 // Backlog detail rail is already labeled "Dispatch", and this
@@ -95,7 +95,7 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
     ui.add(egui::TextEdit::singleline(&mut app.filter).desired_width(filter_width));
     let hint = match app.view_tab {
         ViewTab::Servers => "matches repo, branch, service, command, port, listener cwd",
-        ViewTab::AgentContext => "matches repo, path, title, or instruction text",
+        ViewTab::Agents => "matches repo, context path, hook event, matcher, or command",
         ViewTab::Backlog => "matches task id, title, labels, assignee, or description",
         ViewTab::Dispatch => "matches task id, title, repo, or branch",
     };
@@ -107,7 +107,7 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
             ui.checkbox(&mut app.show_non_servers, "show non-server scripts");
         }
         ViewTab::Backlog => {}
-        ViewTab::AgentContext => {}
+        ViewTab::Agents => {}
         ViewTab::Dispatch => {}
     }
 }

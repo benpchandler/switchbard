@@ -1985,7 +1985,7 @@ impl HiveApp {
         let central_start = Instant::now();
         match self.view_tab {
             ViewTab::Servers => ui::workspace::render(self, ui),
-            ViewTab::AgentContext => ui::agent_context::render(self, ui),
+            ViewTab::Agents => ui::agents::render(self, ui),
             ViewTab::Dispatch => ui::dispatch::render(self, ui),
             ViewTab::Backlog => ui::backlog::render(self, ui),
         }
