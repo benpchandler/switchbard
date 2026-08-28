@@ -85,7 +85,7 @@ fn build_fixture() -> HiveApp {
                     base: "main".to_string(),
                     evidence: switchbard_core::LandedEvidence::Ancestry,
                 },
-                1 => WorktreeStaleness::Orphan,
+                1 => WorktreeStaleness::NoUpstream,
                 _ => WorktreeStaleness::Live,
             };
             let dirty = i % 5 == 0;

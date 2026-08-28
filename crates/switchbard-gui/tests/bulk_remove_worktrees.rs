@@ -373,24 +373,59 @@ fn click_at(harness: &egui_kittest::Harness<'static, HiveApp>, pos: egui::Pos2) 
     }
 }
 
-/// A point inside the linked row's header that no widget occupies: the gap
-/// between the left cluster (name + health chips) and the right-aligned
-/// action cluster. Asserts the point really is blank, so the test can never
-/// pass by accidentally hitting a widget.
+/// The widest piece of the linked row's header that no widget occupies.
+///
+/// Derived from the row's actual widget rects rather than from a named
+/// neighbour, so it survives the row's contents changing — it was previously
+/// anchored to the head SHA, which has since been deleted from the row.
 fn blank_spot_in_row(harness: &egui_kittest::Harness<'static, HiveApp>) -> egui::Pos2 {
     let name = harness.get_by_label("wt-clean-merged").rect();
-    // Right-to-left trailing cluster: SHA is furthest right, so its left edge
-    // is the far side of the gap we want. Two rows render one; index 1 is the
-    // linked row's.
-    let sha: Vec<_> = harness.get_all_by_label("abc1234").collect();
-    let sha_rect = sha[1].rect();
-    let pos = egui::pos2((name.right() + sha_rect.left()) / 2.0, name.center().y);
+    let mut spans = Vec::new();
+    nodes_on_row_line(harness, name.center().y, &mut spans);
+    spans.sort_by(|a: &egui::Rect, b| a.left().total_cmp(&b.left()));
+
+    let mut best: Option<(f32, egui::Pos2)> = None;
+    for pair in spans.windows(2) {
+        let gap = pair[1].left() - pair[0].right();
+        if best.is_none_or(|(w, _)| gap > w) {
+            best = Some((
+                gap,
+                egui::pos2((pair[0].right() + pair[1].left()) / 2.0, name.center().y),
+            ));
+        }
+    }
+    let (width, pos) = best.expect("the row must have at least two widgets");
     assert!(
-        !name.contains(pos) && !sha_rect.contains(pos),
-        "the probe point must be blank row space, not a widget: {pos:?} \
-         (name {name:?}, sha {sha_rect:?})"
+        width > 8.0,
+        "expected a real gap of blank row space, found only {width}px"
+    );
+    assert!(
+        !spans.iter().any(|r| r.contains(pos)),
+        "the probe point must be blank row space, not a widget: {pos:?}"
     );
     pos
+}
+
+/// Every accesskit node whose vertical span crosses `row_y`, in row order.
+fn nodes_on_row_line(
+    harness: &egui_kittest::Harness<'static, HiveApp>,
+    row_y: f32,
+    out: &mut Vec<egui::Rect>,
+) {
+    fn walk(node: &egui_kittest::Node<'_>, row_y: f32, out: &mut Vec<egui::Rect>) {
+        if let Some(b) = node.accesskit_node().raw_bounds() {
+            if (b.y0 as f32) <= row_y && row_y <= (b.y1 as f32) {
+                out.push(egui::Rect::from_min_max(
+                    egui::pos2(b.x0 as f32, b.y0 as f32),
+                    egui::pos2(b.x1 as f32, b.y1 as f32),
+                ));
+            }
+        }
+        for child in node.children() {
+            walk(&child, row_y, out);
+        }
+    }
+    walk(&harness.root(), row_y, out);
 }
 
 /// Centre of the row's expand/collapse triangle.
@@ -404,24 +439,11 @@ fn expand_triangle_center(
     harness: &egui_kittest::Harness<'static, HiveApp>,
     name: egui::Rect,
 ) -> egui::Pos2 {
-    fn walk(node: &egui_kittest::Node<'_>, row_y: f32, left_of: f32, out: &mut Vec<egui::Rect>) {
-        if let Some(b) = node.accesskit_node().raw_bounds() {
-            let (x0, x1) = (b.x0 as f32, b.x1 as f32);
-            if (b.y0 as f32) <= row_y && row_y <= (b.y1 as f32) && x1 <= left_of {
-                out.push(egui::Rect::from_min_max(
-                    egui::pos2(x0, b.y0 as f32),
-                    egui::pos2(x1, b.y1 as f32),
-                ));
-            }
-        }
-        for child in node.children() {
-            walk(&child, row_y, left_of, out);
-        }
-    }
-    let mut found = Vec::new();
-    walk(&harness.root(), name.center().y, name.left(), &mut found);
-    let toggle = found
+    let mut spans = Vec::new();
+    nodes_on_row_line(harness, name.center().y, &mut spans);
+    let toggle = spans
         .into_iter()
+        .filter(|r| r.right() <= name.left())
         .max_by(|a, b| a.right().total_cmp(&b.right()))
         .expect("the row must have a widget left of its name");
     assert_eq!(
@@ -486,9 +508,12 @@ fn clicking_a_hover_only_label_in_the_row_selects_the_worktree() {
     let mut harness = harness(app_with_worktrees(repo.clone(), worktrees));
     harness.run();
 
-    let sha: Vec<_> = harness.get_all_by_label("abc1234").collect();
-    assert_eq!(sha.len(), 2, "primary and linked rows each render one");
-    sha[1].click();
+    // A hover-only label with a tooltip, one per row. (This was the head
+    // SHA until the row shed it; the trunk chip's pending placeholder is the
+    // same kind of widget and outlives layout changes better.)
+    let chip: Vec<_> = harness.get_all_by_label("trunk ...").collect();
+    assert_eq!(chip.len(), 2, "primary and linked rows each render one");
+    chip[1].click();
     harness.run();
     assert!(
         harness
@@ -704,8 +729,8 @@ fn clicking_the_primary_row_selects_nothing() {
     let mut harness = harness(app_with_worktrees(repo.clone(), worktrees));
     harness.run();
 
-    let sha: Vec<_> = harness.get_all_by_label("abc1234").collect();
-    sha[0].click(); // the primary row's
+    let chip: Vec<_> = harness.get_all_by_label("trunk ...").collect();
+    chip[0].click(); // the primary row's
     harness.run();
     assert!(
         harness.state().bulk_selected_worktrees.is_empty(),

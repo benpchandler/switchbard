@@ -40,7 +40,7 @@
 //! | scanner | 3s | ~0.2s, 1 subprocess, independent of worktree count | UX-critical: the Servers view's whole point is "what's listening right now." Kept snappy. |
 //! | git probe | 120s (was 60s) | ~6-8s once `probe_ignored_files` is decoupled (was ~37-40s every tick — see below) | Real git-subprocess cost (~10/worktree) that scales with worktree count; drift/dirty/recent-commits data is useful within a couple minutes' staleness, not seconds. |
 //! | — ignored-files sub-probe | every 5th probe tick (~10 min) | ~32s of the ~37s pre-fix tick (measured in isolation) — `git status --ignored` can't prune subtrees the way plain status does | Tooltip-only cosmetic data (see `IGNORED_FILES_PREVIEW_LIMIT`'s own doc); by far the single most expensive call in this module. Decoupling it from the main probe cadence is the highest-leverage fix found by this audit. |
-//! | — staleness sub-probe (TASK-41) | every probe tick | **free** — derived, not probed | Was ~1.9s / ~2-3 subprocesses per worktree (61 worktrees, re-measured 2026-08-26). It asked git the same three questions `probe_trunk_divergence` asks, so `staleness_from_trunk` now derives the Merged/Orphan/Live badge from that one comparison. Removes the duplicate calls *and* makes badge-vs-chip disagreement unrepresentable rather than merely unlikely. |
+//! | — staleness sub-probe (TASK-41) | every probe tick | **free** — derived, not probed | Was ~1.9s / ~2-3 subprocesses per worktree (61 worktrees, re-measured 2026-08-26). It asked git the same three questions `probe_trunk_divergence` asks, so `staleness_from_trunk` now derives the Merged/NoUpstream/Live badge from that one comparison. Removes the duplicate calls *and* makes badge-vs-chip disagreement unrepresentable rather than merely unlikely. |
 //! | — trunk comparison | every probe tick | ~1.5-1.7s over 61 worktrees (~25-28ms each, measured 2026-08-26 via `examples/scan_cadence_audit.rs`) | Replaced `probe_main_drift` (~0.6s): it resolves the trunk via `default_branch` instead of assuming local `main`, and counts by patch-equivalence rather than ancestry, so it is ~3 subprocesses rather than 2. The staleness derivation above more than pays for it — the whole tick went 21.5s → 21.1s. |
 //! | detection | 60s (was 30s) | ~0.15s cold, ~0 steady-state (idempotent — skips worktrees already in `services`) | No urgency: a newly tracked worktree still gets detected within a minute. |
 //! | agent-context | 60s (was 30s), capped at `AGENT_CONTEXT_MAX_MISSING_PER_TICK` new worktrees per tick | ~47s in one unbroken burst pre-fix (cold scan of all 84 at once) | Recursive per-worktree filesystem walk; cheap in steady state (only rescans missing/>24h-stale entries) but a cold launch or adding several repos at once used to stall the thread for tens of seconds in a single tick. Capping the batch turns that into several bounded, interleaved ticks instead. |
@@ -341,7 +341,7 @@ fn spawn_probe(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
                         .and_then(|m| m.ignored_files.clone())
                 };
                 let repo_path = repo_paths.get(&w.repo_name);
-                // One trunk comparison, two surfaces. The Merged/Orphan/Live
+                // One trunk comparison, two surfaces. The Merged/NoUpstream/Live
                 // badge and the row's unlanded chip are the same question
                 // asked twice, so they are derived from one probe rather than
                 // run as two — which costs three fewer git subprocesses per

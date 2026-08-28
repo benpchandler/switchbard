@@ -171,13 +171,17 @@ pub enum WorktreeStaleness {
     /// including a detached HEAD). Common right after a squash-merged PR
     /// whose remote branch was deleted — still worth surfacing distinctly
     /// from `Live`, since nothing is tracking it anymore.
-    Orphan,
+    ///
+    /// Named for the fact, not for a metaphor. This was `Orphan`, which meant
+    /// the row had two words for one condition: the badge said "orphan" while
+    /// the remote chip beside it said "no upstream". One fact, one name.
+    NoUpstream,
     /// Neither of the above: still ahead of/behind an upstream, i.e.
     /// probably active work.
     Live,
     /// The classification could not be made - git failed on the comparison
     /// itself. Its own variant because the alternative is to guess, and both
-    /// guesses lie: `Live` claims active work nobody verified, and `Orphan`
+    /// guesses lie: `Live` claims active work nobody verified, and `NoUpstream`
     /// nominates a worktree for retirement on no evidence at all. The badge
     /// renders this as an explicit unknown and no filter chip claims it.
     Unknown,
@@ -227,7 +231,7 @@ pub fn probe_worktree_staleness(repo_path: &Path, worktree_path: &Path) -> Workt
         }
     }
     match probe_remote_drift(worktree_path) {
-        Some(DriftProbe::NoUpstream) => WorktreeStaleness::Orphan,
+        Some(DriftProbe::NoUpstream) => WorktreeStaleness::NoUpstream,
         Some(_) => WorktreeStaleness::Live,
         None => WorktreeStaleness::Unknown,
     }
@@ -363,7 +367,7 @@ pub fn staleness_from_trunk(
         }
     }
     match remote {
-        Some(DriftProbe::NoUpstream) => WorktreeStaleness::Orphan,
+        Some(DriftProbe::NoUpstream) => WorktreeStaleness::NoUpstream,
         Some(_) => WorktreeStaleness::Live,
         None => WorktreeStaleness::Unknown,
     }
@@ -683,7 +687,7 @@ mod tests {
 
         assert_eq!(
             probe_worktree_staleness(&repo, &repo),
-            WorktreeStaleness::Orphan
+            WorktreeStaleness::NoUpstream
         );
     }
 
@@ -715,7 +719,7 @@ mod tests {
 
     #[test]
     fn staleness_is_orthogonal_to_dirty_state() {
-        // A worktree can be Merged (or Orphan/Live) and still have
+        // A worktree can be Merged (or NoUpstream/Live) and still have
         // uncommitted scratch files — dirty is a separate, independently
         // probed signal, not folded into the staleness classification.
         let (_tmp, repo) = setup_repo("main");

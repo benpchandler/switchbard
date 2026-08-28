@@ -696,7 +696,7 @@ pub struct WorktreeMeta {
     /// the UI. Currently unread.
     #[allow(dead_code)]
     pub probed_at: Option<Instant>,
-    /// Merged/Orphan/Live classification (TASK-41), computed by the same
+    /// Merged/NoUpstream/Live classification (TASK-41), computed by the same
     /// git-probe worker tick as `trunk`/`remote_drift`. `None` while the
     /// probe hasn't returned yet.
     pub staleness: Option<WorktreeStaleness>,
@@ -961,7 +961,7 @@ pub fn removal_facts(
     }
 }
 
-/// Reuse the Merged/Orphan/Live badge's own probe as the row's "did the work
+/// Reuse the Merged/NoUpstream/Live badge's own probe as the row's "did the work
 /// land" fact, rather than issuing a second git call per row per frame.
 ///
 /// The two cannot disagree: `probe_worktree_staleness` and
@@ -980,11 +980,11 @@ fn landed_from_staleness(meta: &WorktreeMeta) -> Fact<Landed> {
             base: base.clone(),
             evidence: *evidence,
         }),
-        // Orphan and Live are both "probed, and not contained in the base".
+        // NoUpstream and Live are both "probed, and not contained in the base".
         // Neither carries a commit count - the badge only ever recorded
         // whether the count was zero - so both report an unmeasured `No`
         // rather than inventing a number the row could print.
-        Some(WorktreeStaleness::Orphan | WorktreeStaleness::Live) => Fact::Known(Landed::No {
+        Some(WorktreeStaleness::NoUpstream | WorktreeStaleness::Live) => Fact::Known(Landed::No {
             commits: None,
             base: None,
         }),
@@ -1224,7 +1224,7 @@ mod tests {
     #[test]
     fn an_unlanded_worktree_reports_no_commit_count_it_never_measured() {
         let meta = WorktreeMeta {
-            staleness: Some(WorktreeStaleness::Orphan),
+            staleness: Some(WorktreeStaleness::NoUpstream),
             ..Default::default()
         };
         assert_eq!(
