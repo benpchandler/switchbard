@@ -23,7 +23,8 @@ use switchbard_core::dispatch_inspect::{DispatchRun, DispatchRunLiveness};
 use switchbard_core::{
     AgentKind, AttachedProcesses, AttributedListener, BranchDeleteAssessment, CommitSummary,
     ContextKind, ContextScope, DirtyFile, DriftDetail, DriftProbe, Fact, Landed, OrderingOverlay,
-    RemovalFacts, RemovalIntent, RemovalSafety, RemovalVerdict, Repo, TrunkDetail, TrunkDivergence,
+    LandingStage, RemovalFacts, RemovalIntent, RemovalSafety, RemovalVerdict, Repo, TrunkDetail,
+    TrunkDivergence,
     WorktreeRef, WorktreeStaleness,
 };
 
@@ -718,6 +719,19 @@ pub struct WorktreeSizeEntry {
     /// error) — distinct from "not probed yet" (`spawn_size` simply hasn't
     /// gotten to this worktree, and the entry doesn't exist in the map yet).
     pub bytes: Option<u64>,
+    pub computed_at: Instant,
+}
+
+/// A worktree's landing stage plus when it was computed, so the worker can
+/// age entries out the way `WorktreeSizeEntry` does.
+///
+/// Its own map rather than a `WorktreeMeta` field, for the same reason sizes
+/// are: the git-probe worker rewrites `meta` wholesale every tick and would
+/// wipe a field it doesn't own. It also has a genuinely different cadence —
+/// the PR half is a network call.
+#[derive(Debug, Clone)]
+pub struct LandingEntry {
+    pub stage: LandingStage,
     pub computed_at: Instant,
 }
 
