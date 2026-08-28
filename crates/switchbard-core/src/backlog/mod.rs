@@ -9,11 +9,14 @@
 //! public API (see the doc on each submodule) — that split was
 //! lift-and-shift, not a redesign.
 
+mod allocate;
 mod mutations;
 mod parse;
 pub mod status_config;
 mod types;
 mod write;
+
+pub use allocate::{create_task_allocating_id, next_task_id, ACTIVE_BRANCH_DAYS};
 
 pub use mutations::{
     append_backlog_notes, archive_backlog_task, complete_backlog_task, create_backlog_task,
