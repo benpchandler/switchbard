@@ -141,7 +141,7 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-fn parse_task_file(path: &Path, source: BacklogTaskSource) -> Result<BacklogTask> {
+pub(super) fn parse_task_file(path: &Path, source: BacklogTaskSource) -> Result<BacklogTask> {
     let text = fs::read_to_string(path).with_context(|| "cannot read task markdown")?;
     let (frontmatter, body) = split_frontmatter(&text);
     let id = yaml_string(&frontmatter, "id").unwrap_or_else(|| id_from_filename(path));
@@ -222,7 +222,7 @@ fn yaml_string(map: &Mapping, key: &str) -> Option<String> {
     .filter(|s| !s.is_empty())
 }
 
-fn yaml_string_list(map: &Mapping, key: &str) -> Vec<String> {
+pub(super) fn yaml_string_list(map: &Mapping, key: &str) -> Vec<String> {
     let Some(value) = map.get(Value::String(key.to_string())) else {
         return Vec::new();
     };
@@ -296,9 +296,9 @@ fn extract_section(body: &str, heading: &str) -> String {
 }
 
 /// Result of one pass over a body's code fences.
-struct FenceScan {
+pub(super) struct FenceScan {
     /// Per line: is it inside (or a delimiter of) a *properly closed* fence?
-    inside: Vec<bool>,
+    pub(super) inside: Vec<bool>,
     /// Did every opener find a closer? `false` means the body's fences are
     /// malformed — readable, but not safe to write back.
     balanced: bool,
@@ -319,7 +319,7 @@ struct FenceScan {
 /// matters — without it a four-backtick opener would be "closed" by an
 /// ordinary three-backtick line inside it (audit finding R2), silently
 /// truncating the fence and, with it, the section.
-fn scan_fences(body: &str) -> FenceScan {
+pub(super) fn scan_fences(body: &str) -> FenceScan {
     let lines: Vec<&str> = body.lines().collect();
     let mut inside = vec![false; lines.len()];
     let mut open: Option<(usize, char, usize)> = None;
@@ -373,7 +373,7 @@ fn closes_fence(line: &str, marker: char, run: usize) -> bool {
 /// this repo — the only ones that actually occur. Used by
 /// [`body_round_trips`] as an allowlist; see its doc for why an *unknown*
 /// heading has to mean "don't write".
-const KNOWN_SECTION_HEADINGS: &[&str] = &[
+pub(super) const KNOWN_SECTION_HEADINGS: &[&str] = &[
     "Description",
     "Acceptance Criteria",
     "Implementation Plan",
@@ -389,7 +389,7 @@ fn is_known_section_heading(title: &str) -> bool {
 }
 
 /// The `## ` heading a line declares, if it declares one.
-fn heading_title(line: &str) -> Option<&str> {
+pub(super) fn heading_title(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
     trimmed
         .starts_with("## ")
@@ -549,7 +549,7 @@ fn parse_checklist_section(section: &str) -> Vec<BacklogChecklistItem> {
     out
 }
 
-fn parse_checklist_index(text: &str, fallback: usize) -> (usize, String) {
+pub(super) fn parse_checklist_index(text: &str, fallback: usize) -> (usize, String) {
     let Some(rest) = text.strip_prefix('#') else {
         return (fallback, text.trim().to_string());
     };
