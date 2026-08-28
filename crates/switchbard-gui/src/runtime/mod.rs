@@ -22,10 +22,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use switchbard_core::dispatch_inspect::{DispatchRun, DispatchRunLiveness};
 use switchbard_core::{
     AgentKind, AttachedProcesses, AttributedListener, BranchDeleteAssessment, CommitSummary,
-    ContextKind, ContextScope, DirtyFile, DriftDetail, DriftProbe, Fact, Landed, OrderingOverlay,
-    LandingStage, RemovalFacts, RemovalIntent, RemovalSafety, RemovalVerdict, Repo, TrunkDetail,
-    TrunkDivergence,
-    WorktreeRef, WorktreeStaleness,
+    ContextKind, ContextScope, DirtyFile, DriftDetail, DriftProbe, Fact, Landed, LandingStage,
+    OrderingOverlay, RemovalFacts, RemovalIntent, RemovalSafety, RemovalVerdict, Repo, TrunkDetail,
+    TrunkDivergence, WorktreeRef, WorktreeStaleness,
 };
 
 /// The cross-repo triage overlay (`<hub repo>/ordering.yml`), refreshed by
