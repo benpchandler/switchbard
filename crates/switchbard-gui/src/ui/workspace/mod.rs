@@ -716,8 +716,9 @@ fn render_worktree_row_trailing(
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         // feat/landing-stage: first widget added in a right-to-left layout
         // paints furthest right — exactly where the head SHA used to sit.
-        // Renders nothing at all for "no unlanded work" or "detached HEAD"
-        // (see `landing::landing_chip`'s doc), so a boring row stays boring.
+        // Renders nothing only for "no unlanded work"; a detached HEAD with
+        // unlanded work gets its own terminal "detached" chip, not silence
+        // — see `landing::landing_chip`'s doc for why.
         landing::render_landing_chip(ui, landing_view);
         if ui
             .small_button("Rename")

@@ -45,17 +45,29 @@ impl LandingChipTone {
 }
 
 /// What the landing-stage chip shows for one worktree — the full state
-/// matrix (see the design-state review this module was written against):
+/// matrix (see the design-state review this module was written against, and
+/// the post-review audit finding that added the detached-HEAD case below):
 ///
-/// - **`None`** (render nothing): no unlanded work (`LandingStage::Landed`'s
-///   own doc — "the stage question does not arise"), or no branch to push
-///   from at all (a detached HEAD; the worker never has an answer here and
-///   never will, so a permanent "computing…" would be a lie).
-/// - **`Pending`**: unlanded work exists but the background worker hasn't
-///   reached this worktree yet (bounded batch, own cadence — see
-///   `workers::spawn_landing`).
-/// - **`Chip`**: the worker has an answer — one of `LandingStage`'s five
-///   "real" variants, or the explicit unknown.
+/// - **`None`** (render nothing): no unlanded work at all —
+///   `LandingStage::Landed`'s own doc: "the stage question does not arise."
+///   This is the *only* silent case. A detached HEAD with unlanded work is
+///   not silent — see `Chip` below — because every other signal on this same
+///   row (the lavender unlanded dot, the trunk chip, `is_noteworthy`'s
+///   auto-expand, and `removal_safety`'s removal-blocking check) already
+///   treats it as the row's most attention-worthy state, not a non-question.
+/// - **`Pending`**: unlanded work exists, there is a branch to probe, but
+///   the background worker hasn't reached this worktree yet (bounded batch,
+///   own cadence — see `workers::spawn_landing`).
+/// - **`Chip`**: a terminal answer, one of:
+///   - one of `LandingStage`'s five "real" variants, or its explicit
+///     unknown, once the worker has probed a branched worktree; or
+///   - **detached HEAD with unlanded work** — no branch means no push and no
+///     PR are possible, ever, so this needs no worker probe at all: it is
+///     answerable immediately and permanently from `w.branch` alone. A real
+///     stall (nothing can land this way until the worktree gets a branch),
+///     rendered distinctly from both `Pending` (a probe that just hasn't run
+///     yet) and `PrStateUnknown` (a probe that ran and failed) — this is
+///     neither: it is a question with a known, permanent answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum LandingChipView {
     Pending,
@@ -74,8 +86,26 @@ pub(super) fn landing_chip(
     has_branch: bool,
     entry: Option<&LandingEntry>,
 ) -> Option<LandingChipView> {
-    if !has_unlanded || !has_branch {
+    if !has_unlanded {
         return None;
+    }
+    if !has_branch {
+        // No worker probe needed or possible: a detached HEAD can never be
+        // pushed or opened as a PR, so this is a permanent, immediately
+        // knowable answer, not a pending question — see `LandingChipView`'s
+        // doc for why this must not render as blank, `Pending`, or
+        // `PrStateUnknown`. `removal_safety.rs` independently treats this
+        // exact condition as the one that must block a removal (dropping
+        // the only ref reaching those commits); the chip agrees rather than
+        // contradicting that badge by staying silent.
+        return Some(LandingChipView::Chip {
+            text: "detached".to_string(),
+            tone: LandingChipTone::Warn,
+            tooltip: "Unlanded commits on a detached HEAD — there is no branch to push or open \
+                      a pull request from, so this work cannot land by any push/PR path until \
+                      it is given one."
+                .to_string(),
+        });
     }
     let Some(entry) = entry else {
         return Some(LandingChipView::Pending);
@@ -128,9 +158,11 @@ pub(super) fn landing_chip(
 }
 
 /// Paint whatever [`landing_chip`] decided this row should show. Does not
-/// render anything for `None` — the caller passes that straight through so
-/// "no unlanded work" and "detached HEAD" both leave the slot blank, same as
-/// the head SHA's old spot did for a primary worktree.
+/// render anything for `None` — the caller passes that straight through, and
+/// the only state that reaches it is "no unlanded work" (a detached HEAD
+/// with unlanded work is `Chip { text: "detached", .. }`, not `None` — see
+/// `LandingChipView`'s doc), same as the head SHA's old spot leaving nothing
+/// behind for a primary worktree.
 pub(super) fn render_landing_chip(ui: &mut egui::Ui, view: Option<LandingChipView>) {
     match view {
         None => {}
@@ -176,12 +208,65 @@ mod tests {
         );
     }
 
-    /// A detached HEAD has no branch to push or open a PR from — the worker
-    /// will never have an answer, so this must not render as "still
-    /// checking" forever.
+    /// A detached HEAD with unlanded work is the row's most attention-worthy
+    /// state, not a non-question — `headline_dot`, `render_trunk_inline`,
+    /// `is_noteworthy`, and `removal_safety`'s removal-blocking check all
+    /// already treat it that way. The chip must say so with a terminal
+    /// "detached" answer (no worker probe possible or needed — no branch
+    /// means no push and no PR, ever), and that answer must be visibly
+    /// distinct from both `Pending` (a probe that hasn't run yet) and
+    /// `PrStateUnknown` (a probe that ran and failed).
     #[test]
-    fn detached_head_renders_nothing_even_with_unlanded_work() {
-        assert_eq!(landing_chip(true, false, None), None);
+    fn detached_head_with_unlanded_work_renders_a_terminal_stall_chip() {
+        let view = landing_chip(true, false, None).unwrap();
+        assert_eq!(
+            view,
+            LandingChipView::Chip {
+                text: "detached".to_string(),
+                tone: LandingChipTone::Warn,
+                tooltip: "Unlanded commits on a detached HEAD — there is no branch to push or \
+                          open a pull request from, so this work cannot land by any push/PR \
+                          path until it is given one."
+                    .to_string(),
+            }
+        );
+        assert_ne!(
+            view,
+            LandingChipView::Pending,
+            "a permanently unanswerable question is not the same as one not yet asked"
+        );
+        let unknown_pr_state = landing_chip(
+            true,
+            true,
+            Some(&entry(LandingStage::PrStateUnknown {
+                pushed: false,
+                why: "couldn't read the branch's remote-tracking ref".to_string(),
+            })),
+        )
+        .unwrap();
+        assert_ne!(
+            view, unknown_pr_state,
+            "a permanent no-branch answer must not read like a failed probe"
+        );
+    }
+
+    /// Even cached data from before the worktree went detached must not
+    /// override the terminal "detached" answer — the branch fact wins.
+    #[test]
+    fn detached_head_overrides_any_stale_cached_stage() {
+        let view = landing_chip(
+            true,
+            false,
+            Some(&entry(LandingStage::InReview {
+                number: 1,
+                url: "u".into(),
+            })),
+        )
+        .unwrap();
+        let LandingChipView::Chip { text, .. } = view else {
+            panic!("expected a chip");
+        };
+        assert_eq!(text, "detached");
     }
 
     /// The worker hasn't reached this (unlanded, branched) worktree yet.
