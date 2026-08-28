@@ -42,12 +42,12 @@ pub use backlog::{
     assignable_statuses, backlog_cli_path, body_round_trips, complete_backlog_task,
     create_backlog_task, create_task_allocating_id, edit_backlog_task, is_backlog_project,
     load_backlog_project, missing_standard_statuses, next_task_id, ordered_status_vocabulary,
-    parse_backlog_day, parse_created_task_id, replace_task_section, set_backlog_acceptance_checked,
+    parse_backlog_day, replace_task_section, set_backlog_acceptance_checked,
     set_backlog_dod_checked, set_backlog_label, set_task_checklist_item, set_task_label,
     set_task_list_field, set_task_milestone, set_task_priority, set_task_status, set_task_title,
-    swap_backlog_label, task_file_round_trips, write_new_task_file, BacklogChecklistItem,
-    BacklogProject, BacklogTask, BacklogTaskPatch, BacklogTaskSource, NewBacklogTask,
-    TaskChecklist, TaskListField, TaskSection, WriteOutcome, ACTIVE_BRANCH_DAYS,
+    swap_backlog_label, swap_task_label, task_file_round_trips, write_new_task_file,
+    BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskPatch, BacklogTaskSource,
+    NewBacklogTask, TaskChecklist, TaskListField, TaskSection, WriteOutcome, ACTIVE_BRANCH_DAYS,
     BACKLOG_PRIORITIES, BACKLOG_STATUSES, CANONICAL_STATUS_ORDER, STANDARD_STATUSES,
 };
 pub use backlog_relations::{

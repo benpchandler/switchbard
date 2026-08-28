@@ -3,8 +3,8 @@
 //!
 //! # What counts toward "the next id"
 //!
-//! [`next_task_id`] returns `1 + max` over every task id visible from this
-//! machine:
+//! [`next_task_id`] returns `1 + max` over every top-level task id visible
+//! from this machine:
 //!
 //! 1. **Every worktree of the repo** (via `crate::worktree::
 //!    enumerate_worktrees`), scanning the four backlog directories the loader
@@ -18,6 +18,12 @@
 //!    30-day window and the "active branches" idea match the `backlog` CLI
 //!    defaults this replaces (`check_active_branches` /
 //!    `active_branch_days: 30` in `backlog/config.yml`).
+//!
+//! A task created with a parent gets a **decimal child id** (`TASK-7` →
+//! `TASK-7.1`, `TASK-7.2`, …), the CLI's own subtask convention — that
+//! shape is what keeps children sorted adjacent to their parent in every
+//! flat id-ordered list (`parse::task_id_key` orders decimals numerically).
+//! Child ordinals are allocated over the same worktree + branch scan.
 //!
 //! **Deliberately out of scope: remote branches.** The CLI's
 //! `remote_operations` fetch-and-scan is not replicated. Task creation in
@@ -38,9 +44,9 @@
 //! [`super::write::write_new_task_file`]'s own `create_new` remains the
 //! in-directory backstop. A reservation is held only for the moments between
 //! allocation and file creation; one left behind by a crash goes stale after
-//! [`RESERVATION_STALE_SECS`] and is stolen (an unparseable reservation is
-//! treated as stale too — refusing to would brick that id forever, and the
-//! cost of a wrong steal is a reservation, not data).
+//! [`RESERVATION_STALE_SECS`] — judged by its **mtime**, which exists
+//! atomically with the claim itself (see [`try_reserve`] for the race that
+//! rule closed) — and is stolen.
 
 use super::types::NewBacklogTask;
 use super::write::write_new_task_file;
@@ -49,7 +55,6 @@ use crate::worktree::enumerate_worktrees;
 use anyhow::{bail, Context, Result};
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -75,16 +80,15 @@ const RESERVATION_STALE_SECS: u64 = 60;
 /// `super::parse::load_backlog_project` reads.
 const TASK_DIRS: [&str; 4] = ["tasks", "completed", "drafts", "archive/tasks"];
 
-/// The next unclaimed task id for this repo. See the module doc for exactly
-/// what "claimed" covers (and doesn't).
+/// The next unclaimed top-level task id for this repo. See the module doc
+/// for exactly what "claimed" covers (and doesn't).
 pub fn next_task_id(repo_root: &Path) -> Result<u32> {
-    let from_worktrees = max_id_across_worktrees(repo_root);
-    let from_branches = max_id_on_active_branches(repo_root, unix_now_secs())?;
-    Ok(from_worktrees.max(from_branches) + 1)
+    Ok(max_visible_id(repo_root, &filename_task_id)? + 1)
 }
 
-/// Allocate an id, claim it, and create the task file in
-/// `<repo_root>/backlog/tasks`. Returns the id and the created path.
+/// Allocate an id (a decimal child id when `task.parent` is set), claim it,
+/// and create the task file in `<repo_root>/backlog/tasks`. Returns the bare
+/// id (`"42"` / `"42.1"`) and the created path.
 ///
 /// On any conflict — the id already reserved by another process, or a file
 /// already carrying it — the candidate id is bumped and the claim retried,
@@ -92,29 +96,87 @@ pub fn next_task_id(repo_root: &Path) -> Result<u32> {
 pub fn create_task_allocating_id(
     repo_root: &Path,
     task: &NewBacklogTask,
-) -> Result<(u32, PathBuf)> {
+) -> Result<(String, PathBuf)> {
     let tasks_dir = repo_root.join("backlog/tasks");
     fs::create_dir_all(&tasks_dir).with_context(|| format!("creating {}", tasks_dir.display()))?;
     let reservations = reservation_dir(repo_root);
-    let mut id = next_task_id(repo_root)?;
+    let mut candidate = first_candidate(repo_root, task.parent.as_deref())?;
     for _attempt in 0..MAX_CREATE_ATTEMPTS {
-        let Some(_claim) = try_reserve(&reservations, id, unix_now_secs())? else {
-            id += 1;
+        let id = candidate.render();
+        let Some(_claim) = try_reserve(&reservations, &id)? else {
+            candidate.bump();
             continue;
         };
-        if dir_has_task_id(&tasks_dir, id)? {
-            id += 1;
+        if dir_has_task_id(&tasks_dir, &id)? {
+            candidate.bump();
             continue;
         }
-        let path = write_new_task_file(&tasks_dir, id, task)?;
+        let path = write_new_task_file(&tasks_dir, &id, task)?;
         return Ok((id, path));
     }
     bail!("could not claim a task id after {MAX_CREATE_ATTEMPTS} attempts")
 }
 
+/// A candidate id under construction: `7` renders `"7"`, `(Some(7), 2)`
+/// renders `"7.2"`. Bumping is monotonic within one create call, so a
+/// reservation another process released mid-call is never re-minted.
+struct IdCandidate {
+    parent: Option<u32>,
+    number: u32,
+}
+
+impl IdCandidate {
+    fn render(&self) -> String {
+        match self.parent {
+            Some(parent) => format!("{parent}.{}", self.number),
+            None => self.number.to_string(),
+        }
+    }
+
+    fn bump(&mut self) {
+        self.number += 1;
+    }
+}
+
+fn first_candidate(repo_root: &Path, parent: Option<&str>) -> Result<IdCandidate> {
+    let Some(parent) = parent else {
+        return Ok(IdCandidate {
+            parent: None,
+            number: next_task_id(repo_root)?,
+        });
+    };
+    let parent_number = parse_parent_number(parent)?;
+    let extract = move |name: &str| child_ordinal(name, parent_number);
+    Ok(IdCandidate {
+        parent: Some(parent_number),
+        number: max_visible_id(repo_root, &extract)? + 1,
+    })
+}
+
+/// `"TASK-7"` / `"task-7"` / `"7"` → `7`. Nested subtask parents
+/// (`"TASK-7.2"`) are rejected — the CLI's convention is one level of
+/// decimal, and nothing in this app creates deeper.
+fn parse_parent_number(parent: &str) -> Result<u32> {
+    let bare = parent.trim();
+    let bare = bare
+        .get(..5)
+        .filter(|p| p.eq_ignore_ascii_case("task-"))
+        .map_or(bare, |_| &bare[5..]);
+    bare.parse::<u32>()
+        .with_context(|| format!("cannot allocate a subtask id under parent `{parent}`"))
+}
+
 // ---- scanning ----
 
-fn max_id_across_worktrees(repo_root: &Path) -> u32 {
+/// Max over `extract` applied to every task filename visible from this
+/// machine: all worktrees' backlog dirs plus active local branches.
+fn max_visible_id(repo_root: &Path, extract: &dyn Fn(&str) -> Option<u32>) -> Result<u32> {
+    let from_worktrees = max_id_across_worktrees(repo_root, extract);
+    let from_branches = max_id_on_active_branches(repo_root, unix_now_secs(), extract)?;
+    Ok(from_worktrees.max(from_branches))
+}
+
+fn max_id_across_worktrees(repo_root: &Path, extract: &dyn Fn(&str) -> Option<u32>) -> u32 {
     let mut roots: BTreeSet<PathBuf> = BTreeSet::new();
     roots.insert(repo_root.to_path_buf());
     for worktree in enumerate_worktrees(repo_root).unwrap_or_default() {
@@ -122,12 +184,12 @@ fn max_id_across_worktrees(repo_root: &Path) -> u32 {
     }
     roots
         .iter()
-        .map(|root| max_id_in_project(root))
+        .map(|root| max_id_in_project(root, extract))
         .max()
         .unwrap_or(0)
 }
 
-fn max_id_in_project(root: &Path) -> u32 {
+fn max_id_in_project(root: &Path, extract: &dyn Fn(&str) -> Option<u32>) -> u32 {
     let mut max = 0;
     for dir in TASK_DIRS {
         let Ok(entries) = fs::read_dir(root.join("backlog").join(dir)) else {
@@ -135,7 +197,7 @@ fn max_id_in_project(root: &Path) -> u32 {
         };
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name();
-            if let Some(id) = filename_task_id(&name.to_string_lossy()) {
+            if let Some(id) = extract(&name.to_string_lossy()) {
                 max = max.max(id);
             }
         }
@@ -143,18 +205,40 @@ fn max_id_in_project(root: &Path) -> u32 {
     max
 }
 
-/// The integer task id a filename (or ls-tree basename) carries:
-/// `task-42 - Title.md` → 42, `task-150.10 - Sub.md` → 150 (subtask ids
-/// share their parent's integer namespace). Not a task filename → `None`.
-fn filename_task_id(name: &str) -> Option<u32> {
+/// The id portion of a task filename (or ls-tree basename): `task-42 -
+/// Title.md` → `"42"`, `task-150.10 - Sub.md` → `"150.10"`. Not a task
+/// filename → `None`.
+fn filename_id_part(name: &str) -> Option<&str> {
     let rest = name
         .strip_prefix("task-")
         .or_else(|| name.strip_prefix("TASK-"))?;
-    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    let part = rest.split_whitespace().next().unwrap_or(rest);
+    let part = part.strip_suffix(".md").unwrap_or(part);
+    (!part.is_empty()).then_some(part)
+}
+
+/// The integer (top-level) task id a filename carries: `task-42 - Title.md`
+/// → 42, `task-150.10 - Sub.md` → 150 (a child blocks its parent's integer,
+/// which necessarily already exists). Not a task filename → `None`.
+fn filename_task_id(name: &str) -> Option<u32> {
+    let part = filename_id_part(name)?;
+    let digits: String = part.chars().take_while(char::is_ascii_digit).collect();
     digits.parse().ok()
 }
 
-fn max_id_on_active_branches(repo_root: &Path, now: u64) -> Result<u32> {
+/// The child ordinal a filename carries *under this parent*:
+/// `task-7.2 - Sub.md` with parent 7 → 2. Anything else → `None`.
+fn child_ordinal(name: &str, parent: u32) -> Option<u32> {
+    let part = filename_id_part(name)?;
+    let rest = part.strip_prefix(&format!("{parent}."))?;
+    rest.parse().ok()
+}
+
+fn max_id_on_active_branches(
+    repo_root: &Path,
+    now: u64,
+    extract: &dyn Fn(&str) -> Option<u32>,
+) -> Result<u32> {
     let Some(root) = repo_root.to_str() else {
         return Ok(0);
     };
@@ -176,7 +260,7 @@ fn max_id_on_active_branches(repo_root: &Path, now: u64) -> Result<u32> {
     let text = String::from_utf8_lossy(&output.stdout);
     let mut max = 0;
     for branch in parse_active_branches(&text, now, ACTIVE_BRANCH_DAYS) {
-        max = max.max(max_id_on_branch(root, &branch)?);
+        max = max.max(max_id_on_branch(root, &branch, extract)?);
     }
     Ok(max)
 }
@@ -196,7 +280,11 @@ fn parse_active_branches(text: &str, now: u64, days: u64) -> Vec<String> {
         .collect()
 }
 
-fn max_id_on_branch(root: &str, branch: &str) -> Result<u32> {
+fn max_id_on_branch(
+    root: &str,
+    branch: &str,
+    extract: &dyn Fn(&str) -> Option<u32>,
+) -> Result<u32> {
     let mut args = vec!["-C", root, "ls-tree", "-r", "--name-only", branch, "--"];
     let dirs: Vec<String> = TASK_DIRS.iter().map(|d| format!("backlog/{d}")).collect();
     args.extend(dirs.iter().map(String::as_str));
@@ -211,17 +299,18 @@ fn max_id_on_branch(root: &str, branch: &str) -> Result<u32> {
     let text = String::from_utf8_lossy(&output.stdout);
     Ok(text
         .lines()
-        .filter_map(|path| filename_task_id(path.rsplit('/').next().unwrap_or(path)))
+        .filter_map(|path| extract(path.rsplit('/').next().unwrap_or(path)))
         .max()
         .unwrap_or(0))
 }
 
-fn dir_has_task_id(tasks_dir: &Path, id: u32) -> Result<bool> {
+fn dir_has_task_id(tasks_dir: &Path, id: &str) -> Result<bool> {
     let entries =
         fs::read_dir(tasks_dir).with_context(|| format!("reading {}", tasks_dir.display()))?;
-    Ok(entries
-        .filter_map(Result::ok)
-        .any(|entry| filename_task_id(&entry.file_name().to_string_lossy()) == Some(id)))
+    Ok(entries.filter_map(Result::ok).any(|entry| {
+        filename_id_part(&entry.file_name().to_string_lossy())
+            .is_some_and(|part| part.eq_ignore_ascii_case(id))
+    }))
 }
 
 // ---- reservations ----
@@ -269,9 +358,16 @@ impl Drop for IdReservation {
 }
 
 /// Try to claim `id`. `None` means another live process holds it. A stale
-/// or unreadable existing claim is stolen (see the module doc for why
-/// unreadable counts as stale here).
-fn try_reserve(dir: &Path, id: u32, now: u64) -> Result<Option<IdReservation>> {
+/// existing claim is stolen.
+///
+/// The claim's age is its file **mtime**, never its content: mtime exists
+/// atomically with `create_new`, whereas any content would be written a
+/// beat later — and a rival reading in that gap would misjudge a *live*
+/// claim as garbage and steal it. (That exact race shipped in the first
+/// version of this function and was caught by the concurrent-create test:
+/// two racers minted the same id.) The reservation file is deliberately
+/// empty.
+fn try_reserve(dir: &Path, id: &str) -> Result<Option<IdReservation>> {
     fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     let path = dir.join(format!("task-{id}.reserve"));
     for _attempt in 0..2 {
@@ -280,13 +376,11 @@ fn try_reserve(dir: &Path, id: u32, now: u64) -> Result<Option<IdReservation>> {
             .create_new(true)
             .open(&path)
         {
-            Ok(mut file) => {
-                file.write_all(now.to_string().as_bytes())
-                    .with_context(|| format!("writing {}", path.display()))?;
+            Ok(_file) => {
                 return Ok(Some(IdReservation { path }));
             }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                if !reservation_is_stale(&path, now) {
+                if !reservation_is_stale(&path) {
                     return Ok(None);
                 }
                 // Stale: remove and take the second (and last) attempt. If
@@ -302,19 +396,22 @@ fn try_reserve(dir: &Path, id: u32, now: u64) -> Result<Option<IdReservation>> {
     Ok(None)
 }
 
-fn reservation_is_stale(path: &Path, now: u64) -> bool {
-    let Ok(content) = fs::read_to_string(path) else {
-        // Vanished between the create_new failure and this read: the holder
-        // released it. Report stale so the caller's second create_new
-        // attempt settles who owns it now.
+/// Stale = mtime older than [`RESERVATION_STALE_SECS`]. A vanished file
+/// (holder released between the `create_new` failure and this probe) counts
+/// as stale so the caller's second attempt settles ownership; an unreadable
+/// mtime or a future one (clock skew) counts as *live* — never steal what
+/// can't be aged, since the worst case of refusing is one skipped id.
+fn reservation_is_stale(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
         return true;
     };
-    match content.trim().parse::<u64>() {
-        Ok(stamp) => now.saturating_sub(stamp) > RESERVATION_STALE_SECS,
-        // Garbage content: no way to age it; refusing to steal would brick
-        // the id forever, and the price of a wrong steal is only a claim.
-        Err(_) => true,
-    }
+    let Ok(modified) = metadata.modified() else {
+        return false;
+    };
+    SystemTime::now()
+        .duration_since(modified)
+        .map(|age| age.as_secs() > RESERVATION_STALE_SECS)
+        .unwrap_or(false)
 }
 
 fn unix_now_secs() -> u64 {
@@ -370,12 +467,17 @@ mod tests {
     }
 
     #[test]
-    fn filename_task_id_reads_plain_and_subtask_ids_and_rejects_noise() {
+    fn filename_ids_read_plain_and_subtask_forms_and_reject_noise() {
         assert_eq!(filename_task_id("task-42 - Title.md"), Some(42));
         assert_eq!(filename_task_id("task-150.10 - Sub.md"), Some(150));
         assert_eq!(filename_task_id("TASK-7 - Caps.md"), Some(7));
         assert_eq!(filename_task_id("notes.md"), None);
         assert_eq!(filename_task_id("task- - broken.md"), None);
+        assert_eq!(filename_id_part("task-150.10 - Sub.md"), Some("150.10"));
+        assert_eq!(child_ordinal("task-7.2 - Sub.md", 7), Some(2));
+        assert_eq!(child_ordinal("task-7.2 - Sub.md", 71), None);
+        assert_eq!(child_ordinal("task-71.2 - Sub.md", 7), None);
+        assert_eq!(child_ordinal("task-7 - Parent.md", 7), None);
     }
 
     #[test]
@@ -414,6 +516,34 @@ mod tests {
     fn next_id_for_an_empty_project_is_one() {
         let dir = tempfile::tempdir().expect("tempdir");
         assert_eq!(next_task_id(dir.path()).expect("allocates"), 1);
+    }
+
+    #[test]
+    fn a_subtask_gets_the_next_decimal_child_id_under_its_parent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        plain_project(
+            dir.path(),
+            &[
+                ("tasks", "task-7 - Parent.md"),
+                ("tasks", "task-7.1 - First child.md"),
+                ("completed", "task-7.2 - Done child.md"),
+            ],
+        );
+        let mut task = new_task("Third child");
+        task.parent = Some("TASK-7".to_string());
+
+        let (id, path) = create_task_allocating_id(dir.path(), &task).expect("creates");
+
+        assert_eq!(id, "7.3", "children number past every dir, not just tasks/");
+        assert!(path.ends_with("task-7.3 - Third-child.md"), "{path:?}");
+
+        let err = create_task_allocating_id(dir.path(), &{
+            let mut t = new_task("Grandchild");
+            t.parent = Some("TASK-7.3".to_string());
+            t
+        })
+        .expect_err("nested subtask parents are rejected");
+        assert!(err.to_string().contains("TASK-7.3"), "unexpected: {err}");
     }
 
     #[test]
@@ -470,20 +600,27 @@ mod tests {
     #[test]
     fn a_reservation_excludes_a_second_claimant_until_stale() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let now = 1_000_000;
 
-        let claim = try_reserve(dir.path(), 42, now).expect("io ok");
+        let claim = try_reserve(dir.path(), "42").expect("io ok");
         assert!(claim.is_some(), "first claim wins");
-        let rival = try_reserve(dir.path(), 42, now).expect("io ok");
+        let rival = try_reserve(dir.path(), "42").expect("io ok");
         assert!(rival.is_none(), "live claim excludes a rival");
 
         drop(claim);
-        let after_release = try_reserve(dir.path(), 42, now).expect("io ok");
+        let after_release = try_reserve(dir.path(), "42").expect("io ok");
         assert!(after_release.is_some(), "released claim is claimable again");
 
         drop(after_release);
-        fs::write(dir.path().join("task-42.reserve"), "999").expect("stale fixture");
-        let stolen = try_reserve(dir.path(), 42, now).expect("io ok");
+        // Age a claim past the staleness window by backdating its mtime —
+        // staleness is judged from mtime alone (see try_reserve's doc for
+        // why content can't be trusted).
+        let stale_path = dir.path().join("task-42.reserve");
+        let file = fs::File::create(&stale_path).expect("stale fixture");
+        let backdated =
+            SystemTime::now() - std::time::Duration::from_secs(RESERVATION_STALE_SECS + 10);
+        file.set_times(fs::FileTimes::new().set_modified(backdated))
+            .expect("backdate mtime");
+        let stolen = try_reserve(dir.path(), "42").expect("io ok");
         assert!(stolen.is_some(), "a stale claim is stolen");
     }
 
@@ -493,16 +630,12 @@ mod tests {
         plain_project(dir.path(), &[("tasks", "task-4 - Existing.md")]);
         let reservations = reservation_dir(dir.path());
         fs::create_dir_all(&reservations).expect("fixture dirs");
-        fs::write(
-            reservations.join("task-5.reserve"),
-            unix_now_secs().to_string(),
-        )
-        .expect("rival claim");
+        fs::write(reservations.join("task-5.reserve"), "").expect("rival claim");
 
         let (id, path) =
             create_task_allocating_id(dir.path(), &new_task("Skips over")).expect("creates");
 
-        assert_eq!(id, 6, "id 5 is held by the rival, so 6 is minted");
+        assert_eq!(id, "6", "id 5 is held by the rival, so 6 is minted");
         assert!(path.exists());
     }
 
@@ -521,11 +654,11 @@ mod tests {
                 })
             })
             .collect();
-        let mut ids: Vec<u32> = handles
+        let mut ids: Vec<String> = handles
             .into_iter()
             .map(|h| h.join().expect("thread joins").0)
             .collect();
-        ids.sort_unstable();
+        ids.sort();
 
         let mut deduped = ids.clone();
         deduped.dedup();
@@ -559,9 +692,9 @@ mod tests {
             ],
         );
 
-        let claim = try_reserve(&reservation_dir(&root), 9, unix_now_secs()).expect("io ok");
+        let claim = try_reserve(&reservation_dir(&root), "9").expect("io ok");
         assert!(claim.is_some());
-        let rival = try_reserve(&reservation_dir(&sibling), 9, unix_now_secs()).expect("io ok");
+        let rival = try_reserve(&reservation_dir(&sibling), "9").expect("io ok");
         assert!(
             rival.is_none(),
             "a claim from the main worktree must be visible from the sibling"

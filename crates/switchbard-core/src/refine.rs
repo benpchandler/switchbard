@@ -6,7 +6,8 @@
 //!
 //! Same shape as its sibling `crate::dispatch`: build a prompt from the
 //! task's own content, run a headless `claude -p`, and write every result
-//! back through the `backlog` CLI. The repo stays the system of record.
+//! back through `crate::backlog`'s native write layer. The repo stays the
+//! system of record.
 //!
 //! ## Three deliberate differences from `dispatch`
 //!
@@ -53,10 +54,11 @@
 //!   unwind.
 //!
 //! "Verbatim" has two qualifications, both about whitespace and neither
-//! about content. The `backlog` CLI collapses any run of blank lines down to
-//! one on *every* write, including a plain detail-rail Save, so
-//! `collapse_blank_runs` puts both sides into that normal form before
-//! comparing or writing — which makes the write a fixed point and re-refining
+//! about content. Task-file sections have a normal form — at most one blank
+//! line in a run (inherited from the `backlog` CLI, which collapsed blank
+//! runs on every write; the native write layer preserves what it's given) —
+//! so `collapse_blank_runs` puts both sides into that form before comparing
+//! or writing, which makes the write a fixed point and re-refining
 //! the same text a no-op rather than a near-duplicate append. That
 //! normalization also *empties* whitespace-only lines, which the CLI itself
 //! would have preserved. So the precise claim is: **every non-blank line of
@@ -466,11 +468,13 @@ fn merge_prose(original: &str, addition: &str) -> Result<Option<String>> {
     Ok(Some(merged))
 }
 
-/// Put text into the `backlog` CLI's own normal form: at most one blank line
-/// in a row, and no whitespace-only lines. The CLI applies this to every
-/// write regardless, so normalizing first is what makes a refine write a
-/// fixed point — write it twice, get the same file, and the idempotence check
-/// in `merge_prose` can actually find what a previous run left behind.
+/// Put text into the task-file normal form: at most one blank line in a
+/// row, and no whitespace-only lines. (Inherited from the `backlog` CLI,
+/// which applied this to every write; the native write layer stores what
+/// it's given, so refine normalizes *before* writing.) Normalizing first is
+/// what makes a refine write a fixed point — write it twice, get the same
+/// file, and the idempotence check in `merge_prose` can actually find what
+/// a previous run left behind.
 fn collapse_blank_runs(text: &str) -> String {
     let mut out: Vec<&str> = Vec::new();
     let mut blank_run = 0usize;

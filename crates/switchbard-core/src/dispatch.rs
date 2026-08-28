@@ -2,16 +2,18 @@
 //! git worktree → a headless `claude -p` run against that worktree → on
 //! success, a pull request → the PR link appended back onto the task's
 //! notes. Every mutation to a task (claiming it, recording the outcome)
-//! goes through the `backlog` CLI — the repo stays the system of record,
-//! this module is just the engine that drives it (unified task hub, slice 2;
-//! see `docs/product-trajectory.md`).
+//! goes through `crate::backlog`'s native write layer — the repo stays the
+//! system of record, this module is just the engine that drives it (unified
+//! task hub, slice 2, as amended by the *Backlog format fork* entry; see
+//! `docs/product-trajectory.md`).
 //!
 //! ## The queue
 //!
 //! There is no separate queue store. The queue *is* the set of tasks in a
-//! repo's Backlog labeled `dispatch` — flaggable from any machine that can
-//! run the `backlog` CLI, including a plain terminal with no Switchbard
-//! running. [`list_dispatch_queue`] reads that straight off an already-loaded
+//! repo's Backlog labeled `dispatch` — flaggable from a plain terminal with
+//! no Switchbard running (via anything that can set a task label; the
+//! format fork's `switchbard task` CLI is the planned first-class way).
+//! [`list_dispatch_queue`] reads that straight off an already-loaded
 //! [`BacklogProject`].
 //!
 //! The double-dispatch guard is a label swap, not a lock: [`dispatch_one`]'s
@@ -315,7 +317,7 @@ pub fn list_dispatch_queue(project: &BacklogProject) -> Vec<BacklogTask> {
 }
 
 /// Cap how many queued tasks one drain cycle picks up. Pure so the cap
-/// invariant is unit-testable without touching disk or the backlog CLI.
+/// invariant is unit-testable without touching disk.
 pub fn select_batch(queue: &[BacklogTask], max_concurrent: usize) -> Vec<BacklogTask> {
     let batch: Vec<BacklogTask> = queue.iter().take(max_concurrent).cloned().collect();
     debug_assert!(
@@ -606,7 +608,7 @@ fn push_checklist_section(
 ///
 /// Public because it is the one step of the pipeline that is meaningfully
 /// testable against a real Backlog project without spawning an agent — see
-/// `tests/backlog_cli_mutations.rs`.
+/// `tests/backlog_mutations.rs`.
 pub fn claim_task_for_dispatch(repo_root: &Path, task_id: &str) -> Result<()> {
     swap_backlog_label(repo_root, task_id, DISPATCH_LABEL, DISPATCHING_LABEL)
         .with_context(|| format!("failed to claim {task_id} for dispatch"))?;

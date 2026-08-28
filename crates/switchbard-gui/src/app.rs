@@ -118,12 +118,13 @@ pub struct HiveApp {
     /// before its own save even began.
     pub board_move_started: Arc<Mutex<HashMap<BacklogTaskKey, u64>>>,
     /// task-42, post-review revision (N1/N2, second pass): one `Mutex` per
-    /// task, held for the duration of every `backlog task edit` subprocess
-    /// this app spawns for that task — by **all three** savers
+    /// task, held for the duration of every `edit_backlog_task` call this
+    /// app makes for that task — by **all three** savers
     /// (`spawn_backlog_save`, `spawn_board_move_save`, and
     /// `spawn_backlog_bulk_save` per task inside its own loop), not just
-    /// Board drops. `edit_backlog_task` shells out and blocks until the
-    /// process exits, and there is no cheap way to cancel an in-flight one,
+    /// Board drops. `edit_backlog_task` blocks until its file writes land
+    /// (one write per patch field since the format fork's native swap), and
+    /// there is no cheap way to cancel an in-flight one,
     /// so two racing writers touching the *same* task — a Board drag and a
     /// detail-rail field edit, say, or a bulk edit landing mid-drag — could
     /// otherwise complete in either order and leave on-disk state that
@@ -1229,16 +1230,16 @@ impl HiveApp {
         let ctx = ctx.clone();
         thread::spawn(move || {
             let task_lock = task_write_lock(&locks, &key);
-            // Holds this task's lock for the whole subprocess call, so a
-            // second drop on the same task (already queued behind this one)
-            // can't run its own `edit_backlog_task` concurrently — see
+            // Holds this task's lock for the whole save, so a second drop
+            // on the same task (already queued behind this one) can't run
+            // its own `edit_backlog_task` concurrently — see
             // `task_write_locks`'s doc on `HiveApp` for why that matters
             // (N1/N2: every writer takes this same lock, not just Board
             // drops against each other).
             let _guard = lock_task(&task_lock);
             // N9: this generation's save has now actually started (lock
-            // acquired, about to run the subprocess) — see
-            // `board_move_started`'s doc on `HiveApp`.
+            // acquired, about to write) — see `board_move_started`'s doc on
+            // `HiveApp`.
             started.lock().unwrap().insert(key.clone(), generation);
             let success = save_one_task(&project_root, &task_id, &patch, &projects, &status, &kick);
             // N8: record the outcome *before* releasing the lock — closes
@@ -1757,17 +1758,12 @@ impl HiveApp {
         });
     }
 
-    /// TASK-28 (owner-found bug): `create_backlog_task`'s raw stdout is the
-    /// *entire* newly-created task's rendered form — file path, a `====`
-    /// underline, every section header, even when empty — not a one-line
-    /// confirmation like `task archive`'s. That used to land verbatim in
-    /// `backlog_status`, stretching the top bar into a many-line void.
-    /// Builds a compact "Created {repo}:{id}" instead, the same way every
-    /// other mutation status in this file already discards raw CLI stdout
-    /// (see `spawn_backlog_save`'s `Ok(_) => ...`) — this was the one
-    /// exception. `ui::components::action_status_label` is the defense in
-    /// depth for whatever future case still slips through: no status
-    /// message renders unbounded, regardless of what built it.
+    /// Builds a compact "Created {repo}:{id}" status. Since the format
+    /// fork's native swap, `create_backlog_task` returns exactly the new
+    /// task's id (`"TASK-42"`) — the TASK-28 stdout-scraping era, when the
+    /// CLI dumped the whole rendered task into `backlog_status`, is over.
+    /// `ui::components::action_status_label` remains the defense in depth:
+    /// no status message renders unbounded, regardless of what built it.
     pub fn spawn_backlog_create(
         &self,
         project_root: PathBuf,
@@ -1790,10 +1786,7 @@ impl HiveApp {
                         .find(|repo| repo.path == project_root)
                         .map(|repo| repo.name.clone())
                         .unwrap_or_else(|| project_root.display().to_string());
-                    let msg = match switchbard_core::parse_created_task_id(&output) {
-                        Some(task_id) => format!("Created {repo_label}:{task_id}"),
-                        None => format!("created task in {repo_label}"),
-                    };
+                    let msg = format!("Created {repo_label}:{output}");
                     status.set(with_stale_warning(reload, msg));
                     kick.notify();
                 }

@@ -1,13 +1,49 @@
-//! Wrappers around the `backlog` CLI that mutate task state on disk. Every
-//! function here shells out via `run_backlog`; none of them parse task
-//! markdown themselves (see `super::parse` for that side).
+//! Task mutations by (project root, task id) — the caller-facing facade over
+//! the native write layer.
+//!
+//! Until the format fork's TASK-65 swap, every function here shelled out to
+//! the `backlog` CLI; now each resolves the task id to its file under
+//! `backlog/tasks` and applies [`super::write`]'s surgical edits directly.
+//! The signatures are unchanged, so the GUI's `spawn_backlog_*` methods,
+//! `crate::dispatch`, and `crate::refine` did not move.
+//!
+//! # Behavior kept from the CLI (deliberately)
+//!
+//! - **Status writes are validated against the project's own
+//!   `backlog/config.yml`**, with the same `Invalid status: … Valid statuses
+//!   are: …` message shape. The status-vocabulary offer flow
+//!   (`super::status_config`, `missing_standard_statuses`) is built around
+//!   that refusal; accepting anything here would dissolve it by accident.
+//!   TASK-68 owns moving this validation deeper into the write layer.
+//! - **`archive` refuses a Done task** ("Done tasks should be completed") and
+//!   **`complete` requires one** — the two are status-chosen destinations,
+//!   not interchangeable (see each function's doc).
+//! - **Label add/remove/swap read the file at write time**, not the caller's
+//!   snapshot.
+//!
+//! # Behavior deliberately changed
+//!
+//! - **`swap_backlog_label` is strict**: it fails when the task doesn't
+//!   carry the source label, where the CLI added the target label anyway. A
+//!   dispatch claim is a race for a token; see
+//!   [`super::write::swap_task_label`].
+//! - **`create_backlog_task` returns the new task's id** (`"TASK-42"`)
+//!   instead of a rendered blob to scrape (the late `parse_created_task_id`,
+//!   TASK-28's scar).
 
-use super::parse::backlog_cli_path;
-use super::types::{BacklogTaskPatch, NewBacklogTask};
-use anyhow::{anyhow, bail, Context, Result};
-use std::ffi::{OsStr, OsString};
-use std::path::Path;
-use std::process::Command;
+use super::allocate::create_task_allocating_id;
+use super::parse::{parse_config_statuses, parse_task_file};
+use super::types::{BacklogTaskPatch, BacklogTaskSource, NewBacklogTask};
+use super::write::{
+    append_task_acceptance_criteria, append_task_notes, replace_task_section,
+    set_task_checklist_item, set_task_label, set_task_list_field, set_task_milestone,
+    set_task_priority, set_task_status, set_task_title, swap_task_label, TaskChecklist,
+    TaskListField, TaskSection, WriteOutcome,
+};
+use anyhow::{bail, Context, Result};
+use std::ffi::OsStr;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 pub fn edit_backlog_task(
     project_root: &Path,
@@ -17,68 +53,59 @@ pub fn edit_backlog_task(
     if patch.is_empty() {
         return Ok("no changes".to_string());
     }
-    let mut args: Vec<OsString> = vec![
-        "task".into(),
-        "edit".into(),
-        task_id.into(),
-        "--plain".into(),
-    ];
+    if let Some(status) = &patch.status {
+        validate_status(project_root, status)?;
+    }
+    let path = resolve_task_file(project_root, task_id)?;
+    let changed = apply_patch(&path, patch)?;
+    if changed {
+        Ok(format!("Edited {task_id}"))
+    } else {
+        Ok("no changes".to_string())
+    }
+}
+
+/// One write-layer call per populated patch field, in the field order
+/// [`BacklogTaskPatch`] declares. Each call is itself atomic; a failure
+/// partway leaves the earlier fields applied — the same partial-application
+/// surface a failed CLI invocation had, minus the fields it batched.
+fn apply_patch(path: &Path, patch: &BacklogTaskPatch) -> Result<bool> {
+    let mut changed = false;
     if let Some(title) = &patch.title {
-        args.push("-t".into());
-        args.push(title.into());
+        changed |= set_task_title(path, title)?.changed();
     }
     if let Some(description) = &patch.description {
-        args.push("-d".into());
-        args.push(description.into());
+        changed |= replace_task_section(path, TaskSection::Description, description)?.changed();
     }
     if let Some(status) = &patch.status {
-        args.push("-s".into());
-        args.push(status.into());
+        changed |= set_task_status(path, status)?.changed();
     }
     if let Some(priority) = &patch.priority {
-        args.push("--priority".into());
-        args.push(priority.into());
+        changed |= set_task_priority(path, priority)?.changed();
     }
-    if let Some(labels) = &patch.labels {
-        args.push("-l".into());
-        args.push(labels.join(",").into());
-    }
-    if let Some(assignees) = &patch.assignees {
-        args.push("-a".into());
-        args.push(assignees.join(",").into());
-    }
-    if let Some(dependencies) = &patch.dependencies {
-        args.push("--depends-on".into());
-        args.push(dependencies.join(",").into());
-    }
-    if let Some(references) = &patch.references {
-        for reference in references {
-            args.push("--ref".into());
-            args.push(reference.into());
+    for (field, values) in [
+        (TaskListField::Labels, &patch.labels),
+        (TaskListField::Assignee, &patch.assignees),
+        (TaskListField::Dependencies, &patch.dependencies),
+        (TaskListField::References, &patch.references),
+    ] {
+        if let Some(values) = values {
+            changed |= set_task_list_field(path, field, values)?.changed();
         }
     }
     if let Some(plan) = &patch.implementation_plan {
-        args.push("--plan".into());
-        args.push(plan.into());
+        changed |= replace_task_section(path, TaskSection::ImplementationPlan, plan)?.changed();
     }
-    // `--ac` is the CLI's *additive* criteria flag (verified against
-    // `backlog task edit --help`: "add acceptance criteria"), as opposed to
-    // `--acceptance-criteria`, which replaces the list. Appending is the only
-    // criteria write this patch offers on purpose — see the field's doc.
-    for criterion in &patch.append_acceptance_criteria {
-        if criterion.trim().is_empty() {
-            continue;
-        }
-        args.push("--ac".into());
-        args.push(criterion.into());
+    if !patch.append_acceptance_criteria.is_empty() {
+        changed |=
+            append_task_acceptance_criteria(path, &patch.append_acceptance_criteria)?.changed();
     }
     if let Some(milestone) = &patch.milestone {
-        args.push("-m".into());
-        args.push(milestone.into());
+        changed |= set_task_milestone(path, Some(milestone))?.changed();
     } else if patch.clear_milestone {
-        args.push("--clear-milestone".into());
+        changed |= set_task_milestone(path, None)?.changed();
     }
-    run_backlog(project_root, args)
+    Ok(changed)
 }
 
 pub fn set_backlog_dod_checked(
@@ -87,54 +114,9 @@ pub fn set_backlog_dod_checked(
     index: usize,
     checked: bool,
 ) -> Result<String> {
-    let flag = if checked {
-        "--check-dod"
-    } else {
-        "--uncheck-dod"
-    };
-    run_backlog(
-        project_root,
-        [
-            OsString::from("task"),
-            OsString::from("edit"),
-            OsString::from(task_id),
-            OsString::from("--plain"),
-            OsString::from(flag),
-            OsString::from(index.to_string()),
-        ],
-    )
-}
-
-pub fn archive_backlog_task(project_root: &Path, task_id: &str) -> Result<String> {
-    run_backlog(
-        project_root,
-        [
-            OsString::from("task"),
-            OsString::from("archive"),
-            OsString::from(task_id),
-        ],
-    )
-}
-
-/// Backlog.md's terminal disposition for a *Done* task (verified against a
-/// real fixture repo: `backlog task complete --help` and the CLI's own
-/// refusal of `task archive` on a Done task — "Done tasks should be
-/// completed, not archived. Use: backlog task complete"). Moves the task
-/// into `backlog/completed/`, reparsed as `BacklogTaskSource::Completed`,
-/// not `Archived`. `archive_backlog_task` (above) is for a non-Done task's
-/// abandonment and stays unchanged; the two are mutually exclusive
-/// destinations for a task, chosen by status, not interchangeable options.
-/// No `--plain` flag — same as `archive_backlog_task`, confirmed via
-/// `backlog task complete --help`, which lists none.
-pub fn complete_backlog_task(project_root: &Path, task_id: &str) -> Result<String> {
-    run_backlog(
-        project_root,
-        [
-            OsString::from("task"),
-            OsString::from("complete"),
-            OsString::from(task_id),
-        ],
-    )
+    let path = resolve_task_file(project_root, task_id)?;
+    let outcome = set_task_checklist_item(&path, TaskChecklist::DefinitionOfDone, index, checked)?;
+    Ok(outcome_message(task_id, outcome))
 }
 
 pub fn set_backlog_acceptance_checked(
@@ -143,50 +125,54 @@ pub fn set_backlog_acceptance_checked(
     index: usize,
     checked: bool,
 ) -> Result<String> {
-    let flag = if checked {
-        "--check-ac"
-    } else {
-        "--uncheck-ac"
-    };
-    run_backlog(
-        project_root,
-        [
-            OsString::from("task"),
-            OsString::from("edit"),
-            OsString::from(task_id),
-            OsString::from("--plain"),
-            OsString::from(flag),
-            OsString::from(index.to_string()),
-        ],
-    )
+    let path = resolve_task_file(project_root, task_id)?;
+    let outcome =
+        set_task_checklist_item(&path, TaskChecklist::AcceptanceCriteria, index, checked)?;
+    Ok(outcome_message(task_id, outcome))
 }
 
-/// Atomically swap one label for another via the CLI's own `--remove-label`/
-/// `--add-label` flags (a single `task edit` invocation), rather than
-/// round-tripping the full label list through `-l` — that would race with any
-/// other label a human or another process added between our read and write.
-/// This is the in-flight guard the dispatch queue depends on: a task moves
-/// `dispatch` → `dispatching` before work starts, so a queue reload never
-/// sees it as eligible twice.
+/// Move a non-Done task into `backlog/archive/tasks/` — abandonment, not
+/// completion. Mirrors the CLI's refusal: a Done task's terminal disposition
+/// is [`complete_backlog_task`] and `backlog/completed/`; the two are
+/// status-chosen destinations, never interchangeable options.
+pub fn archive_backlog_task(project_root: &Path, task_id: &str) -> Result<String> {
+    let path = resolve_task_file(project_root, task_id)?;
+    let task = parse_task_file(&path, BacklogTaskSource::Active)?;
+    if task.status.eq_ignore_ascii_case("done") {
+        bail!("Done tasks should be completed, not archived");
+    }
+    move_task_file(&path, &project_root.join("backlog/archive/tasks"))?;
+    Ok(format!("Archived task {}", task.id))
+}
+
+/// Move a Done task into `backlog/completed/` (reparsed as
+/// `BacklogTaskSource::Completed`). Refuses anything not Done, the exact
+/// complement of [`archive_backlog_task`]'s refusal.
+pub fn complete_backlog_task(project_root: &Path, task_id: &str) -> Result<String> {
+    let path = resolve_task_file(project_root, task_id)?;
+    let task = parse_task_file(&path, BacklogTaskSource::Active)?;
+    if !task.status.eq_ignore_ascii_case("done") {
+        bail!("only a Done task can be completed; archive it instead");
+    }
+    move_task_file(&path, &project_root.join("backlog/completed"))?;
+    Ok(format!("Completed task {}", task.id))
+}
+
+/// Atomically swap one label for another in a single write. Strict claim
+/// semantics — fails when the task doesn't carry `from`; see the module doc
+/// and [`super::write::swap_task_label`] for why this is deliberately
+/// stronger than the CLI swap it replaces. This is the in-flight guard the
+/// dispatch queue depends on: a task moves `dispatch` → `dispatching` before
+/// work starts, so a queue reload never sees it as eligible twice.
 pub fn swap_backlog_label(
     project_root: &Path,
     task_id: &str,
     from: &str,
     to: &str,
 ) -> Result<String> {
-    run_backlog(
-        project_root,
-        [
-            OsString::from("task"),
-            OsString::from("edit"),
-            OsString::from(task_id),
-            OsString::from("--plain"),
-            OsString::from("--remove-label"),
-            OsString::from(from),
-            OsString::from("--add-label"),
-            OsString::from(to),
-        ],
-    )
+    let path = resolve_task_file(project_root, task_id)?;
+    let outcome = swap_task_label(&path, from, to)?;
+    Ok(outcome_message(task_id, outcome))
 }
 
 /// Add or remove one label without touching a task's other labels — the
@@ -200,113 +186,210 @@ pub fn set_backlog_label(
     label: &str,
     enabled: bool,
 ) -> Result<String> {
-    let flag = if enabled {
-        "--add-label"
-    } else {
-        "--remove-label"
-    };
-    run_backlog(
-        project_root,
-        [
-            OsString::from("task"),
-            OsString::from("edit"),
-            OsString::from(task_id),
-            OsString::from("--plain"),
-            OsString::from(flag),
-            OsString::from(label),
-        ],
-    )
+    let path = resolve_task_file(project_root, task_id)?;
+    let outcome = set_task_label(&path, label, enabled)?;
+    Ok(outcome_message(task_id, outcome))
 }
 
 pub fn append_backlog_notes(project_root: &Path, task_id: &str, note: &str) -> Result<String> {
-    if note.trim().is_empty() {
-        bail!("note is empty");
-    }
-    run_backlog(
-        project_root,
-        [
-            OsString::from("task"),
-            OsString::from("edit"),
-            OsString::from(task_id),
-            OsString::from("--plain"),
-            OsString::from("--append-notes"),
-            OsString::from(note),
-        ],
-    )
+    let path = resolve_task_file(project_root, task_id)?;
+    let outcome = append_task_notes(&path, note)?;
+    Ok(outcome_message(task_id, outcome))
 }
 
+/// Create a task in `backlog/tasks`, allocating its id natively (see
+/// `super::allocate`). Returns the new id — `"TASK-42"` — as the output
+/// string; callers build their own status messages from it.
 pub fn create_backlog_task(project_root: &Path, task: &NewBacklogTask) -> Result<String> {
     if task.title.trim().is_empty() {
         bail!("title is required");
     }
-    let mut args: Vec<OsString> = vec![
-        "task".into(),
-        "create".into(),
-        task.title.clone().into(),
-        "--plain".into(),
-    ];
-    if !task.description.trim().is_empty() {
-        args.push("-d".into());
-        args.push(task.description.clone().into());
+    if let Some(status) = Some(task.status.as_str()).filter(|s| !s.trim().is_empty()) {
+        validate_status(project_root, status)?;
     }
-    if !task.status.trim().is_empty() {
-        args.push("-s".into());
-        args.push(task.status.clone().into());
-    }
-    if !task.priority.trim().is_empty() {
-        args.push("--priority".into());
-        args.push(task.priority.clone().into());
-    }
-    for criterion in &task.acceptance_criteria {
-        if criterion.trim().is_empty() {
-            continue;
-        }
-        args.push("--ac".into());
-        args.push(criterion.clone().into());
-    }
-    if let Some(parent) = &task.parent {
-        args.push("-p".into());
-        args.push(parent.clone().into());
-    }
-    if !task.labels.is_empty() {
-        args.push("-l".into());
-        args.push(task.labels.join(",").into());
-    }
-    if !task.assignees.is_empty() {
-        args.push("-a".into());
-        args.push(task.assignees.join(",").into());
-    }
-    if let Some(milestone) = &task.milestone {
-        args.push("-m".into());
-        args.push(milestone.clone().into());
-    }
-    if !task.dependencies.is_empty() {
-        args.push("--depends-on".into());
-        args.push(task.dependencies.join(",").into());
-    }
-    run_backlog(project_root, args)
+    let (id, _path) = create_task_allocating_id(project_root, task)?;
+    Ok(format!("TASK-{id}"))
 }
 
-fn run_backlog<I, S>(project_root: &Path, args: I) -> Result<String>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let cli = backlog_cli_path().ok_or_else(|| {
-        anyhow!(
-            "Backlog CLI not found. Install backlog or make it visible on PATH before editing tasks."
-        )
-    })?;
-    let output = Command::new(&cli)
-        .current_dir(project_root)
-        .args(args)
-        .output()
-        .with_context(|| format!("failed to run {}", cli.display()))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let msg = if stderr.is_empty() { stdout } else { stderr };
-        bail!("backlog failed: {msg}");
+// ---- shared plumbing ----
+
+/// The same two message shapes `edit_backlog_task` returns, so every
+/// mutation reports honestly whether it changed anything.
+fn outcome_message(task_id: &str, outcome: WriteOutcome) -> String {
+    if outcome.changed() {
+        format!("Edited {task_id}")
+    } else {
+        "no changes".to_string()
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// The file in `backlog/tasks` carrying `task_id`. Matches on the id portion
+/// of the filename (`task-{id} - Title.md`), case-insensitively, accepting
+/// the id with or without its `TASK-` prefix. Zero matches and multiple
+/// matches are both errors — a duplicated id is a fact to surface, never to
+/// guess through.
+fn resolve_task_file(project_root: &Path, task_id: &str) -> Result<PathBuf> {
+    let key = normalized_id(task_id);
+    if key.is_empty() {
+        bail!("task id is empty");
+    }
+    let tasks_dir = project_root.join("backlog/tasks");
+    let entries =
+        fs::read_dir(&tasks_dir).with_context(|| format!("reading {}", tasks_dir.display()))?;
+    let mut matches: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(OsStr::to_str) == Some("md"))
+        .filter(|path| filename_matches_id(path, key))
+        .collect();
+    matches.sort();
+    match matches.len() {
+        0 => bail!("no task {task_id} in {}", tasks_dir.display()),
+        1 => Ok(matches.remove(0)),
+        n => bail!(
+            "{n} files in {} carry task id {task_id} — resolve the duplicate before editing",
+            tasks_dir.display()
+        ),
+    }
+}
+
+fn normalized_id(task_id: &str) -> &str {
+    let trimmed = task_id.trim();
+    let lower = trimmed.get(..5).unwrap_or("");
+    if lower.eq_ignore_ascii_case("task-") {
+        &trimmed[5..]
+    } else {
+        trimmed
+    }
+}
+
+fn filename_matches_id(path: &Path, key: &str) -> bool {
+    let Some(stem) = path.file_stem().and_then(OsStr::to_str) else {
+        return false;
+    };
+    let Some(rest) = stem
+        .get(..5)
+        .filter(|p| p.eq_ignore_ascii_case("task-"))
+        .map(|_| &stem[5..])
+    else {
+        return false;
+    };
+    let id_part = rest.split_whitespace().next().unwrap_or(rest);
+    id_part.eq_ignore_ascii_case(key)
+}
+
+/// Same `Invalid status:` message shape the `backlog` CLI produced, so the
+/// GUI surfaces and the dispatch pipeline's best-effort status writes see
+/// the failure class they were built around. A project declaring no
+/// statuses (missing or minimal `config.yml`) constrains nothing.
+fn validate_status(project_root: &Path, status: &str) -> Result<()> {
+    let declared = parse_config_statuses(project_root);
+    if declared.is_empty() || declared.iter().any(|s| s.eq_ignore_ascii_case(status)) {
+        return Ok(());
+    }
+    bail!(
+        "Invalid status: {status}. Valid statuses are: {}",
+        declared.join(", ")
+    )
+}
+
+fn move_task_file(from: &Path, dest_dir: &Path) -> Result<()> {
+    fs::create_dir_all(dest_dir).with_context(|| format!("creating {}", dest_dir.display()))?;
+    let name = from.file_name().context("task path has no filename")?;
+    let dest = dest_dir.join(name);
+    if dest.exists() {
+        bail!("{} already exists", dest.display());
+    }
+    fs::rename(from, &dest)
+        .with_context(|| format!("moving {} to {}", from.display(), dest.display()))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn project_with_task(filename: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let tasks = dir.path().join("backlog/tasks");
+        fs::create_dir_all(&tasks).expect("fixture dirs");
+        fs::write(
+            tasks.join(filename),
+            "---\nid: TASK-7\ntitle: Fixture\nstatus: To Do\npriority: low\n---\n",
+        )
+        .expect("fixture file");
+        dir
+    }
+
+    #[test]
+    fn resolves_ids_with_and_without_prefix_case_insensitively() {
+        let dir = project_with_task("task-7 - Fixture.md");
+        for id in ["TASK-7", "task-7", "7", " TASK-7 "] {
+            let path = resolve_task_file(dir.path(), id)
+                .unwrap_or_else(|e| panic!("{id} should resolve: {e}"));
+            assert!(path.ends_with("task-7 - Fixture.md"));
+        }
+        assert!(
+            resolve_task_file(dir.path(), "TASK-70").is_err(),
+            "no prefix match"
+        );
+        assert!(resolve_task_file(dir.path(), "").is_err());
+    }
+
+    #[test]
+    fn a_duplicated_id_is_an_error_not_a_guess() {
+        let dir = project_with_task("task-7 - Fixture.md");
+        fs::write(
+            dir.path().join("backlog/tasks/task-7 - Impostor.md"),
+            "---\nid: TASK-7\ntitle: Impostor\n---\n",
+        )
+        .expect("fixture file");
+
+        let err = resolve_task_file(dir.path(), "TASK-7").expect_err("must refuse");
+        assert!(
+            err.to_string().contains("2 files"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn subtask_ids_resolve_by_their_full_decimal_form() {
+        let dir = project_with_task("task-7 - Fixture.md");
+        fs::write(
+            dir.path().join("backlog/tasks/task-7.2 - Sub.md"),
+            "---\nid: TASK-7.2\ntitle: Sub\n---\n",
+        )
+        .expect("fixture file");
+
+        let sub = resolve_task_file(dir.path(), "TASK-7.2").expect("resolves");
+        assert!(sub.ends_with("task-7.2 - Sub.md"));
+        let parent = resolve_task_file(dir.path(), "TASK-7").expect("resolves");
+        assert!(parent.ends_with("task-7 - Fixture.md"));
+    }
+
+    #[test]
+    fn status_validation_matches_the_cli_message_shape() {
+        let dir = project_with_task("task-7 - Fixture.md");
+        fs::write(
+            dir.path().join("backlog/config.yml"),
+            "statuses: [\"To Do\", \"Done\"]\n",
+        )
+        .expect("config fixture");
+
+        assert!(
+            validate_status(dir.path(), "to do").is_ok(),
+            "case-insensitive"
+        );
+        let err = validate_status(dir.path(), "Icebox").expect_err("undeclared");
+        assert_eq!(
+            err.to_string(),
+            "Invalid status: Icebox. Valid statuses are: To Do, Done"
+        );
+    }
+
+    #[test]
+    fn a_project_declaring_no_statuses_constrains_nothing() {
+        let dir = project_with_task("task-7 - Fixture.md");
+        assert!(validate_status(dir.path(), "Anything Goes").is_ok());
+    }
 }

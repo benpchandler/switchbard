@@ -15,7 +15,7 @@
 //!
 //! The pure half of the feature — prompt, parse, additive merge — is proved
 //! in `switchbard-core`'s `refine::tests`, and the CLI write it produces in
-//! `switchbard-core/tests/backlog_cli_mutations.rs`.
+//! `switchbard-core/tests/backlog_mutations.rs`.
 
 mod common;
 

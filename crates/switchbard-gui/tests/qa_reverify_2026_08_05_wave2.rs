@@ -206,9 +206,16 @@ fn a_non_done_task_still_gets_a_working_archive_button_no_regression() {
     assert!(h.query_by_label("Archive TASK-1?").is_some());
     h.get_by_label("Confirm archive").click_accesskit();
     h.run();
-    assert_eq!(
-        h.state().backlog_status.snapshot().as_deref(),
-        Some("archiving TASK-1")
+    // Since the format fork's native writes, the background thread can beat
+    // this assertion — no subprocess spawn to lose the race to — so the
+    // final message is also acceptable; the bounded poll below pins it.
+    let immediate = h.state().backlog_status.snapshot();
+    assert!(
+        matches!(
+            immediate.as_deref(),
+            Some("archiving TASK-1") | Some("archived TASK-1")
+        ),
+        "unexpected status right after confirm: {immediate:?}"
     );
 
     let deadline = Instant::now() + Duration::from_secs(5);

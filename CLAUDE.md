@@ -55,7 +55,7 @@ Re-exports are **explicit in `src/lib.rs`** (no glob re-exports). Module map:
 - `classify` — heuristic `Server` / `Maybe` / `NotServer` verdict per entry point.
 - `expected_port`, `resolve` — port inference; clusters listeners + services into `ResolvedService`.
 - `dispatch` — headless `claude -p` pipeline: dispatch-labeled task → worktree → agent run → PR.
-- `refine` — the grooming step upstream of `dispatch`: a read-only headless run that fills a task's description/ACs/plan, applied additively through the `backlog` CLI.
+- `refine` — the grooming step upstream of `dispatch`: a read-only headless run that fills a task's description/ACs/plan, applied additively through the native write layer.
 - `git_probe` — read-only `git status` / ahead-behind / fetch age / recent commits.
 - `git_env` — `git_cmd()`: every git call goes through it; see Git safety below.
 - `spawn` / `kill` — `spawn_in_session()` (own session/process group) + `kill_pgid()` → `KillOutcome`.

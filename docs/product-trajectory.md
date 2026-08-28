@@ -208,10 +208,11 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   root (no worktree — it writes no code) under a read-only permission posture
   (`--permission-mode plan`, a Read/Grep/Glob allowlist, an explicit
   Bash/Write/Edit/WebFetch/WebSearch deny list, and a turn cap), takes back one
-  strict JSON object, and applies it **additively** through the same `backlog` CLI
-  path every other mutation uses: the original description survives verbatim as a
+  strict JSON object, and applies it **additively** through the same mutation path
+  every other write uses (the `backlog` CLI then; the native write layer since the
+  format fork's TASK-65 swap): the original description survives verbatim as a
   prefix, existing acceptance criteria keep their text *and* checked state (new ones
-  are appended via `--ac`), an empty plan is filled and a non-empty one extended.
+  are append-only), an empty plan is filled and a non-empty one extended.
   Malformed or partial output applies nothing — parsing and merging both complete
   before the single `backlog task edit`. `switchbard_core::refine` owns the contract;
   see its module doc.

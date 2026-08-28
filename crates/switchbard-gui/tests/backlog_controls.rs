@@ -15,7 +15,7 @@
 //! to assert, this file asserts the click's synchronous side effect instead
 //! (a status message set before the spawn, a buffer clearing, a confirm
 //! flag flipping) and leaves the CLI round-trip itself to
-//! `switchbard-core/tests/backlog_cli_mutations.rs`, which proves the exact
+//! `switchbard-core/tests/backlog_mutations.rs`, which proves the exact
 //! same functions against a real fixture repo.
 
 mod common;
@@ -195,7 +195,7 @@ fn multiline_input_nth<'t>(
 /// proves the click dispatched the intended action, so accept both: the
 /// exact in-flight string, or any terminal message starting with one of
 /// `terminal_prefixes`. The CLI's actual effect is proven in
-/// `switchbard-core/tests/backlog_cli_mutations.rs`, not here.
+/// `switchbard-core/tests/backlog_mutations.rs`, not here.
 fn assert_action_status(
     harness: &Harness<'static, HiveApp>,
     in_flight: &str,
@@ -585,7 +585,7 @@ fn create_modal_create_button_queues_a_create_and_closes_the_modal() {
 /// proves the render+queuing half (the fields exist, are typeable, and the
 /// buffer resets after Create — same bar the pre-existing description/AC
 /// fields are held to); `create_backlog_task_wires_labels_assignee_
-/// milestone_and_dependencies` (backlog_cli_mutations.rs) proves the queued
+/// milestone_and_dependencies` (backlog_mutations.rs) proves the queued
 /// value actually reaches the real CLI.
 #[test]
 fn create_modal_labels_assignee_milestone_and_dependencies_fields_reset_after_create() {
@@ -1026,7 +1026,7 @@ fn board_non_editable_card_click_still_selects_it() {
 /// `column_order`'s doc (board.rs). No CLI call decides this outcome (the
 /// `backlog` CLI has no way to set the statuses list at all — see
 /// `load_backlog_project_reads_configured_statuses_from_a_real_init`,
-/// backlog_cli_mutations.rs, for that finding and the real-fixture proof of
+/// backlog_mutations.rs, for that finding and the real-fixture proof of
 /// the parsing itself), so an in-memory fixture with `configured_statuses`
 /// set directly is the right level for exercising the *render* path.
 #[test]
@@ -2806,7 +2806,12 @@ fn references_add_button_clears_the_input_field() {
     );
 
     harness.get_by_label("Add").click_accesskit();
-    harness.run();
+    // `run_steps`, not `run`: the buffer clear under assertion happens
+    // synchronously in the click handler, and `run`'s 4-step settle budget
+    // can be exhausted by the scroll-into-view animation plus the save
+    // thread's own repaint request — which, since the format fork's native
+    // writes, can land mid-run instead of long after it.
+    harness.run_steps(4);
     assert_eq!(
         harness.state().backlog_view.editor.new_reference,
         "",
@@ -2826,7 +2831,9 @@ fn append_note_button_clears_the_note_input() {
     assert_eq!(harness.state().backlog_view.editor.note, "A new note");
 
     harness.get_by_label("Append Note").click_accesskit();
-    harness.run();
+    // `run_steps`, not `run` — same rationale as
+    // `references_add_button_clears_the_input_field` above.
+    harness.run_steps(4);
     assert_eq!(
         harness.state().backlog_view.editor.note,
         "",
@@ -3140,7 +3147,7 @@ fn settings_remove_button_opens_the_shared_confirmation_modal() {
 /// Owner-found bug: `backlog task create --plain` writes the entire newly
 /// created task's rendered form to stdout (confirmed empirically against a
 /// real fixture — `parse_created_task_id_extracts_the_id_from_a_real_
-/// create_call`, backlog_cli_mutations.rs), which used to land verbatim in
+/// create_call`, backlog_mutations.rs), which used to land verbatim in
 /// `backlog_status` and stretch the top bar into a many-line void. This is
 /// the defense-in-depth half: even a status message that somehow still
 /// contains newlines/very long text must render as a single clamped line,
@@ -3260,7 +3267,7 @@ fn saved_view_persists_across_a_simulated_restart() {
 /// click-time status message) truly reaches the real CLI end to end, not
 /// just a fixture path other tests treat as a stand-in. Every other
 /// CLI-writing control's completion is proven at the core level instead
-/// (`backlog_cli_mutations.rs`).
+/// (`backlog_mutations.rs`).
 #[test]
 fn save_button_completes_a_real_cli_round_trip_against_a_real_fixture_repo() {
     let fixture = tempfile::tempdir().expect("create temp dir");
@@ -3560,7 +3567,7 @@ fn create_modal_task_is_visible_in_both_list_and_board_against_a_real_fixture_re
 /// Independent re-verification (2026-08-05 fix-wave audit) of the HIGH
 /// defect's fix: `create_backlog_task_wires_a_subtask_parent` and
 /// `subtask_ids_are_decimal_children_of_the_parent_id`
-/// (backlog_cli_mutations.rs) prove the *parser* now reads real subtasks
+/// (backlog_mutations.rs) prove the *parser* now reads real subtasks
 /// correctly; neither exercises the GUI render path the original defect
 /// actually broke (roll-up badge, tree expand/collapse, "+ Subtask"). Every
 /// pre-existing GUI test for that feature

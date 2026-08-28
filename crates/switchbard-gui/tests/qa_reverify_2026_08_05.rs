@@ -334,7 +334,7 @@ fn saved_view_round_trips_milestone_and_label_filters_through_a_real_reload() {
 // and_dependencies_fields_reset_after_create`) sets the four buffers via
 // `state_mut()`, not `type_text` — a legitimate choice for proving the
 // reset behavior, but it never actually drives the fields' typing
-// mechanics, and their own real-CLI test (`backlog_cli_mutations.rs`) calls
+// mechanics, and their own real-CLI test (`backlog_mutations.rs`) calls
 // `create_backlog_task` directly rather than going through the modal. This
 // test does both at once: real keystrokes into the real modal, on a real
 // fixture repo, reparsed by the real CLI's own parser afterward.
@@ -560,10 +560,17 @@ fn clean_up_old_tasks_confirm_archives_the_done_task_in_both_real_repos() {
     h.run();
 
     // Synchronous, pre-spawn status message (set before the background
-    // thread's per-task archive calls even start).
-    assert_eq!(
-        h.state().backlog_status.snapshot().as_deref(),
-        Some("cleaning up 2 Done tasks")
+    // thread's per-task archive calls even start). Since the format fork's
+    // native writes, the background thread can finish before this assertion
+    // runs — no subprocess spawn to lose the race to — so the final message
+    // is also acceptable here; the bounded poll below still pins it.
+    let immediate = h.state().backlog_status.snapshot();
+    assert!(
+        matches!(
+            immediate.as_deref(),
+            Some("cleaning up 2 Done tasks") | Some("cleaned up 2/2 Done tasks across 2 projects")
+        ),
+        "unexpected status right after confirm: {immediate:?}"
     );
 
     let deadline = Instant::now() + Duration::from_secs(5);
