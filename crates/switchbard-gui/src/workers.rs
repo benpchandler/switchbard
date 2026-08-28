@@ -47,6 +47,7 @@
 //! | backlog | 30s (unchanged) | ~0.15-0.2s over 6 repo *roots*, not per-worktree | Already cheap at this scale (one load per tracked repo, not per worktree) and users watch task state change in near-real-time — no evidence to slow this down. |
 //! | dispatch | 90s (unchanged) | negligible when the queue is empty (the common case); unbounded while a run is in flight (TASK-46 removed the wall-clock kill — see `spawn_dispatch`'s own doc) | Opt-in and rare by design — see its own doc. Unaffected by worktree count. |
 //! | size (TASK-41) | 300s, bounded catch-up batch of 5 | ~650ms **per worktree** average (measured 2026-08-19 via `examples/scan_cadence_audit.rs`, sampled 20/84 real worktrees, `du -sk`; a manual sweep of `~/Dev/.worktrees`'s larger checkouts saw individual calls up to ~1.5s) — an order of magnitude past every other per-worktree probe | `du` walks the whole tree (node_modules/target/build artifacts); see `worktree_size.rs`'s own doc. Never runs inline with the git-probe tick — its own worker, own cadence, catches up a bounded batch of never-yet-sized worktrees per tick (same shape as agent-context's cold-start batching below) rather than blocking on a full sweep. |
+//! | landing (feat/landing-stage) | 300s, bounded catch-up batch of 5 | `probe_push_state` is one free local `rev-parse`; `probe_pr_state` is ~1s of `gh` per branch by that function's own doc — same order of magnitude as `du`'s per-worktree cost above, so this worker reuses `size`'s exact period/batch rather than deriving a new pair | Only ever probes worktrees `spawn_probe` has already found to have unlanded commits (a clean worktree has no "why" to ask) with a real branch (a detached HEAD has nothing to push or open a PR from). Never runs inline with the git-probe tick, same reason `size` doesn't — see `spawn_landing`'s own doc and the hard constraint in `switchbard_core::landing`'s module doc: **never call `probe_pr_state` from the git-probe tick.** |
 //! | reaper | 2s (unchanged) | negligible, in-memory PGID check only | Not part of the worktree-count scaling problem this audit targets. |
 //!
 //! Two cross-cutting mechanisms apply on top of the table above:
@@ -63,7 +64,7 @@
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
     attached_processes_for, is_retired_worktree, ActiveRun, BacklogTaskKey, FileListSummary,
-    OrderingState, WorktreeMeta, WorktreeSizeEntry,
+    LandingEntry, OrderingState, WorktreeMeta, WorktreeSizeEntry,
 };
 use crate::sync::Kick;
 use eframe::egui;
@@ -72,10 +73,11 @@ use switchbard_core::{
     agent_context_needs_rescan, attribute, detect_services, drain_dispatch_queue, find_hub_repo,
     is_backlog_project, list_dispatch_queue, load_backlog_project, load_ordering_overlay,
     probe_dirty_files, probe_fetch_age, probe_head_commit_time, probe_ignored_files,
-    probe_recent_commits, probe_ref_drift_detail, probe_remote_drift, probe_trunk_detail,
-    probe_trunk_divergence, probe_worktree_lock, probe_worktree_size, save_agent_context_cache,
-    scan_agent_context, scan_listeners, staleness_from_trunk, sweep_dead_sidecar, AgentContextMap,
-    BacklogProject, DetectedService, DispatchOptions, DriftProbe, Fact, Repo, WorktreeRef,
+    probe_pr_state, probe_push_state, probe_recent_commits, probe_ref_drift_detail,
+    probe_remote_drift, probe_trunk_detail, probe_trunk_divergence, probe_worktree_lock,
+    probe_worktree_size, save_agent_context_cache, scan_agent_context, scan_listeners,
+    staleness_from_trunk, sweep_dead_sidecar, AgentContextMap, BacklogProject, DetectedService,
+    DispatchOptions, DriftProbe, Fact, LandingStage, PushState, Repo, WorktreeRef,
     DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 
@@ -147,6 +149,23 @@ const SIZE_CACHE_MAX_AGE: Duration = Duration::from_secs(60 * 30);
 /// its sleep and loops again immediately when more remain — same shape as
 /// `spawn_agent_context`).
 const SIZE_MAX_MISSING_PER_TICK: usize = 5;
+
+/// Same period as `SIZE_PERIOD` and for the same reason: `probe_pr_state`'s
+/// own doc prices `gh` at roughly a second per branch, the same order of
+/// magnitude as `du`'s per-worktree cost that justifies `SIZE_PERIOD` — see
+/// this module's cadence-policy table. A PR's review status also does not
+/// change minute to minute, so a 5-minute steady-state refresh for the
+/// single-stalest entry is generous, not stingy.
+const LANDING_PERIOD: Duration = Duration::from_secs(300);
+/// Mirrors `SIZE_CACHE_MAX_AGE`: an entry older than this becomes eligible
+/// for the steady-state single-entry refresh.
+const LANDING_CACHE_MAX_AGE: Duration = Duration::from_secs(60 * 30);
+/// Mirrors `SIZE_MAX_MISSING_PER_TICK`: bounds a cold-start catch-up (many
+/// worktrees with unlanded work and no cached stage yet) to a few seconds per
+/// tick instead of one multi-minute stall, while a large backlog still drains
+/// promptly — this worker also skips its sleep and loops again immediately
+/// when more remain, same shape as `spawn_size`.
+const LANDING_MAX_MISSING_PER_TICK: usize = 5;
 
 /// Every Nth git-probe tick recomputes `probe_ignored_files`; other ticks
 /// carry forward the previously cached value. The 2026-08-05 cadence audit
@@ -230,6 +249,10 @@ pub struct Channels {
     /// nudge`) instead of cloning `repos`/`worktrees` and locking `meta` on
     /// every frame across every tab.
     pub retired_worktree_count: Arc<Mutex<usize>>,
+    /// feat/landing-stage: why each unlanded worktree is still unlanded,
+    /// refreshed by `spawn_landing` on its own slow cadence — see that
+    /// worker's doc for why it can't share the git-probe tick.
+    pub landing: Arc<Mutex<HashMap<PathBuf, LandingEntry>>>,
     pub scanner_kick: Kick,
     pub probe_kick: Kick,
     pub detection_kick: Kick,
@@ -237,6 +260,7 @@ pub struct Channels {
     pub backlog_kick: Kick,
     pub dispatch_kick: Kick,
     pub size_kick: Kick,
+    pub landing_kick: Kick,
 }
 
 pub fn spawn_all(ctx: egui::Context, ch: Channels) {
@@ -247,6 +271,7 @@ pub fn spawn_all(ctx: egui::Context, ch: Channels) {
     spawn_backlog(ctx.clone(), ch.clone(), stagger_offset(4));
     spawn_dispatch(ctx.clone(), ch.clone(), stagger_offset(5));
     spawn_size(ctx.clone(), ch.clone(), stagger_offset(6));
+    spawn_landing(ctx.clone(), ch.clone(), stagger_offset(7));
     spawn_reaper(ctx, ch);
 }
 
@@ -595,6 +620,178 @@ fn size_and_publish(ch: &Channels, path: &Path) {
         computed_at: Instant::now(),
     };
     ch.sizes.lock().unwrap().insert(path.to_path_buf(), entry);
+}
+
+/// Landing-stage worker (feat/landing-stage): answers *why* a worktree's
+/// unlanded commits are still unlanded — see `switchbard_core::landing`'s
+/// module doc for the four situations one "N unlanded" number was hiding on
+/// a real machine. Same shape as `spawn_size`: snapshot candidates → probe
+/// outside any lock → write back → repaint → sleep, with the same
+/// bounded-catch-up-batch/single-stalest-refresh split.
+///
+/// **Never folded into the git-probe tick** (`spawn_probe`): `probe_pr_state`
+/// shells out to `gh`, which costs roughly a second per branch, needs
+/// network + auth, and fails for reasons that say nothing about the
+/// worktree — see this module's cadence-policy table and
+/// `switchbard_core::landing::probe_pr_state`'s own doc, which names this
+/// worker as the one place that call belongs.
+fn spawn_landing(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
+    thread::spawn(move || {
+        ch.landing_kick.wait(initial_delay);
+        loop {
+            let wts = ch.worktrees.lock().unwrap().clone();
+            let meta = ch.meta.lock().unwrap().clone();
+            let candidates = landing_candidates(&wts, &meta);
+            let live_paths: std::collections::HashSet<PathBuf> =
+                candidates.iter().map(|(p, ..)| p.clone()).collect();
+
+            let LandingBatch {
+                batch,
+                more_missing,
+                stale,
+            } = {
+                let mut landing = ch.landing.lock().unwrap();
+                landing.retain(|path, _| live_paths.contains(path));
+                partition_landing_batch(&candidates, &landing, Instant::now())
+            };
+
+            let mut refreshed = false;
+            if batch.is_empty() {
+                if let Some((path, branch, unlanded)) = stale {
+                    landing_and_publish(&ch, &path, &branch, unlanded);
+                    refreshed = true;
+                }
+            } else {
+                for (path, branch, unlanded) in &batch {
+                    landing_and_publish(&ch, path, branch, *unlanded);
+                }
+                refreshed = true;
+            }
+
+            if refreshed {
+                ctx.request_repaint();
+            }
+            if more_missing {
+                continue;
+            }
+            let focused = ctx.input(|i| i.focused);
+            ch.landing_kick
+                .wait(effective_period(LANDING_PERIOD, focused));
+        }
+    });
+}
+
+/// One worktree's `(path, branch, unlanded-commit-count)` — what
+/// [`landing_candidates`] and [`partition_landing_batch`] pass around. Named
+/// so the 3-tuple only has to be spelled out once (clippy's
+/// `type_complexity`, and a future reader's patience).
+type LandingCandidate = (PathBuf, String, u32);
+
+/// [`partition_landing_batch`]'s verdict for one tick.
+struct LandingBatch {
+    /// Never-cached candidates to probe right now, capped at
+    /// `LANDING_MAX_MISSING_PER_TICK`.
+    batch: Vec<LandingCandidate>,
+    /// More never-cached candidates remain beyond `batch` — the worker loops
+    /// again immediately instead of sleeping, same shape as `spawn_size`.
+    more_missing: bool,
+    /// Only set when `batch` is empty: the single stalest cached candidate,
+    /// due for its steady-state refresh.
+    stale: Option<LandingCandidate>,
+}
+
+/// Which worktrees are candidates for a landing-stage probe at all: a real
+/// branch (a detached HEAD has nothing to push or open a PR from) with
+/// something unlanded (a clean worktree has no "why" to ask). Everything
+/// else gets no cache entry, which is exactly the "render nothing" state the
+/// chip wants for those rows — see `ui::workspace::landing::landing_chip`.
+///
+/// Pure and worker-thread-free, split out of `spawn_landing`'s loop
+/// specifically so this filter (the two hard constraints the mission around
+/// this worker turns on) is directly testable without a `gh`/`git`
+/// subprocess or a real `Channels`.
+fn landing_candidates(
+    worktrees: &[WorktreeRef],
+    meta: &HashMap<PathBuf, WorktreeMeta>,
+) -> Vec<LandingCandidate> {
+    worktrees
+        .iter()
+        .filter_map(|w| {
+            let branch = w.branch.clone()?;
+            let unlanded = meta.get(&w.path)?.trunk.as_ref()?.unlanded;
+            (unlanded > 0).then_some((w.path.clone(), branch, unlanded))
+        })
+        .collect()
+}
+
+/// One tick's batching decision, given this tick's `candidates` and the
+/// cache as it stood right after eviction — see [`LandingBatch`] for what
+/// each field means.
+///
+/// Pure (takes `now` rather than reading the clock itself) so batching
+/// behavior — cold-start capping, catch-up looping, steady-state refresh
+/// picking the *stalest* entry — is testable without threads or real time
+/// passing.
+fn partition_landing_batch(
+    candidates: &[LandingCandidate],
+    cached: &HashMap<PathBuf, LandingEntry>,
+    now: Instant,
+) -> LandingBatch {
+    let missing: Vec<LandingCandidate> = candidates
+        .iter()
+        .filter(|(p, ..)| !cached.contains_key(p))
+        .cloned()
+        .collect();
+    let stale = candidates
+        .iter()
+        .filter(|(p, ..)| {
+            cached
+                .get(p)
+                .is_some_and(|e| now.duration_since(e.computed_at) > LANDING_CACHE_MAX_AGE)
+        })
+        .cloned()
+        .min_by_key(|(p, ..)| cached.get(p).map(|e| e.computed_at));
+    let batch: Vec<LandingCandidate> = missing
+        .iter()
+        .take(LANDING_MAX_MISSING_PER_TICK)
+        .cloned()
+        .collect();
+    let more_missing = missing.len() > batch.len();
+    LandingBatch {
+        batch,
+        more_missing,
+        stale,
+    }
+}
+
+/// Probe push + PR state for one worktree and publish the derived
+/// [`LandingStage`]. `origin` is hardcoded as the remote name, matching every
+/// other convention in this codebase that assumes it
+/// (`worktree_remove::default_branch`, `dispatch::DispatchOptions`) — nothing
+/// here re-derives a remote name from `git remote -v`.
+///
+/// The one place `Ok(None)` and `Err` from `probe_pr_state` must stay apart
+/// (see that function's own doc): `Err` becomes `LandingStage::PrStateUnknown`
+/// directly, **bypassing `LandingStage::derive` entirely**, because
+/// `derive`'s `pr: None` argument means "GitHub confirmed no PR" — feeding it
+/// a failed probe would silently promote "couldn't ask" into "confirmed
+/// un-offered", exactly the collapse that module's doc forbids.
+fn landing_and_publish(ch: &Channels, path: &Path, branch: &str, unlanded: u32) {
+    let push = probe_push_state(path, "origin", branch);
+    let stage = match probe_pr_state(path, branch) {
+        Ok(pr) => LandingStage::derive(unlanded, &push, pr.as_ref()),
+        Err(why) => LandingStage::PrStateUnknown {
+            pushed: matches!(push, PushState::Pushed | PushState::PushedStale { .. }),
+            why,
+        },
+    };
+    ch.landing.lock().unwrap().insert(
+        path.to_path_buf(),
+        LandingEntry {
+            stage,
+            computed_at: Instant::now(),
+        },
+    );
 }
 
 fn scan_and_publish_agent_context(ch: &Channels, w: &WorktreeRef) {
@@ -1205,5 +1402,136 @@ mod tests {
             !cache.contains_key(&removed),
             "an untracked repo's stale entry should be dropped, not linger"
         );
+    }
+
+    // ── landing-stage worker (feat/landing-stage) ───────────────────────
+
+    fn wt(path: &str, branch: Option<&str>) -> WorktreeRef {
+        WorktreeRef {
+            repo_name: "demo".to_string(),
+            path: PathBuf::from(path),
+            branch: branch.map(str::to_string),
+            head: "aaaa1111".to_string(),
+        }
+    }
+
+    fn meta_with_unlanded(unlanded: u32) -> WorktreeMeta {
+        WorktreeMeta {
+            trunk: Some(switchbard_core::TrunkDivergence {
+                base: "origin/main".to_string(),
+                unlanded,
+                ancestry_ahead: unlanded,
+                behind: 0,
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// The two hard constraints this worker's whole candidate set rests on:
+    /// a branch to push from, and something unlanded to explain.
+    #[test]
+    fn candidates_need_both_a_branch_and_unlanded_work() {
+        let worktrees = vec![
+            wt("/repo/a", Some("feat/a")), // unlanded — a real candidate
+            wt("/repo/b", Some("feat/b")), // clean — nothing to ask about
+            wt("/repo/c", None),           // detached HEAD — nothing to push
+            wt("/repo/d", Some("feat/d")), // never probed (no meta entry at all)
+        ];
+        let mut meta = HashMap::new();
+        meta.insert(PathBuf::from("/repo/a"), meta_with_unlanded(3));
+        meta.insert(PathBuf::from("/repo/b"), meta_with_unlanded(0));
+        meta.insert(PathBuf::from("/repo/c"), meta_with_unlanded(5));
+        // /repo/d intentionally absent from `meta`.
+
+        let candidates = landing_candidates(&worktrees, &meta);
+        assert_eq!(
+            candidates,
+            vec![(PathBuf::from("/repo/a"), "feat/a".to_string(), 3)]
+        );
+    }
+
+    /// `computed_at` is taken directly (never derived by subtracting from
+    /// `Instant::now()`) so these fixtures can never underflow `Instant` on
+    /// a freshly booted CI runner — every "how stale" comparison below is
+    /// built by *adding* to a fixed base instant instead.
+    fn cache_entry_at(stage: LandingStage, computed_at: Instant) -> LandingEntry {
+        LandingEntry { stage, computed_at }
+    }
+
+    /// A never-cached candidate is "missing" and enters this tick's batch —
+    /// the worker's whole job for a cold worktree.
+    #[test]
+    fn an_uncached_candidate_is_missing_and_batched() {
+        let candidates = vec![(PathBuf::from("/repo/a"), "feat/a".to_string(), 3)];
+        let cached = HashMap::new();
+        let result = partition_landing_batch(&candidates, &cached, Instant::now());
+        assert_eq!(result.batch, candidates);
+        assert!(!result.more_missing);
+        assert!(
+            result.stale.is_none(),
+            "nothing cached, so nothing can be stale"
+        );
+    }
+
+    /// Cold-start capping: more never-cached candidates than
+    /// `LANDING_MAX_MISSING_PER_TICK` still only batches the cap's worth this
+    /// tick, and reports `more_missing` so the worker loops again without
+    /// sleeping instead of stalling on one giant tick.
+    #[test]
+    fn missing_candidates_beyond_the_cap_carry_over_to_the_next_tick() {
+        let candidates: Vec<LandingCandidate> = (0..LANDING_MAX_MISSING_PER_TICK + 3)
+            .map(|i| (PathBuf::from(format!("/repo/{i}")), "feat/x".to_string(), 1))
+            .collect();
+        let cached = HashMap::new();
+        let result = partition_landing_batch(&candidates, &cached, Instant::now());
+        assert_eq!(result.batch.len(), LANDING_MAX_MISSING_PER_TICK);
+        assert!(result.more_missing);
+    }
+
+    /// A cached-and-fresh candidate is neither missing nor stale — the
+    /// steady state where the worker has nothing to do for it this tick.
+    #[test]
+    fn a_fresh_cache_entry_is_neither_missing_nor_stale() {
+        let now = Instant::now();
+        let path = PathBuf::from("/repo/a");
+        let candidates = vec![(path.clone(), "feat/a".to_string(), 3)];
+        let mut cached = HashMap::new();
+        cached.insert(path, cache_entry_at(LandingStage::Unpushed, now));
+        let result = partition_landing_batch(&candidates, &cached, now);
+        assert!(result.batch.is_empty());
+        assert!(!result.more_missing);
+        assert!(result.stale.is_none());
+    }
+
+    /// Once nothing is missing, the single *stalest* cached candidate — not
+    /// an arbitrary one — is offered for the steady-state refresh. Both
+    /// entries are made stale relative to `now` by advancing `now` forward
+    /// from a fixed base instant (never by subtracting from `Instant::now()`
+    /// — see `cache_entry_at`'s doc), with the "stale" entry computed
+    /// earlier than the "fresher" one.
+    #[test]
+    fn the_stalest_cached_candidate_wins_the_steady_state_refresh() {
+        let t0 = Instant::now();
+        let stale_path = PathBuf::from("/repo/stale");
+        let fresher_path = PathBuf::from("/repo/fresher");
+        let candidates = vec![
+            (stale_path.clone(), "feat/stale".to_string(), 1),
+            (fresher_path.clone(), "feat/fresher".to_string(), 1),
+        ];
+        let mut cached = HashMap::new();
+        cached.insert(
+            stale_path.clone(),
+            cache_entry_at(LandingStage::Unpushed, t0),
+        );
+        cached.insert(
+            fresher_path,
+            cache_entry_at(LandingStage::Unpushed, t0 + Duration::from_secs(5)),
+        );
+        let now = t0 + LANDING_CACHE_MAX_AGE * 3;
+
+        let result = partition_landing_batch(&candidates, &cached, now);
+        assert!(result.batch.is_empty());
+        assert!(!result.more_missing);
+        assert_eq!(result.stale.map(|(p, ..)| p), Some(stale_path));
     }
 }

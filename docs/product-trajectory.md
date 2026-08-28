@@ -22,6 +22,16 @@ destructive action (worktree remove) is confirmation-gated. The dominant risk is
 mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility contract
 (`tests/legibility_audit.rs`) — is the real bar.
 
+> **Note (feat/landing-stage):** "No network ops" above is stale and getting staler.
+> `dispatch` already pushes and opens PRs via `gh`; the landing-stage worker
+> (`switchbard-core/src/landing.rs::probe_pr_state`, `switchbard-gui/src/workers.rs::
+> spawn_landing`) adds a second capability — Switchbard now *reads* GitHub (`gh pr list`)
+> to explain why a worktree's unlanded commits are still unlanded. Still read-only, still
+> opt-in-by-failure-mode (a missing/unauthenticated `gh` degrades to an explicit "unknown"
+> rather than blocking anything), and still LOW by this tier's own criteria (no PII/money/
+> irreversible ops) — but the tier line's literal wording no longer matches what the app
+> does, and should be corrected the next time this section is substantially revised.
+
 ## Current entry points
 
 - **Binary:** `crates/switchbard-gui/src/main.rs` → `switchbard` (loads config, expands

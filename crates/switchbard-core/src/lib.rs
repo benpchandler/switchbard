@@ -16,6 +16,7 @@ mod git_env;
 pub mod git_probe;
 pub mod instance_lock;
 pub mod kill;
+pub mod landing;
 pub mod open_url;
 pub mod refine;
 pub mod removal_safety;
@@ -80,6 +81,7 @@ pub use git_probe::{
     TrunkDetail, TrunkDivergence, WorktreeStaleness,
 };
 pub use kill::{kill_pgid, KillOutcome};
+pub use landing::{probe_pr_state, probe_push_state, LandingStage, PrState, PushState};
 pub use open_url::{open_url, url_for_port, BROWSER_APP_NAMES};
 pub use refine::{
     build_refine_patch, build_refine_prompt, describe_refine_outcome, describe_refine_result,

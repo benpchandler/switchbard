@@ -22,7 +22,7 @@ use crate::app::HiveApp;
 use crate::runtime::worktree_names::worktree_display_name;
 use crate::runtime::{
     dispatch_run_holds_worktree, removal_facts, ActiveRun, ActivityLevel, ConfirmRemoveWorktree,
-    RowState, WorktreeMeta, WorktreeSizeEntry,
+    LandingEntry, RowState, WorktreeMeta, WorktreeSizeEntry,
 };
 use crate::ui::components::{
     branch_label, mono_label, path_cell, status_pill, weak_dots, Chip, StatusKind,
@@ -31,6 +31,7 @@ use crate::ui::theme;
 use eframe::egui::{self, collapsing_header::CollapsingState};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use switchbard_core::{
     default_port_for_service, humanize_age, resolve, AttachedProcesses, AttributedListener,
@@ -41,6 +42,7 @@ use switchbard_core::{
 
 mod bulk_remove;
 pub mod create_worktree;
+pub mod landing;
 pub mod rename_worktree;
 pub mod staleness;
 pub mod tooltips;
@@ -144,6 +146,13 @@ struct Snapshot {
     /// TASK-41: on-disk size cache, refreshed on its own cadence — see
     /// `WorktreeSizeEntry`'s doc.
     sizes: HashMap<PathBuf, WorktreeSizeEntry>,
+    /// feat/landing-stage: the shared cache itself, not a per-frame clone of
+    /// it. Unlike `sizes`/`meta` above, most worktrees have no unlanded work
+    /// and so never enter this map at all, but the ones that do carry a PR
+    /// URL string — cheap per-entry, wasteful to clone in bulk every frame
+    /// for rows that won't render it. `render_worktree_row` looks up one
+    /// path at a time instead (`landing.lock().unwrap().get(path).cloned()`).
+    landing: Arc<Mutex<HashMap<PathBuf, LandingEntry>>>,
     services: HashMap<PathBuf, Vec<ResolvedService>>,
     listeners_by_wt: HashMap<PathBuf, Vec<AttributedListener>>,
     unattributed: Vec<AttributedListener>,
@@ -208,6 +217,7 @@ impl Snapshot {
             worktrees: app.worktrees_snapshot(),
             meta,
             sizes: app.sizes.lock().unwrap().clone(),
+            landing: app.landing.clone(),
             services,
             listeners_by_wt,
             unattributed,
@@ -435,6 +445,15 @@ fn render_worktree_row(
         default_meta = WorktreeMeta::default();
         &default_meta
     };
+    // feat/landing-stage: one point lookup into the shared cache, not a
+    // per-frame clone of the whole map (see `Snapshot::landing`'s doc) —
+    // and the only place this row's chip state gets decided, so the trailing
+    // cluster below just paints what this function already worked out.
+    let landing_view = landing::landing_chip(
+        has_unlanded_work(&m.trunk),
+        w.branch.is_some(),
+        snap.landing.lock().unwrap().get(&w.path),
+    );
     let listeners: &[AttributedListener] = snap
         .listeners_by_wt
         .get(&w.path)
@@ -547,6 +566,7 @@ fn render_worktree_row(
                             is_primary,
                             pending,
                             &mut app.bulk_selected_worktrees,
+                            landing_view,
                         );
                     });
                 if !is_primary {
@@ -669,8 +689,9 @@ fn render_branch_inline(ui: &mut egui::Ui, w: &WorktreeRef) {
     });
 }
 
-/// Right-aligned cluster on the worktree row header: short SHA on the far
-/// right, plus a small remove-worktree affordance (hidden on the primary
+/// Right-aligned cluster on the worktree row header: the landing-stage chip
+/// on the far right (feat/landing-stage — the head SHA's old spot, see
+/// below), plus a small remove-worktree affordance (hidden on the primary
 /// worktree, which can't be removed via `git worktree remove`).
 ///
 /// Split from the summary line so each function's arg count stays tame;
@@ -683,6 +704,7 @@ fn render_worktree_row_trailing(
     is_primary: bool,
     pending: &mut Pending,
     bulk_selected: &mut BTreeSet<PathBuf>,
+    landing_view: Option<landing::LandingChipView>,
 ) {
     // No head SHA here any more. It was the row's only element that answered
     // no question the row is for — every other one maps to an action (dirty →
@@ -690,8 +712,14 @@ fn render_worktree_row_trailing(
     // and its one real use, copy-paste, had already been taken away by the
     // row-click gesture, which turns off `selectable_labels` for this whole
     // header. A string you can neither act on nor copy is decoration, and it
-    // was occupying the far-right slot the landing-stage chip wants.
+    // was occupying the far-right slot the landing-stage chip now fills.
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        // feat/landing-stage: first widget added in a right-to-left layout
+        // paints furthest right — exactly where the head SHA used to sit.
+        // Renders nothing only for "no unlanded work"; a detached HEAD with
+        // unlanded work gets its own terminal "detached" chip, not silence
+        // — see `landing::landing_chip`'s doc for why.
+        landing::render_landing_chip(ui, landing_view);
         if ui
             .small_button("Rename")
             .on_hover_text("Rename Switchbard label")
@@ -1897,6 +1925,7 @@ mod tests {
             worktrees: Vec::new(),
             meta: HashMap::new(),
             sizes: HashMap::new(),
+            landing: Arc::new(Mutex::new(HashMap::new())),
             services: HashMap::new(),
             listeners_by_wt: HashMap::new(),
             unattributed: Vec::new(),
