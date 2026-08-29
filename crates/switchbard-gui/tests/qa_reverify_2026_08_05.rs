@@ -62,7 +62,6 @@ fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks,
             warnings: vec![],
             loaded_at_unix: 0,
@@ -84,30 +83,53 @@ fn now_minus_days(days: i64) -> String {
         .to_string()
 }
 
-fn run_cmd(cwd: &std::path::Path, cmd: &str, args: &[&str]) {
-    let output = std::process::Command::new(cmd)
-        .current_dir(cwd)
-        .args(args)
-        .output()
-        .unwrap_or_else(|e| panic!("failed to run {cmd}: {e}"));
-    assert!(
-        output.status.success(),
-        "{cmd} {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+/// Native fixture init — the directory shape plus a config declaring the
+/// standard trio, matching what `backlog init --defaults` used to produce
+/// before the format fork retired the external CLI (TASK-67).
+fn native_backlog_init(root: &std::path::Path) {
+    std::fs::create_dir_all(root.join("backlog/tasks")).expect("fixture layout");
+    std::fs::write(
+        root.join("backlog/config.yml"),
+        "statuses: [\"To Do\", \"In Progress\", \"Done\"]\n",
+    )
+    .expect("fixture config");
+}
+
+fn native_task_create(root: &std::path::Path, title: &str) -> String {
+    switchbard_core::create_backlog_task(
+        root,
+        &switchbard_core::NewBacklogTask {
+            title: title.to_string(),
+            description: String::new(),
+            status: String::new(),
+            priority: String::new(),
+            acceptance_criteria: vec![],
+            parent: None,
+            labels: vec![],
+            assignees: vec![],
+            milestone: None,
+            dependencies: vec![],
+        },
+    )
+    .expect("native fixture create")
+}
+
+fn native_task_status(root: &std::path::Path, id: &str, status: &str) {
+    switchbard_core::edit_backlog_task(
+        root,
+        id,
+        &switchbard_core::BacklogTaskPatch {
+            status: Some(status.to_string()),
+            ..Default::default()
+        },
+    )
+    .expect("native fixture status edit");
 }
 
 fn init_fixture_repo() -> tempfile::TempDir {
     let fixture = tempfile::tempdir().expect("create temp dir");
     let root = fixture.path();
-    run_cmd(root, "git", &["init", "-q"]);
-    run_cmd(root, "git", &["config", "user.email", "qa@example.com"]);
-    run_cmd(root, "git", &["config", "user.name", "QA Fixture"]);
-    run_cmd(
-        root,
-        "backlog",
-        &["init", "--defaults", "--agent-instructions", "none", "qa"],
-    );
+    native_backlog_init(root);
     fixture
 }
 
@@ -334,16 +356,16 @@ fn saved_view_round_trips_milestone_and_label_filters_through_a_real_reload() {
 // and_dependencies_fields_reset_after_create`) sets the four buffers via
 // `state_mut()`, not `type_text` — a legitimate choice for proving the
 // reset behavior, but it never actually drives the fields' typing
-// mechanics, and their own real-CLI test (`backlog_cli_mutations.rs`) calls
+// mechanics, and their own real-CLI test (`backlog_mutations.rs`) calls
 // `create_backlog_task` directly rather than going through the modal. This
 // test does both at once: real keystrokes into the real modal, on a real
 // fixture repo, reparsed by the real CLI's own parser afterward.
 
 #[test]
-fn create_modal_fields_typed_via_kittest_persist_through_a_real_cli_create() {
+fn create_modal_fields_typed_via_kittest_persist_through_a_real_create() {
     let fixture = init_fixture_repo();
     let root = fixture.path();
-    run_cmd(root, "backlog", &["task", "create", "Dependency target"]);
+    native_task_create(root, "Dependency target");
 
     let repos = vec![Repo {
         name: "qa-fixture".to_string(),
@@ -497,9 +519,9 @@ fn clean_up_old_tasks_cancel_leaves_both_repos_untouched() {
     let repo_a = init_fixture_repo();
     let repo_b = init_fixture_repo();
     for root in [repo_a.path(), repo_b.path()] {
-        run_cmd(root, "backlog", &["task", "create", "Done task"]);
-        run_cmd(root, "backlog", &["task", "edit", "TASK-1", "-s", "Done"]);
-        run_cmd(root, "backlog", &["task", "create", "Open task"]);
+        native_task_create(root, "Done task");
+        native_task_status(root, "TASK-1", "Done");
+        native_task_create(root, "Open task");
     }
 
     let mut h = harness(two_repo_app(repo_a.path(), repo_b.path()));
@@ -546,9 +568,9 @@ fn clean_up_old_tasks_confirm_archives_the_done_task_in_both_real_repos() {
     let repo_a = init_fixture_repo();
     let repo_b = init_fixture_repo();
     for root in [repo_a.path(), repo_b.path()] {
-        run_cmd(root, "backlog", &["task", "create", "Done task"]);
-        run_cmd(root, "backlog", &["task", "edit", "TASK-1", "-s", "Done"]);
-        run_cmd(root, "backlog", &["task", "create", "Open task"]);
+        native_task_create(root, "Done task");
+        native_task_status(root, "TASK-1", "Done");
+        native_task_create(root, "Open task");
     }
 
     let mut h = harness(two_repo_app(repo_a.path(), repo_b.path()));
@@ -560,10 +582,17 @@ fn clean_up_old_tasks_confirm_archives_the_done_task_in_both_real_repos() {
     h.run();
 
     // Synchronous, pre-spawn status message (set before the background
-    // thread's per-task archive calls even start).
-    assert_eq!(
-        h.state().backlog_status.snapshot().as_deref(),
-        Some("cleaning up 2 Done tasks")
+    // thread's per-task archive calls even start). Since the format fork's
+    // native writes, the background thread can finish before this assertion
+    // runs — no subprocess spawn to lose the race to — so the final message
+    // is also acceptable here; the bounded poll below still pins it.
+    let immediate = h.state().backlog_status.snapshot();
+    assert!(
+        matches!(
+            immediate.as_deref(),
+            Some("cleaning up 2 Done tasks") | Some("cleaned up 2/2 Done tasks across 2 projects")
+        ),
+        "unexpected status right after confirm: {immediate:?}"
     );
 
     let deadline = Instant::now() + Duration::from_secs(5);

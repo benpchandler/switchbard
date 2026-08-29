@@ -155,7 +155,6 @@ mod tests {
     fn project(tasks: Vec<BacklogTask>) -> BacklogProject {
         BacklogProject {
             root: PathBuf::from("/repo"),
-            cli_path: None,
             tasks,
             warnings: vec![],
             loaded_at_unix: 0,

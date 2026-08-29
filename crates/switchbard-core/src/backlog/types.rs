@@ -150,7 +150,6 @@ pub fn missing_standard_statuses(project: &BacklogProject) -> Vec<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BacklogProject {
     pub root: PathBuf,
-    pub cli_path: Option<PathBuf>,
     pub tasks: Vec<BacklogTask>,
     pub warnings: Vec<String>,
     /// Milliseconds since the Unix epoch when this snapshot was read from
@@ -177,10 +176,6 @@ pub struct BacklogProject {
 }
 
 impl BacklogProject {
-    pub fn cli_available(&self) -> bool {
-        self.cli_path.is_some()
-    }
-
     pub fn active_task_count(&self) -> usize {
         self.tasks
             .iter()
@@ -386,7 +381,6 @@ mod tests {
     fn project(configured_statuses: &[&str], task_statuses: &[&str]) -> BacklogProject {
         BacklogProject {
             root: PathBuf::from("/fixture"),
-            cli_path: None,
             tasks: task_statuses
                 .iter()
                 .enumerate()

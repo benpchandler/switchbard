@@ -1,13 +1,10 @@
-//! Backlog.md task data: reading a project's tasks off disk (`parse`),
-//! shelling out to the `backlog` CLI to mutate them (`mutations`), the
-//! native write layer that will replace those shell-outs (`write` — see the
-//! trajectory doc's *Backlog format fork* entry), and the struct/enum shapes
-//! shared by all of them (`types`).
-//!
-//! Split from a single 1000+ line `backlog.rs` into modules by concern; the
-//! `parse`/`mutations`/`types` names were already part of this module's
-//! public API (see the doc on each submodule) — that split was
-//! lift-and-shift, not a redesign.
+//! Backlog-format task data, natively owned since the format fork (the
+//! trajectory doc's *Backlog format fork* entry, owner-approved 2026-08-28):
+//! reading a project's tasks off disk (`parse`), the surgical write layer
+//! (`write`), id allocation (`allocate`), the caller-facing by-task-id
+//! facade over both (`mutations`), and the struct/enum shapes shared by all
+//! of them (`types`). No mutation shells out to the `backlog` CLI any more;
+//! the files stay Backlog.md-compatible on disk.
 
 mod allocate;
 mod mutations;
@@ -20,12 +17,12 @@ pub use allocate::{create_task_allocating_id, next_task_id, ACTIVE_BRANCH_DAYS};
 
 pub use mutations::{
     append_backlog_notes, archive_backlog_task, complete_backlog_task, create_backlog_task,
-    edit_backlog_task, set_backlog_acceptance_checked, set_backlog_dod_checked, set_backlog_label,
-    swap_backlog_label,
+    edit_backlog_task, set_backlog_acceptance_checked, set_backlog_dod_checked,
+    set_backlog_final_summary, set_backlog_label, swap_backlog_label,
 };
 pub use parse::{
-    backlog_cli_path, body_round_trips, is_backlog_project, load_backlog_project,
-    parse_backlog_day, parse_created_task_id, task_file_round_trips,
+    body_round_trips, is_backlog_project, load_backlog_project, parse_backlog_day,
+    task_file_round_trips,
 };
 pub use types::{
     assignable_statuses, missing_standard_statuses, ordered_status_vocabulary,
@@ -36,6 +33,6 @@ pub use types::{
 pub use write::{
     append_task_acceptance_criteria, append_task_notes, replace_task_section,
     set_task_checklist_item, set_task_label, set_task_list_field, set_task_milestone,
-    set_task_priority, set_task_status, set_task_title, write_new_task_file, TaskChecklist,
-    TaskListField, TaskSection, WriteOutcome,
+    set_task_priority, set_task_status, set_task_title, swap_task_label, write_new_task_file,
+    TaskChecklist, TaskListField, TaskSection, WriteOutcome,
 };

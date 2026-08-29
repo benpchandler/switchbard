@@ -65,7 +65,6 @@ fn board_lens_renders_kanban_columns_with_the_seeded_task() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -145,7 +144,6 @@ fn global_search_overlay_finds_the_matching_task_across_repos() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -605,7 +603,6 @@ fn backlog_view_surfaces_seeded_task() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -689,7 +686,6 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
             repo_path(repo_name),
             BacklogProject {
                 root: repo_path(repo_name),
-                cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
                 tasks: vec![BacklogTask {
                     id: "TASK-1".to_string(),
                     title: title.to_string(),
@@ -763,7 +759,6 @@ fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![in_progress_task],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -825,7 +820,6 @@ fn portfolio_lens_renders_per_repo_health() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -882,7 +876,6 @@ fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![blocker, dependent],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -948,7 +941,6 @@ fn parent_task_shows_rollup_and_expands_to_reveal_children() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![parent, done_child, open_child],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -1024,7 +1016,6 @@ fn saved_view_can_be_saved_and_deleted() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -1090,6 +1081,67 @@ fn saved_view_can_be_saved_and_deleted() {
     );
 }
 
+/// Like [`harness_on_task`], but backed by a *real* task file in its own
+/// temp project, for the two dispatch-toggle tests whose background thread
+/// genuinely writes the label. Since the format fork's native writes, that
+/// thread can finish before the test's first status assertion (there is no
+/// subprocess spawn to lose the race to), so the toggle must actually
+/// succeed against disk — an in-memory-only fixture would race a failure
+/// message into the status line.
+fn harness_on_disk_task(labels: &[&str]) -> (tempfile::TempDir, Harness<'static, HiveApp>) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().to_path_buf();
+    let tasks_dir = root.join("backlog/tasks");
+    std::fs::create_dir_all(&tasks_dir).expect("project layout");
+    switchbard_core::write_new_task_file(
+        &tasks_dir,
+        "1",
+        &switchbard_core::NewBacklogTask {
+            title: "Seeded Backlog Task".to_string(),
+            description: "Task detail body".to_string(),
+            status: "To Do".to_string(),
+            priority: "high".to_string(),
+            acceptance_criteria: vec![],
+            parent: None,
+            labels: labels.iter().map(|l| l.to_string()).collect(),
+            assignees: vec!["ben".to_string()],
+            milestone: None,
+            dependencies: vec![],
+        },
+    )
+    .expect("seed task file");
+    let project = switchbard_core::load_backlog_project(&root).expect("seeded project loads");
+
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::List;
+    app.backlog_view.selected_project = Some(root.clone());
+    app.backlog_view.selected_task = Some((root.clone(), "TASK-1".to_string()));
+    app.backlog_projects.lock().unwrap().insert(root, project);
+    let mut harness = harness(app);
+    harness.run();
+    (dir, harness)
+}
+
+/// Bounded poll until the on-disk task's labels match `expected` — proves
+/// the toggle's background thread completed before the tempdir drops.
+fn wait_for_labels(root: &std::path::Path, expected: &[&str]) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let project = switchbard_core::load_backlog_project(root).expect("project reloads");
+        let task = project.tasks.first().expect("task still present");
+        if task.labels == expected {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "labels never became {expected:?}, still {:?}",
+            task.labels
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
 /// Mount the List lens on one task's detail pane — the shape every dispatch
 /// state test below shares, varying only the seeded task's labels/notes.
 fn harness_on_task(task: BacklogTask) -> Harness<'static, HiveApp> {
@@ -1102,7 +1154,6 @@ fn harness_on_task(task: BacklogTask) -> Harness<'static, HiveApp> {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![task],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -1148,7 +1199,7 @@ fn not_flagged_task_offers_a_dispatch_button_and_no_pill() {
 // `backlog_controls.rs`.
 #[test]
 fn dispatch_button_confirms_before_flagging() {
-    let mut harness = harness_on_task(seeded_backlog_task());
+    let (fixture, mut harness) = harness_on_disk_task(&["demo"]);
 
     harness.get_by_label("Dispatch").click_accesskit();
     harness.run();
@@ -1171,12 +1222,16 @@ fn dispatch_button_confirms_before_flagging() {
     harness.run();
     harness.get_by_label("Confirm dispatch").click_accesskit();
     harness.run();
+    // The synchronous click-handler status and the background thread's
+    // success status are the same string, so this holds whichever wins the
+    // (now native-write-fast) race.
     assert_eq!(
         harness.state().backlog_status.snapshot().as_deref(),
         Some("flagged TASK-1 for dispatch"),
-        "confirming should set the flagged-for-dispatch status synchronously"
+        "confirming should set the flagged-for-dispatch status"
     );
     assert!(!harness.state().backlog_view.dispatch_confirm);
+    wait_for_labels(fixture.path(), &["demo", "dispatch"]);
 }
 
 /// A task labeled `dispatch` (queued, not yet claimed) shows the QUEUED pill,
@@ -1184,9 +1239,7 @@ fn dispatch_button_confirms_before_flagging() {
 /// button.
 #[test]
 fn queued_task_shows_pill_and_offers_unflag() {
-    let mut task = seeded_backlog_task();
-    task.labels = vec![DISPATCH_LABEL.to_string()];
-    let mut harness = harness_on_task(task);
+    let (fixture, mut harness) = harness_on_disk_task(&[DISPATCH_LABEL]);
 
     // The pill renders in both the List row and the detail pane for the
     // selected task, so query_all rather than the exactly-one query.
@@ -1197,11 +1250,14 @@ fn queued_task_shows_pill_and_offers_unflag() {
     );
     harness.get_by_label("Unflag").click_accesskit();
     harness.run();
+    // Synchronous handler status and background success status are the same
+    // string — see dispatch_button_confirms_before_flagging.
     assert_eq!(
         harness.state().backlog_status.snapshot().as_deref(),
         Some("unflagged TASK-1 for dispatch"),
-        "Unflag should set its status synchronously"
+        "Unflag should set its status"
     );
+    wait_for_labels(fixture.path(), &[]);
 }
 
 /// A task labeled `dispatching` (claimed by the worker) shows the
@@ -1294,7 +1350,6 @@ fn list_row_shows_the_dispatch_pill_for_a_queued_task() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![queued, plain],
             warnings: vec![],
             loaded_at_unix: 0,

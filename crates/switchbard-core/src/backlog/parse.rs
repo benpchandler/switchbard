@@ -1,6 +1,6 @@
-//! Turning a Backlog.md project directory (and the raw task markdown inside
-//! it) into `super::types` structs. Nothing here shells out — that's
-//! `super::mutations`.
+//! Turning a Backlog-format project directory (and the raw task markdown
+//! inside it) into `super::types` structs. Read-only — writes live in
+//! `super::write` behind the `super::mutations` facade.
 
 use super::types::{BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource};
 use anyhow::{bail, Context, Result};
@@ -8,7 +8,7 @@ use serde_yaml::{Mapping, Value};
 use std::cmp::Ordering;
 use std::ffi::OsStr;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn is_backlog_project(root: &Path) -> bool {
@@ -17,26 +17,12 @@ pub fn is_backlog_project(root: &Path) -> bool {
         || root.join("backlog/drafts").is_dir()
 }
 
-pub fn backlog_cli_path() -> Option<PathBuf> {
-    find_on_path("backlog").or_else(|| {
-        ["/opt/homebrew/bin/backlog", "/usr/local/bin/backlog"]
-            .into_iter()
-            .map(PathBuf::from)
-            .find(|path| path.is_file())
-    })
-}
-
 pub fn load_backlog_project(root: &Path) -> Result<BacklogProject> {
     if !is_backlog_project(root) {
         bail!("{} is not a Backlog project", root.display());
     }
 
-    let cli_path = backlog_cli_path();
     let mut warnings = Vec::new();
-    if cli_path.is_none() {
-        warnings.push("Backlog CLI not found on PATH".to_string());
-    }
-
     let mut tasks = Vec::new();
     for (rel, source) in [
         ("tasks", BacklogTaskSource::Active),
@@ -66,7 +52,6 @@ pub fn load_backlog_project(root: &Path) -> Result<BacklogProject> {
     tasks.sort_by(compare_tasks);
     Ok(BacklogProject {
         root: root.to_path_buf(),
-        cli_path,
         tasks,
         warnings,
         loaded_at_unix: unix_now(),
@@ -79,7 +64,7 @@ pub fn load_backlog_project(root: &Path) -> Result<BacklogProject> {
 /// the task files themselves. Never fails the whole project load: a
 /// missing/unreadable/malformed config just yields an empty list, same as
 /// if this function didn't exist.
-fn parse_config_statuses(root: &Path) -> Vec<String> {
+pub(super) fn parse_config_statuses(root: &Path) -> Vec<String> {
     let path = root.join("backlog/config.yml");
     let Ok(text) = fs::read_to_string(&path) else {
         return Vec::new();
@@ -91,33 +76,6 @@ fn parse_config_statuses(root: &Path) -> Vec<String> {
         return Vec::new();
     };
     yaml_string_list(mapping, "statuses")
-}
-
-/// TASK-28 (owner-found bug): even with `--plain`, `backlog task create`
-/// (unlike `task archive`'s one-line `"Archived task TASK-1"`) writes the
-/// *entire* newly-created task's rendered form to stdout — file path, a
-/// `====` underline, Status/Ordinal/Created, empty Description/Acceptance
-/// Criteria/Definition of Done sections. `create_backlog_task`'s caller
-/// used to surface that raw multi-line blob as the GUI's action-status
-/// message, stretching the top bar into a many-line void. Every other
-/// mutation function in this module already discards its own raw stdout
-/// and lets the caller build a compact message instead (see
-/// `edit_backlog_task`'s callers); this is the one exception, so rather
-/// than have the GUI parse a format it doesn't own, this pulls the id out
-/// of the one line worth reading — `"Task TASK-1 - Title"` — so the caller
-/// can build `"Created {repo}:{id}"` without touching the rest.
-/// Empirically confirmed against a real `backlog init` fixture before
-/// writing this parser, not guessed. Returns `None` if that line isn't
-/// found (a future CLI output-format change) — callers must fall back to a
-/// generic message, not panic.
-pub fn parse_created_task_id(output: &str) -> Option<String> {
-    output
-        .lines()
-        .find_map(|line| line.strip_prefix("Task "))
-        .and_then(|rest| rest.split(" - ").next())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
 }
 
 /// [`body_round_trips`] for one task file on disk — what `crate::refine`
@@ -132,13 +90,6 @@ pub fn task_file_round_trips(path: &Path) -> bool {
     };
     let (_, body) = split_frontmatter(&text);
     body_round_trips(body)
-}
-
-fn find_on_path(name: &str) -> Option<PathBuf> {
-    let path_var = std::env::var_os("PATH")?;
-    std::env::split_paths(&path_var)
-        .map(|dir| dir.join(name))
-        .find(|path| path.is_file())
 }
 
 pub(super) fn parse_task_file(path: &Path, source: BacklogTaskSource) -> Result<BacklogTask> {
@@ -683,32 +634,6 @@ mod tests {
         assert_eq!(parse_config_statuses(dir.path()), Vec::<String>::new());
     }
 
-    /// TASK-28: pins the real `backlog task create --plain` output shape
-    /// (captured empirically against a real fixture repo) so the parser
-    /// stays correct even without a CLI round trip for every test.
-    #[test]
-    fn parses_created_task_id_from_real_cli_output_shape() {
-        let output = "File: /tmp/x/backlog/tasks/task-1 - Test task for stdout inspection.md\n\
-                       \n\
-                       Task TASK-1 - Test task for stdout inspection\n\
-                       ==================================================\n\
-                       \n\
-                       Status: \u{25cb} To Do\n\
-                       Ordinal: 1000\n\
-                       Created: 2026-08-05 14:59\n\
-                       \n\
-                       Description:\n\
-                       --------------------------------------------------\n\
-                       No description provided\n";
-        assert_eq!(parse_created_task_id(output), Some("TASK-1".to_string()));
-    }
-
-    #[test]
-    fn parse_created_task_id_returns_none_on_unrecognized_output() {
-        assert_eq!(parse_created_task_id("some unexpected future format"), None);
-        assert_eq!(parse_created_task_id(""), None);
-    }
-
     /// TASK-44 audit finding F1 (HIGH). `extract_section` used to end a
     /// section at *any* line starting with `## ` and to drop *any* line
     /// starting with `<!--`. Both are lossy in the read direction, and every
@@ -1050,11 +975,12 @@ Existing note.
         assert!(task.acceptance_criteria[1].checked);
     }
 
-    /// Regression for the 2026-08-05 QA audit's HIGH defect: the real
-    /// `backlog` CLI writes `parent_task_id:`, not `parent:`. This is the
-    /// fast, in-process complement to `backlog_cli_mutations.rs`'s real-CLI
-    /// round trip — it pins the parser's key preference directly, plus the
-    /// fallback for `parent:`-only fixtures written before this fix.
+    /// Regression for the 2026-08-05 QA audit's HIGH defect: the format
+    /// (defined then by the `backlog` CLI, now by `super::write`) uses
+    /// `parent_task_id:`, not `parent:`. This is the fast, in-process
+    /// complement to `backlog_mutations.rs`'s on-disk round trip — it pins
+    /// the parser's key preference directly, plus the fallback for
+    /// `parent:`-only fixtures written before this fix.
     #[test]
     fn parses_parent_task_id_and_falls_back_to_the_old_parent_key() {
         let dir = tempfile::tempdir().unwrap();

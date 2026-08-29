@@ -86,7 +86,6 @@ fn sample_task(id: &str, title: &str, status: &str) -> BacklogTask {
 fn project_with(tasks: Vec<BacklogTask>) -> BacklogProject {
     BacklogProject {
         root: PathBuf::from(REPO_PATH),
-        cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
         tasks,
         warnings: vec![],
         loaded_at_unix: 0,

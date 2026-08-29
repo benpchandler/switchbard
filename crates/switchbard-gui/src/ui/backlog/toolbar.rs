@@ -179,15 +179,14 @@ fn render_cleanup_button(
     }
 }
 
-/// Every project's Done, still-active, CLI-editable task ids — the
-/// candidate set `render_cleanup_button` completes. A `Completed`-sourced
-/// task (already moved to `backlog/completed/`) or an already-
-/// `Archived`/`Draft` one is excluded the same way a single task's
-/// Archive/Complete button already requires `editable()`.
+/// Every project's Done, still-active task ids — the candidate set
+/// `render_cleanup_button` completes. A `Completed`-sourced task (already
+/// moved to `backlog/completed/`) or an already-`Archived`/`Draft` one is
+/// excluded the same way a single task's Archive/Complete button already
+/// requires `editable()`.
 fn cleanup_candidates(snap: &Snapshot) -> Vec<(PathBuf, Vec<String>)> {
     snap.projects
         .iter()
-        .filter(|row| row.project.cli_available())
         .filter_map(|row| {
             let ids: Vec<String> = row
                 .project
@@ -277,17 +276,13 @@ impl ClearBatch {
 /// is a narrower, more deliberate statement of intent than the filter, and it
 /// may legitimately include Done cards the filtered path would have skipped.
 ///
-/// Excludes tasks already in `archive/` or `completed/` (nowhere left to go)
-/// and projects whose `backlog` CLI is missing (every write goes through it).
+/// Excludes tasks already in `archive/` or `completed/` (nowhere left to go).
 pub(super) fn clear_batch(app: &HiveApp, snap: &Snapshot) -> ClearBatch {
     let selection = &app.backlog_view.bulk_selected_tasks;
     let mut archive: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
     let mut complete: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
 
     for row in sort::visible_task_rows(app, snap) {
-        if !row.project.project.cli_available() {
-            continue;
-        }
         if matches!(
             row.task.source,
             BacklogTaskSource::Archived | BacklogTaskSource::Completed

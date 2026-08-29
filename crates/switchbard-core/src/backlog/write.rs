@@ -218,6 +218,33 @@ pub fn set_task_label(path: &Path, label: &str, enabled: bool) -> Result<WriteOu
     })
 }
 
+/// Atomically replace one label with another in a single write — the
+/// dispatch pipeline's claim primitive.
+///
+/// **Strict, deliberately stronger than the CLI swap this replaces**: it
+/// *fails* when the task doesn't carry `from` at write time, instead of
+/// adding `to` anyway. A dispatch claim (`dispatch` → `dispatching`) is a
+/// race for a token; a swap that succeeds without holding the token would
+/// let two claimants both "win". The read happens inside the same
+/// read-modify-rename cycle as the write, so the lost-race window is the
+/// microseconds between them, not a caller's stale snapshot.
+pub fn swap_task_label(path: &Path, from: &str, to: &str) -> Result<WriteOutcome> {
+    let from = validated_single_line("label", from)?.to_string();
+    let to = validated_single_line("label", to)?.to_string();
+    apply_edit(path, move |fm, _| {
+        let labels = current_list(fm, "labels");
+        if !labels.iter().any(|l| l == &from) {
+            bail!("task does not carry label `{from}`");
+        }
+        let mut next: Vec<String> = labels.into_iter().filter(|l| l != &from).collect();
+        if !next.iter().any(|l| l == &to) {
+            next.push(to.clone());
+        }
+        set_list(fm, "labels", &next);
+        Ok(())
+    })
+}
+
 // ---- public operations: body ----
 
 /// Replace one prose section's content wholesale, regenerating its
@@ -305,22 +332,20 @@ pub fn set_task_checklist_item(
 
 // ---- public operations: create ----
 
-/// Write a brand-new task file in the CLI's on-disk shape. The caller owns ID
-/// allocation; this function owns collision *safety*: the file is opened with
-/// `create_new`, so racing two creates onto the same id fails cleanly rather
-/// than overwriting.
+/// Write a brand-new task file in the CLI's on-disk shape. The caller owns
+/// ID allocation (`id` is the bare id — `"42"`, or a decimal subtask id like
+/// `"42.1"`, without the `TASK-` prefix); this function owns collision
+/// *safety*: the file is opened with `create_new`, so racing two creates
+/// onto the same id fails cleanly rather than overwriting.
 ///
 /// Deliberately omits `ordinal` (the CLI web board's manual ordering hint) —
 /// nothing in this app reads it, and a fresh task has no meaningful position
 /// to claim. Recorded as a decision on the write-layer task.
-pub fn write_new_task_file(
-    tasks_dir: &Path,
-    id_number: u32,
-    task: &NewBacklogTask,
-) -> Result<PathBuf> {
+pub fn write_new_task_file(tasks_dir: &Path, id: &str, task: &NewBacklogTask) -> Result<PathBuf> {
+    validate_task_id(id)?;
     let title = validated_single_line("title", &task.title)?;
-    let text = new_task_text(id_number, title, task, &local_stamp())?;
-    let path = tasks_dir.join(format!("task-{id_number} - {}.md", filename_slug(title)));
+    let text = new_task_text(id, title, task, &local_stamp())?;
+    let path = tasks_dir.join(format!("task-{id} - {}.md", filename_slug(title)));
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -329,6 +354,20 @@ pub fn write_new_task_file(
     file.write_all(text.as_bytes())
         .with_context(|| format!("writing {}", path.display()))?;
     Ok(path)
+}
+
+/// A bare task id is digit groups joined by single dots — `42`, `42.1`,
+/// `42.1.3`. Anything else would poison both the filename convention and the
+/// id-matching every reader does.
+fn validate_task_id(id: &str) -> Result<()> {
+    let well_formed = !id.is_empty()
+        && id
+            .split('.')
+            .all(|group| !group.is_empty() && group.chars().all(|c| c.is_ascii_digit()));
+    if !well_formed {
+        bail!("malformed task id `{id}` (expected digits, optionally dot-separated)");
+    }
+    Ok(())
 }
 
 // ---- the edit engine ----
@@ -386,10 +425,22 @@ fn apply_edit(
     Ok(WriteOutcome::Changed)
 }
 
-/// Same write-tmp-then-rename shape as `crate::config::save_to`.
+/// Same write-tmp-then-rename shape as `crate::config::save_to`, with two
+/// courtesies rename alone wouldn't give: a read-only task file is
+/// **refused** (rename needs only directory permission, so it would happily
+/// replace a file its owner locked — the CLI honored the bit, and so do
+/// we), and the original file's permissions survive onto the replacement.
 fn atomic_write(path: &Path, text: &str) -> Result<()> {
+    let permissions = fs::metadata(path)
+        .with_context(|| format!("inspecting {}", path.display()))?
+        .permissions();
+    if permissions.readonly() {
+        bail!("{} is read-only", path.display());
+    }
     let tmp = path.with_extension("md.tmp");
     fs::write(&tmp, text).with_context(|| format!("writing {}", tmp.display()))?;
+    fs::set_permissions(&tmp, permissions)
+        .with_context(|| format!("preserving permissions on {}", tmp.display()))?;
     fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))
 }
 
@@ -789,7 +840,7 @@ fn max_checklist_index(lines: &[String], span: (usize, usize)) -> usize {
 
 // ---- create primitives ----
 
-fn new_task_text(id: u32, title: &str, task: &NewBacklogTask, stamp: &str) -> Result<String> {
+fn new_task_text(id: &str, title: &str, task: &NewBacklogTask, stamp: &str) -> Result<String> {
     let status = default_if_blank(&task.status, "To Do");
     let priority = default_if_blank(&task.priority, "medium");
     let mut fm = vec![
@@ -1099,6 +1150,37 @@ mod tests {
     }
 
     #[test]
+    fn swap_label_replaces_in_one_write_and_fails_without_the_source_label() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = fixture_file(&dir);
+
+        assert_eq!(
+            swap_task_label(&path, "hub", "hub-claimed").expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        assert_eq!(task.labels, vec!["slice-2", "hub-claimed"]);
+
+        let before = read(&path);
+        let err = swap_task_label(&path, "hub", "again").expect_err("source label is gone");
+        assert!(err.to_string().contains("hub"), "unexpected error: {err}");
+        assert_eq!(read(&path), before, "a failed swap must not touch the file");
+    }
+
+    #[test]
+    fn swap_label_never_duplicates_an_already_present_target() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = fixture_file(&dir);
+
+        assert_eq!(
+            swap_task_label(&path, "hub", "slice-2").expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        assert_eq!(task.labels, vec!["slice-2"], "no duplicate slice-2");
+    }
+
+    #[test]
     fn milestone_assign_inserts_after_priority_and_clear_removes_the_key() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = fixture_file(&dir);
@@ -1289,7 +1371,7 @@ mod tests {
             dependencies: vec!["task-5".to_string()],
         };
 
-        let path = write_new_task_file(dir.path(), 42, &task).expect("create succeeds");
+        let path = write_new_task_file(dir.path(), "42", &task).expect("create succeeds");
 
         let text = read(&path);
         let stamp_line = text
@@ -1350,9 +1432,9 @@ mod tests {
             dependencies: vec![],
         };
 
-        let first = write_new_task_file(dir.path(), 7, &task).expect("first create succeeds");
+        let first = write_new_task_file(dir.path(), "7", &task).expect("first create succeeds");
         let before = read(&first);
-        let err = write_new_task_file(dir.path(), 7, &task).expect_err("collision must fail");
+        let err = write_new_task_file(dir.path(), "7", &task).expect_err("collision must fail");
 
         assert!(
             err.to_string().contains("creating"),
@@ -1374,6 +1456,34 @@ mod tests {
             "a blank title still gets a filename"
         );
         assert!(filename_slug(&"x".repeat(400)).chars().count() <= 180);
+    }
+
+    /// Rename-over-file needs only *directory* permission, so without an
+    /// explicit check the write layer would happily replace a file its
+    /// owner marked read-only — a lock signal the CLI honored. Pinned here
+    /// because the GUI's board-drag failure-path test injects its failure
+    /// exactly this way.
+    #[test]
+    fn editing_a_read_only_file_is_refused_and_changes_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = fixture_file(&dir);
+        let mut perms = fs::metadata(&path).expect("metadata").permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&path, perms).expect("make read-only");
+
+        let err = set_task_status(&path, "Done").expect_err("must refuse");
+
+        assert!(
+            err.to_string().contains("read-only"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(
+            read(&path),
+            FIXTURE,
+            "a refused edit must not touch the file"
+        );
+        // No permission restore needed: unlinking a read-only file only
+        // requires directory write permission, which the tempdir has.
     }
 
     #[test]

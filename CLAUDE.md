@@ -39,7 +39,9 @@ When touching egui render paths (`crates/switchbard-gui/src/app.rs` or `crates/s
 
 ## Architecture
 
-Three-crate Cargo workspace. `switchbard-core` has **zero UI dependencies** and is heavily unit-tested; `switchbard-gui` is the only place egui appears; `switchbard-dispatch` is a thin headless binary over `switchbard-core` that drains the dispatch queue with the GUI closed.
+Four-crate Cargo workspace. `switchbard-core` has **zero UI dependencies** and is heavily unit-tested; `switchbard-gui` is the only place egui appears; `switchbard-dispatch` is a thin headless binary over `switchbard-core` that drains the dispatch queue with the GUI closed; `switchbard-task` is the terminal/agent frontend for Backlog-format tasks over the same native write layer (format fork, TASK-66).
+
+**Managing this repo's backlog tasks:** use `cargo run -q -p switchbard-task --` (`list`, `view <id>`, `create`, `edit <id> --check-ac N / --append-notes / --final-summary / -s Done`, `archive`, `complete`) — its `--help` is the output contract. It writes through the same `switchbard-core` layer as the GUI, which is the fork's one-writer invariant. The external `backlog` CLI is retired here (TASK-67): nothing in this repo invokes it, it is not on the toolchain, and task mutations must go through `switchbard-task` (or the GUI) — never hand-edit task markdown.
 
 ### `crates/switchbard-core` — domain layer
 
@@ -55,7 +57,7 @@ Re-exports are **explicit in `src/lib.rs`** (no glob re-exports). Module map:
 - `classify` — heuristic `Server` / `Maybe` / `NotServer` verdict per entry point.
 - `expected_port`, `resolve` — port inference; clusters listeners + services into `ResolvedService`.
 - `dispatch` — headless `claude -p` pipeline: dispatch-labeled task → worktree → agent run → PR.
-- `refine` — the grooming step upstream of `dispatch`: a read-only headless run that fills a task's description/ACs/plan, applied additively through the `backlog` CLI.
+- `refine` — the grooming step upstream of `dispatch`: a read-only headless run that fills a task's description/ACs/plan, applied additively through the native write layer.
 - `git_probe` — read-only `git status` / ahead-behind / fetch age / recent commits.
 - `git_env` — `git_cmd()`: every git call goes through it; see Git safety below.
 - `spawn` / `kill` — `spawn_in_session()` (own session/process group) + `kill_pgid()` → `KillOutcome`.

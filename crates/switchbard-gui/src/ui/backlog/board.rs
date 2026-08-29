@@ -532,7 +532,7 @@ fn apply_drop(
     if card_shows_in_column(app, row, column_status) {
         return;
     }
-    if !(row.task.editable() && row.project.project.cli_available()) {
+    if !row.task.editable() {
         app.backlog_status
             .set(format!("{} is read-only; drag ignored", row.task.id));
         return;
@@ -662,7 +662,7 @@ fn render_strip(
     pending: &mut Pending,
 ) {
     let key = row.key();
-    let editable = row.task.editable() && row.project.project.cli_available();
+    let editable = row.task.editable();
     let bulk_selected = app.backlog_view.bulk_selected_tasks.contains(&key);
     let selected = app.backlog_view.selected_task.as_ref() == Some(&key) || bulk_selected;
     // TASK-26: shift-range select needs the full visible order, same

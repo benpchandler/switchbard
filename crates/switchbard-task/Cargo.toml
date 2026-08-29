@@ -1,0 +1,22 @@
+[package]
+name = "switchbard-task"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Terminal and agent write path for Backlog-format tasks (switchbard's native task layer)"
+
+[dependencies]
+switchbard-core = { path = "../switchbard-core" }
+anyhow.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "switchbard-task"
+path = "src/main.rs"

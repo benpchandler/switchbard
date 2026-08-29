@@ -15,7 +15,7 @@
 //! to assert, this file asserts the click's synchronous side effect instead
 //! (a status message set before the spawn, a buffer clearing, a confirm
 //! flag flipping) and leaves the CLI round-trip itself to
-//! `switchbard-core/tests/backlog_cli_mutations.rs`, which proves the exact
+//! `switchbard-core/tests/backlog_mutations.rs`, which proves the exact
 //! same functions against a real fixture repo.
 
 mod common;
@@ -73,7 +73,6 @@ fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks,
             warnings: vec![],
             loaded_at_unix: 0,
@@ -195,7 +194,7 @@ fn multiline_input_nth<'t>(
 /// proves the click dispatched the intended action, so accept both: the
 /// exact in-flight string, or any terminal message starting with one of
 /// `terminal_prefixes`. The CLI's actual effect is proven in
-/// `switchbard-core/tests/backlog_cli_mutations.rs`, not here.
+/// `switchbard-core/tests/backlog_mutations.rs`, not here.
 fn assert_action_status(
     harness: &Harness<'static, HiveApp>,
     in_flight: &str,
@@ -585,7 +584,7 @@ fn create_modal_create_button_queues_a_create_and_closes_the_modal() {
 /// proves the render+queuing half (the fields exist, are typeable, and the
 /// buffer resets after Create — same bar the pre-existing description/AC
 /// fields are held to); `create_backlog_task_wires_labels_assignee_
-/// milestone_and_dependencies` (backlog_cli_mutations.rs) proves the queued
+/// milestone_and_dependencies` (backlog_mutations.rs) proves the queued
 /// value actually reaches the real CLI.
 #[test]
 fn create_modal_labels_assignee_milestone_and_dependencies_fields_reset_after_create() {
@@ -829,7 +828,6 @@ fn digest_harness_with(tasks: Vec<BacklogTask>) -> Harness<'static, HiveApp> {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks,
             warnings: vec![],
             loaded_at_unix: 0,
@@ -1026,7 +1024,7 @@ fn board_non_editable_card_click_still_selects_it() {
 /// `column_order`'s doc (board.rs). No CLI call decides this outcome (the
 /// `backlog` CLI has no way to set the statuses list at all — see
 /// `load_backlog_project_reads_configured_statuses_from_a_real_init`,
-/// backlog_cli_mutations.rs, for that finding and the real-fixture proof of
+/// backlog_mutations.rs, for that finding and the real-fixture proof of
 /// the parsing itself), so an in-memory fixture with `configured_statuses`
 /// set directly is the right level for exercising the *render* path.
 #[test]
@@ -1039,7 +1037,6 @@ fn board_shows_the_icebox_column_even_with_zero_icebox_tasks() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![task("TASK-1", "Ordinary task", "To Do")],
             warnings: vec![],
             loaded_at_unix: 0,
@@ -1684,22 +1681,15 @@ fn board_pending_move_overlay_renders_card_in_destination_column_before_save_res
 /// the reload this failure triggers would then find no task left to reload
 /// at all, defeating the "still there, just rolled back" assertions below.
 /// Same bounded-poll pattern as
-/// `save_button_completes_a_real_cli_round_trip_against_a_real_fixture_repo`
+/// `save_button_completes_a_real_write_round_trip_against_a_real_fixture_repo`
 /// — a real subprocess, not a synchronous state change, so this is the one
 /// test in this section that waits on the background thread.
 #[test]
 fn board_drag_failure_rolls_back_the_card_and_reloads_the_cache() {
     let fixture = tempfile::tempdir().expect("create temp dir");
     let root = fixture.path();
-    run_cmd(root, "git", &["init", "-q"]);
-    run_cmd(root, "git", &["config", "user.email", "qa@example.com"]);
-    run_cmd(root, "git", &["config", "user.name", "QA Fixture"]);
-    run_cmd(
-        root,
-        "backlog",
-        &["init", "--defaults", "--agent-instructions", "none", "qa"],
-    );
-    run_cmd(root, "backlog", &["task", "create", "Draggable card"]);
+    native_backlog_init(root);
+    native_task_create(root, "Draggable card");
 
     let repos = vec![Repo {
         name: "qa-fixture".to_string(),
@@ -1778,7 +1768,7 @@ fn board_drag_failure_rolls_back_the_card_and_reloads_the_cache() {
 
     // Bounded poll for the real `backlog` CLI subprocess to finish and
     // fail — same pattern as
-    // save_button_completes_a_real_cli_round_trip_against_a_real_fixture_repo.
+    // save_button_completes_a_real_write_round_trip_against_a_real_fixture_repo.
     // Plain `run()` (see `drag_and_drop`'s doc) — it keeps settling in one
     // step on every iteration of this loop even while the move stays
     // pending the whole time.
@@ -1872,15 +1862,8 @@ fn board_drag_failure_rolls_back_the_card_and_reloads_the_cache() {
 fn board_rail_edit_save_serializes_against_an_in_flight_drop_on_the_same_task() {
     let fixture = tempfile::tempdir().expect("create temp dir");
     let root = fixture.path();
-    run_cmd(root, "git", &["init", "-q"]);
-    run_cmd(root, "git", &["config", "user.email", "qa@example.com"]);
-    run_cmd(root, "git", &["config", "user.name", "QA Fixture"]);
-    run_cmd(
-        root,
-        "backlog",
-        &["init", "--defaults", "--agent-instructions", "none", "qa"],
-    );
-    run_cmd(root, "backlog", &["task", "create", "Draggable card"]);
+    native_backlog_init(root);
+    native_task_create(root, "Draggable card");
 
     let repos = vec![Repo {
         name: "qa-fixture".to_string(),
@@ -2132,7 +2115,7 @@ fn board_drop_back_to_origin_while_pending_queues_a_reversing_move() {
     // Not `drag_and_drop` (which ends each event in `Harness::run`) — this
     // drop is a *genuine* new move (not a no-op like the redrop test
     // above), so it really does spawn a real `spawn_board_move_save`
-    // thread. Against this fixture's fake `cli_path`, that thread fails
+    // thread. Against this fixture's nonexistent task file, that thread fails
     // near-instantly and reports its outcome; `Harness::run`'s settle loop
     // can (rarely, when something unrelated also requests an immediate
     // repaint on the same frame — e.g. a hover-state change right after the
@@ -2248,7 +2231,6 @@ fn board_unrelated_project_reload_does_not_resolve_a_pending_move() {
         PathBuf::from(REPO_PATH),
         BacklogProject {
             root: PathBuf::from(REPO_PATH),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![
                 task("TASK-1", "Other card", "To Do"),
                 task("TASK-2", "Draggable card", "In Progress"),
@@ -2806,7 +2788,12 @@ fn references_add_button_clears_the_input_field() {
     );
 
     harness.get_by_label("Add").click_accesskit();
-    harness.run();
+    // `run_steps`, not `run`: the buffer clear under assertion happens
+    // synchronously in the click handler, and `run`'s 4-step settle budget
+    // can be exhausted by the scroll-into-view animation plus the save
+    // thread's own repaint request — which, since the format fork's native
+    // writes, can land mid-run instead of long after it.
+    harness.run_steps(4);
     assert_eq!(
         harness.state().backlog_view.editor.new_reference,
         "",
@@ -2826,7 +2813,9 @@ fn append_note_button_clears_the_note_input() {
     assert_eq!(harness.state().backlog_view.editor.note, "A new note");
 
     harness.get_by_label("Append Note").click_accesskit();
-    harness.run();
+    // `run_steps`, not `run` — same rationale as
+    // `references_add_button_clears_the_input_field` above.
+    harness.run_steps(4);
     assert_eq!(
         harness.state().backlog_view.editor.note,
         "",
@@ -2870,7 +2859,7 @@ fn editing_the_title_enables_the_save_button() {
             .is_disabled(),
         "editing the title should enable Save (the click itself, and the CLI \
          round trip it triggers, are proven in \
-         save_button_completes_a_real_cli_round_trip_against_a_real_fixture_repo \
+         save_button_completes_a_real_write_round_trip_against_a_real_fixture_repo \
          below)"
     );
 }
@@ -3140,7 +3129,7 @@ fn settings_remove_button_opens_the_shared_confirmation_modal() {
 /// Owner-found bug: `backlog task create --plain` writes the entire newly
 /// created task's rendered form to stdout (confirmed empirically against a
 /// real fixture — `parse_created_task_id_extracts_the_id_from_a_real_
-/// create_call`, backlog_cli_mutations.rs), which used to land verbatim in
+/// create_call`, backlog_mutations.rs), which used to land verbatim in
 /// `backlog_status` and stretch the top bar into a many-line void. This is
 /// the defense-in-depth half: even a status message that somehow still
 /// contains newlines/very long text must render as a single clamped line,
@@ -3260,20 +3249,13 @@ fn saved_view_persists_across_a_simulated_restart() {
 /// click-time status message) truly reaches the real CLI end to end, not
 /// just a fixture path other tests treat as a stand-in. Every other
 /// CLI-writing control's completion is proven at the core level instead
-/// (`backlog_cli_mutations.rs`).
+/// (`backlog_mutations.rs`).
 #[test]
-fn save_button_completes_a_real_cli_round_trip_against_a_real_fixture_repo() {
+fn save_button_completes_a_real_write_round_trip_against_a_real_fixture_repo() {
     let fixture = tempfile::tempdir().expect("create temp dir");
     let root = fixture.path();
-    run_cmd(root, "git", &["init", "-q"]);
-    run_cmd(root, "git", &["config", "user.email", "qa@example.com"]);
-    run_cmd(root, "git", &["config", "user.name", "QA Fixture"]);
-    run_cmd(
-        root,
-        "backlog",
-        &["init", "--defaults", "--agent-instructions", "none", "qa"],
-    );
-    run_cmd(root, "backlog", &["task", "create", "Fixture task"]);
+    native_backlog_init(root);
+    native_task_create(root, "Fixture task");
 
     let repos = vec![Repo {
         name: "qa-fixture".to_string(),
@@ -3357,14 +3339,7 @@ fn save_button_completes_a_real_cli_round_trip_against_a_real_fixture_repo() {
 fn create_modal_reports_a_compact_created_message_against_a_real_fixture_repo() {
     let fixture = tempfile::tempdir().expect("create temp dir");
     let root = fixture.path();
-    run_cmd(root, "git", &["init", "-q"]);
-    run_cmd(root, "git", &["config", "user.email", "qa@example.com"]);
-    run_cmd(root, "git", &["config", "user.name", "QA Fixture"]);
-    run_cmd(
-        root,
-        "backlog",
-        &["init", "--defaults", "--agent-instructions", "none", "qa"],
-    );
+    native_backlog_init(root);
 
     let repos = vec![Repo {
         name: "MusicProduction".to_string(),
@@ -3470,14 +3445,7 @@ fn create_modal_reports_a_compact_created_message_against_a_real_fixture_repo() 
 fn create_modal_task_is_visible_in_both_list_and_board_against_a_real_fixture_repo() {
     let fixture = tempfile::tempdir().expect("create temp dir");
     let root = fixture.path();
-    run_cmd(root, "git", &["init", "-q"]);
-    run_cmd(root, "git", &["config", "user.email", "qa@example.com"]);
-    run_cmd(root, "git", &["config", "user.name", "QA Fixture"]);
-    run_cmd(
-        root,
-        "backlog",
-        &["init", "--defaults", "--agent-instructions", "none", "qa"],
-    );
+    native_backlog_init(root);
 
     let repos = vec![Repo {
         name: "MusicProduction".to_string(),
@@ -3560,7 +3528,7 @@ fn create_modal_task_is_visible_in_both_list_and_board_against_a_real_fixture_re
 /// Independent re-verification (2026-08-05 fix-wave audit) of the HIGH
 /// defect's fix: `create_backlog_task_wires_a_subtask_parent` and
 /// `subtask_ids_are_decimal_children_of_the_parent_id`
-/// (backlog_cli_mutations.rs) prove the *parser* now reads real subtasks
+/// (backlog_mutations.rs) prove the *parser* now reads real subtasks
 /// correctly; neither exercises the GUI render path the original defect
 /// actually broke (roll-up badge, tree expand/collapse, "+ Subtask"). Every
 /// pre-existing GUI test for that feature
@@ -3573,39 +3541,40 @@ fn create_modal_task_is_visible_in_both_list_and_board_against_a_real_fixture_re
 /// (`load_backlog_project`, not a struct literal), then driven through the
 /// actual List-lens render path.
 #[test]
-fn sub_task_hierarchy_renders_correctly_from_a_real_cli_created_subtask() {
+fn sub_task_hierarchy_renders_correctly_from_a_native_created_subtask() {
     let fixture = tempfile::tempdir().expect("create temp dir");
     let root = fixture.path();
-    run_cmd(root, "git", &["init", "-q"]);
-    run_cmd(root, "git", &["config", "user.email", "qa@example.com"]);
-    run_cmd(root, "git", &["config", "user.name", "QA Fixture"]);
-    run_cmd(
-        root,
-        "backlog",
-        &["init", "--defaults", "--agent-instructions", "none", "qa"],
-    );
-    run_cmd(root, "backlog", &["task", "create", "Parent task"]);
-    run_cmd(
-        root,
-        "backlog",
-        &["task", "create", "Done child", "-p", "TASK-1"],
-    );
-    run_cmd(
-        root,
-        "backlog",
-        &["task", "create", "Open child", "-p", "TASK-1"],
-    );
-    run_cmd(root, "backlog", &["task", "edit", "TASK-1.1", "-s", "Done"]);
+    native_backlog_init(root);
+    native_task_create(root, "Parent task");
+    for title in ["Done child", "Open child"] {
+        switchbard_core::create_backlog_task(
+            root,
+            &switchbard_core::NewBacklogTask {
+                title: title.to_string(),
+                description: String::new(),
+                status: String::new(),
+                priority: String::new(),
+                acceptance_criteria: vec![],
+                parent: Some("TASK-1".to_string()),
+                labels: vec![],
+                assignees: vec![],
+                milestone: None,
+                dependencies: vec![],
+            },
+        )
+        .expect("native fixture subtask create");
+    }
+    native_task_status(root, "TASK-1.1", "Done");
 
-    // Sanity: prove the real CLI really did write `parent_task_id:`, not
-    // `parent:` — if a future CLI version changes the key again, this test
-    // should fail loudly here rather than silently passing for the wrong
-    // reason.
+    // Sanity: prove the native writer really does write `parent_task_id:`,
+    // not `parent:` — the key the 2026-08-05 QA audit proved the format
+    // uses. If the writer ever changes the key, fail loudly here rather
+    // than silently passing for the wrong reason.
     let child_file = std::fs::read_to_string(root.join("backlog/tasks/task-1.1 - Done-child.md"))
-        .expect("read the real CLI's generated subtask file");
+        .expect("read the native writer's generated subtask file");
     assert!(
         child_file.contains("parent_task_id: TASK-1"),
-        "expected the real CLI to write parent_task_id:, got:\n{child_file}"
+        "expected the native writer to emit parent_task_id:, got:\n{child_file}"
     );
 
     let repos = vec![Repo {
@@ -3686,17 +3655,47 @@ fn sub_task_hierarchy_renders_correctly_from_a_real_cli_created_subtask() {
     assert!(h.state().backlog_view.new_task.open);
 }
 
-fn run_cmd(cwd: &std::path::Path, cmd: &str, args: &[&str]) {
-    let output = std::process::Command::new(cmd)
-        .current_dir(cwd)
-        .args(args)
-        .output()
-        .unwrap_or_else(|e| panic!("failed to run {cmd}: {e}"));
-    assert!(
-        output.status.success(),
-        "{cmd} {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+/// Native fixture init — the directory shape plus a config declaring the
+/// standard trio, matching what `backlog init --defaults` used to produce
+/// before the format fork retired the external CLI (TASK-67).
+fn native_backlog_init(root: &std::path::Path) {
+    std::fs::create_dir_all(root.join("backlog/tasks")).expect("fixture layout");
+    std::fs::write(
+        root.join("backlog/config.yml"),
+        "statuses: [\"To Do\", \"In Progress\", \"Done\"]\n",
+    )
+    .expect("fixture config");
+}
+
+fn native_task_create(root: &std::path::Path, title: &str) -> String {
+    switchbard_core::create_backlog_task(
+        root,
+        &switchbard_core::NewBacklogTask {
+            title: title.to_string(),
+            description: String::new(),
+            status: String::new(),
+            priority: String::new(),
+            acceptance_criteria: vec![],
+            parent: None,
+            labels: vec![],
+            assignees: vec![],
+            milestone: None,
+            dependencies: vec![],
+        },
+    )
+    .expect("native fixture create")
+}
+
+fn native_task_status(root: &std::path::Path, id: &str, status: &str) {
+    switchbard_core::edit_backlog_task(
+        root,
+        id,
+        &switchbard_core::BacklogTaskPatch {
+            status: Some(status.to_string()),
+            ..Default::default()
+        },
+    )
+    .expect("native fixture status edit");
 }
 
 /// A long label list must not drag its column wider than `COLUMN_WIDTH`.
@@ -4059,15 +4058,8 @@ fn keeping_a_repos_own_statuses_is_remembered_and_stops_asking() {
 fn accepting_the_offer_writes_the_config_and_the_column_appears() {
     let fixture = tempfile::tempdir().expect("create temp dir");
     let root = fixture.path();
-    run_cmd(root, "git", &["init", "-q"]);
-    run_cmd(root, "git", &["config", "user.email", "qa@example.com"]);
-    run_cmd(root, "git", &["config", "user.name", "QA Fixture"]);
-    run_cmd(
-        root,
-        "backlog",
-        &["init", "--defaults", "--agent-instructions", "none", "qa"],
-    );
-    run_cmd(root, "backlog", &["task", "create", "Ordinary task"]);
+    native_backlog_init(root);
+    native_task_create(root, "Ordinary task");
 
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
@@ -4118,7 +4110,6 @@ fn a_drop_onto_a_column_this_repo_lacks_is_refused_and_offers_the_fix() {
         PathBuf::from(OTHER),
         BacklogProject {
             root: PathBuf::from(OTHER),
-            cli_path: Some(PathBuf::from("/usr/local/bin/backlog")),
             tasks: vec![task("OTHER-1", "Someone else's task", "Icebox")],
             warnings: vec![],
             loaded_at_unix: 0,

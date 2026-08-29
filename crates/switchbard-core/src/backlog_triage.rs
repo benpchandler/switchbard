@@ -470,7 +470,6 @@ mod tests {
         };
         let project = crate::backlog::BacklogProject {
             root: PathBuf::from("/repos/a"),
-            cli_path: None,
             tasks: vec![task.clone()],
             warnings: vec![],
             loaded_at_unix: 0,
