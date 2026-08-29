@@ -334,18 +334,38 @@ pub fn set_task_checklist_item(
 
 /// Write a brand-new task file in the CLI's on-disk shape. The caller owns
 /// ID allocation (`id` is the bare id — `"42"`, or a decimal subtask id like
-/// `"42.1"`, without the `TASK-` prefix); this function owns collision
-/// *safety*: the file is opened with `create_new`, so racing two creates
-/// onto the same id fails cleanly rather than overwriting.
+/// `"42.1"`, without the `{PREFIX}-` prefix) and prefix resolution (`prefix`
+/// is the project's configured `task_prefix`, e.g. `"LED"`, already
+/// uppercased — see `super::parse::configured_task_prefix`); this function
+/// owns collision *safety*: the file is opened with `create_new`, so racing
+/// two creates onto the same id fails cleanly rather than overwriting.
+///
+/// The frontmatter id is written uppercased (`id: LED-42`) and the filename
+/// lowercased (`led-42 - ....md`) — the exact casing split observed in
+/// budget's own `LED`-prefixed tasks, which the `backlog` CLI produces and
+/// reads regardless of how a human typed `task_prefix` in `config.yml`.
 ///
 /// Deliberately omits `ordinal` (the CLI web board's manual ordering hint) —
 /// nothing in this app reads it, and a fresh task has no meaningful position
 /// to claim. Recorded as a decision on the write-layer task.
-pub fn write_new_task_file(tasks_dir: &Path, id: &str, task: &NewBacklogTask) -> Result<PathBuf> {
+pub fn write_new_task_file(
+    tasks_dir: &Path,
+    prefix: &str,
+    id: &str,
+    task: &NewBacklogTask,
+) -> Result<PathBuf> {
     validate_task_id(id)?;
+    let prefix = prefix.trim();
+    if prefix.is_empty() {
+        bail!("task prefix is empty");
+    }
     let title = validated_single_line("title", &task.title)?;
-    let text = new_task_text(id, title, task, &local_stamp())?;
-    let path = tasks_dir.join(format!("task-{id} - {}.md", filename_slug(title)));
+    let text = new_task_text(prefix, id, title, task, &local_stamp())?;
+    let path = tasks_dir.join(format!(
+        "{}-{id} - {}.md",
+        prefix.to_ascii_lowercase(),
+        filename_slug(title)
+    ));
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -840,11 +860,17 @@ fn max_checklist_index(lines: &[String], span: (usize, usize)) -> usize {
 
 // ---- create primitives ----
 
-fn new_task_text(id: &str, title: &str, task: &NewBacklogTask, stamp: &str) -> Result<String> {
+fn new_task_text(
+    prefix: &str,
+    id: &str,
+    title: &str,
+    task: &NewBacklogTask,
+    stamp: &str,
+) -> Result<String> {
     let status = default_if_blank(&task.status, "To Do");
     let priority = default_if_blank(&task.priority, "medium");
     let mut fm = vec![
-        format!("id: TASK-{id}"),
+        format!("id: {prefix}-{id}"),
         format!("title: {}", yaml_scalar(title)),
         format!(
             "status: {}",
@@ -1371,7 +1397,7 @@ mod tests {
             dependencies: vec!["task-5".to_string()],
         };
 
-        let path = write_new_task_file(dir.path(), "42", &task).expect("create succeeds");
+        let path = write_new_task_file(dir.path(), "TASK", "42", &task).expect("create succeeds");
 
         let text = read(&path);
         let stamp_line = text
@@ -1416,6 +1442,43 @@ mod tests {
         assert_eq!(parsed.acceptance_criteria.len(), 2);
     }
 
+    /// The reproduction: a project configured with `task_prefix: "LED"`
+    /// (budget's own config) must mint `id: LED-11` and a `led-11 - ....md`
+    /// filename — the exact shape a real budget task file carries — not the
+    /// hardcoded `TASK-`/`task-` this crate used to emit regardless of
+    /// config.
+    #[test]
+    fn create_honors_a_configured_prefix_in_both_id_and_filename() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let task = NewBacklogTask {
+            title: "Fix the prefix bug".to_string(),
+            description: String::new(),
+            status: String::new(),
+            priority: String::new(),
+            acceptance_criteria: vec![],
+            parent: None,
+            labels: vec![],
+            assignees: vec![],
+            milestone: None,
+            dependencies: vec![],
+        };
+
+        let path = write_new_task_file(dir.path(), "LED", "11", &task).expect("create succeeds");
+
+        assert!(
+            path.ends_with("led-11 - Fix-the-prefix-bug.md"),
+            "filename must use the configured prefix, lowercased: {path:?}"
+        );
+        let text = read(&path);
+        assert!(
+            text.contains("id: LED-11"),
+            "frontmatter id must use the configured prefix, uppercased: {text:?}"
+        );
+
+        let parsed = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        assert_eq!(parsed.id, "LED-11");
+    }
+
     #[test]
     fn create_refuses_to_overwrite_an_existing_file() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1432,9 +1495,11 @@ mod tests {
             dependencies: vec![],
         };
 
-        let first = write_new_task_file(dir.path(), "7", &task).expect("first create succeeds");
+        let first =
+            write_new_task_file(dir.path(), "TASK", "7", &task).expect("first create succeeds");
         let before = read(&first);
-        let err = write_new_task_file(dir.path(), "7", &task).expect_err("collision must fail");
+        let err =
+            write_new_task_file(dir.path(), "TASK", "7", &task).expect_err("collision must fail");
 
         assert!(
             err.to_string().contains("creating"),

@@ -568,6 +568,59 @@ fn two_independent_fixture_projects_can_both_mint_task_1() {
     );
 }
 
+/// The reproduction (LED-* on staging): a project whose `backlog/config.yml`
+/// declares `task_prefix: "LED"` (budget's own config) must mint an id and
+/// filename in that family, continuing past an existing `led-10` file — not
+/// mint `TASK-1`, a file the external `backlog` CLI in that project would
+/// never recognize as one of its own tasks.
+#[test]
+fn create_backlog_task_mints_the_projects_configured_prefix() {
+    let fixture = fixture_project();
+    let root = fixture.path();
+    fs::write(
+        root.join("backlog/config.yml"),
+        "project_name: \"fixture\"\n\
+         statuses: [\"Icebox\", \"To Do\", \"In Progress\", \"In Review\", \"Done\"]\n\
+         task_prefix: \"LED\"\n",
+    )
+    .expect("rewrite config with task_prefix");
+    fs::write(
+        root.join("backlog/tasks/led-10 - Existing.md"),
+        "---\nid: LED-10\ntitle: Existing\nstatus: To Do\npriority: medium\n---\n",
+    )
+    .expect("seed an existing led-10 file");
+
+    let output = create_backlog_task(
+        root,
+        &NewBacklogTask {
+            title: "Fix the prefix bug".to_string(),
+            description: String::new(),
+            status: "To Do".to_string(),
+            priority: "medium".to_string(),
+            acceptance_criteria: vec![],
+            parent: None,
+            labels: vec![],
+            assignees: vec![],
+            milestone: None,
+            dependencies: vec![],
+        },
+    )
+    .expect("create_backlog_task should succeed");
+
+    assert_eq!(
+        output, "LED-11",
+        "must continue LED numbering past the existing led-10 file, not mint TASK-1"
+    );
+    assert!(
+        root.join("backlog/tasks/led-11 - Fix-the-prefix-bug.md")
+            .is_file(),
+        "the created file must use the CLI's led- filename convention"
+    );
+
+    let project = reload(root);
+    assert_eq!(find(&project, "LED-11").title, "Fix the prefix bug");
+}
+
 #[test]
 fn editing_a_missing_task_names_the_id_and_a_duplicate_is_refused() {
     let fixture = fixture_project();
