@@ -31,8 +31,10 @@
 //!   instead of a rendered blob to scrape (the late `parse_created_task_id`,
 //!   TASK-28's scar).
 
-use super::allocate::create_task_allocating_id;
-use super::parse::{parse_config_statuses, parse_task_file};
+use super::allocate::{create_task_allocating_id, strip_id_prefix};
+use super::parse::{
+    configured_task_prefix, parse_config_statuses, parse_task_file, DEFAULT_TASK_PREFIX,
+};
 use super::types::{BacklogTaskPatch, BacklogTaskSource, NewBacklogTask};
 use super::write::{
     append_task_acceptance_criteria, append_task_notes, replace_task_section,
@@ -216,8 +218,9 @@ pub fn set_backlog_final_summary(
 }
 
 /// Create a task in `backlog/tasks`, allocating its id natively (see
-/// `super::allocate`). Returns the new id — `"TASK-42"` — as the output
-/// string; callers build their own status messages from it.
+/// `super::allocate`). Returns the new id — `"TASK-42"`, or `"LED-42"` in a
+/// project whose `backlog/config.yml` declares `task_prefix: "LED"` — as the
+/// output string; callers build their own status messages from it.
 pub fn create_backlog_task(project_root: &Path, task: &NewBacklogTask) -> Result<String> {
     if task.title.trim().is_empty() {
         bail!("title is required");
@@ -225,8 +228,9 @@ pub fn create_backlog_task(project_root: &Path, task: &NewBacklogTask) -> Result
     if let Some(status) = Some(task.status.as_str()).filter(|s| !s.trim().is_empty()) {
         validate_status(project_root, status)?;
     }
+    let prefix = configured_task_prefix(project_root);
     let (id, _path) = create_task_allocating_id(project_root, task)?;
-    Ok(format!("TASK-{id}"))
+    Ok(format!("{prefix}-{id}"))
 }
 
 // ---- shared plumbing ----
@@ -242,12 +246,15 @@ fn outcome_message(task_id: &str, outcome: WriteOutcome) -> String {
 }
 
 /// The file in `backlog/tasks` carrying `task_id`. Matches on the id portion
-/// of the filename (`task-{id} - Title.md`), case-insensitively, accepting
-/// the id with or without its `TASK-` prefix. Zero matches and multiple
-/// matches are both errors — a duplicated id is a fact to surface, never to
-/// guess through.
+/// of the filename (`{prefix}-{id} - Title.md`, for the project's configured
+/// `task_prefix` — `LED-` for budget), case-insensitively, accepting the id
+/// with or without that prefix (or the literal `TASK-`, tolerated the same
+/// way `super::allocate` tolerates it when scanning — see that module's
+/// *Configured id prefix* doc). Zero matches and multiple matches are both
+/// errors — a duplicated id is a fact to surface, never to guess through.
 fn resolve_task_file(project_root: &Path, task_id: &str) -> Result<PathBuf> {
-    let key = normalized_id(task_id);
+    let prefix = configured_task_prefix(project_root);
+    let key = normalized_id(task_id, &prefix);
     if key.is_empty() {
         bail!("task id is empty");
     }
@@ -258,7 +265,7 @@ fn resolve_task_file(project_root: &Path, task_id: &str) -> Result<PathBuf> {
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| path.extension().and_then(OsStr::to_str) == Some("md"))
-        .filter(|path| filename_matches_id(path, key))
+        .filter(|path| filename_matches_id(path, key, &prefix))
         .collect();
     matches.sort();
     match matches.len() {
@@ -271,24 +278,19 @@ fn resolve_task_file(project_root: &Path, task_id: &str) -> Result<PathBuf> {
     }
 }
 
-fn normalized_id(task_id: &str) -> &str {
+fn normalized_id<'a>(task_id: &'a str, prefix: &str) -> &'a str {
     let trimmed = task_id.trim();
-    let lower = trimmed.get(..5).unwrap_or("");
-    if lower.eq_ignore_ascii_case("task-") {
-        &trimmed[5..]
-    } else {
-        trimmed
-    }
+    strip_id_prefix(trimmed, prefix)
+        .or_else(|| strip_id_prefix(trimmed, DEFAULT_TASK_PREFIX))
+        .unwrap_or(trimmed)
 }
 
-fn filename_matches_id(path: &Path, key: &str) -> bool {
+fn filename_matches_id(path: &Path, key: &str, prefix: &str) -> bool {
     let Some(stem) = path.file_stem().and_then(OsStr::to_str) else {
         return false;
     };
-    let Some(rest) = stem
-        .get(..5)
-        .filter(|p| p.eq_ignore_ascii_case("task-"))
-        .map(|_| &stem[5..])
+    let Some(rest) =
+        strip_id_prefix(stem, prefix).or_else(|| strip_id_prefix(stem, DEFAULT_TASK_PREFIX))
     else {
         return false;
     };
@@ -339,6 +341,39 @@ mod tests {
         dir
     }
 
+    fn new_task(title: &str) -> NewBacklogTask {
+        NewBacklogTask {
+            title: title.to_string(),
+            description: String::new(),
+            status: String::new(),
+            priority: String::new(),
+            acceptance_criteria: vec![],
+            parent: None,
+            labels: vec![],
+            assignees: vec![],
+            milestone: None,
+            dependencies: vec![],
+        }
+    }
+
+    /// The facade-level slice of the reproduction: `create_backlog_task`'s
+    /// returned id string must carry the project's configured prefix, not a
+    /// hardcoded `TASK-`.
+    #[test]
+    fn create_backlog_task_honors_a_configured_prefix() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join("backlog")).expect("fixture dirs");
+        fs::write(
+            dir.path().join("backlog/config.yml"),
+            "project_name: \"Fixture\"\ntask_prefix: \"LED\"\n",
+        )
+        .expect("fixture config");
+
+        let id = create_backlog_task(dir.path(), &new_task("Fix the prefix bug")).expect("creates");
+
+        assert_eq!(id, "LED-1");
+    }
+
     #[test]
     fn resolves_ids_with_and_without_prefix_case_insensitively() {
         let dir = project_with_task("task-7 - Fixture.md");
@@ -352,6 +387,37 @@ mod tests {
             "no prefix match"
         );
         assert!(resolve_task_file(dir.path(), "").is_err());
+    }
+
+    /// The related bug this fix also closes: `edit`/`archive`/`complete`/etc
+    /// all resolve their target file through `resolve_task_file`, which used
+    /// to require a literal `task-` filename prefix regardless of the
+    /// project's configured `task_prefix` — so `switchbard-task edit LED-11`
+    /// failed with "no task LED-11" even though the file existed and `view`/
+    /// `list` (which read frontmatter directly) found it fine. Reproduced
+    /// live against a scratch LED-prefixed project before this fix.
+    #[test]
+    fn resolves_ids_in_a_led_prefixed_project() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join("backlog")).expect("fixture dirs");
+        fs::write(
+            dir.path().join("backlog/config.yml"),
+            "project_name: \"Fixture\"\ntask_prefix: \"LED\"\n",
+        )
+        .expect("fixture config");
+        let tasks = dir.path().join("backlog/tasks");
+        fs::create_dir_all(&tasks).expect("fixture dirs");
+        fs::write(
+            tasks.join("led-11 - Fixture.md"),
+            "---\nid: LED-11\ntitle: Fixture\nstatus: To Do\npriority: low\n---\n",
+        )
+        .expect("fixture file");
+
+        for id in ["LED-11", "led-11", "11", " LED-11 "] {
+            let path = resolve_task_file(dir.path(), id)
+                .unwrap_or_else(|e| panic!("{id} should resolve: {e}"));
+            assert!(path.ends_with("led-11 - Fixture.md"));
+        }
     }
 
     #[test]

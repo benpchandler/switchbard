@@ -78,6 +78,43 @@ pub(super) fn parse_config_statuses(root: &Path) -> Vec<String> {
     yaml_string_list(mapping, "statuses")
 }
 
+/// The `backlog` CLI's own default task-id prefix, used whenever a project's
+/// `backlog/config.yml` doesn't declare `task_prefix` — the exact value this
+/// crate's id allocator hardcoded before it read the config at all (see
+/// `super::allocate`'s module doc for the LED-prefixed-project bug that
+/// hardcoding caused).
+pub(super) const DEFAULT_TASK_PREFIX: &str = "TASK";
+
+/// Read `backlog/config.yml`'s `task_prefix:` scalar, uppercased.
+///
+/// Uppercased because that's what the CLI itself writes into the id
+/// (`id: LED-272`) regardless of how a human typed the key's value; the
+/// lowercase form used in filenames (`led-272 - ....md`) is derived from this
+/// at the call site, not stored separately — one value, two renderings.
+///
+/// Never fails the whole project load: a missing/unreadable/malformed
+/// config, or a project that simply doesn't declare the key, yields
+/// [`DEFAULT_TASK_PREFIX`] — same fallback as `parse_config_statuses`.
+pub(super) fn configured_task_prefix(root: &Path) -> String {
+    let path = root.join("backlog/config.yml");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return DEFAULT_TASK_PREFIX.to_string();
+    };
+    let Ok(value) = serde_yaml::from_str::<Value>(&text) else {
+        return DEFAULT_TASK_PREFIX.to_string();
+    };
+    let Some(mapping) = value.as_mapping() else {
+        return DEFAULT_TASK_PREFIX.to_string();
+    };
+    mapping
+        .get(Value::String("task_prefix".to_string()))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_uppercase)
+        .unwrap_or_else(|| DEFAULT_TASK_PREFIX.to_string())
+}
+
 /// [`body_round_trips`] for one task file on disk — what `crate::refine`
 /// asks before it overwrites a whole section.
 ///
@@ -632,6 +669,40 @@ mod tests {
         )
         .unwrap();
         assert_eq!(parse_config_statuses(dir.path()), Vec::<String>::new());
+    }
+
+    /// The bug this exists to fix: budget's `backlog/config.yml` declares
+    /// `task_prefix: "LED"`, and the value must come back uppercased
+    /// regardless of how it's spelled in the file.
+    #[test]
+    fn reads_a_declared_task_prefix_uppercased() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("backlog")).unwrap();
+        fs::write(
+            dir.path().join("backlog/config.yml"),
+            "project_name: \"Ledger\"\ntask_prefix: \"led\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(configured_task_prefix(dir.path()), "LED");
+    }
+
+    /// Missing config, a config with no `task_prefix` key, and a config with
+    /// no `backlog/` directory at all must all fall back to the CLI's own
+    /// default — preserving exactly the behavior this crate hardcoded before
+    /// it read the config.
+    #[test]
+    fn missing_task_prefix_falls_back_to_the_cli_default() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(configured_task_prefix(dir.path()), DEFAULT_TASK_PREFIX);
+
+        fs::create_dir_all(dir.path().join("backlog")).unwrap();
+        fs::write(
+            dir.path().join("backlog/config.yml"),
+            "project_name: \"No prefix key\"\n",
+        )
+        .unwrap();
+        assert_eq!(configured_task_prefix(dir.path()), DEFAULT_TASK_PREFIX);
     }
 
     /// TASK-44 audit finding F1 (HIGH). `extract_section` used to end a
