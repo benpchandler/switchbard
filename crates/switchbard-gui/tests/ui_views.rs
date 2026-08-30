@@ -1095,6 +1095,7 @@ fn harness_on_disk_task(labels: &[&str]) -> (tempfile::TempDir, Harness<'static,
     std::fs::create_dir_all(&tasks_dir).expect("project layout");
     switchbard_core::write_new_task_file(
         &tasks_dir,
+        "TASK",
         "1",
         &switchbard_core::NewBacklogTask {
             title: "Seeded Backlog Task".to_string(),
