@@ -87,29 +87,26 @@
 //!
 //! Calibrating that claim, because an earlier version of this doc overstated
 //! it: the guard **bounds a class**, it does not prove losslessness. It
-//! requires balanced code fences, and every `## ` heading to be one of the six
-//! the Backlog format defines and appear once — three structural rules that
-//! stop a lossy read from being its own witness — before it compares content
-//! line by line. A future reader bug that preserved all of that *and*
-//! conserved every line would still slip through. It is a strong check, not a
-//! theorem. What it does guarantee is that the failures found so far, and the
-//! whole "spurious heading" family behind them, fail closed to a visible
-//! no-op.
+//! requires balanced code fences, no `## ` heading to repeat, and no known
+//! section heading to sit inside a fence — structural rules that stop a
+//! lossy read from being its own witness — before it compares content line
+//! by line. A future reader bug that preserved all of that *and* conserved
+//! every line would still slip through. It is a strong check, not a theorem.
+//! What it does guarantee is that the failures found so far, and the whole
+//! "spurious heading" family behind them, fail closed to a visible no-op.
 //!
-//! This is not hypothetical strictness. Measured across 345 real task files in
-//! three repos, 51 fail the guard — every one of them because it carries a
-//! human-written section the Backlog format has no field for (`## Resolution`,
-//! `## Root Cause Hypothesis`, `## Reproduction Steps`). `parse_task_file`
-//! extracts six sections; content under any other heading lands in no field at
-//! all, so a replace-write genuinely would delete it. Refine refuses those
-//! tasks' prose writes and says so.
+//! A heading the format does not define is deliberately *not* a ground for
+//! refusal (TASK-45). TASK-44 measured 345 real task files in three repos
+//! and found 51 carrying human-written sections the format has no field for
+//! (`## Resolution`, `## Root Cause Hypothesis`, `## Reproduction Steps`);
+//! the guard originally refused all of them. Since the write layer went
+//! surgical (TASK-63) those sections are opaque blocks a section-replace
+//! never enters, so both Refine and the detail rail's Save — which has
+//! written through the same guarded layer since the TASK-65 swap — proceed
+//! on such files and preserve the custom sections byte-for-byte.
 //!
-//! ## Two residuals worth naming
+//! ## A residual worth naming
 //!
-//! - **The detail rail's Save does not consult this guard.** It writes `-d`
-//!   from the same parsed description, so on exactly those 51 files it can
-//!   still delete a custom section — a pre-existing bug this work measured but
-//!   did not fix. Refine is guarded; Save is not.
 //! - **Hooks in the target repo's `.claude/settings.json` execute regardless
 //!   of these flags.** `--permission-mode plan` and the deny list constrain
 //!   the *model's* tool use; they do not constrain Claude Code's own hook

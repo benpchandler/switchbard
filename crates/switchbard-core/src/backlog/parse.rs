@@ -356,11 +356,12 @@ fn closes_fence(line: &str, marker: char, run: usize) -> bool {
     rest.trim().is_empty()
 }
 
-/// The `## ` headings a Backlog task file may carry: exactly the six sections
-/// `parse_task_file` extracts, and — verified against all 44 task files in
-/// this repo — the only ones that actually occur. Used by
-/// [`body_round_trips`] as an allowlist; see its doc for why an *unknown*
-/// heading has to mean "don't write".
+/// The `## ` headings the Backlog format defines: exactly the six sections
+/// `parse_task_file` extracts. Used by [`body_round_trips`] rule 3 (a
+/// *known* heading swallowed by a fence means the structure was misread)
+/// and by the write layer's canonical section ordering. Deliberately *not*
+/// an allowlist: a heading outside this set is an opaque human section the
+/// surgical writer preserves untouched (TASK-45).
 pub(super) const KNOWN_SECTION_HEADINGS: &[&str] = &[
     "Description",
     "Acceptance Criteria",
@@ -436,13 +437,19 @@ fn is_section_marker_comment(trimmed: &str) -> bool {
 /// 1. **Fences must balance.** An unmatched opener is exactly the state that
 ///    makes a truncated read look self-consistent (R1), and the state a
 ///    mismatched closer length produces (R2).
-/// 2. **Every unfenced `## ` heading must be a known section name** (the six
-///    `parse_task_file` extracts), **and must not repeat.** A heading the
-///    Backlog format does not define is either the user's prose being
-///    misread as structure, or a previous bad write — either way, not
-///    something to overwrite. The no-repeat half also means a file already
-///    carrying a duplicated heading fails closed rather than trapping the
-///    caller in a loop (R3).
+/// 2. **No unfenced `## ` heading may repeat** (case-insensitive, known or
+///    unknown). `extract_section` returns only a heading's *first* span, so a
+///    repeat is exactly the state where "the section" is ambiguous — a file
+///    already carrying one fails closed rather than trapping the caller in a
+///    loop (R3). *Unknown* headings are deliberately allowed (TASK-45): the
+///    write layer is surgical, so a section this format has no field for —
+///    `## Resolution`, `## Root Cause Hypothesis` on 51 of 345 real task
+///    files measured during TASK-44 — is an opaque block no edit ever
+///    enters, and conservation (rule 4) covers its content like any other
+///    section's. Refusing them protected nothing while freezing ~15% of
+///    real tasks; prose misread as a heading now costs at worst a *split*
+///    (the text survives byte-for-byte under its own opaque heading), never
+///    a deletion.
 /// 3. **No known section heading may sit inside a fence.** That means fence
 ///    pairing swallowed a real section boundary, which is how a plan heading
 ///    ends up embedded in a description (R3).
@@ -457,7 +464,7 @@ fn is_section_marker_comment(trimmed: &str) -> bool {
 /// This bounds a class; it is not a proof of losslessness. Rules 1–3 make the
 /// structure recognizable before rule 4 compares content, which is what stops
 /// the reader from being its own witness — but a future reader bug that
-/// preserves balanced fences, known headings, and line conservation would
+/// preserves balanced fences, unique headings, and line conservation would
 /// still slip through. It is a strong check, not a theorem.
 pub fn body_round_trips(body: &str) -> bool {
     let scan = scan_fences(body);
@@ -479,9 +486,7 @@ pub fn body_round_trips(body: &str) -> bool {
             Some(_) if scan.inside[i] => {}
             // Rule 2.
             Some(title) => {
-                if !is_known_section_heading(title)
-                    || headings.iter().any(|seen| seen.eq_ignore_ascii_case(title))
-                {
+                if headings.iter().any(|seen| seen.eq_ignore_ascii_case(title)) {
                     return false;
                 }
                 headings.push(title);
@@ -832,9 +837,10 @@ mod tests {
     /// R1, the auditor's exact repro. An unmatched fence opener is not a
     /// fence, so `## build` looked like a section heading to the reader *and*
     /// to the conservation check — self-consistent, "safe", and the write
-    /// then deleted `## build` and `make all`. Rejected now on two
-    /// independent grounds (unbalanced fence, unknown heading), either of
-    /// which alone would be enough.
+    /// then deleted `## build` and `make all`. Rejected by rule 1: the
+    /// unbalanced fence is exactly the state that makes a truncated read
+    /// look self-consistent. (The unknown heading itself is no longer a
+    /// ground for refusal — see TASK-45 — but this body never reaches rule 2.)
     #[test]
     fn body_round_trips_rejects_a_spurious_heading_produced_by_an_unterminated_fence() {
         let body = "## Description\n\n\
@@ -849,19 +855,38 @@ mod tests {
         );
     }
 
-    /// R1's general form: the reason conservation could be fooled is that it
-    /// trusted "looks like a heading" as ground truth. An unfenced `## ` that
-    /// is not one of the six names the Backlog format defines is prose being
-    /// misread as structure — never something to base a section-replace on.
+    /// TASK-45 inverted the old "reject any unknown heading" rule: the write
+    /// layer is surgical, so a human section the format has no field for
+    /// (`## Resolution` on 51 of 345 real task files) is an opaque block a
+    /// section-replace never enters. Refusing it froze ~15% of real tasks
+    /// while protecting nothing.
     #[test]
-    fn body_round_trips_rejects_a_heading_that_is_not_a_known_backlog_section() {
+    fn body_round_trips_accepts_a_unique_unknown_heading_as_an_opaque_section() {
         let known = "## Description\n\nIntro.\n\n## Implementation Notes\n\nNotes.\n";
         assert!(body_round_trips(known));
 
-        let unknown = "## Description\n\nIntro.\n\n## Build steps\n\nmake all\n";
+        let custom = "## Description\n\nIntro.\n\n## Resolution\n\nRoot cause: the cache.\n";
+        assert!(
+            body_round_trips(custom),
+            "a unique custom section is preserved by surgical writes, not a reason to refuse"
+        );
+    }
+
+    /// The half of the old rule 2 that survives: a *repeated* heading — known
+    /// or unknown — makes "the section" ambiguous (`extract_section` returns
+    /// only the first span), so it still fails closed.
+    #[test]
+    fn body_round_trips_rejects_a_repeated_heading() {
+        let known = "## Description\n\nA.\n\n## Description\n\nB.\n";
+        assert!(
+            !body_round_trips(known),
+            "a duplicated known heading is ambiguous"
+        );
+
+        let unknown = "## Resolution\n\nA.\n\n## Resolution\n\nB.\n";
         assert!(
             !body_round_trips(unknown),
-            "`## Build steps` is not a Backlog section, so its content has no safe home"
+            "a duplicated custom heading is just as ambiguous"
         );
     }
 

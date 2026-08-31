@@ -289,6 +289,41 @@ fn a_native_written_task_round_trips_through_the_parser_even_with_a_fenced_headi
     assert_eq!(task.acceptance_criteria.len(), 1, "later sections intact");
 }
 
+/// TASK-45, the Save path end to end: a human-written section the Backlog
+/// format has no field for (`## Resolution` on 51 of 345 real task files
+/// measured during TASK-44) must neither block a description save nor be
+/// deleted by it. This is the exact route the detail rail's Save takes —
+/// `edit_backlog_task` with a description patch.
+#[test]
+fn saving_a_description_preserves_custom_sections_the_format_does_not_model() {
+    let fixture = fixture_project();
+    let root = fixture.path();
+    let task_id = create_fixture_task(root);
+    let path = find(&reload(root), &task_id).path.clone();
+    let custom_block = "## Resolution\n\nRoot cause: the cache.\n";
+    let mut text = fs::read_to_string(&path).expect("read fixture task");
+    text.push_str(&format!("\n{custom_block}"));
+    fs::write(&path, &text).expect("hand-append a custom section");
+
+    edit_backlog_task(
+        root,
+        &task_id,
+        &BacklogTaskPatch {
+            description: Some("Updated description".to_string()),
+            ..Default::default()
+        },
+    )
+    .expect("a custom section must not block the save");
+
+    let saved = fs::read_to_string(&path).expect("reread task file");
+    assert!(
+        saved.contains(custom_block),
+        "the custom section must survive a description save verbatim: {saved}"
+    );
+    let project = reload(root);
+    assert_eq!(find(&project, &task_id).description, "Updated description");
+}
+
 #[test]
 fn append_notes_persists_and_accumulates() {
     let fixture = fixture_project();
