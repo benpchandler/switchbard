@@ -204,29 +204,194 @@ pub fn compute_burndown(tasks: &[&BacklogTask], today_unix_day: i64) -> Burndown
     }
 }
 
-/// Same as [`compute_burndown`], grouped by `BacklogTask::milestone`. Tasks
-/// with no milestone are omitted — a per-milestone view has nothing
+/// Same as [`compute_burndown`], grouped by `BacklogTask::project`. Tasks
+/// with no project are omitted — a per-project view has nothing
 /// meaningful to say about them.
-pub fn compute_burndown_by_milestone(
+pub fn compute_burndown_by_project(
     tasks: &[&BacklogTask],
     today_unix_day: i64,
 ) -> Vec<BurndownSeries> {
-    let mut by_milestone: BTreeMap<String, Vec<&BacklogTask>> = BTreeMap::new();
+    let mut by_project: BTreeMap<String, Vec<&BacklogTask>> = BTreeMap::new();
     for task in tasks {
-        if let Some(milestone) = &task.project {
-            by_milestone
-                .entry(milestone.clone())
-                .or_default()
-                .push(task);
+        if let Some(project) = &task.project {
+            by_project.entry(project.clone()).or_default().push(task);
         }
     }
-    by_milestone
+    by_project
         .into_iter()
         .map(|(label, tasks)| BurndownSeries {
             points: burndown_points(&tasks, today_unix_day),
             label,
         })
         .collect()
+}
+
+/// One project's roll-up: member-task counts joined (by exact name) to its
+/// optional definition. Computed, never stored — the same posture as every
+/// other statistic in this module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectRollup {
+    pub name: String,
+    pub done: usize,
+    pub total: usize,
+    /// From the def file when one exists; `None` for a reference-only
+    /// project (tasks name it, nothing defines it yet).
+    pub status: Option<String>,
+    pub target_date: Option<String>,
+    pub lead: Option<String>,
+    pub initiative: Option<String>,
+    pub has_def: bool,
+}
+
+impl ProjectRollup {
+    pub fn completion_pct(&self) -> f64 {
+        if self.total == 0 {
+            return 0.0;
+        }
+        (self.done as f64 / self.total as f64) * 100.0
+    }
+}
+
+/// One initiative's roll-up: the sum of its member projects, joined to its
+/// optional definition. `name: None` is the "no initiative" bucket —
+/// projects that don't name one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InitiativeRollup {
+    pub name: Option<String>,
+    pub done: usize,
+    pub total: usize,
+    pub status: Option<String>,
+    pub target_date: Option<String>,
+    pub has_def: bool,
+    /// Member projects, name-sorted.
+    pub projects: Vec<ProjectRollup>,
+}
+
+impl InitiativeRollup {
+    pub fn completion_pct(&self) -> f64 {
+        if self.total == 0 {
+            return 0.0;
+        }
+        (self.done as f64 / self.total as f64) * 100.0
+    }
+}
+
+/// The full Initiative → Project roll-up across every passed repo, plus the
+/// bucket of tasks with no project at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HierarchyRollup {
+    /// Name-sorted, with the `name: None` "no initiative" bucket last (when
+    /// present). An initiative appears if a project references it or a def
+    /// declares it.
+    pub initiatives: Vec<InitiativeRollup>,
+    pub unassigned_done: usize,
+    pub unassigned_total: usize,
+}
+
+/// Compute the Initiative → Project → task roll-up (trajectory:
+/// *Linear-vocabulary hierarchy*, divergence 4).
+///
+/// A project **exists** if any in-scope task references it OR a def file
+/// declares it — a defined-but-empty project rolls up as `0/0`, which is
+/// what makes `project create` before task assignment meaningful. Same rule
+/// one tier up for initiatives. Membership joins are exact string matches,
+/// cross-repo. When two repos define the same name, the first definition in
+/// input order wins (callers pass repos in a stable, name-sorted order), so
+/// the result is deterministic; archived tasks are excluded, as everywhere
+/// in this module.
+pub fn compute_hierarchy_rollup(repos: &[&BacklogRepo]) -> HierarchyRollup {
+    use crate::backlog::{InitiativeDef, ProjectDef};
+
+    // First definition in input order wins on name conflicts.
+    let mut project_defs: BTreeMap<&str, &ProjectDef> = BTreeMap::new();
+    let mut initiative_defs: BTreeMap<&str, &InitiativeDef> = BTreeMap::new();
+    for repo in repos {
+        for def in &repo.project_defs {
+            project_defs.entry(def.name.as_str()).or_insert(def);
+        }
+        for def in &repo.initiative_defs {
+            initiative_defs.entry(def.name.as_str()).or_insert(def);
+        }
+    }
+
+    let mut counts: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    let mut unassigned_done = 0usize;
+    let mut unassigned_total = 0usize;
+    for repo in repos {
+        for task in in_scope_tasks(repo) {
+            let done = usize::from(task.is_done());
+            match task.project.as_deref() {
+                Some(project) => {
+                    let entry = counts.entry(project).or_insert((0, 0));
+                    entry.0 += done;
+                    entry.1 += 1;
+                }
+                None => {
+                    unassigned_done += done;
+                    unassigned_total += 1;
+                }
+            }
+        }
+    }
+
+    // Union of referenced and defined names, BTreeMap-ordered (= name-sorted).
+    let mut project_names: BTreeMap<&str, ()> = BTreeMap::new();
+    project_names.extend(counts.keys().map(|name| (*name, ())));
+    project_names.extend(project_defs.keys().map(|name| (*name, ())));
+
+    let mut by_initiative: BTreeMap<Option<&str>, Vec<ProjectRollup>> = BTreeMap::new();
+    for (name, ()) in project_names {
+        let (done, total) = counts.get(name).copied().unwrap_or((0, 0));
+        let def = project_defs.get(name).copied();
+        let rollup = ProjectRollup {
+            name: name.to_string(),
+            done,
+            total,
+            status: def.map(|d| d.status.clone()),
+            target_date: def.and_then(|d| d.target_date.clone()),
+            lead: def.and_then(|d| d.lead.clone()),
+            initiative: def.and_then(|d| d.initiative.clone()),
+            has_def: def.is_some(),
+        };
+        by_initiative
+            .entry(def.and_then(|d| d.initiative.as_deref()))
+            .or_default()
+            .push(rollup);
+    }
+
+    // An initiative that is defined but has no member projects still appears.
+    for name in initiative_defs.keys() {
+        by_initiative.entry(Some(name)).or_default();
+    }
+
+    // `Option`'s ordering puts `None` first; the "no initiative" bucket
+    // belongs last, so collect the named ones then move the bucket back.
+    let mut initiatives: Vec<InitiativeRollup> = Vec::with_capacity(by_initiative.len());
+    let mut no_initiative: Option<InitiativeRollup> = None;
+    for (name, projects) in by_initiative {
+        let def = name.and_then(|n| initiative_defs.get(n).copied());
+        let rollup = InitiativeRollup {
+            name: name.map(str::to_string),
+            done: projects.iter().map(|p| p.done).sum(),
+            total: projects.iter().map(|p| p.total).sum(),
+            status: def.map(|d| d.status.clone()),
+            target_date: def.and_then(|d| d.target_date.clone()),
+            has_def: def.is_some(),
+            projects,
+        };
+        if rollup.name.is_none() {
+            no_initiative = Some(rollup);
+        } else {
+            initiatives.push(rollup);
+        }
+    }
+    initiatives.extend(no_initiative);
+
+    HierarchyRollup {
+        initiatives,
+        unassigned_done,
+        unassigned_total,
+    }
 }
 
 /// Shared walk behind both burndown entry points: bucket tasks by their
@@ -422,9 +587,137 @@ mod tests {
         unassigned.created_date = Some("2026-01-01 00:00".to_string());
 
         let today = parse_day("2026-01-02 00:00").unwrap();
-        let series = compute_burndown_by_milestone(&[&with_milestone, &unassigned], today);
+        let series = compute_burndown_by_project(&[&with_milestone, &unassigned], today);
 
         assert_eq!(series.len(), 1);
         assert_eq!(series[0].label, "v1");
+    }
+
+    fn project_def(name: &str, status: &str, initiative: Option<&str>) -> crate::ProjectDef {
+        crate::ProjectDef {
+            name: name.to_string(),
+            status: status.to_string(),
+            target_date: None,
+            initiative: initiative.map(str::to_string),
+            lead: None,
+            description: String::new(),
+            path: PathBuf::from(format!("/repo/backlog/projects/{name}.md")),
+        }
+    }
+
+    fn initiative_def(name: &str, status: &str) -> crate::InitiativeDef {
+        crate::InitiativeDef {
+            name: name.to_string(),
+            status: status.to_string(),
+            target_date: None,
+            description: String::new(),
+            path: PathBuf::from(format!("/repo/backlog/initiatives/{name}.md")),
+        }
+    }
+
+    fn task_in(project_name: &str, id: &str, status: &str) -> BacklogTask {
+        let mut t = task(id, status, "medium", BacklogTaskSource::Active);
+        t.project = Some(project_name.to_string());
+        t
+    }
+
+    #[test]
+    fn hierarchy_rollup_unions_referenced_and_defined_and_buckets_by_initiative() {
+        let mut repo_a = project(
+            "/a",
+            vec![
+                task_in("Alpha", "TASK-1", "Done"),
+                task_in("Alpha", "TASK-2", "To Do"),
+                task("TASK-3", "To Do", "low", BacklogTaskSource::Active),
+            ],
+        );
+        repo_a.project_defs = vec![
+            project_def("Alpha", "In Progress", Some("Big")),
+            project_def("Empty", "Planned", None),
+        ];
+        repo_a.initiative_defs = vec![initiative_def("Big", "In Progress")];
+        let repo_b = project("/b", vec![task_in("Beta", "TASK-1", "Done")]);
+
+        let rollup = compute_hierarchy_rollup(&[&repo_a, &repo_b]);
+
+        assert_eq!(rollup.unassigned_total, 1);
+        assert_eq!(rollup.unassigned_done, 0);
+
+        // "Big" first (named, sorted), the no-initiative bucket last.
+        assert_eq!(rollup.initiatives.len(), 2);
+        let big = &rollup.initiatives[0];
+        assert_eq!(big.name.as_deref(), Some("Big"));
+        assert!(big.has_def);
+        assert_eq!(big.status.as_deref(), Some("In Progress"));
+        assert_eq!((big.done, big.total), (1, 2), "sums its member projects");
+        assert_eq!(big.projects.len(), 1);
+        assert_eq!(big.projects[0].name, "Alpha");
+        assert!(big.projects[0].has_def);
+        assert!((big.projects[0].completion_pct() - 50.0).abs() < 1e-9);
+
+        let bucket = &rollup.initiatives[1];
+        assert_eq!(bucket.name, None, "no-initiative bucket renders last");
+        assert!(!bucket.has_def);
+        let names: Vec<&str> = bucket.projects.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["Beta", "Empty"],
+            "name-sorted within the bucket"
+        );
+        let beta = &bucket.projects[0];
+        assert!(!beta.has_def, "reference-only project still appears");
+        assert_eq!(beta.status, None);
+        assert_eq!((beta.done, beta.total), (1, 1));
+        let empty = &bucket.projects[1];
+        assert!(empty.has_def);
+        assert_eq!(
+            (empty.done, empty.total),
+            (0, 0),
+            "defined-but-empty rolls up as 0/0"
+        );
+    }
+
+    #[test]
+    fn hierarchy_rollup_excludes_archived_and_resolves_def_conflicts_first_wins() {
+        let mut repo_a = project("/a", vec![task_in("Dup", "TASK-1", "To Do")]);
+        repo_a.project_defs = vec![project_def("Dup", "Planned", None)];
+        let mut repo_b = project(
+            "/b",
+            vec![{
+                let mut t = task_in("Dup", "TASK-9", "Done");
+                t.source = BacklogTaskSource::Archived;
+                t
+            }],
+        );
+        repo_b.project_defs = vec![project_def("Dup", "Completed", None)];
+
+        let rollup = compute_hierarchy_rollup(&[&repo_a, &repo_b]);
+        let dup = &rollup.initiatives[0].projects[0];
+        assert_eq!(dup.name, "Dup");
+        assert_eq!(
+            dup.status.as_deref(),
+            Some("Planned"),
+            "first definition in input order wins"
+        );
+        assert_eq!(
+            (dup.done, dup.total),
+            (0, 1),
+            "the archived task is excluded"
+        );
+    }
+
+    #[test]
+    fn hierarchy_rollup_shows_a_defined_but_projectless_initiative() {
+        let mut repo = project("/a", vec![]);
+        repo.initiative_defs = vec![initiative_def("Lonely", "Planned")];
+
+        let rollup = compute_hierarchy_rollup(&[&repo]);
+        assert_eq!(rollup.initiatives.len(), 1);
+        assert_eq!(rollup.initiatives[0].name.as_deref(), Some("Lonely"));
+        assert!(rollup.initiatives[0].projects.is_empty());
+        assert_eq!(
+            (rollup.initiatives[0].done, rollup.initiatives[0].total),
+            (0, 0)
+        );
     }
 }

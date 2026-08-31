@@ -58,8 +58,9 @@ pub use backlog_relations::{
     subtask_progress,
 };
 pub use backlog_stats::{
-    compute_burndown, compute_burndown_by_milestone, compute_cross_repo_stats, BurndownPoint,
-    BurndownSeries, CrossRepoStats, RepoStats,
+    compute_burndown, compute_burndown_by_project, compute_cross_repo_stats,
+    compute_hierarchy_rollup, BurndownPoint, BurndownSeries, CrossRepoStats, HierarchyRollup,
+    InitiativeRollup, ProjectRollup, RepoStats,
 };
 pub use backlog_triage::{
     find_hub_repo, load_ordering_overlay, parse_backlog_datetime_unix, triage_entry_from_task,
