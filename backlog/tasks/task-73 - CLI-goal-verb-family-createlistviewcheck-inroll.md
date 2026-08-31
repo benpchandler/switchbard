@@ -4,6 +4,7 @@ title: 'CLI goal verb family: create/list/view/check-in/roll'
 status: To Do
 assignee: []
 created_date: '2026-08-31 17:02'
+updated_date: '2026-08-31 17:38'
 labels:
   - goals
   - cli
@@ -24,3 +25,9 @@ Mirror the project/initiative families (payload-only stdout, one-line stderr err
 - [ ] #1 Integration tests through the real binary incl. check-in append and roll
 - [ ] #2 clap debug_assert stays green
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+goal roll now means 'add a week key with last week's targets' in goals.yml, not cloning files.
+<!-- SECTION:NOTES:END -->
