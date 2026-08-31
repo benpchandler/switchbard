@@ -226,6 +226,35 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
      no longer owed, but every divergence must still name its win and land in this
      doc.
 
+- **Linear-vocabulary hierarchy (owner-approved 2026-08-31; named win per TASK-68).**
+  Four tiers, Linear's model and language: Initiative - Project - Issue (task) -
+  Sub-issue (decimal child). The win: one vocabulary from disk to UI - the
+  `milestone:` frontmatter key never meant milestones here, and every surface
+  renamed around it would otherwise sit on a lying storage key forever. "Repo"
+  replaces "project" for the repo-backlog scope everywhere user-facing (Linear's
+  Team analog); `--project <DIR>` survives as a deprecated alias of `--repo <DIR>`.
+  The divergences, each named:
+  1. *Task membership key is `project:`.* `milestone:` is read as a legacy fallback
+     (both present: warning, `project:` wins) and rewritten in place only when
+     membership itself is written - no mass migration; unrelated edits stay
+     byte-surgical, so untouched files remain byte-identical and upstream-readable.
+  2. *Optional definition files* `backlog/projects/<slug>.md` and
+     `backlog/initiatives/<slug>.md` (frontmatter `name`/`status`/`target_date`/
+     `initiative`/`lead` + markdown description) enrich name-keyed groups with
+     lifecycle. A project exists if any task references it *or* a def declares it;
+     defined-but-empty renders 0/0, which is what makes `project create` before
+     task assignment meaningful.
+  3. *Project lifecycle statuses* (`Planned/In Progress/Completed/Canceled`,
+     `PROJECT_STATUSES`) are a separate vocabulary from task statuses, validated
+     only on def writes. Tasks may reference undefined projects - that is how
+     projects are born, mirroring how milestones were never validated.
+  4. *Roll-up is computed, never stored* (`compute_hierarchy_rollup`): per-project
+     and per-initiative done/total, cross-repo by exact name match; def-name
+     conflicts resolve to the alphabetically-first repo, deterministically.
+  Deliberately deferred, ask before building: `project rename` (a bulk task-file
+  mutation), GUI def-file authoring (def lifecycle is CLI-first in v1),
+  case-insensitive name merging.
+
 - **Refine — AI-assisted grooming, upstream of dispatch (owner-approved 2026-08-19).**
   A "Refine" button in the task detail rail, next to Dispatch. It feeds the task's
   current title/description/criteria/plan to a headless `claude -p` run at the repo
