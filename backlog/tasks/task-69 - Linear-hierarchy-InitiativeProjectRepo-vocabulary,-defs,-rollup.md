@@ -4,7 +4,7 @@ title: 'Linear hierarchy: Initiative/Project/Repo vocabulary, defs, rollup'
 status: To Do
 assignee: []
 created_date: '2026-08-31 12:36'
-updated_date: '2026-08-31 13:25'
+updated_date: '2026-08-31 13:26'
 labels: []
 dependencies: []
 priority: high
@@ -23,3 +23,9 @@ Adopt Linear's four-tier hierarchy (Initiative - Project - Issue - Sub-issue) ac
 - [x] #3 Legacy -m/--milestone/--clear-milestone and --project <DIR> invocations still work
 - [x] #4 docs/product-trajectory.md and CLAUDE.md updated
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+PR: https://github.com/benpchandler/switchbard/pull/55
+<!-- SECTION:NOTES:END -->
