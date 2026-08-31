@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use common::{harness, seeded_app, REPO_PATH};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
-use switchbard_core::{BacklogProject, BacklogTask, BacklogTaskSource};
+use switchbard_core::{BacklogRepo, BacklogTask, BacklogTaskSource};
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{BacklogLens, ViewTab};
 
@@ -39,7 +39,7 @@ fn task(source: BacklogTaskSource) -> BacklogTask {
         labels: vec![],
         dependencies: vec![],
         references: vec![],
-        milestone: None,
+        project: None,
         parent: None,
         created_date: Some("2026-08-19 09:00".to_string()),
         updated_date: Some("2026-08-19 09:00".to_string()),
@@ -54,23 +54,25 @@ fn task(source: BacklogTaskSource) -> BacklogTask {
     }
 }
 
-/// A detail rail showing one task, with the project's `backlog` CLI reported
+/// A detail rail showing one task, with the repo's `backlog` CLI reported
 /// as available — `editable` in the detail pane is `task.editable() &&
-/// project`, and editability matters to this button.
+/// repo`, and editability matters to this button.
 fn rail_app(task: BacklogTask) -> HiveApp {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     app.backlog_view.show_archived = true;
     app.backlog_view.show_completed = true;
     app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), task.id.clone()));
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![task],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),

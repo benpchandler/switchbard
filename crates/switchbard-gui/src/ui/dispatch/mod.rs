@@ -193,11 +193,11 @@ impl DispatchSummary {
 /// ordering. No task, run, or note text is cloned.
 pub(crate) fn summarize_dispatch(app: &HiveApp) -> DispatchSummary {
     let flagged: Vec<(BacklogTaskKey, DispatchCategory)> = {
-        let projects = app.backlog_projects.lock().unwrap();
-        projects
+        let repos = app.backlog_repos.lock().unwrap();
+        repos
             .iter()
-            .flat_map(|(root, project)| {
-                project.tasks.iter().filter_map(move |task| {
+            .flat_map(|(root, repo)| {
+                repo.tasks.iter().filter_map(move |task| {
                     match dispatch_ui::dispatch_category(task) {
                         DispatchCategory::NotFlagged => None,
                         category => Some(((root.clone(), task.id.clone()), category)),
@@ -224,7 +224,7 @@ pub(crate) fn summarize_dispatch(app: &HiveApp) -> DispatchSummary {
 struct DispatchRow {
     /// Repo root, not just the display name: the Kill control keys its
     /// confirm state by [`BacklogTaskKey`], and a task id is only unique
-    /// within one project.
+    /// within one repo.
     repo_root: PathBuf,
     repo_name: String,
     task: BacklogTask,
@@ -339,20 +339,20 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
 /// top-bar filter. Sorted newest-run-first inside a section so a long queue
 /// keeps the thing that just happened at the top.
 fn collect_rows(app: &HiveApp) -> Vec<DispatchRow> {
-    let projects = app.backlog_projects_snapshot();
+    let backlog_repos = app.backlog_repos_snapshot();
     let runs = app.dispatch_runs_snapshot();
     let repos = app.repos_snapshot();
     let filter = app.filter().to_lowercase();
 
     let mut rows: Vec<DispatchRow> = Vec::new();
-    for (root, project) in &projects {
+    for (root, repo) in &backlog_repos {
         let repo_name = repos
             .iter()
             .find(|repo| &repo.path == root)
             .map(|repo| repo.name.clone())
             .unwrap_or_else(|| root.display().to_string());
 
-        for task in &project.tasks {
+        for task in &repo.tasks {
             let state = dispatch_ui::dispatch_state(task);
             if matches!(state, DispatchState::NotFlagged) {
                 continue;

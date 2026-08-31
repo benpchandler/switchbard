@@ -2,7 +2,7 @@
 //! inside it) into `super::types` structs. Read-only — writes live in
 //! `super::write` behind the `super::mutations` facade.
 
-use super::types::{BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource};
+use super::types::{BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource};
 use anyhow::{bail, Context, Result};
 use serde_yaml::{Mapping, Value};
 use std::cmp::Ordering;
@@ -11,14 +11,14 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub fn is_backlog_project(root: &Path) -> bool {
+pub fn is_backlog_repo(root: &Path) -> bool {
     root.join("backlog/config.yml").is_file()
         || root.join("backlog/tasks").is_dir()
         || root.join("backlog/drafts").is_dir()
 }
 
-pub fn load_backlog_project(root: &Path) -> Result<BacklogProject> {
-    if !is_backlog_project(root) {
+pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
+    if !is_backlog_repo(root) {
         bail!("{} is not a Backlog project", root.display());
     }
 
@@ -43,23 +43,34 @@ pub fn load_backlog_project(root: &Path) -> Result<BacklogProject> {
         entries.sort();
         for path in entries {
             match parse_task_file(&path, source) {
-                Ok(task) => tasks.push(task),
+                Ok((task, task_warnings)) => {
+                    warnings.extend(
+                        task_warnings
+                            .into_iter()
+                            .map(|warning| format!("{}: {warning}", path.display())),
+                    );
+                    tasks.push(task);
+                }
                 Err(err) => warnings.push(format!("{}: {err}", path.display())),
             }
         }
     }
 
     tasks.sort_by(compare_tasks);
-    Ok(BacklogProject {
+    let project_defs = super::hierarchy::load_project_defs(root, &mut warnings);
+    let initiative_defs = super::hierarchy::load_initiative_defs(root, &mut warnings);
+    Ok(BacklogRepo {
         root: root.to_path_buf(),
         tasks,
         warnings,
+        project_defs,
+        initiative_defs,
         loaded_at_unix: unix_now(),
         configured_statuses: parse_config_statuses(root),
     })
 }
 
-/// Read `backlog/config.yml`'s `statuses:` array — see `BacklogProject::
+/// Read `backlog/config.yml`'s `statuses:` array — see `BacklogRepo::
 /// configured_statuses`'s doc for why this is worth a second read alongside
 /// the task files themselves. Never fails the whole project load: a
 /// missing/unreadable/malformed config just yields an empty list, same as
@@ -129,9 +140,17 @@ pub fn task_file_round_trips(path: &Path) -> bool {
     body_round_trips(body)
 }
 
-pub(super) fn parse_task_file(path: &Path, source: BacklogTaskSource) -> Result<BacklogTask> {
+/// Parse one task file. The second tuple element is per-file *warnings* —
+/// conditions worth surfacing that don't make the file unusable (today:
+/// carrying both the `project:` key and its legacy `milestone:` spelling).
+/// Hard failures stay in the `Err` channel.
+pub(super) fn parse_task_file(
+    path: &Path,
+    source: BacklogTaskSource,
+) -> Result<(BacklogTask, Vec<String>)> {
     let text = fs::read_to_string(path).with_context(|| "cannot read task markdown")?;
     let (frontmatter, body) = split_frontmatter(&text);
+    let mut warnings = Vec::new();
     let id = yaml_string(&frontmatter, "id").unwrap_or_else(|| id_from_filename(path));
     let title = yaml_string(&frontmatter, "title").unwrap_or_else(|| id.clone());
     let status = yaml_string(&frontmatter, "status").unwrap_or_else(|| match source {
@@ -149,7 +168,22 @@ pub(super) fn parse_task_file(path: &Path, source: BacklogTaskSource) -> Result<
         parse_checklist_section(&extract_section(body, "Acceptance Criteria"));
     let definition_of_done = parse_checklist_section(&extract_section(body, "Definition of Done"));
 
-    Ok(BacklogTask {
+    // `project:` is the fork's membership key (trajectory: *Linear-vocabulary
+    // hierarchy*); `milestone:` is the pre-divergence spelling, read as a
+    // fallback so no mass migration is needed. A file carrying both is
+    // mechanically safe — `project:` wins — but worth a warning, since the
+    // next membership write will drop the legacy key.
+    let project = yaml_string(&frontmatter, "project");
+    let legacy_milestone = yaml_string(&frontmatter, "milestone");
+    if project.is_some() && legacy_milestone.is_some() {
+        warnings.push(
+            "carries both `project:` and legacy `milestone:`; `project:` wins \
+             (the next project assignment removes the legacy key)"
+                .to_string(),
+        );
+    }
+
+    let task = BacklogTask {
         id,
         title,
         status,
@@ -158,7 +192,7 @@ pub(super) fn parse_task_file(path: &Path, source: BacklogTaskSource) -> Result<
         labels: yaml_string_list(&frontmatter, "labels"),
         dependencies: yaml_string_list(&frontmatter, "dependencies"),
         references: yaml_string_list(&frontmatter, "references"),
-        milestone: yaml_string(&frontmatter, "milestone"),
+        project: project.or(legacy_milestone),
         // The real `backlog` CLI (v1.47.1) writes `parent_task_id:`, not
         // `parent:` — confirmed empirically in the 2026-08-05 QA audit
         // (docs/qa/2026-08-05-parity-qa.md, Defect 1). Fall back to the old
@@ -175,10 +209,11 @@ pub(super) fn parse_task_file(path: &Path, source: BacklogTaskSource) -> Result<
         definition_of_done,
         source,
         path: path.to_path_buf(),
-    })
+    };
+    Ok((task, warnings))
 }
 
-fn split_frontmatter(text: &str) -> (Mapping, &str) {
+pub(super) fn split_frontmatter(text: &str) -> (Mapping, &str) {
     let Some(rest) = text.strip_prefix("---") else {
         return (Mapping::new(), text);
     };
@@ -198,7 +233,7 @@ fn split_frontmatter(text: &str) -> (Mapping, &str) {
     (mapping, body)
 }
 
-fn yaml_string(map: &Mapping, key: &str) -> Option<String> {
+pub(super) fn yaml_string(map: &Mapping, key: &str) -> Option<String> {
     let value = map.get(Value::String(key.to_string()))?;
     match value {
         Value::String(s) => Some(s.clone()),
@@ -615,7 +650,7 @@ fn task_id_key(id: &str) -> Vec<u32> {
         .collect()
 }
 
-/// Milliseconds, not seconds — see `BacklogProject::loaded_at_unix`'s doc
+/// Milliseconds, not seconds — see `BacklogRepo::loaded_at_unix`'s doc
 /// for why the finer precision matters.
 fn unix_now() -> u64 {
     SystemTime::now()
@@ -1056,7 +1091,7 @@ Existing note.
         )
         .unwrap();
 
-        let task = parse_task_file(&path, BacklogTaskSource::Active).unwrap();
+        let task = parse_task_file(&path, BacklogTaskSource::Active).unwrap().0;
 
         assert_eq!(task.id, "TASK-18");
         assert_eq!(task.title, "Example task");
@@ -1069,6 +1104,74 @@ Existing note.
         assert_eq!(task.acceptance_criteria[0].index, 1);
         assert!(!task.acceptance_criteria[0].checked);
         assert!(task.acceptance_criteria[1].checked);
+    }
+
+    /// The Linear-hierarchy divergence's membership-key rule (trajectory:
+    /// *Linear-vocabulary hierarchy*, divergence 1): `project:` is the key,
+    /// `milestone:` is the legacy fallback, and a file carrying both parses
+    /// with `project:` winning plus a warning naming the condition.
+    #[test]
+    fn project_key_is_preferred_with_legacy_milestone_as_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let with_project = dir.path().join("task-1 - New.md");
+        fs::write(
+            &with_project,
+            "---\nid: TASK-1\ntitle: New\nstatus: To Do\nproject: Lucella cutover\n---\n",
+        )
+        .unwrap();
+        let (task, warnings) = parse_task_file(&with_project, BacklogTaskSource::Active).unwrap();
+        assert_eq!(task.project.as_deref(), Some("Lucella cutover"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let legacy = dir.path().join("task-2 - Legacy.md");
+        fs::write(
+            &legacy,
+            "---\nid: TASK-2\ntitle: Legacy\nstatus: To Do\nmilestone: v1\n---\n",
+        )
+        .unwrap();
+        let (task, warnings) = parse_task_file(&legacy, BacklogTaskSource::Active).unwrap();
+        assert_eq!(
+            task.project.as_deref(),
+            Some("v1"),
+            "legacy milestone: still resolves membership"
+        );
+        assert!(warnings.is_empty(), "the fallback alone is not a warning");
+
+        let both = dir.path().join("task-3 - Both.md");
+        fs::write(
+            &both,
+            "---\nid: TASK-3\ntitle: Both\nstatus: To Do\nproject: current\nmilestone: stale\n---\n",
+        )
+        .unwrap();
+        let (task, warnings) = parse_task_file(&both, BacklogTaskSource::Active).unwrap();
+        assert_eq!(task.project.as_deref(), Some("current"), "project: wins");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("legacy `milestone:`"), "{warnings:?}");
+    }
+
+    /// The both-keys warning must survive the project-load aggregation with
+    /// the file path prefixed, since `BacklogRepo::warnings` is where every
+    /// surface reads it from.
+    #[test]
+    fn both_keys_warning_reaches_repo_warnings_with_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("backlog/tasks")).unwrap();
+        fs::write(dir.path().join("backlog/config.yml"), "statuses: []\n").unwrap();
+        let path = dir.path().join("backlog/tasks/task-1 - Both.md");
+        fs::write(
+            &path,
+            "---\nid: TASK-1\ntitle: Both\nstatus: To Do\nproject: a\nmilestone: b\n---\n",
+        )
+        .unwrap();
+
+        let repo = load_backlog_repo(dir.path()).unwrap();
+        assert_eq!(repo.warnings.len(), 1, "{:?}", repo.warnings);
+        assert!(
+            repo.warnings[0].starts_with(&path.display().to_string()),
+            "{:?}",
+            repo.warnings
+        );
     }
 
     /// Regression for the 2026-08-05 QA audit's HIGH defect: the format
@@ -1087,7 +1190,9 @@ Existing note.
             "---\nid: TASK-2\ntitle: Subtask\nparent_task_id: TASK-1\n---\n",
         )
         .unwrap();
-        let real_cli_task = parse_task_file(&real_cli_path, BacklogTaskSource::Active).unwrap();
+        let real_cli_task = parse_task_file(&real_cli_path, BacklogTaskSource::Active)
+            .unwrap()
+            .0;
         assert_eq!(real_cli_task.parent.as_deref(), Some("TASK-1"));
 
         let old_fixture_path = dir.path().join("task-3 - Old fixture.md");
@@ -1096,8 +1201,9 @@ Existing note.
             "---\nid: TASK-3\ntitle: Old fixture\nparent: TASK-1\n---\n",
         )
         .unwrap();
-        let old_fixture_task =
-            parse_task_file(&old_fixture_path, BacklogTaskSource::Active).unwrap();
+        let old_fixture_task = parse_task_file(&old_fixture_path, BacklogTaskSource::Active)
+            .unwrap()
+            .0;
         assert_eq!(old_fixture_task.parent.as_deref(), Some("TASK-1"));
     }
 
@@ -1106,7 +1212,7 @@ Existing note.
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("backlog/tasks")).unwrap();
 
-        assert!(is_backlog_project(dir.path()));
+        assert!(is_backlog_repo(dir.path()));
     }
 
     #[test]

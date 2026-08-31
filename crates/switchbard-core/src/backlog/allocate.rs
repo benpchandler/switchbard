@@ -30,7 +30,7 @@
 //! A project's `backlog/config.yml` may declare `task_prefix: "LED"` (budget
 //! does); the `backlog` CLI then mints `LED-186`, files it as
 //! `led-186 - Title.md`, and this crate's own *read* path already handles
-//! that fine — `super::parse::load_backlog_project` reads every `.md` file's
+//! that fine — `super::parse::load_backlog_repo` reads every `.md` file's
 //! frontmatter `id:` regardless of filename. Allocation used to hardcode
 //! `task-`/`TASK-` everywhere a filename or id was built or scanned, so in a
 //! `LED`-prefixed project it always scanned for (and minted) the wrong
@@ -101,7 +101,7 @@ const MAX_CREATE_ATTEMPTS: u32 = 20;
 const RESERVATION_STALE_SECS: u64 = 60;
 
 /// The four directories task files live in — the same set
-/// `super::parse::load_backlog_project` reads.
+/// `super::parse::load_backlog_repo` reads.
 const TASK_DIRS: [&str; 4] = ["tasks", "completed", "drafts", "archive/tasks"];
 
 /// The next unclaimed top-level task id for this repo. See the module doc
@@ -513,7 +513,7 @@ mod tests {
             parent: None,
             labels: vec![],
             assignees: vec![],
-            milestone: None,
+            project: None,
             dependencies: vec![],
         }
     }

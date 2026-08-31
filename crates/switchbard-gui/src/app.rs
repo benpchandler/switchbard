@@ -51,9 +51,9 @@ use switchbard_core::dispatch_inspect::DispatchRun;
 use switchbard_core::instance_lock::{self, AcquireError, InstanceLock};
 use switchbard_core::{
     assess_branch_delete, collect_dirty_files, config, delete_branch, is_primary_worktree,
-    kill_dispatch_run, kill_pgid, load_agent_context_cache, load_backlog_project, open_url,
+    kill_dispatch_run, kill_pgid, load_agent_context_cache, load_backlog_repo, open_url,
     probe_facts, remove_worktree, spawn_in_session, url_for_port, AgentContextMap,
-    AttachedProcesses, AttributedListener, BacklogProject, BacklogTaskPatch, DetectedService, Fact,
+    AttachedProcesses, AttributedListener, BacklogRepo, BacklogTaskPatch, DetectedService, Fact,
     KillOutcome, NewBacklogTask, Repo, WorktreeRef, BROWSER_APP_NAMES,
 };
 
@@ -98,14 +98,14 @@ pub struct HiveApp {
     pub meta: Arc<Mutex<HashMap<PathBuf, WorktreeMeta>>>,
     pub services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>>,
     pub agent_contexts: Arc<Mutex<HashMap<PathBuf, AgentContextMap>>>,
-    pub backlog_projects: Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
+    pub backlog_repos: Arc<Mutex<HashMap<PathBuf, BacklogRepo>>>,
     /// task-42, post-review revision: one board drag-drop's completion
     /// report, keyed by the moved task and written by
     /// `spawn_board_move_save`'s background thread. `board::
     /// resolve_pending_moves` drains this every frame and resolves a
     /// `PendingBoardMove` only against an outcome whose `generation`
     /// matches — see `BoardMoveOutcome`'s doc (runtime/mod.rs) for why this
-    /// replaced resolving off any `backlog_projects` reload.
+    /// replaced resolving off any `backlog_repos` reload.
     pub board_move_outcomes: Arc<Mutex<HashMap<BacklogTaskKey, BoardMoveOutcome>>>,
     /// task-42, post-review revision (N9): reports, per key, the
     /// `PendingBoardMove::generation` whose `spawn_board_move_save` thread
@@ -153,7 +153,7 @@ pub struct HiveApp {
     /// Shared rather than plain view state only because the worker thread
     /// that clears an entry cannot reach `&mut HiveApp`.
     pub refining_tasks: Arc<Mutex<BTreeSet<BacklogTaskKey>>>,
-    /// The cross-repo triage overlay, refreshed alongside `backlog_projects`.
+    /// The cross-repo triage overlay, refreshed alongside `backlog_repos`.
     pub ordering: Arc<Mutex<OrderingState>>,
     pub active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
     /// TASK-41: on-disk size per worktree, refreshed by `workers::spawn_size`
@@ -395,11 +395,11 @@ impl HiveApp {
         let agent_context_view = AgentContextViewState::restore_filters(&cfg.ui);
         let mut backlog_view = BacklogViewState::restore_filters(&cfg.ui);
         if backlog_view
-            .selected_project
+            .selected_repo
             .as_ref()
             .is_some_and(|selected| !repos.iter().any(|repo| repo.path == *selected))
         {
-            backlog_view.selected_project = None;
+            backlog_view.selected_repo = None;
         }
         let server_filters = cfg.ui.filters.get("servers");
         let show_only_managed = server_filters
@@ -416,7 +416,7 @@ impl HiveApp {
             meta: Arc::new(Mutex::new(HashMap::new())),
             services: Arc::new(Mutex::new(HashMap::new())),
             agent_contexts: Arc::new(Mutex::new(HashMap::new())),
-            backlog_projects: Arc::new(Mutex::new(HashMap::new())),
+            backlog_repos: Arc::new(Mutex::new(HashMap::new())),
             board_move_outcomes: Arc::new(Mutex::new(HashMap::new())),
             board_move_started: Arc::new(Mutex::new(HashMap::new())),
             task_write_locks: Arc::new(Mutex::new(HashMap::new())),
@@ -485,7 +485,7 @@ impl HiveApp {
                 meta: self.meta.clone(),
                 services: self.services.clone(),
                 agent_contexts: self.agent_contexts.clone(),
-                backlog_projects: self.backlog_projects.clone(),
+                backlog_repos: self.backlog_repos.clone(),
                 dispatch_runs: self.dispatch_runs.clone(),
                 ordering: self.ordering.clone(),
                 active_runs: self.active_runs.clone(),
@@ -512,8 +512,8 @@ impl HiveApp {
         self.worktrees.lock().unwrap().clone()
     }
 
-    pub fn backlog_projects_snapshot(&self) -> HashMap<PathBuf, BacklogProject> {
-        self.backlog_projects.lock().unwrap().clone()
+    pub fn backlog_repos_snapshot(&self) -> HashMap<PathBuf, BacklogRepo> {
+        self.backlog_repos.lock().unwrap().clone()
     }
 
     pub fn dispatch_runs_snapshot(&self) -> HashMap<BacklogTaskKey, DispatchRun> {
@@ -1255,7 +1255,7 @@ impl HiveApp {
         ctx: &egui::Context,
     ) {
         let status = self.backlog_status.clone();
-        let projects = self.backlog_projects.clone();
+        let repos = self.backlog_repos.clone();
         let kick = self.backlog_kick.clone();
         let locks = self.task_write_locks.clone();
         let ctx = ctx.clone();
@@ -1263,7 +1263,7 @@ impl HiveApp {
             let key = (project_root.clone(), task_id.clone());
             let task_lock = task_write_lock(&locks, &key);
             let _guard = lock_task(&task_lock);
-            save_one_task(&project_root, &task_id, &patch, &projects, &status, &kick);
+            save_one_task(&project_root, &task_id, &patch, &repos, &status, &kick);
             ctx.request_repaint();
         });
     }
@@ -1292,7 +1292,7 @@ impl HiveApp {
         ctx: &egui::Context,
     ) {
         let status = self.backlog_status.clone();
-        let projects = self.backlog_projects.clone();
+        let repos = self.backlog_repos.clone();
         let kick = self.backlog_kick.clone();
         let outcomes = self.board_move_outcomes.clone();
         let started = self.board_move_started.clone();
@@ -1311,7 +1311,7 @@ impl HiveApp {
             // acquired, about to write) — see `board_move_started`'s doc on
             // `HiveApp`.
             started.lock().unwrap().insert(key.clone(), generation);
-            let success = save_one_task(&project_root, &task_id, &patch, &projects, &status, &kick);
+            let success = save_one_task(&project_root, &task_id, &patch, &repos, &status, &kick);
             // N8: record the outcome *before* releasing the lock — closes
             // the window where a second, newer same-task save (already
             // queued behind this lock) could acquire it, finish, and report
@@ -1333,7 +1333,7 @@ impl HiveApp {
     /// on a background thread. Unlike `spawn_backlog_save`/
     /// `spawn_board_move_save`, this deliberately does **not** call
     /// `save_one_task` per task in the loop below — reloading and
-    /// re-parsing the whole project after every individual edit in an
+    /// re-parsing the whole repo after every individual edit in an
     /// n-task batch would be an O(n) reload done O(n) times, so this
     /// aggregates one reload/status/kick for the whole batch instead. It
     /// does still take each task's `task_write_locks` entry before editing
@@ -1354,7 +1354,7 @@ impl HiveApp {
             return;
         }
         let status = self.backlog_status.clone();
-        let projects = self.backlog_projects.clone();
+        let repos = self.backlog_repos.clone();
         let kick = self.backlog_kick.clone();
         let locks = self.task_write_locks.clone();
         let ctx = ctx.clone();
@@ -1377,7 +1377,7 @@ impl HiveApp {
             }
             let mut reload = Ok(());
             if saved > 0 {
-                reload = refresh_backlog_project_cache(&projects, &project_root);
+                reload = refresh_backlog_repo_cache(&repos, &project_root);
                 kick.notify();
             }
             let summary = match first_error {
@@ -1407,7 +1407,7 @@ impl HiveApp {
         ctx: &egui::Context,
     ) {
         let status = self.backlog_status.clone();
-        let projects = self.backlog_projects.clone();
+        let repos = self.backlog_repos.clone();
         let backlog_kick = self.backlog_kick.clone();
         let dispatch_kick = self.dispatch_kick.clone();
         let ctx = ctx.clone();
@@ -1419,7 +1419,7 @@ impl HiveApp {
                 enabled,
             ) {
                 Ok(_) => {
-                    let reload = refresh_backlog_project_cache(&projects, &project_root);
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
                     let verb = if enabled { "flagged" } else { "unflagged" };
                     status.set(with_stale_warning(
                         reload,
@@ -1465,7 +1465,7 @@ impl HiveApp {
             }
         }
         let status = self.backlog_status.clone();
-        let projects = self.backlog_projects.clone();
+        let repos = self.backlog_repos.clone();
         let refining = self.refining_tasks.clone();
         let kick = self.backlog_kick.clone();
         let ctx = ctx.clone();
@@ -1475,7 +1475,7 @@ impl HiveApp {
                 tasks: refining,
                 key,
             };
-            let msg = match load_refine_target(&projects, &project_root, &task_id) {
+            let msg = match load_refine_target(&repos, &project_root, &task_id) {
                 Some(task) => {
                     match switchbard_core::refine_task(
                         &project_root,
@@ -1483,7 +1483,7 @@ impl HiveApp {
                         &switchbard_core::RefineOptions::default(),
                     ) {
                         Ok(outcome) => {
-                            let reload = refresh_backlog_project_cache(&projects, &project_root);
+                            let reload = refresh_backlog_repo_cache(&repos, &project_root);
                             kick.notify();
                             with_stale_warning(
                                 reload,
@@ -1493,7 +1493,7 @@ impl HiveApp {
                         Err(e) => format!("refine {task_id} failed to start: {e}"),
                     }
                 }
-                None => format!("refine {task_id} failed: task not found in the loaded project"),
+                None => format!("refine {task_id} failed: task not found in the loaded repo"),
             };
             status.set(msg);
             // Released *before* the repaint so the button re-enables in the
@@ -1513,7 +1513,7 @@ impl HiveApp {
         ctx: &egui::Context,
     ) {
         let status = self.backlog_status.clone();
-        let projects = self.backlog_projects.clone();
+        let repos = self.backlog_repos.clone();
         let kick = self.backlog_kick.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
@@ -1524,7 +1524,7 @@ impl HiveApp {
                 checked,
             ) {
                 Ok(_) => {
-                    let reload = refresh_backlog_project_cache(&projects, &project_root);
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
                     let verb = if checked { "checked" } else { "unchecked" };
                     status.set(with_stale_warning(
                         reload,
@@ -1547,14 +1547,14 @@ impl HiveApp {
         ctx: &egui::Context,
     ) {
         let status = self.backlog_status.clone();
-        let projects = self.backlog_projects.clone();
+        let repos = self.backlog_repos.clone();
         let kick = self.backlog_kick.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             match switchbard_core::set_backlog_dod_checked(&project_root, &task_id, index, checked)
             {
                 Ok(_) => {
-                    let reload = refresh_backlog_project_cache(&projects, &project_root);
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
                     let verb = if checked { "checked" } else { "unchecked" };
                     status.set(with_stale_warning(
                         reload,
@@ -1575,13 +1575,13 @@ impl HiveApp {
         ctx: &egui::Context,
     ) {
         let status = self.backlog_status.clone();
-        let projects = self.backlog_projects.clone();
+        let repos = self.backlog_repos.clone();
         let kick = self.backlog_kick.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             match switchbard_core::archive_backlog_task(&project_root, &task_id) {
                 Ok(_) => {
-                    let reload = refresh_backlog_project_cache(&projects, &project_root);
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
                     status.set(with_stale_warning(reload, format!("archived {task_id}")));
                     kick.notify();
                 }
@@ -1601,13 +1601,13 @@ impl HiveApp {
         ctx: &egui::Context,
     ) {
         let status = self.backlog_status.clone();
-        let projects = self.backlog_projects.clone();
+        let repos = self.backlog_repos.clone();
         let kick = self.backlog_kick.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             match switchbard_core::complete_backlog_task(&project_root, &task_id) {
                 Ok(_) => {
-                    let reload = refresh_backlog_project_cache(&projects, &project_root);
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
                     status.set(with_stale_warning(reload, format!("completed {task_id}")));
                     kick.notify();
                 }
@@ -1621,9 +1621,9 @@ impl HiveApp {
     /// task in `per_project` — one `complete_backlog_task` call per task
     /// (not `archive_backlog_task`; the real CLI refuses `task archive` on
     /// a Done task, a defect the 2026-08-05 re-verification caught), across
-    /// however many projects the caller found Done tasks in. Mirrors
-    /// `spawn_backlog_bulk_save`'s per-project loop shape; the difference is
-    /// this always spans every tracked project rather than one bulk
+    /// however many repos the caller found Done tasks in. Mirrors
+    /// `spawn_backlog_bulk_save`'s per-repo loop shape; the difference is
+    /// this always spans every tracked repo rather than one bulk
     /// selection, since "clean up" is a workspace-wide housekeeping action,
     /// not scoped to whatever the user happens to be filtering by.
     pub fn spawn_backlog_cleanup(
@@ -1635,7 +1635,7 @@ impl HiveApp {
             return;
         }
         let status = self.backlog_status.clone();
-        let projects = self.backlog_projects.clone();
+        let repos = self.backlog_repos.clone();
         let kick = self.backlog_kick.clone();
         let progress = self.bulk_progress.clone();
         let ctx = ctx.clone();
@@ -1671,7 +1671,7 @@ impl HiveApp {
                     ctx.request_repaint();
                 }
                 if touched {
-                    let reload = refresh_backlog_project_cache(&projects, project_root);
+                    let reload = refresh_backlog_repo_cache(&repos, project_root);
                     if first_reload_error.is_ok() {
                         first_reload_error = reload;
                     }
@@ -1682,10 +1682,10 @@ impl HiveApp {
             }
             let summary = match first_error {
                 Some(error) => format!(
-                    "cleaned up {completed}/{total} Done tasks across {project_count} projects; first failure: {error}"
+                    "cleaned up {completed}/{total} Done tasks across {project_count} repos; first failure: {error}"
                 ),
                 None => format!(
-                    "cleaned up {completed}/{total} Done tasks across {project_count} projects"
+                    "cleaned up {completed}/{total} Done tasks across {project_count} repos"
                 ),
             };
             progress.finish();
@@ -1722,7 +1722,7 @@ impl HiveApp {
             return;
         }
         let status = self.backlog_status.clone();
-        let projects = self.backlog_projects.clone();
+        let repos = self.backlog_repos.clone();
         let kick = self.backlog_kick.clone();
         let progress = self.bulk_progress.clone();
         let ctx = ctx.clone();
@@ -1774,10 +1774,10 @@ impl HiveApp {
                 }
             }
 
-            // Reloaded once per project after *both* arms, not per arm — a
+            // Reloaded once per repo after *both* arms, not per arm — a
             // mixed batch touching one repo would otherwise reload it twice.
             for project_root in &touched_roots {
-                let reload = refresh_backlog_project_cache(&projects, project_root);
+                let reload = refresh_backlog_repo_cache(&repos, project_root);
                 if first_reload_error.is_ok() {
                     first_reload_error = reload;
                 }
@@ -1809,13 +1809,13 @@ impl HiveApp {
         ctx: &egui::Context,
     ) {
         let status = self.backlog_status.clone();
-        let projects = self.backlog_projects.clone();
+        let repos = self.backlog_repos.clone();
         let kick = self.backlog_kick.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             match switchbard_core::append_backlog_notes(&project_root, &task_id, &note) {
                 Ok(_) => {
-                    let reload = refresh_backlog_project_cache(&projects, &project_root);
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
                     status.set(with_stale_warning(
                         reload,
                         format!("appended note to {task_id}"),
@@ -1841,14 +1841,14 @@ impl HiveApp {
         ctx: &egui::Context,
     ) {
         let status = self.backlog_status.clone();
-        let projects = self.backlog_projects.clone();
+        let backlog_repos = self.backlog_repos.clone();
         let repos = self.repos.clone();
         let kick = self.backlog_kick.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             match switchbard_core::create_backlog_task(&project_root, &task) {
                 Ok(output) => {
-                    let reload = refresh_backlog_project_cache(&projects, &project_root);
+                    let reload = refresh_backlog_repo_cache(&backlog_repos, &project_root);
                     let repo_label = repos
                         .lock()
                         .unwrap()
@@ -2139,7 +2139,7 @@ fn lock_task(task_lock: &Arc<Mutex<()>>) -> std::sync::MutexGuard<'_, ()> {
 /// Shared core of a single-task `backlog` CLI save (N1/N2, post-review
 /// revision — previously duplicated near-verbatim between
 /// `spawn_backlog_save` and `spawn_board_move_save`): run
-/// `edit_backlog_task`, reload the project cache either way, and set the
+/// `edit_backlog_task`, reload the repo cache either way, and set the
 /// stale-aware status message. Returns whether the edit itself succeeded —
 /// `spawn_board_move_save` needs that for its own outcome report;
 /// `spawn_backlog_save` just discards it.
@@ -2153,13 +2153,13 @@ fn save_one_task(
     project_root: &Path,
     task_id: &str,
     patch: &BacklogTaskPatch,
-    projects: &Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
+    repos: &Arc<Mutex<HashMap<PathBuf, BacklogRepo>>>,
     status: &Status,
     kick: &Kick,
 ) -> bool {
     match switchbard_core::edit_backlog_task(project_root, task_id, patch) {
         Ok(_) => {
-            let reload = refresh_backlog_project_cache(projects, project_root);
+            let reload = refresh_backlog_repo_cache(repos, project_root);
             status.set(with_stale_warning(reload, format!("saved {task_id}")));
             kick.notify();
             true
@@ -2172,10 +2172,10 @@ fn save_one_task(
             // reload itself fails — no reason to only make that check on
             // the success path. `board::resolve_pending_moves`'s
             // wall-clock-timeout fallback also reads whatever
-            // `backlog_projects` currently holds, so a stale snapshot there
+            // `backlog_repos` currently holds, so a stale snapshot there
             // is a worse failure mode than a status line that also says the
             // reload failed.
-            let reload = refresh_backlog_project_cache(projects, project_root);
+            let reload = refresh_backlog_repo_cache(repos, project_root);
             status.set(with_stale_warning(
                 reload,
                 format!("save {task_id} failed: {e}"),
@@ -2185,7 +2185,7 @@ fn save_one_task(
     }
 }
 
-/// Re-read one project straight after a mutation so the UI reflects the edit
+/// Re-read one repo straight after a mutation so the UI reflects the edit
 /// without waiting out `workers::spawn_backlog`'s poll period.
 ///
 /// Returns the reload failure rather than swallowing it. A dropped error here
@@ -2193,16 +2193,16 @@ fn save_one_task(
 /// status bar says "saved", while the cache the views render from still holds
 /// the pre-mutation snapshot — the user sees their edit apparently do nothing
 /// and has no clue why. Callers pair this with [`with_stale_warning`].
-pub(crate) fn refresh_backlog_project_cache(
-    projects: &Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
+pub(crate) fn refresh_backlog_repo_cache(
+    repos: &Arc<Mutex<HashMap<PathBuf, BacklogRepo>>>,
     project_root: &Path,
 ) -> Result<(), String> {
-    match load_backlog_project(project_root) {
-        Ok(project) => {
-            projects
+    match load_backlog_repo(project_root) {
+        Ok(repo) => {
+            repos
                 .lock()
                 .unwrap()
-                .insert(project_root.to_path_buf(), project);
+                .insert(project_root.to_path_buf(), repo);
             Ok(())
         }
         Err(e) => Err(e.to_string()),
@@ -2247,11 +2247,11 @@ impl Drop for RefineLease {
 /// concurrent AC toggle, a background reload), and merging against a stale
 /// copy is how an "additive" merge quietly re-appends something.
 fn load_refine_target(
-    projects: &Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
+    repos: &Arc<Mutex<HashMap<PathBuf, BacklogRepo>>>,
     project_root: &Path,
     task_id: &str,
 ) -> Option<switchbard_core::BacklogTask> {
-    projects
+    repos
         .lock()
         .unwrap()
         .get(project_root)?
@@ -2261,7 +2261,7 @@ fn load_refine_target(
         .cloned()
 }
 
-/// Compose a mutation's success message with the [`refresh_backlog_project_cache`]
+/// Compose a mutation's success message with the [`refresh_backlog_repo_cache`]
 /// outcome. The write really did succeed, so the message still says so — but a
 /// failed reload means the visible snapshot is stale, and that has to be said
 /// out loud rather than left for the user to infer from a view that didn't move.

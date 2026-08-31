@@ -10,7 +10,7 @@
 
 use std::time::Instant;
 use switchbard_core::{
-    config, detect_services, enumerate_worktrees, is_backlog_project, load_backlog_project,
+    config, detect_services, enumerate_worktrees, is_backlog_repo, load_backlog_repo,
     probe_dirty_files, probe_fetch_age, probe_head_commit_time, probe_ignored_files,
     probe_recent_commits, probe_ref_drift_detail, probe_remote_drift, probe_trunk_detail,
     probe_trunk_divergence, probe_worktree_size, probe_worktree_staleness, scan_agent_context,
@@ -252,16 +252,16 @@ fn main() {
     let t0 = Instant::now();
     let mut task_total = 0usize;
     for root in &roots {
-        if !is_backlog_project(root) {
+        if !is_backlog_repo(root) {
             continue;
         }
-        if let Ok(project) = load_backlog_project(root) {
-            task_total += project.tasks.len();
+        if let Ok(repo) = load_backlog_repo(root) {
+            task_total += repo.tasks.len();
         }
     }
     let backlog_elapsed = t0.elapsed();
     println!(
-        "\n[backlog] load_backlog_project over {} repo roots (NOT per-worktree): {:?}, {} tasks total (0 subprocesses; markdown file reads)",
+        "\n[backlog] load_backlog_repo over {} repo roots (NOT per-worktree): {:?}, {} tasks total (0 subprocesses; markdown file reads)",
         roots.len(),
         backlog_elapsed,
         task_total

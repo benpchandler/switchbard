@@ -28,7 +28,7 @@ use egui_kittest::kittest::{self, Queryable};
 use egui_kittest::Harness;
 use switchbard_core::config::Config;
 use switchbard_core::{
-    BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource, Repo, WorktreeRef,
+    BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource, Repo, WorktreeRef,
 };
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey, ViewTab};
@@ -43,7 +43,7 @@ fn task(id: &str, title: &str, status: &str) -> BacklogTask {
         labels: vec![],
         dependencies: vec![],
         references: vec![],
-        milestone: None,
+        project: None,
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-01 09:00".to_string()),
@@ -61,20 +61,22 @@ fn task(id: &str, title: &str, status: &str) -> BacklogTask {
     }
 }
 
-/// A `HiveApp` with `n` plain "To Do" tasks (TASK-1..TASK-n) in one project,
+/// A `HiveApp` with `n` plain "To Do" tasks (TASK-1..TASK-n) in one repo,
 /// scoped to it, on the List lens — the shape most of this file's tests
 /// share.
 fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks,
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -146,7 +148,7 @@ fn unlabeled_checkbox<'t>(
 /// matches — ambiguously, since the field itself has no name of its own).
 /// A *fixed* absolute index among all `TextInput`-role nodes in the window
 /// is fragile: the sidebar's repo filter, the saved-views name-draft field,
-/// and (in List/Board lenses) the toolbar's project filter all render
+/// and (in List/Board lenses) the toolbar's repo filter all render
 /// before the detail pane and would shift it (confirmed empirically — this
 /// cost real debugging time before landing on this approach). Instead,
 /// locate the title field by its known, presumably-unique current value,
@@ -188,7 +190,7 @@ fn multiline_input_nth<'t>(
 /// Asserts a control routed to the right backlog action by checking the
 /// status surface. The UI sets `in_flight` synchronously on click, then a
 /// `spawn_backlog_*` thread overwrites it with a terminal message once the
-/// CLI call finishes — and against this fixture's nonexistent project root
+/// CLI call finishes — and against this fixture's nonexistent repo root
 /// that thread can lose or win the race with the assertion (on CI the spawn
 /// fails instantly; locally a stray dir makes it slow). Either observation
 /// proves the click dispatched the intended action, so accept both: the
@@ -518,7 +520,7 @@ fn refresh_backlog_button_kicks_a_reload_and_sets_status() {
     harness.run();
     assert_eq!(
         harness.state().backlog_status.snapshot().as_deref(),
-        Some("refreshing Backlog projects")
+        Some("refreshing Backlog repos")
     );
 }
 
@@ -532,7 +534,7 @@ fn plus_task_button_opens_the_create_modal_targeting_the_current_project() {
 
     assert!(harness.state().backlog_view.new_task.open);
     assert_eq!(
-        harness.state().backlog_view.new_task.target_project,
+        harness.state().backlog_view.new_task.target_repo,
         Some(PathBuf::from(REPO_PATH))
     );
     assert!(
@@ -602,7 +604,7 @@ fn create_modal_labels_assignee_milestone_and_dependencies_fields_reset_after_cr
     harness.state_mut().backlog_view.new_task.title = "New fixture task".to_string();
     harness.state_mut().backlog_view.new_task.labels = "frontend, urgent".to_string();
     harness.state_mut().backlog_view.new_task.assignees = "ben".to_string();
-    harness.state_mut().backlog_view.new_task.milestone = "v1".to_string();
+    harness.state_mut().backlog_view.new_task.project = "v1".to_string();
     harness.state_mut().backlog_view.new_task.dependencies = "TASK-1".to_string();
     harness.run();
 
@@ -631,7 +633,7 @@ fn create_modal_labels_assignee_milestone_and_dependencies_fields_reset_after_cr
         "assignees buffer should reset after Create"
     );
     assert_eq!(
-        new_task.milestone, "",
+        new_task.project, "",
         "milestone buffer should reset after Create"
     );
     assert_eq!(
@@ -717,16 +719,16 @@ fn drafts_filter_checkbox_hides_and_reveals_draft_tasks() {
 /// UNDRIVABLE by this harness (no accessible label — same confirmed
 /// limitation the QA audit documents for status_filter/priority_filter); the
 /// filter's actual effect is proven directly via `task_visible`'s
-/// milestone_filter branch (sort.rs), same bar those two combos are held to.
+/// project_filter branch (sort.rs), same bar those two combos are held to.
 #[test]
-fn milestone_filter_hides_tasks_outside_the_selected_milestone() {
+fn project_filter_hides_tasks_outside_the_selected_milestone() {
     let mut v1 = task("TASK-1", "In v1", "To Do");
-    v1.milestone = Some("v1".to_string());
+    v1.project = Some("v1".to_string());
     let mut v2 = task("TASK-2", "In v2", "To Do");
-    v2.milestone = Some("v2".to_string());
+    v2.project = Some("v2".to_string());
     let mut harness = list_harness_with_tasks(vec![v1, v2]);
 
-    harness.state_mut().backlog_view.milestone_filter = "v1".to_string();
+    harness.state_mut().backlog_view.project_filter = "v1".to_string();
     harness.run();
 
     assert!(harness.query_by_label("TASK-1  In v1").is_some());
@@ -824,12 +826,14 @@ fn search_result_row_click_selects_the_task_without_changing_lens() {
 fn digest_harness_with(tasks: Vec<BacklogTask>) -> Harness<'static, HiveApp> {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks,
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -865,8 +869,8 @@ fn digest_recently_done_view_all_jumps_to_list_filtered_to_done() {
 /// Owner UX pass (2026-08-05): a Digest card click used to force-switch to
 /// the List lens just to reach its detail pane. Now the persistent detail
 /// rail shows it regardless of lens, so Digest stays on screen — only
-/// selection (and the scope-widen to "All projects", still needed since a
-/// Digest card can surface a task from any tracked project) changes.
+/// selection (and the scope-widen to "All repos", still needed since a
+/// Digest card can surface a task from any tracked repo) changes.
 #[test]
 fn digest_card_click_selects_the_task_without_changing_lens() {
     // A second, boring task: with only one task, `reconcile_selected_task`
@@ -1018,12 +1022,12 @@ fn board_non_editable_card_click_still_selects_it() {
     );
 }
 
-/// TASK-25 (owner-requested UX): a project's `config.yml`-declared status
+/// TASK-25 (owner-requested UX): a repo's `config.yml`-declared status
 /// (Icebox, matching budget's real config) should show as a Board column
 /// even with zero tasks in it right now — declaring it is enough, per
 /// `column_order`'s doc (board.rs). No CLI call decides this outcome (the
 /// `backlog` CLI has no way to set the statuses list at all — see
-/// `load_backlog_project_reads_configured_statuses_from_a_real_init`,
+/// `load_backlog_repo_reads_configured_statuses_from_a_real_init`,
 /// backlog_mutations.rs, for that finding and the real-fixture proof of
 /// the parsing itself), so an in-memory fixture with `configured_statuses`
 /// set directly is the right level for exercising the *render* path.
@@ -1032,13 +1036,15 @@ fn board_shows_the_icebox_column_even_with_zero_icebox_tasks() {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::Board;
-    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![task("TASK-1", "Ordinary task", "To Do")],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".to_string(),
@@ -1086,14 +1092,14 @@ fn board_shows_the_icebox_column_even_with_zero_icebox_tasks() {
 /// **Reversed again (owner decision, 2026-08-28).** This assertion has now
 /// been all three ways, so the history is worth keeping.
 ///
-/// Originally: a project declaring no statuses got "no phantom columns beyond
+/// Originally: a repo declaring no statuses got "no phantom columns beyond
 /// the standard three". Then 2026-08-06 standardized the vocabulary and this
-/// test was flipped to assert every project shows all of `STANDARD_STATUSES`,
+/// test was flipped to assert every repo shows all of `STANDARD_STATUSES`,
 /// because `dispatch` releases to `In Review` and four of five repos could
 /// neither display nor select it.
 ///
 /// That fix asserted a vocabulary the repos didn't have. The `backlog` CLI
-/// validates writes against each project's own `config.yml`, so the board
+/// validates writes against each repo's own `config.yml`, so the board
 /// offered columns the CLI then refused — a drag to `Icebox` failed with
 /// `Invalid status`, and dispatch's own `In Review` write failed silently in
 /// three of four repos because `set_dispatch_status` discards the error.
@@ -1160,7 +1166,7 @@ fn board_column_add_task_opens_the_composer_with_that_columns_status() {
         "the clicked column should preselect the new task's status"
     );
     assert_eq!(
-        harness.state().backlog_view.new_task.target_project,
+        harness.state().backlog_view.new_task.target_repo,
         Some(PathBuf::from(REPO_PATH))
     );
     assert!(harness.query_by_label("New Backlog Task").is_some());
@@ -1639,11 +1645,11 @@ fn board_pending_move_overlay_renders_card_in_destination_column_before_save_res
 
     let cached_status = harness
         .state()
-        .backlog_projects
+        .backlog_repos
         .lock()
         .unwrap()
         .get(&PathBuf::from(REPO_PATH))
-        .expect("project should still be cached")
+        .expect("repo should still be cached")
         .tasks
         .iter()
         .find(|t| t.id == "TASK-2")
@@ -1708,14 +1714,13 @@ fn board_drag_failure_rolls_back_the_card_and_reloads_the_cache() {
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::Board;
     app.backlog_view.sort_key = BacklogTaskSortKey::Task;
-    app.backlog_view.selected_project = Some(root.to_path_buf());
-    let project =
-        switchbard_core::load_backlog_project(root).expect("load the real fixture project");
-    assert_eq!(project.tasks[0].id, "TASK-1");
-    app.backlog_projects
+    app.backlog_view.selected_repo = Some(root.to_path_buf());
+    let repo = switchbard_core::load_backlog_repo(root).expect("load the real fixture repo");
+    assert_eq!(repo.tasks[0].id, "TASK-1");
+    app.backlog_repos
         .lock()
         .unwrap()
-        .insert(root.to_path_buf(), project);
+        .insert(root.to_path_buf(), repo);
 
     let mut harness = harness(app);
     harness.run();
@@ -1814,11 +1819,11 @@ fn board_drag_failure_rolls_back_the_card_and_reloads_the_cache() {
     // the task's real, unmoved status.
     let cached_status = harness
         .state()
-        .backlog_projects
+        .backlog_repos
         .lock()
         .unwrap()
         .get(&root.to_path_buf())
-        .expect("project should still be cached")
+        .expect("repo should still be cached")
         .tasks
         .iter()
         .find(|t| t.id == "TASK-1")
@@ -1880,13 +1885,12 @@ fn board_rail_edit_save_serializes_against_an_in_flight_drop_on_the_same_task() 
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     app.config_save_path = Some(isolated_config_save_path());
     app.view_tab = ViewTab::Backlog;
-    let project =
-        switchbard_core::load_backlog_project(root).expect("load the real fixture project");
-    assert_eq!(project.tasks[0].id, "TASK-1");
-    app.backlog_projects
+    let repo = switchbard_core::load_backlog_repo(root).expect("load the real fixture repo");
+    assert_eq!(repo.tasks[0].id, "TASK-1");
+    app.backlog_repos
         .lock()
         .unwrap()
-        .insert(root.to_path_buf(), project);
+        .insert(root.to_path_buf(), repo);
 
     let mut harness = harness(app);
     harness.run();
@@ -1935,7 +1939,7 @@ fn board_rail_edit_save_serializes_against_an_in_flight_drop_on_the_same_task() 
     // duration before trusting it (see this task's PR description).
     std::thread::sleep(std::time::Duration::from_millis(1000));
     let project_while_locked =
-        switchbard_core::load_backlog_project(root).expect("reload the real fixture project");
+        switchbard_core::load_backlog_repo(root).expect("reload the real fixture repo");
     let status_while_locked = project_while_locked
         .tasks
         .iter()
@@ -1959,7 +1963,7 @@ fn board_rail_edit_save_serializes_against_an_in_flight_drop_on_the_same_task() 
         harness.run();
         let landed = harness
             .state()
-            .backlog_projects
+            .backlog_repos
             .lock()
             .unwrap()
             .get(&root.to_path_buf())
@@ -1978,7 +1982,7 @@ fn board_rail_edit_save_serializes_against_an_in_flight_drop_on_the_same_task() 
     }
 
     let final_project =
-        switchbard_core::load_backlog_project(root).expect("reload the real fixture project");
+        switchbard_core::load_backlog_repo(root).expect("reload the real fixture repo");
     let final_status = final_project
         .tasks
         .iter()
@@ -1995,7 +1999,7 @@ fn board_rail_edit_save_serializes_against_an_in_flight_drop_on_the_same_task() 
 // ─── task-42 post-review revision: generation-based resolution ──────────
 //
 // Independent audit findings F1-F4 all traced back to the first version
-// resolving a `PendingBoardMove` off *any* `BacklogProject::loaded_at_unix`
+// resolving a `PendingBoardMove` off *any* `BacklogRepo::loaded_at_unix`
 // advance instead of its own drop's own save completing. The four tests
 // below exercise the replacement (`PendingBoardMove::generation` +
 // `HiveApp::board_move_outcomes`) directly against seeded state — the same
@@ -2192,10 +2196,10 @@ fn board_drop_back_to_origin_while_pending_queues_a_reversing_move() {
     // state assertions above already do.
 }
 
-/// F1 (the actual root-cause fix): an *unrelated* project reload — the
+/// F1 (the actual root-cause fix): an *unrelated* repo reload — the
 /// periodic backlog worker's own poll, standing in for `Kick::notify`
 /// waking it early right after some other save — must have zero effect on
-/// a still-in-flight pending move. Directly overwrites `backlog_projects`
+/// a still-in-flight pending move. Directly overwrites `backlog_repos`
 /// (what a worker's reload would do) with a snapshot where the task's real
 /// status *already* matches the move's target — the strongest version of
 /// this check: even a reload that happens to agree with the pending move's
@@ -2223,19 +2227,21 @@ fn board_unrelated_project_reload_does_not_resolve_a_pending_move() {
     harness.run();
 
     // Simulate an unrelated worker reload: the cache is replaced wholesale
-    // (as `refresh_backlog_project_cache`/a periodic scan would do) with a
+    // (as `refresh_backlog_repo_cache`/a periodic scan would do) with a
     // fresh snapshot whose task already carries the move's own target
     // status — no `board_move_outcomes` entry is written, because this
     // reload has nothing to do with this drop.
-    harness.state_mut().backlog_projects.lock().unwrap().insert(
+    harness.state_mut().backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![
                 task("TASK-1", "Other card", "To Do"),
                 task("TASK-2", "Draggable card", "In Progress"),
             ],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 999_999,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -2521,7 +2527,7 @@ fn digest_card_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
 
 /// No selection at all — not just "nothing clicked yet" (`reconcile_
 /// selected_task` always auto-selects the first *visible* task when one
-/// exists) but the realistic case where a project has tasks, none of them
+/// exists) but the realistic case where a repo has tasks, none of them
 /// currently pass the visibility filters. The rail should show its quiet
 /// existing empty state (`render_task_detail`'s own "Select a task"),
 /// unmodified for the rail — proving the rail needs no separate
@@ -2615,9 +2621,9 @@ fn detail_rail_width_changes_when_its_left_edge_is_dragged() {
 #[test]
 fn milestone_row_click_selects_the_task() {
     let mut milestoned = task("TASK-1", "Milestoned task", "To Do");
-    milestoned.milestone = Some("v1".to_string());
+    milestoned.project = Some("v1".to_string());
     let mut app = list_app_with_tasks(vec![milestoned]);
-    app.backlog_view.lens = BacklogLens::Milestones;
+    app.backlog_view.lens = BacklogLens::Projects;
     let mut harness = harness(app);
     harness.run();
 
@@ -2633,9 +2639,9 @@ fn milestone_row_click_selects_the_task() {
 #[test]
 fn milestone_collapsing_header_collapses_and_reveals_its_tasks() {
     let mut milestoned = task("TASK-1", "Milestoned task", "To Do");
-    milestoned.milestone = Some("v1".to_string());
+    milestoned.project = Some("v1".to_string());
     let mut app = list_app_with_tasks(vec![milestoned]);
-    app.backlog_view.lens = BacklogLens::Milestones;
+    app.backlog_view.lens = BacklogLens::Projects;
     let mut harness = harness(app);
     harness.run();
 
@@ -2677,7 +2683,7 @@ fn detail_task_with_checklists() -> BacklogTask {
         checked: false,
         text: "DoD one".to_string(),
     }];
-    t.milestone = Some("v1".to_string());
+    t.project = Some("v1".to_string());
     t.description = "Some body text.".to_string();
     t
 }
@@ -2750,7 +2756,7 @@ fn milestone_clear_button_empties_the_milestone_field() {
     harness.get_by_label("Clear").click();
     harness.run();
 
-    assert_eq!(harness.state().backlog_view.editor.milestone, "");
+    assert_eq!(harness.state().backlog_view.editor.project, "");
     assert!(
         harness.query_by_label("Clear").is_none(),
         "the Clear button only shows while the milestone field is non-empty"
@@ -3203,7 +3209,7 @@ fn saved_view_persists_across_a_simulated_restart() {
     // regression bar for adding a new filter field: forgetting to wire it
     // into current_as_saved_view/apply_saved_view would silently reset it
     // to "all" the next time this view is applied.
-    harness.state_mut().backlog_view.milestone_filter = "v1".to_string();
+    harness.state_mut().backlog_view.project_filter = "v1".to_string();
     harness.state_mut().backlog_view.label_filter = "frontend".to_string();
     harness.run();
 
@@ -3232,7 +3238,7 @@ fn saved_view_persists_across_a_simulated_restart() {
     assert_eq!(reloaded.ui.saved_views.len(), 1);
     assert_eq!(reloaded.ui.saved_views[0].name, "High priority");
     assert_eq!(reloaded.ui.saved_views[0].priority_filter, "high");
-    assert_eq!(reloaded.ui.saved_views[0].milestone_filter, "v1");
+    assert_eq!(reloaded.ui.saved_views[0].project_filter, "v1");
     assert_eq!(reloaded.ui.saved_views[0].label_filter, "frontend");
 }
 
@@ -3273,10 +3279,10 @@ fn save_button_completes_a_real_write_round_trip_against_a_real_fixture_repo() {
     app.config_save_path = Some(isolated_config_save_path());
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(root.to_path_buf());
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_view.selected_repo = Some(root.to_path_buf());
+    app.backlog_repos.lock().unwrap().insert(
         root.to_path_buf(),
-        switchbard_core::load_backlog_project(root).expect("load the real fixture project"),
+        switchbard_core::load_backlog_repo(root).expect("load the real fixture repo"),
     );
     app.backlog_view.selected_task = Some((root.to_path_buf(), "TASK-1".to_string()));
 
@@ -3318,9 +3324,8 @@ fn save_button_completes_a_real_write_round_trip_against_a_real_fixture_repo() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 
-    let project =
-        switchbard_core::load_backlog_project(root).expect("reload the real fixture project");
-    let saved_task = project
+    let repo = switchbard_core::load_backlog_repo(root).expect("reload the real fixture repo");
+    let saved_task = repo
         .tasks
         .iter()
         .find(|t| t.id == "TASK-1")
@@ -3361,10 +3366,10 @@ fn create_modal_reports_a_compact_created_message_against_a_real_fixture_repo() 
     app.config_save_path = Some(isolated_config_save_path());
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(root.to_path_buf());
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_view.selected_repo = Some(root.to_path_buf());
+    app.backlog_repos.lock().unwrap().insert(
         root.to_path_buf(),
-        switchbard_core::load_backlog_project(root).expect("load the real fixture project"),
+        switchbard_core::load_backlog_repo(root).expect("load the real fixture repo"),
     );
 
     let mut harness = harness(app);
@@ -3419,30 +3424,30 @@ fn create_modal_reports_a_compact_created_message_against_a_real_fixture_repo() 
 /// three sub-questions — (a) the CLI's default status ("To Do") IS a
 /// standard Board column, confirmed against a real `backlog task create`
 /// call; (b) `column_order`'s status union (TASK-25) always includes
-/// `BACKLOG_STATUSES` regardless of a project's own `config.yml`, so it
+/// `BACKLOG_STATUSES` regardless of a repo's own `config.yml`, so it
 /// can't exclude "To Do"; (c) `spawn_backlog_create`'s own
-/// `refresh_backlog_project_cache` call (app.rs, TASK-28) correctly
-/// updates the SAME shared `backlog_projects` cache both List and Board
+/// `refresh_backlog_repo_cache` call (app.rs, TASK-28) correctly
+/// updates the SAME shared `backlog_repos` cache both List and Board
 /// read from every frame (`Snapshot::collect`, mod.rs) — there's no
 /// separate, Board-only stale cache. None of the three reproduced the
 /// symptom with a real fixture (this test).
 ///
 /// The actual root cause turned out to be a fourth thing, found by reading
 /// `workers.rs`'s periodic backlog-scan worker: `spawn_backlog`'s loop did
-/// a wholesale `*ch.backlog_projects.lock().unwrap() = projects` every
+/// a wholesale `*ch.backlog_repos.lock().unwrap() = repos` every
 /// `BACKLOG_PERIOD` (30s, or sooner if kicked). Since `collect_backlog_
-/// projects` scans every tracked repo's disk state *sequentially* (real
+/// repos` scans every tracked repo's disk state *sequentially* (real
 /// multi-repo wall time, not an instant), a periodic scan that started
-/// reading a project *before* a create finished, but finishes applying its
-/// (stale) result *after* `refresh_backlog_project_cache`'s fresher
-/// single-project insert, would silently revert that project back to its
+/// reading a repo *before* a create finished, but finishes applying its
+/// (stale) result *after* `refresh_backlog_repo_cache`'s fresher
+/// single-repo insert, would silently revert that repo back to its
 /// pre-create state — clobbering the newly created task out of the shared
 /// cache entirely, in EVERY lens, not just Board. This isn't reproducible
 /// with a single-threaded kittest harness (there's no periodic worker
 /// thread racing anything here); it's covered instead by
 /// `workers::tests::merge_keeps_a_newer_cached_snapshot_over_a_stale_scan_
 /// result`, which deterministically proves the exact interleaving via
-/// `merge_backlog_projects` (the fix: per-project `loaded_at_unix`
+/// `merge_backlog_repos` (the fix: per-repo `loaded_at_unix`
 /// timestamp comparison instead of a blind overwrite) without depending on
 /// real thread timing.
 ///
@@ -3471,10 +3476,10 @@ fn create_modal_task_is_visible_in_both_list_and_board_against_a_real_fixture_re
     app.config_save_path = Some(isolated_config_save_path());
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(root.to_path_buf());
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_view.selected_repo = Some(root.to_path_buf());
+    app.backlog_repos.lock().unwrap().insert(
         root.to_path_buf(),
-        switchbard_core::load_backlog_project(root).expect("load the real fixture project"),
+        switchbard_core::load_backlog_repo(root).expect("load the real fixture repo"),
     );
 
     let mut harness = harness(app);
@@ -3548,7 +3553,7 @@ fn create_modal_task_is_visible_in_both_list_and_board_against_a_real_fixture_re
 /// mismatch go undetected. This test closes that blind spot: a real parent
 /// and two real subtasks created via the real `backlog` CLI, one child
 /// marked Done via the real CLI, loaded through the real parser
-/// (`load_backlog_project`, not a struct literal), then driven through the
+/// (`load_backlog_repo`, not a struct literal), then driven through the
 /// actual List-lens render path.
 #[test]
 fn sub_task_hierarchy_renders_correctly_from_a_native_created_subtask() {
@@ -3568,7 +3573,7 @@ fn sub_task_hierarchy_renders_correctly_from_a_native_created_subtask() {
                 parent: Some("TASK-1".to_string()),
                 labels: vec![],
                 assignees: vec![],
-                milestone: None,
+                project: None,
                 dependencies: vec![],
             },
         )
@@ -3603,9 +3608,9 @@ fn sub_task_hierarchy_renders_correctly_from_a_native_created_subtask() {
     app.config_save_path = Some(isolated_config_save_path());
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(root.to_path_buf());
+    app.backlog_view.selected_repo = Some(root.to_path_buf());
     let real_project =
-        switchbard_core::load_backlog_project(root).expect("load the real fixture project");
+        switchbard_core::load_backlog_repo(root).expect("load the real fixture repo");
     // Independently confirm the parser itself resolved parentage before
     // even reaching the GUI — if this fails, the GUI assertions below would
     // fail for an uninteresting reason (no roll-up data to show at all).
@@ -3619,7 +3624,7 @@ fn sub_task_hierarchy_renders_correctly_from_a_native_created_subtask() {
         Some("TASK-1"),
         "the real parser should resolve the real CLI's parent_task_id key"
     );
-    app.backlog_projects
+    app.backlog_repos
         .lock()
         .unwrap()
         .insert(root.to_path_buf(), real_project);
@@ -3689,7 +3694,7 @@ fn native_task_create(root: &std::path::Path, title: &str) -> String {
             parent: None,
             labels: vec![],
             assignees: vec![],
-            milestone: None,
+            project: None,
             dependencies: vec![],
         },
     )
@@ -3985,15 +3990,15 @@ fn the_sort_control_renders_on_the_board_lens() {
 // vocabulary, the app offers to close the gap instead of pretending it isn't
 // there — see `ui::backlog::status_migration` for why that's an offer.
 
-/// A project declaring only the default trio, i.e. what `backlog init` writes.
+/// A repo declaring only the default trio, i.e. what `backlog init` writes.
 fn trio_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
     let mut app = list_app_with_tasks(tasks);
     app.backlog_view.lens = BacklogLens::Board;
-    app.backlog_projects
+    app.backlog_repos
         .lock()
         .unwrap()
         .get_mut(&PathBuf::from(REPO_PATH))
-        .expect("the fixture project")
+        .expect("the fixture repo")
         .configured_statuses = vec!["To Do".into(), "In Progress".into(), "Done".into()];
     app
 }
@@ -4074,10 +4079,10 @@ fn accepting_the_offer_writes_the_config_and_the_column_appears() {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::Board;
-    app.backlog_view.selected_project = Some(root.to_path_buf());
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_view.selected_repo = Some(root.to_path_buf());
+    app.backlog_repos.lock().unwrap().insert(
         root.to_path_buf(),
-        switchbard_core::load_backlog_project(root).expect("load the real fixture"),
+        switchbard_core::load_backlog_repo(root).expect("load the real fixture"),
     );
 
     let mut harness = harness(app);
@@ -4116,12 +4121,14 @@ fn a_drop_onto_a_column_this_repo_lacks_is_refused_and_offers_the_fix() {
     let mut app = trio_app_with_tasks(vec![task("TASK-1", "Draggable card", "To Do")]);
     // A second repo that *does* declare Icebox, which is the only reason the
     // column is on screen at all.
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(OTHER),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(OTHER),
             tasks: vec![task("OTHER-1", "Someone else's task", "Icebox")],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -4131,7 +4138,7 @@ fn a_drop_onto_a_column_this_repo_lacks_is_refused_and_offers_the_fix() {
             ],
         },
     );
-    app.backlog_view.selected_project = None; // all repos in scope
+    app.backlog_view.selected_repo = None; // all repos in scope
     app.backlog_view.sort_key = BacklogTaskSortKey::Task;
     // The passive offer would otherwise fire first and mask the drop's own.
     app.config

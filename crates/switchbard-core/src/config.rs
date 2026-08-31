@@ -137,18 +137,23 @@ pub struct FilterMemory {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SavedView {
     pub name: String,
-    /// `None` means the All-projects scope. Named to match the GUI's own
-    /// `BacklogViewState::selected_project` — deliberately *not*
-    /// `project_filter`, which is a different, unrelated field there (the
-    /// project picker's free-text search string).
-    #[serde(default)]
-    pub selected_project: Option<PathBuf>,
+    /// `None` means the All-repos scope. Named to match the GUI's own
+    /// `BacklogViewState::selected_repo` — deliberately *not*
+    /// `repo_filter`, which is a different, unrelated field there (the
+    /// repo picker's free-text search string). Serialized under the
+    /// pre-rename key `selected_project` so existing config files keep
+    /// loading and older builds keep reading ours.
+    #[serde(default, rename = "selected_project")]
+    pub selected_repo: Option<PathBuf>,
     #[serde(default = "default_filter_all")]
     pub status_filter: String,
     #[serde(default = "default_filter_all")]
     pub priority_filter: String,
-    #[serde(default = "default_filter_all")]
-    pub milestone_filter: String,
+    /// The project-name facet. `alias` keeps saved views written before the
+    /// Linear-hierarchy rename (which stored this as `milestone_filter`)
+    /// loading; new files write the honest key.
+    #[serde(default = "default_filter_all", alias = "milestone_filter")]
+    pub project_filter: String,
     #[serde(default = "default_filter_all")]
     pub label_filter: String,
     #[serde(default)]
@@ -342,10 +347,10 @@ mod tests {
                 stale_after_days: 45,
                 saved_views: vec![SavedView {
                     name: "My high-priority queue".into(),
-                    selected_project: None,
+                    selected_repo: None,
                     status_filter: "all".into(),
                     priority_filter: "high".into(),
-                    milestone_filter: "all".into(),
+                    project_filter: "all".into(),
                     label_filter: "all".into(),
                     sort_key: "triage".into(),
                     sort_direction: "ascending".into(),
@@ -585,5 +590,15 @@ path = "/Users/me/Dev/switchbard"
         assert_eq!(cfg.repos.len(), 1);
         assert!(!cfg.ui.show_non_servers);
         assert_eq!(cfg.ui.browser, None);
+    }
+
+    #[test]
+    fn saved_view_reads_the_pre_rename_milestone_filter_key() {
+        let toml = r#"
+            name = "old view"
+            milestone_filter = "Lucella cutover"
+        "#;
+        let view: SavedView = toml::from_str(toml).expect("legacy saved view loads");
+        assert_eq!(view.project_filter, "Lucella cutover");
     }
 }

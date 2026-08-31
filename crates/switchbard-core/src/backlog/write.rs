@@ -163,18 +163,35 @@ pub fn set_task_title(path: &Path, title: &str) -> Result<WriteOutcome> {
     })
 }
 
-/// `Some(name)` assigns the milestone (inserting the key after `priority` if
-/// the task never had one); `None` removes the key entirely.
-pub fn set_task_milestone(path: &Path, milestone: Option<&str>) -> Result<WriteOutcome> {
-    let Some(name) = milestone else {
+/// `Some(name)` assigns the project; `None` removes the assignment.
+///
+/// This is the one write that performs the membership-key migration
+/// (trajectory: *Linear-vocabulary hierarchy*, divergence 1): a file still
+/// carrying the legacy `milestone:` key has that line rewritten **in place**
+/// as `project:` — same position, one changed line — so key order is
+/// preserved and the diff is minimal. A file carrying both keys is collapsed
+/// to `project:` alone in the same atomic write. Files are otherwise never
+/// migrated: every other operation leaves a legacy `milestone:` line
+/// byte-identical.
+pub fn set_task_project(path: &Path, project: Option<&str>) -> Result<WriteOutcome> {
+    let Some(name) = project else {
         return apply_edit(path, |fm, _| {
+            remove_key(fm, "project");
             remove_key(fm, "milestone");
             Ok(())
         });
     };
-    let name = validated_single_line("milestone", name)?.to_string();
+    let name = validated_single_line("project", name)?.to_string();
     apply_edit(path, move |fm, _| {
-        set_scalar(fm, "milestone", &yaml_scalar(&name), Some("priority"));
+        let rendered = yaml_scalar(&name);
+        if key_span(fm, "project").is_some() {
+            set_scalar(fm, "project", &rendered, None);
+            remove_key(fm, "milestone");
+        } else if let Some((start, end)) = key_span(fm, "milestone") {
+            fm.splice(start..end, [format!("project: {rendered}")]);
+        } else {
+            set_scalar(fm, "project", &rendered, Some("priority"));
+        }
         Ok(())
     })
 }
@@ -400,12 +417,12 @@ fn validate_task_id(id: &str) -> Result<()> {
 /// is byte-identical by construction: `fm` is exactly the lines between the
 /// two `---` fences, `rest` is exactly everything after the closing fence
 /// (leading newline included).
-struct RawTask {
-    fm: Vec<String>,
-    rest: String,
+pub(super) struct RawTask {
+    pub(super) fm: Vec<String>,
+    pub(super) rest: String,
 }
 
-fn split_raw(text: &str) -> Result<RawTask> {
+pub(super) fn split_raw(text: &str) -> Result<RawTask> {
     if text.contains('\r') {
         bail!("task file has CR line endings; refusing to edit");
     }
@@ -420,7 +437,7 @@ fn split_raw(text: &str) -> Result<RawTask> {
     Ok(RawTask { fm, rest })
 }
 
-fn join_raw(fm: &[String], rest: &str) -> String {
+pub(super) fn join_raw(fm: &[String], rest: &str) -> String {
     format!("---\n{}\n---{}", fm.join("\n"), rest)
 }
 
@@ -454,7 +471,7 @@ fn apply_edit(
 /// **refused** (rename needs only directory permission, so it would happily
 /// replace a file its owner locked — the CLI honored the bit, and so do
 /// we), and the original file's permissions survive onto the replacement.
-fn atomic_write(path: &Path, text: &str) -> Result<()> {
+pub(super) fn atomic_write(path: &Path, text: &str) -> Result<()> {
     let permissions = fs::metadata(path)
         .with_context(|| format!("inspecting {}", path.display()))?
         .permissions();
@@ -507,7 +524,12 @@ fn key_span(fm: &[String], key: &str) -> Option<(usize, usize)> {
 
 /// Replace `key`'s lines with `key: rendered`, or insert the key if absent —
 /// after `insert_after`'s span when given (and present), else at the end.
-fn set_scalar(fm: &mut Vec<String>, key: &str, rendered: &str, insert_after: Option<&str>) {
+pub(super) fn set_scalar(
+    fm: &mut Vec<String>,
+    key: &str,
+    rendered: &str,
+    insert_after: Option<&str>,
+) {
     let line = format!("{key}: {rendered}");
     if let Some((start, end)) = key_span(fm, key) {
         fm.splice(start..end, [line]);
@@ -528,7 +550,7 @@ fn set_list(fm: &mut Vec<String>, key: &str, values: &[String]) {
     }
 }
 
-fn remove_key(fm: &mut Vec<String>, key: &str) {
+pub(super) fn remove_key(fm: &mut Vec<String>, key: &str) {
     if let Some((start, end)) = key_span(fm, key) {
         fm.drain(start..end);
     }
@@ -577,7 +599,7 @@ fn local_stamp() -> String {
 /// it — colons, comment starts, bool/null lookalikes, and anything not
 /// starting with a plain ASCII letter (dates, numbers, punctuation-led
 /// titles).
-fn yaml_scalar(value: &str) -> String {
+pub(super) fn yaml_scalar(value: &str) -> String {
     debug_assert!(
         !value.contains('\n'),
         "frontmatter scalars are single-line; public entry points validate"
@@ -898,10 +920,10 @@ fn new_task_text(
         "priority: {}",
         yaml_scalar(validated_single_line("priority", priority)?)
     ));
-    if let Some(milestone) = &task.milestone {
+    if let Some(project) = &task.project {
         fm.push(format!(
-            "milestone: {}",
-            yaml_scalar(validated_single_line("milestone", milestone)?)
+            "project: {}",
+            yaml_scalar(validated_single_line("project", project)?)
         ));
     }
     if let Some(parent) = &task.parent {
@@ -937,7 +959,7 @@ fn new_task_body(task: &NewBacklogTask) -> Result<String> {
 /// that are shell- or filesystem-hostile are dropped, runs of `-` collapse.
 /// Capped at 180 chars so a long title can't overflow a 255-byte filename.
 /// Only a convention, not an identity: the id lives in the frontmatter.
-fn filename_slug(title: &str) -> String {
+pub(super) fn filename_slug(title: &str) -> String {
     const DROPPED: &[char] = &[
         '/', '\\', ':', '*', '?', '"', '\'', '<', '>', '|', '#', '%', '&', '{', '}', '$', '!', '@',
         '`', '+', '=',
@@ -962,13 +984,20 @@ fn filename_slug(title: &str) -> String {
 
 // ---- shared validation ----
 
-fn validated_single_line<'v>(field: &str, value: &'v str) -> Result<&'v str> {
+pub(super) fn validated_single_line<'v>(field: &str, value: &'v str) -> Result<&'v str> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         bail!("{field} must not be empty");
     }
     if trimmed.contains('\n') {
         bail!("{field} must be a single line");
+    }
+    // Tabs are rejected alongside newlines: `yaml_scalar` doesn't quote
+    // them, and the CLIs' list output is tab-separated — a tab in a project
+    // name (the *first* TSV column) would silently shift every later column
+    // for anything parsing the documented stable-columns contract.
+    if trimmed.contains('\t') {
+        bail!("{field} must not contain tab characters");
     }
     Ok(trimmed)
 }
@@ -1125,7 +1154,9 @@ mod tests {
         );
 
         assert!(read(&path).contains("title: 'New: with a colon, and ''quotes'''"));
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.title, "New: with a colon, and 'quotes'");
     }
 
@@ -1168,14 +1199,18 @@ mod tests {
             set_task_label(&path, "dispatch", true).expect("edit succeeds"),
             WriteOutcome::Changed
         );
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.labels, vec!["hub", "slice-2", "dispatch"]);
 
         assert_eq!(
             set_task_label(&path, "hub", false).expect("edit succeeds"),
             WriteOutcome::Changed
         );
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.labels, vec!["slice-2", "dispatch"]);
     }
 
@@ -1188,7 +1223,9 @@ mod tests {
             swap_task_label(&path, "hub", "hub-claimed").expect("edit succeeds"),
             WriteOutcome::Changed
         );
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.labels, vec!["slice-2", "hub-claimed"]);
 
         let before = read(&path);
@@ -1206,17 +1243,19 @@ mod tests {
             swap_task_label(&path, "hub", "slice-2").expect("edit succeeds"),
             WriteOutcome::Changed
         );
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.labels, vec!["slice-2"], "no duplicate slice-2");
     }
 
     #[test]
-    fn milestone_assign_inserts_after_priority_and_clear_removes_the_key() {
+    fn project_assign_inserts_after_priority_and_clear_removes_the_key() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = fixture_file(&dir);
 
         assert_eq!(
-            set_task_milestone(&path, Some("m-1")).expect("edit succeeds"),
+            set_task_project(&path, Some("m-1")).expect("edit succeeds"),
             WriteOutcome::Changed
         );
         let after = read(&path);
@@ -1225,13 +1264,120 @@ mod tests {
             .iter()
             .position(|l| l.starts_with("priority:"))
             .expect("priority survives");
-        assert_eq!(lines[priority + 1], "milestone: m-1");
+        assert_eq!(lines[priority + 1], "project: m-1");
 
         assert_eq!(
-            set_task_milestone(&path, None).expect("edit succeeds"),
+            set_task_project(&path, None).expect("edit succeeds"),
             WriteOutcome::Changed
         );
-        assert!(!read(&path).contains("milestone:"));
+        assert!(!read(&path).contains("project:"));
+    }
+
+    /// A fixture still carrying the pre-divergence `milestone:` key, with a
+    /// key after it so in-place rewrites are position-checkable.
+    fn legacy_milestone_file(dir: &tempfile::TempDir) -> std::path::PathBuf {
+        let path = dir.path().join("task-8 - Legacy.md");
+        fs::write(
+            &path,
+            "---\n\
+             id: TASK-8\n\
+             title: Legacy\n\
+             status: To Do\n\
+             priority: medium\n\
+             milestone: v1\n\
+             ordinal: 800\n\
+             ---\n\
+             \n\
+             ## Description\n\
+             \n\
+             Body.\n",
+        )
+        .expect("fixture writes");
+        path
+    }
+
+    #[test]
+    fn project_assign_rewrites_a_legacy_milestone_line_in_place() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = legacy_milestone_file(&dir);
+        let before = read(&path);
+        let milestone_index = before
+            .lines()
+            .position(|l| l.starts_with("milestone:"))
+            .expect("fixture carries the legacy key");
+
+        assert_eq!(
+            set_task_project(&path, Some("v2")).expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+
+        let after = read(&path);
+        assert_eq!(
+            after.lines().nth(milestone_index),
+            Some("project: v2"),
+            "the legacy line migrates in place — same position, new key"
+        );
+        assert!(!after.contains("milestone:"));
+        assert_only_lines_touched(
+            &before,
+            &after,
+            &["milestone:", "project:", "updated_date:"],
+        );
+    }
+
+    #[test]
+    fn project_assign_on_a_both_keys_file_collapses_to_project_in_one_write() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("task-7 - Both.md");
+        fs::write(
+            &path,
+            "---\nid: TASK-7\ntitle: Both\nstatus: To Do\nproject: current\nmilestone: stale\n---\n",
+        )
+        .expect("fixture writes");
+
+        assert_eq!(
+            set_task_project(&path, Some("next")).expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+        let after = read(&path);
+        assert!(after.contains("project: next"));
+        assert!(!after.contains("milestone:"));
+    }
+
+    #[test]
+    fn unrelated_edits_never_migrate_the_legacy_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = legacy_milestone_file(&dir);
+        let before = read(&path);
+
+        assert_eq!(
+            set_task_status(&path, "In Progress").expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+
+        let after = read(&path);
+        assert!(
+            after.contains("milestone: v1"),
+            "a status edit leaves the legacy key byte-identical"
+        );
+        assert_only_lines_touched(&before, &after, &["status:", "updated_date:"]);
+    }
+
+    #[test]
+    fn reassigning_the_same_project_is_a_byte_no_op() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = fixture_file(&dir);
+        assert_eq!(
+            set_task_project(&path, Some("m-1")).expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+        let before = read(&path);
+
+        assert_eq!(
+            set_task_project(&path, Some("m-1")).expect("edit succeeds"),
+            WriteOutcome::Unchanged
+        );
+        assert_eq!(read(&path), before, "no-op writes nothing");
     }
 
     #[test]
@@ -1245,7 +1391,9 @@ mod tests {
             WriteOutcome::Changed
         );
 
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.description, content);
         assert_eq!(
             task.acceptance_criteria.len(),
@@ -1277,7 +1425,9 @@ mod tests {
             description < criteria && criteria < plan,
             "plan lands after criteria per canonical section order"
         );
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.implementation_plan, "1. Step");
         assert_eq!(task.acceptance_criteria.len(), 2);
     }
@@ -1351,7 +1501,9 @@ mod tests {
             WriteOutcome::Changed
         );
 
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.implementation_notes, "First note.\n\nSecond note.");
         assert_eq!(
             task.description, "Do the thing.",
@@ -1372,7 +1524,9 @@ mod tests {
 
         let after = read(&path);
         assert!(after.contains("- [ ] #3 Third"));
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.acceptance_criteria.len(), 3);
         assert!(
             task.acceptance_criteria[1].checked,
@@ -1427,7 +1581,7 @@ mod tests {
             parent: Some("TASK-3".to_string()),
             labels: vec!["format-fork".to_string()],
             assignees: vec![],
-            milestone: Some("m-1".to_string()),
+            project: Some("m-1".to_string()),
             dependencies: vec!["task-5".to_string()],
         };
 
@@ -1451,7 +1605,7 @@ mod tests {
              dependencies:\n\
              \x20 - task-5\n\
              priority: medium\n\
-             milestone: m-1\n\
+             project: m-1\n\
              parent_task_id: TASK-3\n\
              ---\n\
              \n\
@@ -1469,7 +1623,9 @@ mod tests {
         );
         assert_eq!(text, expected, "created file must match the CLI's shape");
 
-        let parsed = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let parsed = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(parsed.id, "TASK-42");
         assert_eq!(parsed.title, "Ship it: a 'quoted' title");
         assert_eq!(parsed.parent.as_deref(), Some("TASK-3"));
@@ -1493,7 +1649,7 @@ mod tests {
             parent: None,
             labels: vec![],
             assignees: vec![],
-            milestone: None,
+            project: None,
             dependencies: vec![],
         };
 
@@ -1509,7 +1665,9 @@ mod tests {
             "frontmatter id must use the configured prefix, uppercased: {text:?}"
         );
 
-        let parsed = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let parsed = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(parsed.id, "LED-11");
     }
 
@@ -1525,7 +1683,7 @@ mod tests {
             parent: None,
             labels: vec![],
             assignees: vec![],
-            milestone: None,
+            project: None,
             dependencies: vec![],
         };
 

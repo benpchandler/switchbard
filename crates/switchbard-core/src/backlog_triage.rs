@@ -36,14 +36,14 @@ use std::cmp::Ordering;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// One task's ranking-relevant facts, extracted from a `BacklogProject` by
-/// the caller. Deliberately decoupled from `BacklogTask`/`BacklogProject` so
+/// One task's ranking-relevant facts, extracted from a `BacklogRepo` by
+/// the caller. Deliberately decoupled from `BacklogTask`/`BacklogRepo` so
 /// the ranking function itself has no IO and no markdown/YAML parsing
 /// dependency — see the module doc.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TriageEntry {
     /// The project's worktree-root key, exactly as used elsewhere backlog
-    /// state is keyed (`HiveApp::backlog_projects`). Disambiguates tasks
+    /// state is keyed (`HiveApp::backlog_repos`). Disambiguates tasks
     /// when two tracked repos happen to share a `repo` name.
     pub project_key: PathBuf,
     /// Repo identity as it appears in `ordering.yml` ("repo-dir-name") and
@@ -110,14 +110,14 @@ impl TriageDue {
 
 /// Build a [`TriageEntry`] from a real task. `repo` is the tracked `Repo`'s
 /// `name` (the ordering.yml / badge identity); `project_key` is the
-/// project's worktree-root path as used in `HiveApp::backlog_projects`;
+/// project's worktree-root path as used in `HiveApp::backlog_repos`;
 /// `project` is `task`'s own project, needed to resolve its dependencies'
 /// statuses for the blocked computation.
 pub fn triage_entry_from_task(
     project_key: PathBuf,
     repo: &str,
     task: &BacklogTask,
-    project: &crate::backlog::BacklogProject,
+    project: &crate::backlog::BacklogRepo,
 ) -> TriageEntry {
     TriageEntry {
         project_key,
@@ -455,7 +455,7 @@ mod tests {
             labels: vec![],
             dependencies: vec![],
             references: vec![],
-            milestone: None,
+            project: None,
             parent: None,
             created_date: None,
             updated_date: None,
@@ -468,10 +468,12 @@ mod tests {
             source: crate::backlog::BacklogTaskSource::Active,
             path: PathBuf::from("/repos/a/backlog/tasks/task-1.md"),
         };
-        let project = crate::backlog::BacklogProject {
+        let project = crate::backlog::BacklogRepo {
             root: PathBuf::from("/repos/a"),
             tasks: vec![task.clone()],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![],
         };

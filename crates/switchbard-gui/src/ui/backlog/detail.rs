@@ -9,7 +9,7 @@
 //! default (`egui_commonmark`) with a raw-editor toggle, rather than always
 //! showing a plain multiline `TextEdit` — matching the Backlog.md webview.
 
-use super::{detail_lists, format, Pending, ProjectRow, Snapshot};
+use super::{detail_lists, format, Pending, RepoRow, Snapshot};
 use crate::app::HiveApp;
 use crate::runtime::BacklogEditorState;
 use crate::ui::components::{status_pill, StatusKind};
@@ -27,15 +27,11 @@ pub(super) fn render_task_detail(
 ) {
     let selected = app.backlog_view.selected_task.clone();
     let found = selected.as_ref().and_then(|(project_key, task_id)| {
-        let project = snap.project(project_key)?;
-        let task = project
-            .project
-            .tasks
-            .iter()
-            .find(|task| &task.id == task_id)?;
-        Some((project, task))
+        let repo = snap.repo(project_key)?;
+        let task = repo.repo.tasks.iter().find(|task| &task.id == task_id)?;
+        Some((repo, task))
     });
-    let Some((project, task)) = found else {
+    let Some((repo, task)) = found else {
         ui.vertical_centered(|ui| {
             ui.add_space(40.0);
             ui.label(egui::RichText::new("Select a task").strong());
@@ -43,7 +39,7 @@ pub(super) fn render_task_detail(
         return;
     };
 
-    sync_editor(app, &project.key, task);
+    sync_editor(app, &repo.key, task);
     let editable = task.editable();
 
     egui::ScrollArea::vertical()
@@ -55,7 +51,7 @@ pub(super) fn render_task_detail(
                 .stroke(theme::surface_stroke())
                 .corner_radius(7.0)
                 .inner_margin(egui::Margin::same(10))
-                .show(ui, |ui| render_detail_header(ui, project, task, editable));
+                .show(ui, |ui| render_detail_header(ui, repo, task, editable));
             ui.add_space(8.0);
             egui::Frame::default()
                 .fill(theme::card_bg())
@@ -63,45 +59,34 @@ pub(super) fn render_task_detail(
                 .corner_radius(7.0)
                 .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
-                    render_editor(app, ui, project, task, editable, pending);
+                    render_editor(app, ui, snap, repo, task, editable, pending);
                 });
             ui.add_space(10.0);
-            detail_lists::render_subtasks(app, ui, &project.key, task, &project.project, editable);
+            detail_lists::render_subtasks(app, ui, &repo.key, task, &repo.repo, editable);
             ui.add_space(10.0);
             detail_lists::render_dependencies(
-                app,
-                ui,
-                &project.key,
-                task,
-                &project.project,
-                editable,
-                pending,
+                app, ui, &repo.key, task, &repo.repo, editable, pending,
             );
             ui.add_space(10.0);
-            detail_lists::render_blocks(ui, task, &project.project);
+            detail_lists::render_blocks(ui, task, &repo.repo);
             ui.add_space(10.0);
-            detail_lists::render_references(app, ui, &project.key, task, editable, pending);
+            detail_lists::render_references(app, ui, &repo.key, task, editable, pending);
             ui.add_space(10.0);
-            detail_lists::render_acceptance(app, ui, &project.key, task, editable, pending);
+            detail_lists::render_acceptance(app, ui, &repo.key, task, editable, pending);
             ui.add_space(10.0);
-            detail_lists::render_definition_of_done(app, ui, &project.key, task, editable, pending);
+            detail_lists::render_definition_of_done(app, ui, &repo.key, task, editable, pending);
             ui.add_space(10.0);
-            detail_lists::render_notes(app, ui, &project.key, task, editable, pending);
+            detail_lists::render_notes(app, ui, &repo.key, task, editable, pending);
             detail_lists::render_readonly_sections(ui, task);
             ui.add_space(10.0);
-            detail_lists::render_refine(app, ui, &project.key, task, editable, pending);
-            detail_lists::render_dispatch(app, ui, &project.key, task, editable, pending);
+            detail_lists::render_refine(app, ui, &repo.key, task, editable, pending);
+            detail_lists::render_dispatch(app, ui, &repo.key, task, editable, pending);
             ui.add_space(10.0);
-            detail_lists::render_archive(app, ui, &project.key, task, editable, pending);
+            detail_lists::render_archive(app, ui, &repo.key, task, editable, pending);
         });
 }
 
-fn render_detail_header(
-    ui: &mut egui::Ui,
-    project: &ProjectRow,
-    task: &BacklogTask,
-    editable: bool,
-) {
+fn render_detail_header(ui: &mut egui::Ui, repo: &RepoRow, task: &BacklogTask, editable: bool) {
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(&task.id)
@@ -121,7 +106,7 @@ fn render_detail_header(
                 Some("Only active backlog/tasks entries are edited through the CLI"),
             );
         }
-        if !task.is_done() && switchbard_core::is_blocked(task, &project.project) {
+        if !task.is_done() && switchbard_core::is_blocked(task, &repo.repo) {
             status_pill(
                 ui,
                 StatusKind::Danger,
@@ -132,12 +117,9 @@ fn render_detail_header(
     });
     ui.label(egui::RichText::new(&task.title).heading().strong());
     ui.label(
-        egui::RichText::new(format!(
-            "{} / {}",
-            project.repo_name, project.worktree_label
-        ))
-        .small()
-        .color(theme::muted_text()),
+        egui::RichText::new(format!("{} / {}", repo.repo_name, repo.worktree_label))
+            .small()
+            .color(theme::muted_text()),
     )
     .on_hover_text(task.path.display().to_string());
     ui.horizontal(|ui| {
@@ -159,22 +141,40 @@ fn render_detail_header(
             .color(theme::muted_text()),
         );
     });
-    if !project.project.warnings.is_empty() {
-        for warning in &project.project.warnings {
+    if !repo.repo.warnings.is_empty() {
+        for warning in &repo.repo.warnings {
             ui.colored_label(theme::amber(), warning);
         }
     }
 }
 
+/// Sorted union of every project name any snapshot repo references (task
+/// membership) or defines (def files) — the assign dropdown's option list.
+fn known_project_names(snap: &Snapshot) -> Vec<String> {
+    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for repo in &snap.repos {
+        for task in &repo.repo.tasks {
+            if let Some(project) = &task.project {
+                names.insert(project.clone());
+            }
+        }
+        for def in &repo.repo.project_defs {
+            names.insert(def.name.clone());
+        }
+    }
+    names.into_iter().collect()
+}
+
 fn render_editor(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
-    project: &ProjectRow,
+    snap: &Snapshot,
+    repo: &RepoRow,
     task: &BacklogTask,
     editable: bool,
     pending: &mut Pending,
 ) {
-    let project_root = &project.key;
+    let project_root = &repo.key;
     ui.label(
         egui::RichText::new("Task fields")
             .strong()
@@ -191,10 +191,10 @@ fn render_editor(
 
         ui.columns(2, |columns| {
             columns[0].label("status");
-            // Owner UX pass (2026-08-05): this task's own project's shared
+            // Owner UX pass (2026-08-05): this task's own repo's shared
             // vocabulary, not a fixed 3-entry list — matches what Board and
-            // the List filter now offer for the same project.
-            let statuses = ordered_status_vocabulary(std::iter::once(&project.project));
+            // the List filter now offer for the same repo.
+            let statuses = ordered_status_vocabulary(std::iter::once(&repo.repo));
             if format::render_value_combo(
                 &mut columns[0],
                 "backlog_task_status",
@@ -227,20 +227,41 @@ fn render_editor(
             );
         });
 
-        ui.label("milestone");
+        ui.label("project");
         ui.horizontal(|ui| {
+            // Every known project name across the snapshot — membership is
+            // cross-repo name-matched, so offering every name is the point.
+            // Def-declared names appear even with zero member tasks (a
+            // just-created project must be assignable). The text field stays
+            // as the free-text escape hatch: referencing a brand-new name is
+            // how projects are born. The name scan runs *inside* `show_ui`,
+            // so it costs nothing until the dropdown is actually opened —
+            // the detail rail renders this editor every frame (render-path
+            // perf rule: no per-frame full scans).
+            egui::ComboBox::from_id_salt("backlog_editor_project")
+                .selected_text("assign")
+                .width(72.0)
+                .show_ui(ui, |ui| {
+                    for name in known_project_names(snap) {
+                        ui.selectable_value(
+                            &mut app.backlog_view.editor.project,
+                            name.clone(),
+                            &name,
+                        );
+                    }
+                });
             ui.add(
-                egui::TextEdit::singleline(&mut app.backlog_view.editor.milestone)
+                egui::TextEdit::singleline(&mut app.backlog_view.editor.project)
                     .hint_text("none")
                     .desired_width(ui.available_width() - 50.0),
             );
-            if !app.backlog_view.editor.milestone.trim().is_empty()
+            if !app.backlog_view.editor.project.trim().is_empty()
                 && ui
                     .small_button("Clear")
-                    .on_hover_text("Clear the milestone assignment")
+                    .on_hover_text("Clear the project assignment")
                     .clicked()
             {
-                app.backlog_view.editor.milestone.clear();
+                app.backlog_view.editor.project.clear();
             }
         });
 
@@ -341,7 +362,7 @@ fn sync_editor(app: &mut HiveApp, project_root: &Path, task: &BacklogTask) {
     app.backlog_view.editor.assignees = task.assignees.join(", ");
     app.backlog_view.editor.dependencies = task.dependencies.join(", ");
     app.backlog_view.editor.plan = task.implementation_plan.clone();
-    app.backlog_view.editor.milestone = task.milestone.clone().unwrap_or_default();
+    app.backlog_view.editor.project = task.project.clone().unwrap_or_default();
     app.backlog_view.editor.note.clear();
     app.backlog_view.editor.description_editing = false;
     app.backlog_view.editor.new_reference.clear();
@@ -385,13 +406,13 @@ fn patch_from_editor(task: &BacklogTask, editor: &BacklogEditorState) -> Backlog
     if plan != task.implementation_plan {
         patch.implementation_plan = Some(plan);
     }
-    let milestone = editor.milestone.trim();
-    let current_milestone = task.milestone.as_deref().unwrap_or("");
+    let milestone = editor.project.trim();
+    let current_milestone = task.project.as_deref().unwrap_or("");
     if milestone != current_milestone {
         if milestone.is_empty() {
-            patch.clear_milestone = true;
+            patch.clear_project = true;
         } else {
-            patch.milestone = Some(milestone.to_string());
+            patch.project = Some(milestone.to_string());
         }
     }
     patch

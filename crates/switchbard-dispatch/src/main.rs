@@ -17,7 +17,7 @@
 use std::time::Duration;
 use switchbard_core::config;
 use switchbard_core::dispatch::{drain_dispatch_queue, DispatchOptions, DispatchResult};
-use switchbard_core::{is_backlog_project, load_backlog_project};
+use switchbard_core::{is_backlog_repo, load_backlog_repo};
 
 fn main() {
     let cfg = config::load();
@@ -28,10 +28,10 @@ fn main() {
     let mut failed = 0usize;
 
     for repo in &cfg.repos {
-        if !is_backlog_project(&repo.path) {
+        if !is_backlog_repo(&repo.path) {
             continue;
         }
-        let project = match load_backlog_project(&repo.path) {
+        let project = match load_backlog_repo(&repo.path) {
             Ok(project) => project,
             Err(e) => {
                 eprintln!(

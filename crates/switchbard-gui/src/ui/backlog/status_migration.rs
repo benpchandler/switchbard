@@ -89,24 +89,24 @@ pub(super) fn detect(app: &mut HiveApp, roots: &[PathBuf]) {
         return;
     }
     let declined = app.config.status_standardization_declined.clone();
-    let projects = app.backlog_projects.lock().unwrap();
+    let repos = app.backlog_repos.lock().unwrap();
     for root in roots {
         if declined.contains(root) {
             continue;
         }
-        let Some(project) = projects.get(root) else {
+        let Some(repo) = repos.get(root) else {
             continue;
         };
-        // An unloaded or CLI-less project has nothing to say yet; asking
+        // An unloaded or CLI-less repo has nothing to say yet; asking
         // about a repo we can't read would be guessing.
-        if project.configured_statuses.is_empty() {
+        if repo.configured_statuses.is_empty() {
             continue;
         }
-        let missing = switchbard_core::missing_standard_statuses(project);
+        let missing = switchbard_core::missing_standard_statuses(repo);
         if missing.is_empty() {
             continue;
         }
-        drop(projects);
+        drop(repos);
         app.status_migration_prompt = Some(StatusMigrationPrompt {
             repo_name: repo_label(root),
             repo_root: root.clone(),
@@ -173,16 +173,15 @@ pub(super) fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
                     prompt.repo_name,
                     statuses.join(", ")
                 ));
-                // The in-memory project still carries the old list, and every
+                // The in-memory repo still carries the old list, and every
                 // status surface reads it — reload so the new column appears
                 // in the same frame the user was promised it. A failure here
                 // is reported, not swallowed: the file write succeeded, so a
                 // silent miss would leave the board still refusing a status
                 // the config now allows.
-                if let Err(e) = crate::app::refresh_backlog_project_cache(
-                    &app.backlog_projects,
-                    &prompt.repo_root,
-                ) {
+                if let Err(e) =
+                    crate::app::refresh_backlog_repo_cache(&app.backlog_repos, &prompt.repo_root)
+                {
                     app.backlog_status.set(format!(
                         "{} updated, but the reload failed: {e}",
                         prompt.repo_name

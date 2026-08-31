@@ -2,7 +2,7 @@
 //!
 //! Shown when `config.ui.onboarding_dismissed == false` AND
 //! `config.repos.is_empty()`. Auto-scans common dev directories (`~/Dev`,
-//! `~/code`, `~/src`, `~/Projects`, …) for git repositories, presents them
+//! `~/code`, `~/src`, `~/Repos`, …) for git repositories, presents them
 //! as a checklist, and adds the selected ones in one click.
 //!
 //! Three exits, each dismisses the modal permanently:
@@ -455,8 +455,8 @@ mod tests {
         );
         // A path outside the home dir falls back to the absolute path.
         assert_eq!(
-            display_path(&PathBuf::from("/opt/projects/beta"), &home),
-            "/opt/projects/beta"
+            display_path(&PathBuf::from("/opt/repos/beta"), &home),
+            "/opt/repos/beta"
         );
     }
 }

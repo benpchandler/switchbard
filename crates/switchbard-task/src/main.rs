@@ -19,6 +19,7 @@
 //! - Nothing here blocks or waits, so the banner/heartbeat rules don't
 //!   apply; every command does its work and exits.
 
+mod hierarchy_cmd;
 mod render;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -26,7 +27,7 @@ use clap::{Args, Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use switchbard_core::{BacklogTask, BacklogTaskPatch, NewBacklogTask};
 
-/// How many directory levels [`find_project_root`] will climb before giving
+/// How many directory levels [`find_repo_root`] will climb before giving
 /// up — bounded so a weird mount layout can't turn root discovery into an
 /// unbounded walk.
 const MAX_ROOT_WALK: usize = 64;
@@ -39,23 +40,39 @@ const MAX_ROOT_WALK: usize = 64;
     long_about = "Read and write Backlog-format tasks through switchbard's native write \
                   layer — the same implementation the Switchbard GUI and switchbard-dispatch \
                   use, and the replacement for the external `backlog` CLI's write path.\n\n\
-                  PROJECT RESOLUTION: commands act on the Backlog project containing the \
+                  REPO RESOLUTION: commands act on the Backlog repo containing the \
                   current directory (the nearest ancestor with a backlog/ directory), or the \
-                  one named by --project.\n\n\
+                  one named by --repo (--project <DIR> is a deprecated alias).\n\n\
                   TASK IDS: every <ID> accepts `TASK-7`, `task-7`, or bare `7`, plus decimal \
                   subtask ids like `7.2`.\n\n\
                   OUTPUT CONTRACT: stdout carries only the payload — `create` prints the new \
                   task id alone; edit-shaped commands print `Edited <ID>` or `no changes`; \
                   `view` prints the task; `list` prints one tab-separated row per task \
-                  (id, status, priority, labels, title). Errors are one line on stderr and \
-                  exit code 1.\n\n\
+                  (id, status, priority, labels, project, title). Errors are one line on \
+                  stderr and exit code 1.\n\n\
+                  HIERARCHY: tasks belong to a named project (`--in-project`, stored as \
+                  `project:` frontmatter; legacy `milestone:` is read as a fallback and \
+                  rewritten on assignment), and projects belong to a named initiative. The \
+                  `project` and `initiative` subcommand families manage the optional \
+                  definition files (backlog/projects/, backlog/initiatives/) that give a \
+                  name lifecycle, and their `list`/`view` roll up member done/total counts.\n\n\
                   DISPATCH: flag a task for an autonomous run with \
                   `switchbard-task edit <ID> --add-label dispatch`."
 )]
 struct Cli {
-    /// Project root to act on (default: nearest ancestor of the current
+    /// Repo root to act on (default: nearest ancestor of the current
     /// directory containing a backlog/ directory)
     #[arg(long, global = true, value_name = "DIR")]
+    repo: Option<PathBuf>,
+
+    /// Deprecated alias for --repo
+    #[arg(
+        long,
+        global = true,
+        value_name = "DIR",
+        hide = true,
+        conflicts_with = "repo"
+    )]
     project: Option<PathBuf>,
 
     #[command(subcommand)]
@@ -65,11 +82,14 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// List tasks, one tab-separated row per task: id, status, priority,
-    /// labels (comma-joined), title
+    /// labels (comma-joined), project, title
     List {
         /// Only rows whose status matches (case-insensitive)
         #[arg(long, value_name = "STATUS")]
         status: Option<String>,
+        /// Only rows assigned to this project (exact name match)
+        #[arg(long = "in-project", value_name = "NAME")]
+        in_project: Option<String>,
         /// Include completed, draft, and archived tasks (default: active only)
         #[arg(long)]
         all: bool,
@@ -88,6 +108,12 @@ enum Command {
     Archive { id: String },
     /// Move a Done task to backlog/completed. Refuses non-Done tasks
     Complete { id: String },
+    /// Manage project definitions (the completable tier above tasks)
+    #[command(subcommand)]
+    Project(hierarchy_cmd::ProjectCmd),
+    /// Manage initiative definitions (the grouping tier above projects)
+    #[command(subcommand)]
+    Initiative(hierarchy_cmd::InitiativeCmd),
 }
 
 #[derive(Args)]
@@ -116,9 +142,15 @@ struct CreateArgs {
     /// Assignees, comma-separated
     #[arg(short = 'a', long, value_delimiter = ',')]
     assignees: Vec<String>,
-    /// Milestone name
-    #[arg(short = 'm', long)]
-    milestone: Option<String>,
+    /// Assign the task to a project (stored as `project:` frontmatter;
+    /// `--milestone` is a deprecated alias)
+    #[arg(
+        short = 'm',
+        long = "in-project",
+        alias = "milestone",
+        value_name = "NAME"
+    )]
+    in_project: Option<String>,
     /// Dependency task ids, comma-separated
     #[arg(long, value_delimiter = ',')]
     depends_on: Vec<String>,
@@ -161,12 +193,20 @@ struct EditArgs {
     /// criteria or their checked state)
     #[arg(long = "ac", value_name = "TEXT")]
     acceptance_criteria: Vec<String>,
-    /// Assign a milestone
-    #[arg(short = 'm', long, conflicts_with = "clear_milestone")]
-    milestone: Option<String>,
-    /// Remove the milestone assignment
-    #[arg(long)]
-    clear_milestone: bool,
+    /// Assign the task to a project (rewrites a legacy `milestone:` key as
+    /// `project:`; `--milestone` is a deprecated alias)
+    #[arg(
+        short = 'm',
+        long = "in-project",
+        alias = "milestone",
+        value_name = "NAME",
+        conflicts_with = "clear_project"
+    )]
+    in_project: Option<String>,
+    /// Remove the project assignment (removes legacy `milestone:` too;
+    /// `--clear-milestone` is a deprecated alias)
+    #[arg(long, alias = "clear-milestone")]
+    clear_project: bool,
     /// Add one label, leaving the rest untouched
     #[arg(long, value_name = "LABEL")]
     add_label: Vec<String>,
@@ -204,9 +244,16 @@ fn main() {
 }
 
 fn run(cli: &Cli) -> Result<()> {
-    let root = resolve_project(cli.project.as_deref())?;
+    if cli.project.is_some() {
+        eprintln!("switchbard-task: warning: --project is deprecated; use --repo");
+    }
+    let root = resolve_repo(cli.repo.as_deref().or(cli.project.as_deref()))?;
     match &cli.command {
-        Command::List { status, all } => list(&root, status.as_deref(), *all),
+        Command::List {
+            status,
+            in_project,
+            all,
+        } => list(&root, status.as_deref(), in_project.as_deref(), *all),
         Command::View { id } => view(&root, id),
         Command::Create(args) => create(&root, args),
         Command::Edit(args) => edit(&root, args),
@@ -218,49 +265,57 @@ fn run(cli: &Cli) -> Result<()> {
             println!("{}", switchbard_core::complete_backlog_task(&root, id)?);
             Ok(())
         }
+        Command::Project(cmd) => hierarchy_cmd::run_project(&root, cmd),
+        Command::Initiative(cmd) => hierarchy_cmd::run_initiative(&root, cmd),
     }
 }
 
-/// The project root: `--project` verbatim (validated), else the nearest
-/// ancestor of the current directory that is a Backlog project.
-fn resolve_project(explicit: Option<&Path>) -> Result<PathBuf> {
+/// The repo root: `--repo` (or its deprecated `--project` alias) verbatim
+/// (validated), else the nearest ancestor of the current directory that is
+/// a Backlog repo.
+fn resolve_repo(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(root) = explicit {
-        if switchbard_core::is_backlog_project(root) {
+        if switchbard_core::is_backlog_repo(root) {
             return Ok(root.to_path_buf());
         }
         bail!(
-            "{} is not a Backlog project (no backlog/ directory there)",
+            "{} is not a Backlog repo (no backlog/ directory there)",
             root.display()
         );
     }
     let cwd = std::env::current_dir().context("cannot read the current directory")?;
-    find_project_root(&cwd).ok_or_else(|| {
+    find_repo_root(&cwd).ok_or_else(|| {
         anyhow!(
-            "no Backlog project found at or above {} — run inside one, or pass --project <repo-root>",
+            "no Backlog repo found at or above {} — run inside one, or pass --repo <repo-root>",
             cwd.display()
         )
     })
 }
 
-fn find_project_root(start: &Path) -> Option<PathBuf> {
+fn find_repo_root(start: &Path) -> Option<PathBuf> {
     start
         .ancestors()
         .take(MAX_ROOT_WALK)
-        .find(|dir| switchbard_core::is_backlog_project(dir))
+        .find(|dir| switchbard_core::is_backlog_repo(dir))
         .map(Path::to_path_buf)
 }
 
-fn list(root: &Path, status: Option<&str>, all: bool) -> Result<()> {
-    let project = switchbard_core::load_backlog_project(root)?;
-    for warning in &project.warnings {
+fn list(root: &Path, status: Option<&str>, in_project: Option<&str>, all: bool) -> Result<()> {
+    let repo = switchbard_core::load_backlog_repo(root)?;
+    for warning in &repo.warnings {
         eprintln!("switchbard-task: warning: {warning}");
     }
-    for task in &project.tasks {
+    for task in &repo.tasks {
         if !all && task.source != switchbard_core::BacklogTaskSource::Active {
             continue;
         }
         if let Some(wanted) = status {
             if !task.status.eq_ignore_ascii_case(wanted) {
+                continue;
+            }
+        }
+        if let Some(wanted) = in_project {
+            if task.project.as_deref() != Some(wanted) {
                 continue;
             }
         }
@@ -270,7 +325,7 @@ fn list(root: &Path, status: Option<&str>, all: bool) -> Result<()> {
 }
 
 fn view(root: &Path, id: &str) -> Result<()> {
-    let project = switchbard_core::load_backlog_project(root)?;
+    let project = switchbard_core::load_backlog_repo(root)?;
     let task = find_task(&project.tasks, id).ok_or_else(|| {
         anyhow!(
             "no task {id} in {} — try `switchbard-task list --all`",
@@ -307,7 +362,7 @@ fn create(root: &Path, args: &CreateArgs) -> Result<()> {
         parent: args.parent.clone(),
         labels: args.labels.clone(),
         assignees: args.assignees.clone(),
-        milestone: args.milestone.clone(),
+        project: args.in_project.clone(),
         dependencies: args.depends_on.clone(),
     };
     let id = switchbard_core::create_backlog_task(root, &task)?;
@@ -379,14 +434,23 @@ fn patch_from(args: &EditArgs) -> BacklogTaskPatch {
         references: args.references.clone(),
         implementation_plan: args.plan.clone(),
         append_acceptance_criteria: args.acceptance_criteria.clone(),
-        milestone: args.milestone.clone(),
-        clear_milestone: args.clear_milestone,
+        project: args.in_project.clone(),
+        clear_project: args.clear_project,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// clap's own debug assertions catch conflicting arg ids/aliases (e.g.
+    /// the global deprecated `--project <DIR>` vs the task `--in-project`
+    /// family) at test time instead of at first parse in production.
+    #[test]
+    fn clap_definition_is_internally_consistent() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
 
     #[test]
     fn bare_id_strips_the_prefix_case_insensitively() {
@@ -397,16 +461,16 @@ mod tests {
     }
 
     #[test]
-    fn find_project_root_climbs_to_the_nearest_backlog_dir_and_is_bounded() {
+    fn find_repo_root_climbs_to_the_nearest_backlog_dir_and_is_bounded() {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path().join("repo");
         let deep = root.join("crates/something/src");
         std::fs::create_dir_all(root.join("backlog/tasks")).expect("fixture");
         std::fs::create_dir_all(&deep).expect("fixture");
 
-        assert_eq!(find_project_root(&deep), Some(root.clone()));
+        assert_eq!(find_repo_root(&deep), Some(root.clone()));
         assert_eq!(
-            find_project_root(dir.path()),
+            find_repo_root(dir.path()),
             None,
             "a dir with no backlog/ above it resolves to nothing"
         );

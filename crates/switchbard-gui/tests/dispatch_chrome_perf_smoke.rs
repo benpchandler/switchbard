@@ -53,7 +53,7 @@ use common::{harness, isolated_config_save_path};
 use switchbard_core::config::Config;
 use switchbard_core::dispatch_inspect::{now_unix, DispatchRun, DispatchRunLiveness};
 use switchbard_core::{
-    BacklogProject, BacklogTask, BacklogTaskSource, Repo, WorktreeRef, DISPATCHED_LABEL,
+    BacklogRepo, BacklogTask, BacklogTaskSource, Repo, WorktreeRef, DISPATCHED_LABEL,
     DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
@@ -97,7 +97,7 @@ fn task(repo: usize, i: usize) -> BacklogTask {
             .unwrap_or_else(|| vec!["hub".to_string()]),
         dependencies: vec![],
         references: vec![],
-        milestone: None,
+        project: None,
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-01 09:00".to_string()),
@@ -120,7 +120,7 @@ fn task(repo: usize, i: usize) -> BacklogTask {
 fn build_fixture() -> HiveApp {
     let mut repos = Vec::new();
     let mut worktrees = Vec::new();
-    let mut projects = Vec::new();
+    let mut backlog_repos = Vec::new();
     for r in 0..REPOS {
         let repo_path = PathBuf::from(format!("/tmp/switchbard-dispatch-perf/repo-{r}"));
         let repo_name = format!("repo-{r}");
@@ -134,12 +134,14 @@ fn build_fixture() -> HiveApp {
             branch: Some("main".to_string()),
             head: "aaaa1111".to_string(),
         });
-        projects.push((
+        backlog_repos.push((
             repo_path.clone(),
-            BacklogProject {
+            BacklogRepo {
                 root: repo_path,
                 tasks: (0..TASKS_PER_REPO).map(|i| task(r, i)).collect(),
                 warnings: vec![],
+                project_defs: vec![],
+                initiative_defs: vec![],
                 loaded_at_unix: 0,
                 configured_statuses: vec![
                     "Icebox".into(),
@@ -158,11 +160,11 @@ fn build_fixture() -> HiveApp {
     app.config_save_path = Some(isolated_config_save_path());
 
     {
-        let mut cached_projects = app.backlog_projects.lock().unwrap();
+        let mut cached_projects = app.backlog_repos.lock().unwrap();
         let mut cached_runs = app.dispatch_runs.lock().unwrap();
         let now = now_unix();
-        for (root, project) in projects {
-            for task in &project.tasks {
+        for (root, repo) in backlog_repos {
+            for task in &repo.tasks {
                 if label_for_task(task).is_none() {
                     continue;
                 }
@@ -188,7 +190,7 @@ fn build_fixture() -> HiveApp {
                     },
                 );
             }
-            cached_projects.insert(root, project);
+            cached_projects.insert(root, repo);
         }
     }
 

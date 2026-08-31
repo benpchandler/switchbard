@@ -1,10 +1,10 @@
 //! QA parity audit (2026-08-05) — the edge cases the audit brief called out
 //! by name: 455-task real-repo scale, an empty real repo, a malformed
-//! `ordering.yml`'s warning pill, and a missing-CLI project's read-only
+//! `ordering.yml`'s warning pill, and a missing-CLI repo's read-only
 //! affordances.
 //!
 //! Real `~/Dev` repos (`budget-onramp-pilot`, `janus`) are read via
-//! `switchbard_core::load_backlog_project` only — a pure filesystem read, no
+//! `switchbard_core::load_backlog_repo` only — a pure filesystem read, no
 //! `backlog` CLI invocation, no writes, no `dispatch` label ever set. These
 //! two tests are `#[ignore]`d because they depend on paths outside this
 //! repo that only exist on the auditor's machine; run them explicitly with
@@ -18,14 +18,14 @@ use std::time::Instant;
 use common::{harness, seeded_app, REPO_PATH};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::SnapshotOptions;
-use switchbard_core::{BacklogProject, OrderingOverlay};
+use switchbard_core::{BacklogRepo, OrderingOverlay};
 use switchbard_gui::runtime::{BacklogLens, OrderingState, ViewTab};
 
 fn output_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/qa/screenshots")
 }
 
-/// Real, read-only, ~455-task Backlog.md project. Confirmed on this machine
+/// Real, read-only, ~455-task Backlog.md repo. Confirmed on this machine
 /// via `find ~/Dev/budget-onramp-pilot/backlog/tasks -name '*.md' | wc -l`
 /// (455) before writing this test — the exact repo and scale the audit
 /// brief named.
@@ -42,13 +42,12 @@ fn real_455_task_repo_loads_and_renders_the_list_lens_within_a_render_path_budge
     );
 
     let load_start = Instant::now();
-    let project =
-        switchbard_core::load_backlog_project(&root).expect("read-only load must succeed");
+    let repo = switchbard_core::load_backlog_repo(&root).expect("read-only load must succeed");
     let load_elapsed = load_start.elapsed();
     assert!(
-        project.tasks.len() > 400,
+        repo.tasks.len() > 400,
         "expected the ~455-task scale this test is named for, got {}",
-        project.tasks.len()
+        repo.tasks.len()
     );
     // A generous ceiling (this is a debug build with no I/O caching
     // guarantees) — the point is catching a pathological regression (e.g.
@@ -56,14 +55,14 @@ fn real_455_task_repo_loads_and_renders_the_list_lens_within_a_render_path_budge
     assert!(
         load_elapsed.as_secs() < 5,
         "loading {} tasks took {load_elapsed:?}, expected well under 5s",
-        project.tasks.len()
+        repo.tasks.len()
     );
 
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(root.clone());
-    app.backlog_projects.lock().unwrap().insert(root, project);
+    app.backlog_view.selected_repo = Some(root.clone());
+    app.backlog_repos.lock().unwrap().insert(root, repo);
 
     let render_start = Instant::now();
     let mut h = harness(app);
@@ -83,7 +82,7 @@ fn real_455_task_repo_loads_and_renders_the_list_lens_within_a_render_path_budge
     let _ = h.try_snapshot_options("backlog_scale_455_tasks", &options);
 }
 
-/// Real, empty (zero-task) Backlog.md project — confirmed via `find
+/// Real, empty (zero-task) Backlog.md repo — confirmed via `find
 /// ~/Dev/janus/backlog/tasks -name '*.md' | wc -l` (0) before writing this
 /// test, the exact repo the audit brief named for this case.
 #[test]
@@ -96,26 +95,25 @@ fn real_empty_repo_loads_with_zero_tasks_and_no_warnings() {
         root.display()
     );
 
-    let project =
-        switchbard_core::load_backlog_project(&root).expect("read-only load must succeed");
+    let repo = switchbard_core::load_backlog_repo(&root).expect("read-only load must succeed");
     assert!(
-        project.tasks.is_empty(),
+        repo.tasks.is_empty(),
         "janus is the fixture named for the zero-task case; got {} tasks",
-        project.tasks.len()
+        repo.tasks.len()
     );
 
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(root.clone());
-    app.backlog_projects.lock().unwrap().insert(root, project);
+    app.backlog_view.selected_repo = Some(root.clone());
+    app.backlog_repos.lock().unwrap().insert(root, repo);
     let mut h = harness(app);
     h.run();
 
     assert!(
         h.query_by_label("No tasks match the current filters")
             .is_some(),
-        "an empty-but-tracked project should show the List lens's own empty state"
+        "an empty-but-tracked repo should show the List lens's own empty state"
     );
 
     let options = SnapshotOptions::new().output_path(output_dir());
@@ -136,13 +134,15 @@ fn malformed_ordering_yaml_app() -> switchbard_gui::app::HiveApp {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),

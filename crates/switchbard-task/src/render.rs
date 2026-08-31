@@ -5,16 +5,18 @@
 
 use switchbard_core::{BacklogChecklistItem, BacklogTask};
 
-/// `id \t status \t priority \t labels(comma) \t title` — stable columns,
-/// greppable, no alignment padding (agents parse this, humans pipe it to
-/// `column -t`).
+/// `id \t status \t priority \t labels(comma) \t project \t title` — stable
+/// columns, greppable, no alignment padding (agents parse this, humans pipe
+/// it to `column -t`). The project column sits before the title so the one
+/// free-text column stays last for naive tab-splitters.
 pub fn list_row(task: &BacklogTask) -> String {
     format!(
-        "{}\t{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}",
         task.id,
         task.status,
         task.priority,
         task.labels.join(","),
+        task.project.as_deref().unwrap_or(""),
         task.title
     )
 }
@@ -29,11 +31,7 @@ pub fn task_view(task: &BacklogTask) -> String {
     push_field(&mut out, "Priority", &task.priority);
     push_field(&mut out, "Labels", &task.labels.join(", "));
     push_field(&mut out, "Assignee", &task.assignees.join(", "));
-    push_field(
-        &mut out,
-        "Milestone",
-        task.milestone.as_deref().unwrap_or(""),
-    );
+    push_field(&mut out, "Project", task.project.as_deref().unwrap_or(""));
     push_field(&mut out, "Parent", task.parent.as_deref().unwrap_or(""));
     push_field(&mut out, "Dependencies", &task.dependencies.join(", "));
     push_field(&mut out, "References", &task.references.join(", "));
@@ -98,7 +96,7 @@ mod tests {
             labels: vec!["fork".to_string(), "cli".to_string()],
             dependencies: vec![],
             references: vec![],
-            milestone: None,
+            project: None,
             parent: None,
             created_date: Some("2026-08-28 10:00".to_string()),
             updated_date: None,
@@ -118,10 +116,16 @@ mod tests {
     }
 
     #[test]
-    fn list_row_is_five_stable_tab_separated_columns() {
+    fn list_row_is_six_stable_tab_separated_columns_with_title_last() {
         assert_eq!(
             list_row(&task()),
-            "TASK-7\tIn Progress\thigh\tfork,cli\tRender me"
+            "TASK-7\tIn Progress\thigh\tfork,cli\t\tRender me"
+        );
+        let mut assigned = task();
+        assigned.project = Some("Lucella cutover".to_string());
+        assert_eq!(
+            list_row(&assigned),
+            "TASK-7\tIn Progress\thigh\tfork,cli\tLucella cutover\tRender me"
         );
     }
 
@@ -131,7 +135,7 @@ mod tests {
         assert!(text.starts_with("TASK-7 - Render me\n"));
         assert!(text.contains("Status: In Progress\n"));
         assert!(text.contains("Labels: fork, cli\n"));
-        assert!(!text.contains("Milestone:"), "empty fields are omitted");
+        assert!(!text.contains("Project:"), "empty fields are omitted");
         assert!(text.contains("\n## Description\n\nWhy.\n"));
         assert!(text.contains("- [x] #1 Proven\n"));
         assert!(

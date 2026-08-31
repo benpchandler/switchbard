@@ -31,7 +31,7 @@ use switchbard_core::{
 /// the backlog worker alongside the project scan. `warning` is set when a
 /// present-but-malformed file falls back to an empty overlay (task-10 AC #3)
 /// — surfaced in the Backlog view's summary bar as a warning pill, the same
-/// treatment `BacklogProject::warnings` gets, rather than through the
+/// treatment `BacklogRepo::warnings` gets, rather than through the
 /// transient `backlog_status` line (which a 30s-periodic worker write would
 /// otherwise clobber mid-read).
 #[derive(Debug, Clone, Default)]
@@ -67,9 +67,9 @@ pub type BacklogTaskKey = (PathBuf, String);
 
 /// One in-flight board drag-drop, keyed by the moved task (task-42: "Board
 /// drag: optimistic move + drop feedback"). Lives on `BacklogViewState`
-/// rather than folded into `HiveApp::backlog_projects` — that cache is
+/// rather than folded into `HiveApp::backlog_repos` — that cache is
 /// reloaded on its own cadence by `workers::spawn_backlog` and by a
-/// mutation's own targeted reload (`app::refresh_backlog_project_cache`),
+/// mutation's own targeted reload (`app::refresh_backlog_repo_cache`),
 /// and there is no way to tell "a worker just clobbered this" from "the drop
 /// itself resolved" if an in-flight edit lived in the same map as real,
 /// disk-backed data. Keeping this a separate, render-time-only overlay means
@@ -79,7 +79,7 @@ pub type BacklogTaskKey = (PathBuf, String);
 /// resolves.
 ///
 /// **Post-review revision (independent audit, F1/F3):** the first version of
-/// this type resolved off `BacklogProject::loaded_at_unix` advancing past a
+/// this type resolved off `BacklogRepo::loaded_at_unix` advancing past a
 /// drop-time snapshot — "any reload, from any source, resolves it." That was
 /// wrong: an *unrelated* reload (the periodic backlog worker's own poll,
 /// woken early by `Kick::notify` right after a completely different save)
@@ -131,7 +131,7 @@ pub struct BoardMoveOutcome {
 
 /// UI-local filters and edit buffers for the Backlog project-management view.
 ///
-/// `selected_project` doubles as the scope switch: `None` (the default) is
+/// `selected_repo` doubles as the scope switch: `None` (the default) is
 /// the unified "All projects" scope — the task list merges every tracked
 /// project, triage-ranked, with a repo badge per row. `Some(path)` narrows
 /// to that one project, matching how the view worked before the unified
@@ -140,17 +140,17 @@ pub struct BoardMoveOutcome {
 /// existing project picker combo box already drives.
 #[derive(Debug, Clone)]
 pub struct BacklogViewState {
-    pub selected_project: Option<PathBuf>,
+    pub selected_repo: Option<PathBuf>,
     pub selected_task: Option<BacklogTaskKey>,
     pub bulk_selected_tasks: BTreeSet<BacklogTaskKey>,
     pub bulk_selection_anchor: Option<BacklogTaskKey>,
-    pub project_filter: String,
+    pub repo_filter: String,
     pub status_filter: String,
     pub priority_filter: String,
-    /// QA parity matrix gap: milestone browsing previously required
-    /// switching to the separate Milestones lens; this filters the List
-    /// lens's own row set instead, same "all" sentinel as status/priority.
-    pub milestone_filter: String,
+    /// The project-name facet ("all" sentinel, same as status/priority):
+    /// filters the List lens's row set without switching to the Projects
+    /// lens.
+    pub project_filter: String,
     pub label_filter: String,
     pub sort_key: BacklogTaskSortKey,
     pub sort_direction: BacklogTaskSortDirection,
@@ -210,7 +210,7 @@ pub struct BacklogViewState {
     pub cleanup_confirm: bool,
     /// task-42: render-time overlay for every in-flight Board drag-drop —
     /// see `PendingBoardMove`'s doc for why this isn't folded into
-    /// `HiveApp::backlog_projects`. `board::resolve_pending_moves` is the
+    /// `HiveApp::backlog_repos`. `board::resolve_pending_moves` is the
     /// only place entries are cleared.
     pub pending_moves: HashMap<BacklogTaskKey, PendingBoardMove>,
     /// task-42: once a `pending_moves` entry resolves as a *success* (the
@@ -232,14 +232,14 @@ pub struct BacklogViewState {
 impl Default for BacklogViewState {
     fn default() -> Self {
         Self {
-            selected_project: None,
+            selected_repo: None,
             selected_task: None,
             bulk_selected_tasks: BTreeSet::new(),
             bulk_selection_anchor: None,
-            project_filter: String::new(),
+            repo_filter: String::new(),
             status_filter: "all".to_string(),
             priority_filter: "all".to_string(),
-            milestone_filter: "all".to_string(),
+            project_filter: "all".to_string(),
             label_filter: "all".to_string(),
             sort_key: BacklogTaskSortKey::default(),
             sort_direction: BacklogTaskSortDirection::default(),
@@ -272,12 +272,20 @@ impl BacklogViewState {
         let Some(memory) = ui.filters.get("backlog") else {
             return state;
         };
-        state.project_filter = memory
+        // "repo"/"repo_query" are the current keys; "project"/"project_query"
+        // are the pre-rename spellings, read as fallbacks so an existing
+        // config restores once and re-persists under the new keys.
+        state.repo_filter = memory
             .facets
-            .get("project_query")
+            .get("repo_query")
+            .or_else(|| memory.facets.get("project_query"))
             .cloned()
             .unwrap_or_default();
-        state.selected_project = memory.facets.get("project").map(PathBuf::from);
+        state.selected_repo = memory
+            .facets
+            .get("repo")
+            .or_else(|| memory.facets.get("project"))
+            .map(PathBuf::from);
         state.status_filter = memory
             .facets
             .get("status")
@@ -288,9 +296,10 @@ impl BacklogViewState {
             .get("priority")
             .cloned()
             .unwrap_or_else(|| "all".to_string());
-        state.milestone_filter = memory
+        state.project_filter = memory
             .facets
-            .get("milestone")
+            .get("project_name")
+            .or_else(|| memory.facets.get("milestone"))
             .cloned()
             .unwrap_or_else(|| "all".to_string());
         state.label_filter = memory
@@ -309,22 +318,28 @@ impl BacklogViewState {
         let memory = ui.filters.entry("backlog".to_string()).or_default();
         set_optional_facet(
             &mut memory.facets,
-            "project_query",
-            (!self.project_filter.is_empty()).then(|| self.project_filter.clone()),
+            "repo_query",
+            (!self.repo_filter.is_empty()).then(|| self.repo_filter.clone()),
         );
         set_optional_facet(
             &mut memory.facets,
-            "project",
-            self.selected_project
+            "repo",
+            self.selected_repo
                 .as_ref()
                 .map(|path| path.display().to_string()),
         );
+        // Purge the pre-rename keys so a config only ever carries one
+        // spelling. "project" held a repo *path* before the rename, which is
+        // why the project-name facet uses the fresh key "project_name".
+        memory.facets.remove("project_query");
+        memory.facets.remove("project");
+        memory.facets.remove("milestone");
         persist_non_default(&mut memory.facets, "status", &self.status_filter, "all");
         persist_non_default(&mut memory.facets, "priority", &self.priority_filter, "all");
         persist_non_default(
             &mut memory.facets,
-            "milestone",
-            &self.milestone_filter,
+            "project_name",
+            &self.project_filter,
             "all",
         );
         persist_non_default(&mut memory.facets, "label", &self.label_filter, "all");
@@ -362,7 +377,7 @@ fn persist_bool(
 }
 
 /// The Backlog view's central-panel lens. `List` is the pre-existing
-/// triage/status list; `Board`/`Milestones`/`Statistics` are task-15/16
+/// triage/status list; `Board`/`Projects`/`Statistics` are task-15/16
 /// additions; `Digest`/`Portfolio` are task-21/19. `Digest` is the default —
 /// task-21 makes the "what should I do today" landing screen the Backlog
 /// tab's default lens (not the whole app's default *tab*, which stays
@@ -373,7 +388,7 @@ pub enum BacklogLens {
     Digest,
     List,
     Board,
-    Milestones,
+    Projects,
     Portfolio,
     Statistics,
 }
@@ -384,7 +399,7 @@ impl BacklogLens {
             Self::Digest => "Digest",
             Self::List => "List",
             Self::Board => "Board",
-            Self::Milestones => "Milestones",
+            Self::Projects => "Projects",
             Self::Portfolio => "Portfolio",
             Self::Statistics => "Statistics",
         }
@@ -399,7 +414,7 @@ impl BacklogLens {
             Self::Digest => "digest",
             Self::List => "list",
             Self::Board => "board",
-            Self::Milestones => "milestones",
+            Self::Projects => "projects",
             Self::Portfolio => "portfolio",
             Self::Statistics => "statistics",
         }
@@ -413,7 +428,10 @@ impl BacklogLens {
         match id {
             "list" => Self::List,
             "board" => Self::Board,
-            "milestones" => Self::Milestones,
+            "projects" => Self::Projects,
+            // Pre-rename spelling (the lens was "Milestones" before the
+            // Linear-hierarchy divergence) — old saved views land here.
+            "milestones" => Self::Projects,
             "portfolio" => Self::Portfolio,
             "statistics" => Self::Statistics,
             _ => Self::Digest,
@@ -445,7 +463,7 @@ pub enum BacklogTaskSortKey {
     /// keys.
     Labels,
     Assignee,
-    Milestone,
+    Project,
 }
 
 impl BacklogTaskSortKey {
@@ -458,7 +476,7 @@ impl BacklogTaskSortKey {
             Self::AcceptanceCriteria => "AC",
             Self::Labels => "Labels",
             Self::Assignee => "Assignee",
-            Self::Milestone => "Milestone",
+            Self::Project => "Project",
         }
     }
 
@@ -472,7 +490,7 @@ impl BacklogTaskSortKey {
             Self::AcceptanceCriteria => "acceptance_criteria",
             Self::Labels => "labels",
             Self::Assignee => "assignee",
-            Self::Milestone => "milestone",
+            Self::Project => "project",
         }
     }
 
@@ -484,7 +502,9 @@ impl BacklogTaskSortKey {
             "acceptance_criteria" => Self::AcceptanceCriteria,
             "labels" => Self::Labels,
             "assignee" => Self::Assignee,
-            "milestone" => Self::Milestone,
+            "project" => Self::Project,
+            // Pre-rename spelling from old saved views.
+            "milestone" => Self::Project,
             _ => Self::Triage,
         }
     }
@@ -539,7 +559,7 @@ pub struct BacklogEditorState {
     pub assignees: String,
     pub dependencies: String,
     pub plan: String,
-    pub milestone: String,
+    pub project: String,
     pub note: String,
     /// `false` (default) shows the description as rendered CommonMark;
     /// `true` reveals the raw multiline editor (task-15 AC #3).
@@ -553,15 +573,15 @@ pub struct BacklogEditorState {
 #[derive(Debug, Clone)]
 pub struct BacklogNewTaskState {
     pub open: bool,
-    /// Which project to create the task in. Seeded from `selected_project`
+    /// Which project to create the task in. Seeded from `selected_repo`
     /// when it names one project; when the view is in the All-projects scope
-    /// (`selected_project` is `None`), the modal shows its own project picker
+    /// (`selected_repo` is `None`), the modal shows its own project picker
     /// and stores the choice here instead of forcing the user out of the
     /// unified scope just to file a task.
-    pub target_project: Option<PathBuf>,
+    pub target_repo: Option<PathBuf>,
     /// Set when the modal was opened via "+ Subtask" on a task's detail pane
     /// (task-17) — the parent task id, passed through as `-p` on create.
-    /// `Some` also pins `target_project` to the parent's own project; a
+    /// `Some` also pins `target_repo` to the parent's own project; a
     /// subtask can't be filed in a different repo than its parent, since
     /// Backlog.md's `parent` field is a bare, project-scoped id.
     pub parent: Option<String>,
@@ -577,7 +597,7 @@ pub struct BacklogNewTaskState {
     /// parses both).
     pub labels: String,
     pub assignees: String,
-    pub milestone: String,
+    pub project: String,
     pub dependencies: String,
 }
 
@@ -585,7 +605,7 @@ impl Default for BacklogNewTaskState {
     fn default() -> Self {
         Self {
             open: false,
-            target_project: None,
+            target_repo: None,
             parent: None,
             title: String::new(),
             description: String::new(),
@@ -594,7 +614,7 @@ impl Default for BacklogNewTaskState {
             acceptance_criteria: String::new(),
             labels: String::new(),
             assignees: String::new(),
-            milestone: String::new(),
+            project: String::new(),
             dependencies: String::new(),
         }
     }
@@ -1380,7 +1400,7 @@ mod tests {
     fn backlog_filter_facets_round_trip_without_transient_actions() {
         let mut ui = switchbard_core::config::UiConfig::default();
         let state = BacklogViewState {
-            selected_project: Some(PathBuf::from("/tmp/demo")),
+            selected_repo: Some(PathBuf::from("/tmp/demo")),
             status_filter: "In Progress".to_string(),
             priority_filter: "high".to_string(),
             show_completed: true,
@@ -1392,13 +1412,57 @@ mod tests {
         state.persist_filters(&mut ui);
         let restored = BacklogViewState::restore_filters(&ui);
 
-        assert_eq!(restored.selected_project, Some(PathBuf::from("/tmp/demo")));
+        assert_eq!(restored.selected_repo, Some(PathBuf::from("/tmp/demo")));
         assert_eq!(restored.status_filter, "In Progress");
         assert_eq!(restored.priority_filter, "high");
         assert!(restored.show_completed);
         assert!(restored.stale_only);
         assert!(!restored.bulk_archive_confirm);
         assert!(restored.bulk_selected_tasks.is_empty());
+    }
+
+    #[test]
+    fn backlog_repo_facets_restore_from_pre_rename_keys_and_persist_purges_them() {
+        // A config written before the repo-vocabulary rename stored the repo
+        // scope under "project"/"project_query".
+        let mut ui = switchbard_core::config::UiConfig::default();
+        let memory = ui.filters.entry("backlog".to_string()).or_default();
+        memory
+            .facets
+            .insert("project".to_string(), "/tmp/legacy".to_string());
+        memory
+            .facets
+            .insert("project_query".to_string(), "budg".to_string());
+
+        let restored = BacklogViewState::restore_filters(&ui);
+        assert_eq!(restored.selected_repo, Some(PathBuf::from("/tmp/legacy")));
+        assert_eq!(restored.repo_filter, "budg");
+
+        // Re-persisting writes the new keys and drops the legacy spellings.
+        restored.persist_filters(&mut ui);
+        let memory = ui.filters.get("backlog").expect("backlog memory");
+        assert_eq!(
+            memory.facets.get("repo").map(String::as_str),
+            Some("/tmp/legacy")
+        );
+        assert_eq!(
+            memory.facets.get("repo_query").map(String::as_str),
+            Some("budg")
+        );
+        assert!(!memory.facets.contains_key("project"));
+        assert!(!memory.facets.contains_key("project_query"));
+
+        // New keys win when both spellings are present.
+        let mut both = switchbard_core::config::UiConfig::default();
+        let memory = both.filters.entry("backlog".to_string()).or_default();
+        memory
+            .facets
+            .insert("project".to_string(), "/tmp/old".to_string());
+        memory
+            .facets
+            .insert("repo".to_string(), "/tmp/new".to_string());
+        let restored = BacklogViewState::restore_filters(&both);
+        assert_eq!(restored.selected_repo, Some(PathBuf::from("/tmp/new")));
     }
 
     fn ready_probe(ahead: u32, behind: u32, base: &str) -> Option<DriftProbe> {
@@ -1597,5 +1661,46 @@ mod tests {
         assert!(!dispatch_run_holds_worktree(
             &DispatchRunLiveness::NoSidecar
         ));
+    }
+
+    #[test]
+    fn pre_rename_saved_ids_land_on_the_new_lens_and_sort_key() {
+        assert_eq!(
+            BacklogLens::from_saved_id("projects"),
+            BacklogLens::Projects
+        );
+        assert_eq!(
+            BacklogLens::from_saved_id("milestones"),
+            BacklogLens::Projects,
+            "a saved view from before the Linear-hierarchy rename restores"
+        );
+        assert_eq!(
+            BacklogTaskSortKey::from_saved_id("project"),
+            BacklogTaskSortKey::Project
+        );
+        assert_eq!(
+            BacklogTaskSortKey::from_saved_id("milestone"),
+            BacklogTaskSortKey::Project
+        );
+    }
+
+    #[test]
+    fn project_name_facet_restores_from_the_legacy_milestone_key_and_purges_it() {
+        let mut ui = switchbard_core::config::UiConfig::default();
+        let memory = ui.filters.entry("backlog".to_string()).or_default();
+        memory
+            .facets
+            .insert("milestone".to_string(), "Lucella cutover".to_string());
+
+        let restored = BacklogViewState::restore_filters(&ui);
+        assert_eq!(restored.project_filter, "Lucella cutover");
+
+        restored.persist_filters(&mut ui);
+        let memory = ui.filters.get("backlog").expect("backlog memory");
+        assert_eq!(
+            memory.facets.get("project_name").map(String::as_str),
+            Some("Lucella cutover")
+        );
+        assert!(!memory.facets.contains_key("milestone"));
     }
 }

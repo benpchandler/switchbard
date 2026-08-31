@@ -40,23 +40,27 @@ pub use attribution::attribute;
 pub use backlog::{
     append_backlog_notes, append_task_acceptance_criteria, append_task_notes, archive_backlog_task,
     assignable_statuses, body_round_trips, complete_backlog_task, create_backlog_task,
-    create_task_allocating_id, edit_backlog_task, is_backlog_project, load_backlog_project,
+    create_initiative_def, create_project_def, create_task_allocating_id, edit_backlog_task,
+    edit_initiative_def, edit_project_def, is_backlog_repo, load_backlog_repo,
     missing_standard_statuses, next_task_id, ordered_status_vocabulary, parse_backlog_day,
     replace_task_section, set_backlog_acceptance_checked, set_backlog_dod_checked,
     set_backlog_final_summary, set_backlog_label, set_task_checklist_item, set_task_label,
-    set_task_list_field, set_task_milestone, set_task_priority, set_task_status, set_task_title,
+    set_task_list_field, set_task_priority, set_task_project, set_task_status, set_task_title,
     swap_backlog_label, swap_task_label, task_file_round_trips, write_new_task_file,
-    BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskPatch, BacklogTaskSource,
-    NewBacklogTask, TaskChecklist, TaskListField, TaskSection, WriteOutcome, ACTIVE_BRANCH_DAYS,
-    BACKLOG_PRIORITIES, BACKLOG_STATUSES, CANONICAL_STATUS_ORDER, STANDARD_STATUSES,
+    BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskPatch, BacklogTaskSource,
+    InitiativeDef, InitiativeDefPatch, NewBacklogTask, NewInitiativeDef, NewProjectDef, ProjectDef,
+    ProjectDefPatch, TaskChecklist, TaskListField, TaskSection, WriteOutcome, ACTIVE_BRANCH_DAYS,
+    BACKLOG_PRIORITIES, BACKLOG_STATUSES, CANONICAL_STATUS_ORDER, DEFAULT_PROJECT_STATUS,
+    PROJECT_STATUSES, STANDARD_STATUSES,
 };
 pub use backlog_relations::{
     blocking_dependencies, blocks, children, dependency_statuses, is_blocked, is_newly_unblocked,
     subtask_progress,
 };
 pub use backlog_stats::{
-    compute_burndown, compute_burndown_by_milestone, compute_cross_repo_stats, BurndownPoint,
-    BurndownSeries, CrossRepoStats, RepoStats,
+    compute_burndown, compute_burndown_by_project, compute_cross_repo_stats,
+    compute_hierarchy_rollup, BurndownPoint, BurndownSeries, CrossRepoStats, HierarchyRollup,
+    InitiativeRollup, ProjectRollup, RepoStats,
 };
 pub use backlog_triage::{
     find_hub_repo, load_ordering_overlay, parse_backlog_datetime_unix, triage_entry_from_task,

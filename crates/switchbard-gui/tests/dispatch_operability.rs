@@ -25,7 +25,7 @@ use egui_kittest::kittest::{self, Queryable};
 use egui_kittest::Harness;
 use switchbard_core::dispatch_inspect::{now_unix, DispatchRun, DispatchRunLiveness, SidecarDoubt};
 use switchbard_core::{
-    BacklogProject, BacklogTask, BacklogTaskSource, DispatchOptions, DISPATCHED_LABEL,
+    BacklogRepo, BacklogTask, BacklogTaskSource, DispatchOptions, DISPATCHED_LABEL,
     DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
@@ -41,7 +41,7 @@ fn task(id: &str, labels: &[&str], notes: &str) -> BacklogTask {
         labels: labels.iter().map(|l| l.to_string()).collect(),
         dependencies: vec![],
         references: vec![],
-        milestone: None,
+        project: None,
         parent: None,
         created_date: None,
         updated_date: None,
@@ -93,16 +93,18 @@ fn run_with(task_id: &str, age_secs: u64, liveness: DispatchRunLiveness) -> Disp
     }
 }
 
-/// A headless app holding `tasks` in one project, with `runs` already cached
+/// A headless app holding `tasks` in one repo, with `runs` already cached
 /// the way `workers::refresh_dispatch_runs` would have left them.
 fn app_with(tasks: Vec<BacklogTask>, runs: Vec<DispatchRun>) -> HiveApp {
     let app = seeded_app();
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks,
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),

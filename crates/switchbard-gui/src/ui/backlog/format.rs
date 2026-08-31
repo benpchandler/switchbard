@@ -10,7 +10,7 @@ use switchbard_core::BACKLOG_PRIORITIES;
 
 /// `BACKLOG_PRIORITIES` as owned `String`s — `render_value_combo` takes
 /// `&[String]` (not `&[&str]`) so it can also accept a freshly computed,
-/// project-scoped status vocabulary; priority has no such per-project
+/// repo-scoped status vocabulary; priority has no such per-repo
 /// variant, so this is just the fixed list converted once per call site.
 pub(super) fn priority_options() -> Vec<String> {
     BACKLOG_PRIORITIES.iter().map(|s| s.to_string()).collect()
@@ -74,7 +74,7 @@ pub(super) fn title_case_value(value: &str) -> String {
 /// (`String`, not `&str`) so a caller can pass either a `'static` constant
 /// slice's owned copies or a freshly computed vocabulary (e.g. the owner UX
 /// pass's `switchbard_core::ordered_status_vocabulary`, which is
-/// project-scope-dependent and can't be a fixed slice).
+/// repo-scope-dependent and can't be a fixed slice).
 pub(super) fn render_value_combo(
     ui: &mut egui::Ui,
     id: &'static str,

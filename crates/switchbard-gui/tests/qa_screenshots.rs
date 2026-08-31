@@ -29,7 +29,7 @@ use egui_kittest::kittest::{self, Queryable};
 use egui_kittest::{Harness, SnapshotOptions};
 use switchbard_core::config::ThemeChoice;
 use switchbard_core::{
-    BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource, DISPATCHED_LABEL,
+    BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource, DISPATCHED_LABEL,
     DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
@@ -57,7 +57,7 @@ fn sample_task(id: &str, title: &str, status: &str) -> BacklogTask {
         labels: vec!["demo".to_string()],
         dependencies: vec![],
         references: vec!["https://example.com/spec".to_string()],
-        milestone: Some("v1".to_string()),
+        project: Some("v1".to_string()),
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-20 12:00".to_string()),
@@ -83,11 +83,13 @@ fn sample_task(id: &str, title: &str, status: &str) -> BacklogTask {
     }
 }
 
-fn project_with(tasks: Vec<BacklogTask>) -> BacklogProject {
-    BacklogProject {
+fn project_with(tasks: Vec<BacklogTask>) -> BacklogRepo {
+    BacklogRepo {
         root: PathBuf::from(REPO_PATH),
         tasks,
         warnings: vec![],
+        project_defs: vec![],
+        initiative_defs: vec![],
         loaded_at_unix: 0,
         configured_statuses: vec![
             "Icebox".into(),
@@ -104,8 +106,8 @@ fn app_with(theme: ThemeChoice, lens: BacklogLens, tasks: Vec<BacklogTask>) -> H
     app.config.ui.theme = theme;
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = lens;
-    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
-    app.backlog_projects
+    app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
+    app.backlog_repos
         .lock()
         .unwrap()
         .insert(PathBuf::from(REPO_PATH), project_with(tasks));
@@ -223,7 +225,7 @@ fn shots_for_theme(theme: ThemeChoice) {
     {
         let app = app_with(
             theme,
-            BacklogLens::Milestones,
+            BacklogLens::Projects,
             vec![sample_task("TASK-1", "Milestoned task", "To Do")],
         );
         let mut h = harness(app);
@@ -308,7 +310,7 @@ fn shots_for_theme(theme: ThemeChoice) {
             vec![sample_task("TASK-1", "Existing task", "To Do")],
         );
         app.backlog_view.new_task.open = true;
-        app.backlog_view.new_task.target_project = Some(PathBuf::from(REPO_PATH));
+        app.backlog_view.new_task.target_repo = Some(PathBuf::from(REPO_PATH));
         let mut h = harness(app);
         h.run();
         snapshot(&mut h, &format!("backlog_create_modal{suffix}"));
@@ -323,7 +325,7 @@ fn shots_for_theme(theme: ThemeChoice) {
             vec![sample_task("TASK-1", "Existing board task", "To Do")],
         );
         app.backlog_view.new_task.open = true;
-        app.backlog_view.new_task.target_project = Some(PathBuf::from(REPO_PATH));
+        app.backlog_view.new_task.target_repo = Some(PathBuf::from(REPO_PATH));
         app.backlog_view.new_task.status = "In Progress".to_string();
         let mut h = harness(app);
         h.run();
@@ -357,10 +359,10 @@ fn shots_for_theme(theme: ThemeChoice) {
             .saved_views
             .push(switchbard_core::config::SavedView {
                 name: "High priority".to_string(),
-                selected_project: None,
+                selected_repo: None,
                 status_filter: "all".to_string(),
                 priority_filter: "high".to_string(),
-                milestone_filter: "all".to_string(),
+                project_filter: "all".to_string(),
                 label_filter: "all".to_string(),
                 sort_key: String::new(),
                 sort_direction: String::new(),

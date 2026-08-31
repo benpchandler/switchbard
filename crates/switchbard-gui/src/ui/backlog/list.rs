@@ -20,7 +20,7 @@ const TREE_INDENT: f32 = 20.0;
 
 /// Width of the trailing checkbox + status + priority + AC columns (i.e.
 /// everything to the right of the title). The repo badge column, present
-/// only in "All projects" scope, adds `REPO_COL_WIDTH` on top of this.
+/// only in "All repos" scope, adds `REPO_COL_WIDTH` on top of this.
 const TRAILING_COLS_WIDTH: f32 = 236.0;
 const REPO_COL_WIDTH: f32 = 92.0;
 
@@ -45,7 +45,7 @@ fn render_task_list(
     pending: &mut Pending,
 ) {
     selection::retain_visible_bulk_selection(app, &tasks);
-    let show_repo = app.backlog_view.selected_project.is_none();
+    let show_repo = app.backlog_view.selected_repo.is_none();
     let visible_keys: Vec<BacklogTaskKey> = tasks.iter().map(TaskRow::key).collect();
 
     ui.horizontal(|ui| {
@@ -177,7 +177,7 @@ pub(super) fn render_task_sort_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
                     BacklogTaskSortKey::AcceptanceCriteria,
                     BacklogTaskSortKey::Labels,
                     BacklogTaskSortKey::Assignee,
-                    BacklogTaskSortKey::Milestone,
+                    BacklogTaskSortKey::Project,
                 ] {
                     ui.selectable_value(&mut app.backlog_view.sort_key, key, key.label());
                 }
@@ -254,7 +254,7 @@ pub(super) fn render_task_list_row(
             }
         }
         let title_text = if show_repo {
-            format!("{}:{}  {}", row.project.repo_name, task.id, task.title)
+            format!("{}:{}  {}", row.repo.repo_name, task.id, task.title)
         } else {
             format!("{}  {}", task.id, task.title)
         };
@@ -298,8 +298,8 @@ pub(super) fn render_task_list_row(
                     status_pill(
                         ui,
                         StatusKind::Neutral,
-                        row.project.repo_name.clone(),
-                        Some(&row.project.label()),
+                        row.repo.repo_name.clone(),
+                        Some(&row.repo.label()),
                     );
                 },
             );
@@ -351,7 +351,7 @@ pub(super) fn render_task_list_row(
         // task-18: a lamp-language marker (StatusKind::Danger → warn_orange,
         // the same "hot" tone Operator's Console uses for line/due alerts)
         // for tasks with at least one open dependency.
-        if !task.is_done() && is_blocked(task, &row.project.project) {
+        if !task.is_done() && is_blocked(task, &row.repo.repo) {
             status_pill(
                 ui,
                 StatusKind::Danger,
@@ -472,7 +472,7 @@ fn bulk_patch_button(
     }
 }
 
-/// A cross-repo bulk selection needs one `backlog` CLI invocation per project
+/// A cross-repo bulk selection needs one `backlog` CLI invocation per repo
 /// root (the CLI runs with that root as its working directory) — group the
 /// selected keys accordingly before queuing the pending bulk-save entries.
 fn group_by_project(keys: &[BacklogTaskKey]) -> Vec<(PathBuf, Vec<String>)> {
