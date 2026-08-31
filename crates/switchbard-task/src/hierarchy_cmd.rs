@@ -189,25 +189,36 @@ pub fn run_project(root: &Path, cmd: &ProjectCmd) -> Result<()> {
             );
             Ok(())
         }
-        ProjectCmd::Complete { name } => {
-            let patch = ProjectDefPatch {
-                status: Some("Completed".to_string()),
-                ..ProjectDefPatch::default()
-            };
-            let _ = switchbard_core::edit_project_def(root, name, &patch)?;
-            println!("Completed {name}");
-            Ok(())
-        }
-        ProjectCmd::Archive { name } => {
-            let patch = ProjectDefPatch {
-                status: Some("Canceled".to_string()),
-                ..ProjectDefPatch::default()
-            };
-            let _ = switchbard_core::edit_project_def(root, name, &patch)?;
-            println!("Canceled {name}");
-            Ok(())
-        }
+        ProjectCmd::Complete { name } => project_lifecycle(root, name, "Completed"),
+        ProjectCmd::Archive { name } => project_lifecycle(root, name, "Canceled"),
     }
+}
+
+/// `complete`/`archive` for projects: set the def's status and confirm with
+/// `"{status} {name}"`. Deliberately idempotent — re-completing prints the
+/// same confirmation rather than "no changes", because the user's statement
+/// ("this is completed") is true either way; the `WriteOutcome` is
+/// discarded here for that reason, unlike `edit`, which reports staleness.
+fn project_lifecycle(root: &Path, name: &str, status: &str) -> Result<()> {
+    let patch = ProjectDefPatch {
+        status: Some(status.to_string()),
+        ..ProjectDefPatch::default()
+    };
+    let _ = switchbard_core::edit_project_def(root, name, &patch)?;
+    println!("{status} {name}");
+    Ok(())
+}
+
+/// [`project_lifecycle`]'s initiative twin — separate only because the
+/// patch types differ.
+fn initiative_lifecycle(root: &Path, name: &str, status: &str) -> Result<()> {
+    let patch = InitiativeDefPatch {
+        status: Some(status.to_string()),
+        ..InitiativeDefPatch::default()
+    };
+    let _ = switchbard_core::edit_initiative_def(root, name, &patch)?;
+    println!("{status} {name}");
+    Ok(())
 }
 
 pub fn run_initiative(root: &Path, cmd: &InitiativeCmd) -> Result<()> {
@@ -261,24 +272,8 @@ pub fn run_initiative(root: &Path, cmd: &InitiativeCmd) -> Result<()> {
             );
             Ok(())
         }
-        InitiativeCmd::Complete { name } => {
-            let patch = InitiativeDefPatch {
-                status: Some("Completed".to_string()),
-                ..InitiativeDefPatch::default()
-            };
-            let _ = switchbard_core::edit_initiative_def(root, name, &patch)?;
-            println!("Completed {name}");
-            Ok(())
-        }
-        InitiativeCmd::Archive { name } => {
-            let patch = InitiativeDefPatch {
-                status: Some("Canceled".to_string()),
-                ..InitiativeDefPatch::default()
-            };
-            let _ = switchbard_core::edit_initiative_def(root, name, &patch)?;
-            println!("Canceled {name}");
-            Ok(())
-        }
+        InitiativeCmd::Complete { name } => initiative_lifecycle(root, name, "Completed"),
+        InitiativeCmd::Archive { name } => initiative_lifecycle(root, name, "Canceled"),
     }
 }
 

@@ -992,6 +992,13 @@ pub(super) fn validated_single_line<'v>(field: &str, value: &'v str) -> Result<&
     if trimmed.contains('\n') {
         bail!("{field} must be a single line");
     }
+    // Tabs are rejected alongside newlines: `yaml_scalar` doesn't quote
+    // them, and the CLIs' list output is tab-separated — a tab in a project
+    // name (the *first* TSV column) would silently shift every later column
+    // for anything parsing the documented stable-columns contract.
+    if trimmed.contains('\t') {
+        bail!("{field} must not contain tab characters");
+    }
     Ok(trimmed)
 }
 

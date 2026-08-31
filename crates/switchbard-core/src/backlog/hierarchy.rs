@@ -226,9 +226,22 @@ fn load_defs<T>(
 
 // ---- writing ----
 
+/// Everything [`create_def`] needs beyond the repo root — one struct so the
+/// per-kind wrappers pass a named shape instead of eight positional args.
+struct DefSpec<'a> {
+    rel: &'a str,
+    kind: &'a str,
+    name: &'a str,
+    status: &'a str,
+    target_date: Option<&'a str>,
+    /// Kind-specific optional scalars (projects: `initiative`, `lead`).
+    extra_fields: &'a [(&'a str, Option<&'a str>)],
+    description: &'a str,
+}
+
 /// Create `backlog/projects/<slug>.md`. Refuses a name any existing def in
 /// the repo already claims (whatever its slug), and refuses a slug collision
-/// via `create_new` — same posture as task creation's "id already taken".
+/// — including a case-variant one — before touching the filesystem.
 pub fn create_project_def(root: &Path, def: &NewProjectDef) -> Result<PathBuf> {
     let mut fields: Vec<(&str, Option<&str>)> = vec![
         ("initiative", def.initiative.as_deref()),
@@ -237,47 +250,42 @@ pub fn create_project_def(root: &Path, def: &NewProjectDef) -> Result<PathBuf> {
     fields.retain(|(_, v)| v.is_some());
     create_def(
         root,
-        PROJECTS_DIR,
-        "project",
-        &def.name,
-        &def.status,
-        def.target_date.as_deref(),
-        &fields,
-        &def.description,
+        DefSpec {
+            rel: PROJECTS_DIR,
+            kind: "project",
+            name: &def.name,
+            status: &def.status,
+            target_date: def.target_date.as_deref(),
+            extra_fields: &fields,
+            description: &def.description,
+        },
     )
 }
 
 pub fn create_initiative_def(root: &Path, def: &NewInitiativeDef) -> Result<PathBuf> {
     create_def(
         root,
-        INITIATIVES_DIR,
-        "initiative",
-        &def.name,
-        &def.status,
-        def.target_date.as_deref(),
-        &[],
-        &def.description,
+        DefSpec {
+            rel: INITIATIVES_DIR,
+            kind: "initiative",
+            name: &def.name,
+            status: &def.status,
+            target_date: def.target_date.as_deref(),
+            extra_fields: &[],
+            description: &def.description,
+        },
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn create_def(
-    root: &Path,
-    rel: &str,
-    kind: &str,
-    name: &str,
-    status: &str,
-    target_date: Option<&str>,
-    extra_fields: &[(&str, Option<&str>)],
-    description: &str,
-) -> Result<PathBuf> {
-    let name = validated_single_line("name", name)?;
-    let status = if status.trim().is_empty() {
+fn create_def(root: &Path, spec: DefSpec<'_>) -> Result<PathBuf> {
+    let name = validated_single_line("name", spec.name)?;
+    let kind = spec.kind;
+    let status = if spec.status.trim().is_empty() {
         DEFAULT_PROJECT_STATUS
     } else {
-        validated_def_status(status)?
+        validated_def_status(spec.status)?
     };
-    if let Some((_, existing)) = find_def_file(root, rel, name)? {
+    if let Some((_, existing)) = find_def_file(root, spec.rel, name)? {
         bail!(
             "{kind} '{name}' is already defined at {} — edit it instead",
             existing.display()
@@ -288,13 +296,13 @@ fn create_def(
         format!("name: {}", yaml_scalar(name)),
         format!("status: {}", yaml_scalar(status)),
     ];
-    if let Some(date) = target_date {
+    if let Some(date) = spec.target_date {
         fm.push(format!(
             "target_date: {}",
             yaml_scalar(validated_single_line("target_date", date)?)
         ));
     }
-    for (key, value) in extra_fields {
+    for (key, value) in spec.extra_fields {
         if let Some(value) = value {
             fm.push(format!(
                 "{key}: {}",
@@ -302,16 +310,29 @@ fn create_def(
             ));
         }
     }
-    let body = if description.trim().is_empty() {
+    let body = if spec.description.trim().is_empty() {
         String::new()
     } else {
-        format!("\n{}\n", description.trim())
+        format!("\n{}\n", spec.description.trim())
     };
     let text = format!("---\n{}\n---\n{body}", fm.join("\n"));
 
-    let dir = root.join(rel);
+    let dir = root.join(spec.rel);
     fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-    let path = dir.join(format!("{}.md", filename_slug(name)));
+    let slug = filename_slug(name);
+    // Checked by scan, not left to `create_new`: names differing only in
+    // case share a filename on case-insensitive filesystems (macOS APFS),
+    // and the `create_new` failure would surface as a baffling generic
+    // "slug already taken?" instead of naming the colliding definition.
+    // Scanning also makes the behavior identical on case-sensitive Linux.
+    if let Some(colliding) = slug_collision(&dir, &slug) {
+        bail!(
+            "a {kind} definition with the same filename slug already exists at {} \
+             (names differing only in case share a slug) — pick a distinct name",
+            colliding.display()
+        );
+    }
+    let path = dir.join(format!("{slug}.md"));
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -320,6 +341,22 @@ fn create_def(
     file.write_all(text.as_bytes())
         .with_context(|| format!("writing {}", path.display()))?;
     Ok(path)
+}
+
+/// An existing `.md` file in `dir` whose stem equals `slug` ignoring ASCII
+/// case, if any — see the call site for why this is a scan.
+fn slug_collision(dir: &Path, slug: &str) -> Option<PathBuf> {
+    let entries = fs::read_dir(dir).ok()?;
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.extension().and_then(OsStr::to_str) == Some("md")
+                && path
+                    .file_stem()
+                    .and_then(OsStr::to_str)
+                    .is_some_and(|stem| stem.eq_ignore_ascii_case(slug))
+        })
 }
 
 pub fn edit_project_def(root: &Path, name: &str, patch: &ProjectDefPatch) -> Result<WriteOutcome> {
@@ -731,5 +768,42 @@ mod tests {
         assert_eq!(outcome, WriteOutcome::Changed);
         let defs = load_initiative_defs(&root, &mut warnings);
         assert_eq!(defs[0].status, "Completed");
+    }
+
+    #[test]
+    fn names_with_tabs_are_refused_and_case_variant_slugs_get_a_clear_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+
+        let err = create_project_def(
+            &root,
+            &NewProjectDef {
+                name: "Alpha\tBeta".to_string(),
+                ..NewProjectDef::default()
+            },
+        )
+        .expect_err("tab in a name would corrupt the TSV list contract");
+        assert!(err.to_string().contains("tab"), "{err}");
+
+        create_project_def(
+            &root,
+            &NewProjectDef {
+                name: "Fresh Start".to_string(),
+                ..NewProjectDef::default()
+            },
+        )
+        .expect("first create succeeds");
+        let err = create_project_def(
+            &root,
+            &NewProjectDef {
+                name: "fresh start".to_string(),
+                ..NewProjectDef::default()
+            },
+        )
+        .expect_err("case-variant slug collides");
+        assert!(
+            err.to_string().contains("differing only in case"),
+            "the diagnostic names the real cause: {err}"
+        );
     }
 }

@@ -1,17 +1,21 @@
 //! The Projects lens: every visible task grouped by `BacklogTask::project`,
-//! cross-repo, with projects nested under their initiative (from the
-//! project's def file) and an "Unassigned" bucket last. Project *assignment*
-//! lives in the detail pane (`detail::render_editor`); def lifecycle is
-//! CLI-first (`switchbard-task project create/edit`); this lens is
-//! read/browse-only — clicking a task selects it, which the persistent
-//! detail rail shows regardless of lens.
+//! cross-repo, with projects nested under their initiative and an
+//! "Unassigned" bucket last. Project *assignment* lives in the detail pane
+//! (`detail::render_editor`); def lifecycle is CLI-first (`switchbard-task
+//! project create/edit`); this lens is read/browse-only — clicking a task
+//! selects it, which the persistent detail rail shows regardless of lens.
 //!
-//! Grouping is pure ([`initiative_groups`]) over the frame's already-loaded
-//! snapshot — def lookups come from `BacklogRepo::{project_defs,
-//! initiative_defs}`, which ride the backlog worker's snapshot, so this lens
-//! does no IO. When no named initiative exists anywhere in view, the
-//! initiative header level is skipped entirely: a lone "No initiative"
-//! wrapper around everything would be pure noise.
+//! The Initiative → Project *structure* (which names exist, referenced ∪
+//! defined; first-def-wins conflicts; the `None` bucket last) comes from
+//! `switchbard_core::compute_hierarchy_rollup` — the same single authority
+//! the CLI's `project`/`initiative` verbs render — so the two surfaces
+//! cannot drift. This lens only joins the frame's *visible* rows onto that
+//! structure: the `N/M done` counts and progress bars reflect the filtered
+//! view (a project whose rows are all filtered out shows 0/0), while status
+//! pills and target dates come from the rollup's def data. No IO: defs ride
+//! the backlog worker's snapshot. When no named initiative exists anywhere
+//! in view, the initiative header level is skipped entirely — a lone
+//! "No initiative" wrapper around everything would be pure noise.
 
 use super::{format, RepoRow, Snapshot, TaskRow};
 use crate::app::HiveApp;
@@ -19,91 +23,77 @@ use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
 use std::collections::BTreeMap;
-use switchbard_core::{InitiativeDef, ProjectDef};
+use switchbard_core::{compute_hierarchy_rollup, InitiativeRollup, ProjectRollup};
 
 const UNASSIGNED_LABEL: &str = "Unassigned";
 const PROGRESS_BAR_WIDTH: f32 = 120.0;
 
-/// One project's group for this frame: its visible task rows plus its def,
-/// when one exists in any scoped repo.
+/// One project's group for this frame: the core rollup entry (structure +
+/// def metadata) joined to the *visible* task rows.
 struct ProjectGroup<'a> {
-    name: String,
-    def: Option<&'a ProjectDef>,
+    rollup: ProjectRollup,
     rows: Vec<&'a TaskRow<'a>>,
 }
 
-/// The frame's full grouping: initiatives (name-sorted, `None` bucket last)
-/// each holding name-sorted project groups, plus the unassigned rows.
+/// The frame's full grouping, in the rollup's own order (initiatives
+/// name-sorted, `None` bucket last; projects name-sorted within), plus the
+/// visible rows with no project at all.
 struct Groups<'a> {
-    initiatives: Vec<(
-        Option<&'a str>,
-        Option<&'a InitiativeDef>,
-        Vec<ProjectGroup<'a>>,
-    )>,
+    initiatives: Vec<(InitiativeRollup, Vec<ProjectGroup<'a>>)>,
     unassigned: Vec<&'a TaskRow<'a>>,
 }
 
 impl Groups<'_> {
+    /// Nothing to show at all — no project exists (referenced or defined)
+    /// and no unassigned row is visible. Note a project *shell* still
+    /// renders when filters hide all of its rows; see the module doc.
     fn is_empty(&self) -> bool {
-        self.initiatives.is_empty() && self.unassigned.is_empty()
+        self.unassigned.is_empty()
+            && self
+                .initiatives
+                .iter()
+                .all(|(_, projects)| projects.is_empty())
     }
 
     /// Whether the initiative header level carries any information — false
     /// when the only bucket is the no-initiative one.
     fn has_named_initiative(&self) -> bool {
-        self.initiatives.iter().any(|(name, _, _)| name.is_some())
+        self.initiatives
+            .iter()
+            .any(|(initiative, _)| initiative.name.is_some())
     }
 }
 
-fn initiative_groups<'a>(scoped: &[&'a RepoRow], tasks: &'a [TaskRow<'a>]) -> Groups<'a> {
-    // First def wins on cross-repo name conflicts — same deterministic rule
-    // as `compute_hierarchy_rollup`.
-    let mut project_defs: BTreeMap<&str, &ProjectDef> = BTreeMap::new();
-    let mut initiative_defs: BTreeMap<&str, &InitiativeDef> = BTreeMap::new();
-    for repo in scoped {
-        for def in &repo.repo.project_defs {
-            project_defs.entry(def.name.as_str()).or_insert(def);
-        }
-        for def in &repo.repo.initiative_defs {
-            initiative_defs.entry(def.name.as_str()).or_insert(def);
-        }
-    }
+fn initiative_groups<'a>(scoped: &[&RepoRow], tasks: &'a [TaskRow<'a>]) -> Groups<'a> {
+    let repos: Vec<&switchbard_core::BacklogRepo> = scoped.iter().map(|row| &row.repo).collect();
+    let rollup = compute_hierarchy_rollup(&repos);
 
-    let mut by_project: BTreeMap<String, Vec<&TaskRow<'_>>> = BTreeMap::new();
+    let mut rows_by_project: BTreeMap<&str, Vec<&TaskRow<'_>>> = BTreeMap::new();
     let mut unassigned: Vec<&TaskRow<'_>> = Vec::new();
     for row in tasks {
-        match &row.task.project {
-            Some(project) => by_project.entry(project.clone()).or_default().push(row),
+        match row.task.project.as_deref() {
+            Some(project) => rows_by_project.entry(project).or_default().push(row),
             None => unassigned.push(row),
         }
     }
-    // Def-declared projects with no visible tasks still render (0/0) — that
-    // is what makes `project create` visible before assignment.
-    for name in project_defs.keys() {
-        by_project.entry((*name).to_string()).or_default();
-    }
 
-    let mut by_initiative: BTreeMap<Option<&str>, Vec<ProjectGroup<'_>>> = BTreeMap::new();
-    for (name, rows) in by_project {
-        let def = project_defs.get(name.as_str()).copied();
-        by_initiative
-            .entry(def.and_then(|d| d.initiative.as_deref()))
-            .or_default()
-            .push(ProjectGroup { name, def, rows });
-    }
-
-    // `Option` sorts `None` first; the no-initiative bucket belongs last.
-    let mut initiatives = Vec::with_capacity(by_initiative.len());
-    let mut bucket = None;
-    for (name, groups) in by_initiative {
-        let def = name.and_then(|n| initiative_defs.get(n).copied());
-        if name.is_none() {
-            bucket = Some((name, def, groups));
-        } else {
-            initiatives.push((name, def, groups));
-        }
-    }
-    initiatives.extend(bucket);
+    let initiatives = rollup
+        .initiatives
+        .into_iter()
+        .map(|initiative| {
+            let projects = initiative
+                .projects
+                .iter()
+                .map(|project| ProjectGroup {
+                    rows: rows_by_project
+                        .remove(project.name.as_str())
+                        .unwrap_or_default(),
+                    rollup: project.clone(),
+                })
+                .collect();
+            (initiative, projects)
+        })
+        .collect();
 
     Groups {
         initiatives,
@@ -131,9 +121,9 @@ pub(super) fn render_projects(
                 return;
             }
             let nest_under_initiatives = groups.has_named_initiative();
-            for (initiative, def, projects) in &groups.initiatives {
+            for (initiative, projects) in &groups.initiatives {
                 if nest_under_initiatives {
-                    render_initiative(app, ui, initiative.as_deref(), *def, projects, show_repo);
+                    render_initiative(app, ui, initiative, projects, show_repo);
                 } else {
                     for project in projects {
                         render_project(app, ui, project, show_repo);
@@ -141,7 +131,7 @@ pub(super) fn render_projects(
                 }
             }
             if !groups.unassigned.is_empty() {
-                render_task_group(app, ui, UNASSIGNED_LABEL, &groups.unassigned, show_repo);
+                render_unassigned(app, ui, &groups.unassigned, show_repo);
             }
         });
 }
@@ -149,12 +139,11 @@ pub(super) fn render_projects(
 fn render_initiative(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
-    name: Option<&str>,
-    def: Option<&InitiativeDef>,
+    initiative: &InitiativeRollup,
     projects: &[ProjectGroup<'_>],
     show_repo: bool,
 ) {
-    let label = name.unwrap_or("No initiative");
+    let label = initiative.name.as_deref().unwrap_or("No initiative");
     let (done, total) = projects.iter().fold((0usize, 0usize), |(d, t), p| {
         (
             d + p.rows.iter().filter(|r| r.task.is_done()).count(),
@@ -167,8 +156,14 @@ fn render_initiative(
     .default_open(true)
     .id_salt(format!("initiative_{label}"))
     .show(ui, |ui| {
-        if let Some(def) = def {
-            header_meta(ui, &def.status, def.target_date.as_deref());
+        if initiative.has_def {
+            ui.horizontal(|ui| {
+                def_meta(
+                    ui,
+                    initiative.status.as_deref(),
+                    initiative.target_date.as_deref(),
+                );
+            });
         }
         for project in projects {
             render_project(app, ui, project, show_repo);
@@ -184,21 +179,16 @@ fn render_project(
 ) {
     let done = project.rows.iter().filter(|r| r.task.is_done()).count();
     let total = project.rows.len();
-    egui::CollapsingHeader::new(format!("{}  ·  {done}/{total} done", project.name))
+    egui::CollapsingHeader::new(format!("{}  ·  {done}/{total} done", project.rollup.name))
         .default_open(true)
-        .id_salt(format!("project_{}", project.name))
+        .id_salt(format!("project_{}", project.rollup.name))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                if let Some(def) = project.def {
-                    status_pill(ui, project_status_kind(&def.status), &def.status, None);
-                    if let Some(target) = def.target_date.as_deref() {
-                        ui.label(
-                            egui::RichText::new(format!("target {target}"))
-                                .small()
-                                .color(theme::muted_text()),
-                        );
-                    }
-                }
+                def_meta(
+                    ui,
+                    project.rollup.status.as_deref(),
+                    project.rollup.target_date.as_deref(),
+                );
                 // `max(1)` keeps a defined-but-empty project (0/0) at an
                 // honest empty bar instead of NaN.
                 ui.add(
@@ -214,18 +204,12 @@ fn render_project(
 
 /// The Unassigned bucket: plain task group, no def metadata or progress bar
 /// — it's the catch-all, not a project anyone tracks progress toward.
-fn render_task_group(
-    app: &mut HiveApp,
-    ui: &mut egui::Ui,
-    label: &str,
-    rows: &[&TaskRow<'_>],
-    show_repo: bool,
-) {
+fn render_unassigned(app: &mut HiveApp, ui: &mut egui::Ui, rows: &[&TaskRow<'_>], show_repo: bool) {
     let done = rows.iter().filter(|row| row.task.is_done()).count();
     let total = rows.len();
-    egui::CollapsingHeader::new(format!("{label}  ·  {done}/{total} done"))
+    egui::CollapsingHeader::new(format!("{UNASSIGNED_LABEL}  ·  {done}/{total} done"))
         .default_open(true)
-        .id_salt(format!("project_{label}"))
+        .id_salt(format!("project_{UNASSIGNED_LABEL}"))
         .show(ui, |ui| {
             for row in rows {
                 render_row(app, ui, row, show_repo);
@@ -233,17 +217,20 @@ fn render_task_group(
         });
 }
 
-fn header_meta(ui: &mut egui::Ui, status: &str, target_date: Option<&str>) {
-    ui.horizontal(|ui| {
+/// Definition metadata rendered inline (no layout of its own, so the two
+/// call sites can compose it with their own header rows): a status pill
+/// when the def declares one, and the target date when set.
+fn def_meta(ui: &mut egui::Ui, status: Option<&str>, target_date: Option<&str>) {
+    if let Some(status) = status {
         status_pill(ui, project_status_kind(status), status, None);
-        if let Some(target) = target_date {
-            ui.label(
-                egui::RichText::new(format!("target {target}"))
-                    .small()
-                    .color(theme::muted_text()),
-            );
-        }
-    });
+    }
+    if let Some(target) = target_date {
+        ui.label(
+            egui::RichText::new(format!("target {target}"))
+                .small()
+                .color(theme::muted_text()),
+        );
+    }
 }
 
 /// Map the def lifecycle vocabulary onto the shared pill semantics. Unknown
@@ -296,7 +283,7 @@ fn render_row(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_repo
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use switchbard_core::{BacklogRepo, BacklogTask, BacklogTaskSource};
+    use switchbard_core::{BacklogRepo, BacklogTask, BacklogTaskSource, InitiativeDef, ProjectDef};
 
     fn task(id: &str, project: Option<&str>, done: bool) -> BacklogTask {
         BacklogTask {
@@ -357,7 +344,7 @@ mod tests {
         }
     }
 
-    fn rows<'a>(row: &'a RepoRow) -> Vec<TaskRow<'a>> {
+    fn rows(row: &RepoRow) -> Vec<TaskRow<'_>> {
         row.repo
             .tasks
             .iter()
@@ -394,14 +381,31 @@ mod tests {
 
         assert!(groups.has_named_initiative());
         assert_eq!(groups.initiatives.len(), 2);
-        let (name, _, projects) = &groups.initiatives[0];
-        assert_eq!(name.as_deref(), Some("Big"));
-        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        let (initiative, projects) = &groups.initiatives[0];
+        assert_eq!(initiative.name.as_deref(), Some("Big"));
+        let names: Vec<&str> = projects.iter().map(|p| p.rollup.name.as_str()).collect();
         assert_eq!(names, vec!["Alpha", "Empty"], "0/0 project still appears");
         assert!(projects[1].rows.is_empty());
-        let (bucket_name, _, bucket_projects) = &groups.initiatives[1];
-        assert_eq!(*bucket_name, None, "no-initiative bucket last");
-        assert_eq!(bucket_projects[0].name, "Beta");
+        assert!(
+            projects[0].rollup.status.is_some() && !projects[0].rows.is_empty(),
+            "def metadata and visible rows both reach the group"
+        );
+        let (bucket, bucket_projects) = &groups.initiatives[1];
+        assert_eq!(bucket.name, None, "no-initiative bucket last");
+        assert_eq!(bucket_projects[0].rollup.name, "Beta");
         assert_eq!(groups.unassigned.len(), 1, "unassigned tasks separate");
+    }
+
+    /// The lens joins *visible* rows onto repo-wide structure: a project
+    /// whose rows are all filtered out still appears (from the rollup),
+    /// with zero visible rows.
+    #[test]
+    fn a_fully_filtered_project_still_appears_with_no_rows() {
+        let row = repo_row(vec![task("TASK-1", Some("Alpha"), false)], vec![], vec![]);
+        let no_visible_rows: Vec<TaskRow<'_>> = Vec::new();
+        let groups = initiative_groups(&[&row], &no_visible_rows);
+        let (_, projects) = &groups.initiatives[0];
+        assert_eq!(projects[0].rollup.name, "Alpha");
+        assert!(projects[0].rows.is_empty());
     }
 }

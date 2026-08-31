@@ -234,17 +234,19 @@ fn render_editor(
             // Def-declared names appear even with zero member tasks (a
             // just-created project must be assignable). The text field stays
             // as the free-text escape hatch: referencing a brand-new name is
-            // how projects are born.
-            let known = known_project_names(snap);
+            // how projects are born. The name scan runs *inside* `show_ui`,
+            // so it costs nothing until the dropdown is actually opened —
+            // the detail rail renders this editor every frame (render-path
+            // perf rule: no per-frame full scans).
             egui::ComboBox::from_id_salt("backlog_editor_project")
                 .selected_text("assign")
                 .width(72.0)
                 .show_ui(ui, |ui| {
-                    for name in &known {
+                    for name in known_project_names(snap) {
                         ui.selectable_value(
                             &mut app.backlog_view.editor.project,
                             name.clone(),
-                            name,
+                            &name,
                         );
                     }
                 });
