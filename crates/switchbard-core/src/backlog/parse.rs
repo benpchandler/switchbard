@@ -59,12 +59,14 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
     tasks.sort_by(compare_tasks);
     let project_defs = super::hierarchy::load_project_defs(root, &mut warnings);
     let initiative_defs = super::hierarchy::load_initiative_defs(root, &mut warnings);
+    let goals = super::goals::load_goals(root, &mut warnings);
     Ok(BacklogRepo {
         root: root.to_path_buf(),
         tasks,
         warnings,
         project_defs,
         initiative_defs,
+        goals,
         loaded_at_unix: unix_now(),
         configured_statuses: parse_config_statuses(root),
     })

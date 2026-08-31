@@ -1801,6 +1801,40 @@ impl HiveApp {
         });
     }
 
+    /// Record a weekly-goal check-in (Digest card affordance) through the
+    /// core write layer, then refresh that repo's cached snapshot.
+    pub fn spawn_goal_checkin(
+        &self,
+        project_root: PathBuf,
+        goal_name: String,
+        week: String,
+        value: i64,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let repos = self.backlog_repos.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let date = chrono::Local::now()
+                .date_naive()
+                .format("%Y-%m-%d")
+                .to_string();
+            match switchbard_core::check_in_goal(&project_root, &goal_name, &week, &date, value) {
+                Ok(()) => {
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
+                    status.set(with_stale_warning(
+                        reload,
+                        format!("checked in {goal_name}: {value}"),
+                    ));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("check-in for {goal_name} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
     pub fn spawn_backlog_append_note(
         &self,
         project_root: PathBuf,

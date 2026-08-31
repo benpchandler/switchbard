@@ -7,6 +7,7 @@
 //! the files stay Backlog.md-compatible on disk.
 
 mod allocate;
+mod goals;
 mod hierarchy;
 mod mutations;
 mod parse;
@@ -15,6 +16,10 @@ mod types;
 mod write;
 
 pub use allocate::{create_task_allocating_id, next_task_id, ACTIVE_BRANCH_DAYS};
+
+pub use goals::{
+    check_in_goal, create_goal, roll_goals, GoalCheckIn, GoalDef, GoalMeasure, GoalWeek, NewGoal,
+};
 
 pub use hierarchy::{
     create_initiative_def, create_project_def, edit_initiative_def, edit_project_def,

@@ -428,3 +428,167 @@ fn initiative_family_rolls_up_member_projects() {
         "Canceled Rebrand\n"
     );
 }
+
+#[test]
+fn goal_lifecycle_round_trips_with_deterministic_past_week_verdicts() {
+    let dir = fixture_project();
+    let root = dir.path();
+
+    assert_eq!(
+        ok_stdout(
+            root,
+            &[
+                "goal",
+                "create",
+                "Onboard users",
+                "--target",
+                "5",
+                "--unit",
+                "users",
+                "--week",
+                "2020-01-06",
+            ]
+        ),
+        "Onboard users\n",
+        "create prints the name alone"
+    );
+
+    assert_eq!(
+        ok_stdout(
+            root,
+            &[
+                "goal",
+                "check-in",
+                "Onboard users",
+                "3",
+                "--date",
+                "2020-01-07",
+                "--week",
+                "2020-01-06",
+            ]
+        ),
+        "Checked in Onboard users: 3/5\n"
+    );
+    // A past week is terminal, so the verdict is deterministic: missed.
+    assert_eq!(
+        ok_stdout(root, &["goal", "list", "--week", "2020-01-06"]),
+        "Onboard users\t2020-01-06\t3/5\t60%\tmissed\n"
+    );
+    // --week accepts any day of the week and normalizes to its Monday.
+    assert_eq!(
+        ok_stdout(root, &["goal", "list", "--week", "2020-01-08"]),
+        ok_stdout(root, &["goal", "list", "--week", "2020-01-06"])
+    );
+
+    // Meeting the target flips the terminal verdict to met.
+    assert_eq!(
+        ok_stdout(
+            root,
+            &[
+                "goal",
+                "check-in",
+                "Onboard users",
+                "5",
+                "--date",
+                "2020-01-10",
+                "--week",
+                "2020-01-06",
+            ]
+        ),
+        "Checked in Onboard users: 5/5\n"
+    );
+    let view = ok_stdout(root, &["goal", "view", "Onboard users"]);
+    assert!(view.starts_with("Onboard users\n"), "{view}");
+    assert!(view.contains("Unit: users\n"), "{view}");
+    assert!(view.contains("2020-01-06: 5/5 (100%) met\n"), "{view}");
+
+    assert_eq!(
+        ok_stdout(root, &["goal", "roll", "--week", "2020-01-13"]),
+        "Rolled 1 goals into the week of 2020-01-13\n"
+    );
+    assert_eq!(
+        ok_stdout(root, &["goal", "list", "--week", "2020-01-13"]),
+        "Onboard users\t2020-01-13\t0/5\t0%\tmissed\n",
+        "the rolled week carries the target with no check-ins"
+    );
+}
+
+#[test]
+fn tasks_measured_goals_compute_from_done_tasks_and_refuse_check_ins() {
+    let dir = fixture_project();
+    let root = dir.path();
+    // Current week + target 1 + a task done now: actual 1 -> met, which is
+    // deterministic whatever day of the week the test runs.
+    assert_eq!(
+        ok_stdout(
+            root,
+            &[
+                "goal",
+                "create",
+                "Close cutover tasks",
+                "--target",
+                "1",
+                "--unit",
+                "tasks",
+                "--measure",
+                "tasks",
+                "--scope",
+                "Lucella cutover",
+            ]
+        ),
+        "Close cutover tasks\n"
+    );
+    assert_eq!(
+        ok_stdout(root, &["create", "Member", "-m", "Lucella cutover"]),
+        "TASK-1\n"
+    );
+    assert_eq!(ok_stdout(root, &["edit", "1", "-s", "Done"]), "Edited 1\n");
+
+    let listed = ok_stdout(root, &["goal", "list"]);
+    assert!(
+        listed.contains("Close cutover tasks\t") && listed.contains("\t1/1\t100%\tmet\n"),
+        "{listed}"
+    );
+
+    let refused = bin(root, &["goal", "check-in", "Close cutover tasks", "2"]);
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("computed, not checked in"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+}
+
+#[test]
+fn goal_errors_name_the_next_step() {
+    let dir = fixture_project();
+    let root = dir.path();
+    let no_file = bin(root, &["goal", "check-in", "Ghost", "1"]);
+    assert_eq!(no_file.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&no_file.stderr).contains("goal create"),
+        "{}",
+        String::from_utf8_lossy(&no_file.stderr)
+    );
+
+    let missing_scope = bin(
+        root,
+        &[
+            "goal",
+            "create",
+            "Bad",
+            "--target",
+            "3",
+            "--unit",
+            "x",
+            "--measure",
+            "tasks",
+        ],
+    );
+    assert_eq!(missing_scope.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&missing_scope.stderr).contains("--scope"),
+        "{}",
+        String::from_utf8_lossy(&missing_scope.stderr)
+    );
+}

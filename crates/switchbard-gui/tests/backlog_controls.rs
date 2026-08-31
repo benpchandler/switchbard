@@ -77,6 +77,7 @@ fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -834,6 +835,7 @@ fn digest_harness_with(tasks: Vec<BacklogTask>) -> Harness<'static, HiveApp> {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -1045,6 +1047,7 @@ fn board_shows_the_icebox_column_even_with_zero_icebox_tasks() {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".to_string(),
@@ -2242,6 +2245,7 @@ fn board_unrelated_project_reload_does_not_resolve_a_pending_move() {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 999_999,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -4129,6 +4133,7 @@ fn a_drop_onto_a_column_this_repo_lacks_is_refused_and_offers_the_fix() {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),

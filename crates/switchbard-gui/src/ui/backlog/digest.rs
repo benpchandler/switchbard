@@ -11,7 +11,7 @@
 //! the user has the Done filter off elsewhere, which defeats the point of a
 //! landing page.
 
-use super::{format, scoped_repos, RepoRow, Snapshot};
+use super::{format, scoped_repos, Pending, RepoRow, Snapshot};
 use crate::app::HiveApp;
 use crate::runtime::BacklogLens;
 use crate::ui::theme;
@@ -28,7 +28,12 @@ struct DigestRow<'a> {
     subtitle: Option<String>,
 }
 
-pub(super) fn render_digest(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
+pub(super) fn render_digest(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    snap: &Snapshot,
+    pending: &mut Pending,
+) {
     let scoped = scoped_repos(app, snap);
     let today_day = chrono::Utc::now().timestamp().div_euclid(86_400);
 
@@ -90,6 +95,7 @@ pub(super) fn render_digest(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapsho
         .id_salt("backlog_digest")
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            render_goals_section(app, ui, &scoped, pending);
             render_section(
                 app,
                 ui,
@@ -123,6 +129,153 @@ pub(super) fn render_digest(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapsho
                 Some("Done"),
             );
         });
+}
+
+/// "This week's goals" — the section leading the Digest when any scoped
+/// repo has a goal with a target set for the current week; absent entirely
+/// otherwise (a glance surface earns no empty shells). Cards show
+/// actual/target, a pace pill, and a progress bar whose "today" tick marks
+/// the elapsed-week fraction — fill past the tick reads as ahead, short of
+/// it as behind, with no arithmetic. Manual goals carry an inline check-in;
+/// task-derived goals state their scope instead. State matrix (design-state,
+/// 2026-08-31): zero goals (section absent), on-track/behind/met/missed,
+/// 0-target (full bar, met), long names (wrap), check-in failure (surfaces
+/// via `backlog_status` like every other backlog write).
+fn render_goals_section(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    scoped: &[&RepoRow],
+    pending: &mut Pending,
+) {
+    let today = chrono::Local::now().date_naive();
+    let week = switchbard_core::week_monday_of(today)
+        .format("%Y-%m-%d")
+        .to_string();
+    // Per repo (not flattened): a check-in write needs the owning repo root.
+    let per_repo: Vec<(&RepoRow, Vec<switchbard_core::GoalStatus>)> = scoped
+        .iter()
+        .map(|repo| {
+            (
+                *repo,
+                switchbard_core::compute_goal_statuses(&[&repo.repo], &week, today),
+            )
+        })
+        .filter(|(_, statuses)| !statuses.is_empty())
+        .collect();
+    if per_repo.is_empty() {
+        return;
+    }
+
+    let days_elapsed = per_repo[0].1[0].days_elapsed;
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("This week's goals").strong().heading());
+        ui.label(
+            egui::RichText::new(format!("week of {week}  ·  day {days_elapsed} of 7"))
+                .color(theme::muted_text()),
+        );
+    });
+    ui.separator();
+    for (repo, statuses) in per_repo {
+        for status in statuses {
+            render_goal_card(app, ui, repo, &status, pending);
+            ui.add_space(4.0);
+        }
+    }
+    ui.add_space(14.0);
+}
+
+fn goal_pace_pill(ui: &mut egui::Ui, pace: switchbard_core::GoalPace) {
+    use crate::ui::components::StatusKind;
+    use switchbard_core::GoalPace;
+    let (kind, label) = match pace {
+        GoalPace::OnTrack => (StatusKind::Good, "on track"),
+        GoalPace::Behind => (StatusKind::Warn, "behind"),
+        GoalPace::Met => (StatusKind::Good, "met"),
+        GoalPace::Missed => (StatusKind::Danger, "missed"),
+    };
+    crate::ui::components::status_pill(ui, kind, label, None);
+}
+
+fn render_goal_card(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    repo: &RepoRow,
+    status: &switchbard_core::GoalStatus,
+    pending: &mut Pending,
+) {
+    let frame = egui::Frame::default()
+        .fill(theme::card_bg())
+        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+        .corner_radius(3.0)
+        .inner_margin(egui::Margin::symmetric(10, 6));
+    frame.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            let _ = theme::painted_dot(ui, theme::repo_rail_color(&repo.repo_name));
+            ui.label(egui::RichText::new(&status.name).strong());
+            goal_pace_pill(ui, status.pace);
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} / {} {}",
+                    status.actual, status.target, status.unit
+                ))
+                .color(theme::weak_text()),
+            );
+            if let Some(scope) = &status.scope {
+                ui.label(
+                    egui::RichText::new(format!("auto · {scope}"))
+                        .small()
+                        .color(theme::muted_text()),
+                );
+            } else if let Some(date) = &status.last_checkin_date {
+                ui.label(
+                    egui::RichText::new(format!("checked in {date}"))
+                        .small()
+                        .color(theme::muted_text()),
+                );
+            }
+        });
+        ui.horizontal(|ui| {
+            let bar =
+                ui.add(egui::ProgressBar::new(status.progress_fraction()).desired_width(160.0));
+            // The "today" tick: where the week clock sits on the same bar.
+            // Skip it on terminal verdicts — the race is over.
+            if matches!(
+                status.pace,
+                switchbard_core::GoalPace::OnTrack | switchbard_core::GoalPace::Behind
+            ) {
+                let x = bar.rect.left() + bar.rect.width() * status.week_fraction();
+                ui.painter().vline(
+                    x,
+                    bar.rect.y_range().expand(2.0),
+                    egui::Stroke::new(2.0, theme::muted_text()),
+                );
+            }
+            if status.measure == switchbard_core::GoalMeasure::Manual {
+                let key = (repo.key.clone(), status.name.clone());
+                let draft = app
+                    .backlog_view
+                    .goal_checkin_drafts
+                    .entry(key.clone())
+                    .or_insert(status.actual);
+                ui.add(egui::DragValue::new(draft).range(0..=i64::MAX));
+                if ui
+                    .small_button("Check in")
+                    .on_hover_text("Record this week's value (cumulative, not an increment)")
+                    .clicked()
+                {
+                    pending.goal_checkin = Some((
+                        repo.key.clone(),
+                        status.name.clone(),
+                        status.week.clone(),
+                        *app.backlog_view
+                            .goal_checkin_drafts
+                            .get(&key)
+                            .expect("just inserted"),
+                    ));
+                }
+            }
+        });
+    });
 }
 
 fn render_section(

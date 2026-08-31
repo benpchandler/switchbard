@@ -326,6 +326,7 @@ mod tests {
                 warnings: vec![],
                 project_defs,
                 initiative_defs,
+                goals: vec![],
                 loaded_at_unix: 0,
                 configured_statuses: vec![],
             },

@@ -45,6 +45,8 @@ Four-crate Cargo workspace. `switchbard-core` has **zero UI dependencies** and i
 
 **Hierarchy (Linear vocabulary, trajectory: *Linear-vocabulary hierarchy*):** Initiative → Project → Issue (task) → Sub-issue (decimal child). Task membership is the `project:` frontmatter key (legacy `milestone:` reads as a fallback and migrates on the next assignment); `backlog/hierarchy.rs` owns the optional def files; roll-up is computed (`compute_hierarchy_rollup`), never stored. "Repo" is the word for the repo-backlog scope everywhere user-facing.
 
+**Weekly goals (trajectory: *Weekly goals*):** numeric targets tracked relative to the week clock, stored in `backlog/goals.yml` (records, not documents — `backlog/goals.rs` owns it; never hand-edit). Actuals come from append-only dated check-ins (manual) or done-in-week tasks matching a scope (`measure: tasks`); pace (`compute_goal_statuses`: on-track / behind / met / missed) is computed, never stored. CLI: `goal create/check-in/list/view/roll`; the Digest lens leads with the current week's goal cards.
+
 ### `crates/switchbard-core` — domain layer
 
 Re-exports are **explicit in `src/lib.rs`** (no glob re-exports). Module map:

@@ -19,6 +19,7 @@
 //! - Nothing here blocks or waits, so the banner/heartbeat rules don't
 //!   apply; every command does its work and exits.
 
+mod goals_cmd;
 mod hierarchy_cmd;
 mod render;
 
@@ -56,6 +57,9 @@ const MAX_ROOT_WALK: usize = 64;
                   `project` and `initiative` subcommand families manage the optional \
                   definition files (backlog/projects/, backlog/initiatives/) that give a \
                   name lifecycle, and their `list`/`view` roll up member done/total counts.\n\n\
+                  GOALS: weekly numeric goals live in backlog/goals.yml (records, not \
+                  markdown) - `goal create/list/view/check-in/roll`. Pace compares \
+                  actual/target against the elapsed week: on-track, behind, met, missed.\n\n\
                   DISPATCH: flag a task for an autonomous run with \
                   `switchbard-task edit <ID> --add-label dispatch`."
 )]
@@ -114,6 +118,9 @@ enum Command {
     /// Manage initiative definitions (the grouping tier above projects)
     #[command(subcommand)]
     Initiative(hierarchy_cmd::InitiativeCmd),
+    /// Weekly numeric goals tracked relative to target (backlog/goals.yml)
+    #[command(subcommand)]
+    Goal(goals_cmd::GoalCmd),
 }
 
 #[derive(Args)]
@@ -267,6 +274,7 @@ fn run(cli: &Cli) -> Result<()> {
         }
         Command::Project(cmd) => hierarchy_cmd::run_project(&root, cmd),
         Command::Initiative(cmd) => hierarchy_cmd::run_initiative(&root, cmd),
+        Command::Goal(cmd) => goals_cmd::run_goal(&root, cmd),
     }
 }
 

@@ -69,6 +69,7 @@ fn board_lens_renders_kanban_columns_with_the_seeded_task() {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -150,6 +151,7 @@ fn global_search_overlay_finds_the_matching_task_across_repos() {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -611,6 +613,7 @@ fn backlog_view_surfaces_seeded_task() {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -717,6 +720,7 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
                 warnings: vec![],
                 project_defs: vec![],
                 initiative_defs: vec![],
+                goals: vec![],
                 loaded_at_unix: 0,
                 configured_statuses: vec![
                     "Icebox".into(),
@@ -771,6 +775,7 @@ fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -820,6 +825,85 @@ fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
     );
 }
 
+/// Digest goals section (TASK-74): current-week goals lead the Digest with
+/// a pace pill and check-in affordance; with no goals the section is absent
+/// entirely.
+#[test]
+fn digest_leads_with_current_week_goals_and_omits_the_section_without_any() {
+    let today = chrono::Local::now().date_naive();
+    let week = switchbard_core::week_monday_of(today)
+        .format("%Y-%m-%d")
+        .to_string();
+    let mut weeks = std::collections::BTreeMap::new();
+    weeks.insert(
+        week.clone(),
+        switchbard_core::GoalWeek {
+            target: 1,
+            checkins: vec![switchbard_core::GoalCheckIn {
+                date: week.clone(),
+                value: 1,
+            }],
+        },
+    );
+
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_repos.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogRepo {
+            root: PathBuf::from(REPO_PATH),
+            tasks: vec![seeded_backlog_task()],
+            warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
+            goals: vec![switchbard_core::GoalDef {
+                name: "Onboard users".to_string(),
+                unit: "users".to_string(),
+                measure: switchbard_core::GoalMeasure::Manual,
+                scope: None,
+                weeks,
+            }],
+            loaded_at_unix: 0,
+            configured_statuses: vec!["To Do".into(), "Done".into()],
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness
+            .query_all_by_label("This week's goals")
+            .next()
+            .is_some(),
+        "the goals section leads the Digest"
+    );
+    assert!(
+        harness.query_all_by_label("Onboard users").next().is_some(),
+        "the goal card renders its name"
+    );
+    // target 1 with a check-in of 1 is met whatever day the test runs.
+    assert!(
+        harness.query_all_by_label("met").next().is_some(),
+        "the deterministic verdict pill renders"
+    );
+    assert!(
+        harness.query_all_by_label("Check in").next().is_some(),
+        "manual goals carry the inline check-in affordance"
+    );
+
+    // And with no goals at all, no empty shell.
+    let mut goalless = seeded_app();
+    goalless.view_tab = ViewTab::Backlog;
+    let mut bare = common::harness(goalless);
+    bare.run();
+    assert!(
+        bare.query_all_by_label("This week's goals")
+            .next()
+            .is_none(),
+        "a glance surface earns no empty section"
+    );
+}
+
 /// Portfolio lens (task-19): a read-only per-repo health table.
 #[test]
 fn portfolio_lens_renders_per_repo_health() {
@@ -834,6 +918,7 @@ fn portfolio_lens_renders_per_repo_health() {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -892,6 +977,7 @@ fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -959,6 +1045,7 @@ fn parent_task_shows_rollup_and_expands_to_reveal_children() {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -1036,6 +1123,7 @@ fn saved_view_can_be_saved_and_deleted() {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -1177,6 +1265,7 @@ fn harness_on_task(task: BacklogTask) -> Harness<'static, HiveApp> {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -1375,6 +1464,7 @@ fn list_row_shows_the_dispatch_pill_for_a_queued_task() {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),

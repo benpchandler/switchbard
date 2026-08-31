@@ -226,6 +226,169 @@ pub fn compute_burndown_by_project(
         .collect()
 }
 
+/// A weekly goal's verdict relative to its target and the week clock
+/// (trajectory: *Weekly goals*). `Met`/`Missed` are terminal; the other two
+/// compare progress against elapsed time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoalPace {
+    OnTrack,
+    Behind,
+    Met,
+    Missed,
+}
+
+impl GoalPace {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OnTrack => "on-track",
+            Self::Behind => "behind",
+            Self::Met => "met",
+            Self::Missed => "missed",
+        }
+    }
+}
+
+/// One goal's computed state for one week — the pace verdict plus the
+/// numbers every surface renders. Computed, never stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalStatus {
+    pub name: String,
+    pub unit: String,
+    pub week: String,
+    pub target: i64,
+    pub actual: i64,
+    pub measure: crate::GoalMeasure,
+    pub scope: Option<String>,
+    pub pace: GoalPace,
+    /// Days of the goal week elapsed as of `today`, clamped to `1..=7`.
+    pub days_elapsed: u32,
+    /// Date of the latest manual check-in, when any exists.
+    pub last_checkin_date: Option<String>,
+}
+
+impl GoalStatus {
+    /// `actual/target` clamped to `0..=1` — the progress-bar fill.
+    pub fn progress_fraction(&self) -> f32 {
+        if self.target <= 0 {
+            return 1.0;
+        }
+        (self.actual.max(0) as f32 / self.target as f32).min(1.0)
+    }
+
+    /// `days_elapsed/7` — where the "today" tick sits on the bar.
+    pub fn week_fraction(&self) -> f32 {
+        self.days_elapsed as f32 / 7.0
+    }
+}
+
+/// Epoch-day of a `NaiveDate`, on the same scale as [`parse_backlog_day`].
+fn epoch_day(date: chrono::NaiveDate) -> i64 {
+    (date - chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch exists")).num_days()
+}
+
+/// Compute every goal's status for `week` (a Monday, `YYYY-MM-DD`) across
+/// the passed repos, name-sorted. A goal without that week key is omitted —
+/// "no target set this week" is absence, not a zero.
+///
+/// The actual: for manual goals, the latest check-in's value (latest by
+/// date, last entry winning ties — entries are append-ordered); for
+/// task-derived goals, the count of done, non-archived tasks across all
+/// passed repos whose `project` or a label equals the scope and whose
+/// `updated_date` falls inside the goal week.
+///
+/// The verdict: `Met` once `actual >= target` (kept after the week ends);
+/// `Missed` when the week is over short of target; otherwise `OnTrack` when
+/// `actual/target >= days_elapsed/7` (integer cross-multiplied) and
+/// `Behind` when not. Days before the week starts clamp to day 1.
+pub fn compute_goal_statuses(
+    repos: &[&BacklogRepo],
+    week: &str,
+    today: chrono::NaiveDate,
+) -> Vec<GoalStatus> {
+    let Some(monday) = chrono::NaiveDate::parse_from_str(week, "%Y-%m-%d").ok() else {
+        return Vec::new();
+    };
+    let week_start = epoch_day(monday);
+    let week_end = week_start + 6;
+    let today_day = epoch_day(today);
+    let days_elapsed = (today_day - week_start + 1).clamp(1, 7) as u32;
+    let week_over = today_day > week_end;
+
+    let mut statuses: Vec<GoalStatus> = Vec::new();
+    for repo in repos {
+        for goal in &repo.goals {
+            let Some(goal_week) = goal.weeks.get(week) else {
+                continue;
+            };
+            let (actual, last_checkin_date) = match goal.measure {
+                crate::GoalMeasure::Manual => {
+                    let latest = goal_week.checkins.iter().fold(
+                        None::<&crate::GoalCheckIn>,
+                        |best, entry| match best {
+                            Some(b) if b.date > entry.date => Some(b),
+                            _ => Some(entry),
+                        },
+                    );
+                    (
+                        latest.map_or(0, |c| c.value),
+                        latest.map(|c| c.date.clone()),
+                    )
+                }
+                crate::GoalMeasure::Tasks => {
+                    let scope = goal.scope.as_deref().unwrap_or_default();
+                    let count = repos
+                        .iter()
+                        .flat_map(|r| in_scope_tasks(r))
+                        .filter(|task| {
+                            task.is_done()
+                                && (task.project.as_deref() == Some(scope)
+                                    || task.labels.iter().any(|l| l == scope))
+                                && task
+                                    .updated_date
+                                    .as_deref()
+                                    .and_then(parse_day)
+                                    .is_some_and(|d| (week_start..=week_end).contains(&d))
+                        })
+                        .count() as i64;
+                    (count, None)
+                }
+            };
+
+            let pace = if actual >= goal_week.target {
+                GoalPace::Met
+            } else if week_over {
+                GoalPace::Missed
+            } else if actual * 7 >= goal_week.target * i64::from(days_elapsed) {
+                GoalPace::OnTrack
+            } else {
+                GoalPace::Behind
+            };
+
+            statuses.push(GoalStatus {
+                name: goal.name.clone(),
+                unit: goal.unit.clone(),
+                week: week.to_string(),
+                target: goal_week.target,
+                actual,
+                measure: goal.measure,
+                scope: goal.scope.clone(),
+                pace,
+                days_elapsed,
+                last_checkin_date,
+            });
+        }
+    }
+    statuses.sort_by(|a, b| a.name.cmp(&b.name));
+    statuses
+}
+
+/// The Monday of `date`'s week — the canonical week key for that date.
+pub fn week_monday_of(date: chrono::NaiveDate) -> chrono::NaiveDate {
+    date - chrono::Days::new(u64::from(
+        chrono::Datelike::weekday(&date).num_days_from_monday(),
+    ))
+}
+
 /// One project's roll-up: member-task counts joined (by exact name) to its
 /// optional definition. Computed, never stored — the same posture as every
 /// other statistic in this module.
@@ -483,6 +646,7 @@ mod tests {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![],
         }
@@ -719,5 +883,156 @@ mod tests {
             (rollup.initiatives[0].done, rollup.initiatives[0].total),
             (0, 0)
         );
+    }
+
+    fn date(s: &str) -> chrono::NaiveDate {
+        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").expect("test date")
+    }
+
+    fn manual_goal(
+        name: &str,
+        week: &str,
+        target: i64,
+        checkins: &[(&str, i64)],
+    ) -> crate::GoalDef {
+        let mut weeks = std::collections::BTreeMap::new();
+        weeks.insert(
+            week.to_string(),
+            crate::GoalWeek {
+                target,
+                checkins: checkins
+                    .iter()
+                    .map(|(d, v)| crate::GoalCheckIn {
+                        date: (*d).to_string(),
+                        value: *v,
+                    })
+                    .collect(),
+            },
+        );
+        crate::GoalDef {
+            name: name.to_string(),
+            unit: "users".to_string(),
+            measure: crate::GoalMeasure::Manual,
+            scope: None,
+            weeks,
+        }
+    }
+
+    #[test]
+    fn goal_pace_covers_all_four_verdicts_and_week_boundaries() {
+        // Week of Mon 2026-09-01 (a Tuesday in reality is irrelevant: keys
+        // are opaque Mondays to this function). Thursday = day 4.
+        let mut repo = project("/a", vec![]);
+        repo.goals = vec![
+            manual_goal(
+                "ahead",
+                "2026-08-31",
+                5,
+                &[("2026-09-02", 1), ("2026-09-03", 4)],
+            ),
+            manual_goal("lagging", "2026-08-31", 8, &[("2026-09-02", 3)]),
+            manual_goal("finished", "2026-08-31", 1, &[("2026-09-01", 1)]),
+            manual_goal("untouched", "2026-08-31", 5, &[]),
+        ];
+
+        let thursday = date("2026-09-03");
+        let statuses = compute_goal_statuses(&[&repo], "2026-08-31", thursday);
+        let by_name = |n: &str| statuses.iter().find(|s| s.name == n).expect("present");
+
+        let ahead = by_name("ahead");
+        assert_eq!(ahead.pace, GoalPace::OnTrack, "4/5 on day 4 of 7");
+        assert_eq!(ahead.actual, 4, "latest check-in wins");
+        assert_eq!(ahead.days_elapsed, 4);
+        assert_eq!(ahead.last_checkin_date.as_deref(), Some("2026-09-03"));
+
+        assert_eq!(by_name("lagging").pace, GoalPace::Behind, "3/8 on day 4");
+        assert_eq!(by_name("finished").pace, GoalPace::Met);
+        assert_eq!(by_name("untouched").actual, 0);
+        assert_eq!(by_name("untouched").pace, GoalPace::Behind);
+
+        // Sunday night, still short: behind (the week is not over)…
+        let sunday = date("2026-09-06");
+        let statuses = compute_goal_statuses(&[&repo], "2026-08-31", sunday);
+        assert_eq!(
+            statuses.iter().find(|s| s.name == "lagging").unwrap().pace,
+            GoalPace::Behind
+        );
+        // …the Monday after, terminal: missed for the short, met stays met.
+        let next_monday = date("2026-09-07");
+        let statuses = compute_goal_statuses(&[&repo], "2026-08-31", next_monday);
+        assert_eq!(
+            statuses.iter().find(|s| s.name == "lagging").unwrap().pace,
+            GoalPace::Missed
+        );
+        assert_eq!(
+            statuses.iter().find(|s| s.name == "finished").unwrap().pace,
+            GoalPace::Met
+        );
+
+        // A goal without this week's key is absent, not zero.
+        let statuses = compute_goal_statuses(&[&repo], "2026-09-07", next_monday);
+        assert!(statuses.is_empty());
+    }
+
+    #[test]
+    fn tasks_measured_goals_count_done_in_week_tasks_matching_project_or_label() {
+        let mut in_week_project = task("TASK-1", "Done", "high", BacklogTaskSource::Active);
+        in_week_project.project = Some("Lucella cutover".to_string());
+        in_week_project.updated_date = Some("2026-09-02 10:00".to_string());
+
+        let mut in_week_label = task("TASK-2", "Done", "high", BacklogTaskSource::Active);
+        in_week_label.labels = vec!["Lucella cutover".to_string()];
+        in_week_label.updated_date = Some("2026-09-06 23:00".to_string());
+
+        let mut out_of_week = task("TASK-3", "Done", "high", BacklogTaskSource::Active);
+        out_of_week.project = Some("Lucella cutover".to_string());
+        out_of_week.updated_date = Some("2026-08-28 10:00".to_string());
+
+        let mut not_done = task("TASK-4", "To Do", "high", BacklogTaskSource::Active);
+        not_done.project = Some("Lucella cutover".to_string());
+        not_done.updated_date = Some("2026-09-02 10:00".to_string());
+
+        let mut archived = task("TASK-5", "Done", "high", BacklogTaskSource::Archived);
+        archived.project = Some("Lucella cutover".to_string());
+        archived.updated_date = Some("2026-09-02 10:00".to_string());
+
+        let mut repo = project(
+            "/a",
+            vec![
+                in_week_project,
+                in_week_label,
+                out_of_week,
+                not_done,
+                archived,
+            ],
+        );
+        repo.goals = vec![crate::GoalDef {
+            name: "Close cutover tasks".to_string(),
+            unit: "tasks".to_string(),
+            measure: crate::GoalMeasure::Tasks,
+            scope: Some("Lucella cutover".to_string()),
+            weeks: std::collections::BTreeMap::from([(
+                "2026-08-31".to_string(),
+                crate::GoalWeek {
+                    target: 8,
+                    checkins: vec![],
+                },
+            )]),
+        }];
+
+        let statuses = compute_goal_statuses(&[&repo], "2026-08-31", date("2026-09-03"));
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(
+            statuses[0].actual, 2,
+            "project match + label match; out-of-week, open, and archived excluded"
+        );
+        assert_eq!(statuses[0].pace, GoalPace::Behind);
+    }
+
+    #[test]
+    fn week_monday_of_maps_any_day_to_its_monday() {
+        assert_eq!(week_monday_of(date("2026-09-03")), date("2026-08-31"));
+        assert_eq!(week_monday_of(date("2026-08-31")), date("2026-08-31"));
+        assert_eq!(week_monday_of(date("2026-09-06")), date("2026-08-31"));
     }
 }

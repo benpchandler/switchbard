@@ -1311,6 +1311,7 @@ mod tests {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix,
             configured_statuses: vec![],
         }
