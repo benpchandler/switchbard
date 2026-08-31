@@ -4,6 +4,7 @@ title: 'Linear hierarchy: Initiative/Project/Repo vocabulary, defs, rollup'
 status: To Do
 assignee: []
 created_date: '2026-08-31 12:36'
+updated_date: '2026-08-31 13:25'
 labels: []
 dependencies: []
 priority: high
@@ -18,7 +19,7 @@ Adopt Linear's four-tier hierarchy (Initiative - Project - Issue - Sub-issue) ac
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Every subtask Done; mise run ci green on macOS+Linux
-- [ ] #2 Untouched task files stay byte-identical (write_layer_real_files green)
-- [ ] #3 Legacy -m/--milestone/--clear-milestone and --project <DIR> invocations still work
-- [ ] #4 docs/product-trajectory.md and CLAUDE.md updated
+- [x] #2 Untouched task files stay byte-identical (write_layer_real_files green)
+- [x] #3 Legacy -m/--milestone/--clear-milestone and --project <DIR> invocations still work
+- [x] #4 docs/product-trajectory.md and CLAUDE.md updated
 <!-- AC:END -->
