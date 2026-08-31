@@ -300,7 +300,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
             match app.backlog_view.lens {
                 BacklogLens::Digest => {
                     ui.separator();
-                    digest::render_digest(app, ui, &snap);
+                    digest::render_digest(app, ui, &snap, &mut pending);
                 }
                 BacklogLens::List => {
                     ui.separator();
@@ -408,6 +408,9 @@ pub(in crate::ui::backlog) struct Pending {
     /// `(project_root, task_id, enabled)` — the per-task Dispatch opt-in
     /// toggle (task-11 GUI wiring).
     pub dispatch_toggle: Option<(PathBuf, String, bool)>,
+    /// (repo root, goal name, week monday, value) — a Digest goal card's
+    /// check-in.
+    pub goal_checkin: Option<(PathBuf, String, String, i64)>,
     /// "Clean Up Old Tasks" (QA parity matrix LOW gap): one entry per
     /// repo with Done tasks to archive, same cross-repo shape as
     /// `bulk_save` — a bulk archive still needs one `backlog` CLI
@@ -451,6 +454,9 @@ fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, pending: Pending) {
     }
     if let Some((project_root, task_id, enabled)) = pending.dispatch_toggle {
         app.spawn_backlog_dispatch_toggle(project_root, task_id, enabled, ctx);
+    }
+    if let Some((project_root, goal_name, week, value)) = pending.goal_checkin {
+        app.spawn_goal_checkin(project_root, goal_name, week, value, ctx);
     }
     if let Some(per_project) = pending.cleanup {
         app.spawn_backlog_cleanup(per_project, ctx);

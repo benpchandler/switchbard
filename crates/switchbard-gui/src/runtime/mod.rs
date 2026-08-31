@@ -141,6 +141,10 @@ pub struct BoardMoveOutcome {
 #[derive(Debug, Clone)]
 pub struct BacklogViewState {
     pub selected_repo: Option<PathBuf>,
+    /// Session-only draft values for the Digest goal cards' check-in field,
+    /// keyed by (repo root, goal name). Seeded from the goal's current
+    /// actual the first time a card renders.
+    pub goal_checkin_drafts: HashMap<(PathBuf, String), i64>,
     pub selected_task: Option<BacklogTaskKey>,
     pub bulk_selected_tasks: BTreeSet<BacklogTaskKey>,
     pub bulk_selection_anchor: Option<BacklogTaskKey>,
@@ -233,6 +237,7 @@ impl Default for BacklogViewState {
     fn default() -> Self {
         Self {
             selected_repo: None,
+            goal_checkin_drafts: HashMap::new(),
             selected_task: None,
             bulk_selected_tasks: BTreeSet::new(),
             bulk_selection_anchor: None,

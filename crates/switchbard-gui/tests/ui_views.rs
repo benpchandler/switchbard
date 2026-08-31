@@ -825,6 +825,85 @@ fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
     );
 }
 
+/// Digest goals section (TASK-74): current-week goals lead the Digest with
+/// a pace pill and check-in affordance; with no goals the section is absent
+/// entirely.
+#[test]
+fn digest_leads_with_current_week_goals_and_omits_the_section_without_any() {
+    let today = chrono::Local::now().date_naive();
+    let week = switchbard_core::week_monday_of(today)
+        .format("%Y-%m-%d")
+        .to_string();
+    let mut weeks = std::collections::BTreeMap::new();
+    weeks.insert(
+        week.clone(),
+        switchbard_core::GoalWeek {
+            target: 1,
+            checkins: vec![switchbard_core::GoalCheckIn {
+                date: week.clone(),
+                value: 1,
+            }],
+        },
+    );
+
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_repos.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogRepo {
+            root: PathBuf::from(REPO_PATH),
+            tasks: vec![seeded_backlog_task()],
+            warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
+            goals: vec![switchbard_core::GoalDef {
+                name: "Onboard users".to_string(),
+                unit: "users".to_string(),
+                measure: switchbard_core::GoalMeasure::Manual,
+                scope: None,
+                weeks,
+            }],
+            loaded_at_unix: 0,
+            configured_statuses: vec!["To Do".into(), "Done".into()],
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness
+            .query_all_by_label("This week's goals")
+            .next()
+            .is_some(),
+        "the goals section leads the Digest"
+    );
+    assert!(
+        harness.query_all_by_label("Onboard users").next().is_some(),
+        "the goal card renders its name"
+    );
+    // target 1 with a check-in of 1 is met whatever day the test runs.
+    assert!(
+        harness.query_all_by_label("met").next().is_some(),
+        "the deterministic verdict pill renders"
+    );
+    assert!(
+        harness.query_all_by_label("Check in").next().is_some(),
+        "manual goals carry the inline check-in affordance"
+    );
+
+    // And with no goals at all, no empty shell.
+    let mut goalless = seeded_app();
+    goalless.view_tab = ViewTab::Backlog;
+    let mut bare = common::harness(goalless);
+    bare.run();
+    assert!(
+        bare.query_all_by_label("This week's goals")
+            .next()
+            .is_none(),
+        "a glance surface earns no empty section"
+    );
+}
+
 /// Portfolio lens (task-19): a read-only per-repo health table.
 #[test]
 fn portfolio_lens_renders_per_repo_health() {
