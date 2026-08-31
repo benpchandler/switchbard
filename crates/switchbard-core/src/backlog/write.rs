@@ -7,9 +7,13 @@
 //! targets**. Frontmatter keys this crate doesn't model (`ordinal`, anything
 //! a future format adds), key order, quoting style, and author formatting all
 //! survive byte-for-byte — pinned by `tests/write_layer_real_files.rs`, which
-//! runs the gate over every real task file in this repository. The precedent
-//! is `super::status_config`, which already edits `config.yml` at line level;
-//! this module extends that philosophy to the task files themselves.
+//! runs the gate over every real task file in this repository. Body sections
+//! this crate doesn't model (`## Resolution` and friends, common in real
+//! repos) survive the same way: a section edit rewrites only its own span,
+//! so an unknown heading's block is opaque to every operation here
+//! (TASK-45). The precedent is `super::status_config`, which already edits
+//! `config.yml` at line level; this module extends that philosophy to the
+//! task files themselves.
 //!
 //! # Contract
 //!
@@ -470,8 +474,8 @@ fn ensure_body_rewrite_safe(path: &Path) -> Result<()> {
     }
     bail!(
         "refusing to rewrite {}: the task body does not round-trip losslessly \
-         (unbalanced code fences, or an unknown/duplicated section heading) — \
-         fix the file by hand first",
+         (unbalanced code fences, a duplicated section heading, or content \
+         before the first heading) — fix the file by hand first",
         path.display()
     )
 }
@@ -1276,6 +1280,36 @@ mod tests {
         let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
         assert_eq!(task.implementation_plan, "1. Step");
         assert_eq!(task.acceptance_criteria.len(), 2);
+    }
+
+    /// TASK-45: a human section the format has no field for must neither
+    /// block the save (the old guard refused it) nor be deleted by it (the
+    /// pre-guard behavior). Surgery replaces only the target section's span,
+    /// so the custom block survives byte-for-byte.
+    #[test]
+    fn replacing_a_section_preserves_an_unknown_section_byte_for_byte() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("task-1 - Custom.md");
+        let custom_block = "## Resolution\n\nRoot cause: the cache.\n\n> verbatim   spacing kept\n";
+        fs::write(
+            &path,
+            format!(
+                "---\nid: TASK-1\ntitle: Custom\n---\n\n## Description\n\nOld body.\n\n{custom_block}"
+            ),
+        )
+        .expect("fixture writes");
+
+        let outcome = replace_task_section(&path, TaskSection::Description, "New body.")
+            .expect("a unique custom section must not block a section replace");
+
+        assert_eq!(outcome, WriteOutcome::Changed);
+        let after = read(&path);
+        assert!(
+            after.contains(custom_block.trim_end()),
+            "the custom section must survive verbatim: {after}"
+        );
+        assert!(after.contains("New body."), "{after}");
+        assert!(!after.contains("Old body."), "{after}");
     }
 
     #[test]

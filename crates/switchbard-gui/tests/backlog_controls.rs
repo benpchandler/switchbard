@@ -3297,12 +3297,16 @@ fn save_button_completes_a_real_write_round_trip_against_a_real_fixture_repo() {
     // CentralPanel's List content — three "Save"-labeled buttons render
     // (field editor's, Dependencies', saved-views bar's, in that order);
     // index 0 is the field editor's.
+    // `run_steps`, not `run`, from here on: the click spawns the save's
+    // background thread, and its repaints (completion `request_repaint`,
+    // scroll-area animation) can land inside `run()`'s settle window and
+    // spin it past max_steps — the TASK-56 race.
     harness.get_all_by_label("Save").next().unwrap().click();
-    harness.run();
+    harness.run_steps(4);
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        harness.run();
+        harness.run_steps(4);
         if harness.state().backlog_status.snapshot().as_deref() == Some("saved TASK-1") {
             break;
         }
@@ -3378,12 +3382,16 @@ fn create_modal_reports_a_compact_created_message_against_a_real_fixture_repo() 
     title_field.type_text("Real create status message task");
     harness.run();
 
+    // `run_steps`, not `run`, from here on: the click spawns the create's
+    // background thread, whose repaints can land inside `run()`'s settle
+    // window and spin it past max_steps — the TASK-56 race (seen on CI with
+    // a scroll-area animation as the recorded repaint cause).
     harness.get_by_label("Create").click();
-    harness.run();
+    harness.run_steps(4);
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        harness.run();
+        harness.run_steps(4);
         if let Some(msg) = harness.state().backlog_status.snapshot() {
             if msg.starts_with("Created ") {
                 assert_eq!(
@@ -3482,12 +3490,14 @@ fn create_modal_task_is_visible_in_both_list_and_board_against_a_real_fixture_re
     title_field.focus();
     title_field.type_text("Freshly created task");
     harness.run();
+    // `run_steps`, not `run`, from here on — the TASK-56 race; see
+    // `create_modal_reports_a_compact_created_message_against_a_real_fixture_repo`.
     harness.get_by_label("Create").click();
-    harness.run();
+    harness.run_steps(4);
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        harness.run();
+        harness.run_steps(4);
         if harness
             .state()
             .backlog_status

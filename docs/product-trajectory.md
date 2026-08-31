@@ -259,22 +259,30 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
     structure isn't one a section-replace can be based on, the description and plan
     are skipped (the criteria append still runs — `--ac` adds to a list rather than
     replacing a section) and the status line says why.
-    - *What the guard is and isn't.* It requires balanced fences, and every `## `
-      heading to be one of the six the format defines and appear once, before it
-      compares content line by line. Those structural rules exist because the first
-      version checked conservation alone and was **circular** — it derived "which
-      lines are headings" with the same predicate the reader used, so a lossy read
-      that surfaced as a spurious heading was self-consistent and passed. It now
-      bounds that class; it is a strong check, not a proof of losslessness.
-    - *It fires on real data.* Across 345 real task files in three repos, 51 fail —
-      every one because it carries a human-written section the format has no field
-      for (`## Resolution`, `## Root Cause Hypothesis`, `## Reproduction Steps`).
-      `parse_task_file` extracts six sections; content under any other heading lands
-      in no field at all, so a replace-write really would delete it.
-    - **Residual (pre-existing, unfixed): the detail rail's Save does not consult
-      the guard.** It writes `-d` from the same parsed description, so on exactly
-      those 51 files it can still delete a custom section. Refine is guarded; Save
-      is not. Fix it when Save is next touched.
+    - *What the guard is and isn't.* It requires balanced fences, no `## ` heading
+      to repeat, and no known section heading inside a fence, before it compares
+      content line by line. Those structural rules exist because the first version
+      checked conservation alone and was **circular** — it derived "which lines are
+      headings" with the same predicate the reader used, so a lossy read that
+      surfaced as a spurious heading was self-consistent and passed. It now bounds
+      that class; it is a strong check, not a proof of losslessness.
+    - *Custom sections are preserved, not refused (TASK-45, decided 2026-08-31).*
+      Across 345 real task files in three repos, 51 carry a human-written section
+      the format has no field for (`## Resolution`, `## Root Cause Hypothesis`,
+      `## Reproduction Steps`); the guard originally treated any unknown heading as
+      a reason to refuse prose writes. TASK-45 posed refuse-vs-preserve as a product
+      call and it resolved to **preserve**: the native write layer (TASK-63) is
+      surgical — a section edit rewrites only its own span — so an unknown heading's
+      block is opaque to every operation and survives byte-for-byte, with the
+      round-trip guard's conservation rule extended to cover it. Refusing would
+      have frozen saves on ~15% of real tasks to defend against nothing; the
+      residual cost of the preserve stance is that prose misread as a heading
+      splits into its own opaque section instead of refusing — a survivable
+      outcome, where the alternatives were refusal or deletion. Only duplicated
+      headings and unbalanced fences still refuse.
+    - *The old residual is closed.* The detail rail's Save has written through the
+      same guarded write layer since the TASK-65 swap, so Refine and Save now share
+      one preservation contract; the 51-file class blocks neither.
     - Whitespace qualification: every non-blank line of the original survives in
       order, byte for byte. Blank runs collapse to one (the CLI does this to every
       write regardless) and whitespace-only lines lose their whitespace.
