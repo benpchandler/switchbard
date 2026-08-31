@@ -44,7 +44,7 @@ pub use backlog::{
     missing_standard_statuses, next_task_id, ordered_status_vocabulary, parse_backlog_day,
     replace_task_section, set_backlog_acceptance_checked, set_backlog_dod_checked,
     set_backlog_final_summary, set_backlog_label, set_task_checklist_item, set_task_label,
-    set_task_list_field, set_task_milestone, set_task_priority, set_task_status, set_task_title,
+    set_task_list_field, set_task_priority, set_task_project, set_task_status, set_task_title,
     swap_backlog_label, swap_task_label, task_file_round_trips, write_new_task_file,
     BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskPatch, BacklogTaskSource,
     NewBacklogTask, TaskChecklist, TaskListField, TaskSection, WriteOutcome, ACTIVE_BRANCH_DAYS,

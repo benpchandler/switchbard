@@ -31,7 +31,7 @@ pub use types::{
 };
 pub use write::{
     append_task_acceptance_criteria, append_task_notes, replace_task_section,
-    set_task_checklist_item, set_task_label, set_task_list_field, set_task_milestone,
-    set_task_priority, set_task_status, set_task_title, swap_task_label, write_new_task_file,
+    set_task_checklist_item, set_task_label, set_task_list_field, set_task_priority,
+    set_task_project, set_task_status, set_task_title, swap_task_label, write_new_task_file,
     TaskChecklist, TaskListField, TaskSection, WriteOutcome,
 };

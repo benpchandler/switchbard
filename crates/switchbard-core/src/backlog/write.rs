@@ -163,18 +163,35 @@ pub fn set_task_title(path: &Path, title: &str) -> Result<WriteOutcome> {
     })
 }
 
-/// `Some(name)` assigns the milestone (inserting the key after `priority` if
-/// the task never had one); `None` removes the key entirely.
-pub fn set_task_milestone(path: &Path, milestone: Option<&str>) -> Result<WriteOutcome> {
-    let Some(name) = milestone else {
+/// `Some(name)` assigns the project; `None` removes the assignment.
+///
+/// This is the one write that performs the membership-key migration
+/// (trajectory: *Linear-vocabulary hierarchy*, divergence 1): a file still
+/// carrying the legacy `milestone:` key has that line rewritten **in place**
+/// as `project:` — same position, one changed line — so key order is
+/// preserved and the diff is minimal. A file carrying both keys is collapsed
+/// to `project:` alone in the same atomic write. Files are otherwise never
+/// migrated: every other operation leaves a legacy `milestone:` line
+/// byte-identical.
+pub fn set_task_project(path: &Path, project: Option<&str>) -> Result<WriteOutcome> {
+    let Some(name) = project else {
         return apply_edit(path, |fm, _| {
+            remove_key(fm, "project");
             remove_key(fm, "milestone");
             Ok(())
         });
     };
-    let name = validated_single_line("milestone", name)?.to_string();
+    let name = validated_single_line("project", name)?.to_string();
     apply_edit(path, move |fm, _| {
-        set_scalar(fm, "milestone", &yaml_scalar(&name), Some("priority"));
+        let rendered = yaml_scalar(&name);
+        if key_span(fm, "project").is_some() {
+            set_scalar(fm, "project", &rendered, None);
+            remove_key(fm, "milestone");
+        } else if let Some((start, end)) = key_span(fm, "milestone") {
+            fm.splice(start..end, [format!("project: {rendered}")]);
+        } else {
+            set_scalar(fm, "project", &rendered, Some("priority"));
+        }
         Ok(())
     })
 }
@@ -898,10 +915,10 @@ fn new_task_text(
         "priority: {}",
         yaml_scalar(validated_single_line("priority", priority)?)
     ));
-    if let Some(milestone) = &task.project {
+    if let Some(project) = &task.project {
         fm.push(format!(
-            "milestone: {}",
-            yaml_scalar(validated_single_line("milestone", milestone)?)
+            "project: {}",
+            yaml_scalar(validated_single_line("project", project)?)
         ));
     }
     if let Some(parent) = &task.parent {
@@ -1221,12 +1238,12 @@ mod tests {
     }
 
     #[test]
-    fn milestone_assign_inserts_after_priority_and_clear_removes_the_key() {
+    fn project_assign_inserts_after_priority_and_clear_removes_the_key() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = fixture_file(&dir);
 
         assert_eq!(
-            set_task_milestone(&path, Some("m-1")).expect("edit succeeds"),
+            set_task_project(&path, Some("m-1")).expect("edit succeeds"),
             WriteOutcome::Changed
         );
         let after = read(&path);
@@ -1235,13 +1252,120 @@ mod tests {
             .iter()
             .position(|l| l.starts_with("priority:"))
             .expect("priority survives");
-        assert_eq!(lines[priority + 1], "milestone: m-1");
+        assert_eq!(lines[priority + 1], "project: m-1");
 
         assert_eq!(
-            set_task_milestone(&path, None).expect("edit succeeds"),
+            set_task_project(&path, None).expect("edit succeeds"),
             WriteOutcome::Changed
         );
-        assert!(!read(&path).contains("milestone:"));
+        assert!(!read(&path).contains("project:"));
+    }
+
+    /// A fixture still carrying the pre-divergence `milestone:` key, with a
+    /// key after it so in-place rewrites are position-checkable.
+    fn legacy_milestone_file(dir: &tempfile::TempDir) -> std::path::PathBuf {
+        let path = dir.path().join("task-8 - Legacy.md");
+        fs::write(
+            &path,
+            "---\n\
+             id: TASK-8\n\
+             title: Legacy\n\
+             status: To Do\n\
+             priority: medium\n\
+             milestone: v1\n\
+             ordinal: 800\n\
+             ---\n\
+             \n\
+             ## Description\n\
+             \n\
+             Body.\n",
+        )
+        .expect("fixture writes");
+        path
+    }
+
+    #[test]
+    fn project_assign_rewrites_a_legacy_milestone_line_in_place() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = legacy_milestone_file(&dir);
+        let before = read(&path);
+        let milestone_index = before
+            .lines()
+            .position(|l| l.starts_with("milestone:"))
+            .expect("fixture carries the legacy key");
+
+        assert_eq!(
+            set_task_project(&path, Some("v2")).expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+
+        let after = read(&path);
+        assert_eq!(
+            after.lines().nth(milestone_index),
+            Some("project: v2"),
+            "the legacy line migrates in place — same position, new key"
+        );
+        assert!(!after.contains("milestone:"));
+        assert_only_lines_touched(
+            &before,
+            &after,
+            &["milestone:", "project:", "updated_date:"],
+        );
+    }
+
+    #[test]
+    fn project_assign_on_a_both_keys_file_collapses_to_project_in_one_write() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("task-7 - Both.md");
+        fs::write(
+            &path,
+            "---\nid: TASK-7\ntitle: Both\nstatus: To Do\nproject: current\nmilestone: stale\n---\n",
+        )
+        .expect("fixture writes");
+
+        assert_eq!(
+            set_task_project(&path, Some("next")).expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+        let after = read(&path);
+        assert!(after.contains("project: next"));
+        assert!(!after.contains("milestone:"));
+    }
+
+    #[test]
+    fn unrelated_edits_never_migrate_the_legacy_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = legacy_milestone_file(&dir);
+        let before = read(&path);
+
+        assert_eq!(
+            set_task_status(&path, "In Progress").expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+
+        let after = read(&path);
+        assert!(
+            after.contains("milestone: v1"),
+            "a status edit leaves the legacy key byte-identical"
+        );
+        assert_only_lines_touched(&before, &after, &["status:", "updated_date:"]);
+    }
+
+    #[test]
+    fn reassigning_the_same_project_is_a_byte_no_op() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = fixture_file(&dir);
+        assert_eq!(
+            set_task_project(&path, Some("m-1")).expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+        let before = read(&path);
+
+        assert_eq!(
+            set_task_project(&path, Some("m-1")).expect("edit succeeds"),
+            WriteOutcome::Unchanged
+        );
+        assert_eq!(read(&path), before, "no-op writes nothing");
     }
 
     #[test]
@@ -1469,7 +1593,7 @@ mod tests {
              dependencies:\n\
              \x20 - task-5\n\
              priority: medium\n\
-             milestone: m-1\n\
+             project: m-1\n\
              parent_task_id: TASK-3\n\
              ---\n\
              \n\

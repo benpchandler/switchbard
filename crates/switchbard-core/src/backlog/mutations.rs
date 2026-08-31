@@ -38,8 +38,8 @@ use super::parse::{
 use super::types::{BacklogTaskPatch, BacklogTaskSource, NewBacklogTask};
 use super::write::{
     append_task_acceptance_criteria, append_task_notes, replace_task_section,
-    set_task_checklist_item, set_task_label, set_task_list_field, set_task_milestone,
-    set_task_priority, set_task_status, set_task_title, swap_task_label, TaskChecklist,
+    set_task_checklist_item, set_task_label, set_task_list_field, set_task_priority,
+    set_task_project, set_task_status, set_task_title, swap_task_label, TaskChecklist,
     TaskListField, TaskSection, WriteOutcome,
 };
 use anyhow::{bail, Context, Result};
@@ -103,9 +103,9 @@ fn apply_patch(path: &Path, patch: &BacklogTaskPatch) -> Result<bool> {
             append_task_acceptance_criteria(path, &patch.append_acceptance_criteria)?.changed();
     }
     if let Some(project) = &patch.project {
-        changed |= set_task_milestone(path, Some(project))?.changed();
+        changed |= set_task_project(path, Some(project))?.changed();
     } else if patch.clear_project {
-        changed |= set_task_milestone(path, None)?.changed();
+        changed |= set_task_project(path, None)?.changed();
     }
     Ok(changed)
 }
