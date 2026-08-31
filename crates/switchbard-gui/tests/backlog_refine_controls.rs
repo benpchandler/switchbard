@@ -39,7 +39,7 @@ fn task(source: BacklogTaskSource) -> BacklogTask {
         labels: vec![],
         dependencies: vec![],
         references: vec![],
-        milestone: None,
+        project: None,
         parent: None,
         created_date: Some("2026-08-19 09:00".to_string()),
         updated_date: Some("2026-08-19 09:00".to_string()),

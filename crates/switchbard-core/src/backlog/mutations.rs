@@ -102,9 +102,9 @@ fn apply_patch(path: &Path, patch: &BacklogTaskPatch) -> Result<bool> {
         changed |=
             append_task_acceptance_criteria(path, &patch.append_acceptance_criteria)?.changed();
     }
-    if let Some(milestone) = &patch.milestone {
-        changed |= set_task_milestone(path, Some(milestone))?.changed();
-    } else if patch.clear_milestone {
+    if let Some(project) = &patch.project {
+        changed |= set_task_milestone(path, Some(project))?.changed();
+    } else if patch.clear_project {
         changed |= set_task_milestone(path, None)?.changed();
     }
     Ok(changed)
@@ -139,7 +139,7 @@ pub fn set_backlog_acceptance_checked(
 /// status-chosen destinations, never interchangeable options.
 pub fn archive_backlog_task(project_root: &Path, task_id: &str) -> Result<String> {
     let path = resolve_task_file(project_root, task_id)?;
-    let task = parse_task_file(&path, BacklogTaskSource::Active)?;
+    let (task, _) = parse_task_file(&path, BacklogTaskSource::Active)?;
     if task.status.eq_ignore_ascii_case("done") {
         bail!("Done tasks should be completed, not archived");
     }
@@ -152,7 +152,7 @@ pub fn archive_backlog_task(project_root: &Path, task_id: &str) -> Result<String
 /// complement of [`archive_backlog_task`]'s refusal.
 pub fn complete_backlog_task(project_root: &Path, task_id: &str) -> Result<String> {
     let path = resolve_task_file(project_root, task_id)?;
-    let task = parse_task_file(&path, BacklogTaskSource::Active)?;
+    let (task, _) = parse_task_file(&path, BacklogTaskSource::Active)?;
     if !task.status.eq_ignore_ascii_case("done") {
         bail!("only a Done task can be completed; archive it instead");
     }
@@ -351,7 +351,7 @@ mod tests {
             parent: None,
             labels: vec![],
             assignees: vec![],
-            milestone: None,
+            project: None,
             dependencies: vec![],
         }
     }

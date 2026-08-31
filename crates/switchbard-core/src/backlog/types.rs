@@ -217,7 +217,11 @@ pub struct BacklogTask {
     pub labels: Vec<String>,
     pub dependencies: Vec<String>,
     pub references: Vec<String>,
-    pub milestone: Option<String>,
+    /// Project membership (the Linear-hierarchy tier above tasks), read from
+    /// the `project:` frontmatter key with legacy `milestone:` as a fallback
+    /// — see `parse_task_file`. Name-keyed: the string is the project's name,
+    /// which may or may not have a `backlog/projects/<slug>.md` definition.
+    pub project: Option<String>,
     pub parent: Option<String>,
     pub created_date: Option<String>,
     pub updated_date: Option<String>,
@@ -288,15 +292,15 @@ pub struct BacklogTaskPatch {
     /// human-authored, possibly already-checked criterion is never disturbed
     /// by an agent's suggestions.
     pub append_acceptance_criteria: Vec<String>,
-    /// `Some(name)` assigns the milestone; `None` with `clear_milestone` unset
+    /// `Some(name)` assigns the project; `None` with `clear_project` unset
     /// leaves it untouched. Assign and clear are mutually exclusive — callers
-    /// that want to clear set `clear_milestone` instead of this field.
-    pub milestone: Option<String>,
-    /// Clears the task's milestone assignment (`--clear-milestone`). Ignored
-    /// if `milestone` is also set (assigning wins) — `is_empty` doesn't need
+    /// that want to clear set `clear_project` instead of this field.
+    pub project: Option<String>,
+    /// Clears the task's project assignment (`--clear-project`). Ignored
+    /// if `project` is also set (assigning wins) — `is_empty` doesn't need
     /// to police that; `edit_backlog_task` only ever receives one or the
     /// other from the UI layer.
-    pub clear_milestone: bool,
+    pub clear_project: bool,
 }
 
 impl BacklogTaskPatch {
@@ -311,8 +315,8 @@ impl BacklogTaskPatch {
             && self.references.is_none()
             && self.implementation_plan.is_none()
             && self.append_acceptance_criteria.is_empty()
-            && self.milestone.is_none()
-            && !self.clear_milestone
+            && self.project.is_none()
+            && !self.clear_project
     }
 }
 
@@ -332,8 +336,8 @@ pub struct NewBacklogTask {
     /// --help`, same flag `edit_backlog_task` already uses for
     /// `BacklogTaskPatch::assignees`).
     pub assignees: Vec<String>,
-    /// Passed as `-m` (verified against `backlog task create --help`).
-    pub milestone: Option<String>,
+    /// Project membership at creation time (`-m`/`--in-project`).
+    pub project: Option<String>,
     /// Passed as `--depends-on`, comma-joined (verified against `backlog
     /// task create --help`; same flag `edit_backlog_task` uses for
     /// `BacklogTaskPatch::dependencies`).
@@ -393,7 +397,7 @@ mod tests {
                     labels: vec![],
                     dependencies: vec![],
                     references: vec![],
-                    milestone: None,
+                    project: None,
                     parent: None,
                     created_date: None,
                     updated_date: None,

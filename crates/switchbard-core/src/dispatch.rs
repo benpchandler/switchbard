@@ -998,7 +998,7 @@ mod tests {
             labels: labels.iter().map(|l| l.to_string()).collect(),
             dependencies: vec![],
             references: vec![],
-            milestone: None,
+            project: None,
             parent: None,
             created_date: None,
             updated_date: None,

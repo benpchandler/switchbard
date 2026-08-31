@@ -25,7 +25,7 @@ pub(super) fn render_milestones(
     for row in &tasks {
         let label = row
             .task
-            .milestone
+            .project
             .clone()
             .unwrap_or_else(|| UNASSIGNED_LABEL.to_string());
         groups.entry(label).or_default().push(row);

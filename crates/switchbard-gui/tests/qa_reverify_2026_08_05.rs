@@ -35,7 +35,7 @@ fn task(id: &str, title: &str, status: &str) -> BacklogTask {
         labels: vec![],
         dependencies: vec![],
         references: vec![],
-        milestone: None,
+        project: None,
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-01 09:00".to_string()),
@@ -107,7 +107,7 @@ fn native_task_create(root: &std::path::Path, title: &str) -> String {
             parent: None,
             labels: vec![],
             assignees: vec![],
-            milestone: None,
+            project: None,
             dependencies: vec![],
         },
     )
@@ -242,9 +242,9 @@ fn sort_by_labels_actually_reorders_the_rendered_rows() {
 #[test]
 fn sort_by_milestone_actually_reorders_the_rendered_rows() {
     let mut v2 = task("TASK-1", "V2 task", "To Do");
-    v2.milestone = Some("v2".to_string());
+    v2.project = Some("v2".to_string());
     let mut v1 = task("TASK-2", "V1 task", "To Do");
-    v1.milestone = Some("v1".to_string());
+    v1.project = Some("v1".to_string());
 
     let mut app = list_app_with_tasks(vec![v2, v1]);
     app.backlog_view.sort_key = BacklogTaskSortKey::Milestone;
@@ -279,15 +279,15 @@ fn sort_by_milestone_actually_reorders_the_rendered_rows() {
 #[test]
 fn milestone_and_label_filters_both_narrow_the_visible_set_together() {
     let mut matches_both = task("TASK-1", "Matches both filters", "To Do");
-    matches_both.milestone = Some("Q3-hardening".to_string());
+    matches_both.project = Some("Q3-hardening".to_string());
     matches_both.labels = vec!["security-review".to_string()];
 
     let mut wrong_milestone = task("TASK-2", "Wrong milestone", "To Do");
-    wrong_milestone.milestone = Some("Q4-launch".to_string());
+    wrong_milestone.project = Some("Q4-launch".to_string());
     wrong_milestone.labels = vec!["security-review".to_string()];
 
     let mut wrong_label = task("TASK-3", "Wrong label", "To Do");
-    wrong_label.milestone = Some("Q3-hardening".to_string());
+    wrong_label.project = Some("Q3-hardening".to_string());
     wrong_label.labels = vec!["docs".to_string()];
 
     let mut h = harness(list_app_with_tasks(vec![
@@ -444,7 +444,7 @@ fn create_modal_fields_typed_via_kittest_persist_through_a_real_create() {
         "qa-reverify, cross-cutting"
     );
     assert_eq!(h.state().backlog_view.new_task.assignees, "ben");
-    assert_eq!(h.state().backlog_view.new_task.milestone, "v-reverify");
+    assert_eq!(h.state().backlog_view.new_task.project, "v-reverify");
     assert_eq!(h.state().backlog_view.new_task.dependencies, "TASK-1");
 
     h.get_by_label("Create").click();
@@ -494,7 +494,7 @@ fn create_modal_fields_typed_via_kittest_persist_through_a_real_create() {
         "assignee typed into the modal should reach the real CLI"
     );
     assert_eq!(
-        created.milestone.as_deref(),
+        created.project.as_deref(),
         Some("v-reverify"),
         "milestone typed into the modal should reach the real CLI"
     );

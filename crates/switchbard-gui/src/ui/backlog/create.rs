@@ -13,12 +13,8 @@ use switchbard_core::{ordered_status_vocabulary, NewBacklogTask};
 /// column's status. All entry points share this so the global "+ Task"
 /// control and per-column affordances cannot drift on repo targeting or
 /// accidentally retain a subtask parent.
-pub(super) fn open_new_task(
-    app: &mut HiveApp,
-    target_project: Option<PathBuf>,
-    status: Option<&str>,
-) {
-    app.backlog_view.new_task.target_project = target_project;
+pub(super) fn open_new_task(app: &mut HiveApp, target_repo: Option<PathBuf>, status: Option<&str>) {
+    app.backlog_view.new_task.target_repo = target_repo;
     app.backlog_view.new_task.parent = None;
     if let Some(status) = status {
         app.backlog_view.new_task.status = status.to_string();
@@ -35,7 +31,7 @@ pub(super) fn render_create_modal(
     if !app.backlog_view.new_task.open {
         return;
     }
-    let Some(target_key) = app.backlog_view.new_task.target_project.clone() else {
+    let Some(target_key) = app.backlog_view.new_task.target_repo.clone() else {
         app.backlog_view.new_task.open = false;
         return;
     };
@@ -77,10 +73,10 @@ pub(super) fn render_create_modal(
                     .width(320.0)
                     .show_ui(ui, |ui| {
                         for row in &snap.repos {
-                            let selected = app.backlog_view.new_task.target_project.as_deref()
-                                == Some(&row.key);
+                            let selected =
+                                app.backlog_view.new_task.target_repo.as_deref() == Some(&row.key);
                             if ui.selectable_label(selected, row.label()).clicked() {
-                                app.backlog_view.new_task.target_project = Some(row.key.clone());
+                                app.backlog_view.new_task.target_repo = Some(row.key.clone());
                             }
                         }
                     });
@@ -143,7 +139,7 @@ pub(super) fn render_create_modal(
             ui.horizontal(|ui| {
                 ui.label("milestone");
                 ui.add(
-                    egui::TextEdit::singleline(&mut app.backlog_view.new_task.milestone)
+                    egui::TextEdit::singleline(&mut app.backlog_view.new_task.project)
                         .desired_width(200.0),
                 );
                 ui.label("dependencies");
@@ -169,7 +165,7 @@ pub(super) fn render_create_modal(
                         .filter(|line| !line.is_empty())
                         .map(str::to_string)
                         .collect();
-                    let milestone = app.backlog_view.new_task.milestone.trim().to_string();
+                    let milestone = app.backlog_view.new_task.project.trim().to_string();
                     pending.create = Some((
                         target_key.clone(),
                         NewBacklogTask {
@@ -183,7 +179,7 @@ pub(super) fn render_create_modal(
                             assignees: detail_lists::split_csv(
                                 &app.backlog_view.new_task.assignees,
                             ),
-                            milestone: (!milestone.is_empty()).then_some(milestone),
+                            project: (!milestone.is_empty()).then_some(milestone),
                             dependencies: detail_lists::split_csv(
                                 &app.backlog_view.new_task.dependencies,
                             ),

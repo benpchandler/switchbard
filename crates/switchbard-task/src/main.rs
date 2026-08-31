@@ -321,7 +321,7 @@ fn create(root: &Path, args: &CreateArgs) -> Result<()> {
         parent: args.parent.clone(),
         labels: args.labels.clone(),
         assignees: args.assignees.clone(),
-        milestone: args.milestone.clone(),
+        project: args.milestone.clone(),
         dependencies: args.depends_on.clone(),
     };
     let id = switchbard_core::create_backlog_task(root, &task)?;
@@ -393,8 +393,8 @@ fn patch_from(args: &EditArgs) -> BacklogTaskPatch {
         references: args.references.clone(),
         implementation_plan: args.plan.clone(),
         append_acceptance_criteria: args.acceptance_criteria.clone(),
-        milestone: args.milestone.clone(),
-        clear_milestone: args.clear_milestone,
+        project: args.milestone.clone(),
+        clear_project: args.clear_milestone,
     }
 }
 

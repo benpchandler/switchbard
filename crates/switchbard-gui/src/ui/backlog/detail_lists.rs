@@ -121,7 +121,7 @@ pub(super) fn render_subtasks(
                 .on_hover_text("Create a subtask through backlog task create -p")
                 .clicked()
         {
-            app.backlog_view.new_task.target_project = Some(project_root.to_path_buf());
+            app.backlog_view.new_task.target_repo = Some(project_root.to_path_buf());
             app.backlog_view.new_task.parent = Some(task.id.clone());
             app.backlog_view.new_task.open = true;
         }

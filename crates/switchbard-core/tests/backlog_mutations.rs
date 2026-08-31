@@ -49,7 +49,7 @@ fn create_fixture_task(root: &Path) -> String {
         parent: None,
         labels: vec![],
         assignees: vec![],
-        milestone: None,
+        project: None,
         dependencies: vec![],
     };
     let output = create_backlog_task(root, &task).expect("create_backlog_task should succeed");
@@ -91,7 +91,7 @@ fn edit_backlog_task_persists_every_field_the_detail_pane_editor_exposes() {
         dependencies: Some(vec!["task-9".to_string()]),
         references: Some(vec!["https://example.com/spec".to_string()]),
         implementation_plan: Some("1. Do it\n2. Prove it".to_string()),
-        milestone: Some("m-1".to_string()),
+        project: Some("m-1".to_string()),
         ..Default::default()
     };
     edit_backlog_task(root, &task_id, &patch).expect("edit should succeed");
@@ -107,7 +107,7 @@ fn edit_backlog_task_persists_every_field_the_detail_pane_editor_exposes() {
     assert_eq!(task.dependencies, vec!["task-9"]);
     assert_eq!(task.references, vec!["https://example.com/spec"]);
     assert_eq!(task.implementation_plan, "1. Do it\n2. Prove it");
-    assert_eq!(task.milestone.as_deref(), Some("m-1"));
+    assert_eq!(task.project.as_deref(), Some("m-1"));
     assert_eq!(
         task.acceptance_criteria.len(),
         1,
@@ -118,13 +118,13 @@ fn edit_backlog_task_persists_every_field_the_detail_pane_editor_exposes() {
         root,
         &task_id,
         &BacklogTaskPatch {
-            clear_milestone: true,
+            clear_project: true,
             ..Default::default()
         },
     )
     .expect("clearing the milestone should succeed");
     let project = reload(root);
-    assert_eq!(find(&project, &task_id).milestone, None);
+    assert_eq!(find(&project, &task_id).project, None);
 }
 
 #[test]
@@ -515,7 +515,7 @@ fn create_backlog_task_wires_labels_assignee_milestone_and_dependencies() {
             parent: None,
             labels: vec!["frontend".to_string(), "urgent".to_string()],
             assignees: vec!["ben".to_string()],
-            milestone: Some("v1".to_string()),
+            project: Some("v1".to_string()),
             dependencies: vec![dependency_id.clone()],
         },
     )
@@ -526,7 +526,7 @@ fn create_backlog_task_wires_labels_assignee_milestone_and_dependencies() {
     let task = find(&project, "TASK-2");
     assert_eq!(task.labels, vec!["frontend", "urgent"]);
     assert_eq!(task.assignees, vec!["ben"]);
-    assert_eq!(task.milestone.as_deref(), Some("v1"));
+    assert_eq!(task.project.as_deref(), Some("v1"));
     assert_eq!(task.dependencies, vec![dependency_id]);
 }
 
@@ -551,7 +551,7 @@ fn subtask_ids_are_decimal_children_of_the_parent_id() {
                 parent: Some(parent_id.clone()),
                 labels: vec![],
                 assignees: vec![],
-                milestone: None,
+                project: None,
                 dependencies: vec![],
             },
         )
@@ -636,7 +636,7 @@ fn create_backlog_task_mints_the_projects_configured_prefix() {
             parent: None,
             labels: vec![],
             assignees: vec![],
-            milestone: None,
+            project: None,
             dependencies: vec![],
         },
     )

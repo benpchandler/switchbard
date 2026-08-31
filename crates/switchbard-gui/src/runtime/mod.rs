@@ -550,7 +550,7 @@ pub struct BacklogEditorState {
     pub assignees: String,
     pub dependencies: String,
     pub plan: String,
-    pub milestone: String,
+    pub project: String,
     pub note: String,
     /// `false` (default) shows the description as rendered CommonMark;
     /// `true` reveals the raw multiline editor (task-15 AC #3).
@@ -569,10 +569,10 @@ pub struct BacklogNewTaskState {
     /// (`selected_repo` is `None`), the modal shows its own project picker
     /// and stores the choice here instead of forcing the user out of the
     /// unified scope just to file a task.
-    pub target_project: Option<PathBuf>,
+    pub target_repo: Option<PathBuf>,
     /// Set when the modal was opened via "+ Subtask" on a task's detail pane
     /// (task-17) — the parent task id, passed through as `-p` on create.
-    /// `Some` also pins `target_project` to the parent's own project; a
+    /// `Some` also pins `target_repo` to the parent's own project; a
     /// subtask can't be filed in a different repo than its parent, since
     /// Backlog.md's `parent` field is a bare, project-scoped id.
     pub parent: Option<String>,
@@ -588,7 +588,7 @@ pub struct BacklogNewTaskState {
     /// parses both).
     pub labels: String,
     pub assignees: String,
-    pub milestone: String,
+    pub project: String,
     pub dependencies: String,
 }
 
@@ -596,7 +596,7 @@ impl Default for BacklogNewTaskState {
     fn default() -> Self {
         Self {
             open: false,
-            target_project: None,
+            target_repo: None,
             parent: None,
             title: String::new(),
             description: String::new(),
@@ -605,7 +605,7 @@ impl Default for BacklogNewTaskState {
             acceptance_criteria: String::new(),
             labels: String::new(),
             assignees: String::new(),
-            milestone: String::new(),
+            project: String::new(),
             dependencies: String::new(),
         }
     }

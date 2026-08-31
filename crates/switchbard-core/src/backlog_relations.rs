@@ -133,7 +133,7 @@ mod tests {
             labels: vec![],
             dependencies: deps.iter().map(|s| s.to_string()).collect(),
             references: vec![],
-            milestone: None,
+            project: None,
             parent: parent.map(str::to_string),
             created_date: None,
             updated_date: None,

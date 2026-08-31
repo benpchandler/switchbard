@@ -429,7 +429,7 @@ fn legibility_backlog_task() -> BacklogTask {
         labels: vec!["demo".to_string(), DISPATCH_LABEL.to_string()],
         dependencies: vec!["TASK-2".to_string()],
         references: vec!["https://example.com/spec".to_string()],
-        milestone: Some("v1".to_string()),
+        project: Some("v1".to_string()),
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-20 12:00".to_string()),

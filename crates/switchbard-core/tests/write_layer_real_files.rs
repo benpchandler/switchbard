@@ -161,7 +161,7 @@ fn assert_fields_untouched(before: &BacklogTask, after: &BacklogTask, source: &P
     assert_eq!(before.labels, after.labels, "{name}");
     assert_eq!(before.dependencies, after.dependencies, "{name}");
     assert_eq!(before.references, after.references, "{name}");
-    assert_eq!(before.milestone, after.milestone, "{name}");
+    assert_eq!(before.project, after.project, "{name}");
     assert_eq!(before.parent, after.parent, "{name}");
     assert_eq!(before.created_date, after.created_date, "{name}");
     assert_eq!(before.description, after.description, "{name}");

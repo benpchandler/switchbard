@@ -57,7 +57,7 @@ fn sample_task(id: &str, title: &str, status: &str) -> BacklogTask {
         labels: vec!["demo".to_string()],
         dependencies: vec![],
         references: vec!["https://example.com/spec".to_string()],
-        milestone: Some("v1".to_string()),
+        project: Some("v1".to_string()),
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-20 12:00".to_string()),
@@ -308,7 +308,7 @@ fn shots_for_theme(theme: ThemeChoice) {
             vec![sample_task("TASK-1", "Existing task", "To Do")],
         );
         app.backlog_view.new_task.open = true;
-        app.backlog_view.new_task.target_project = Some(PathBuf::from(REPO_PATH));
+        app.backlog_view.new_task.target_repo = Some(PathBuf::from(REPO_PATH));
         let mut h = harness(app);
         h.run();
         snapshot(&mut h, &format!("backlog_create_modal{suffix}"));
@@ -323,7 +323,7 @@ fn shots_for_theme(theme: ThemeChoice) {
             vec![sample_task("TASK-1", "Existing board task", "To Do")],
         );
         app.backlog_view.new_task.open = true;
-        app.backlog_view.new_task.target_project = Some(PathBuf::from(REPO_PATH));
+        app.backlog_view.new_task.target_repo = Some(PathBuf::from(REPO_PATH));
         app.backlog_view.new_task.status = "In Progress".to_string();
         let mut h = harness(app);
         h.run();

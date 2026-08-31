@@ -212,17 +212,17 @@ fn render_editor(
         ui.label("milestone");
         ui.horizontal(|ui| {
             ui.add(
-                egui::TextEdit::singleline(&mut app.backlog_view.editor.milestone)
+                egui::TextEdit::singleline(&mut app.backlog_view.editor.project)
                     .hint_text("none")
                     .desired_width(ui.available_width() - 50.0),
             );
-            if !app.backlog_view.editor.milestone.trim().is_empty()
+            if !app.backlog_view.editor.project.trim().is_empty()
                 && ui
                     .small_button("Clear")
                     .on_hover_text("Clear the milestone assignment")
                     .clicked()
             {
-                app.backlog_view.editor.milestone.clear();
+                app.backlog_view.editor.project.clear();
             }
         });
 
@@ -323,7 +323,7 @@ fn sync_editor(app: &mut HiveApp, project_root: &Path, task: &BacklogTask) {
     app.backlog_view.editor.assignees = task.assignees.join(", ");
     app.backlog_view.editor.dependencies = task.dependencies.join(", ");
     app.backlog_view.editor.plan = task.implementation_plan.clone();
-    app.backlog_view.editor.milestone = task.milestone.clone().unwrap_or_default();
+    app.backlog_view.editor.project = task.project.clone().unwrap_or_default();
     app.backlog_view.editor.note.clear();
     app.backlog_view.editor.description_editing = false;
     app.backlog_view.editor.new_reference.clear();
@@ -367,13 +367,13 @@ fn patch_from_editor(task: &BacklogTask, editor: &BacklogEditorState) -> Backlog
     if plan != task.implementation_plan {
         patch.implementation_plan = Some(plan);
     }
-    let milestone = editor.milestone.trim();
-    let current_milestone = task.milestone.as_deref().unwrap_or("");
+    let milestone = editor.project.trim();
+    let current_milestone = task.project.as_deref().unwrap_or("");
     if milestone != current_milestone {
         if milestone.is_empty() {
-            patch.clear_milestone = true;
+            patch.clear_project = true;
         } else {
-            patch.milestone = Some(milestone.to_string());
+            patch.project = Some(milestone.to_string());
         }
     }
     patch

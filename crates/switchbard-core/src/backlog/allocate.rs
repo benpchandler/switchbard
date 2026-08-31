@@ -513,7 +513,7 @@ mod tests {
             parent: None,
             labels: vec![],
             assignees: vec![],
-            milestone: None,
+            project: None,
             dependencies: vec![],
         }
     }

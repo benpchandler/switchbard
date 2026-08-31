@@ -29,11 +29,7 @@ pub fn task_view(task: &BacklogTask) -> String {
     push_field(&mut out, "Priority", &task.priority);
     push_field(&mut out, "Labels", &task.labels.join(", "));
     push_field(&mut out, "Assignee", &task.assignees.join(", "));
-    push_field(
-        &mut out,
-        "Milestone",
-        task.milestone.as_deref().unwrap_or(""),
-    );
+    push_field(&mut out, "Milestone", task.project.as_deref().unwrap_or(""));
     push_field(&mut out, "Parent", task.parent.as_deref().unwrap_or(""));
     push_field(&mut out, "Dependencies", &task.dependencies.join(", "));
     push_field(&mut out, "References", &task.references.join(", "));
@@ -98,7 +94,7 @@ mod tests {
             labels: vec!["fork".to_string(), "cli".to_string()],
             dependencies: vec![],
             references: vec![],
-            milestone: None,
+            project: None,
             parent: None,
             created_date: Some("2026-08-28 10:00".to_string()),
             updated_date: None,

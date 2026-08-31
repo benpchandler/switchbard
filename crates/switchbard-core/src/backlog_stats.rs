@@ -213,7 +213,7 @@ pub fn compute_burndown_by_milestone(
 ) -> Vec<BurndownSeries> {
     let mut by_milestone: BTreeMap<String, Vec<&BacklogTask>> = BTreeMap::new();
     for task in tasks {
-        if let Some(milestone) = &task.milestone {
+        if let Some(milestone) = &task.project {
             by_milestone
                 .entry(milestone.clone())
                 .or_default()
@@ -296,7 +296,7 @@ mod tests {
             labels: vec![],
             dependencies: vec![],
             references: vec![],
-            milestone: None,
+            project: None,
             parent: None,
             created_date: None,
             updated_date: None,
@@ -414,7 +414,7 @@ mod tests {
         let mut with_milestone = task("TASK-1", "Done", "high", BacklogTaskSource::Active);
         with_milestone.created_date = Some("2026-01-01 00:00".to_string());
         with_milestone.updated_date = Some("2026-01-01 00:00".to_string());
-        with_milestone.milestone = Some("v1".to_string());
+        with_milestone.project = Some("v1".to_string());
 
         let mut unassigned = task("TASK-2", "To Do", "high", BacklogTaskSource::Active);
         unassigned.created_date = Some("2026-01-01 00:00".to_string());

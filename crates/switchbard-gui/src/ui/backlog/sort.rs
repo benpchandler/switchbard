@@ -110,8 +110,8 @@ pub(super) fn compare_tasks(
             cmp_ascii_case_insensitive(&a.assignees.join(", "), &b.assignees.join(", "))
         }
         BacklogTaskSortKey::Milestone => cmp_ascii_case_insensitive(
-            a.milestone.as_deref().unwrap_or(""),
-            b.milestone.as_deref().unwrap_or(""),
+            a.project.as_deref().unwrap_or(""),
+            b.project.as_deref().unwrap_or(""),
         ),
     };
     let primary = match sort_direction {
@@ -278,7 +278,7 @@ impl<'a> ActiveFilters<'a> {
         }
         if exclude != Some(Facet::Milestone)
             && self.milestone != "all"
-            && task.milestone.as_deref() != Some(self.milestone)
+            && task.project.as_deref() != Some(self.milestone)
         {
             return false;
         }
@@ -355,7 +355,7 @@ pub(super) fn milestone_options(
             if !filters.matches(task, Some(Facet::Milestone)) {
                 continue;
             }
-            if let Some(milestone) = &task.milestone {
+            if let Some(milestone) = &task.project {
                 *counts.entry(milestone.clone()).or_default() += 1;
             }
         }
@@ -431,7 +431,7 @@ mod tests {
             labels: vec![],
             dependencies: vec![],
             references: vec![],
-            milestone: None,
+            project: None,
             parent: None,
             created_date: None,
             updated_date: None,
@@ -486,7 +486,7 @@ mod tests {
 
     fn milestone_task(id: &str, status: &str, milestone: &str) -> BacklogTask {
         let mut task = task_with_fields(id, id, status, "medium", 0, 0);
-        task.milestone = Some(milestone.to_string());
+        task.project = Some(milestone.to_string());
         task
     }
 
@@ -734,7 +734,7 @@ mod tests {
         let mut task = task_with_fields(id, id, "To Do", "medium", 0, 0);
         task.labels = labels.iter().map(|l| l.to_string()).collect();
         task.assignees = assignee.into_iter().map(|a| a.to_string()).collect();
-        task.milestone = milestone.map(|m| m.to_string());
+        task.project = milestone.map(|m| m.to_string());
         task
     }
 

@@ -43,7 +43,7 @@ fn task(id: &str, title: &str, status: &str) -> BacklogTask {
         labels: vec![],
         dependencies: vec![],
         references: vec![],
-        milestone: None,
+        project: None,
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-01 09:00".to_string()),
@@ -532,7 +532,7 @@ fn plus_task_button_opens_the_create_modal_targeting_the_current_project() {
 
     assert!(harness.state().backlog_view.new_task.open);
     assert_eq!(
-        harness.state().backlog_view.new_task.target_project,
+        harness.state().backlog_view.new_task.target_repo,
         Some(PathBuf::from(REPO_PATH))
     );
     assert!(
@@ -602,7 +602,7 @@ fn create_modal_labels_assignee_milestone_and_dependencies_fields_reset_after_cr
     harness.state_mut().backlog_view.new_task.title = "New fixture task".to_string();
     harness.state_mut().backlog_view.new_task.labels = "frontend, urgent".to_string();
     harness.state_mut().backlog_view.new_task.assignees = "ben".to_string();
-    harness.state_mut().backlog_view.new_task.milestone = "v1".to_string();
+    harness.state_mut().backlog_view.new_task.project = "v1".to_string();
     harness.state_mut().backlog_view.new_task.dependencies = "TASK-1".to_string();
     harness.run();
 
@@ -631,7 +631,7 @@ fn create_modal_labels_assignee_milestone_and_dependencies_fields_reset_after_cr
         "assignees buffer should reset after Create"
     );
     assert_eq!(
-        new_task.milestone, "",
+        new_task.project, "",
         "milestone buffer should reset after Create"
     );
     assert_eq!(
@@ -721,9 +721,9 @@ fn drafts_filter_checkbox_hides_and_reveals_draft_tasks() {
 #[test]
 fn milestone_filter_hides_tasks_outside_the_selected_milestone() {
     let mut v1 = task("TASK-1", "In v1", "To Do");
-    v1.milestone = Some("v1".to_string());
+    v1.project = Some("v1".to_string());
     let mut v2 = task("TASK-2", "In v2", "To Do");
-    v2.milestone = Some("v2".to_string());
+    v2.project = Some("v2".to_string());
     let mut harness = list_harness_with_tasks(vec![v1, v2]);
 
     harness.state_mut().backlog_view.milestone_filter = "v1".to_string();
@@ -1160,7 +1160,7 @@ fn board_column_add_task_opens_the_composer_with_that_columns_status() {
         "the clicked column should preselect the new task's status"
     );
     assert_eq!(
-        harness.state().backlog_view.new_task.target_project,
+        harness.state().backlog_view.new_task.target_repo,
         Some(PathBuf::from(REPO_PATH))
     );
     assert!(harness.query_by_label("New Backlog Task").is_some());
@@ -2613,7 +2613,7 @@ fn detail_rail_width_changes_when_its_left_edge_is_dragged() {
 #[test]
 fn milestone_row_click_selects_the_task() {
     let mut milestoned = task("TASK-1", "Milestoned task", "To Do");
-    milestoned.milestone = Some("v1".to_string());
+    milestoned.project = Some("v1".to_string());
     let mut app = list_app_with_tasks(vec![milestoned]);
     app.backlog_view.lens = BacklogLens::Milestones;
     let mut harness = harness(app);
@@ -2631,7 +2631,7 @@ fn milestone_row_click_selects_the_task() {
 #[test]
 fn milestone_collapsing_header_collapses_and_reveals_its_tasks() {
     let mut milestoned = task("TASK-1", "Milestoned task", "To Do");
-    milestoned.milestone = Some("v1".to_string());
+    milestoned.project = Some("v1".to_string());
     let mut app = list_app_with_tasks(vec![milestoned]);
     app.backlog_view.lens = BacklogLens::Milestones;
     let mut harness = harness(app);
@@ -2675,7 +2675,7 @@ fn detail_task_with_checklists() -> BacklogTask {
         checked: false,
         text: "DoD one".to_string(),
     }];
-    t.milestone = Some("v1".to_string());
+    t.project = Some("v1".to_string());
     t.description = "Some body text.".to_string();
     t
 }
@@ -2748,7 +2748,7 @@ fn milestone_clear_button_empties_the_milestone_field() {
     harness.get_by_label("Clear").click();
     harness.run();
 
-    assert_eq!(harness.state().backlog_view.editor.milestone, "");
+    assert_eq!(harness.state().backlog_view.editor.project, "");
     assert!(
         harness.query_by_label("Clear").is_none(),
         "the Clear button only shows while the milestone field is non-empty"
@@ -3565,7 +3565,7 @@ fn sub_task_hierarchy_renders_correctly_from_a_native_created_subtask() {
                 parent: Some("TASK-1".to_string()),
                 labels: vec![],
                 assignees: vec![],
-                milestone: None,
+                project: None,
                 dependencies: vec![],
             },
         )
@@ -3686,7 +3686,7 @@ fn native_task_create(root: &std::path::Path, title: &str) -> String {
             parent: None,
             labels: vec![],
             assignees: vec![],
-            milestone: None,
+            project: None,
             dependencies: vec![],
         },
     )

@@ -53,7 +53,7 @@ fn native_task_create(root: &std::path::Path, title: &str) -> String {
             parent: None,
             labels: vec![],
             assignees: vec![],
-            milestone: None,
+            project: None,
             dependencies: vec![],
         },
     )

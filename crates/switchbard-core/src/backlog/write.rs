@@ -898,7 +898,7 @@ fn new_task_text(
         "priority: {}",
         yaml_scalar(validated_single_line("priority", priority)?)
     ));
-    if let Some(milestone) = &task.milestone {
+    if let Some(milestone) = &task.project {
         fm.push(format!(
             "milestone: {}",
             yaml_scalar(validated_single_line("milestone", milestone)?)
@@ -1125,7 +1125,9 @@ mod tests {
         );
 
         assert!(read(&path).contains("title: 'New: with a colon, and ''quotes'''"));
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.title, "New: with a colon, and 'quotes'");
     }
 
@@ -1168,14 +1170,18 @@ mod tests {
             set_task_label(&path, "dispatch", true).expect("edit succeeds"),
             WriteOutcome::Changed
         );
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.labels, vec!["hub", "slice-2", "dispatch"]);
 
         assert_eq!(
             set_task_label(&path, "hub", false).expect("edit succeeds"),
             WriteOutcome::Changed
         );
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.labels, vec!["slice-2", "dispatch"]);
     }
 
@@ -1188,7 +1194,9 @@ mod tests {
             swap_task_label(&path, "hub", "hub-claimed").expect("edit succeeds"),
             WriteOutcome::Changed
         );
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.labels, vec!["slice-2", "hub-claimed"]);
 
         let before = read(&path);
@@ -1206,7 +1214,9 @@ mod tests {
             swap_task_label(&path, "hub", "slice-2").expect("edit succeeds"),
             WriteOutcome::Changed
         );
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.labels, vec!["slice-2"], "no duplicate slice-2");
     }
 
@@ -1245,7 +1255,9 @@ mod tests {
             WriteOutcome::Changed
         );
 
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.description, content);
         assert_eq!(
             task.acceptance_criteria.len(),
@@ -1277,7 +1289,9 @@ mod tests {
             description < criteria && criteria < plan,
             "plan lands after criteria per canonical section order"
         );
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.implementation_plan, "1. Step");
         assert_eq!(task.acceptance_criteria.len(), 2);
     }
@@ -1351,7 +1365,9 @@ mod tests {
             WriteOutcome::Changed
         );
 
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.implementation_notes, "First note.\n\nSecond note.");
         assert_eq!(
             task.description, "Do the thing.",
@@ -1372,7 +1388,9 @@ mod tests {
 
         let after = read(&path);
         assert!(after.contains("- [ ] #3 Third"));
-        let task = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let task = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(task.acceptance_criteria.len(), 3);
         assert!(
             task.acceptance_criteria[1].checked,
@@ -1427,7 +1445,7 @@ mod tests {
             parent: Some("TASK-3".to_string()),
             labels: vec!["format-fork".to_string()],
             assignees: vec![],
-            milestone: Some("m-1".to_string()),
+            project: Some("m-1".to_string()),
             dependencies: vec!["task-5".to_string()],
         };
 
@@ -1469,7 +1487,9 @@ mod tests {
         );
         assert_eq!(text, expected, "created file must match the CLI's shape");
 
-        let parsed = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let parsed = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(parsed.id, "TASK-42");
         assert_eq!(parsed.title, "Ship it: a 'quoted' title");
         assert_eq!(parsed.parent.as_deref(), Some("TASK-3"));
@@ -1493,7 +1513,7 @@ mod tests {
             parent: None,
             labels: vec![],
             assignees: vec![],
-            milestone: None,
+            project: None,
             dependencies: vec![],
         };
 
@@ -1509,7 +1529,9 @@ mod tests {
             "frontmatter id must use the configured prefix, uppercased: {text:?}"
         );
 
-        let parsed = parse_task_file(&path, BacklogTaskSource::Active).expect("reparses");
+        let parsed = parse_task_file(&path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0;
         assert_eq!(parsed.id, "LED-11");
     }
 
@@ -1525,7 +1547,7 @@ mod tests {
             parent: None,
             labels: vec![],
             assignees: vec![],
-            milestone: None,
+            project: None,
             dependencies: vec![],
         };
 
