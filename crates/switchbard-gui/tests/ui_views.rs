@@ -67,6 +67,8 @@ fn board_lens_renders_kanban_columns_with_the_seeded_task() {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -146,6 +148,8 @@ fn global_search_overlay_finds_the_matching_task_across_repos() {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -605,6 +609,8 @@ fn backlog_view_surfaces_seeded_task() {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -709,6 +715,8 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
                     path: repo_path(repo_name).join("backlog/tasks/task-1.md"),
                 }],
                 warnings: vec![],
+                project_defs: vec![],
+                initiative_defs: vec![],
                 loaded_at_unix: 0,
                 configured_statuses: vec![
                     "Icebox".into(),
@@ -761,6 +769,8 @@ fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![in_progress_task],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -822,6 +832,8 @@ fn portfolio_lens_renders_per_repo_health() {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -878,6 +890,8 @@ fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![blocker, dependent],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -943,6 +957,8 @@ fn parent_task_shows_rollup_and_expands_to_reveal_children() {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![parent, done_child, open_child],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -1018,6 +1034,8 @@ fn saved_view_can_be_saved_and_deleted() {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -1157,6 +1175,8 @@ fn harness_on_task(task: BacklogTask) -> Harness<'static, HiveApp> {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![task],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -1353,6 +1373,8 @@ fn list_row_shows_the_dispatch_pill_for_a_queued_task() {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![queued, plain],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),

@@ -417,12 +417,12 @@ fn validate_task_id(id: &str) -> Result<()> {
 /// is byte-identical by construction: `fm` is exactly the lines between the
 /// two `---` fences, `rest` is exactly everything after the closing fence
 /// (leading newline included).
-struct RawTask {
-    fm: Vec<String>,
-    rest: String,
+pub(super) struct RawTask {
+    pub(super) fm: Vec<String>,
+    pub(super) rest: String,
 }
 
-fn split_raw(text: &str) -> Result<RawTask> {
+pub(super) fn split_raw(text: &str) -> Result<RawTask> {
     if text.contains('\r') {
         bail!("task file has CR line endings; refusing to edit");
     }
@@ -437,7 +437,7 @@ fn split_raw(text: &str) -> Result<RawTask> {
     Ok(RawTask { fm, rest })
 }
 
-fn join_raw(fm: &[String], rest: &str) -> String {
+pub(super) fn join_raw(fm: &[String], rest: &str) -> String {
     format!("---\n{}\n---{}", fm.join("\n"), rest)
 }
 
@@ -471,7 +471,7 @@ fn apply_edit(
 /// **refused** (rename needs only directory permission, so it would happily
 /// replace a file its owner locked — the CLI honored the bit, and so do
 /// we), and the original file's permissions survive onto the replacement.
-fn atomic_write(path: &Path, text: &str) -> Result<()> {
+pub(super) fn atomic_write(path: &Path, text: &str) -> Result<()> {
     let permissions = fs::metadata(path)
         .with_context(|| format!("inspecting {}", path.display()))?
         .permissions();
@@ -524,7 +524,12 @@ fn key_span(fm: &[String], key: &str) -> Option<(usize, usize)> {
 
 /// Replace `key`'s lines with `key: rendered`, or insert the key if absent —
 /// after `insert_after`'s span when given (and present), else at the end.
-fn set_scalar(fm: &mut Vec<String>, key: &str, rendered: &str, insert_after: Option<&str>) {
+pub(super) fn set_scalar(
+    fm: &mut Vec<String>,
+    key: &str,
+    rendered: &str,
+    insert_after: Option<&str>,
+) {
     let line = format!("{key}: {rendered}");
     if let Some((start, end)) = key_span(fm, key) {
         fm.splice(start..end, [line]);
@@ -545,7 +550,7 @@ fn set_list(fm: &mut Vec<String>, key: &str, values: &[String]) {
     }
 }
 
-fn remove_key(fm: &mut Vec<String>, key: &str) {
+pub(super) fn remove_key(fm: &mut Vec<String>, key: &str) {
     if let Some((start, end)) = key_span(fm, key) {
         fm.drain(start..end);
     }
@@ -594,7 +599,7 @@ fn local_stamp() -> String {
 /// it — colons, comment starts, bool/null lookalikes, and anything not
 /// starting with a plain ASCII letter (dates, numbers, punctuation-led
 /// titles).
-fn yaml_scalar(value: &str) -> String {
+pub(super) fn yaml_scalar(value: &str) -> String {
     debug_assert!(
         !value.contains('\n'),
         "frontmatter scalars are single-line; public entry points validate"
@@ -954,7 +959,7 @@ fn new_task_body(task: &NewBacklogTask) -> Result<String> {
 /// that are shell- or filesystem-hostile are dropped, runs of `-` collapse.
 /// Capped at 180 chars so a long title can't overflow a 255-byte filename.
 /// Only a convention, not an identity: the id lives in the frontmatter.
-fn filename_slug(title: &str) -> String {
+pub(super) fn filename_slug(title: &str) -> String {
     const DROPPED: &[char] = &[
         '/', '\\', ':', '*', '?', '"', '\'', '<', '>', '|', '#', '%', '&', '{', '}', '$', '!', '@',
         '`', '+', '=',
@@ -979,7 +984,7 @@ fn filename_slug(title: &str) -> String {
 
 // ---- shared validation ----
 
-fn validated_single_line<'v>(field: &str, value: &'v str) -> Result<&'v str> {
+pub(super) fn validated_single_line<'v>(field: &str, value: &'v str) -> Result<&'v str> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         bail!("{field} must not be empty");

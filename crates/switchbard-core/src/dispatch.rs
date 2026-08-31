@@ -1024,6 +1024,8 @@ mod tests {
                 task("TASK-4", &[]),
             ],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![],
         };
@@ -1046,6 +1048,8 @@ mod tests {
             root: PathBuf::from("/repo"),
             tasks: vec![done],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![],
         };

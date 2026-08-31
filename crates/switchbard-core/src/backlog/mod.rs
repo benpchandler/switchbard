@@ -7,6 +7,7 @@
 //! the files stay Backlog.md-compatible on disk.
 
 mod allocate;
+mod hierarchy;
 mod mutations;
 mod parse;
 pub mod status_config;
@@ -14,6 +15,12 @@ mod types;
 mod write;
 
 pub use allocate::{create_task_allocating_id, next_task_id, ACTIVE_BRANCH_DAYS};
+
+pub use hierarchy::{
+    create_initiative_def, create_project_def, edit_initiative_def, edit_project_def,
+    InitiativeDef, InitiativeDefPatch, NewInitiativeDef, NewProjectDef, ProjectDef,
+    ProjectDefPatch, DEFAULT_PROJECT_STATUS, PROJECT_STATUSES,
+};
 
 pub use mutations::{
     append_backlog_notes, archive_backlog_task, complete_backlog_task, create_backlog_task,

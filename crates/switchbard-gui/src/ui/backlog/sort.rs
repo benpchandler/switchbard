@@ -478,6 +478,8 @@ mod tests {
                 root: PathBuf::from("/tmp/fixture"),
                 tasks,
                 warnings: vec![],
+                project_defs: vec![],
+                initiative_defs: vec![],
                 loaded_at_unix: 0,
                 configured_statuses: vec![],
             },
@@ -678,6 +680,8 @@ mod tests {
                 task_with_status("To Do", BacklogTaskSource::Archived),
             ],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![],
         };

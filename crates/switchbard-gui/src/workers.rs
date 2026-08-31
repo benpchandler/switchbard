@@ -1309,6 +1309,8 @@ mod tests {
                 })
                 .collect(),
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix,
             configured_statuses: vec![],
         }

@@ -57,10 +57,14 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
     }
 
     tasks.sort_by(compare_tasks);
+    let project_defs = super::hierarchy::load_project_defs(root, &mut warnings);
+    let initiative_defs = super::hierarchy::load_initiative_defs(root, &mut warnings);
     Ok(BacklogRepo {
         root: root.to_path_buf(),
         tasks,
         warnings,
+        project_defs,
+        initiative_defs,
         loaded_at_unix: unix_now(),
         configured_statuses: parse_config_statuses(root),
     })
@@ -209,7 +213,7 @@ pub(super) fn parse_task_file(
     Ok((task, warnings))
 }
 
-fn split_frontmatter(text: &str) -> (Mapping, &str) {
+pub(super) fn split_frontmatter(text: &str) -> (Mapping, &str) {
     let Some(rest) = text.strip_prefix("---") else {
         return (Mapping::new(), text);
     };
@@ -229,7 +233,7 @@ fn split_frontmatter(text: &str) -> (Mapping, &str) {
     (mapping, body)
 }
 
-fn yaml_string(map: &Mapping, key: &str) -> Option<String> {
+pub(super) fn yaml_string(map: &Mapping, key: &str) -> Option<String> {
     let value = map.get(Value::String(key.to_string()))?;
     match value {
         Value::String(s) => Some(s.clone()),

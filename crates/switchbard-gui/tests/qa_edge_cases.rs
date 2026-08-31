@@ -141,6 +141,8 @@ fn malformed_ordering_yaml_app() -> switchbard_gui::app::HiveApp {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),

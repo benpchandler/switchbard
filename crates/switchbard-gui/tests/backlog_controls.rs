@@ -75,6 +75,8 @@ fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
             root: PathBuf::from(REPO_PATH),
             tasks,
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -830,6 +832,8 @@ fn digest_harness_with(tasks: Vec<BacklogTask>) -> Harness<'static, HiveApp> {
             root: PathBuf::from(REPO_PATH),
             tasks,
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -1039,6 +1043,8 @@ fn board_shows_the_icebox_column_even_with_zero_icebox_tasks() {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![task("TASK-1", "Ordinary task", "To Do")],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".to_string(),
@@ -2234,6 +2240,8 @@ fn board_unrelated_project_reload_does_not_resolve_a_pending_move() {
                 task("TASK-2", "Draggable card", "In Progress"),
             ],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 999_999,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -4119,6 +4127,8 @@ fn a_drop_onto_a_column_this_repo_lacks_is_refused_and_offers_the_fix() {
             root: PathBuf::from(OTHER),
             tasks: vec![task("OTHER-1", "Someone else's task", "Icebox")],
             warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),

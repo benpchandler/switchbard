@@ -140,6 +140,8 @@ fn build_fixture() -> HiveApp {
                 root: repo_path,
                 tasks: (0..TASKS_PER_REPO).map(|i| task(r, i)).collect(),
                 warnings: vec![],
+                project_defs: vec![],
+                initiative_defs: vec![],
                 loaded_at_unix: 0,
                 configured_statuses: vec![
                     "Icebox".into(),
