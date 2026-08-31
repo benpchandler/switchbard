@@ -1,0 +1,589 @@
+//! Weekly goals — `backlog/goals.yml`, one structured file per repo
+//! (trajectory: *Weekly goals*, owner-approved 2026-08-31).
+//!
+//! Goals are **records, not documents** (the owner's storage decision):
+//! a goal is a name, a unit, a measure, and a `weeks` map of
+//! `{target, checkins: [{date, value}]}`. Cross-week history is one read;
+//! `roll` adds a week key instead of cloning files. Values are integers —
+//! a weekly goal is a count ("5 users", "8 tasks"), and integer values keep
+//! every type in the snapshot `Eq`.
+//!
+//! Reads are **tolerant**: a missing file is an empty goal list, and a
+//! malformed file warns and loads empty rather than failing the repo load —
+//! the same posture as `parse_config_statuses`. Writes are **line-surgical**
+//! over the file this module itself emits (precedent: `status_config.rs`
+//! editing `config.yml`): check-ins append one line, `roll` inserts a week
+//! block, and an edit that changes nothing writes nothing. A hand-restyled
+//! file this module cannot confidently locate its edit point in fails
+//! closed with an error naming the fix, never a rewrite.
+
+use super::write::{atomic_write, validated_single_line, yaml_scalar};
+use anyhow::{bail, Context, Result};
+use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+const GOALS_REL: &str = "backlog/goals.yml";
+
+/// How a goal's *actual* is measured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoalMeasure {
+    /// Reported via dated check-ins; current = the latest entry.
+    Manual,
+    /// Computed from tasks done within the goal week matching `scope`.
+    Tasks,
+}
+
+impl GoalMeasure {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Tasks => "tasks",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalCheckIn {
+    /// `YYYY-MM-DD`, stored as written.
+    pub date: String,
+    pub value: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GoalWeek {
+    pub target: i64,
+    /// Append-only observations; "current" derives from the latest entry.
+    pub checkins: Vec<GoalCheckIn>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalDef {
+    pub name: String,
+    pub unit: String,
+    pub measure: GoalMeasure,
+    /// For [`GoalMeasure::Tasks`]: a project name or label the counted
+    /// tasks must match.
+    pub scope: Option<String>,
+    /// Keyed by the week's Monday (`YYYY-MM-DD`); `BTreeMap` keeps weeks
+    /// chronological for free since the keys are ISO dates.
+    pub weeks: BTreeMap<String, GoalWeek>,
+}
+
+/// Input for [`create_goal`] — one goal with its first week.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewGoal {
+    pub name: String,
+    pub unit: String,
+    pub measure: GoalMeasure,
+    pub scope: Option<String>,
+    /// The first week's Monday, `YYYY-MM-DD`.
+    pub week: String,
+    pub target: i64,
+}
+
+// ---- reading ----
+
+#[derive(Deserialize)]
+struct GoalsFileSer {
+    #[serde(default)]
+    goals: Vec<GoalSer>,
+}
+
+#[derive(Deserialize)]
+struct GoalSer {
+    name: String,
+    #[serde(default)]
+    unit: String,
+    #[serde(default)]
+    measure: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    weeks: BTreeMap<String, GoalWeekSer>,
+}
+
+#[derive(Deserialize)]
+struct GoalWeekSer {
+    target: i64,
+    #[serde(default)]
+    checkins: Vec<GoalCheckInSer>,
+}
+
+#[derive(Deserialize)]
+struct GoalCheckInSer {
+    date: String,
+    value: i64,
+}
+
+/// Load `backlog/goals.yml`. Never fails the repo load: missing file is an
+/// empty list; a malformed file (or an entry with an unknown `measure:`)
+/// warns and is dropped.
+pub(super) fn load_goals(root: &Path, warnings: &mut Vec<String>) -> Vec<GoalDef> {
+    let path = root.join(GOALS_REL);
+    let Ok(text) = fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let parsed: GoalsFileSer = match serde_yaml::from_str(&text) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            warnings.push(format!("{}: {err}", path.display()));
+            return Vec::new();
+        }
+    };
+    let mut goals = Vec::with_capacity(parsed.goals.len());
+    for goal in parsed.goals {
+        let measure = match goal.measure.as_deref() {
+            None | Some("manual") => GoalMeasure::Manual,
+            Some("tasks") => GoalMeasure::Tasks,
+            Some(other) => {
+                warnings.push(format!(
+                    "{}: goal '{}' has unknown measure `{other}` (expected manual or tasks) — skipped",
+                    path.display(),
+                    goal.name
+                ));
+                continue;
+            }
+        };
+        goals.push(GoalDef {
+            name: goal.name,
+            unit: goal.unit,
+            measure,
+            scope: goal.scope,
+            weeks: goal
+                .weeks
+                .into_iter()
+                .map(|(week, w)| {
+                    (
+                        week,
+                        GoalWeek {
+                            target: w.target,
+                            checkins: w
+                                .checkins
+                                .into_iter()
+                                .map(|c| GoalCheckIn {
+                                    date: c.date,
+                                    value: c.value,
+                                })
+                                .collect(),
+                        },
+                    )
+                })
+                .collect(),
+        });
+    }
+    goals
+}
+
+// ---- writing ----
+//
+// The emitted shape, which the surgical edits below scan for:
+//
+//   goals:
+//     - name: Onboard users
+//       unit: users
+//       measure: manual
+//       weeks:
+//         2026-09-01:
+//           target: 5
+//           checkins:
+//             - { date: 2026-09-02, value: 1 }
+
+const GOAL_ITEM_INDENT: &str = "  ";
+const GOAL_FIELD_INDENT: &str = "    ";
+const WEEK_KEY_INDENT: &str = "      ";
+const WEEK_FIELD_INDENT: &str = "        ";
+const CHECKIN_ITEM_INDENT: &str = "          ";
+
+fn goals_path(root: &Path) -> PathBuf {
+    root.join(GOALS_REL)
+}
+
+fn read_lines(path: &Path) -> Result<Vec<String>> {
+    let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    if text.contains('\r') {
+        bail!("{} has CR line endings; refusing to edit", path.display());
+    }
+    Ok(text.lines().map(str::to_string).collect())
+}
+
+fn write_lines(path: &Path, lines: &[String]) -> Result<()> {
+    let text = format!("{}\n", lines.join("\n"));
+    if path.is_file() {
+        return atomic_write(path, &text);
+    }
+    // First write: `atomic_write` preserves an existing file's permissions,
+    // which a brand-new goals.yml doesn't have — same tmp-then-rename
+    // atomicity, default permissions.
+    let tmp = path.with_extension("yml.tmp");
+    fs::write(&tmp, &text).with_context(|| format!("writing {}", tmp.display()))?;
+    fs::rename(&tmp, path).with_context(|| format!("creating {}", path.display()))
+}
+
+fn validated_week(week: &str) -> Result<&str> {
+    let week = validated_single_line("week", week)?;
+    if chrono::NaiveDate::parse_from_str(week, "%Y-%m-%d").is_err() {
+        bail!("week must be a YYYY-MM-DD date (the week's Monday), got `{week}`");
+    }
+    Ok(week)
+}
+
+fn validated_date(date: &str) -> Result<&str> {
+    let date = validated_single_line("date", date)?;
+    if chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err() {
+        bail!("date must be YYYY-MM-DD, got `{date}`");
+    }
+    Ok(date)
+}
+
+fn goal_week_block(week: &str, target: i64) -> Vec<String> {
+    vec![
+        format!("{WEEK_KEY_INDENT}{week}:"),
+        format!("{WEEK_FIELD_INDENT}target: {target}"),
+        format!("{WEEK_FIELD_INDENT}checkins: []"),
+    ]
+}
+
+/// Append a goal (with its first week) to `backlog/goals.yml`, creating the
+/// file when absent. Refuses a duplicate name.
+pub fn create_goal(root: &Path, goal: &NewGoal) -> Result<()> {
+    let name = validated_single_line("name", &goal.name)?;
+    let unit = validated_single_line("unit", &goal.unit)?;
+    let week = validated_week(&goal.week)?;
+    if goal.measure == GoalMeasure::Tasks && goal.scope.is_none() {
+        bail!("a tasks-measured goal needs --scope (a project name or label to count)");
+    }
+
+    let mut warnings = Vec::new();
+    if load_goals(root, &mut warnings)
+        .iter()
+        .any(|existing| existing.name == name)
+    {
+        bail!("goal '{name}' already exists — check in with `goal check-in`, or extend it with `goal roll`");
+    }
+
+    let path = goals_path(root);
+    let mut lines = if path.is_file() {
+        read_lines(&path)?
+    } else {
+        fs::create_dir_all(path.parent().expect("goals.yml has a parent"))
+            .with_context(|| format!("creating {}", root.join("backlog").display()))?;
+        vec![
+            "# Weekly goals — written by switchbard (`goal` commands); one record per goal,"
+                .to_string(),
+            "# targets and dated check-ins per week. See docs/product-trajectory.md.".to_string(),
+            "goals:".to_string(),
+        ]
+    };
+    if !lines.iter().any(|l| l.trim_end() == "goals:") {
+        bail!(
+            "{} has no `goals:` key — fix the file (or remove it to start fresh)",
+            path.display()
+        );
+    }
+
+    lines.push(format!("{GOAL_ITEM_INDENT}- name: {}", yaml_scalar(name)));
+    lines.push(format!("{GOAL_FIELD_INDENT}unit: {}", yaml_scalar(unit)));
+    lines.push(format!(
+        "{GOAL_FIELD_INDENT}measure: {}",
+        goal.measure.label()
+    ));
+    if let Some(scope) = &goal.scope {
+        lines.push(format!(
+            "{GOAL_FIELD_INDENT}scope: {}",
+            yaml_scalar(validated_single_line("scope", scope)?)
+        ));
+    }
+    lines.push(format!("{GOAL_FIELD_INDENT}weeks:"));
+    lines.extend(goal_week_block(week, goal.target));
+    write_lines(&path, &lines)
+}
+
+/// Append one dated observation to a goal's week. Fails closed when the
+/// file's structure isn't one this module emitted (it never rewrites what
+/// it cannot confidently locate).
+pub fn check_in_goal(root: &Path, name: &str, week: &str, date: &str, value: i64) -> Result<()> {
+    let name = validated_single_line("name", name)?;
+    let week = validated_week(week)?;
+    let date = validated_date(date)?;
+
+    let path = goals_path(root);
+    if !path.is_file() {
+        bail!("no goals defined yet — run `goal create` first");
+    }
+    let mut lines = read_lines(&path)?;
+    let (goal_start, goal_end) = goal_span(&lines, name)?;
+    let Some(week_line) = (goal_start..goal_end)
+        .find(|&i| lines[i].trim_end() == format!("{WEEK_KEY_INDENT}{week}:"))
+    else {
+        bail!("goal '{name}' has no week {week} — add it with `goal roll --week {week}`");
+    };
+    // The week block ends at the next line at week-key indent or shallower.
+    let week_end = ((week_line + 1)..goal_end)
+        .find(|&i| indent_of(&lines[i]) <= WEEK_KEY_INDENT.len())
+        .unwrap_or(goal_end);
+
+    let item = format!("{CHECKIN_ITEM_INDENT}- {{ date: {date}, value: {value} }}");
+    let empty_marker = format!("{WEEK_FIELD_INDENT}checkins: []");
+    let header = format!("{WEEK_FIELD_INDENT}checkins:");
+    if let Some(i) = ((week_line + 1)..week_end).find(|&i| lines[i].trim_end() == empty_marker) {
+        lines.splice(i..=i, [header, item]);
+    } else if let Some(i) = ((week_line + 1)..week_end).find(|&i| lines[i].trim_end() == header) {
+        // Append after the last existing check-in line.
+        let insert_at = ((i + 1)..week_end)
+            .take_while(|&j| indent_of(&lines[j]) > WEEK_FIELD_INDENT.len())
+            .last()
+            .map_or(i + 1, |j| j + 1);
+        lines.insert(insert_at, item);
+    } else {
+        bail!(
+            "{}: week {week} of goal '{name}' has no recognizable `checkins:` — restore the emitted structure before checking in",
+            path.display()
+        );
+    }
+    write_lines(&path, &lines)
+}
+
+/// Give every goal that lacks `to_week` a new week block carrying its most
+/// recent earlier target. Returns how many goals were rolled; rolling when
+/// every goal already has the week is a no-op that writes nothing.
+pub fn roll_goals(root: &Path, to_week: &str) -> Result<usize> {
+    let to_week = validated_week(to_week)?;
+    let path = goals_path(root);
+    if !path.is_file() {
+        bail!("no goals defined yet — run `goal create` first");
+    }
+    let mut warnings = Vec::new();
+    let goals = load_goals(root, &mut warnings);
+    if !warnings.is_empty() {
+        bail!(
+            "{} does not parse cleanly — fix it before rolling: {}",
+            path.display(),
+            warnings.join("; ")
+        );
+    }
+
+    let mut lines = read_lines(&path)?;
+    let mut rolled = 0usize;
+    for goal in &goals {
+        if goal.weeks.contains_key(to_week) {
+            continue;
+        }
+        // The most recent week before `to_week` (ISO keys sort correctly).
+        let Some((_, source)) = goal
+            .weeks
+            .range::<str, _>((
+                std::ops::Bound::Unbounded,
+                std::ops::Bound::Excluded(to_week),
+            ))
+            .next_back()
+        else {
+            continue; // only future weeks exist; nothing to carry forward
+        };
+        let (goal_start, goal_end) = goal_span(&lines, &goal.name)?;
+        let Some(weeks_line) = (goal_start..goal_end)
+            .find(|&i| lines[i].trim_end() == format!("{GOAL_FIELD_INDENT}weeks:"))
+        else {
+            bail!(
+                "{}: goal '{}' has no recognizable `weeks:` — restore the emitted structure before rolling",
+                path.display(),
+                goal.name
+            );
+        };
+        // Insert at the end of the weeks section (chronology holds because
+        // rolls only ever add the newest week).
+        let insert_at = ((weeks_line + 1)..goal_end)
+            .take_while(|&i| indent_of(&lines[i]) > GOAL_FIELD_INDENT.len())
+            .last()
+            .map_or(weeks_line + 1, |i| i + 1);
+        lines.splice(
+            insert_at..insert_at,
+            goal_week_block(to_week, source.target),
+        );
+        rolled += 1;
+    }
+    if rolled > 0 {
+        write_lines(&path, &lines)?;
+    }
+    Ok(rolled)
+}
+
+/// `[start, end)` of the goal item whose `name:` matches. Matching is
+/// against this module's own emitted line (`- name: <yaml_scalar>`), so a
+/// hand-restyled entry fails closed rather than mislocating an edit.
+fn goal_span(lines: &[String], name: &str) -> Result<(usize, usize)> {
+    let needle = format!("{GOAL_ITEM_INDENT}- name: {}", yaml_scalar(name));
+    let start = lines
+        .iter()
+        .position(|l| l.trim_end() == needle)
+        .with_context(|| {
+            format!("cannot locate goal '{name}' in backlog/goals.yml — check `goal list` for the exact name")
+        })?;
+    let end = ((start + 1)..lines.len())
+        .find(|&i| {
+            let indent = indent_of(&lines[i]);
+            !lines[i].trim().is_empty() && indent <= GOAL_ITEM_INDENT.len()
+        })
+        .unwrap_or(lines.len());
+    Ok((start, end))
+}
+
+fn indent_of(line: &str) -> usize {
+    line.len() - line.trim_start_matches(' ').len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repo(dir: &tempfile::TempDir) -> PathBuf {
+        let root = dir.path().to_path_buf();
+        fs::create_dir_all(root.join("backlog/tasks")).expect("layout");
+        fs::write(root.join("backlog/config.yml"), "statuses: []\n").expect("config");
+        root
+    }
+
+    fn goal(name: &str, week: &str, target: i64) -> NewGoal {
+        NewGoal {
+            name: name.to_string(),
+            unit: "users".to_string(),
+            measure: GoalMeasure::Manual,
+            scope: None,
+            week: week.to_string(),
+            target,
+        }
+    }
+
+    fn load(root: &Path) -> (Vec<GoalDef>, Vec<String>) {
+        let mut warnings = Vec::new();
+        let goals = load_goals(root, &mut warnings);
+        (goals, warnings)
+    }
+
+    #[test]
+    fn create_check_in_and_reload_round_trip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        create_goal(&root, &goal("Onboard users", "2026-09-01", 5)).expect("create");
+        check_in_goal(&root, "Onboard users", "2026-09-01", "2026-09-02", 1).expect("check in");
+        check_in_goal(&root, "Onboard users", "2026-09-01", "2026-09-04", 4).expect("check in");
+
+        let (goals, warnings) = load(&root);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(goals.len(), 1);
+        let week = &goals[0].weeks["2026-09-01"];
+        assert_eq!(week.target, 5);
+        assert_eq!(
+            week.checkins,
+            vec![
+                GoalCheckIn {
+                    date: "2026-09-02".to_string(),
+                    value: 1
+                },
+                GoalCheckIn {
+                    date: "2026-09-04".to_string(),
+                    value: 4
+                },
+            ],
+            "check-ins append in order"
+        );
+    }
+
+    #[test]
+    fn create_refuses_duplicates_and_tasks_measure_requires_scope() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        create_goal(&root, &goal("Twice", "2026-09-01", 3)).expect("create");
+        let err = create_goal(&root, &goal("Twice", "2026-09-08", 3)).expect_err("dup");
+        assert!(err.to_string().contains("already exists"), "{err}");
+
+        let mut tasks_goal = goal("Scoped", "2026-09-01", 8);
+        tasks_goal.measure = GoalMeasure::Tasks;
+        let err = create_goal(&root, &tasks_goal).expect_err("scope required");
+        assert!(err.to_string().contains("--scope"), "{err}");
+    }
+
+    #[test]
+    fn roll_carries_the_latest_target_and_is_idempotent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        create_goal(&root, &goal("Onboard users", "2026-09-01", 5)).expect("create");
+        create_goal(&root, &goal("Ship things", "2026-09-01", 2)).expect("create");
+
+        assert_eq!(roll_goals(&root, "2026-09-08").expect("roll"), 2);
+        let before = fs::read_to_string(root.join(GOALS_REL)).expect("read");
+        assert_eq!(roll_goals(&root, "2026-09-08").expect("re-roll"), 0);
+        let after = fs::read_to_string(root.join(GOALS_REL)).expect("read");
+        assert_eq!(before, after, "an all-rolled roll writes nothing");
+
+        let (goals, _) = load(&root);
+        assert_eq!(goals[0].weeks["2026-09-08"].target, 5);
+        assert!(goals[0].weeks["2026-09-08"].checkins.is_empty());
+        // Check-ins still land in the right week after a roll.
+        check_in_goal(&root, "Onboard users", "2026-09-08", "2026-09-09", 2).expect("check in");
+        let (goals, _) = load(&root);
+        assert_eq!(goals[0].weeks["2026-09-08"].checkins.len(), 1);
+        assert!(goals[0].weeks["2026-09-01"].checkins.is_empty());
+    }
+
+    #[test]
+    fn edits_are_surgical_around_untouched_goals() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        create_goal(&root, &goal("First", "2026-09-01", 5)).expect("create");
+        create_goal(&root, &goal("Second", "2026-09-01", 3)).expect("create");
+        let before = fs::read_to_string(root.join(GOALS_REL)).expect("read");
+
+        check_in_goal(&root, "First", "2026-09-01", "2026-09-02", 1).expect("check in");
+        let after = fs::read_to_string(root.join(GOALS_REL)).expect("read");
+        let changed: Vec<&str> = after.lines().filter(|l| !before.contains(*l)).collect();
+        assert_eq!(
+            changed,
+            vec!["          - { date: 2026-09-02, value: 1 }"],
+            "exactly one line appears; every other byte survives"
+        );
+    }
+
+    #[test]
+    fn malformed_files_warn_and_load_empty_and_missing_files_are_empty() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        let (goals, warnings) = load(&root);
+        assert!(
+            goals.is_empty() && warnings.is_empty(),
+            "missing file is silent"
+        );
+
+        fs::write(root.join(GOALS_REL), "goals: [not: [valid\n").expect("write");
+        let (goals, warnings) = load(&root);
+        assert!(goals.is_empty());
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+
+        fs::write(
+            root.join(GOALS_REL),
+            "goals:\n  - name: Odd\n    measure: fortnightly\n    weeks: {}\n",
+        )
+        .expect("write");
+        let (goals, warnings) = load(&root);
+        assert!(goals.is_empty(), "unknown measure skips the goal");
+        assert!(warnings[0].contains("fortnightly"), "{warnings:?}");
+    }
+
+    #[test]
+    fn check_in_errors_name_the_next_step() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        let err =
+            check_in_goal(&root, "Ghost", "2026-09-01", "2026-09-02", 1).expect_err("no file yet");
+        assert!(err.to_string().contains("goal create"), "{err}");
+
+        create_goal(&root, &goal("Real", "2026-09-01", 5)).expect("create");
+        let err =
+            check_in_goal(&root, "Real", "2026-09-08", "2026-09-09", 1).expect_err("missing week");
+        assert!(err.to_string().contains("goal roll"), "{err}");
+        let err =
+            check_in_goal(&root, "Ghost", "2026-09-01", "2026-09-02", 1).expect_err("unknown goal");
+        assert!(err.to_string().contains("goal list"), "{err}");
+    }
+}

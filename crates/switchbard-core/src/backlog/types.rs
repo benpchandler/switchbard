@@ -157,6 +157,8 @@ pub struct BacklogRepo {
     pub project_defs: Vec<super::hierarchy::ProjectDef>,
     /// Initiative definition files (`backlog/initiatives/*.md`).
     pub initiative_defs: Vec<super::hierarchy::InitiativeDef>,
+    /// Weekly goals from `backlog/goals.yml` — see `super::goals`.
+    pub goals: Vec<super::goals::GoalDef>,
     /// Milliseconds since the Unix epoch when this snapshot was read from
     /// disk (`unix_now`) — millisecond, not second, precision specifically
     /// so `workers::merge_backlog_repos` can use it to detect a stale
@@ -419,6 +421,7 @@ mod tests {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: configured_statuses.iter().map(|s| s.to_string()).collect(),
         }

@@ -105,6 +105,7 @@ fn app_with(tasks: Vec<BacklogTask>, runs: Vec<DispatchRun>) -> HiveApp {
             warnings: vec![],
             project_defs: vec![],
             initiative_defs: vec![],
+            goals: vec![],
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
