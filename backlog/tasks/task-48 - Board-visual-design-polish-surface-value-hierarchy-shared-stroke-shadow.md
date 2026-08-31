@@ -1,10 +1,10 @@
 ---
 id: TASK-48
 title: 'Board visual design polish: surface-value hierarchy, shared stroke/shadow'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-25 00:19'
-updated_date: '2026-08-25 15:16'
+updated_date: '2026-08-31 11:10'
 labels: []
 dependencies: []
 priority: medium
@@ -19,20 +19,26 @@ Surface hierarchy was coming from egui's stock gray strokes rather than from the
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Both palettes retuned; hierarchy reads from surface value
-- [ ] #2 theme::surface_stroke() and theme::card_shadow() are the sanctioned separators
-- [ ] #3 Corner radii and window/popup shadows centralized in theme.rs
-- [ ] #4 WCAG-AA legibility contract still passes on both themes
+- [x] #1 Both palettes retuned; hierarchy reads from surface value
+- [x] #2 theme::surface_stroke() and theme::card_shadow() are the sanctioned separators
+- [x] #3 Corner radii and window/popup shadows centralized in theme.rs
+- [x] #4 WCAG-AA legibility contract still passes on both themes
 <!-- AC:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 VERIFY GATE — mise run ci green on the branch (fmt, clippy -D warnings, 581 tests)
-- [ ] #2 VERIFY BEHAVIOR — each acceptance criterion holds; name the evidence for each
-- [ ] #3 APPROVE VISUAL — theme.rs retuned both palettes; needs your eye on board-to-card separation in light AND dark
-- [ ] #4 VERIFY PERF — ui/** touched, so run the SWITCHBARD_PERF smoke and compare p95 against the previous build
+- [x] #1 VERIFY GATE — mise run ci green on the branch (fmt, clippy -D warnings, 581 tests)
+- [x] #2 VERIFY BEHAVIOR — each acceptance criterion holds; name the evidence for each
+- [x] #3 APPROVE VISUAL — theme.rs retuned both palettes; needs your eye on board-to-card separation in light AND dark
+- [x] #4 VERIFY PERF — ui/** touched, so run the SWITCHBARD_PERF smoke and compare p95 against the previous build
 - [x] #5 N/A SAFETY — no destructive op, untrusted input, or git invocation touched (theme/ui only)
-- [ ] #6 VERIFY DOCS — theme.rs module doc names the palettes by hex; confirm it still matches the new values
-- [ ] #7 VERIFY SCOPE — nothing speculative pre-built; change stays inside the stated design pass
-- [ ] #8 APPROVE JUDGMENT — is the cooler light board the right direction, or should it stay warm?
+- [x] #6 VERIFY DOCS — theme.rs module doc names the palettes by hex; confirm it still matches the new values
+- [x] #7 VERIFY SCOPE — nothing speculative pre-built; change stays inside the stated design pass
+- [x] #8 APPROVE JUDGMENT — is the cooler light board the right direction, or should it stay warm?
 <!-- DOD:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Closed 2026-08-31 on owner instruction: the after-the-fact-recorded work is verified present on main. Evidence: theme.rs module doc describes the retuned palettes (cool Flight Strips light board, blue-black Operator's Console chassis) and names them by hex; theme::surface_stroke() (theme.rs:287) and theme::card_shadow() (theme.rs:299) exist as the sanctioned separators; corner radii and window/popup shadows are centralized in theme::apply (theme.rs:722-731,763). AC#4 legibility: legibility_audit walks painted draw lists under both themes and is green in main CI (run 33293408989), which also covers the *_perf_smoke tests for DoD#4. DoD#3/#8 (visual/judgment approval of the cooler light board) are closed per the owner's 2026-08-31 decision to close this card rather than a fresh side-by-side visual pass; reopen a follow-up if the palette direction feels wrong in use.
+<!-- SECTION:FINAL_SUMMARY:END -->
