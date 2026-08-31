@@ -1,9 +1,10 @@
 ---
 id: TASK-47
 title: 'Board: per-column task creation + collapsible detail rail'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-25 00:19'
+updated_date: '2026-08-31 11:10'
 labels: []
 dependencies: []
 priority: medium
@@ -18,8 +19,14 @@ Creating a task in a particular column meant opening the global composer and re-
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Per-column + Add task preselects that column's status
-- [ ] #2 Empty column renders the affordance as a full-height target
-- [ ] #3 All creation entry points route through create::open_new_task
-- [ ] #4 Detail rail collapses to an edge toggle; dragged width persists
+- [x] #1 Per-column + Add task preselects that column's status
+- [x] #2 Empty column renders the affordance as a full-height target
+- [x] #3 All creation entry points route through create::open_new_task
+- [x] #4 Detail rail collapses to an edge toggle; dragged width persists
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Closed 2026-08-31: the after-the-fact-recorded work is verified present on main. Evidence: board.rs renders '+ Add task' per column (full-height 'No tasks - + Add task' target when empty, board.rs:439-441) and routes through create::open_new_task (board.rs:461), as does the global toolbar control (toolbar.rs:118); open_new_task owns project targeting and parent clearing (create.rs:16). Detail rail collapses to a narrow edge toggle with session-only state (rail.rs:37-89, backlog_detail_rail_collapsed panel); dragged width stays in egui panel memory. CI green on main (run 33293408989).
+<!-- SECTION:FINAL_SUMMARY:END -->
