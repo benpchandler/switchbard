@@ -255,6 +255,34 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   mutation), GUI def-file authoring (def lifecycle is CLI-first in v1),
   case-insensitive name merging.
 
+- **Weekly goals (owner-approved 2026-08-31; TASK-70..74).** Weekly numeric
+  goals tracked relative to target ("onboard 5 users this week" vs 4 actually
+  onboarded). Two goal kinds: *task-derived* (actual computed from tasks done
+  within the goal week matching a scope - a project name or label) and
+  *manual-metric* (actual reported as dated, append-only check-in
+  observations; "current" derives from the latest entry).
+  - *Storage is `backlog/goals.yml`, one structured file per repo - NOT
+    markdown def files* (owner decision after review of the markdown design):
+    goals are records, not documents. A goal's shape is name/unit/measure/
+    scope plus a `weeks` map of `{target, checkins: [{date, value}]}`, so
+    cross-week history is one read and `goal roll` adds a week key rather
+    than cloning files. Writes are line-surgical YAML edits through the
+    shared write layer (precedent: `status_config.rs` on `config.yml`);
+    reads are tolerant - a malformed file warns and loads empty, never
+    failing the repo load. Goals ride `load_backlog_repo`, so they reach
+    every snapshot with no new IO or worker.
+  - *Pace is the load-bearing derived signal, computed never stored:*
+    `actual/target` vs `elapsed_days/7` yields on-track / behind / met /
+    missed; met and missed are the terminal verdicts at the week boundary.
+  - Surfaces: a `goal` CLI verb family (create / list / view / check-in /
+    roll) mirroring the `project` family's output contract, and a "This
+    week's goals" section leading the Digest lens (progress bar with a
+    today-tick at the elapsed-week fraction, pace pill, check-in affordance
+    for manual goals).
+  - **Speculative, do NOT pre-build:** auto-recurring goal templates - v1's
+    `goal roll` (explicitly cloning last week's targets into a new week key)
+    is the recurrence story until demand says otherwise.
+
 - **Refine — AI-assisted grooming, upstream of dispatch (owner-approved 2026-08-19).**
   A "Refine" button in the task detail rail, next to Dispatch. It feeds the task's
   current title/description/criteria/plan to a headless `claude -p` run at the repo
