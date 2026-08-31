@@ -12,6 +12,7 @@ description = "Terminal and agent write path for Backlog-format tasks (switchbar
 [dependencies]
 switchbard-core = { path = "../switchbard-core" }
 anyhow.workspace = true
+chrono.workspace = true
 clap.workspace = true
 
 [dev-dependencies]
