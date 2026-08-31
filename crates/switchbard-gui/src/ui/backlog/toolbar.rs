@@ -30,7 +30,7 @@ pub(super) fn render_lens_tabs(app: &mut HiveApp, ui: &mut egui::Ui) {
                 BacklogLens::Digest,
                 BacklogLens::List,
                 BacklogLens::Board,
-                BacklogLens::Milestones,
+                BacklogLens::Projects,
                 BacklogLens::Portfolio,
                 BacklogLens::Statistics,
             ] {
@@ -396,7 +396,7 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
             + usize::from(app.backlog_view.selected_repo.is_some())
             + usize::from(app.backlog_view.status_filter != "all")
             + usize::from(app.backlog_view.priority_filter != "all")
-            + usize::from(app.backlog_view.milestone_filter != "all")
+            + usize::from(app.backlog_view.project_filter != "all")
             + usize::from(app.backlog_view.label_filter != "all")
             + usize::from(app.backlog_view.show_completed)
             + usize::from(app.backlog_view.show_archived)
@@ -532,7 +532,7 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
                 ui.end_row();
             }
 
-            crate::ui::filter_bar::facet_label(ui, "Milestone");
+            crate::ui::filter_bar::facet_label(ui, "Project");
             // Both option lists are built here, before any combo can
             // mutate `app`: they borrow it immutably via `ActiveFilters`,
             // and each `selectable_value` below needs it mutably.
@@ -541,24 +541,24 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
                 let filters = sort::ActiveFilters::from_app(app, &facet_filter_lc);
                 let scoped = super::scoped_repos(app, snap);
                 (
-                    sort::milestone_options(&scoped, &filters, &app.backlog_view.milestone_filter),
+                    sort::project_options(&scoped, &filters, &app.backlog_view.project_filter),
                     sort::label_options(&scoped, &filters, &app.backlog_view.label_filter),
                 )
             };
-            egui::ComboBox::from_id_salt("backlog_milestone_filter")
+            egui::ComboBox::from_id_salt("backlog_project_filter")
                 .selected_text(format::value_filter_label(
-                    &app.backlog_view.milestone_filter,
+                    &app.backlog_view.project_filter,
                 ))
                 .show_ui(ui, |ui| {
                     ui.selectable_value(
-                        &mut app.backlog_view.milestone_filter,
+                        &mut app.backlog_view.project_filter,
                         "all".to_string(),
                         "All",
                     );
                     for option in milestones {
                         let label = format!("{}  ({})", option.value, option.count);
                         ui.selectable_value(
-                            &mut app.backlog_view.milestone_filter,
+                            &mut app.backlog_view.project_filter,
                             option.value,
                             label,
                         );
@@ -626,7 +626,7 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
                 app.backlog_view.selected_repo = None;
                 app.backlog_view.status_filter = "all".to_string();
                 app.backlog_view.priority_filter = "all".to_string();
-                app.backlog_view.milestone_filter = "all".to_string();
+                app.backlog_view.project_filter = "all".to_string();
                 app.backlog_view.label_filter = "all".to_string();
                 app.backlog_view.show_completed = false;
                 app.backlog_view.show_archived = false;

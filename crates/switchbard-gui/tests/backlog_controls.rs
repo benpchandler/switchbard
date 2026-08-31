@@ -719,16 +719,16 @@ fn drafts_filter_checkbox_hides_and_reveals_draft_tasks() {
 /// UNDRIVABLE by this harness (no accessible label — same confirmed
 /// limitation the QA audit documents for status_filter/priority_filter); the
 /// filter's actual effect is proven directly via `task_visible`'s
-/// milestone_filter branch (sort.rs), same bar those two combos are held to.
+/// project_filter branch (sort.rs), same bar those two combos are held to.
 #[test]
-fn milestone_filter_hides_tasks_outside_the_selected_milestone() {
+fn project_filter_hides_tasks_outside_the_selected_milestone() {
     let mut v1 = task("TASK-1", "In v1", "To Do");
     v1.project = Some("v1".to_string());
     let mut v2 = task("TASK-2", "In v2", "To Do");
     v2.project = Some("v2".to_string());
     let mut harness = list_harness_with_tasks(vec![v1, v2]);
 
-    harness.state_mut().backlog_view.milestone_filter = "v1".to_string();
+    harness.state_mut().backlog_view.project_filter = "v1".to_string();
     harness.run();
 
     assert!(harness.query_by_label("TASK-1  In v1").is_some());
@@ -2623,7 +2623,7 @@ fn milestone_row_click_selects_the_task() {
     let mut milestoned = task("TASK-1", "Milestoned task", "To Do");
     milestoned.project = Some("v1".to_string());
     let mut app = list_app_with_tasks(vec![milestoned]);
-    app.backlog_view.lens = BacklogLens::Milestones;
+    app.backlog_view.lens = BacklogLens::Projects;
     let mut harness = harness(app);
     harness.run();
 
@@ -2641,7 +2641,7 @@ fn milestone_collapsing_header_collapses_and_reveals_its_tasks() {
     let mut milestoned = task("TASK-1", "Milestoned task", "To Do");
     milestoned.project = Some("v1".to_string());
     let mut app = list_app_with_tasks(vec![milestoned]);
-    app.backlog_view.lens = BacklogLens::Milestones;
+    app.backlog_view.lens = BacklogLens::Projects;
     let mut harness = harness(app);
     harness.run();
 
@@ -3209,7 +3209,7 @@ fn saved_view_persists_across_a_simulated_restart() {
     // regression bar for adding a new filter field: forgetting to wire it
     // into current_as_saved_view/apply_saved_view would silently reset it
     // to "all" the next time this view is applied.
-    harness.state_mut().backlog_view.milestone_filter = "v1".to_string();
+    harness.state_mut().backlog_view.project_filter = "v1".to_string();
     harness.state_mut().backlog_view.label_filter = "frontend".to_string();
     harness.run();
 
@@ -3238,7 +3238,7 @@ fn saved_view_persists_across_a_simulated_restart() {
     assert_eq!(reloaded.ui.saved_views.len(), 1);
     assert_eq!(reloaded.ui.saved_views[0].name, "High priority");
     assert_eq!(reloaded.ui.saved_views[0].priority_filter, "high");
-    assert_eq!(reloaded.ui.saved_views[0].milestone_filter, "v1");
+    assert_eq!(reloaded.ui.saved_views[0].project_filter, "v1");
     assert_eq!(reloaded.ui.saved_views[0].label_filter, "frontend");
 }
 

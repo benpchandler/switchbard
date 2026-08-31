@@ -137,7 +137,7 @@ pub(super) fn render_create_modal(
                 );
             });
             ui.horizontal(|ui| {
-                ui.label("milestone");
+                ui.label("project");
                 ui.add(
                     egui::TextEdit::singleline(&mut app.backlog_view.new_task.project)
                         .desired_width(200.0),

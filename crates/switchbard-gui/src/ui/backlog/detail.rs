@@ -59,7 +59,7 @@ pub(super) fn render_task_detail(
                 .corner_radius(7.0)
                 .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
-                    render_editor(app, ui, repo, task, editable, pending);
+                    render_editor(app, ui, snap, repo, task, editable, pending);
                 });
             ui.add_space(10.0);
             detail_lists::render_subtasks(app, ui, &repo.key, task, &repo.repo, editable);
@@ -148,9 +148,27 @@ fn render_detail_header(ui: &mut egui::Ui, repo: &RepoRow, task: &BacklogTask, e
     }
 }
 
+/// Sorted union of every project name any snapshot repo references (task
+/// membership) or defines (def files) — the assign dropdown's option list.
+fn known_project_names(snap: &Snapshot) -> Vec<String> {
+    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for repo in &snap.repos {
+        for task in &repo.repo.tasks {
+            if let Some(project) = &task.project {
+                names.insert(project.clone());
+            }
+        }
+        for def in &repo.repo.project_defs {
+            names.insert(def.name.clone());
+        }
+    }
+    names.into_iter().collect()
+}
+
 fn render_editor(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
+    snap: &Snapshot,
     repo: &RepoRow,
     task: &BacklogTask,
     editable: bool,
@@ -209,8 +227,27 @@ fn render_editor(
             );
         });
 
-        ui.label("milestone");
+        ui.label("project");
         ui.horizontal(|ui| {
+            // Every known project name across the snapshot — membership is
+            // cross-repo name-matched, so offering every name is the point.
+            // Def-declared names appear even with zero member tasks (a
+            // just-created project must be assignable). The text field stays
+            // as the free-text escape hatch: referencing a brand-new name is
+            // how projects are born.
+            let known = known_project_names(snap);
+            egui::ComboBox::from_id_salt("backlog_editor_project")
+                .selected_text("assign")
+                .width(72.0)
+                .show_ui(ui, |ui| {
+                    for name in &known {
+                        ui.selectable_value(
+                            &mut app.backlog_view.editor.project,
+                            name.clone(),
+                            name,
+                        );
+                    }
+                });
             ui.add(
                 egui::TextEdit::singleline(&mut app.backlog_view.editor.project)
                     .hint_text("none")
@@ -219,7 +256,7 @@ fn render_editor(
             if !app.backlog_view.editor.project.trim().is_empty()
                 && ui
                     .small_button("Clear")
-                    .on_hover_text("Clear the milestone assignment")
+                    .on_hover_text("Clear the project assignment")
                     .clicked()
             {
                 app.backlog_view.editor.project.clear();

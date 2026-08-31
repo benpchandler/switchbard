@@ -27,7 +27,7 @@
 //! - `list`       — the List lens: task list column + row rendering.
 //! - `tree`        — the List lens's sub-task tree walk, split out of `list` (task-17).
 //! - `board`      — the Board lens: per-status kanban columns with drag-to-change-status.
-//! - `milestones` — the Milestones lens: tasks grouped by milestone, cross-repo.
+//! - `projects`   — the Projects lens: initiative -> project grouping with rollup, cross-repo.
 //! - `portfolio`  — the Portfolio lens: read-only per-repo health (task-19).
 //! - `stats`      — the Statistics lens: cross-repo totals + burndown (task-16).
 //! - `search`     — the Cmd+K / Ctrl+K global free-text search overlay.
@@ -40,7 +40,7 @@
 //!
 //! `app.backlog_view.lens` (`BacklogLens`) picks which of the six central
 //! renderers below the toolbar owns the frame: `Digest` (default), `List`,
-//! `Board`, `Milestones`, `Portfolio`, or `Statistics`. All six share the
+//! `Board`, `Projects`, `Portfolio`, or `Statistics`. All six share the
 //! same `Snapshot`; `List`/`Board` additionally share one triage-ranked/
 //! filtered `tasks` list computed once per frame in `render` (see the perf
 //! note there) — `Digest`/`Portfolio`/`Statistics` read `scoped_repos`
@@ -51,7 +51,7 @@
 //! ## Selecting a task shows its detail, regardless of lens
 //!
 //! Owner UX pass (2026-08-05): every lens's "click a task" affordance
-//! (Board card, List row, Digest card, Milestones row, search result) sets
+//! (Board card, List row, Digest card, Projects row, search result) sets
 //! `backlog_view.selected_task` and nothing else — no lens switch. `rail`
 //! renders that selection's detail in a persistent right-side panel
 //! alongside whichever lens is active, replacing the old behavior where a
@@ -68,8 +68,8 @@ mod digest;
 pub(crate) mod dispatch_ui;
 mod format;
 mod list;
-mod milestones;
 mod portfolio;
+mod projects;
 mod rail;
 mod saved_views;
 mod search;
@@ -214,7 +214,7 @@ impl Snapshot {
 pub(super) fn lens_filters(lens: BacklogLens) -> bool {
     matches!(
         lens,
-        BacklogLens::List | BacklogLens::Board | BacklogLens::Milestones
+        BacklogLens::List | BacklogLens::Board | BacklogLens::Projects
     )
 }
 
@@ -310,9 +310,9 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
                     ui.separator();
                     board::render_board(app, ui, &snap, tasks, &mut pending);
                 }
-                BacklogLens::Milestones => {
+                BacklogLens::Projects => {
                     ui.separator();
-                    milestones::render_milestones(app, ui, &snap, tasks);
+                    projects::render_projects(app, ui, &snap, tasks);
                 }
                 BacklogLens::Portfolio => {
                     ui.separator();

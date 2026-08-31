@@ -225,7 +225,7 @@ fn shots_for_theme(theme: ThemeChoice) {
     {
         let app = app_with(
             theme,
-            BacklogLens::Milestones,
+            BacklogLens::Projects,
             vec![sample_task("TASK-1", "Milestoned task", "To Do")],
         );
         let mut h = harness(app);
@@ -362,7 +362,7 @@ fn shots_for_theme(theme: ThemeChoice) {
                 selected_repo: None,
                 status_filter: "all".to_string(),
                 priority_filter: "high".to_string(),
-                milestone_filter: "all".to_string(),
+                project_filter: "all".to_string(),
                 label_filter: "all".to_string(),
                 sort_key: String::new(),
                 sort_direction: String::new(),

@@ -147,10 +147,10 @@ pub struct BacklogViewState {
     pub repo_filter: String,
     pub status_filter: String,
     pub priority_filter: String,
-    /// QA parity matrix gap: milestone browsing previously required
-    /// switching to the separate Milestones lens; this filters the List
-    /// lens's own row set instead, same "all" sentinel as status/priority.
-    pub milestone_filter: String,
+    /// The project-name facet ("all" sentinel, same as status/priority):
+    /// filters the List lens's row set without switching to the Projects
+    /// lens.
+    pub project_filter: String,
     pub label_filter: String,
     pub sort_key: BacklogTaskSortKey,
     pub sort_direction: BacklogTaskSortDirection,
@@ -239,7 +239,7 @@ impl Default for BacklogViewState {
             repo_filter: String::new(),
             status_filter: "all".to_string(),
             priority_filter: "all".to_string(),
-            milestone_filter: "all".to_string(),
+            project_filter: "all".to_string(),
             label_filter: "all".to_string(),
             sort_key: BacklogTaskSortKey::default(),
             sort_direction: BacklogTaskSortDirection::default(),
@@ -296,9 +296,10 @@ impl BacklogViewState {
             .get("priority")
             .cloned()
             .unwrap_or_else(|| "all".to_string());
-        state.milestone_filter = memory
+        state.project_filter = memory
             .facets
-            .get("milestone")
+            .get("project_name")
+            .or_else(|| memory.facets.get("milestone"))
             .cloned()
             .unwrap_or_else(|| "all".to_string());
         state.label_filter = memory
@@ -327,15 +328,18 @@ impl BacklogViewState {
                 .as_ref()
                 .map(|path| path.display().to_string()),
         );
-        // Purge the pre-rename keys so a config only ever carries one spelling.
+        // Purge the pre-rename keys so a config only ever carries one
+        // spelling. "project" held a repo *path* before the rename, which is
+        // why the project-name facet uses the fresh key "project_name".
         memory.facets.remove("project_query");
         memory.facets.remove("project");
+        memory.facets.remove("milestone");
         persist_non_default(&mut memory.facets, "status", &self.status_filter, "all");
         persist_non_default(&mut memory.facets, "priority", &self.priority_filter, "all");
         persist_non_default(
             &mut memory.facets,
-            "milestone",
-            &self.milestone_filter,
+            "project_name",
+            &self.project_filter,
             "all",
         );
         persist_non_default(&mut memory.facets, "label", &self.label_filter, "all");
@@ -373,7 +377,7 @@ fn persist_bool(
 }
 
 /// The Backlog view's central-panel lens. `List` is the pre-existing
-/// triage/status list; `Board`/`Milestones`/`Statistics` are task-15/16
+/// triage/status list; `Board`/`Projects`/`Statistics` are task-15/16
 /// additions; `Digest`/`Portfolio` are task-21/19. `Digest` is the default —
 /// task-21 makes the "what should I do today" landing screen the Backlog
 /// tab's default lens (not the whole app's default *tab*, which stays
@@ -384,7 +388,7 @@ pub enum BacklogLens {
     Digest,
     List,
     Board,
-    Milestones,
+    Projects,
     Portfolio,
     Statistics,
 }
@@ -395,7 +399,7 @@ impl BacklogLens {
             Self::Digest => "Digest",
             Self::List => "List",
             Self::Board => "Board",
-            Self::Milestones => "Milestones",
+            Self::Projects => "Projects",
             Self::Portfolio => "Portfolio",
             Self::Statistics => "Statistics",
         }
@@ -410,7 +414,7 @@ impl BacklogLens {
             Self::Digest => "digest",
             Self::List => "list",
             Self::Board => "board",
-            Self::Milestones => "milestones",
+            Self::Projects => "projects",
             Self::Portfolio => "portfolio",
             Self::Statistics => "statistics",
         }
@@ -424,7 +428,10 @@ impl BacklogLens {
         match id {
             "list" => Self::List,
             "board" => Self::Board,
-            "milestones" => Self::Milestones,
+            "projects" => Self::Projects,
+            // Pre-rename spelling (the lens was "Milestones" before the
+            // Linear-hierarchy divergence) — old saved views land here.
+            "milestones" => Self::Projects,
             "portfolio" => Self::Portfolio,
             "statistics" => Self::Statistics,
             _ => Self::Digest,
@@ -456,7 +463,7 @@ pub enum BacklogTaskSortKey {
     /// keys.
     Labels,
     Assignee,
-    Milestone,
+    Project,
 }
 
 impl BacklogTaskSortKey {
@@ -469,7 +476,7 @@ impl BacklogTaskSortKey {
             Self::AcceptanceCriteria => "AC",
             Self::Labels => "Labels",
             Self::Assignee => "Assignee",
-            Self::Milestone => "Milestone",
+            Self::Project => "Project",
         }
     }
 
@@ -483,7 +490,7 @@ impl BacklogTaskSortKey {
             Self::AcceptanceCriteria => "acceptance_criteria",
             Self::Labels => "labels",
             Self::Assignee => "assignee",
-            Self::Milestone => "milestone",
+            Self::Project => "project",
         }
     }
 
@@ -495,7 +502,9 @@ impl BacklogTaskSortKey {
             "acceptance_criteria" => Self::AcceptanceCriteria,
             "labels" => Self::Labels,
             "assignee" => Self::Assignee,
-            "milestone" => Self::Milestone,
+            "project" => Self::Project,
+            // Pre-rename spelling from old saved views.
+            "milestone" => Self::Project,
             _ => Self::Triage,
         }
     }
@@ -1652,5 +1661,46 @@ mod tests {
         assert!(!dispatch_run_holds_worktree(
             &DispatchRunLiveness::NoSidecar
         ));
+    }
+
+    #[test]
+    fn pre_rename_saved_ids_land_on_the_new_lens_and_sort_key() {
+        assert_eq!(
+            BacklogLens::from_saved_id("projects"),
+            BacklogLens::Projects
+        );
+        assert_eq!(
+            BacklogLens::from_saved_id("milestones"),
+            BacklogLens::Projects,
+            "a saved view from before the Linear-hierarchy rename restores"
+        );
+        assert_eq!(
+            BacklogTaskSortKey::from_saved_id("project"),
+            BacklogTaskSortKey::Project
+        );
+        assert_eq!(
+            BacklogTaskSortKey::from_saved_id("milestone"),
+            BacklogTaskSortKey::Project
+        );
+    }
+
+    #[test]
+    fn project_name_facet_restores_from_the_legacy_milestone_key_and_purges_it() {
+        let mut ui = switchbard_core::config::UiConfig::default();
+        let memory = ui.filters.entry("backlog".to_string()).or_default();
+        memory
+            .facets
+            .insert("milestone".to_string(), "Lucella cutover".to_string());
+
+        let restored = BacklogViewState::restore_filters(&ui);
+        assert_eq!(restored.project_filter, "Lucella cutover");
+
+        restored.persist_filters(&mut ui);
+        let memory = ui.filters.get("backlog").expect("backlog memory");
+        assert_eq!(
+            memory.facets.get("project_name").map(String::as_str),
+            Some("Lucella cutover")
+        );
+        assert!(!memory.facets.contains_key("milestone"));
     }
 }

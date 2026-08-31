@@ -249,7 +249,7 @@ fn sort_by_milestone_actually_reorders_the_rendered_rows() {
     v1.project = Some("v1".to_string());
 
     let mut app = list_app_with_tasks(vec![v2, v1]);
-    app.backlog_view.sort_key = BacklogTaskSortKey::Milestone;
+    app.backlog_view.sort_key = BacklogTaskSortKey::Project;
     app.backlog_view.sort_direction = BacklogTaskSortDirection::Ascending;
     let mut h = harness(app);
     h.run();
@@ -302,7 +302,7 @@ fn milestone_and_label_filters_both_narrow_the_visible_set_together() {
     assert!(h.query_by_label("TASK-2  Wrong milestone").is_some());
     assert!(h.query_by_label("TASK-3  Wrong label").is_some());
 
-    h.state_mut().backlog_view.milestone_filter = "Q3-hardening".to_string();
+    h.state_mut().backlog_view.project_filter = "Q3-hardening".to_string();
     h.state_mut().backlog_view.label_filter = "security-review".to_string();
     h.run();
 
@@ -323,7 +323,7 @@ fn milestone_and_label_filters_both_narrow_the_visible_set_together() {
 #[test]
 fn saved_view_round_trips_milestone_and_label_filters_through_a_real_reload() {
     let mut h = harness(list_app_with_tasks(vec![task("TASK-1", "Task", "To Do")]));
-    h.state_mut().backlog_view.milestone_filter = "release-4.2".to_string();
+    h.state_mut().backlog_view.project_filter = "release-4.2".to_string();
     h.state_mut().backlog_view.label_filter = "needs-triage".to_string();
     h.run();
 
@@ -346,7 +346,7 @@ fn saved_view_round_trips_milestone_and_label_filters_through_a_real_reload() {
         .expect("reloading the just-saved config should succeed");
     assert_eq!(reloaded.ui.saved_views.len(), 1);
     let view = &reloaded.ui.saved_views[0];
-    assert_eq!(view.milestone_filter, "release-4.2");
+    assert_eq!(view.project_filter, "release-4.2");
     assert_eq!(view.label_filter, "needs-triage");
 }
 

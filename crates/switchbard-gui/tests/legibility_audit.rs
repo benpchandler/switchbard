@@ -725,7 +725,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     let mut milestones_app = seeded_app();
     milestones_app.config.ui.theme = theme;
     milestones_app.view_tab = ViewTab::Backlog;
-    milestones_app.backlog_view.lens = BacklogLens::Milestones;
+    milestones_app.backlog_view.lens = BacklogLens::Projects;
     seed_backlog_project(&milestones_app);
     let milestones = harness(milestones_app);
 
