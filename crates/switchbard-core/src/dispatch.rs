@@ -14,7 +14,7 @@
 //! no Switchbard running (via anything that can set a task label; the
 //! format fork's `switchbard task` CLI is the planned first-class way).
 //! [`list_dispatch_queue`] reads that straight off an already-loaded
-//! [`BacklogProject`].
+//! [`BacklogRepo`].
 //!
 //! The double-dispatch guard is a label swap, not a lock: [`dispatch_one`]'s
 //! first move is `dispatch` → `dispatching` via [`crate::swap_backlog_label`],
@@ -131,14 +131,14 @@
 //! ## For the future GUI wiring
 //!
 //! [`list_dispatch_queue`], [`dispatch_one`], and [`DispatchOutcome`] are the
-//! whole surface a caller needs: load a `BacklogProject`, list the queue,
+//! whole surface a caller needs: load a `BacklogRepo`, list the queue,
 //! call `dispatch_one` per task (or `drain_dispatch_queue` for the capped,
 //! spaced-out version), render `DispatchOutcome`. No GUI code lives here —
 //! that wiring (the Dispatch button, a background worker thread following
 //! `workers.rs`'s pattern) is separate scope.
 
 use crate::backlog::{
-    append_backlog_notes, edit_backlog_task, set_backlog_label, swap_backlog_label, BacklogProject,
+    append_backlog_notes, edit_backlog_task, set_backlog_label, swap_backlog_label, BacklogRepo,
     BacklogTask, BacklogTaskPatch, BacklogTaskSource,
 };
 use crate::git_env::git_cmd;
@@ -304,7 +304,7 @@ pub struct DispatchOutcome {
 /// labeled exactly `dispatch`, sorted by id for a deterministic drain order.
 /// A task mid-flight (`dispatching`) or already finished (`dispatched` /
 /// `dispatch-failed`) never reappears here.
-pub fn list_dispatch_queue(project: &BacklogProject) -> Vec<BacklogTask> {
+pub fn list_dispatch_queue(project: &BacklogRepo) -> Vec<BacklogTask> {
     let mut queue: Vec<BacklogTask> = project
         .tasks
         .iter()
@@ -694,7 +694,7 @@ pub fn dispatch_one(
 /// already-throttled token.
 pub fn drain_dispatch_queue(
     repo_root: &Path,
-    project: &BacklogProject,
+    project: &BacklogRepo,
     opts: &DispatchOptions,
 ) -> Vec<DispatchOutcome> {
     let batch = select_batch(&list_dispatch_queue(project), opts.max_concurrent);
@@ -985,7 +985,7 @@ pub(crate) fn unix_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backlog::{load_backlog_project, BacklogChecklistItem};
+    use crate::backlog::{load_backlog_repo, BacklogChecklistItem};
     use std::fs;
 
     fn task(id: &str, labels: &[&str]) -> BacklogTask {
@@ -1015,7 +1015,7 @@ mod tests {
 
     #[test]
     fn list_dispatch_queue_only_returns_dispatch_labeled_active_tasks() {
-        let project = BacklogProject {
+        let project = BacklogRepo {
             root: PathBuf::from("/repo"),
             tasks: vec![
                 task("TASK-2", &["dispatch"]),
@@ -1042,7 +1042,7 @@ mod tests {
     fn list_dispatch_queue_ignores_non_active_sources() {
         let mut done = task("TASK-9", &["dispatch"]);
         done.source = BacklogTaskSource::Completed;
-        let project = BacklogProject {
+        let project = BacklogRepo {
             root: PathBuf::from("/repo"),
             tasks: vec![done],
             warnings: vec![],
@@ -1056,7 +1056,7 @@ mod tests {
     #[test]
     fn list_dispatch_queue_filters_real_fixture_files_on_disk() {
         // Exercises the module against real markdown parsed by
-        // `load_backlog_project` (not hand-built structs), per the mission's
+        // `load_backlog_repo` (not hand-built structs), per the mission's
         // "unit-test queue/guard logic against fixture repos under $TMPDIR".
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("backlog/tasks")).unwrap();
@@ -1065,7 +1065,7 @@ mod tests {
         write_fixture_task(dir.path(), "TASK-3", &[]);
         write_fixture_task(dir.path(), "TASK-4", &["dispatch", "hub"]);
 
-        let project = load_backlog_project(dir.path()).unwrap();
+        let project = load_backlog_repo(dir.path()).unwrap();
         let ids: Vec<String> = list_dispatch_queue(&project)
             .into_iter()
             .map(|t| t.id)

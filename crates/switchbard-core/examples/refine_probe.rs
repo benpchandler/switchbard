@@ -14,7 +14,7 @@
 //! cargo run -p switchbard-core --example refine_probe -- ~/Dev/switchbard TASK-44
 //! ```
 
-use switchbard_core::{describe_refine_result, load_backlog_project, refine_task, RefineOptions};
+use switchbard_core::{describe_refine_result, load_backlog_repo, refine_task, RefineOptions};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -24,7 +24,7 @@ fn main() {
     };
     let root = std::path::PathBuf::from(root);
 
-    let project = match load_backlog_project(&root) {
+    let project = match load_backlog_repo(&root) {
         Ok(project) => project,
         Err(e) => {
             eprintln!("failed to load backlog project at {}: {e}", root.display());

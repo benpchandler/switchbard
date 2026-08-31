@@ -1,7 +1,7 @@
 //! Global free-text search overlay (Cmd+K / Ctrl+K), task-15 AC #2.
 //!
-//! "Global" here means cross-repo scope — every tracked project's tasks,
-//! independent of the current project/status/priority filters or lens —
+//! "Global" here means cross-repo scope — every tracked repo's tasks,
+//! independent of the current repo/status/priority filters or lens —
 //! not cross-view; the shortcut is only live while the Backlog tab is on
 //! screen, matched by the Backlog.md webview's own command palette being
 //! scoped to its task views.
@@ -75,13 +75,13 @@ fn render_contents(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
     }
 
     let mut matches = Vec::new();
-    for project in &snap.projects {
-        for task in &project.project.tasks {
+    for repo in &snap.repos {
+        for task in &repo.repo.tasks {
             if task.source == BacklogTaskSource::Archived {
                 continue;
             }
             if matches_query(task, &query_lc) {
-                matches.push((project, task));
+                matches.push((repo, task));
             }
         }
         if matches.len() >= MAX_RESULTS {
@@ -97,14 +97,14 @@ fn render_contents(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
     egui::ScrollArea::vertical()
         .max_height(320.0)
         .show(ui, |ui| {
-            for (project, task) in matches.iter().take(MAX_RESULTS) {
-                let label = format!("{}:{}  {}", project.repo_name, task.id, task.title);
+            for (repo, task) in matches.iter().take(MAX_RESULTS) {
+                let label = format!("{}:{}  {}", repo.repo_name, task.id, task.title);
                 if ui.selectable_label(false, label).clicked() {
                     // Owner UX pass (2026-08-05): selecting is enough — the
                     // persistent detail rail shows it regardless of lens,
                     // so this no longer needs to jump to List.
-                    app.backlog_view.selected_project = None;
-                    app.backlog_view.selected_task = Some((project.key.clone(), task.id.clone()));
+                    app.backlog_view.selected_repo = None;
+                    app.backlog_view.selected_task = Some((repo.key.clone(), task.id.clone()));
                     app.backlog_view.editor.loaded_key = None;
                     app.backlog_view.search.open = false;
                 }

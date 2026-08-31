@@ -1,7 +1,7 @@
 //! Task relationship graphs within one Backlog project: dependency/blocked
 //! state (task-18) and parent/child sub-task hierarchy (task-17).
 //!
-//! Both are pure, no-IO functions over an already-loaded `BacklogProject` —
+//! Both are pure, no-IO functions over an already-loaded `BacklogRepo` —
 //! no new store, matching the same constraint `backlog_stats` and
 //! `backlog_triage` already follow. Dependencies and sub-tasks are scoped to
 //! a single project: Backlog.md's own `dependencies`/`parent` fields store
@@ -9,13 +9,13 @@
 //! ever means "TASK-1 in this same project" — there is no native cross-repo
 //! dependency concept to resolve.
 
-use crate::backlog::{parse_backlog_day, BacklogProject, BacklogTask};
+use crate::backlog::{parse_backlog_day, BacklogRepo, BacklogTask};
 
 /// `true` when any of `task`'s `dependencies` names a task in `project` that
 /// isn't done. A dependency id that doesn't resolve to any task in the
 /// project (typo, or a task since archived/removed) can't be verified, so it
 /// doesn't block — matching Rule 5's "don't over-block on ambiguous data".
-pub fn is_blocked(task: &BacklogTask, project: &BacklogProject) -> bool {
+pub fn is_blocked(task: &BacklogTask, project: &BacklogRepo) -> bool {
     !blocking_dependencies(task, project).is_empty()
 }
 
@@ -23,7 +23,7 @@ pub fn is_blocked(task: &BacklogTask, project: &BacklogProject) -> bool {
 /// they're listed. Empty when `task` isn't blocked.
 pub fn blocking_dependencies<'a>(
     task: &BacklogTask,
-    project: &'a BacklogProject,
+    project: &'a BacklogRepo,
 ) -> Vec<&'a BacklogTask> {
     task.dependencies
         .iter()
@@ -38,7 +38,7 @@ pub fn blocking_dependencies<'a>(
 /// a status for.
 pub fn dependency_statuses<'a>(
     task: &BacklogTask,
-    project: &'a BacklogProject,
+    project: &'a BacklogRepo,
 ) -> Vec<(&'a BacklogTask, bool)> {
     task.dependencies
         .iter()
@@ -50,7 +50,7 @@ pub fn dependency_statuses<'a>(
 /// The reverse edge: every task in `project` that names `task.id` as one of
 /// its own dependencies — i.e. what `task` blocks (task-18's "blocks"
 /// direction). Purely derived; Backlog.md has no stored inverse field.
-pub fn blocks<'a>(task: &BacklogTask, project: &'a BacklogProject) -> Vec<&'a BacklogTask> {
+pub fn blocks<'a>(task: &BacklogTask, project: &'a BacklogRepo) -> Vec<&'a BacklogTask> {
     project
         .tasks
         .iter()
@@ -75,11 +75,7 @@ const NEWLY_UNBLOCKED_WINDOW_DAYS: i64 = 3;
 /// dependency that just flipped to Done is the observable signal that
 /// `task` just became actionable. A task with no dependencies at all is
 /// never "newly" anything — there was nothing to unblock.
-pub fn is_newly_unblocked(
-    task: &BacklogTask,
-    project: &BacklogProject,
-    today_unix_day: i64,
-) -> bool {
+pub fn is_newly_unblocked(task: &BacklogTask, project: &BacklogRepo, today_unix_day: i64) -> bool {
     if task.dependencies.is_empty() || is_blocked(task, project) {
         return false;
     }
@@ -100,7 +96,7 @@ pub fn is_newly_unblocked(
 /// would double-count if a grandchild's parent (the child) is also counted,
 /// so "children done/total" per the task's own description means direct
 /// children only.
-pub fn children<'a>(task: &BacklogTask, project: &'a BacklogProject) -> Vec<&'a BacklogTask> {
+pub fn children<'a>(task: &BacklogTask, project: &'a BacklogRepo) -> Vec<&'a BacklogTask> {
     project
         .tasks
         .iter()
@@ -111,13 +107,13 @@ pub fn children<'a>(task: &BacklogTask, project: &'a BacklogProject) -> Vec<&'a 
 /// `(done, total)` roll-up over `task`'s direct children, for the tree
 /// view's parent-row progress badge. `(0, 0)` for a childless task — callers
 /// checking `total == 0` know to skip the badge rather than render "0/0".
-pub fn subtask_progress(task: &BacklogTask, project: &BacklogProject) -> (usize, usize) {
+pub fn subtask_progress(task: &BacklogTask, project: &BacklogRepo) -> (usize, usize) {
     let kids = children(task, project);
     let done = kids.iter().filter(|kid| kid.is_done()).count();
     (done, kids.len())
 }
 
-fn find_task<'a>(project: &'a BacklogProject, id: &str) -> Option<&'a BacklogTask> {
+fn find_task<'a>(project: &'a BacklogRepo, id: &str) -> Option<&'a BacklogTask> {
     project.tasks.iter().find(|task| task.id == id)
 }
 
@@ -152,8 +148,8 @@ mod tests {
         }
     }
 
-    fn project(tasks: Vec<BacklogTask>) -> BacklogProject {
-        BacklogProject {
+    fn project(tasks: Vec<BacklogTask>) -> BacklogRepo {
+        BacklogRepo {
             root: PathBuf::from("/repo"),
             tasks,
             warnings: vec![],

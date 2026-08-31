@@ -1,6 +1,6 @@
-//! The "New Backlog Task" modal. In single-project scope the target project
-//! is fixed (a label only); in the All-projects scope it carries its own
-//! project picker so filing a task doesn't require leaving the unified view.
+//! The "New Backlog Task" modal. In single-repo scope the target repo
+//! is fixed (a label only); in the All-repos scope it carries its own
+//! repo picker so filing a task doesn't require leaving the unified view.
 
 use super::{detail_lists, format, Pending, Snapshot};
 use crate::app::HiveApp;
@@ -11,7 +11,7 @@ use switchbard_core::{ordered_status_vocabulary, NewBacklogTask};
 
 /// Open the top-level task composer, optionally preselecting a Board
 /// column's status. All entry points share this so the global "+ Task"
-/// control and per-column affordances cannot drift on project targeting or
+/// control and per-column affordances cannot drift on repo targeting or
 /// accidentally retain a subtask parent.
 pub(super) fn open_new_task(
     app: &mut HiveApp,
@@ -39,16 +39,16 @@ pub(super) fn render_create_modal(
         app.backlog_view.new_task.open = false;
         return;
     };
-    let Some(project) = snap.project(&target_key) else {
+    let Some(repo) = snap.repo(&target_key) else {
         app.backlog_view.new_task.open = false;
         return;
     };
     // A subtask (task-17) can't move to a different repo than its parent —
-    // Backlog.md's `parent` field is a bare, project-scoped id — so the
-    // project picker is fixed whenever this modal was opened via "+ Subtask"
-    // even in the otherwise-unified All-projects scope.
+    // Backlog.md's `parent` field is a bare, repo-scoped id — so the
+    // repo picker is fixed whenever this modal was opened via "+ Subtask"
+    // even in the otherwise-unified All-repos scope.
     let fixed_target =
-        app.backlog_view.selected_project.is_some() || app.backlog_view.new_task.parent.is_some();
+        app.backlog_view.selected_repo.is_some() || app.backlog_view.new_task.parent.is_some();
 
     let mut open = true;
     let mut close = false;
@@ -67,19 +67,16 @@ pub(super) fn render_create_modal(
         .show(ctx, |ui| {
             if fixed_target {
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{} / {}",
-                        project.repo_name, project.worktree_label
-                    ))
-                    .color(theme::muted_text()),
+                    egui::RichText::new(format!("{} / {}", repo.repo_name, repo.worktree_label))
+                        .color(theme::muted_text()),
                 );
             } else {
-                ui.label(egui::RichText::new("Project").color(theme::muted_text()));
+                ui.label(egui::RichText::new("Repo").color(theme::muted_text()));
                 egui::ComboBox::from_id_salt("backlog_new_task_project")
-                    .selected_text(project.label())
+                    .selected_text(repo.label())
                     .width(320.0)
                     .show_ui(ui, |ui| {
-                        for row in &snap.projects {
+                        for row in &snap.repos {
                             let selected = app.backlog_view.new_task.target_project.as_deref()
                                 == Some(&row.key);
                             if ui.selectable_label(selected, row.label()).clicked() {
@@ -102,10 +99,10 @@ pub(super) fn render_create_modal(
             ui.horizontal(|ui| {
                 ui.label("status");
                 // Owner UX pass (2026-08-05): scoped to the target
-                // project's own vocabulary, not a fixed 3-entry list —
-                // e.g. a project declaring Icebox in config.yml can file a
+                // repo's own vocabulary, not a fixed 3-entry list —
+                // e.g. a repo declaring Icebox in config.yml can file a
                 // new task straight into it.
-                let statuses = ordered_status_vocabulary(std::iter::once(&project.project));
+                let statuses = ordered_status_vocabulary(std::iter::once(&repo.repo));
                 format::render_value_combo(
                     ui,
                     "backlog_new_status",

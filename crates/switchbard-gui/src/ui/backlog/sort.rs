@@ -1,19 +1,19 @@
 //! Task filtering, sorting, and the triage-ranking pipeline.
 //!
 //! `visible_task_rows` is the single place that turns "every tracked
-//! project's tasks" into "the rows this frame renders": it applies the
+//! repo's tasks" into "the rows this frame renders": it applies the
 //! visibility filters (status/priority/search/show-completed/show-archived),
 //! then orders them either via the manual sort keys (`compare_tasks`, ported
 //! unchanged from the pre-split view) or, for the default `Triage` key, via
 //! `switchbard_core::triage_rank` — the pure cross-repo ranking function.
 
-use super::{scoped_projects, ProjectRow, Snapshot, TaskRow};
+use super::{scoped_repos, RepoRow, Snapshot, TaskRow};
 use crate::app::HiveApp;
 use crate::runtime::{BacklogTaskKey, BacklogTaskSortDirection, BacklogTaskSortKey};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use switchbard_core::{
-    parse_backlog_datetime_unix, triage_entry_from_task, triage_rank, BacklogProject, BacklogTask,
+    parse_backlog_datetime_unix, triage_entry_from_task, triage_rank, BacklogRepo, BacklogTask,
     BacklogTaskSource, BACKLOG_PRIORITIES, CANONICAL_STATUS_ORDER,
 };
 
@@ -24,10 +24,10 @@ use switchbard_core::{
 pub(super) fn visible_task_rows<'a>(app: &HiveApp, snap: &'a Snapshot) -> Vec<TaskRow<'a>> {
     let filter_lc = app.filter().to_lowercase();
     let mut rows: Vec<TaskRow<'a>> = Vec::new();
-    for project in scoped_projects(app, snap) {
-        for task in &project.project.tasks {
+    for repo in scoped_repos(app, snap) {
+        for task in &repo.repo.tasks {
             if task_visible(task, app, &filter_lc) {
-                rows.push(TaskRow { project, task });
+                rows.push(TaskRow { repo, task });
             }
         }
     }
@@ -51,10 +51,10 @@ fn sort_by_triage<'a>(app: &HiveApp, rows: &mut Vec<TaskRow<'a>>) {
         .iter()
         .map(|row| {
             triage_entry_from_task(
-                row.project.key.clone(),
-                &row.project.repo_name,
+                row.repo.key.clone(),
+                &row.repo.repo_name,
                 row.task,
-                &row.project.project,
+                &row.repo.repo,
             )
         })
         .collect();
@@ -255,7 +255,7 @@ impl<'a> ActiveFilters<'a> {
     /// filter.
     ///
     /// The group is an AND chain, so a control offering values drawn from the
-    /// whole project scope can offer one that yields nothing once the *other*
+    /// whole repo scope can offer one that yields nothing once the *other*
     /// filters apply — the user picks it and the board empties. Building each
     /// control's options with its own facet excluded (and only its own —
     /// excluding more would over-offer again) is what makes the group behave
@@ -316,9 +316,8 @@ pub(super) fn task_visible(task: &BacklogTask, app: &HiveApp, filter_lc: &str) -
     ActiveFilters::from_app(app, filter_lc).matches(task, None)
 }
 
-pub(super) fn open_task_count(project: &BacklogProject) -> usize {
-    project
-        .tasks
+pub(super) fn open_task_count(repo: &BacklogRepo) -> usize {
+    repo.tasks
         .iter()
         .filter(|task| !task_is_completed(task) && task.source != BacklogTaskSource::Archived)
         .count()
@@ -346,13 +345,13 @@ pub(super) struct FacetOption {
 /// even at zero — dropping the selected value would silently mutate the
 /// control the user is looking at, and they need a way back.
 pub(super) fn milestone_options(
-    scoped: &[&ProjectRow],
+    scoped: &[&RepoRow],
     filters: &ActiveFilters<'_>,
     current: &str,
 ) -> Vec<FacetOption> {
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-    for project in scoped {
-        for task in &project.project.tasks {
+    for repo in scoped {
+        for task in &repo.repo.tasks {
             if !filters.matches(task, Some(Facet::Milestone)) {
                 continue;
             }
@@ -373,13 +372,13 @@ pub(super) fn milestone_options(
 /// Label values worth offering — see [`milestone_options`] for why these are
 /// counted with their own facet excluded.
 pub(super) fn label_options(
-    scoped: &[&ProjectRow],
+    scoped: &[&RepoRow],
     filters: &ActiveFilters<'_>,
     current: &str,
 ) -> Vec<FacetOption> {
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-    for project in scoped {
-        for task in &project.project.tasks {
+    for repo in scoped {
+        for task in &repo.repo.tasks {
             if !filters.matches(task, Some(Facet::Label)) {
                 continue;
             }
@@ -449,7 +448,7 @@ mod tests {
                 .collect(),
             definition_of_done: vec![],
             source: BacklogTaskSource::Active,
-            path: PathBuf::from("/tmp/project/backlog/tasks/task.md"),
+            path: PathBuf::from("/tmp/repo/backlog/tasks/task.md"),
         }
     }
 
@@ -469,13 +468,13 @@ mod tests {
         }
     }
 
-    fn project_row(tasks: Vec<BacklogTask>) -> ProjectRow {
-        ProjectRow {
+    fn project_row(tasks: Vec<BacklogTask>) -> RepoRow {
+        RepoRow {
             key: PathBuf::from("/tmp/fixture"),
             repo_name: "fixture".to_string(),
             worktree_label: "main".to_string(),
             branch: Some("main".to_string()),
-            project: BacklogProject {
+            repo: BacklogRepo {
                 root: PathBuf::from("/tmp/fixture"),
                 tasks,
                 warnings: vec![],
@@ -582,7 +581,7 @@ mod tests {
     /// A control must not offer a value that leads nowhere.
     ///
     /// The group is an AND chain, but each control used to draw its options
-    /// from the whole project scope, ignoring the other filters. With
+    /// from the whole repo scope, ignoring the other filters. With
     /// Status=In Progress active, the Milestone picker still listed `v2` —
     /// whose only task is To Do — and choosing it emptied the board.
     #[test]
@@ -670,8 +669,8 @@ mod tests {
 
     #[test]
     fn open_task_count_excludes_done_and_archived_tasks() {
-        let project = BacklogProject {
-            root: PathBuf::from("/tmp/project"),
+        let repo = BacklogRepo {
+            root: PathBuf::from("/tmp/repo"),
             tasks: vec![
                 task_with_status("To Do", BacklogTaskSource::Active),
                 task_with_status("In Progress", BacklogTaskSource::Active),
@@ -683,7 +682,7 @@ mod tests {
             configured_statuses: vec![],
         };
 
-        assert_eq!(open_task_count(&project), 2);
+        assert_eq!(open_task_count(&repo), 2);
     }
 
     #[test]

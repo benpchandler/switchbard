@@ -1,24 +1,24 @@
-//! Backlog project-management view.
+//! Backlog repo-management view.
 //!
 //! The view renders cached `backlog/` task snapshots for every tracked
-//! worktree that has a Backlog project. Mutations go back through the
+//! worktree that has a Backlog repo. Mutations go back through the
 //! `backlog` CLI from worker threads; this module only queues intents.
 //!
 //! ## Unified scope
 //!
-//! `app.backlog_view.selected_project` doubles as the scope switch: `None`
-//! (the default) is "All projects" — every tracked project's tasks merged
+//! `app.backlog_view.selected_repo` doubles as the scope switch: `None`
+//! (the default) is "All repos" — every tracked repo's tasks merged
 //! into one triage-ranked list (`sort::visible_task_rows` +
 //! `switchbard_core::triage_rank`), each row tagged with a repo badge and
-//! `repo:id`-formatted task id. `Some(path)` narrows to that one project,
+//! `repo:id`-formatted task id. `Some(path)` narrows to that one repo,
 //! matching how the view worked before the unified scope. See `sort.rs` for
 //! the ranking/filtering pipeline and `runtime::BacklogTaskKey` for why
 //! selection is keyed on `(project_root, task_id)` rather than a bare id —
-//! ids are only unique within a project.
+//! ids are only unique within a repo.
 //!
 //! ## Module map
 //! - `format`     — presentation-only helpers (status/priority labels+colors).
-//! - `toolbar`    — summary line + project/status/priority filter bar + lens tabs.
+//! - `toolbar`    — summary line + repo/status/priority filter bar + lens tabs.
 //! - `sort`       — task filtering, sorting (incl. triage ranking), status options.
 //! - `selection`  — bulk multi-select state machine (shift/ctrl-click, context menu targets).
 //! - `detail_lists` — detail-pane checklist/list sections split out of `detail`.
@@ -43,7 +43,7 @@
 //! `Board`, `Milestones`, `Portfolio`, or `Statistics`. All six share the
 //! same `Snapshot`; `List`/`Board` additionally share one triage-ranked/
 //! filtered `tasks` list computed once per frame in `render` (see the perf
-//! note there) — `Digest`/`Portfolio`/`Statistics` read `scoped_projects`
+//! note there) — `Digest`/`Portfolio`/`Statistics` read `scoped_repos`
 //! directly instead, since a read-only aggregation or landing page
 //! shouldn't go empty just because the toolbar's Done/Archived filters are
 //! off elsewhere.
@@ -87,17 +87,17 @@ use crate::ui::theme;
 use eframe::egui;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use switchbard_core::{BacklogProject, BacklogTask, BacklogTaskPatch, NewBacklogTask, Repo};
+use switchbard_core::{BacklogRepo, BacklogTask, BacklogTaskPatch, NewBacklogTask, Repo};
 
-pub(in crate::ui::backlog) struct ProjectRow {
+pub(in crate::ui::backlog) struct RepoRow {
     pub key: PathBuf,
-    pub project: BacklogProject,
+    pub repo: BacklogRepo,
     pub repo_name: String,
     pub worktree_label: String,
     pub branch: Option<String>,
 }
 
-impl ProjectRow {
+impl RepoRow {
     fn label(&self) -> String {
         let mut label = format!("{} / {}", self.repo_name, self.worktree_label);
         if let Some(branch) = &self.branch {
@@ -122,27 +122,27 @@ impl ProjectRow {
     }
 }
 
-/// One task paired with the project it belongs to — the unit the list/detail
-/// panes render, regardless of whether the view is scoped to one project or
+/// One task paired with the repo it belongs to — the unit the list/detail
+/// panes render, regardless of whether the view is scoped to one repo or
 /// merging all of them.
 pub(in crate::ui::backlog) struct TaskRow<'a> {
-    pub project: &'a ProjectRow,
+    pub repo: &'a RepoRow,
     pub task: &'a BacklogTask,
 }
 
 impl TaskRow<'_> {
     pub fn key(&self) -> BacklogTaskKey {
-        (self.project.key.clone(), self.task.id.clone())
+        (self.repo.key.clone(), self.task.id.clone())
     }
 }
 
 pub(in crate::ui::backlog) struct Snapshot {
-    pub projects: Vec<ProjectRow>,
+    pub repos: Vec<RepoRow>,
 }
 
 impl Snapshot {
     fn collect(app: &HiveApp) -> Self {
-        let projects = app.backlog_projects_snapshot();
+        let backlog_repos = app.backlog_repos_snapshot();
         let repos = app.repos_snapshot();
         let worktrees = app.worktrees_snapshot();
         let repos_by_name: HashMap<String, Repo> = repos
@@ -151,9 +151,9 @@ impl Snapshot {
             .map(|repo| (repo.name.clone(), repo))
             .collect();
 
-        let mut rows = projects
+        let mut rows = backlog_repos
             .into_iter()
-            .map(|(path, project)| {
+            .map(|(path, repo)| {
                 let worktree = worktrees.iter().find(|wt| wt.path == path);
                 let repo_name = worktree
                     .map(|wt| wt.repo_name.clone())
@@ -166,7 +166,7 @@ impl Snapshot {
                     .unwrap_or_else(|| {
                         path.file_name()
                             .and_then(|name| name.to_str())
-                            .unwrap_or("project")
+                            .unwrap_or("repo")
                             .to_string()
                     });
                 let worktree_label = match (worktree, repos_by_name.get(&repo_name)) {
@@ -177,9 +177,9 @@ impl Snapshot {
                         .unwrap_or("worktree")
                         .to_string(),
                 };
-                ProjectRow {
+                RepoRow {
                     key: path,
-                    project,
+                    repo,
                     repo_name,
                     worktree_label,
                     branch: worktree.and_then(|wt| wt.branch.clone()),
@@ -193,19 +193,19 @@ impl Snapshot {
                 .then_with(|| a.key.cmp(&b.key))
         });
 
-        Self { projects: rows }
+        Self { repos: rows }
     }
 
-    /// Look up one project by its worktree-root key, regardless of scope.
-    /// Used wherever a single project is needed even while the view as a
-    /// whole is scoped to "All projects" (task creation target, detail pane).
-    pub(super) fn project(&self, key: &Path) -> Option<&ProjectRow> {
-        self.projects.iter().find(|row| row.key == key)
+    /// Look up one repo by its worktree-root key, regardless of scope.
+    /// Used wherever a single repo is needed even while the view as a
+    /// whole is scoped to "All repos" (task creation target, detail pane).
+    pub(super) fn repo(&self, key: &Path) -> Option<&RepoRow> {
+        self.repos.iter().find(|row| row.key == key)
     }
 }
 
-/// The project rows the task list draws from for the current scope: every
-/// tracked project in "All projects" scope, or just the selected one.
+/// The repo rows the task list draws from for the current scope: every
+/// tracked repo in "All repos" scope, or just the selected one.
 /// Whether a lens is driven by the filter row.
 ///
 /// One definition, used both to decide whether to render the filters and
@@ -218,24 +218,20 @@ pub(super) fn lens_filters(lens: BacklogLens) -> bool {
     )
 }
 
-pub(in crate::ui::backlog) fn scoped_projects<'a>(
+pub(in crate::ui::backlog) fn scoped_repos<'a>(
     app: &HiveApp,
     snap: &'a Snapshot,
-) -> Vec<&'a ProjectRow> {
-    match &app.backlog_view.selected_project {
-        None => snap.projects.iter().collect(),
-        Some(path) => snap
-            .projects
-            .iter()
-            .filter(|row| &row.key == path)
-            .collect(),
+) -> Vec<&'a RepoRow> {
+    match &app.backlog_view.selected_repo {
+        None => snap.repos.iter().collect(),
+        Some(path) => snap.repos.iter().filter(|row| &row.key == path).collect(),
     }
 }
 
 pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     let ctx = &ui.ctx().clone();
     let snap = Snapshot::collect(app);
-    reconcile_selected_project(app, &snap);
+    reconcile_selected_repo(app, &snap);
     // Computed once per frame — it re-sorts (and, for the default Triage key,
     // re-ranks via a per-task clone into `TriageEntry`) every visible task,
     // so a second pass here is exactly the "per-frame rebuild" render-path
@@ -252,7 +248,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     // — see `HiveApp::render_ui`'s own comment). Skipped when there's
     // nothing to ever select, matching the CentralPanel's own empty-scope
     // branch just below.
-    if !snap.projects.is_empty() {
+    if !snap.repos.is_empty() {
         rail::render_detail_rail(app, ui, &snap, &mut pending);
     }
 
@@ -261,7 +257,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     egui::CentralPanel::default()
         .frame(workspace_frame)
         .show(ui, |ui| {
-            if snap.projects.is_empty() {
+            if snap.repos.is_empty() {
                 render_empty(ui);
                 return;
             }
@@ -272,11 +268,8 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
             // Above the controls, not over them: the offer is information the
             // user can act on or ignore, and nothing below it is gated on an
             // answer — the board is already showing the truth either way.
-            let roots: Vec<std::path::PathBuf> = snap
-                .projects
-                .iter()
-                .map(|p| p.project.root.clone())
-                .collect();
+            let roots: Vec<std::path::PathBuf> =
+                snap.repos.iter().map(|p| p.repo.root.clone()).collect();
             status_migration::detect(app, &roots);
             if app.status_migration_prompt.is_some() {
                 ui.add_space(6.0);
@@ -337,17 +330,17 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     apply_pending(app, ui, pending);
 }
 
-/// Fall back to "All projects" if the scoped project vanished (repo
-/// untracked, or no projects left at all) — never guess a replacement.
-fn reconcile_selected_project(app: &mut HiveApp, snap: &Snapshot) {
-    if snap.projects.is_empty() {
-        app.backlog_view.selected_project = None;
+/// Fall back to "All repos" if the scoped repo vanished (repo
+/// untracked, or no repos left at all) — never guess a replacement.
+fn reconcile_selected_repo(app: &mut HiveApp, snap: &Snapshot) {
+    if snap.repos.is_empty() {
+        app.backlog_view.selected_repo = None;
         reset_task_selection(app);
         return;
     }
-    if let Some(path) = app.backlog_view.selected_project.clone() {
-        if !snap.projects.iter().any(|row| row.key == path) {
-            app.backlog_view.selected_project = None;
+    if let Some(path) = app.backlog_view.selected_repo.clone() {
+        if !snap.repos.iter().any(|row| row.key == path) {
+            app.backlog_view.selected_repo = None;
             reset_task_selection(app);
         }
     }
@@ -368,7 +361,7 @@ fn reconcile_selected_task(app: &mut HiveApp, visible: &[TaskRow<'_>]) {
 }
 
 /// Clear task-level selection state (detail selection, bulk selection, the
-/// in-progress editor buffer). Does not touch `selected_project` — callers
+/// in-progress editor buffer). Does not touch `selected_repo` — callers
 /// that are changing scope set that separately.
 pub(in crate::ui::backlog) fn reset_task_selection(app: &mut HiveApp) {
     app.backlog_view.selected_task = None;
@@ -394,8 +387,8 @@ fn render_empty(ui: &mut egui::Ui) {
 #[derive(Default)]
 pub(in crate::ui::backlog) struct Pending {
     pub save: Option<(PathBuf, String, BacklogTaskPatch)>,
-    /// One entry per project a bulk action touches — a cross-repo bulk
-    /// selection needs one `backlog` CLI invocation per project root.
+    /// One entry per repo a bulk action touches — a cross-repo bulk
+    /// selection needs one `backlog` CLI invocation per repo root.
     pub bulk_save: Vec<(PathBuf, Vec<String>, BacklogTaskPatch, String)>,
     pub toggle_ac: Option<(PathBuf, String, usize, bool)>,
     pub toggle_dod: Option<(PathBuf, String, usize, bool)>,
@@ -416,10 +409,10 @@ pub(in crate::ui::backlog) struct Pending {
     /// toggle (task-11 GUI wiring).
     pub dispatch_toggle: Option<(PathBuf, String, bool)>,
     /// "Clean Up Old Tasks" (QA parity matrix LOW gap): one entry per
-    /// project with Done tasks to archive, same cross-repo shape as
+    /// repo with Done tasks to archive, same cross-repo shape as
     /// `bulk_save` — a bulk archive still needs one `backlog` CLI
     /// invocation per task, and those are scattered across every tracked
-    /// project, not just one.
+    /// repo, not just one.
     pub cleanup: Option<Vec<(PathBuf, Vec<String>)>>,
     /// A bulk clear off the active board, already split by disposition:
     /// Done tasks are completed, the rest archived. See

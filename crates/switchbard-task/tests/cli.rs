@@ -20,7 +20,7 @@ fn fixture_project() -> tempfile::TempDir {
 
 fn bin(root: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_switchbard-task"))
-        .arg("--project")
+        .arg("--repo")
         .arg(root)
         .args(args)
         .output()
@@ -199,11 +199,32 @@ fn outside_a_project_the_error_names_the_escape_hatch() {
 
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("no Backlog project"), "{err}");
+    assert!(err.contains("no Backlog repo"), "{err}");
     assert!(
-        err.contains("--project"),
+        err.contains("--repo"),
         "the error names the escape hatch: {err}"
     );
+}
+
+#[test]
+fn deprecated_project_flag_still_works_and_warns_on_stderr_only() {
+    let dir = fixture_project();
+    let out = Command::new(env!("CARGO_BIN_EXE_switchbard-task"))
+        .arg("--project")
+        .arg(dir.path())
+        .args(["create", "Via legacy flag"])
+        .output()
+        .expect("binary runs");
+
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Payload purity: the id is still the only thing on stdout.
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "TASK-1\n");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("--project is deprecated; use --repo"), "{err}");
 }
 
 #[test]

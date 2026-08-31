@@ -9,7 +9,7 @@
 //! completed task's file physically lands in `backlog/completed/` (not just
 //! that `BacklogTaskSource::Completed` comes back from the parser — a
 //! reparse could theoretically report the right source from the wrong
-//! directory if `load_backlog_project`'s own directory-to-source mapping
+//! directory if `load_backlog_repo`'s own directory-to-source mapping
 //! were ever wrong), that visibility of a completed task is governed by the
 //! same `show_completed` toggle as any other Done task (there is no
 //! separate "completed source" filter in this codebase — confirmed by
@@ -96,10 +96,10 @@ fn single_repo_app(root: &std::path::Path) -> HiveApp {
     app.config_save_path = Some(isolated_config_save_path());
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(root.to_path_buf());
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_view.selected_repo = Some(root.to_path_buf());
+    app.backlog_repos.lock().unwrap().insert(
         root.to_path_buf(),
-        switchbard_core::load_backlog_project(root).expect("load real fixture project"),
+        switchbard_core::load_backlog_repo(root).expect("load real fixture repo"),
     );
     app
 }
@@ -109,7 +109,7 @@ fn single_repo_app(root: &std::path::Path) -> HiveApp {
 /// `BacklogTaskSource` from the parser (which could be right for the wrong
 /// reason if the directory scan itself were the thing under test — it
 /// isn't here, this checks the raw filesystem independent of
-/// `load_backlog_project`).
+/// `load_backlog_repo`).
 #[test]
 fn completing_a_done_task_moves_its_file_to_the_completed_directory_on_disk() {
     let fixture = init_fixture_repo();
@@ -169,8 +169,8 @@ fn a_completed_task_is_visible_only_when_show_completed_is_on_same_as_any_done_t
     switchbard_core::complete_backlog_task(root, "TASK-1").expect("native fixture complete");
     native_task_create(root, "Still open");
 
-    let project = switchbard_core::load_backlog_project(root).expect("reload");
-    let completed_task = project
+    let repo = switchbard_core::load_backlog_repo(root).expect("reload");
+    let completed_task = repo
         .tasks
         .iter()
         .find(|t| t.id == "TASK-1")
@@ -251,8 +251,8 @@ fn a_non_done_task_still_gets_a_working_archive_button_no_regression() {
         std::thread::sleep(Duration::from_millis(20));
     }
 
-    let project = switchbard_core::load_backlog_project(root).expect("reload");
-    let task = project.tasks.iter().find(|t| t.id == "TASK-1").unwrap();
+    let repo = switchbard_core::load_backlog_repo(root).expect("reload");
+    let task = repo.tasks.iter().find(|t| t.id == "TASK-1").unwrap();
     assert_eq!(
         task.source,
         BacklogTaskSource::Archived,
@@ -275,7 +275,7 @@ fn a_non_done_task_still_gets_a_working_archive_button_no_regression() {
 /// Clean Up Old Tasks, real 2-repo fixture with the auditor's own mix of
 /// Done/non-Done tasks (3 Done + 1 open in repo A, 1 Done + 1 open in repo
 /// B — the fix-wave's own re-verification test uses exactly one Done task
-/// per repo; this stresses more than one candidate per project), confirming
+/// per repo; this stresses more than one candidate per repo), confirming
 /// every Done task across both repos completes (not archives) and every
 /// non-Done task is untouched.
 #[test]
@@ -326,9 +326,9 @@ fn clean_up_old_tasks_completes_multiple_done_tasks_per_repo_across_two_real_rep
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
     for root in [repo_a.path(), repo_b.path()] {
-        app.backlog_projects.lock().unwrap().insert(
+        app.backlog_repos.lock().unwrap().insert(
             root.to_path_buf(),
-            switchbard_core::load_backlog_project(root).expect("load real fixture project"),
+            switchbard_core::load_backlog_repo(root).expect("load real fixture repo"),
         );
     }
 
@@ -345,7 +345,7 @@ fn clean_up_old_tasks_completes_multiple_done_tasks_per_repo_across_two_real_rep
     loop {
         h.run();
         if h.state().backlog_status.snapshot().as_deref()
-            == Some("cleaned up 4/4 Done tasks across 2 projects")
+            == Some("cleaned up 4/4 Done tasks across 2 repos")
         {
             break;
         }
@@ -357,7 +357,7 @@ fn clean_up_old_tasks_completes_multiple_done_tasks_per_repo_across_two_real_rep
         std::thread::sleep(Duration::from_millis(20));
     }
 
-    let project_a = switchbard_core::load_backlog_project(repo_a.path()).unwrap();
+    let project_a = switchbard_core::load_backlog_repo(repo_a.path()).unwrap();
     for id in ["TASK-1", "TASK-2", "TASK-3"] {
         let t = project_a.tasks.iter().find(|t| t.id == id).unwrap();
         assert_eq!(
@@ -373,7 +373,7 @@ fn clean_up_old_tasks_completes_multiple_done_tasks_per_repo_across_two_real_rep
         "the non-Done task in repo A must be untouched"
     );
 
-    let project_b = switchbard_core::load_backlog_project(repo_b.path()).unwrap();
+    let project_b = switchbard_core::load_backlog_repo(repo_b.path()).unwrap();
     let done_b = project_b.tasks.iter().find(|t| t.id == "TASK-1").unwrap();
     assert_eq!(done_b.source, BacklogTaskSource::Completed);
     let open_b = project_b.tasks.iter().find(|t| t.id == "TASK-2").unwrap();

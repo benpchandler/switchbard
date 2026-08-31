@@ -12,18 +12,18 @@ use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
 use std::path::Path;
-use switchbard_core::{BacklogProject, BacklogTask, BacklogTaskPatch};
+use switchbard_core::{BacklogRepo, BacklogTask, BacklogTaskPatch};
 
 /// "Depends on" (task-18): each dependency shown with its own done/open
 /// status, not just the bare id — `dependency_statuses` resolves them
-/// against `project` (Backlog.md dependency ids are project-scoped, no repo
+/// against `repo` (Backlog.md dependency ids are repo-scoped, no repo
 /// qualifier, so there's no cross-repo case to handle here).
 pub(super) fn render_dependencies(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
     project_root: &Path,
     task: &BacklogTask,
-    project: &BacklogProject,
+    repo: &BacklogRepo,
     editable: bool,
     pending: &mut Pending,
 ) {
@@ -31,7 +31,7 @@ pub(super) fn render_dependencies(
     if task.dependencies.is_empty() {
         ui.label(egui::RichText::new("No dependencies").color(theme::muted_text()));
     } else {
-        for (dep, done) in switchbard_core::dependency_statuses(task, project) {
+        for (dep, done) in switchbard_core::dependency_statuses(task, repo) {
             ui.horizontal(|ui| {
                 ui.label(format!("{} {}", dep.id, dep.title));
                 if done {
@@ -41,13 +41,13 @@ pub(super) fn render_dependencies(
                 }
             });
         }
-        // Ids that didn't resolve to a task in this project (typo, or a task
+        // Ids that didn't resolve to a task in this repo (typo, or a task
         // since archived/removed) — dependency_statuses omits them, so name
         // them here rather than silently dropping them from view.
         let unresolved: Vec<&str> = task
             .dependencies
             .iter()
-            .filter(|id| !project.tasks.iter().any(|t| &t.id == *id))
+            .filter(|id| !repo.tasks.iter().any(|t| &t.id == *id))
             .map(String::as_str)
             .collect();
         if !unresolved.is_empty() {
@@ -102,10 +102,10 @@ pub(super) fn render_subtasks(
     ui: &mut egui::Ui,
     project_root: &Path,
     task: &BacklogTask,
-    project: &BacklogProject,
+    repo: &BacklogRepo,
     editable: bool,
 ) {
-    let kids = switchbard_core::children(task, project);
+    let kids = switchbard_core::children(task, repo);
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Sub-tasks").strong());
         if !kids.is_empty() {
@@ -138,12 +138,12 @@ pub(super) fn render_subtasks(
     }
 }
 
-/// "Blocks" (task-18's reverse direction): every task in `project` that
+/// "Blocks" (task-18's reverse direction): every task in `repo` that
 /// names this task as one of its own dependencies. Purely derived — there's
 /// no CLI mutation for it, so this is read-only, unlike `render_dependencies`.
-pub(super) fn render_blocks(ui: &mut egui::Ui, task: &BacklogTask, project: &BacklogProject) {
+pub(super) fn render_blocks(ui: &mut egui::Ui, task: &BacklogTask, repo: &BacklogRepo) {
     ui.label(egui::RichText::new("Blocks").strong());
-    let blocked = switchbard_core::blocks(task, project);
+    let blocked = switchbard_core::blocks(task, repo);
     if blocked.is_empty() {
         ui.label(
             egui::RichText::new("No other tasks depend on this one").color(theme::muted_text()),

@@ -18,12 +18,12 @@ use switchbard_core::{
 };
 
 pub(super) fn render_statistics(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
-    let scoped = super::scoped_projects(app, snap);
-    let projects: Vec<(String, &switchbard_core::BacklogProject)> = scoped
+    let scoped = super::scoped_repos(app, snap);
+    let repos: Vec<(String, &switchbard_core::BacklogRepo)> = scoped
         .iter()
-        .map(|row| (row.repo_name.clone(), &row.project))
+        .map(|row| (row.repo_name.clone(), &row.repo))
         .collect();
-    let stats = compute_cross_repo_stats(&projects);
+    let stats = compute_cross_repo_stats(&repos);
 
     egui::ScrollArea::vertical()
         .id_salt("backlog_statistics")
@@ -159,11 +159,11 @@ fn render_repo_table(ui: &mut egui::Ui, stats: &switchbard_core::CrossRepoStats)
         });
 }
 
-fn render_burndown_section(_app: &mut HiveApp, ui: &mut egui::Ui, scoped: &[&super::ProjectRow]) {
+fn render_burndown_section(_app: &mut HiveApp, ui: &mut egui::Ui, scoped: &[&super::RepoRow]) {
     ui.label(egui::RichText::new("Burndown (completion trend)").strong());
     let all_tasks: Vec<&switchbard_core::BacklogTask> = scoped
         .iter()
-        .flat_map(|row| row.project.tasks.iter())
+        .flat_map(|row| row.repo.tasks.iter())
         .filter(|task| task.source != switchbard_core::BacklogTaskSource::Archived)
         .collect();
     let today_day = chrono::Utc::now().timestamp().div_euclid(86_400);

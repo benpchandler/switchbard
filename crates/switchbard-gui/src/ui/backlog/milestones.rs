@@ -20,7 +20,7 @@ pub(super) fn render_milestones(
     _snap: &Snapshot,
     tasks: Vec<TaskRow<'_>>,
 ) {
-    let show_repo = app.backlog_view.selected_project.is_none();
+    let show_repo = app.backlog_view.selected_repo.is_none();
     let mut groups: BTreeMap<String, Vec<&TaskRow<'_>>> = BTreeMap::new();
     for row in &tasks {
         let label = row
@@ -83,7 +83,7 @@ fn render_row(app: &mut HiveApp, ui: &mut egui::Ui, row: &TaskRow<'_>, show_repo
             status_pill(
                 ui,
                 crate::ui::components::StatusKind::Neutral,
-                row.project.repo_name.clone(),
+                row.repo.repo_name.clone(),
                 None,
             );
         }

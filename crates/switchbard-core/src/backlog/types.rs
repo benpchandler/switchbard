@@ -72,7 +72,7 @@ pub const CANONICAL_STATUS_ORDER: &[&str] = &[
 /// UI proposes writing it into the repo, which makes the shared vocabulary
 /// true rather than assumed.
 pub fn ordered_status_vocabulary<'a>(
-    projects: impl IntoIterator<Item = &'a BacklogProject>,
+    projects: impl IntoIterator<Item = &'a BacklogRepo>,
 ) -> Vec<String> {
     let mut set: BTreeSet<String> = BTreeSet::new();
     for project in projects {
@@ -125,7 +125,7 @@ fn order_statuses(set: BTreeSet<String>) -> Vec<String> {
 /// includes statuses tasks merely carry: a stray `Backlog` value on one task
 /// is a thing to render, not a destination to offer. The `backlog` CLI is the
 /// authority and it accepts exactly the config's list, so this mirrors it.
-pub fn assignable_statuses(project: &BacklogProject) -> Vec<String> {
+pub fn assignable_statuses(project: &BacklogRepo) -> Vec<String> {
     order_statuses(project.configured_statuses.iter().cloned().collect())
 }
 
@@ -134,7 +134,7 @@ pub fn assignable_statuses(project: &BacklogProject) -> Vec<String> {
 /// Empty means the repo already offers the shared vocabulary. Non-empty is
 /// the gap the UI offers to close — see `ordered_status_vocabulary` for why
 /// closing it is now an offer rather than an assumption.
-pub fn missing_standard_statuses(project: &BacklogProject) -> Vec<String> {
+pub fn missing_standard_statuses(project: &BacklogRepo) -> Vec<String> {
     STANDARD_STATUSES
         .iter()
         .filter(|standard| {
@@ -148,13 +148,13 @@ pub fn missing_standard_statuses(project: &BacklogProject) -> Vec<String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BacklogProject {
+pub struct BacklogRepo {
     pub root: PathBuf,
     pub tasks: Vec<BacklogTask>,
     pub warnings: Vec<String>,
     /// Milliseconds since the Unix epoch when this snapshot was read from
     /// disk (`unix_now`) — millisecond, not second, precision specifically
-    /// so `workers::merge_backlog_projects` can use it to detect a stale
+    /// so `workers::merge_backlog_repos` can use it to detect a stale
     /// scan racing a fresher single-project refresh (TASK-30 fix):
     /// two loads of the same project easily land in the same *second*
     /// (a periodic multi-repo scan and a just-completed mutation's own
@@ -175,7 +175,7 @@ pub struct BacklogProject {
     pub configured_statuses: Vec<String>,
 }
 
-impl BacklogProject {
+impl BacklogRepo {
     pub fn active_task_count(&self) -> usize {
         self.tasks
             .iter()
@@ -378,8 +378,8 @@ mod tests {
         }
     }
 
-    fn project(configured_statuses: &[&str], task_statuses: &[&str]) -> BacklogProject {
-        BacklogProject {
+    fn project(configured_statuses: &[&str], task_statuses: &[&str]) -> BacklogRepo {
+        BacklogRepo {
             root: PathBuf::from("/fixture"),
             tasks: task_statuses
                 .iter()

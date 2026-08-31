@@ -5,13 +5,13 @@
 //! with it selected; each section header can jump to the List lens filtered
 //! to match.
 //!
-//! Unlike the List/Board lenses, Digest reads directly from `scoped_projects`
+//! Unlike the List/Board lenses, Digest reads directly from `scoped_repos`
 //! rather than the toolbar-filtered `tasks` list — the same choice `stats.rs`
 //! makes. A "Recently Done" section would otherwise render empty whenever
 //! the user has the Done filter off elsewhere, which defeats the point of a
 //! landing page.
 
-use super::{format, scoped_projects, ProjectRow, Snapshot};
+use super::{format, scoped_repos, RepoRow, Snapshot};
 use crate::app::HiveApp;
 use crate::runtime::BacklogLens;
 use crate::ui::theme;
@@ -22,23 +22,23 @@ use switchbard_core::{is_newly_unblocked, triage_entry_from_task, BacklogTask, T
 const SECTION_LIMIT: usize = 6;
 
 struct DigestRow<'a> {
-    project: &'a ProjectRow,
+    repo: &'a RepoRow,
     task: &'a BacklogTask,
     /// Section-specific context line (e.g. which dependency just cleared).
     subtitle: Option<String>,
 }
 
 pub(super) fn render_digest(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
-    let scoped = scoped_projects(app, snap);
+    let scoped = scoped_repos(app, snap);
     let today_day = chrono::Utc::now().timestamp().div_euclid(86_400);
 
     let mut overdue = Vec::new();
     let mut newly_unblocked = Vec::new();
     let mut in_progress = Vec::new();
-    let mut recently_done: Vec<(&ProjectRow, &BacklogTask, i64)> = Vec::new();
+    let mut recently_done: Vec<(&RepoRow, &BacklogTask, i64)> = Vec::new();
 
-    for project in &scoped {
-        for task in &project.project.tasks {
+    for repo in &scoped {
+        for task in &repo.repo.tasks {
             if task.source == switchbard_core::BacklogTaskSource::Archived {
                 continue;
             }
@@ -48,33 +48,28 @@ pub(super) fn render_digest(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapsho
                     .as_deref()
                     .and_then(switchbard_core::parse_backlog_day)
                 {
-                    recently_done.push((project, task, day));
+                    recently_done.push((repo, task, day));
                 }
                 continue;
             }
-            let entry = triage_entry_from_task(
-                project.key.clone(),
-                &project.repo_name,
-                task,
-                &project.project,
-            );
+            let entry = triage_entry_from_task(repo.key.clone(), &repo.repo_name, task, &repo.repo);
             if entry.due == TriageDue::Overdue {
                 overdue.push(DigestRow {
-                    project,
+                    repo,
                     task,
                     subtitle: None,
                 });
             }
-            if is_newly_unblocked(task, &project.project, today_day) {
+            if is_newly_unblocked(task, &repo.repo, today_day) {
                 newly_unblocked.push(DigestRow {
-                    project,
+                    repo,
                     task,
                     subtitle: Some("a dependency was just completed".to_string()),
                 });
             }
             if task.status.eq_ignore_ascii_case("in progress") {
                 in_progress.push(DigestRow {
-                    project,
+                    repo,
                     task,
                     subtitle: None,
                 });
@@ -84,8 +79,8 @@ pub(super) fn render_digest(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapsho
     recently_done.sort_by_key(|(_, _, day)| std::cmp::Reverse(*day));
     let recently_done: Vec<DigestRow<'_>> = recently_done
         .into_iter()
-        .map(|(project, task, _)| DigestRow {
-            project,
+        .map(|(repo, task, _)| DigestRow {
+            repo,
             task,
             subtitle: task.updated_date.clone(),
         })
@@ -163,7 +158,7 @@ fn render_section(
 }
 
 fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &DigestRow<'_>) {
-    let key = (row.project.key.clone(), row.task.id.clone());
+    let key = (row.repo.key.clone(), row.task.id.clone());
     // `theme::card_bg()`, not `ui.visuals().extreme_bg_color` — the owner UX
     // pass repointed that egui slot to input fields (see theme.rs's doc).
     let frame = egui::Frame::default()
@@ -174,11 +169,11 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &DigestRow<'_>) {
     let resp = frame
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                let _ = theme::painted_dot(ui, theme::repo_rail_color(&row.project.repo_name));
+                let _ = theme::painted_dot(ui, theme::repo_rail_color(&row.repo.repo_name));
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         ui.label(
-                            egui::RichText::new(&row.project.repo_name)
+                            egui::RichText::new(&row.repo.repo_name)
                                 .small()
                                 .color(theme::muted_text()),
                         );
@@ -211,10 +206,10 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &DigestRow<'_>) {
         .on_hover_text("Show details in the rail")
         .clicked()
     {
-        // Widen to "All projects" scope — a Digest card can surface a task
-        // from any tracked project regardless of the current single-project
+        // Widen to "All repos" scope — a Digest card can surface a task
+        // from any tracked repo regardless of the current single-repo
         // scope, so selecting it needs the rail to actually find it.
-        app.backlog_view.selected_project = None;
+        app.backlog_view.selected_repo = None;
         app.backlog_view.selected_task = Some(key);
         app.backlog_view.editor.loaded_key = None;
     }

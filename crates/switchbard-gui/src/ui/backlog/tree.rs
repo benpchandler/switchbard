@@ -7,10 +7,10 @@
 //! filtered/sorted list* renders nested under that parent instead of at the
 //! top level ([`child_keys_in_view`]); a parent's expand/collapse state lives
 //! in `app.backlog_view.expanded_parents`. Nested children come from
-//! `switchbard_core::children` against the *full* project, not the filtered
+//! `switchbard_core::children` against the *full* repo, not the filtered
 //! view — expanding a parent should reveal its whole sub-tree, not silently
 //! hide children the status/priority filters happen to exclude. A child
-//! whose parent isn't in the current view (filtered out, or cross-project —
+//! whose parent isn't in the current view (filtered out, or cross-repo —
 //! impossible for a real parent/child pair, but Rule 5 says don't assume)
 //! renders at the top level instead of vanishing.
 
@@ -28,9 +28,9 @@ pub(super) fn child_keys_in_view(tasks: &[TaskRow<'_>]) -> HashSet<BacklogTaskKe
         .iter()
         .filter(|row| {
             row.task.parent.as_ref().is_some_and(|parent_id| {
-                tasks.iter().any(|other| {
-                    other.project.key == row.project.key && &other.task.id == parent_id
-                })
+                tasks
+                    .iter()
+                    .any(|other| other.repo.key == row.repo.key && &other.task.id == parent_id)
             })
         })
         .map(TaskRow::key)
@@ -39,7 +39,7 @@ pub(super) fn child_keys_in_view(tasks: &[TaskRow<'_>]) -> HashSet<BacklogTaskKe
 
 /// Render `row`, then — if it has children and is expanded — recurse into
 /// them, indented one level deeper. `children` always resolves against the
-/// full project (see the module doc), so a parent's roll-up badge and
+/// full repo (see the module doc), so a parent's roll-up badge and
 /// expanded subtree are consistent regardless of the active filters.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_task_tree_row(
@@ -52,7 +52,7 @@ pub(super) fn render_task_tree_row(
     depth: usize,
     pending: &mut Pending,
 ) {
-    let kids = children(row.task, &row.project.project);
+    let kids = children(row.task, &row.repo.repo);
     list::render_task_list_row(
         app,
         ui,
@@ -68,7 +68,7 @@ pub(super) fn render_task_tree_row(
     if !kids.is_empty() && app.backlog_view.expanded_parents.contains(&row.key()) {
         for child_task in &kids {
             let child_row = TaskRow {
-                project: row.project,
+                repo: row.repo,
                 task: child_task,
             };
             render_task_tree_row(

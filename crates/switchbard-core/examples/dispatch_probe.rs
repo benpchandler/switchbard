@@ -11,8 +11,8 @@
 
 use switchbard_core::dispatch_inspect::{inspect_dispatch_run, now_unix};
 use switchbard_core::{
-    load_backlog_project, DispatchOptions, DISPATCHED_LABEL, DISPATCHING_LABEL,
-    DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
+    load_backlog_repo, DispatchOptions, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL,
+    DISPATCH_LABEL,
 };
 
 fn main() {
@@ -22,7 +22,7 @@ fn main() {
     };
     let root = std::path::PathBuf::from(root);
 
-    let project = match load_backlog_project(&root) {
+    let project = match load_backlog_repo(&root) {
         Ok(project) => project,
         Err(e) => {
             eprintln!("failed to load backlog project at {}: {e}", root.display());

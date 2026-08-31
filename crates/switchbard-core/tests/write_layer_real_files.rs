@@ -16,7 +16,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use switchbard_core::{load_backlog_project, set_task_status, BacklogTask, WriteOutcome};
+use switchbard_core::{load_backlog_repo, set_task_status, BacklogTask, WriteOutcome};
 
 const TASK_DIRS: [&str; 4] = [
     "backlog/tasks",
@@ -63,7 +63,7 @@ fn staged_copy(dir: &Path, source: &Path) -> (PathBuf, BacklogTask) {
 }
 
 fn parse_single(project_root: &Path) -> BacklogTask {
-    let project = load_backlog_project(project_root).expect("staged project loads");
+    let project = load_backlog_repo(project_root).expect("staged project loads");
     assert_eq!(project.tasks.len(), 1, "one staged file, one task");
     project.tasks.into_iter().next().expect("task exists")
 }

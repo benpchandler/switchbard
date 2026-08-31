@@ -16,7 +16,7 @@ use egui_kittest::kittest::{self, NodeT, Queryable};
 use egui_kittest::Harness;
 use switchbard_core::config::Config;
 use switchbard_core::{
-    AgentHook, AgentKind, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource,
+    AgentHook, AgentKind, BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource,
     ContextKind, ContextScope, Repo, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL,
     DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
@@ -60,10 +60,10 @@ fn board_lens_renders_kanban_columns_with_the_seeded_task() {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::Board;
-    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
@@ -129,7 +129,7 @@ fn hooks_section_surfaces_disabled_state_instead_of_registrations() {
 
 /// Global search overlay (task-15 AC #2): opening it and matching a query
 /// should surface results across every tracked repo, prefixed with the
-/// repo id the same way the All-projects list rows are.
+/// repo id the same way the All-repos list rows are.
 #[test]
 fn global_search_overlay_finds_the_matching_task_across_repos() {
     let mut app = seeded_app();
@@ -140,9 +140,9 @@ fn global_search_overlay_finds_the_matching_task_across_repos() {
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.search.open = true;
     app.backlog_view.search.query = "Seeded".to_string();
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
@@ -404,7 +404,7 @@ fn restart_drops_a_persisted_backlog_project_that_is_no_longer_tracked() {
         .entry("backlog".to_string())
         .or_default()
         .facets
-        .insert("project".to_string(), "/tmp/removed-repo".to_string());
+        .insert("repo".to_string(), "/tmp/removed-repo".to_string());
     let app = HiveApp::new_headless(
         cfg,
         vec![Repo {
@@ -414,7 +414,7 @@ fn restart_drops_a_persisted_backlog_project_that_is_no_longer_tracked() {
         Vec::new(),
     );
 
-    assert_eq!(app.backlog_view.selected_project, None);
+    assert_eq!(app.backlog_view.selected_repo, None);
 }
 
 #[test]
@@ -599,9 +599,9 @@ fn backlog_view_surfaces_seeded_task() {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
@@ -618,7 +618,7 @@ fn backlog_view_surfaces_seeded_task() {
     app.backlog_view
         .bulk_selected_tasks
         .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
-    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     let mut harness = harness(app);
     harness.run();
 
@@ -647,7 +647,7 @@ fn backlog_view_surfaces_seeded_task() {
 }
 
 /// One task from each of two tracked repos, both numbered "TASK-1" — the
-/// unified All-projects scope must merge them without id collisions, prefix
+/// unified All-repos scope must merge them without id collisions, prefix
 /// each row's id with its repo, and render a repo badge per row.
 #[test]
 fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
@@ -682,9 +682,9 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
     app.backlog_view.lens = BacklogLens::List;
 
     for (repo_name, title) in [("alpha", "Alpha task"), ("beta", "Beta task")] {
-        app.backlog_projects.lock().unwrap().insert(
+        app.backlog_repos.lock().unwrap().insert(
             repo_path(repo_name),
-            BacklogProject {
+            BacklogRepo {
                 root: repo_path(repo_name),
                 tasks: vec![BacklogTask {
                     id: "TASK-1".to_string(),
@@ -725,13 +725,13 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
     harness.run();
 
     assert_eq!(
-        harness.state().backlog_view.selected_project,
+        harness.state().backlog_view.selected_repo,
         None,
-        "the Backlog view defaults to the All-projects scope"
+        "the Backlog view defaults to the All-repos scope"
     );
     assert!(
         harness.query_by_label("alpha:TASK-1  Alpha task").is_some(),
-        "row id is repo-prefixed in the All-projects scope"
+        "row id is repo-prefixed in the All-repos scope"
     );
     assert!(
         harness.query_by_label("beta:TASK-1  Beta task").is_some(),
@@ -755,9 +755,9 @@ fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
     app.view_tab = ViewTab::Backlog;
     let mut in_progress_task = seeded_backlog_task();
     in_progress_task.status = "In Progress".to_string();
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![in_progress_task],
             warnings: vec![],
@@ -816,9 +816,9 @@ fn portfolio_lens_renders_per_repo_health() {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::Portfolio;
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
@@ -858,7 +858,7 @@ fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
 
     let mut blocker = seeded_backlog_task();
     blocker.id = "TASK-1".to_string();
@@ -872,9 +872,9 @@ fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
     dependent.dependencies = vec!["TASK-1".to_string()];
     dependent.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-2.md"));
 
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![blocker, dependent],
             warnings: vec![],
@@ -918,7 +918,7 @@ fn parent_task_shows_rollup_and_expands_to_reveal_children() {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
 
     let mut parent = seeded_backlog_task();
     parent.id = "TASK-1".to_string();
@@ -937,9 +937,9 @@ fn parent_task_shows_rollup_and_expands_to_reveal_children() {
     open_child.parent = Some("TASK-1".to_string());
     open_child.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-1.2.md"));
 
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![parent, done_child, open_child],
             warnings: vec![],
@@ -1012,9 +1012,9 @@ fn saved_view_can_be_saved_and_deleted() {
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::Statistics;
     app.backlog_view.priority_filter = "high".to_string();
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![seeded_backlog_task()],
             warnings: vec![],
@@ -1082,7 +1082,7 @@ fn saved_view_can_be_saved_and_deleted() {
 }
 
 /// Like [`harness_on_task`], but backed by a *real* task file in its own
-/// temp project, for the two dispatch-toggle tests whose background thread
+/// temp repo, for the two dispatch-toggle tests whose background thread
 /// genuinely writes the label. Since the format fork's native writes, that
 /// thread can finish before the test's first status assertion (there is no
 /// subprocess spawn to lose the race to), so the toggle must actually
@@ -1092,7 +1092,7 @@ fn harness_on_disk_task(labels: &[&str]) -> (tempfile::TempDir, Harness<'static,
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().to_path_buf();
     let tasks_dir = root.join("backlog/tasks");
-    std::fs::create_dir_all(&tasks_dir).expect("project layout");
+    std::fs::create_dir_all(&tasks_dir).expect("repo layout");
     switchbard_core::write_new_task_file(
         &tasks_dir,
         "TASK",
@@ -1111,14 +1111,14 @@ fn harness_on_disk_task(labels: &[&str]) -> (tempfile::TempDir, Harness<'static,
         },
     )
     .expect("seed task file");
-    let project = switchbard_core::load_backlog_project(&root).expect("seeded project loads");
+    let repo = switchbard_core::load_backlog_repo(&root).expect("seeded repo loads");
 
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(root.clone());
+    app.backlog_view.selected_repo = Some(root.clone());
     app.backlog_view.selected_task = Some((root.clone(), "TASK-1".to_string()));
-    app.backlog_projects.lock().unwrap().insert(root, project);
+    app.backlog_repos.lock().unwrap().insert(root, repo);
     let mut harness = harness(app);
     harness.run();
     (dir, harness)
@@ -1129,8 +1129,8 @@ fn harness_on_disk_task(labels: &[&str]) -> (tempfile::TempDir, Harness<'static,
 fn wait_for_labels(root: &std::path::Path, expected: &[&str]) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        let project = switchbard_core::load_backlog_project(root).expect("project reloads");
-        let task = project.tasks.first().expect("task still present");
+        let repo = switchbard_core::load_backlog_repo(root).expect("repo reloads");
+        let task = repo.tasks.first().expect("task still present");
         if task.labels == expected {
             return;
         }
@@ -1149,11 +1149,11 @@ fn harness_on_task(task: BacklogTask) -> Harness<'static, HiveApp> {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), task.id.clone()));
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![task],
             warnings: vec![],
@@ -1346,10 +1346,10 @@ fn list_row_shows_the_dispatch_pill_for_a_queued_task() {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![queued, plain],
             warnings: vec![],

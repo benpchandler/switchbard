@@ -3,7 +3,7 @@
 //! consistent as the visible task list changes under it.
 //!
 //! Keyed on `BacklogTaskKey` (`(project_root, task_id)`) rather than a bare
-//! task id — the unified All-projects scope can show two same-numbered tasks
+//! task id — the unified All-repos scope can show two same-numbered tasks
 //! from different repos, and a bare-id `BTreeSet` would silently conflate
 //! them.
 

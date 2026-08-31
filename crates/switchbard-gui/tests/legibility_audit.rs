@@ -47,7 +47,7 @@ use egui_kittest::kittest::{by, Queryable};
 use egui_kittest::Harness;
 use switchbard_core::config::ThemeChoice;
 use switchbard_core::{
-    AttributedListener, BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource,
+    AttributedListener, BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource,
     LocalListener, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
@@ -354,7 +354,7 @@ fn write_preview_fixture() {
     }
     let _ = std::fs::write(
         &path,
-        "# Project Instructions\n\n\
+        "# Repo Instructions\n\n\
          These are the effective instructions an agent reads in this repo.\n\n\
          - Prefer small, composable functions.\n\
          - Keep the validation boundary singular.\n",
@@ -534,9 +534,9 @@ fn legibility_done_task() -> BacklogTask {
 }
 
 fn seed_backlog_project(app: &HiveApp) {
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks: vec![
                 legibility_backlog_task(),
@@ -638,7 +638,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     // task-21 — without this, this fixture would silently audit Digest
     // twice and never touch the List lens's detail pane at all.
     list_app.backlog_view.lens = BacklogLens::List;
-    list_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    list_app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     // Expanded so the sub-task tree's nested child row (task-17) is part of
     // what gets audited, not just the collapsed parent's roll-up badge.
     list_app
@@ -657,7 +657,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     dispatched_app.config.ui.theme = theme;
     dispatched_app.view_tab = ViewTab::Backlog;
     dispatched_app.backlog_view.lens = BacklogLens::List;
-    dispatched_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    dispatched_app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     dispatched_app.backlog_view.selected_task =
         Some((PathBuf::from(REPO_PATH), "TASK-7".to_string()));
     seed_backlog_project(&dispatched_app);
@@ -667,7 +667,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     dispatch_failed_app.config.ui.theme = theme;
     dispatch_failed_app.view_tab = ViewTab::Backlog;
     dispatch_failed_app.backlog_view.lens = BacklogLens::List;
-    dispatch_failed_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    dispatch_failed_app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     dispatch_failed_app.backlog_view.selected_task =
         Some((PathBuf::from(REPO_PATH), "TASK-8".to_string()));
     seed_backlog_project(&dispatch_failed_app);
@@ -684,7 +684,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     done_app.config.ui.theme = theme;
     done_app.view_tab = ViewTab::Backlog;
     done_app.backlog_view.lens = BacklogLens::List;
-    done_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    done_app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     done_app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-9".to_string()));
     done_app.backlog_view.archive_confirm = true;
     // `reconcile_selected_task` (mod.rs) clears a selection outside the
@@ -707,7 +707,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     board_app.config.ui.theme = theme;
     board_app.view_tab = ViewTab::Backlog;
     board_app.backlog_view.lens = BacklogLens::Board;
-    board_app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
+    board_app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     seed_backlog_project(&board_app);
     // TASK-26 (owner-requested UX): bulk-select a task directly on state —
     // the checkbox click itself is UNDRIVABLE-BY-KITTEST for this lens (see

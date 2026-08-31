@@ -2,7 +2,7 @@
 //! status writing through the `backlog` CLI (task-15 AC #1).
 //!
 //! Columns come from `switchbard_core::ordered_status_vocabulary` (owner
-//! UX pass, 2026-08-05: "all projects should share a common set of statuses
+//! UX pass, 2026-08-05: "all repos should share a common set of statuses
 //! across every view") — the same status list every other status-listing
 //! surface (List's filter, the detail-pane editor, Statistics) now consumes
 //! too, so Board can no longer show a column List's filter doesn't offer or
@@ -19,7 +19,7 @@
 //!
 //! A drop's status change writes through the real `backlog` CLI
 //! (`HiveApp::spawn_board_move_save`), which is a 0.5-1.5s subprocess round
-//! trip — rendering strictly off `HiveApp::backlog_projects` would leave a
+//! trip — rendering strictly off `HiveApp::backlog_repos` would leave a
 //! dropped card sitting in its origin column, motionless, for that entire
 //! window. `apply_drop` instead writes a `PendingBoardMove` into
 //! `app.backlog_view.pending_moves` (see that type's doc, runtime/mod.rs)
@@ -48,7 +48,7 @@
 //! gesture. See `resolve_pending_moves` and `apply_drop` for the detail.
 
 use super::{
-    create, dispatch_ui, format, list, scoped_projects, selection, Pending, Snapshot, TaskRow,
+    create, dispatch_ui, format, list, scoped_repos, selection, Pending, Snapshot, TaskRow,
 };
 use crate::app::HiveApp;
 use crate::runtime::{BacklogTaskKey, PendingBoardMove};
@@ -106,13 +106,13 @@ const LANDING_FLASH_DURATION: Duration = Duration::from_millis(700);
 const LANDING_FLASH_REPAINT_INTERVAL: Duration = Duration::from_millis(300);
 
 /// Column order: the shared status vocabulary (owner UX pass, 2026-08-05),
-/// scoped to whichever projects are currently in view. Declaring a status
-/// in a project's `config.yml` is enough to earn it a column even with zero
+/// scoped to whichever repos are currently in view. Declaring a status
+/// in a repo's `config.yml` is enough to earn it a column even with zero
 /// tasks in it right now — a repo-specific column like Icebox shouldn't
 /// only appear once someone happens to file something there.
 fn column_order(app: &HiveApp, snap: &Snapshot) -> Vec<String> {
-    let scoped = scoped_projects(app, snap);
-    ordered_status_vocabulary(scoped.iter().map(|row| &row.project))
+    let scoped = scoped_repos(app, snap);
+    ordered_status_vocabulary(scoped.iter().map(|row| &row.repo))
 }
 
 pub(super) fn render_board(
@@ -152,12 +152,12 @@ pub(super) fn render_board(
     render_bulk_selection_bar(app, ui);
 
     let columns = column_order(app, snap);
-    let show_repo = app.backlog_view.selected_project.is_none();
+    let show_repo = app.backlog_view.selected_repo.is_none();
     let create_target = app
         .backlog_view
-        .selected_project
+        .selected_repo
         .clone()
-        .or_else(|| snap.projects.first().map(|row| row.key.clone()));
+        .or_else(|| snap.repos.first().map(|row| row.key.clone()));
 
     egui::ScrollArea::horizontal()
         .id_salt("backlog_board")
@@ -252,9 +252,8 @@ fn resolve_pending_moves(app: &mut HiveApp, snap: &Snapshot, ctx: &egui::Context
         }
         // Best-effort only (see the doc above) — no outcome ever arrived,
         // so fall back to whatever `snap` currently shows for this task.
-        let succeeded = snap.project(&key.0).is_some_and(|project| {
-            project
-                .project
+        let succeeded = snap.repo(&key.0).is_some_and(|repo| {
+            repo.repo
                 .tasks
                 .iter()
                 .any(|t| t.id == key.1 && t.status.eq_ignore_ascii_case(&mv.target_status))
@@ -495,7 +494,7 @@ fn card_shows_in_column(app: &HiveApp, row: &TaskRow<'_>, column_status: &str) -
             .backlog_view
             .pending_moves
             .iter()
-            .find(|(key, _)| key.0 == row.project.key && key.1 == row.task.id)
+            .find(|(key, _)| key.0 == row.repo.key && key.1 == row.task.id)
         {
             return mv.target_status.eq_ignore_ascii_case(column_status);
         }
@@ -539,14 +538,14 @@ fn apply_drop(
     }
     // A cross-repo board shows the union of every scoped repo's columns, so a
     // column can exist because *another* repo declares it. The `backlog` CLI
-    // validates against this task's own project, so refuse here rather than
+    // validates against this task's own repo, so refuse here rather than
     // let the save fail — and turn the refusal into the offer to fix it,
     // since the user has just demonstrated they want that status.
-    if !switchbard_core::assignable_statuses(&row.project.project)
+    if !switchbard_core::assignable_statuses(&row.repo.repo)
         .iter()
         .any(|s| s == column_status)
     {
-        let repo_root = row.project.project.root.clone();
+        let repo_root = row.repo.repo.root.clone();
         let repo_name = crate::ui::backlog::status_migration::repo_label(&repo_root);
         app.backlog_status.set(format!(
             "{} can't move to {column_status}: {repo_name} doesn't declare it",
@@ -554,7 +553,7 @@ fn apply_drop(
         ));
         app.status_migration_prompt = Some(
             crate::ui::backlog::status_migration::StatusMigrationPrompt {
-                missing: switchbard_core::missing_standard_statuses(&row.project.project),
+                missing: switchbard_core::missing_standard_statuses(&row.repo.repo),
                 blocked_move: Some(crate::ui::backlog::status_migration::BlockedMove {
                     task_id: row.task.id.clone(),
                     target_status: column_status.to_string(),
@@ -591,7 +590,7 @@ fn apply_drop(
     // overlay entry above, and `Pending` only carries a `(root, id, patch)`
     // tuple with no room for that pairing.
     app.spawn_board_move_save(
-        row.project.key.clone(),
+        row.repo.key.clone(),
         row.task.id.clone(),
         BacklogTaskPatch {
             status: Some(column_status.to_string()),
@@ -850,12 +849,11 @@ fn paint_card(
                     .on_hover_text("Select task for bulk actions");
                 let content_resp = ui
                     .scope(|ui| {
-                        let _ =
-                            theme::painted_dot(ui, theme::repo_rail_color(&row.project.repo_name));
+                        let _ = theme::painted_dot(ui, theme::repo_rail_color(&row.repo.repo_name));
                         ui.vertical(|ui| {
                             if show_repo {
                                 ui.label(
-                                    egui::RichText::new(&row.project.repo_name)
+                                    egui::RichText::new(&row.repo.repo_name)
                                         .small()
                                         .color(theme::muted_text()),
                                 );
@@ -896,7 +894,7 @@ fn paint_card(
                                 // task-18 lamp-language marker — same
                                 // rationale as the List lens's blocked pill.
                                 if !row.task.is_done()
-                                    && switchbard_core::is_blocked(row.task, &row.project.project)
+                                    && switchbard_core::is_blocked(row.task, &row.repo.repo)
                                 {
                                     ui.label(
                                         egui::RichText::new("blocked")

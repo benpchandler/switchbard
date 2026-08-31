@@ -137,12 +137,14 @@ pub struct FilterMemory {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SavedView {
     pub name: String,
-    /// `None` means the All-projects scope. Named to match the GUI's own
-    /// `BacklogViewState::selected_project` — deliberately *not*
-    /// `project_filter`, which is a different, unrelated field there (the
-    /// project picker's free-text search string).
-    #[serde(default)]
-    pub selected_project: Option<PathBuf>,
+    /// `None` means the All-repos scope. Named to match the GUI's own
+    /// `BacklogViewState::selected_repo` — deliberately *not*
+    /// `repo_filter`, which is a different, unrelated field there (the
+    /// repo picker's free-text search string). Serialized under the
+    /// pre-rename key `selected_project` so existing config files keep
+    /// loading and older builds keep reading ours.
+    #[serde(default, rename = "selected_project")]
+    pub selected_repo: Option<PathBuf>,
     #[serde(default = "default_filter_all")]
     pub status_filter: String,
     #[serde(default = "default_filter_all")]
@@ -342,7 +344,7 @@ mod tests {
                 stale_after_days: 45,
                 saved_views: vec![SavedView {
                     name: "My high-priority queue".into(),
-                    selected_project: None,
+                    selected_repo: None,
                     status_filter: "all".into(),
                     priority_filter: "high".into(),
                     milestone_filter: "all".into(),

@@ -3,19 +3,19 @@
 //! A `switchbard_core::compute_cross_repo_stats` row (`RepoStats`) already
 //! carries everything this table needs; this module is presentation only.
 
-use super::scoped_projects;
+use super::scoped_repos;
 use crate::app::HiveApp;
 use crate::ui::theme;
 use eframe::egui;
 use switchbard_core::{compute_cross_repo_stats, RepoStats};
 
 pub(super) fn render_portfolio(app: &mut HiveApp, ui: &mut egui::Ui, snap: &super::Snapshot) {
-    let scoped = scoped_projects(app, snap);
-    let projects: Vec<(String, &switchbard_core::BacklogProject)> = scoped
+    let scoped = scoped_repos(app, snap);
+    let repos: Vec<(String, &switchbard_core::BacklogRepo)> = scoped
         .iter()
-        .map(|row| (row.repo_name.clone(), &row.project))
+        .map(|row| (row.repo_name.clone(), &row.repo))
         .collect();
-    let stats = compute_cross_repo_stats(&projects);
+    let stats = compute_cross_repo_stats(&repos);
 
     egui::ScrollArea::both()
         .id_salt("backlog_portfolio")

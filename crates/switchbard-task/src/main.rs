@@ -26,7 +26,7 @@ use clap::{Args, Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use switchbard_core::{BacklogTask, BacklogTaskPatch, NewBacklogTask};
 
-/// How many directory levels [`find_project_root`] will climb before giving
+/// How many directory levels [`find_repo_root`] will climb before giving
 /// up — bounded so a weird mount layout can't turn root discovery into an
 /// unbounded walk.
 const MAX_ROOT_WALK: usize = 64;
@@ -39,9 +39,9 @@ const MAX_ROOT_WALK: usize = 64;
     long_about = "Read and write Backlog-format tasks through switchbard's native write \
                   layer — the same implementation the Switchbard GUI and switchbard-dispatch \
                   use, and the replacement for the external `backlog` CLI's write path.\n\n\
-                  PROJECT RESOLUTION: commands act on the Backlog project containing the \
+                  REPO RESOLUTION: commands act on the Backlog repo containing the \
                   current directory (the nearest ancestor with a backlog/ directory), or the \
-                  one named by --project.\n\n\
+                  one named by --repo (--project <DIR> is a deprecated alias).\n\n\
                   TASK IDS: every <ID> accepts `TASK-7`, `task-7`, or bare `7`, plus decimal \
                   subtask ids like `7.2`.\n\n\
                   OUTPUT CONTRACT: stdout carries only the payload — `create` prints the new \
@@ -53,9 +53,19 @@ const MAX_ROOT_WALK: usize = 64;
                   `switchbard-task edit <ID> --add-label dispatch`."
 )]
 struct Cli {
-    /// Project root to act on (default: nearest ancestor of the current
+    /// Repo root to act on (default: nearest ancestor of the current
     /// directory containing a backlog/ directory)
     #[arg(long, global = true, value_name = "DIR")]
+    repo: Option<PathBuf>,
+
+    /// Deprecated alias for --repo
+    #[arg(
+        long,
+        global = true,
+        value_name = "DIR",
+        hide = true,
+        conflicts_with = "repo"
+    )]
     project: Option<PathBuf>,
 
     #[command(subcommand)]
@@ -204,7 +214,10 @@ fn main() {
 }
 
 fn run(cli: &Cli) -> Result<()> {
-    let root = resolve_project(cli.project.as_deref())?;
+    if cli.project.is_some() {
+        eprintln!("switchbard-task: warning: --project is deprecated; use --repo");
+    }
+    let root = resolve_repo(cli.repo.as_deref().or(cli.project.as_deref()))?;
     match &cli.command {
         Command::List { status, all } => list(&root, status.as_deref(), *all),
         Command::View { id } => view(&root, id),
@@ -221,37 +234,38 @@ fn run(cli: &Cli) -> Result<()> {
     }
 }
 
-/// The project root: `--project` verbatim (validated), else the nearest
-/// ancestor of the current directory that is a Backlog project.
-fn resolve_project(explicit: Option<&Path>) -> Result<PathBuf> {
+/// The repo root: `--repo` (or its deprecated `--project` alias) verbatim
+/// (validated), else the nearest ancestor of the current directory that is
+/// a Backlog repo.
+fn resolve_repo(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(root) = explicit {
-        if switchbard_core::is_backlog_project(root) {
+        if switchbard_core::is_backlog_repo(root) {
             return Ok(root.to_path_buf());
         }
         bail!(
-            "{} is not a Backlog project (no backlog/ directory there)",
+            "{} is not a Backlog repo (no backlog/ directory there)",
             root.display()
         );
     }
     let cwd = std::env::current_dir().context("cannot read the current directory")?;
-    find_project_root(&cwd).ok_or_else(|| {
+    find_repo_root(&cwd).ok_or_else(|| {
         anyhow!(
-            "no Backlog project found at or above {} — run inside one, or pass --project <repo-root>",
+            "no Backlog repo found at or above {} — run inside one, or pass --repo <repo-root>",
             cwd.display()
         )
     })
 }
 
-fn find_project_root(start: &Path) -> Option<PathBuf> {
+fn find_repo_root(start: &Path) -> Option<PathBuf> {
     start
         .ancestors()
         .take(MAX_ROOT_WALK)
-        .find(|dir| switchbard_core::is_backlog_project(dir))
+        .find(|dir| switchbard_core::is_backlog_repo(dir))
         .map(Path::to_path_buf)
 }
 
 fn list(root: &Path, status: Option<&str>, all: bool) -> Result<()> {
-    let project = switchbard_core::load_backlog_project(root)?;
+    let project = switchbard_core::load_backlog_repo(root)?;
     for warning in &project.warnings {
         eprintln!("switchbard-task: warning: {warning}");
     }
@@ -270,7 +284,7 @@ fn list(root: &Path, status: Option<&str>, all: bool) -> Result<()> {
 }
 
 fn view(root: &Path, id: &str) -> Result<()> {
-    let project = switchbard_core::load_backlog_project(root)?;
+    let project = switchbard_core::load_backlog_repo(root)?;
     let task = find_task(&project.tasks, id).ok_or_else(|| {
         anyhow!(
             "no task {id} in {} — try `switchbard-task list --all`",
@@ -397,16 +411,16 @@ mod tests {
     }
 
     #[test]
-    fn find_project_root_climbs_to_the_nearest_backlog_dir_and_is_bounded() {
+    fn find_repo_root_climbs_to_the_nearest_backlog_dir_and_is_bounded() {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path().join("repo");
         let deep = root.join("crates/something/src");
         std::fs::create_dir_all(root.join("backlog/tasks")).expect("fixture");
         std::fs::create_dir_all(&deep).expect("fixture");
 
-        assert_eq!(find_project_root(&deep), Some(root.clone()));
+        assert_eq!(find_repo_root(&deep), Some(root.clone()));
         assert_eq!(
-            find_project_root(dir.path()),
+            find_repo_root(dir.path()),
             None,
             "a dir with no backlog/ above it resolves to nothing"
         );

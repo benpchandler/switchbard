@@ -18,7 +18,7 @@ use std::path::Path;
 
 use switchbard_core::{
     append_backlog_notes, archive_backlog_task, build_refine_patch, claim_task_for_dispatch,
-    complete_backlog_task, create_backlog_task, edit_backlog_task, load_backlog_project,
+    complete_backlog_task, create_backlog_task, edit_backlog_task, load_backlog_repo,
     set_backlog_acceptance_checked, set_backlog_dod_checked, set_backlog_label, swap_backlog_label,
     BacklogTaskPatch, BacklogTaskSource, NewBacklogTask, RefineSuggestion, REFINED_MARKER,
 };
@@ -60,12 +60,12 @@ fn create_fixture_task(root: &Path) -> String {
     output
 }
 
-fn reload(root: &Path) -> switchbard_core::BacklogProject {
-    load_backlog_project(root).expect("reparsing the fixture project should succeed")
+fn reload(root: &Path) -> switchbard_core::BacklogRepo {
+    load_backlog_repo(root).expect("reparsing the fixture project should succeed")
 }
 
 fn find<'p>(
-    project: &'p switchbard_core::BacklogProject,
+    project: &'p switchbard_core::BacklogRepo,
     id: &str,
 ) -> &'p switchbard_core::BacklogTask {
     project

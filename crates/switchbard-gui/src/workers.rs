@@ -71,12 +71,12 @@ use eframe::egui;
 use switchbard_core::dispatch_inspect::{inspect_dispatch_run, DispatchRun};
 use switchbard_core::{
     agent_context_needs_rescan, attribute, detect_services, drain_dispatch_queue, find_hub_repo,
-    is_backlog_project, list_dispatch_queue, load_backlog_project, load_ordering_overlay,
+    is_backlog_repo, list_dispatch_queue, load_backlog_repo, load_ordering_overlay,
     probe_dirty_files, probe_fetch_age, probe_head_commit_time, probe_ignored_files,
     probe_pr_state, probe_push_state, probe_recent_commits, probe_ref_drift_detail,
     probe_remote_drift, probe_trunk_detail, probe_trunk_divergence, probe_worktree_lock,
     probe_worktree_size, save_agent_context_cache, scan_agent_context, scan_listeners,
-    staleness_from_trunk, sweep_dead_sidecar, AgentContextMap, BacklogProject, DetectedService,
+    staleness_from_trunk, sweep_dead_sidecar, AgentContextMap, BacklogRepo, DetectedService,
     DispatchOptions, DriftProbe, Fact, LandingStage, PushState, Repo, WorktreeRef,
     DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
@@ -234,7 +234,7 @@ pub struct Channels {
     pub meta: Arc<Mutex<HashMap<PathBuf, WorktreeMeta>>>,
     pub services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>>,
     pub agent_contexts: Arc<Mutex<HashMap<PathBuf, AgentContextMap>>>,
-    pub backlog_projects: Arc<Mutex<HashMap<PathBuf, BacklogProject>>>,
+    pub backlog_repos: Arc<Mutex<HashMap<PathBuf, BacklogRepo>>>,
     pub dispatch_runs: Arc<Mutex<HashMap<BacklogTaskKey, DispatchRun>>>,
     pub ordering: Arc<Mutex<OrderingState>>,
     pub active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
@@ -820,7 +820,7 @@ fn persist_agent_context_cache(ch: &Channels) {
 /// worktrees the unified List lens showed 42 copies of each budget task
 /// (~48k phantom rows) and the dispatch worker saw 42 drainable queues.
 /// The repo's primary checkout is the system-of-record view of its backlog.
-pub(crate) fn backlog_project_roots(repos: &[Repo]) -> Vec<PathBuf> {
+pub(crate) fn backlog_repo_roots(repos: &[Repo]) -> Vec<PathBuf> {
     let mut seen = std::collections::HashSet::new();
     repos
         .iter()
@@ -829,43 +829,43 @@ pub(crate) fn backlog_project_roots(repos: &[Repo]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Load every root that actually is a Backlog project. Split from the worker
+/// Load every root that actually is a Backlog repo. Split from the worker
 /// loop so the root-set semantics above are testable without threads.
-pub(crate) fn collect_backlog_projects(roots: &[PathBuf]) -> HashMap<PathBuf, BacklogProject> {
-    let mut projects = HashMap::new();
+pub(crate) fn collect_backlog_repos(roots: &[PathBuf]) -> HashMap<PathBuf, BacklogRepo> {
+    let mut repos = HashMap::new();
     for root in roots {
-        if !is_backlog_project(root) {
+        if !is_backlog_repo(root) {
             continue;
         }
-        if let Ok(project) = load_backlog_project(root) {
-            projects.insert(root.clone(), project);
+        if let Ok(repo) = load_backlog_repo(root) {
+            repos.insert(root.clone(), repo);
         }
     }
-    projects
+    repos
 }
 
 /// TASK-29 fix wave (owner-reported: a task created via the Create modal
 /// sometimes didn't appear on Board — reproduced as a stale-write race, not
 /// a Board-specific rendering bug): applies a freshly-scanned
-/// `HashMap<PathBuf, BacklogProject>` onto the *existing* shared cache
-/// per-entry, keeping whichever snapshot of each project is actually newer,
+/// `HashMap<PathBuf, BacklogRepo>` onto the *existing* shared cache
+/// per-entry, keeping whichever snapshot of each repo is actually newer,
 /// rather than the caller doing a wholesale `*cache = fresh` swap or a
 /// blind per-key overwrite (`HashMap::extend`, which is just as vulnerable
 /// — "last write wins" regardless of which write is *older* data).
 ///
-/// `collect_backlog_projects` scans every tracked root's disk state
+/// `collect_backlog_repos` scans every tracked root's disk state
 /// sequentially — for a handful of real repos that's real, multi-repo wall
 /// time, not an instant. `HiveApp::spawn_backlog_create` (app.rs, TASK-28)
-/// does its own single-project `refresh_backlog_project_cache` insert
+/// does its own single-repo `refresh_backlog_repo_cache` insert
 /// immediately after a create succeeds, so the periodic scan and a
 /// mutation's targeted refresh can legitimately interleave: if this
 /// worker's scan had *already read* a repo's pre-create state earlier in
 /// its own loop, applying that stale snapshot after the mutation's fresher
 /// one lands would silently revert it — the newly created task "vanishes"
-/// until the next periodic cycle corrects it. Comparing each project's own
+/// until the next periodic cycle corrects it. Comparing each repo's own
 /// `loaded_at_unix` (millisecond precision — see its doc, core/backlog.rs)
 /// before overwriting closes the race outright rather than merely
-/// shrinking its window: a scan's stale read of a project can never
+/// shrinking its window: a scan's stale read of a repo can never
 /// overwrite a genuinely newer one, whichever order the two locks happen
 /// to land in.
 ///
@@ -879,19 +879,18 @@ pub(crate) fn collect_backlog_projects(roots: &[PathBuf]) -> HashMap<PathBuf, Ba
 /// refresh anything while the thing worth watching is happening. This runs on
 /// the backlog cadence instead, which is the same data's natural refresh rate.
 ///
-/// The filesystem work is deliberately done outside the `backlog_projects`
+/// The filesystem work is deliberately done outside the `backlog_repos`
 /// lock: collecting the (root, id) pairs first keeps that mutex held for a map
 /// walk rather than for a `read_dir` per dispatched task. Whether each task is
 /// still *claimed* is collected in the same pass, because the sidecar sweep
 /// below needs it and re-locking to ask would be a second walk.
 fn refresh_dispatch_runs(ch: &Channels) {
     let targets: Vec<(PathBuf, String, bool)> = {
-        let projects = ch.backlog_projects.lock().unwrap();
-        projects
+        let repos = ch.backlog_repos.lock().unwrap();
+        repos
             .iter()
-            .flat_map(|(root, project)| {
-                project
-                    .tasks
+            .flat_map(|(root, repo)| {
+                repo.tasks
                     .iter()
                     .filter(|task| task.labels.iter().any(|label| is_dispatch_label(label)))
                     .map(|task| {
@@ -971,21 +970,21 @@ fn is_dispatch_label(label: &str) -> bool {
     )
 }
 
-pub(crate) fn merge_backlog_projects(
-    cache: &mut HashMap<PathBuf, BacklogProject>,
+pub(crate) fn merge_backlog_repos(
+    cache: &mut HashMap<PathBuf, BacklogRepo>,
     roots: &[PathBuf],
-    fresh: HashMap<PathBuf, BacklogProject>,
+    fresh: HashMap<PathBuf, BacklogRepo>,
 ) {
     cache.retain(|root, _| roots.contains(root));
-    for (root, project) in fresh {
+    for (root, repo) in fresh {
         match cache.get(&root) {
-            Some(existing) if existing.loaded_at_unix > project.loaded_at_unix => {
+            Some(existing) if existing.loaded_at_unix > repo.loaded_at_unix => {
                 // A newer snapshot (e.g. a mutation's own targeted refresh)
-                // is already cached — this scan's read of the same project
+                // is already cached — this scan's read of the same repo
                 // was taken earlier and would revert it. Keep the newer one.
             }
             _ => {
-                cache.insert(root, project);
+                cache.insert(root, repo);
             }
         }
     }
@@ -996,9 +995,9 @@ fn spawn_backlog(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
         ch.backlog_kick.wait(initial_delay);
         loop {
             let repos = ch.repos.lock().unwrap().clone();
-            let roots = backlog_project_roots(&repos);
-            let projects = collect_backlog_projects(&roots);
-            merge_backlog_projects(&mut ch.backlog_projects.lock().unwrap(), &roots, projects);
+            let roots = backlog_repo_roots(&repos);
+            let backlog_repos = collect_backlog_repos(&roots);
+            merge_backlog_repos(&mut ch.backlog_repos.lock().unwrap(), &roots, backlog_repos);
             refresh_dispatch_runs(&ch);
 
             // The unified triage overlay lives in whichever tracked repo hosts
@@ -1020,13 +1019,13 @@ fn spawn_backlog(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
     });
 }
 
-/// Dispatch: for every tracked Backlog project with at least one task
+/// Dispatch: for every tracked Backlog repo with at least one task
 /// labeled `dispatch`, drain up to `DispatchOptions::default().max_concurrent`
 /// of them (claim → worktree → headless `claude -p` → PR → notes — see
 /// `switchbard_core::dispatch`'s module doc). Reads the already-cached
-/// `backlog_projects` snapshot rather than reloading from disk — it's at
+/// `backlog_repos` snapshot rather than reloading from disk — it's at
 /// most `BACKLOG_PERIOD` stale, which is nothing next to how long a single
-/// dispatch run itself takes. Skips a project entirely when its queue is
+/// dispatch run itself takes. Skips a repo entirely when its queue is
 /// empty, which is the common case: dispatch is opt-in, so most polls do
 /// nothing.
 ///
@@ -1042,16 +1041,16 @@ fn spawn_dispatch(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
     thread::spawn(move || {
         ch.dispatch_kick.wait(initial_delay);
         loop {
-            // Iterate the (repo-primary-keyed) projects map directly: one drain
+            // Iterate the (repo-primary-keyed) repos map directly: one drain
             // per repo. Iterating worktrees here would drain the same logical
             // queue once per sibling checkout — a real double-dispatch, since
             // each checkout carries its own copy of the task files.
-            let projects = ch.backlog_projects.lock().unwrap().clone();
-            for (root, project) in &projects {
-                if list_dispatch_queue(project).is_empty() {
+            let repos = ch.backlog_repos.lock().unwrap().clone();
+            for (root, repo) in &repos {
+                if list_dispatch_queue(repo).is_empty() {
                     continue;
                 }
-                drain_dispatch_queue(root, project, &opts);
+                drain_dispatch_queue(root, repo, &opts);
                 // The pipeline mutates task labels/notes straight through the
                 // backlog CLI, bypassing this app's cache entirely — kick the
                 // backlog worker so the GUI reflects the outcome immediately
@@ -1215,9 +1214,9 @@ mod tests {
     }
 
     /// Regression for the 2026-08-05 duplicate-rows defect: a repo with a
-    /// linked worktree must yield exactly ONE backlog project (the primary
+    /// linked worktree must yield exactly ONE backlog repo (the primary
     /// checkout), even though the linked worktree is itself a full Backlog
-    /// project on disk. Scanning per-worktree multiplied every task by the
+    /// repo on disk. Scanning per-worktree multiplied every task by the
     /// repo's worktree count (42x for budget) in the unified lenses and gave
     /// the dispatch worker one drainable queue per checkout.
     #[test]
@@ -1257,31 +1256,31 @@ mod tests {
             &primary,
             &["worktree", "add", "-q", linked.to_str().expect("utf8 path")],
         );
-        // Sanity: the linked worktree really is a Backlog project on disk —
+        // Sanity: the linked worktree really is a Backlog repo on disk —
         // the exact condition that used to duplicate every task.
-        assert!(is_backlog_project(&linked));
+        assert!(is_backlog_repo(&linked));
 
         let repos = vec![Repo {
             name: "fixture".to_string(),
             path: primary.clone(),
         }];
-        let roots = backlog_project_roots(&repos);
+        let roots = backlog_repo_roots(&repos);
         assert_eq!(
             roots,
             vec![primary.clone()],
             "one root per repo, primary only"
         );
-        let projects = collect_backlog_projects(&roots);
-        assert_eq!(projects.len(), 1, "one project despite the linked worktree");
-        assert!(projects.contains_key(&primary));
-        assert_eq!(projects[&primary].tasks.len(), 1);
+        let repos = collect_backlog_repos(&roots);
+        assert_eq!(repos.len(), 1, "one repo despite the linked worktree");
+        assert!(repos.contains_key(&primary));
+        assert_eq!(repos[&primary].tasks.len(), 1);
     }
 
-    /// `task_titles` stands in for "what this snapshot of the project
+    /// `task_titles` stands in for "what this snapshot of the repo
     /// looked like" — the merge tests below only care about which
     /// snapshot (stale vs. fresh) survives, not task content specifics.
-    fn fixture_project(root: &Path, loaded_at_unix: u64, task_titles: &[&str]) -> BacklogProject {
-        BacklogProject {
+    fn fixture_project(root: &Path, loaded_at_unix: u64, task_titles: &[&str]) -> BacklogRepo {
+        BacklogRepo {
             root: root.to_path_buf(),
             tasks: task_titles
                 .iter()
@@ -1316,11 +1315,11 @@ mod tests {
     }
 
     /// TASK-29 fix wave: the exact race the owner reported. A periodic
-    /// scan's own read of a project (taken *before* a task was created,
+    /// scan's own read of a repo (taken *before* a task was created,
     /// hence no `"New task"` in its task list, hence an *older*
     /// `loaded_at_unix`) must not overwrite a mutation's fresher targeted
-    /// refresh of the same project once both land in the shared cache —
-    /// regardless of which of the two `merge_backlog_projects` calls
+    /// refresh of the same repo once both land in the shared cache —
+    /// regardless of which of the two `merge_backlog_repos` calls
     /// happens to run second. Before this fix, a plain `HashMap::extend`
     /// (or a wholesale `*cache = fresh` replace) would have reverted the
     /// cache to the stale, task-less snapshot here.
@@ -1328,7 +1327,7 @@ mod tests {
     fn merge_keeps_a_newer_cached_snapshot_over_a_stale_scan_result() {
         let root = PathBuf::from("/fixture/repo");
         let mut cache = HashMap::new();
-        // The mutation's own refresh_backlog_project_cache-style insert
+        // The mutation's own refresh_backlog_repo_cache-style insert
         // landed first, with the new task and a later timestamp.
         cache.insert(
             root.clone(),
@@ -1344,7 +1343,7 @@ mod tests {
             fixture_project(&root, 100, &["Existing task"]),
         );
 
-        merge_backlog_projects(&mut cache, std::slice::from_ref(&root), stale_scan);
+        merge_backlog_repos(&mut cache, std::slice::from_ref(&root), stale_scan);
 
         assert_eq!(
             cache[&root].tasks.len(),
@@ -1372,7 +1371,7 @@ mod tests {
             fixture_project(&root, 200, &["Existing task", "Another new task"]),
         );
 
-        merge_backlog_projects(&mut cache, std::slice::from_ref(&root), newer_scan);
+        merge_backlog_repos(&mut cache, std::slice::from_ref(&root), newer_scan);
 
         assert_eq!(cache[&root].tasks.len(), 2);
         assert_eq!(cache[&root].loaded_at_unix, 200);
@@ -1394,7 +1393,7 @@ mod tests {
         // `removed` is absent from both `roots` and this scan's own
         // results — it was untracked before this cycle ran.
 
-        merge_backlog_projects(&mut cache, std::slice::from_ref(&tracked), fresh);
+        merge_backlog_repos(&mut cache, std::slice::from_ref(&tracked), fresh);
 
         assert!(cache.contains_key(&tracked));
         assert!(

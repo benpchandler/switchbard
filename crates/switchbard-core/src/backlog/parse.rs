@@ -2,7 +2,7 @@
 //! inside it) into `super::types` structs. Read-only — writes live in
 //! `super::write` behind the `super::mutations` facade.
 
-use super::types::{BacklogChecklistItem, BacklogProject, BacklogTask, BacklogTaskSource};
+use super::types::{BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource};
 use anyhow::{bail, Context, Result};
 use serde_yaml::{Mapping, Value};
 use std::cmp::Ordering;
@@ -11,14 +11,14 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub fn is_backlog_project(root: &Path) -> bool {
+pub fn is_backlog_repo(root: &Path) -> bool {
     root.join("backlog/config.yml").is_file()
         || root.join("backlog/tasks").is_dir()
         || root.join("backlog/drafts").is_dir()
 }
 
-pub fn load_backlog_project(root: &Path) -> Result<BacklogProject> {
-    if !is_backlog_project(root) {
+pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
+    if !is_backlog_repo(root) {
         bail!("{} is not a Backlog project", root.display());
     }
 
@@ -50,7 +50,7 @@ pub fn load_backlog_project(root: &Path) -> Result<BacklogProject> {
     }
 
     tasks.sort_by(compare_tasks);
-    Ok(BacklogProject {
+    Ok(BacklogRepo {
         root: root.to_path_buf(),
         tasks,
         warnings,
@@ -59,7 +59,7 @@ pub fn load_backlog_project(root: &Path) -> Result<BacklogProject> {
     })
 }
 
-/// Read `backlog/config.yml`'s `statuses:` array — see `BacklogProject::
+/// Read `backlog/config.yml`'s `statuses:` array — see `BacklogRepo::
 /// configured_statuses`'s doc for why this is worth a second read alongside
 /// the task files themselves. Never fails the whole project load: a
 /// missing/unreadable/malformed config just yields an empty list, same as
@@ -615,7 +615,7 @@ fn task_id_key(id: &str) -> Vec<u32> {
         .collect()
 }
 
-/// Milliseconds, not seconds — see `BacklogProject::loaded_at_unix`'s doc
+/// Milliseconds, not seconds — see `BacklogRepo::loaded_at_unix`'s doc
 /// for why the finer precision matters.
 fn unix_now() -> u64 {
     SystemTime::now()
@@ -1106,7 +1106,7 @@ Existing note.
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("backlog/tasks")).unwrap();
 
-        assert!(is_backlog_project(dir.path()));
+        assert!(is_backlog_repo(dir.path()));
     }
 
     #[test]

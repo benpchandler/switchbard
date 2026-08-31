@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use common::{harness, isolated_config_save_path, seeded_app, REPO_PATH};
 use egui_kittest::kittest::{self, Queryable};
 use switchbard_core::config::Config;
-use switchbard_core::{BacklogProject, BacklogTask, BacklogTaskSource, Repo, WorktreeRef};
+use switchbard_core::{BacklogRepo, BacklogTask, BacklogTaskSource, Repo, WorktreeRef};
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey, ViewTab};
 
@@ -57,10 +57,10 @@ fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
     let mut app = seeded_app();
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(PathBuf::from(REPO_PATH));
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
+    app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
-        BacklogProject {
+        BacklogRepo {
             root: PathBuf::from(REPO_PATH),
             tasks,
             warnings: vec![],
@@ -383,10 +383,10 @@ fn create_modal_fields_typed_via_kittest_persist_through_a_real_create() {
     app.config_save_path = Some(isolated_config_save_path());
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
-    app.backlog_view.selected_project = Some(root.to_path_buf());
-    app.backlog_projects.lock().unwrap().insert(
+    app.backlog_view.selected_repo = Some(root.to_path_buf());
+    app.backlog_repos.lock().unwrap().insert(
         root.to_path_buf(),
-        switchbard_core::load_backlog_project(root).expect("load the real fixture project"),
+        switchbard_core::load_backlog_repo(root).expect("load the real fixture repo"),
     );
 
     let mut h = harness(app);
@@ -477,9 +477,8 @@ fn create_modal_fields_typed_via_kittest_persist_through_a_real_create() {
         std::thread::sleep(Duration::from_millis(20));
     }
 
-    let project =
-        switchbard_core::load_backlog_project(root).expect("reload the real fixture project");
-    let created = project
+    let repo = switchbard_core::load_backlog_repo(root).expect("reload the real fixture repo");
+    let created = repo
         .tasks
         .iter()
         .find(|t| t.title == "Fully specified task")
@@ -536,8 +535,8 @@ fn clean_up_old_tasks_cancel_leaves_both_repos_untouched() {
     assert!(!h.state().backlog_view.cleanup_confirm);
 
     for root in [repo_a.path(), repo_b.path()] {
-        let project = switchbard_core::load_backlog_project(root).unwrap();
-        let done_task = project.tasks.iter().find(|t| t.id == "TASK-1").unwrap();
+        let repo = switchbard_core::load_backlog_repo(root).unwrap();
+        let done_task = repo.tasks.iter().find(|t| t.id == "TASK-1").unwrap();
         assert_eq!(
             done_task.source,
             BacklogTaskSource::Active,
@@ -590,7 +589,7 @@ fn clean_up_old_tasks_confirm_archives_the_done_task_in_both_real_repos() {
     assert!(
         matches!(
             immediate.as_deref(),
-            Some("cleaning up 2 Done tasks") | Some("cleaned up 2/2 Done tasks across 2 projects")
+            Some("cleaning up 2 Done tasks") | Some("cleaned up 2/2 Done tasks across 2 repos")
         ),
         "unexpected status right after confirm: {immediate:?}"
     );
@@ -599,7 +598,7 @@ fn clean_up_old_tasks_confirm_archives_the_done_task_in_both_real_repos() {
     loop {
         h.run();
         if h.state().backlog_status.snapshot().as_deref()
-            == Some("cleaned up 2/2 Done tasks across 2 projects")
+            == Some("cleaned up 2/2 Done tasks across 2 repos")
         {
             break;
         }
@@ -612,9 +611,9 @@ fn clean_up_old_tasks_confirm_archives_the_done_task_in_both_real_repos() {
     }
 
     for root in [repo_a.path(), repo_b.path()] {
-        let project = switchbard_core::load_backlog_project(root)
+        let repo = switchbard_core::load_backlog_repo(root)
             .unwrap_or_else(|e| panic!("reload {} failed: {e}", root.display()));
-        let done_task = project
+        let done_task = repo
             .tasks
             .iter()
             .find(|t| t.id == "TASK-1")
@@ -625,7 +624,7 @@ fn clean_up_old_tasks_confirm_archives_the_done_task_in_both_real_repos() {
             "the Done task in {} should be completed by the real CLI, not archived",
             root.display()
         );
-        let open_task = project.tasks.iter().find(|t| t.id == "TASK-2").unwrap();
+        let open_task = repo.tasks.iter().find(|t| t.id == "TASK-2").unwrap();
         assert_eq!(
             open_task.source,
             BacklogTaskSource::Active,
@@ -667,9 +666,9 @@ fn two_repo_app(root_a: &std::path::Path, root_b: &std::path::Path) -> HiveApp {
     app.view_tab = ViewTab::Backlog;
     app.backlog_view.lens = BacklogLens::List;
     for root in [root_a, root_b] {
-        app.backlog_projects.lock().unwrap().insert(
+        app.backlog_repos.lock().unwrap().insert(
             root.to_path_buf(),
-            switchbard_core::load_backlog_project(root).expect("load real fixture project"),
+            switchbard_core::load_backlog_repo(root).expect("load real fixture repo"),
         );
     }
     app

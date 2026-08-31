@@ -1,5 +1,5 @@
 //! The summary line ("N open · M total", warnings) and the filter bar
-//! (project/scope picker, status/priority filters, completed/archived
+//! (repo/scope picker, status/priority filters, completed/archived
 //! toggles).
 
 use super::{create, format, reset_task_selection, sort, Pending, Snapshot};
@@ -55,13 +55,13 @@ pub(super) fn render_summary(
     pending: &mut Pending,
     visible_count: Option<usize>,
 ) {
-    let scoped = super::scoped_projects(app, snap);
-    let task_count: usize = scoped.iter().map(|row| row.project.tasks.len()).sum();
+    let scoped = super::scoped_repos(app, snap);
+    let task_count: usize = scoped.iter().map(|row| row.repo.tasks.len()).sum();
     let open_count: usize = scoped
         .iter()
-        .map(|row| sort::open_task_count(&row.project))
+        .map(|row| sort::open_task_count(&row.repo))
         .sum();
-    let warning_count: usize = scoped.iter().map(|row| row.project.warnings.len()).sum();
+    let warning_count: usize = scoped.iter().map(|row| row.repo.warnings.len()).sum();
     let ordering_warning = app.ordering_snapshot().warning;
 
     ui.horizontal(|ui| {
@@ -70,8 +70,8 @@ pub(super) fn render_summary(
         // One count, and when a filter is narrowing the view it explains the
         // gap itself ("370 of 1509") rather than sitting next to a second,
         // unrelated number further down the toolbar. The scope is not
-        // repeated here — the project picker directly below already states
-        // it, and saying "All projects" twice was the loudest redundancy in
+        // repeated here — the repo picker directly below already states
+        // it, and saying "All repos" twice was the loudest redundancy in
         // this header.
         let count_label = match visible_count {
             Some(visible) if visible != task_count => {
@@ -89,7 +89,7 @@ pub(super) fn render_summary(
                     "{warning_count} warning{}",
                     if warning_count == 1 { "" } else { "s" }
                 ),
-                Some("One or more Backlog projects loaded with warnings"),
+                Some("One or more Backlog repos loaded with warnings"),
             );
         }
         if let Some(warning) = &ordering_warning {
@@ -103,18 +103,18 @@ pub(super) fn render_summary(
                 .clicked()
             {
                 app.backlog_kick.notify();
-                app.backlog_status.set("refreshing Backlog projects");
+                app.backlog_status.set("refreshing Backlog repos");
             }
             if ui
                 .button("+ Task")
-                .on_hover_text("Create a task in a Backlog project")
+                .on_hover_text("Create a task in a Backlog repo")
                 .clicked()
             {
                 let target = app
                     .backlog_view
-                    .selected_project
+                    .selected_repo
                     .clone()
-                    .or_else(|| snap.projects.first().map(|row| row.key.clone()));
+                    .or_else(|| snap.repos.first().map(|row| row.key.clone()));
                 create::open_new_task(app, target, None);
             }
 
@@ -133,10 +133,10 @@ pub(super) fn render_summary(
 }
 
 /// "Clean Up Old Tasks" (QA parity matrix LOW gap): complete every Done,
-/// active, CLI-editable task across every tracked project — a
+/// active, CLI-editable task across every tracked repo — a
 /// workspace-wide housekeeping action, so it lives in the always-visible
 /// summary line rather than the List lens's own toolbar, and always spans
-/// every project regardless of the current filter/scope ("cross-repo
+/// every repo regardless of the current filter/scope ("cross-repo
 /// aware" per the mission's own framing). Confirm-gated the same way
 /// Archive/Complete is on a single task: bulk-completing is consequential
 /// enough to confirm.
@@ -172,24 +172,24 @@ fn render_cleanup_button(
         }
     } else if ui
         .add_enabled(total > 0, egui::Button::new("Clean Up Old Tasks"))
-        .on_hover_text("Complete every Done task across all tracked projects")
+        .on_hover_text("Complete every Done task across all tracked repos")
         .clicked()
     {
         app.backlog_view.cleanup_confirm = true;
     }
 }
 
-/// Every project's Done, still-active task ids — the candidate set
+/// Every repo's Done, still-active task ids — the candidate set
 /// `render_cleanup_button` completes. A `Completed`-sourced task (already
 /// moved to `backlog/completed/`) or an already-`Archived`/`Draft` one is
 /// excluded the same way a single task's Archive/Complete button already
 /// requires `editable()`.
 fn cleanup_candidates(snap: &Snapshot) -> Vec<(PathBuf, Vec<String>)> {
-    snap.projects
+    snap.repos
         .iter()
         .filter_map(|row| {
             let ids: Vec<String> = row
-                .project
+                .repo
                 .tasks
                 .iter()
                 .filter(|task| task.editable() && task.is_done())
@@ -298,7 +298,7 @@ pub(super) fn clear_batch(app: &HiveApp, snap: &Snapshot) -> ClearBatch {
             &mut archive
         };
         bucket
-            .entry(row.project.key.clone())
+            .entry(row.repo.key.clone())
             .or_default()
             .push(row.task.id.clone());
     }
@@ -335,9 +335,9 @@ fn render_bulk_clear_button(
     if !super::lens_filters(app.backlog_view.lens) {
         return;
     }
-    let scope_total: usize = super::scoped_projects(app, snap)
+    let scope_total: usize = super::scoped_repos(app, snap)
         .iter()
-        .map(|row| row.project.tasks.len())
+        .map(|row| row.repo.tasks.len())
         .sum();
     let batch = clear_batch(app, snap);
     let total = batch.total();
@@ -392,8 +392,8 @@ fn render_bulk_clear_button(
 pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
     {
         let active_count = usize::from(!app.filter().is_empty())
-            + usize::from(!app.backlog_view.project_filter.is_empty())
-            + usize::from(app.backlog_view.selected_project.is_some())
+            + usize::from(!app.backlog_view.repo_filter.is_empty())
+            + usize::from(app.backlog_view.selected_repo.is_some())
             + usize::from(app.backlog_view.status_filter != "all")
             + usize::from(app.backlog_view.priority_filter != "all")
             + usize::from(app.backlog_view.milestone_filter != "all")
@@ -403,7 +403,7 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
             + usize::from(!app.backlog_view.show_drafts)
             + usize::from(app.backlog_view.stale_only);
         let compact = ui.available_width() < 640.0;
-        let project_filter_width = if compact { 140.0 } else { 180.0 };
+        let repo_filter_width = if compact { 140.0 } else { 180.0 };
         let project_picker_width = if compact { 160.0 } else { 280.0 };
         ui.horizontal_wrapped(|ui| {
             ui.label(egui::RichText::new("Filters").strong());
@@ -415,65 +415,65 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
                 );
             }
             ui.separator();
-            crate::ui::filter_bar::facet_label(ui, "Project");
+            crate::ui::filter_bar::facet_label(ui, "Repo");
             ui.add(
-                egui::TextEdit::singleline(&mut app.backlog_view.project_filter)
-                    .id_salt("backlog_project_filter")
-                    .hint_text("Filter projects")
-                    .desired_width(project_filter_width),
+                egui::TextEdit::singleline(&mut app.backlog_view.repo_filter)
+                    .id_salt("backlog_repo_filter")
+                    .hint_text("Filter repos")
+                    .desired_width(repo_filter_width),
             );
-            let project_filter_lc = app.backlog_view.project_filter.to_lowercase();
+            let repo_filter_lc = app.backlog_view.repo_filter.to_lowercase();
             let combo_label = app
                 .backlog_view
-                .selected_project
+                .selected_repo
                 .as_deref()
-                .and_then(|key| snap.project(key))
+                .and_then(|key| snap.repo(key))
                 .map(|row| row.label())
-                .unwrap_or_else(|| "All projects".to_string());
+                .unwrap_or_else(|| "All repos".to_string());
             egui::ComboBox::from_id_salt("backlog_project_picker")
                 .selected_text(combo_label)
                 .width(project_picker_width)
                 .show_ui(ui, |ui| {
                     let mut shown = 0usize;
-                    if project_filter_lc.is_empty() || "all projects".contains(&project_filter_lc) {
+                    if repo_filter_lc.is_empty() || "all repos".contains(&repo_filter_lc) {
                         shown += 1;
-                        let selected = app.backlog_view.selected_project.is_none();
+                        let selected = app.backlog_view.selected_repo.is_none();
                         let total_open: usize = snap
-                            .projects
+                            .repos
                             .iter()
-                            .map(|row| sort::open_task_count(&row.project))
+                            .map(|row| sort::open_task_count(&row.repo))
                             .sum();
                         if ui
                             .selectable_label(
                                 selected,
-                                format!("All projects  ·  {total_open} open"),
+                                format!("All repos  ·  {total_open} open"),
                             )
                             .clicked()
                         {
-                            app.backlog_view.selected_project = None;
+                            app.backlog_view.selected_repo = None;
                             reset_task_selection(app);
                         }
                     }
-                    for row in &snap.projects {
-                        if !row.matches_filter(&project_filter_lc) {
+                    for row in &snap.repos {
+                        if !row.matches_filter(&repo_filter_lc) {
                             continue;
                         }
                         shown += 1;
                         let selected =
-                            app.backlog_view.selected_project.as_deref() == Some(&row.key);
+                            app.backlog_view.selected_repo.as_deref() == Some(&row.key);
                         let label = format!(
                             "{}  ·  {} open",
                             row.label(),
-                            sort::open_task_count(&row.project)
+                            sort::open_task_count(&row.repo)
                         );
                         if ui.selectable_label(selected, label).clicked() {
-                            app.backlog_view.selected_project = Some(row.key.clone());
+                            app.backlog_view.selected_repo = Some(row.key.clone());
                             reset_task_selection(app);
                         }
                     }
                     if shown == 0 {
                         ui.label(
-                            egui::RichText::new("No matching projects").color(theme::muted_text()),
+                            egui::RichText::new("No matching repos").color(theme::muted_text()),
                         );
                     }
                 });
@@ -488,9 +488,9 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
             // columns, the detail-pane editor, and Statistics all consume now,
             // so this dropdown can no longer offer a different status set than
             // what Board actually shows (previously this used a local union
-            // that omitted a project's declared-but-currently-empty statuses).
-            let scoped = super::scoped_projects(app, snap);
-            let statuses = ordered_status_vocabulary(scoped.iter().map(|row| &row.project));
+            // that omitted a repo's declared-but-currently-empty statuses).
+            let scoped = super::scoped_repos(app, snap);
+            let statuses = ordered_status_vocabulary(scoped.iter().map(|row| &row.repo));
             egui::ComboBox::from_id_salt("backlog_status_filter")
                 .selected_text(format::value_filter_label(&app.backlog_view.status_filter))
                 .show_ui(ui, |ui| {
@@ -539,7 +539,7 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
             let (milestones, labels) = {
                 let facet_filter_lc = app.filter().to_lowercase();
                 let filters = sort::ActiveFilters::from_app(app, &facet_filter_lc);
-                let scoped = super::scoped_projects(app, snap);
+                let scoped = super::scoped_repos(app, snap);
                 (
                     sort::milestone_options(&scoped, &filters, &app.backlog_view.milestone_filter),
                     sort::label_options(&scoped, &filters, &app.backlog_view.label_filter),
@@ -622,8 +622,8 @@ pub(super) fn render_project_toolbar(app: &mut HiveApp, ui: &mut egui::Ui, snap:
             }
             if crate::ui::filter_bar::clear(ui, active_count > 0) {
                 app.filter_mut().clear();
-                app.backlog_view.project_filter.clear();
-                app.backlog_view.selected_project = None;
+                app.backlog_view.repo_filter.clear();
+                app.backlog_view.selected_repo = None;
                 app.backlog_view.status_filter = "all".to_string();
                 app.backlog_view.priority_filter = "all".to_string();
                 app.backlog_view.milestone_filter = "all".to_string();

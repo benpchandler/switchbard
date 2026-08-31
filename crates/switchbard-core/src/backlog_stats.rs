@@ -2,9 +2,9 @@
 //! TASK-16's Statistics lens.
 //!
 //! Everything here is derived from `BacklogTask` metadata already loaded by
-//! `load_backlog_project` (status, priority, `created_date`, `updated_date`,
+//! `load_backlog_repo` (status, priority, `created_date`, `updated_date`,
 //! `milestone`). No new store, no schema change, no IO — the GUI passes in
-//! the same `BacklogProject`s it already caches for the list/board lenses.
+//! the same `BacklogRepo`s it already caches for the list/board lenses.
 //!
 //! ## Burndown is a completion trend, not a due-date burndown
 //!
@@ -18,7 +18,7 @@
 //! `created_date` are excluded from the timeline; they still count in the
 //! snapshot totals in [`CrossRepoStats`].
 
-use crate::backlog::{parse_backlog_day as parse_day, BacklogProject, BacklogTask};
+use crate::backlog::{parse_backlog_day as parse_day, BacklogRepo, BacklogTask};
 use crate::backlog_relations::is_blocked;
 use std::collections::BTreeMap;
 
@@ -86,7 +86,7 @@ impl CrossRepoStats {
 /// every tracked project, with a per-repo breakdown. Archived tasks are
 /// excluded — they've explicitly opted out of the active count the same way
 /// they're excluded from `sort::open_task_count`.
-pub fn compute_cross_repo_stats(projects: &[(String, &BacklogProject)]) -> CrossRepoStats {
+pub fn compute_cross_repo_stats(projects: &[(String, &BacklogRepo)]) -> CrossRepoStats {
     assert!(
         projects.iter().all(|(name, _)| !name.is_empty()),
         "invariant: every repo passed to compute_cross_repo_stats has a name"
@@ -169,7 +169,7 @@ pub fn compute_cross_repo_stats(projects: &[(String, &BacklogProject)]) -> Cross
 /// Archived tasks are excluded from every statistic; everything else
 /// (active, draft, completed) counts. Kept as its own function so the two
 /// call sites (the cross-repo snapshot and the burndown walk) can't drift.
-fn in_scope_tasks(project: &BacklogProject) -> impl Iterator<Item = &BacklogTask> {
+fn in_scope_tasks(project: &BacklogRepo) -> impl Iterator<Item = &BacklogTask> {
     project
         .tasks
         .iter()
@@ -311,8 +311,8 @@ mod tests {
         }
     }
 
-    fn project(root: &str, tasks: Vec<BacklogTask>) -> BacklogProject {
-        BacklogProject {
+    fn project(root: &str, tasks: Vec<BacklogTask>) -> BacklogRepo {
+        BacklogRepo {
             root: PathBuf::from(root),
             tasks,
             warnings: vec![],
