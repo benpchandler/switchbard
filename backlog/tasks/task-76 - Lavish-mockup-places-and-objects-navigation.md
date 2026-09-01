@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-31 21:20'
-updated_date: '2026-09-01 01:44'
+updated_date: '2026-09-01 01:50'
 labels:
   - ia
   - design
@@ -50,4 +50,6 @@ Round 8 (2026-09-01): process correction from owner - agent must run its own vis
 Round 9 (2026-09-01, first round after the poll-truncation fix): (a) Q12 RESOLVED = B and stronger: the project page is CUT entirely; the group header expands in place for summary, and the stack rank surfaces only as a sort/filter option in Tasks (Sort: rank next to Group by) - never a page or dedicated column. Q5 dissolves with it (delivery = status-cell badge + facet). (b) Q14 RESOLVED = C: Command becomes its own place - the fleet console (agents, missions, leases, SITREPs, support requests with respond affordance); Dispatches under Tasks remains the task-delivery facet; same runs, two axes. (c) Buttons: icon-only with tooltips for universal actions everywhere (open/merge/retry/log/kill/remove/edit/check-in); text labels only where no icon is unambiguous (empty-state CTAs, Roll). (d) Selected rows get a dedicated stronger tint + 3px stroke so selection never reads as a group header (owner: too close in color). Visual self-review run post-change (light render, tiles): icons, sort control, selection contrast, and Command console all verified. Open set: Q6, Q7, Q8, Q9, Q11.
 
 Round 10 (2026-09-01): (a) Selection vs group headers, third pass: adopted the Board's stroke-based indicator (per TASK-38's direction) - selected rows get a full sel-stroke ring (1.5px top/bottom/right, 3px left) over a faint wash; verified by render that it cannot read as a gray header band. (b) Owner-requested accessibility audit, computed (WCAG 4.5:1, both palettes): LIGHT all pairs pass (5.1-15.3). DARK: chip tint alpha .14 ate contrast - reduced to .07 (green 5.07, amber 5.76, sky 5.24, lavender 4.75); warn E87A5A fails even untinted on card_bg (4.52 raw, 4.12 tinted; theme.rs's ~5.2 claim holds only against panel_fill) - mock brightens dark warn/danger to F0907A (4.88 tinted / 5.51 on card) and flags it as a proposed theme.rs adjustment for EGUI Polish. (c) Structural a11y gaps named for implementation: icon-only buttons need AccessKit labels (title/tooltip alone insufficient), tooltips keyboard-reachable, focus ring can reuse the selection stroke, 26px icon buttons fine for pointer but sub-44px touch (desktop-only, noted). Matrix updated with both a11y rows.
+
+Round 10b (2026-09-01): owner challenged the 'AccessKit not doable in a mock' gap - correct split applied. The mock now carries the accessibility CONTRACT: all 31 icon buttons get aria-label + role=button + tabindex, text buttons focusable, :focus-visible ring reuses the selection stroke. What remains implementation-only: the egui/AccessKit runtime node tree (labels must derive from the engine Command verb names - one authority for verb naming and accessible naming) and keyboard-reachable tooltips. Matrix row updated from GAP to PARTIAL with that split.
 <!-- SECTION:NOTES:END -->
