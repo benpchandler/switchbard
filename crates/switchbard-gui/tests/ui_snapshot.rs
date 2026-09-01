@@ -325,3 +325,25 @@ fn dispatches_kill_confirm_armed_snapshot() {
     harness.run();
     harness.snapshot("dispatches_kill_confirm_armed");
 }
+
+/// Narrow-width design-state check (mock §4/§7d: the sidebar collapses to
+/// an icon rail below `NARROW_WIDTH_THRESHOLD`) — both new place bodies'
+/// row layouts (facet bar wrapping, the right-aligned action cluster) at a
+/// width narrow enough to matter.
+#[test]
+#[ignore = "wgpu image snapshot: machine-specific, run explicitly with `-- --ignored` (see module docs)"]
+fn dispatches_running_narrow_snapshot() {
+    let mut harness = harness(dispatches_running_app(ThemeChoice::Light));
+    harness.set_size(eframe::egui::vec2(640.0, 700.0));
+    harness.run();
+    harness.snapshot("dispatches_running_narrow");
+}
+
+#[test]
+#[ignore = "wgpu image snapshot: machine-specific, run explicitly with `-- --ignored` (see module docs)"]
+fn command_fleet_mixed_narrow_snapshot() {
+    let mut harness = harness(command_fleet_mixed_app(ThemeChoice::Light));
+    harness.set_size(eframe::egui::vec2(640.0, 700.0));
+    harness.run();
+    harness.snapshot("command_fleet_mixed_narrow");
+}
