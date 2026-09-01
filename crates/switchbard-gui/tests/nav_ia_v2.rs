@@ -17,7 +17,8 @@ use egui_kittest::kittest::Queryable;
 use switchbard_core::config::{Config, FavoriteKind, FavoriteRef, FilterMemory};
 use switchbard_core::{
     AgentContextMap, AgentKind, BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource,
-    ContextKind, ContextScope, Repo, RepoRanking, WorktreeRef, DISPATCH_LABEL,
+    ContextKind, ContextScope, GoalDef, GoalInputs, GoalMeasure, GoalWeek, Repo, RepoRanking,
+    WorktreeRef, DISPATCHING_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{Place, TasksView};
@@ -70,6 +71,44 @@ fn backlog_repo(root: &str, tasks: Vec<BacklogTask>) -> BacklogRepo {
             "In Review".into(),
             "Done".into(),
         ],
+    }
+}
+
+/// Same as [`backlog_repo`] but with `goals` set, for the Goals-place
+/// scoping test.
+fn backlog_repo_with_goals(
+    root: &str,
+    tasks: Vec<BacklogTask>,
+    goals: Vec<GoalDef>,
+) -> BacklogRepo {
+    BacklogRepo {
+        goals,
+        ..backlog_repo(root, tasks)
+    }
+}
+
+/// A manual goal with a target set for the *current* week (so
+/// `compute_goal_statuses` — and therefore the nav's Goals count and the
+/// Goals place body — actually picks it up; a goal without this week's key
+/// is absence, not a zero, per that function's own doc). No check-ins: the
+/// scoping tests only care whether the goal is counted at all, not its pace.
+fn goal_def(name: &str) -> GoalDef {
+    let week = switchbard_core::week_monday_of(chrono::Local::now().date_naive())
+        .format("%Y-%m-%d")
+        .to_string();
+    GoalDef {
+        name: name.to_string(),
+        unit: "tasks".to_string(),
+        measure: GoalMeasure::Manual,
+        scope: None,
+        inputs: GoalInputs::default(),
+        weeks: std::collections::BTreeMap::from([(
+            week,
+            GoalWeek {
+                target: 1,
+                checkins: vec![],
+            },
+        )]),
     }
 }
 
@@ -288,6 +327,59 @@ fn narrowing_scope_hides_the_other_repos_tasks_in_digest() {
     );
 }
 
+/// Missing coverage the reviewer noted: the Goals place (`render_goals_place`
+/// -> `digest::render_goals_section`) reads `scoped_repos`, same as Digest,
+/// but had no dedicated test of its own.
+#[test]
+fn narrowing_scope_hides_the_other_repos_goal_in_goals_place() {
+    let mut app = two_repo_app();
+    app.backlog_repos.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        backlog_repo_with_goals(
+            REPO_PATH,
+            vec![backlog_task(
+                "TASK-1",
+                "First repo's own task",
+                "In Progress",
+            )],
+            vec![goal_def("First repo goal")],
+        ),
+    );
+    app.backlog_repos.lock().unwrap().insert(
+        PathBuf::from(REPO_B_PATH),
+        backlog_repo_with_goals(
+            REPO_B_PATH,
+            vec![backlog_task(
+                "TASK-2",
+                "Second repo's own task",
+                "In Progress",
+            )],
+            vec![goal_def("Second repo goal")],
+        ),
+    );
+    app.place = Place::Goals;
+    let mut harness = harness(app);
+    harness.run();
+    assert_eq!(harness.state().place, Place::Goals, "precondition");
+    assert!(
+        harness.query_by_label("First repo goal").is_some(),
+        "precondition: both goals render unscoped"
+    );
+    assert!(harness.query_by_label("Second repo goal").is_some());
+
+    harness.state_mut().repo_scope = std::iter::once(PathBuf::from(REPO_PATH)).collect();
+    harness.run();
+
+    assert!(
+        harness.query_by_label("First repo goal").is_some(),
+        "the in-scope repo's goal should still render in the Goals place"
+    );
+    assert!(
+        harness.query_by_label("Second repo goal").is_none(),
+        "the out-of-scope repo's goal must not render in the Goals place"
+    );
+}
+
 #[test]
 fn narrowing_scope_hides_the_other_repos_context_item_in_command() {
     let mut app = two_repo_app();
@@ -370,6 +462,79 @@ fn narrowing_scope_hides_the_other_repos_row_in_the_dispatches_list() {
         harness.query_by_label("TASK-2").is_none(),
         "the out-of-scope repo's dispatch-flagged task must not list"
     );
+}
+
+/// Post-review (MAJOR 1): `summarize_dispatch` used to be unscoped while
+/// `collect_rows` (the Dispatches list itself) was already scoped, so
+/// narrowing scope could leave the nav's "Dispatches (N)" badge and footer
+/// lamp claiming a run the list didn't show at all. Both must now agree with
+/// the list under a narrowed scope — and, since MINOR 1 makes them the exact
+/// same `DispatchSummary` value computed once per frame, the top-bar chip
+/// necessarily agrees too.
+#[test]
+fn dispatch_badge_and_lamp_match_the_scoped_dispatches_list() {
+    let mut app = two_repo_app();
+    {
+        let mut repos = app.backlog_repos.lock().unwrap();
+        repos
+            .get_mut(&PathBuf::from(REPO_PATH))
+            .expect("first repo seeded")
+            .tasks[0]
+            .labels = vec![DISPATCHING_LABEL.to_string()];
+        repos
+            .get_mut(&PathBuf::from(REPO_B_PATH))
+            .expect("second repo seeded")
+            .tasks[0]
+            .labels = vec![DISPATCHING_LABEL.to_string()];
+    }
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::All;
+
+    // Unscoped first: both repos' in-flight runs count. "⚙ 2 running" should
+    // appear TWICE — the top-bar chip and the nav footer lamp both render it,
+    // which is exactly the "one shared DispatchSummary" property MINOR 1
+    // fixed; querying for both nodes, not just "at least one", is the point.
+    let mut harness = harness(app);
+    harness.run();
+    assert!(
+        harness.query_by_label("Dispatches (2)").is_some(),
+        "unscoped: the nav badge should count both repos' running dispatches"
+    );
+    assert_eq!(
+        harness.query_all_by_label("⚙ 2 running").count(),
+        2,
+        "unscoped: both the top-bar chip and the nav footer lamp should show \
+         the same unscoped running count"
+    );
+
+    // Narrow to the first repo only.
+    harness.state_mut().repo_scope = std::iter::once(PathBuf::from(REPO_PATH)).collect();
+    harness.run();
+
+    assert!(
+        harness.query_by_label("Dispatches (2)").is_none(),
+        "the stale unscoped badge count must not survive narrowing"
+    );
+    assert!(
+        harness.query_by_label("Dispatches (1)").is_some(),
+        "scoped: the nav badge should match the scoped Dispatches list's one visible run"
+    );
+    assert_eq!(
+        harness.query_all_by_label("⚙ 1 running").count(),
+        2,
+        "scoped: both the top-bar chip and the nav footer lamp should match \
+         the scoped Dispatches list"
+    );
+    assert!(
+        harness.query_by_label("⚙ 2 running").is_none(),
+        "the stale unscoped chip/lamp text must not survive narrowing"
+    );
+
+    // And the list itself agrees with both.
+    harness.state_mut().tasks_view = TasksView::Dispatches;
+    harness.run();
+    assert!(harness.query_by_label("TASK-1").is_some());
+    assert!(harness.query_by_label("TASK-2").is_none());
 }
 
 // ---------------------------------------------------------------------

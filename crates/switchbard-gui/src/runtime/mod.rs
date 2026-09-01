@@ -1191,13 +1191,24 @@ pub struct LandingEntry {
     pub computed_at: Instant,
 }
 
-/// TASK-96: is `repo` inside the sidebar's multi-select scope? An empty
-/// `scope` means "all repos" — the one definition every scope-aware surface
-/// (Workspace/Ops, Agents/Command) filters its `Repo` list through, so "no
-/// restriction" can't drift into "no repos" on one surface while another
-/// still reads it correctly.
+/// TASK-96 (post-review widening): is `path` — a tracked repo's root —
+/// inside the sidebar's multi-select scope? An empty `scope` means "all
+/// repos". This is **the** scope-membership primitive; every scope-aware
+/// surface in this app (Workspace/Ops, Agents/Command, Backlog's
+/// `scoped_repos`, the Dispatches list, the dispatch summary the nav badge
+/// and footer lamp read) routes through this function or [`repo_in_scope`]
+/// rather than re-deriving `scope.is_empty() || scope.contains(..)` inline —
+/// "no restriction" must not drift into "no repos" on one surface while
+/// another still reads it correctly, and a hand-rolled copy is exactly how
+/// that drift happens.
+pub fn path_in_scope(path: &Path, scope: &BTreeSet<PathBuf>) -> bool {
+    scope.is_empty() || scope.contains(path)
+}
+
+/// `Repo`-typed convenience wrapper over [`path_in_scope`] for the surfaces
+/// that already have a `&Repo` in hand (Workspace/Ops, Agents/Command).
 pub fn repo_in_scope(repo: &Repo, scope: &BTreeSet<PathBuf>) -> bool {
-    scope.is_empty() || scope.contains(&repo.path)
+    path_in_scope(&repo.path, scope)
 }
 
 /// Is `w` the primary checkout of its repo? A cheap "same path" check — good

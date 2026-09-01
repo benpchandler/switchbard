@@ -38,7 +38,7 @@
 
 use crate::app::HiveApp;
 use crate::runtime::{Place, TasksView};
-use crate::ui::dispatch::{self, DispatchSummary};
+use crate::ui::dispatch::DispatchSummary;
 use crate::ui::theme::{self, Glyph};
 use eframe::egui;
 use std::path::Path;
@@ -52,7 +52,11 @@ const NARROW_WIDTH_THRESHOLD: f32 = 720.0;
 const EXPANDED_WIDTH: f32 = 184.0;
 const RAIL_WIDTH: f32 = 44.0;
 
-pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
+/// `dispatch_summary` is computed exactly once per frame by
+/// `HiveApp::render_ui` and passed to every reader (the top bar's chip, this
+/// module's badge and footer lamp) — see that call site's comment and
+/// `ui::dispatch::summarize_dispatch`'s own doc.
+pub(crate) fn render(app: &mut HiveApp, ui: &mut egui::Ui, dispatch_summary: DispatchSummary) {
     // `viewport_rect` (not `content_rect`, which subtracts safe-area insets
     // meant for phone notches/dynamic islands — irrelevant to a desktop
     // window's collapse threshold) is egui 0.36's replacement for the
@@ -61,7 +65,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     if narrow {
         render_rail(app, ui);
     } else {
-        render_expanded(app, ui);
+        render_expanded(app, ui, dispatch_summary);
     }
 }
 
@@ -88,7 +92,7 @@ impl NavCounts {
         let mut tasks = 0usize;
         let mut goals = 0usize;
         for (root, repo) in backlog_repos.iter() {
-            if !app.repo_scope.is_empty() && !app.repo_scope.contains(root) {
+            if !crate::runtime::path_in_scope(root, &app.repo_scope) {
                 continue;
             }
             tasks += active_task_count(repo);
@@ -120,8 +124,7 @@ fn active_task_count(repo: &BacklogRepo) -> usize {
         .count()
 }
 
-fn render_expanded(app: &mut HiveApp, ui: &mut egui::Ui) {
-    let dispatch_summary = dispatch::summarize_dispatch(app);
+fn render_expanded(app: &mut HiveApp, ui: &mut egui::Ui, dispatch_summary: DispatchSummary) {
     let counts = NavCounts::compute(app);
     let frame = egui::Frame::side_top_panel(&ui.ctx().style_of(ui.ctx().theme()))
         .fill(theme::nav_bg())
@@ -179,7 +182,7 @@ fn render_scope_selector(app: &mut HiveApp, ui: &mut egui::Ui) {
             return;
         }
         for repo in &repos {
-            let mut checked = app.repo_scope.is_empty() || app.repo_scope.contains(&repo.path);
+            let mut checked = crate::runtime::path_in_scope(&repo.path, &app.repo_scope);
             if ui.checkbox(&mut checked, &repo.name).changed() {
                 set_repo_checked(app, &repos, &repo.path, checked);
             }

@@ -673,6 +673,12 @@ impl HiveApp {
     /// under (the same key space `RepoRow::key`/`Config::repos[].path` use);
     /// `key` is the object's own identity within that repo (task id, goal
     /// name, project name, or `SavedView::name`).
+    /// Mutates `config.ui.favorites` only — does **not** save. `eframe::App::
+    /// ui`'s end-of-frame before/after diff already covers `favorites` (see
+    /// its own `favorites_before`/`favorites_changed`) and calls
+    /// `save_ui_to_config` once per frame if anything changed; a direct
+    /// `save_config()` here would double-write to disk on every star click
+    /// (once here, once again from the same frame's end-of-frame diff).
     pub fn toggle_favorite(&mut self, kind: config::FavoriteKind, repo: &Path, key: &str) {
         let repo = repo.display().to_string();
         let existing = self
@@ -693,7 +699,6 @@ impl HiveApp {
                 });
             }
         }
-        self.save_config();
     }
 
     /// Whether the star affordance for this exact object should render
@@ -2280,8 +2285,18 @@ impl HiveApp {
         self.drain_create_worktree_outcomes();
         self.drain_remove_worktree_outcomes();
 
+        // Post-review (TASK-96): computed exactly once per frame and handed
+        // to every reader — the top bar's chip, the nav's Tasks "Dispatches
+        // (N)" badge, and the nav's footer lamp all render every frame
+        // regardless of the active place, and each used to call
+        // `summarize_dispatch` independently. Three passes over the same
+        // caches for one fact was needless work and, worse, three chances
+        // for the readers to end up looking at different scope snapshots if
+        // the scope changed mid-frame; one call fixes both.
+        let dispatch_summary = ui::dispatch::summarize_dispatch(self);
+
         let top_start = Instant::now();
-        ui::top_bar::render(self, ui);
+        ui::top_bar::render(self, ui, dispatch_summary);
         if let Some(perf) = &mut self.perf {
             perf.record_top_bar(top_start.elapsed());
         }
@@ -2293,7 +2308,7 @@ impl HiveApp {
         // "Tracked repos" panel always had to: an un-docked side panel lets
         // the central panel size to the full window and then overlay it.
         let nav_start = Instant::now();
-        ui::nav::render(self, ui);
+        ui::nav::render(self, ui, dispatch_summary);
         if let Some(perf) = &mut self.perf {
             perf.record_nav(nav_start.elapsed());
         }

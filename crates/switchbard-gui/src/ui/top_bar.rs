@@ -5,7 +5,7 @@
 use crate::app::{self, HiveApp};
 use crate::runtime::{Place, TasksView};
 use crate::ui::components::action_status_label;
-use crate::ui::dispatch::{self, DispatchSummary};
+use crate::ui::dispatch::DispatchSummary;
 use crate::ui::filter_bar;
 use crate::ui::theme;
 use crate::ui::theme::ThemeChoice;
@@ -13,13 +13,13 @@ use crate::ui::workspace;
 use eframe::egui;
 use switchbard_core::BROWSER_APP_NAMES;
 
-pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
+/// `dispatch_summary` is computed exactly once per frame by
+/// `HiveApp::render_ui` and passed to every reader (this chip, the nav
+/// badge, the nav footer lamp) — see that call site's comment and
+/// `ui::dispatch::summarize_dispatch`'s own doc for why it must not be
+/// recomputed here.
+pub(crate) fn render(app: &mut HiveApp, ui: &mut egui::Ui, dispatch_summary: DispatchSummary) {
     let ctx = &ui.ctx().clone();
-    // Counted once and shared by the chip and the nav footer lamp (`ui::
-    // nav`): they are two renderings of the same fact, and computing it
-    // twice per frame would be two chances for them to disagree as well as
-    // twice the work.
-    let dispatch_summary = dispatch::summarize_dispatch(app);
     let frame = egui::Frame::side_top_panel(&ctx.style_of(ctx.theme()))
         .fill(theme::nav_bg())
         .inner_margin(egui::Margin::symmetric(10, 7))

@@ -235,14 +235,10 @@ pub(in crate::ui::backlog) fn scoped_repos<'a>(
         None => snap.repos.iter().collect(),
         Some(path) => snap.repos.iter().filter(|row| &row.key == path).collect(),
     };
-    if app.repo_scope.is_empty() {
-        picked
-    } else {
-        picked
-            .into_iter()
-            .filter(|row| app.repo_scope.contains(&row.key))
-            .collect()
-    }
+    picked
+        .into_iter()
+        .filter(|row| crate::runtime::path_in_scope(&row.key, &app.repo_scope))
+        .collect()
 }
 
 /// TASK-96: apply a saved view by name — the one entry point

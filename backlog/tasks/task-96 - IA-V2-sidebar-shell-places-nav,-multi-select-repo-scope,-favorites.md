@@ -4,7 +4,7 @@ title: 'IA V2: sidebar shell - places nav, multi-select repo scope, favorites'
 status: In Review
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 03:58'
+updated_date: '2026-09-01 04:41'
 labels:
   - ia
   - gui
@@ -57,4 +57,13 @@ Design-state matrix (dimensions covered / gaps):
 - Keyboard/focus: N/A - not exercised; nav rows use plain click Sense, no keyboard-nav test written. Named gap for a future pass (matches the mock's own note that the runtime half of accessibility lands with implementation).
 - Combinations: place x scope (Digest+Ops+Command+Dispatches all proven independently against a narrowed scope); Tasks<->Dispatches subview transition preserving/resetting state (tested).
 - Failure/perf: perf smoke run and compared to a real pre-change baseline (see above); no interaction-failure states apply here (no network/IO in nav.rs itself).
+
+Post-review fixes applied (independent review, MERGE-WITH-FIXES) before merge:
+- MAJOR 1: summarize_dispatch was unscoped while the Dispatches list was already scoped - scoped it too, and made the top-bar chip scoped as well (one scoping rule everywhere). New test dispatch_badge_and_lamp_match_the_scoped_dispatches_list proves the chip and the lamp both flip to the scoped count together.
+- MAJOR 2: widened repo_in_scope to a Path-based path_in_scope (repo_in_scope now a thin Repo-typed wrapper) and routed every hand-rolled repo_scope.is_empty()||repo_scope.contains(..) call site through it (nav.rs counts+checkbox state, backlog::scoped_repos, dispatch::collect_rows/summarize_dispatch). Grepped clean.
+- MINOR 1: summarize_dispatch now computed once per frame in HiveApp::render_ui and passed to top_bar::render/nav::render as a parameter (both now pub(crate), matching the pub(crate) DispatchSummary type).
+- MINOR 2: HiveApp::toggle_favorite no longer calls save_config() directly - the end-of-frame diff already owns persistence for favorites, so the direct call was a double disk write per star click.
+- NIT accepted, noted in the PR body: the bare agents filter key drops on upgrade, per the decision record's own documented behavior.
+- Added the missing Goals-place scoping test the reviewer flagged.
+- Re-verified: mise run ci green (43/43 test-result blocks, 0 failures).
 <!-- SECTION:NOTES:END -->
