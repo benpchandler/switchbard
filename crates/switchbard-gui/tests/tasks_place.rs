@@ -379,6 +379,31 @@ fn adding_a_filter_predicate_narrows_the_visible_tasks() {
 }
 
 #[test]
+fn a_positive_scope_with_no_filter_matches_renders_an_honest_empty_state() {
+    let mut app = tasks_app(vec![task("TASK-1", "Only scoped task", "To Do")]);
+    app.tasks_place.group_by = None;
+    app.tasks_place.filters = vec![FilterPredicate {
+        field: TaskField::Status,
+        value: "In Review".to_string(),
+    }];
+
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness
+            .query_by_label("No tasks match the current filters")
+            .is_some(),
+        "a loaded positive scope narrowed to zero must explain the empty body"
+    );
+    assert!(
+        harness.query_by_label("0 of 1 · 1 open").is_some(),
+        "the summary must distinguish zero filter matches from one open scoped task"
+    );
+    assert!(harness.query_by_label("TASK-1  Only scoped task").is_none());
+}
+
+#[test]
 fn removing_the_last_filter_predicate_restores_every_task_and_remembers_it_as_recent() {
     let mut app = tasks_app(vec![
         task("TASK-1", "In progress task", "In Progress"),

@@ -312,6 +312,17 @@ fn render_bulk_selection_bar(app: &mut HiveApp, ui: &mut egui::Ui) {
 
 const COLUMN_WIDTH: f32 = 260.0;
 const EMPTY_COLUMN_ADD_HEIGHT: f32 = 112.0;
+const CARD_HEIGHT: f32 = 148.0;
+// Board cards clamp their title to two lines and truncate labels, so this
+// fixed slot safely contains the complete card (including the four-pixel
+// inter-card spacer) while allowing egui to skip constructing cards outside
+// each column's viewport. The worst bounded shape is cross-repo (repo + id),
+// two title lines, one metrics line, and one labels/age line. The GPU-backed
+// embedded-font journey measures that worst shape at 142px, leaving 6px of
+// headroom here.
+// Keeping the spacer in the slot preserves the existing separation without
+// making the virtualized rows overlap.
+const CARD_ROW_HEIGHT: f32 = CARD_HEIGHT + 4.0;
 
 fn render_column(
     app: &mut HiveApp,
@@ -426,44 +437,86 @@ fn render_column(
         let (_, dropped) = ui.dnd_drop_zone::<BacklogTaskKey, ()>(frame, |ui| {
             ui.set_min_height(120.0);
 
-            egui::ScrollArea::vertical()
-                .id_salt(format!("backlog_board_col_{column_status}"))
-                .max_height(ui.available_height().max(200.0))
-                .show(ui, |ui| {
-                    for row in &column_tasks {
-                        render_strip(app, ui, row, all_visible, show_repo, pending);
-                        ui.add_space(4.0);
-                    }
-                    let add_label = if column_tasks.is_empty() {
-                        "No tasks  ·  + Add task"
-                    } else {
-                        "+ Add task"
-                    };
-                    let add_height = if column_tasks.is_empty() {
-                        EMPTY_COLUMN_ADD_HEIGHT
-                    } else {
-                        32.0
-                    };
-                    if ui
-                        .add_sized(
-                            [ui.available_width(), add_height],
-                            egui::Button::new(
-                                egui::RichText::new(add_label).color(theme::muted_text()),
+            // The old loop constructed every card in every column on every
+            // frame. At several hundred matching tasks that made opening
+            // Board effectively hang before egui could paint its first frame.
+            // `show_rows` retains one fixed slot per task, so scrolling still
+            // reaches every card while only the visible window performs card
+            // layout and interaction work.
+            let scroll_id = format!("backlog_board_col_{column_status}");
+            if column_tasks.is_empty() {
+                egui::ScrollArea::vertical()
+                    .id_salt(scroll_id)
+                    .max_height(ui.available_height().max(200.0))
+                    .show(ui, |ui| {
+                        if ui
+                            .add_sized(
+                                [ui.available_width(), EMPTY_COLUMN_ADD_HEIGHT],
+                                egui::Button::new(
+                                    egui::RichText::new("No tasks  ·  + Add task")
+                                        .color(theme::muted_text()),
+                                )
+                                .fill(theme::nav_bg())
+                                .stroke(theme::surface_stroke())
+                                .corner_radius(5.0),
                             )
-                            .fill(theme::nav_bg())
-                            .stroke(theme::surface_stroke())
-                            .corner_radius(5.0),
-                        )
-                        .on_hover_text(format!("Create a task in {column_status}"))
-                        .clicked()
-                    {
-                        create::open_new_task(
-                            app,
-                            create_target.map(std::path::Path::to_path_buf),
-                            Some(column_status),
-                        );
-                    }
-                });
+                            .on_hover_text(format!("Create a task in {column_status}"))
+                            .clicked()
+                        {
+                            create::open_new_task(
+                                app,
+                                create_target.map(std::path::Path::to_path_buf),
+                                Some(column_status),
+                            );
+                        }
+                    });
+            } else {
+                // The final virtual row keeps the add affordance inside the
+                // same bounded sequence as the cards, so it remains reachable
+                // even when the column's scroll viewport is full.
+                egui::ScrollArea::vertical()
+                    .id_salt(scroll_id)
+                    .max_height(ui.available_height().max(200.0))
+                    .show_rows(
+                        ui,
+                        CARD_ROW_HEIGHT,
+                        column_tasks.len() + 1,
+                        |ui, row_range| {
+                            for index in row_range {
+                                if index < column_tasks.len() {
+                                    render_strip(
+                                        app,
+                                        ui,
+                                        column_tasks[index],
+                                        all_visible,
+                                        show_repo,
+                                        pending,
+                                    );
+                                    ui.add_space(4.0);
+                                } else if ui
+                                    .add_sized(
+                                        [ui.available_width(), 32.0],
+                                        egui::Button::new(
+                                            egui::RichText::new("+ Add task")
+                                                .color(theme::muted_text()),
+                                        )
+                                        .fill(theme::nav_bg())
+                                        .stroke(theme::surface_stroke())
+                                        .corner_radius(5.0),
+                                    )
+                                    .on_hover_text(format!("Create a task in {column_status}"))
+                                    .clicked()
+                                {
+                                    create::open_new_task(
+                                        app,
+                                        create_target.map(std::path::Path::to_path_buf),
+                                        Some(column_status),
+                                    );
+                                }
+                            }
+                        },
+                    );
+            }
         });
 
         if let Some(dropped_key) = dropped {
@@ -830,6 +883,10 @@ fn paint_card(
         _ if selected => egui::Stroke::new(2.0, theme::selected_row_stroke().color),
         _ => ui.visuals().widgets.noninteractive.bg_stroke,
     };
+    // `Frame::outer_rect` adds both 8px inner margins and the stroke on
+    // each edge. Subtract the actual stroke here so normal, selected, and
+    // landing cards all occupy the same 148px outer slot.
+    let card_content_height = CARD_HEIGHT - 16.0 - 2.0 * stroke.width;
     let mut frame = egui::Frame::default()
         .fill(theme::card_bg())
         .stroke(stroke)
@@ -846,129 +903,137 @@ fn paint_card(
     }
     let mut checked = bulk_selected;
     let mut content_rect = egui::Rect::NOTHING;
-    let checkbox_resp = frame
-        .show(ui, |ui| {
-            ui.set_width(COLUMN_WIDTH - 16.0);
-            ui.horizontal(|ui| {
-                let checkbox = ui
-                    .add_sized([20.0, 18.0], egui::Checkbox::without_text(&mut checked))
-                    .on_hover_text("Select task for bulk actions");
-                let content_resp = ui
-                    .scope(|ui| {
-                        let _ = theme::painted_dot(ui, theme::repo_rail_color(&row.repo.repo_name));
-                        ui.vertical(|ui| {
-                            if show_repo {
-                                ui.label(
-                                    egui::RichText::new(&row.repo.repo_name)
-                                        .small()
-                                        .color(theme::muted_text()),
-                                );
-                            }
+    let card = frame.show(ui, |ui| {
+        // Keep every card at the fixed geometry promised to show_rows;
+        // the content height accounts for both the 16px inner margin and
+        // this card state's actual two-sided stroke width.
+        ui.set_min_height(card_content_height);
+        ui.set_width(COLUMN_WIDTH - 16.0);
+        ui.horizontal(|ui| {
+            let checkbox = ui
+                .add_sized([20.0, 18.0], egui::Checkbox::without_text(&mut checked))
+                .on_hover_text("Select task for bulk actions");
+            let content_resp = ui
+                .scope(|ui| {
+                    let _ = theme::painted_dot(ui, theme::repo_rail_color(&row.repo.repo_name));
+                    ui.vertical(|ui| {
+                        if show_repo {
                             ui.label(
-                                egui::RichText::new(&row.task.id)
-                                    .monospace()
+                                egui::RichText::new(&row.repo.repo_name)
                                     .small()
                                     .color(theme::muted_text()),
                             );
-                            let title_color = if motion == CardMotion::Saving {
-                                theme::muted_text()
-                            } else {
-                                ui.visuals().text_color()
-                            };
-                            // TASK-97 medic pass (PARITY finding): mock §7c
-                            // clamps a title at two lines and never grows the
-                            // row past that — this card used to render a
-                            // plain wrapping `Label`, which grows the card
-                            // (and the whole column) without bound for a
-                            // long title. A hand-built `LayoutJob` with
-                            // `wrap.max_rows = 2` bounds it exactly (egui's
-                            // `Label` has no "clamp at N rows" option of its
-                            // own — only 1-row `.truncate()`); `.strong()`'s
-                            // color resolution is reproduced via
-                            // `RichText::append_to` rather than duplicated,
-                            // so this stays the same "strong" style Label
-                            // itself would have resolved to.
-                            let mut title_job = egui::text::LayoutJob::default();
-                            egui::RichText::new(&row.task.title)
-                                .strong()
-                                .color(title_color)
-                                .append_to(
-                                    &mut title_job,
-                                    ui.style(),
-                                    egui::FontSelection::Default,
-                                    ui.text_valign(),
-                                );
-                            title_job.wrap.max_rows = 2;
-                            title_job.wrap.break_anywhere = true;
-                            ui.add(egui::Label::new(title_job).wrap());
-                            ui.horizontal(|ui| {
+                        }
+                        ui.label(
+                            egui::RichText::new(&row.task.id)
+                                .monospace()
+                                .small()
+                                .color(theme::muted_text()),
+                        );
+                        let title_color = if motion == CardMotion::Saving {
+                            theme::muted_text()
+                        } else {
+                            ui.visuals().text_color()
+                        };
+                        // TASK-97 medic pass (PARITY finding): mock §7c
+                        // clamps a title at two lines and never grows the
+                        // row past that — this card used to render a
+                        // plain wrapping `Label`, which grows the card
+                        // (and the whole column) without bound for a
+                        // long title. A hand-built `LayoutJob` with
+                        // `wrap.max_rows = 2` bounds it exactly (egui's
+                        // `Label` has no "clamp at N rows" option of its
+                        // own — only 1-row `.truncate()`); `.strong()`'s
+                        // color resolution is reproduced via
+                        // `RichText::append_to` rather than duplicated,
+                        // so this stays the same "strong" style Label
+                        // itself would have resolved to.
+                        let mut title_job = egui::text::LayoutJob::default();
+                        egui::RichText::new(&row.task.title)
+                            .strong()
+                            .color(title_color)
+                            .append_to(
+                                &mut title_job,
+                                ui.style(),
+                                egui::FontSelection::Default,
+                                ui.text_valign(),
+                            );
+                        title_job.wrap.max_rows = 2;
+                        title_job.wrap.break_anywhere = true;
+                        ui.add(egui::Label::new(title_job).wrap());
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format::priority_title(&row.task.priority))
+                                    .small()
+                                    .color(format::priority_color(&row.task.priority)),
+                            );
+                            if !row.task.acceptance_criteria.is_empty() {
                                 ui.label(
-                                    egui::RichText::new(format::priority_title(&row.task.priority))
-                                        .small()
-                                        .color(format::priority_color(&row.task.priority)),
+                                    egui::RichText::new(format!(
+                                        "{}/{}",
+                                        row.task.acceptance_done_count(),
+                                        row.task.acceptance_criteria.len()
+                                    ))
+                                    .small()
+                                    .color(theme::muted_text()),
                                 );
-                                if !row.task.acceptance_criteria.is_empty() {
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "{}/{}",
-                                            row.task.acceptance_done_count(),
-                                            row.task.acceptance_criteria.len()
-                                        ))
+                            }
+                            // task-18 lamp-language marker — same
+                            // rationale as the List lens's blocked pill.
+                            if !row.task.is_done()
+                                && switchbard_core::is_blocked(row.task, &row.repo.repo)
+                            {
+                                ui.label(
+                                    egui::RichText::new("blocked")
                                         .small()
+                                        .strong()
+                                        .color(theme::warn_orange()),
+                                );
+                            }
+                            dispatch_ui::render_dispatch_pill(
+                                ui,
+                                &dispatch_ui::dispatch_state(row.task),
+                            );
+                            // task-42 AC #1: a clear, queryable in-flight
+                            // treatment — the dimmed frame alone reads as
+                            // "disabled" as easily as "in progress", so
+                            // this spells it out. `theme::painted_dot_
+                            // pulse`'s own `request_repaint_after`
+                            // (500ms, `PULSE_FRAME_MS`) is safely above
+                            // kittest's default `step_dt` too (see
+                            // `render_board`'s note on that margin), so
+                            // — post-review correction, same class as
+                            // N4 — it does not in fact break the plain
+                            // `harness.run()` idiom, and the "live
+                            // activity" pulse language this app already
+                            // uses elsewhere (listener dots) is the
+                            // better match for a real "spinner" than a
+                            // static one.
+                            if motion == CardMotion::Saving {
+                                theme::painted_dot_pulse(ui, theme::sky(), 1);
+                                ui.label(
+                                    egui::RichText::new("saving…")
+                                        .small()
+                                        .italics()
                                         .color(theme::muted_text()),
-                                    );
-                                }
-                                // task-18 lamp-language marker — same
-                                // rationale as the List lens's blocked pill.
-                                if !row.task.is_done()
-                                    && switchbard_core::is_blocked(row.task, &row.repo.repo)
-                                {
-                                    ui.label(
-                                        egui::RichText::new("blocked")
-                                            .small()
-                                            .strong()
-                                            .color(theme::warn_orange()),
-                                    );
-                                }
-                                dispatch_ui::render_dispatch_pill(
-                                    ui,
-                                    &dispatch_ui::dispatch_state(row.task),
                                 );
-                                // task-42 AC #1: a clear, queryable in-flight
-                                // treatment — the dimmed frame alone reads as
-                                // "disabled" as easily as "in progress", so
-                                // this spells it out. `theme::painted_dot_
-                                // pulse`'s own `request_repaint_after`
-                                // (500ms, `PULSE_FRAME_MS`) is safely above
-                                // kittest's default `step_dt` too (see
-                                // `render_board`'s note on that margin), so
-                                // — post-review correction, same class as
-                                // N4 — it does not in fact break the plain
-                                // `harness.run()` idiom, and the "live
-                                // activity" pulse language this app already
-                                // uses elsewhere (listener dots) is the
-                                // better match for a real "spinner" than a
-                                // static one.
-                                if motion == CardMotion::Saving {
-                                    theme::painted_dot_pulse(ui, theme::sky(), 1);
-                                    ui.label(
-                                        egui::RichText::new("saving…")
-                                            .small()
-                                            .italics()
-                                            .color(theme::muted_text()),
-                                    );
-                                }
-                            });
-                            render_labels_and_age(ui, row.task);
+                            }
                         });
-                    })
-                    .response;
-                content_rect = content_resp.rect;
-                checkbox
-            })
-            .inner
+                        render_labels_and_age(ui, row.task);
+                    });
+                })
+                .response;
+            content_rect = content_resp.rect;
+            checkbox
         })
-        .inner;
+        .inner
+    });
+    debug_assert!(
+        card.response.rect.height() <= CARD_HEIGHT + 0.5,
+        "Board card exceeded its fixed virtual-row slot: {:.1}px > {CARD_HEIGHT}px",
+        card.response.rect.height()
+    );
+    let checkbox_resp = card.inner;
     (checkbox_resp, checked, content_rect)
 }
 
@@ -1078,4 +1143,22 @@ fn card_age(task: &BacklogTask) -> Option<String> {
         .or(task.created_date.as_deref())
         .and_then(parse_backlog_datetime_unix)
         .map(humanize_age)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CARD_HEIGHT, CARD_ROW_HEIGHT, EMPTY_COLUMN_ADD_HEIGHT};
+
+    #[test]
+    fn virtual_board_geometry_has_headroom_and_preserves_empty_affordance() {
+        let card_height = CARD_HEIGHT;
+        let row_height = CARD_ROW_HEIGHT;
+        let empty_add_height = EMPTY_COLUMN_ADD_HEIGHT;
+        assert_eq!(row_height - card_height, 4.0);
+        assert!(
+            card_height >= 142.0,
+            "GPU-measured worst bounded card must fit"
+        );
+        assert_eq!(empty_add_height, 112.0);
+    }
 }

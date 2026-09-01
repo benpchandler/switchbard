@@ -13,20 +13,26 @@
 //! (headless egui_kittest through the real `render_ui`, `#[ignore]`d — run
 //! deliberately, not on every `cargo test`).
 //!
+//! The Board journey uses the same deterministic 500-task fixture. Before
+//! fixed-row virtualization, it measured p50 62.210ms / p95 65.445ms / max
+//! 267.848ms over 200 frames and took 14.63s for the test body. After the
+//! change it measured p50 11.400ms / p95 13.207ms / max 101.991ms and took
+//! 2.23s (2026-09-01, debug build, M-series laptop).
+//!
 //! ## Measured (2026-09-01, debug build, M-series laptop)
 //!
-//! 400 tasks (4 repos x 5 projects x 20 tasks/project), List view mode
+//! 500 tasks (4 repos x 5 projects x 25 tasks/project), List view mode
 //! grouped by Project, 200 frames:
 //!
 //! | | frame p50 | frame p95 | frame max |
 //! |---|---|---|---|
-//! | this test (virtualized `show_rows`) | 10.743ms | 14.383ms | 110.801ms |
+//! | this test (virtualized `show_rows`) | 14.270ms | 18.692ms | 130.243ms |
 //!
 //! For scale comparison, `projects_rank_perf_smoke.rs` measures ~26-28ms
-//! p95 on a similarly-sized fixture (200 tasks) through the pre-existing
+//! p95 on a smaller fixture (200 tasks) through the pre-existing
 //! *unvirtualized* Projects lens (its own doc names that as the dominant
 //! cost, "TASK-13, which this change does not touch"). This test's lower
-//! p95 despite 2x the task count is exactly what `show_rows` virtualization
+//! p95 despite 2.5x the task count is exactly what `show_rows` virtualization
 //! buys: only the rows scrolled into view get built each frame, so cost
 //! stays roughly flat in the visible viewport height, not linear in total
 //! task count — the frame max spike is a one-off compile/GC-adjacent
@@ -41,6 +47,7 @@ mod common;
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use common::{harness, isolated_config_save_path};
 use switchbard_core::config::Config;
@@ -49,10 +56,11 @@ use switchbard_core::{
 };
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::Place;
+use switchbard_gui::ui::places::tasks::state::TasksViewMode;
 
 const REPOS: usize = 4;
 const PROJECTS_PER_REPO: usize = 5;
-const TASKS_PER_PROJECT: usize = 20;
+const TASKS_PER_PROJECT: usize = 25;
 const FRAMES: usize = 200;
 
 /// A ceiling over a debug-build measured baseline, not a target — see
@@ -60,11 +68,25 @@ const FRAMES: usize = 200;
 /// generous headroom check rather than a tight regression gate.
 const FRAME_P95_BUDGET_MS: f64 = 40.0;
 
+// Both ignored probes use the renderer's process-wide performance-log
+// environment variables. `cargo test -- --ignored` runs them in parallel by
+// default, so serialize that small critical section rather than let one test
+// replace the other's log path mid-run.
+static PERF_ENV_LOCK: Mutex<()> = Mutex::new(());
+
 fn task(repo: usize, project: usize, i: usize) -> BacklogTask {
     let id = format!("TASK-{repo}{project}{i:02}");
     BacklogTask {
         title: format!("Task {i} of project {project} in repo {repo}"),
-        status: if i.is_multiple_of(5) { "Done" } else { "To Do" }.to_string(),
+        // Keep all 500 fixture tasks visible under the Tasks place default,
+        // which hides completed work. The Board smoke therefore measures the
+        // requested 500 matching rows rather than a smaller post-filter set.
+        status: if i.is_multiple_of(2) {
+            "In Progress"
+        } else {
+            "To Do"
+        }
+        .to_string(),
         priority: "medium".to_string(),
         assignees: vec![],
         labels: if i.is_multiple_of(3) {
@@ -170,6 +192,9 @@ fn percentiles(mut values: Vec<f64>) -> Percentiles {
 #[test]
 #[ignore = "perf smoke — run explicitly, see module doc"]
 fn tasks_place_list_grouped_by_project_perf_smoke() {
+    let _perf_env_guard = PERF_ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let log_path = std::env::temp_dir().join(format!(
         "switchbard-tasks-place-perf-smoke-{}.csv",
         std::process::id()
@@ -218,6 +243,56 @@ fn tasks_place_list_grouped_by_project_perf_smoke() {
         total.p95 < FRAME_P95_BUDGET_MS,
         "frame p95 {:.3}ms exceeds the {FRAME_P95_BUDGET_MS}ms budget — something \
          per-frame-expensive landed on the Tasks place's List/group-by path",
+        total.p95
+    );
+}
+
+#[test]
+#[ignore = "perf smoke - run explicitly, see module doc"]
+fn tasks_place_board_500_tasks_perf_smoke() {
+    let _perf_env_guard = PERF_ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let log_path = std::env::temp_dir().join(format!(
+        "switchbard-tasks-place-board-perf-smoke-{}.csv",
+        std::process::id()
+    ));
+    unsafe {
+        std::env::set_var("SWITCHBARD_PERF", "1");
+        std::env::set_var("SWITCHBARD_PERF_LOG", &log_path);
+    }
+
+    let mut app = build_fixture();
+    app.tasks_place.view_mode = TasksViewMode::Board;
+    let mut harness = harness(app);
+    for _ in 0..FRAMES {
+        harness.run();
+    }
+
+    let csv = fs::read_to_string(&log_path)
+        .unwrap_or_else(|e| panic!("perf log at {}: {e}", log_path.display()));
+    let total_ms: Vec<f64> = csv
+        .lines()
+        .skip(1)
+        .filter_map(|line| line.split(',').nth(1)?.parse().ok())
+        .collect();
+    assert!(
+        !total_ms.is_empty(),
+        "perf log at {} recorded no frames",
+        log_path.display()
+    );
+
+    let total = percentiles(total_ms);
+    println!(
+        "Tasks place Board perf smoke - {} tasks, {FRAMES} frames: frame p50 {:.3}ms p95 {:.3}ms max {:.3}ms",
+        REPOS * PROJECTS_PER_REPO * TASKS_PER_PROJECT,
+        total.p50,
+        total.p95,
+        total.max,
+    );
+    assert!(
+        total.p95 < FRAME_P95_BUDGET_MS,
+        "Board frame p95 {:.3}ms exceeds the {FRAME_P95_BUDGET_MS}ms budget",
         total.p95
     );
 }
