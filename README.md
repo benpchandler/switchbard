@@ -49,6 +49,23 @@ all in one window, with no telemetry and no cloud account.**
 - 🔒 **Local-first.** No telemetry, no account, no background daemon. Config is a
   hand-editable TOML at `~/.switchbard/config.toml`.
 
+## Task Queue
+
+Switchbard doesn't just watch agents work - it can hand them the work. Tee a
+Backlog task up with `sb queue send` and it joins the dispatch queue at its
+stack-rank position; rank order alone decides what gets picked up next. The
+[LangGraph orchestrator](orchestrator/README.md) drains the queue: it claims
+each task, runs a headless agent against it in a fresh worktree, verifies the
+result, and opens a PR - or hands the claim back as an honest failure. Live
+progress for every run streams into the GUI's Dispatches view.
+
+```sh
+sb queue send TASK-42      # tee it up; it queues at its stack-rank position
+sb queue list              # the live queue, in pickup order
+cd orchestrator && uv run python -m switchbard_orchestrator drain \
+    --repo ~/Dev/yourrepo --gate "mise run ci"
+```
+
 ## Install
 
 ### macOS
