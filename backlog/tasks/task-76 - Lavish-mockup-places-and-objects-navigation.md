@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-31 21:20'
-updated_date: '2026-09-01 01:23'
+updated_date: '2026-09-01 01:38'
 labels:
   - ia
   - design
@@ -46,4 +46,6 @@ Round 6 (2026-09-01): (a) Q2 RESOLVED = A: attention feed lives on Digest; feed 
 Round 7 (2026-09-01): (a) Group headers in Tasks must WIN the color-hierarchy against task rows (owner: grouping took a backseat, hard to distinguish groups; dark mode fared better) - headers now use the recessed faint surface, bold 12.5px, 2px top rule, taller padding, in both themes. Implementation note for EGUI Polish overlap: group headers need their own elevation token. (b) Burndown-on-project-page questioned again - clarified it plots remaining member tasks over time (per TASK-76 spec) and recorded that Q12=B cuts it with the page; more evidence toward B.
 
 Round 8 (2026-09-01): process correction from owner - agent must run its own visual review (screenshots, optical pass) using the design-review skill kit (~/Downloads/design-review-skill-kit) before every handback, instead of blind HTML edits. Root cause of 'you didn't fix it' found: the owner's Chrome tab was showing a DIFFERENT lavish artifact (xplan Portfolio Mission Command session), so round-7 fixes were invisible; correct session reopened. Self-review (headless Chrome captures, light + dark) found and fixed: stale 'Repos' place on the Goal-page sidebar (missed rename); FAVORITES glyphs indistinguishable (saved filter now uses a distinct glyph); dev-speak inside frames (ungrouped tail, collapsed, measure/scope config vocabulary, computed-from-done-in-week) replaced with user copy; project-page table had task IDs inside the Status column (moved into Task cell). Dark mode verified: group headers dominate correctly.
+
+Round 9 (2026-09-01, first round after the poll-truncation fix): (a) Q12 RESOLVED = B and stronger: the project page is CUT entirely; the group header expands in place for summary, and the stack rank surfaces only as a sort/filter option in Tasks (Sort: rank next to Group by) - never a page or dedicated column. Q5 dissolves with it (delivery = status-cell badge + facet). (b) Q14 RESOLVED = C: Command becomes its own place - the fleet console (agents, missions, leases, SITREPs, support requests with respond affordance); Dispatches under Tasks remains the task-delivery facet; same runs, two axes. (c) Buttons: icon-only with tooltips for universal actions everywhere (open/merge/retry/log/kill/remove/edit/check-in); text labels only where no icon is unambiguous (empty-state CTAs, Roll). (d) Selected rows get a dedicated stronger tint + 3px stroke so selection never reads as a group header (owner: too close in color). Visual self-review run post-change (light render, tiles): icons, sort control, selection contrast, and Command console all verified. Open set: Q6, Q7, Q8, Q9, Q11.
 <!-- SECTION:NOTES:END -->
