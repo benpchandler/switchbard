@@ -1,0 +1,24 @@
+[project]
+name = "switchbard-orchestrator"
+version = "0.1.0"
+description = "LangGraph orchestration agent for the Switchbard Task Queue (trajectory: Task Queue orchestration, TASK-89)"
+requires-python = ">=3.12"
+# The exact pair the xplan langgraph-mission-shadow probe validated for
+# durable checkpoint + interrupt + resume semantics.
+dependencies = [
+    "langgraph==1.2.9",
+    "langgraph-checkpoint-sqlite==3.1.1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["switchbard_orchestrator"]

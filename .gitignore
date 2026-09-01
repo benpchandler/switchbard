@@ -64,3 +64,4 @@ lcov.info
 # egui_kittest snapshot scratch byproducts in the QA screenshot set
 docs/qa/screenshots/*.diff.png
 docs/qa/screenshots/*.old.png
+.worktrees/

@@ -185,6 +185,7 @@ fn build_fixture() -> HiveApp {
                         // Verified-alive: the state that makes the summary do
                         // the most work per row (a supervision check and an
                         // elapsed-time fold, not an early bail).
+                        progress: switchbard_core::dispatch_inspect::RunProgress::default(),
                         liveness: DispatchRunLiveness::Alive {
                             pgid: 4242,
                             supervised: true,

@@ -1,4 +1,4 @@
-//! `switchbard-task` — the terminal and agent write path for Backlog-format
+//! `sb` — the terminal and agent write path for Backlog-format
 //! tasks, over `switchbard_core::backlog`'s native write layer.
 //!
 //! One of the format fork's frontends (trajectory: *Backlog format fork*):
@@ -21,6 +21,7 @@
 
 mod goals_cmd;
 mod hierarchy_cmd;
+mod queue_cmd;
 mod rank_cmd;
 mod render;
 
@@ -36,7 +37,7 @@ const MAX_ROOT_WALK: usize = 64;
 
 #[derive(Parser)]
 #[command(
-    name = "switchbard-task",
+    name = "sb",
     version,
     about = "Read and write Backlog-format tasks (switchbard's native task layer)",
     long_about = "Read and write Backlog-format tasks through switchbard's native write \
@@ -69,7 +70,14 @@ const MAX_ROOT_WALK: usize = 64;
                   `list` and `project list` print the computed order: expedited first, then \
                   ranked, then everything else by status/priority/id.\n\n\
                   DISPATCH: flag a task for an autonomous run with \
-                  `switchbard-task edit <ID> --add-label dispatch`."
+                  `sb edit <ID> --add-label dispatch`.\n\n\
+                  QUEUE: the `queue` family is the orchestrator's protocol surface - \
+                  `queue list` (dispatch queue in stack-rank order), `queue send/withdraw <ID>`, \
+                  `queue claim <ID>` (acknowledge: dispatch -> dispatching, prints the prior \
+                  status - keep it for `release`), `queue release <ID> --outcome \
+                  dispatched|failed`, `queue prompt <ID>` (the exact headless-agent prompt). \
+                  Claim before work; releases walk the same label ladder the built-in \
+                  dispatch pipeline uses."
 )]
 struct Cli {
     /// Repo root to act on (default: nearest ancestor of the current
@@ -141,6 +149,9 @@ enum Command {
     Expedite { id: String },
     /// Remove a task from the expedite lane
     Unexpedite { id: String },
+    /// The dispatch queue protocol (list/send/withdraw/claim/release/prompt)
+    #[command(subcommand)]
+    Queue(queue_cmd::QueueCmd),
 }
 
 #[derive(Args)]
@@ -267,14 +278,14 @@ struct EditArgs {
 fn main() {
     let cli = Cli::parse();
     if let Err(err) = run(&cli) {
-        eprintln!("switchbard-task: error: {err}");
+        eprintln!("sb: error: {err}");
         std::process::exit(1);
     }
 }
 
 fn run(cli: &Cli) -> Result<()> {
     if cli.project.is_some() {
-        eprintln!("switchbard-task: warning: --project is deprecated; use --repo");
+        eprintln!("sb: warning: --project is deprecated; use --repo");
     }
     let root = resolve_repo(cli.repo.as_deref().or(cli.project.as_deref()))?;
     match &cli.command {
@@ -301,6 +312,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Unrank(cmd) => rank_cmd::run_unrank(&root, cmd),
         Command::Expedite { id } => rank_cmd::run_expedite(&root, id),
         Command::Unexpedite { id } => rank_cmd::run_unexpedite(&root, id),
+        Command::Queue(cmd) => queue_cmd::run_queue(&root, cmd),
     }
 }
 
@@ -337,7 +349,7 @@ fn find_repo_root(start: &Path) -> Option<PathBuf> {
 fn list(root: &Path, status: Option<&str>, in_project: Option<&str>, all: bool) -> Result<()> {
     let repo = switchbard_core::load_backlog_repo(root)?;
     for warning in &repo.warnings {
-        eprintln!("switchbard-task: warning: {warning}");
+        eprintln!("sb: warning: {warning}");
     }
     for task in &repo.tasks {
         if !all && task.source != switchbard_core::BacklogTaskSource::Active {
@@ -360,12 +372,8 @@ fn list(root: &Path, status: Option<&str>, in_project: Option<&str>, all: bool) 
 
 fn view(root: &Path, id: &str) -> Result<()> {
     let project = switchbard_core::load_backlog_repo(root)?;
-    let task = find_task(&project.tasks, id).ok_or_else(|| {
-        anyhow!(
-            "no task {id} in {} — try `switchbard-task list --all`",
-            root.display()
-        )
-    })?;
+    let task = find_task(&project.tasks, id)
+        .ok_or_else(|| anyhow!("no task {id} in {} — try `sb list --all`", root.display()))?;
     print!("{}", render::task_view(task));
     Ok(())
 }

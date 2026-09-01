@@ -1,7 +1,7 @@
 //! The Projects lens: every visible task grouped by `BacklogTask::project`,
 //! cross-repo, with projects nested under their initiative and an
 //! "Unassigned" bucket last. Project *assignment* lives in the detail pane
-//! (`detail::render_editor`); def lifecycle is CLI-first (`switchbard-task
+//! (`detail::render_editor`); def lifecycle is CLI-first (`sb
 //! project create/edit`); this lens is read/browse-only — clicking a task
 //! selects it, which the persistent detail rail shows regardless of lens.
 //!

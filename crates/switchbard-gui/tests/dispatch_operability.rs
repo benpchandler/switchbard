@@ -90,6 +90,7 @@ fn run_with(task_id: &str, age_secs: u64, liveness: DispatchRunLiveness) -> Disp
         log_bytes: 0,
         log_modified_unix: None,
         liveness,
+        progress: switchbard_core::dispatch_inspect::RunProgress::default(),
     }
 }
 

@@ -180,7 +180,7 @@ pub fn run_goal(root: &Path, cmd: &GoalCmd) -> Result<()> {
             warn(&repo.warnings);
             let Some(goal) = repo.goals.iter().find(|g| &g.name == name) else {
                 anyhow::bail!(
-                    "no goal '{name}' — try `switchbard-task goal list`, or define it with `switchbard-task goal create`"
+                    "no goal '{name}' — try `sb goal list`, or define it with `sb goal create`"
                 );
             };
             print!("{}", goal_view(&repo, goal));
@@ -227,7 +227,7 @@ fn monday_arg(week: Option<&str>) -> Result<String> {
 
 fn warn(warnings: &[String]) {
     for warning in warnings {
-        eprintln!("switchbard-task: warning: {warning}");
+        eprintln!("sb: warning: {warning}");
     }
 }
 

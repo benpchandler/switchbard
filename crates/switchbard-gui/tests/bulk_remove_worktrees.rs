@@ -265,6 +265,7 @@ fn a_locked_worktree_and_a_live_dispatch_run_both_route_to_needs_review() {
             started_at_unix: Some(1),
             log_bytes: 0,
             log_modified_unix: None,
+            progress: switchbard_core::dispatch_inspect::RunProgress::default(),
             liveness: DispatchRunLiveness::Alive {
                 pgid: 4242,
                 supervised: true,

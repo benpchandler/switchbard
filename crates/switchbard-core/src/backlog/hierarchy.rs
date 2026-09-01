@@ -502,7 +502,7 @@ fn resolve_def_file(root: &Path, rel: &str, kind: &str, name: &str) -> Result<Pa
     match find_def_file(root, rel, name)? {
         Some((_, path)) => Ok(path),
         None => {
-            bail!("no {kind} definition named '{name}' — run `switchbard-task {kind} create` first")
+            bail!("no {kind} definition named '{name}' — run `sb {kind} create` first")
         }
     }
 }

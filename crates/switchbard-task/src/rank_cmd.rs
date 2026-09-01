@@ -159,7 +159,7 @@ fn resolve_task_id(repo: &BacklogRepo, id: &str) -> Result<String> {
         .map(|task| task.id.clone())
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "no task {id} in {} — try `switchbard-task list --all`",
+                "no task {id} in {} — try `sb list --all`",
                 repo.root.display()
             )
         })
