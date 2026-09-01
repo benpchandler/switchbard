@@ -258,6 +258,53 @@ fn goal_cards_lead_the_digest_place_ahead_of_in_flight_and_the_feed() {
     );
 }
 
+/// Owner-reported: with the Tasks place's single-repo picker parked on a
+/// repo with no goals, Digest rendered "No goals this week" while another
+/// scoped repo had three current-week goals. Digest is a places surface — it
+/// aggregates over the sidebar's multi-select scope and must never consult
+/// the Tasks picker, which is invisible from here (the place's other
+/// sections already follow that rule — see `collect_task_rows`).
+#[test]
+fn goal_cards_ignore_the_tasks_places_repo_picker() {
+    let mut app = app_with(vec![], vec![goal_def("Close out Stack Ranking")], vec![]);
+    app.place = Place::Digest;
+    app.backlog_view.selected_repo = Some(PathBuf::from("/some/other/repo"));
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_by_label("Close out Stack Ranking").is_some(),
+        "the goal card must render even though the Tasks picker points elsewhere"
+    );
+    assert!(
+        harness.query_by_label("No goals this week").is_none(),
+        "the zero-goal state must not appear while a scoped repo has goals"
+    );
+}
+
+/// The zero-goal card's week line must tell the truth about the clock: the
+/// mock's literal "ends today." copy was only correct on a Sunday
+/// (owner-reported wrong on a Tuesday). It now mirrors the header chip's
+/// "day N of 7" formula.
+#[test]
+fn zero_goal_state_names_the_week_day_not_ends_today() {
+    let mut app = app_with(vec![], vec![], vec![]);
+    app.place = Place::Digest;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        text_containing(&harness, "ends today").is_empty(),
+        "no surface may claim the week ends today unless it actually does"
+    );
+    let today = chrono::Local::now().date_naive();
+    let day = (today - switchbard_core::week_monday_of(today)).num_days() + 1;
+    assert!(
+        !text_containing(&harness, &format!("day {day} of 7")).is_empty(),
+        "the zero-goal card carries the real week-clock position"
+    );
+}
+
 #[test]
 fn zero_goal_state_offers_new_goal_and_roll_last_week() {
     let mut app = app_with(vec![], vec![], vec![]);
