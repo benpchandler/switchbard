@@ -55,6 +55,9 @@ jobs:
 
       - name: Install uv for pinned xplan artifact build
         uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.7"
+          enable-cache: false
 
       - name: Cache cargo registry + build
         uses: actions/cache@v4
@@ -86,6 +89,8 @@ jobs:
           )"
           XPLAN_SOURCE="$RUNNER_TEMP/xplan-source"
           XPLAN_OUTPUT="$RUNNER_TEMP/xplan-output"
+          export UV_PYTHON_INSTALL_DIR="$RUNNER_TEMP/uv-python"
+          export UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/xplan-sidecar-venv"
           scripts/checkout-pinned-xplan.sh --destination "$XPLAN_SOURCE"
           uv python install "$XPLAN_SIDECAR_PYTHON"
           uv run --python "$XPLAN_SIDECAR_PYTHON" --locked --project "$XPLAN_SOURCE/sidecar" \
