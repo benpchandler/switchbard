@@ -154,13 +154,9 @@ fn render_goal_modal_for_digest_place(
     // picker, invisible from Digest — locking the modal's repo dropdown to
     // it would pin a choice the user cannot see (same family as the
     // goal-card scoping fix above).
-    if let Some((project_root, goal)) = super::goal_create::render_goal_modal(
-        app,
-        ctx,
-        &repo_options,
-        &known_project_names,
-        false,
-    ) {
+    if let Some((project_root, goal)) =
+        super::goal_create::render_goal_modal(app, ctx, &repo_options, &known_project_names, false)
+    {
         pending.goal_create = Some((project_root, goal));
     }
 }
@@ -199,13 +195,11 @@ fn render_zero_goal_state(
                 .map(|d| d.format("%b %-d").to_string())
                 .unwrap_or_else(|_| week.to_string());
             let today = chrono::Local::now().date_naive();
-            let days_elapsed = ((today - switchbard_core::week_monday_of(today)).num_days() + 1)
-                .clamp(1, 7);
+            let days_elapsed =
+                ((today - switchbard_core::week_monday_of(today)).num_days() + 1).clamp(1, 7);
             ui.label(
-                egui::RichText::new(format!(
-                    "Week of {friendly} · day {days_elapsed} of 7."
-                ))
-                .color(theme::muted_text()),
+                egui::RichText::new(format!("Week of {friendly} · day {days_elapsed} of 7."))
+                    .color(theme::muted_text()),
             );
             ui.add_space(6.0);
             ui.horizontal(|ui| {
