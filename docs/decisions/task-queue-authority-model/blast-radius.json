@@ -1,0 +1,160 @@
+{
+  "format": "decision-blast-radius-v1",
+  "decision": "task-queue-authority-model",
+  "generatedAt": "2026-09-01",
+  "surfaces": [
+    {
+      "id": "BR-001",
+      "area": "native-task-model",
+      "currentPaths": ["crates/switchbard-core/src/backlog/types.rs"],
+      "currentSymbols": ["BacklogTask", "TaskPatch", "BacklogRepo"],
+      "currentBehavior": "Task references are URL strings and load_backlog_repo returns the ranked task order.",
+      "proposedChange": "Preserve the string field and expose generic resolved links without adding typed link claims.",
+      "consumers": ["native mutation facade", "GUI task rows", "sb task commands", "dispatch prompt"],
+      "risk": "high"
+    },
+    {
+      "id": "BR-002",
+      "area": "ranking",
+      "currentPaths": ["crates/switchbard-core/src/backlog/ranking.rs"],
+      "currentSymbols": ["RepoRanking", "RankedItem"],
+      "currentBehavior": "Durable rank keys are local task and project identities only.",
+      "proposedChange": "Do not add remote keys; compose ordered source bands after local rank.",
+      "consumers": ["load_backlog_repo", "task lists", "dispatch queue"],
+      "risk": "high"
+    },
+    {
+      "id": "BR-003",
+      "area": "dispatch-queue-selector",
+      "currentPaths": ["crates/switchbard-core/src/dispatch.rs"],
+      "currentSymbols": ["list_dispatch_queue"],
+      "currentBehavior": "The fallback dispatch selector re-sorts eligible tasks by id after ranked load.",
+      "proposedChange": "Make one core selector preserve ranked load order and share it with all consumers.",
+      "consumers": ["switchbard-dispatch", "GUI Dispatches", "sb queue"],
+      "risk": "high"
+    },
+    {
+      "id": "BR-004",
+      "area": "dispatch-success",
+      "currentPaths": ["crates/switchbard-core/src/dispatch.rs", "crates/switchbard-core/src/backlog/mutations.rs"],
+      "currentSymbols": ["release_task", "mutate_task"],
+      "currentBehavior": "Release applies label, status, and note through separate mutations and does not record the PR reference.",
+      "proposedChange": "Add one intent-level RecordDispatchSuccess command with validation, single replacement, replay no-op, and conflict rejection.",
+      "consumers": ["Rust fallback dispatcher", "sb queue release", "LangGraph orchestrator"],
+      "risk": "critical"
+    },
+    {
+      "id": "BR-005",
+      "area": "queue-cli",
+      "currentPaths": ["crates/switchbard-task/src/queue_cmd.rs", "crates/switchbard-task/tests/cli.rs"],
+      "currentSymbols": ["run_queue", "queue_list"],
+      "currentBehavior": "sb queue already preserves load_backlog_repo order and is the orchestrator mutation protocol.",
+      "proposedChange": "Route release success through the atomic native command while keeping the protocol backward compatible.",
+      "consumers": ["orchestrator/proto.py", "operators", "automation tests"],
+      "risk": "high"
+    },
+    {
+      "id": "BR-006",
+      "area": "source-config",
+      "currentPaths": ["crates/switchbard-core/src/config.rs"],
+      "currentSymbols": ["Config"],
+      "currentBehavior": "Config has no GitHub Project source definitions.",
+      "proposedChange": "Add an ordered, default-empty github_project_bindings list plus validated atomic mutation methods.",
+      "consumers": ["GUI source settings", "delivery worker", "queue projection"],
+      "risk": "high"
+    },
+    {
+      "id": "BR-007",
+      "area": "github-read-precedent",
+      "currentPaths": ["crates/switchbard-core/src/landing.rs"],
+      "currentSymbols": ["LandingCache", "probe_github"],
+      "currentBehavior": "Existing landing probes establish read-only GitHub observation and cached UI precedent.",
+      "proposedChange": "Add a bounded delivery adapter and typed observation state without reusing summary-shaped landing truth.",
+      "consumers": ["delivery worker", "Task Queue rows", "attention surfaces"],
+      "risk": "medium"
+    },
+    {
+      "id": "BR-008",
+      "area": "worker-cadence",
+      "currentPaths": ["crates/switchbard-gui/src/workers.rs"],
+      "currentSymbols": ["WorkerPolicy"],
+      "currentBehavior": "Background probes use a named cadence table; landing runs on the slow cadence with catch-up limits.",
+      "proposedChange": "Register delivery refresh explicitly, respect rate-limit reset, and keep all network work off the render path.",
+      "consumers": ["GUI background runtime", "delivery cache"],
+      "risk": "high"
+    },
+    {
+      "id": "BR-009",
+      "area": "gui-state",
+      "currentPaths": ["crates/switchbard-gui/src/app.rs"],
+      "currentSymbols": ["SwitchboardApp", "render_place"],
+      "currentBehavior": "App state owns dispatch caches and routes IA V2 places.",
+      "proposedChange": "Own source bindings, refresh generations, visible snapshots, and derived projections at the app boundary.",
+      "consumers": ["Tasks place", "Dispatches view", "settings"],
+      "risk": "high"
+    },
+    {
+      "id": "BR-010",
+      "area": "information-architecture",
+      "currentPaths": ["crates/switchbard-gui/src/runtime/mod.rs", "crates/switchbard-gui/src/ui/places", "crates/switchbard-gui/src/ui/places/dispatches.rs"],
+      "currentSymbols": ["Place", "TasksView"],
+      "currentBehavior": "IA V2 provides Tasks / All and Tasks / Dispatches destinations; collect_rows supplies Active/Queued/Finished/Failed facets in newest-run-first activity order.",
+      "proposedChange": "Render local and configured remote next-work bands inside the existing destination while conserving the separate activity/history facets, actions, and newest-run order.",
+      "consumers": ["sidebar routing", "next-work bands", "collect_rows activity history", "Dispatches facets and controls"],
+      "risk": "high"
+    },
+    {
+      "id": "BR-011",
+      "area": "orchestrator-protocol",
+      "currentPaths": ["orchestrator/switchbard_orchestrator/proto.py", "orchestrator/switchbard_orchestrator/graph.py"],
+      "currentSymbols": ["SbClient", "build_graph"],
+      "currentBehavior": "The LangGraph mission uses sb queue as its only task mutation boundary.",
+      "proposedChange": "Keep the protocol shape stable while release delegates atomic success recording to core.",
+      "consumers": ["durable mission resume", "dispatch reconciliation"],
+      "risk": "critical"
+    },
+    {
+      "id": "BR-012",
+      "area": "cache-filesystem",
+      "currentPaths": ["crates/switchbard-core/src/config.rs", "crates/switchbard-gui/src/app.rs"],
+      "currentSymbols": ["Config::path", "SwitchboardApp"],
+      "currentBehavior": "No Task Queue delivery snapshot exists on disk.",
+      "proposedChange": "Add versioned per-binding cache files under ~/.switchbard/cache/github-delivery-v1 with atomic 0600 writes and strict input bounds.",
+      "consumers": ["startup hydration", "stale display", "refresh worker"],
+      "risk": "high"
+    },
+    {
+      "id": "BR-013",
+      "area": "core-tests",
+      "currentPaths": ["crates/switchbard-core/src/dispatch.rs", "crates/switchbard-core/src/backlog", "crates/switchbard-task/tests/cli.rs"],
+      "currentSymbols": ["dispatch_tests", "mutation_tests", "cli_tests"],
+      "currentBehavior": "Existing tests cover native dispatch and CLI behavior but not remote observations or atomic PR-edge release.",
+      "proposedChange": "Add synthetic projection, cache, adapter, failure-injection, compatibility, and cross-consumer ordering evidence.",
+      "consumers": ["mise run ci", "decision verifier"],
+      "risk": "high"
+    },
+    {
+      "id": "BR-014",
+      "area": "gui-tests-and-visual-gate",
+      "currentPaths": ["crates/switchbard-gui/src/app.rs", "crates/switchbard-gui/src/ui/places"],
+      "currentSymbols": ["navigation_tests", "command_tests"],
+      "currentBehavior": "IA routing tests exist; GitHub Task Queue state and stress evidence does not.",
+      "proposedChange": "Add behavior tests and rendered evidence for every applicable state before TASK-80.4 completion.",
+      "consumers": ["design-state review", "Visual Review", "release decision"],
+      "risk": "high"
+    },
+    {
+      "id": "BR-015",
+      "area": "documentation-and-task-contract",
+      "currentPaths": ["docs/product-trajectory.md", "backlog/completed/task-80.2 - Lock-the-Task-Queue-authority-and-identity-model.md"],
+      "currentSymbols": ["Task Queue GitHub authority and identity", "TASK-80.2"],
+      "currentBehavior": "The trajectory sets the authority boundary and completed TASK-80.2 records the accepted executable contract.",
+      "proposedChange": "Keep this package canonical and bind TASK-80.3/TASK-80.4 to its verifier.",
+      "consumers": ["future implementers", "owner review", "release handoff"],
+      "risk": "medium"
+    }
+  ],
+  "firstIrreversibleAction": "No irreversible production action is approved. The first guarded write boundary is persisting a real GitHubProjectBinding or delivery cache under ~/.switchbard; production code, live config/cache writes, and any GitHub mutation require separate authorization.",
+  "approvalBoundary": "This package may change tracked decision, plan, fixture, verifier, trajectory, and backlog metadata only. It must not edit production Rust or Python, mutate real ~/.switchbard state, or write GitHub.",
+  "rollback": "Before implementation, revert the tracked contract commit. After a later implementation, preserve native task files and any PR references; source config is additive and cache files are disposable."
+}

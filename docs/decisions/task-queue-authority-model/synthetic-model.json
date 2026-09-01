@@ -1,0 +1,215 @@
+{
+  "format": "decision-synthetic-model-v1",
+  "decision": "task-queue-authority-model",
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "VALID-001",
+      "title": "Local band precedes an explicitly configured Project band",
+      "given": {
+        "repoRoot": "/synthetic/lucella",
+        "localTasks": [
+          {"taskId": "TASK-2", "labels": ["dispatch"], "rank": 0},
+          {"taskId": "TASK-1", "labels": ["dispatch"], "rank": 1}
+        ],
+        "bindings": [
+          {"bindingId": "ghp_lucella", "host": "github.com", "projectUrl": "https://github.com/orgs/example/projects/3", "repoRoot": "/synthetic/lucella"}
+        ],
+        "snapshot": {
+          "generation": 7,
+          "complete": true,
+          "projectNodeId": "PVT_kwDOsynthetic",
+          "memberships": [
+            {"itemNodeId": "PVTI_open", "contentNodeId": "I_open", "position": 0, "archived": false, "state": "OPEN"},
+            {"itemNodeId": "PVTI_closed", "contentNodeId": "I_closed", "position": 1, "archived": false, "state": "CLOSED"}
+          ]
+        }
+      },
+      "when": "compose-next-work",
+      "expect": {
+        "bands": [
+          {"kind": "local", "keys": ["TASK-2", "TASK-1"]},
+          {"kind": "github-project", "bindingId": "ghp_lucella", "keys": ["I_open"]}
+        ],
+        "historyKeys": ["I_closed"],
+        "taskBytesChanged": false,
+        "githubMutationCount": 0
+      }
+    },
+    {
+      "id": "VALID-002",
+      "title": "One artifact in two Projects renders once and retains both memberships",
+      "given": {
+        "bindings": ["ghp_first", "ghp_second"],
+        "memberships": [
+          {"bindingId": "ghp_second", "itemNodeId": "PVTI_2", "contentNodeId": "I_shared", "position": 0},
+          {"bindingId": "ghp_first", "itemNodeId": "PVTI_1", "contentNodeId": "I_shared", "position": 4}
+        ]
+      },
+      "when": "compose-next-work",
+      "expect": {
+        "projectionCount": 1,
+        "projectionKey": "github.com:I_shared",
+        "owningBand": "ghp_first",
+        "membershipItemNodeIds": ["PVTI_1", "PVTI_2"]
+      }
+    },
+    {
+      "id": "VALID-003",
+      "title": "A resolved local link suppresses the standalone remote projection",
+      "given": {
+        "localTask": {"repoRoot": "/synthetic/lucella", "taskId": "TASK-9", "references": ["https://github.com/example/lucella/issues/9"]},
+        "resolvedNode": {"host": "github.com", "nodeId": "I_linked"},
+        "membership": {"bindingId": "ghp_lucella", "itemNodeId": "PVTI_linked", "contentNodeId": "I_linked"}
+      },
+      "when": "compose-next-work",
+      "expect": {
+        "localProjectionCount": 1,
+        "remoteProjectionCount": 0,
+        "nestedDeliveryEvidence": true,
+        "localOutcomeAuthority": true
+      }
+    },
+    {
+      "id": "VALID-004",
+      "title": "Repository transfer changes derived coordinates without rewriting the task reference",
+      "given": {
+        "taskReference": "https://github.com/old-owner/repo/issues/12",
+        "priorObservation": {"nodeId": "I_transfer", "owner": "old-owner", "repo": "repo", "number": 12},
+        "nextObservation": {"nodeId": "I_transfer", "owner": "new-owner", "repo": "renamed", "number": 12}
+      },
+      "when": "publish-successor-snapshot",
+      "expect": {
+        "identityUnchanged": true,
+        "displayUrl": "https://github.com/new-owner/renamed/issues/12",
+        "storedTaskReference": "https://github.com/old-owner/repo/issues/12",
+        "taskBytesChanged": false
+      }
+    },
+    {
+      "id": "VALID-005",
+      "title": "Newest refresh generation wins and a later failure preserves stale evidence",
+      "given": {
+        "published": {"generation": 10, "observedAtMs": 1000, "title": "Known title"},
+        "attempts": [
+          {"generation": 11, "completionOrder": 2, "result": "success", "observedAtMs": 1100, "title": "Current title"},
+          {"generation": 10, "completionOrder": 3, "result": "success", "observedAtMs": 1050, "title": "Late old title"},
+          {"generation": 12, "completionOrder": 4, "result": "network-failure", "attemptedAtMs": 1200}
+        ]
+      },
+      "when": "publish-in-completion-order",
+      "expect": {
+        "state": "Stale",
+        "visibleGeneration": 11,
+        "observedAtMs": 1100,
+        "attemptedAtMs": 1200,
+        "title": "Current title"
+      }
+    },
+    {
+      "id": "VALID-006",
+      "title": "A partial subquery preserves field-level Unknown",
+      "given": {
+        "sourceRefresh": "success",
+        "issueTitle": {"kind": "Known", "value": "Synthetic issue"},
+        "closingPullRequests": {"kind": "Unknown", "reason": "ConnectionIncomplete"}
+      },
+      "when": "build-fresh-snapshot",
+      "expect": {
+        "sourceState": "Fresh",
+        "title": "Synthetic issue",
+        "closingPullRequestsKnownEmpty": false,
+        "negativeDeliveryClaim": false
+      }
+    },
+    {
+      "id": "VALID-007",
+      "title": "Dispatch success is atomic and same-URL replay is a no-op",
+      "given": {
+        "task": {"taskId": "TASK-42", "status": "In Progress", "labels": ["dispatching"], "notes": [], "references": []},
+        "command": {"kind": "RecordDispatchSuccess", "prUrl": "https://github.com/example/lucella/pull/42", "optionalNote": "Ready for owner review."}
+      },
+      "when": "execute-command-twice",
+      "expect": {
+        "fileReplacementCount": 1,
+        "status": "In Review",
+        "labels": ["dispatched"],
+        "referenceOccurrences": 1,
+        "noteEntryOccurrences": 1,
+        "noteEntry": "Dispatch PR: https://github.com/example/lucella/pull/42\nReady for owner review.",
+        "secondResult": "success-no-op"
+      }
+    },
+    {
+      "id": "VALID-008",
+      "title": "Cache hydration is versioned, viewer-bound, bounded, and isolated per binding",
+      "given": {
+        "cacheFiles": [
+          {"bindingId": "ghp_ok", "version": 1, "viewer": "synthetic-user", "itemCount": 500, "valid": true},
+          {"bindingId": "ghp_bad", "version": 1, "viewer": "synthetic-user", "itemCount": 3, "valid": false}
+        ]
+      },
+      "when": "hydrate-cache",
+      "expect": {
+        "loadedBindings": ["ghp_ok"],
+        "ignoredBindings": ["ghp_bad"],
+        "nativeWorkLost": false,
+        "refreshStillAllowed": true
+      }
+    },
+    {
+      "id": "VALID-009",
+      "title": "Live Lucella read-only evidence shape",
+      "synthetic": false,
+      "requires": ["authenticated github.com viewer", "configured Lucella Project access"],
+      "when": "run-live-read-only-probe",
+      "expect": {
+        "projectNodeIdPresent": true,
+        "membershipNodeIdsPresent": true,
+        "orderedItemsPresent": true,
+        "snapshotProvenancePresent": true,
+        "githubMutationCount": 0,
+        "taskBytesChanged": false
+      }
+    },
+    {
+      "id": "VALID-010",
+      "title": "Adoption is serialized by resolved node identity and replay returns one local task",
+      "given": {
+        "repoRoot": "/synthetic/lucella",
+        "visibleSnapshot": {"bindingId": "ghp_lucella", "nodeId": "I_adopt", "canonicalUrl": "https://github.com/example/lucella/issues/77", "title": "Adopt me"},
+        "existingTasks": []
+      },
+      "when": "execute-two-concurrent-AdoptGitHubItem-commands",
+      "expect": {
+        "reservationKey": "hash:/synthetic/lucella:github.com:I_adopt",
+        "createdTaskCount": 1,
+        "returnedTaskIdsEqual": true,
+        "initialReferenceOccurrences": 1,
+        "standaloneRemoteProjectionCount": 0,
+        "githubMutationCount": 0
+      }
+    },
+    {
+      "id": "VALID-011",
+      "title": "Per-binding budget enriches linked work first and degrades the remainder explicitly",
+      "given": {
+        "projectPages": 5,
+        "projectItemCount": 500,
+        "linkedArtifactCount": 5,
+        "unlinkedArtifactCount": 495,
+        "detailRequestCostPerArtifact": 3
+      },
+      "when": "refresh-binding",
+      "expect": {
+        "totalRequestCountMax": 65,
+        "enrichedArtifactCount": 20,
+        "enrichmentOrder": ["all-linked-in-project-order", "then-unlinked-in-project-order"],
+        "deferredArtifactCount": 480,
+        "deferredReason": "BudgetDeferred",
+        "projectMembershipComplete": true,
+        "negativeDeliveryClaimsForDeferred": 0
+      }
+    }
+  ]
+}

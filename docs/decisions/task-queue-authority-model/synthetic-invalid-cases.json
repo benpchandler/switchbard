@@ -1,0 +1,135 @@
+{
+  "format": "decision-synthetic-invalid-cases-v1",
+  "decision": "task-queue-authority-model",
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "INVALID-001",
+      "illegalState": "A typed delivers/tracks/mentions link kind is written into URL-string references.",
+      "attempt": {"taskId": "TASK-1", "reference": {"kind": "delivers", "url": "https://github.com/example/repo/pull/1"}},
+      "rejectAt": "native reference input validation",
+      "expectError": "TypedLinkKindUnsupported",
+      "zeroEffects": ["task bytes unchanged", "no shadow link store", "no GitHub write"]
+    },
+    {
+      "id": "INVALID-002",
+      "illegalState": "Two source bindings select the same Project locator in the same repo scope.",
+      "attempt": {"command": "AddGitHubProjectBinding", "repoRoot": "/synthetic/lucella", "projectUrl": "https://github.com/orgs/example/projects/3"},
+      "rejectAt": "config mutation validation",
+      "expectError": "DuplicateProjectBinding",
+      "zeroEffects": ["config bytes unchanged", "no cache file", "no GitHub request"]
+    },
+    {
+      "id": "INVALID-003",
+      "illegalState": "A v1 binding uses an unsupported host.",
+      "attempt": {"command": "AddGitHubProjectBinding", "projectUrl": "https://github.enterprise.example/orgs/example/projects/3"},
+      "rejectAt": "source locator validation",
+      "expectError": "UnsupportedGitHubHost",
+      "zeroEffects": ["config bytes unchanged", "no cache file", "no network request"]
+    },
+    {
+      "id": "INVALID-004",
+      "illegalState": "An older refresh generation publishes after a newer generation.",
+      "attempt": {"currentGeneration": 9, "completedGeneration": 8},
+      "rejectAt": "delivery cache publication compare-and-publish",
+      "expectError": "SupersededGeneration",
+      "zeroEffects": ["visible snapshot unchanged", "cache bytes unchanged", "no task write"]
+    },
+    {
+      "id": "INVALID-005",
+      "illegalState": "A 404, null node, or permission-masked response is classified as Gone or deleted.",
+      "attempt": {"transportResult": "404-or-null", "proposedFact": "Gone"},
+      "rejectAt": "GitHub response normalization",
+      "expectError": "UseMissingOrInaccessible",
+      "zeroEffects": ["no deletion claim", "prior snapshot retained as stale when present", "no task write"]
+    },
+    {
+      "id": "INVALID-006",
+      "illegalState": "An omitted or truncated connection is published as known-empty.",
+      "attempt": {"connectionPresent": true, "hasNextPage": true, "pagesFetched": 1, "proposedEdges": []},
+      "rejectAt": "bounded snapshot completeness validation",
+      "expectError": "ConnectionIncomplete",
+      "zeroEffects": ["field remains Unknown", "no negative delivery claim", "no task write"]
+    },
+    {
+      "id": "INVALID-007",
+      "illegalState": "Dispatch success receives a non-canonical or non-PR URL.",
+      "attempt": {"command": "RecordDispatchSuccess", "taskId": "TASK-42", "prUrl": "https://example.com/not-a-pr"},
+      "rejectAt": "native command validation before task read/write",
+      "expectError": "InvalidGitHubPullRequestUrl",
+      "zeroEffects": ["task remains dispatching", "task bytes unchanged", "no compensating GitHub action"]
+    },
+    {
+      "id": "INVALID-008",
+      "illegalState": "A successful dispatch is replayed with a different PR URL or different normalized optional note.",
+      "attempt": {"command": "RecordDispatchSuccess", "taskId": "TASK-42", "existingPrUrl": "https://github.com/example/repo/pull/42", "existingOptionalNote": "Ready for review.", "prUrl": "https://github.com/example/repo/pull/43", "optionalNote": "Different note."},
+      "rejectAt": "native command idempotency conflict check",
+      "expectError": "DispatchSuccessConflict",
+      "zeroEffects": ["task bytes unchanged", "original PR reference retained", "no second note"]
+    },
+    {
+      "id": "INVALID-009",
+      "illegalState": "A refresh path calls a task writer or GitHub mutation.",
+      "attempt": {"command": "RefreshGitHubProject", "sideEffect": "write-task-or-github"},
+      "rejectAt": "read-only adapter and refresh application-service boundary",
+      "expectError": "MutationCapabilityUnavailable",
+      "zeroEffects": ["task bytes unchanged", "GitHub unchanged", "snapshot publication aborted"]
+    },
+    {
+      "id": "INVALID-010",
+      "illegalState": "A remote-only Project item is assigned Switchbard priority/rank or expedited without adoption.",
+      "attempt": {"projectionKey": "github.com:I_remote", "mutation": "expedite"},
+      "rejectAt": "queue command target validation",
+      "expectError": "RemoteProjectionNotLocallyRankable",
+      "zeroEffects": ["ranking.yml unchanged", "no task created", "Project order unchanged"]
+    },
+    {
+      "id": "INVALID-011",
+      "illegalState": "A cache has the wrong version/viewer/binding/host or exceeds 500 items.",
+      "attempt": {"bindingId": "ghp_lucella", "version": 2, "viewer": "other-user", "itemCount": 501},
+      "rejectAt": "per-binding cache hydration",
+      "expectError": "CacheEntryRejected",
+      "zeroEffects": ["entry ignored with warning", "other binding caches retained", "no task write"]
+    },
+    {
+      "id": "INVALID-012",
+      "illegalState": "Merged, released, deployed, empty, or refresh-success evidence marks a local task Done.",
+      "attempt": {"localTaskId": "TASK-42", "remoteEvidence": "merged", "proposedStatus": "Done"},
+      "rejectAt": "queue projection and native mutation authorization",
+      "expectError": "OutcomeAcceptanceRequired",
+      "zeroEffects": ["local status unchanged", "acceptance criteria unchanged", "remote evidence remains observational"]
+    },
+    {
+      "id": "INVALID-013",
+      "illegalState": "Source removal, cache eviction, or an unresolved URL deletes or rewrites a native task/reference.",
+      "attempt": {"command": "RemoveGitHubProjectBinding", "bindingId": "ghp_lucella", "taskReference": "https://github.com/old/repo/issues/1"},
+      "rejectAt": "source command effect boundary",
+      "expectError": "NativeTaskMutationForbidden",
+      "zeroEffects": ["task bytes unchanged", "reference unchanged", "GitHub unchanged"]
+    },
+    {
+      "id": "INVALID-014",
+      "illegalState": "An old config with no GitHub source field or an old task file requires migration before loading.",
+      "attempt": {"configHasBindingsField": false, "taskSchemaIsPreDecision": true},
+      "rejectAt": "compatibility test expectation",
+      "expectError": "MigrationRequirementIsInvalid",
+      "zeroEffects": ["old config loads with empty bindings", "task loads unchanged", "no cache prerequisite"]
+    },
+    {
+      "id": "INVALID-015",
+      "illegalState": "Adoption proceeds without a resolved node identity, outside the node reservation, or when more than one local task already resolves to the node.",
+      "attempt": {"command": "AdoptGitHubItem", "nodeId": null, "matchingLocalTaskCount": 2},
+      "rejectAt": "adoption identity validation and git-common-dir reservation boundary",
+      "expectError": "AdoptionIdentityUnresolvedOrConflicted",
+      "zeroEffects": ["no task file created", "no existing task changed", "no GitHub write"]
+    },
+    {
+      "id": "INVALID-016",
+      "illegalState": "A binding refresh exceeds 65 total requests, enriches more than 20 artifacts, or publishes a truncated descendant connection as complete.",
+      "attempt": {"projectPageRequests": 5, "detailRequests": 61, "enrichedArtifacts": 21, "proposedCompleteness": "KnownComplete"},
+      "rejectAt": "refresh budget and connection-completeness accounting",
+      "expectError": "RefreshBudgetExceeded",
+      "zeroEffects": ["no request 66", "over-budget fields remain Unknown with BudgetDeferred or ConnectionTruncated", "prior successful snapshot remains publishable", "no task write"]
+    }
+  ]
+}
