@@ -22,7 +22,7 @@ Add a '## Task Queue' section to README.md (after the existing feature overview)
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 README.md contains a Task Queue section covering queue verbs, rank-ordered pickup, the orchestrator, and live progress
+- [x] #1 README.md contains a Task Queue section covering queue verbs, rank-ordered pickup, the orchestrator, and live progress
 <!-- AC:END -->
 
 ## Implementation Notes
