@@ -1,23 +1,48 @@
 use crate::types::{AttributedListener, LocalListener, WorktreeRef};
+use std::path::Path;
+
+/// Sort worktrees by decreasing path length so the most-specific path is
+/// tried first — shared by every cwd-prefix attribution caller (this
+/// module's own [`attribute`] and `agent_sessions::attribute_agent_sessions`)
+/// so the ordering rule lives in exactly one place.
+pub(crate) fn sort_by_specificity(worktrees: &[WorktreeRef]) -> Vec<&WorktreeRef> {
+    let mut sorted: Vec<&WorktreeRef> = worktrees.iter().collect();
+    sorted.sort_by_key(|w| std::cmp::Reverse(w.path.as_os_str().len()));
+    sorted
+}
+
+/// The one cwd-prefix match algorithm: the most-specific worktree whose path
+/// is a prefix of `cwd`, or `None` if nothing covers it (no cwd at all, or a
+/// cwd outside every known worktree). `worktrees_by_specificity` must already
+/// be sorted by [`sort_by_specificity`] — most callers hold one such sort
+/// across many `cwd`s in a loop, so re-sorting per call would be wasted work.
+pub(crate) fn most_specific_worktree<'a>(
+    cwd: Option<&Path>,
+    worktrees_by_specificity: &[&'a WorktreeRef],
+) -> Option<&'a WorktreeRef> {
+    let cwd = cwd?;
+    worktrees_by_specificity
+        .iter()
+        .find(|w| cwd.starts_with(&w.path))
+        .copied()
+}
 
 /// Attribute each listener to a (repo, worktree) pair via cwd-prefix match.
 /// Worktrees are tried in order of decreasing path length so the most-specific
 /// path wins (e.g. a worktree at `~/Dev/repo/.worktrees/foo` is matched before
-/// the primary at `~/Dev/repo`).
+/// the primary at `~/Dev/repo`). Same algorithm `agent_sessions::
+/// attribute_agent_sessions` uses for interactive/dispatch agent processes —
+/// [`most_specific_worktree`] is the one place it lives.
 pub fn attribute(
     listeners: &[LocalListener],
     worktrees: &[WorktreeRef],
 ) -> Vec<AttributedListener> {
-    let mut sorted: Vec<&WorktreeRef> = worktrees.iter().collect();
-    sorted.sort_by_key(|w| std::cmp::Reverse(w.path.as_os_str().len()));
+    let sorted = sort_by_specificity(worktrees);
 
     listeners
         .iter()
         .map(|l| {
-            let matched = l
-                .cwd
-                .as_ref()
-                .and_then(|cwd| sorted.iter().find(|w| cwd.starts_with(&w.path)));
+            let matched = most_specific_worktree(l.cwd.as_deref(), &sorted);
             AttributedListener {
                 repo_name: matched.map(|w| w.repo_name.clone()),
                 worktree_path: matched.map(|w| w.path.clone()),

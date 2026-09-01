@@ -285,6 +285,7 @@ fn command_fleet_mixed_app(theme: ThemeChoice) -> HiveApp {
         worktree_path: Some(PathBuf::from(format!("{REPO_PATH}/.worktrees/feature-x"))),
         worktree_branch: Some("feature/stack-ranking-core".to_string()),
         started_unix: Some(now_unix() - 900),
+        pgid: Some(5150),
     }];
     app.command_view.selected = Some(CommandRowKey::Dispatch((
         PathBuf::from(REPO_PATH),

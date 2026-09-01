@@ -178,7 +178,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
         if let Some(selected) = app.dispatches_view.selected.clone() {
             if let Some(row) = rows.iter().find(|r| r.key() == selected) {
                 ui.add_space(10.0);
-                render_detail_card(app, ui, row, now);
+                render_detail_card(ui, row, now);
             }
         }
     });
@@ -568,7 +568,7 @@ fn render_empty(ui: &mut egui::Ui) {
 /// from the task card, and SITREP age (= log mtime age — the same evidence
 /// `ui::places::command`'s fleet rows use for the same field, so the two
 /// surfaces can never disagree about how stale a run's last activity is).
-fn render_detail_card(app: &mut HiveApp, ui: &mut egui::Ui, row: &DispatchRow, now: u64) {
+fn render_detail_card(ui: &mut egui::Ui, row: &DispatchRow, now: u64) {
     egui::Frame::default()
         .fill(theme::card_bg())
         .stroke(theme::surface_stroke())
@@ -619,8 +619,15 @@ fn render_detail_card(app: &mut HiveApp, ui: &mut egui::Ui, row: &DispatchRow, n
                     );
                 } else {
                     for item in &row.task.acceptance_criteria {
-                        let text =
-                            format!("AC {}{}", item.index, if item.checked { " ✓" } else { "" });
+                        // Checked/unchecked is color-only, not a Unicode
+                        // checkmark glyph — this app's fonts are Barlow/
+                        // JetBrains plus egui's bundled fallbacks, which
+                        // this module doc's own font-coverage note (`ui::
+                        // theme`'s `Glyph` doc) says can't be trusted with
+                        // an unverified symbol like ✓; better an honest
+                        // color-only chip than a tofu box next to a real
+                        // task's AC list.
+                        let text = format!("AC {}", item.index);
                         let color = if item.checked {
                             theme::green()
                         } else {
@@ -643,7 +650,6 @@ fn render_detail_card(app: &mut HiveApp, ui: &mut egui::Ui, row: &DispatchRow, n
                 }
             });
         });
-    let _ = app; // reserved for a future card-level action; nothing here mutates state yet.
 }
 
 /// Read the last `max_bytes` of a file as UTF-8, lossily. Bounded, single

@@ -38,6 +38,7 @@
 //! affordance at all (see the GUI's `ui::places::command` module doc for why
 //! that is a deliberate scope boundary, not an oversight).
 
+use crate::attribution::{most_specific_worktree, sort_by_specificity};
 use crate::types::WorktreeRef;
 use anyhow::Result;
 use std::path::PathBuf;
@@ -76,6 +77,16 @@ pub struct AgentProcessRow {
     /// Command row's "now" line to an honest "session" with no age, rather
     /// than fabricating a start time.
     pub started_unix: Option<u64>,
+    /// Process group id (`ps pgid=` / `/proc/<pid>/stat`'s `pgrp` field).
+    /// The fleet-union dedup key: a dispatch run's own spawned `claude`
+    /// process shares its supervising shell's pgid (`spawn::
+    /// spawn_in_session`'s `setsid()`), so `ui::places::command` cross-checks
+    /// this against every in-flight run's `DispatchRunLiveness::Alive`
+    /// pgid before rendering a session as a *separate* interactive row — see
+    /// that module's doc. `None` when the OS scan couldn't determine it,
+    /// which degrades the dedup to a same-worktree fallback rather than a
+    /// hard failure.
+    pub pgid: Option<i32>,
 }
 
 /// One agent session attributed to a worktree — what
@@ -88,6 +99,8 @@ pub struct AgentSession {
     pub worktree_path: Option<PathBuf>,
     pub worktree_branch: Option<String>,
     pub started_unix: Option<u64>,
+    /// See [`AgentProcessRow::pgid`] — carried through attribution unchanged.
+    pub pgid: Option<i32>,
 }
 
 /// Which binary names count as an interactive agent CLI — see this module's
@@ -102,24 +115,19 @@ fn classify_command(name: &str) -> Option<AgentProcessKind> {
 }
 
 /// Attribute each session to a (repo, worktree) pair via cwd-prefix match —
-/// the identical longest-specific-path algorithm `attribution::attribute`
-/// uses for listeners (most-specific worktree path wins), reimplemented here
-/// rather than shared because the two source types (`LocalListener` vs.
-/// `AgentProcessRow`) carry no port/pgid in common for a generic function to
-/// key on profitably.
+/// the same longest-specific-path algorithm `attribution::attribute` uses
+/// for listeners (most-specific worktree path wins): both call
+/// [`crate::attribution::most_specific_worktree`], the one place the
+/// algorithm lives.
 pub fn attribute_agent_sessions(
     rows: &[AgentProcessRow],
     worktrees: &[WorktreeRef],
 ) -> Vec<AgentSession> {
-    let mut sorted: Vec<&WorktreeRef> = worktrees.iter().collect();
-    sorted.sort_by_key(|w| std::cmp::Reverse(w.path.as_os_str().len()));
+    let sorted = sort_by_specificity(worktrees);
 
     rows.iter()
         .map(|row| {
-            let matched = row
-                .cwd
-                .as_ref()
-                .and_then(|cwd| sorted.iter().find(|w| cwd.starts_with(&w.path)));
+            let matched = most_specific_worktree(row.cwd.as_deref(), &sorted);
             AgentSession {
                 pid: row.pid,
                 kind: row.kind,
@@ -127,6 +135,7 @@ pub fn attribute_agent_sessions(
                 worktree_path: matched.map(|w| w.path.clone()),
                 worktree_branch: matched.and_then(|w| w.branch.clone()),
                 started_unix: row.started_unix,
+                pgid: row.pgid,
             }
         })
         .collect()
@@ -158,11 +167,12 @@ fn scan_ps() -> Result<Vec<AgentProcessRow>> {
 /// `-ww` disables BSD `ps`'s terminal-width truncation on the `comm` column
 /// — defensive only (the two names we classify on, `claude`/`codex`, are
 /// short enough to survive even a truncated column), kept because a future
-/// third agent name might not be.
+/// third agent name might not be. `pgid=` is the fleet-union dedup key — see
+/// [`AgentProcessRow::pgid`].
 #[cfg(not(target_os = "linux"))]
 fn run_ps() -> Result<String> {
     let output = Command::new("ps")
-        .args(["-axwwo", "pid=,etime=,comm="])
+        .args(["-axwwo", "pid=,pgid=,etime=,comm="])
         .output()
         .map_err(|e| anyhow!("failed to spawn ps: {e}"))?;
     if !output.status.success() && output.stdout.is_empty() {
@@ -175,28 +185,31 @@ fn run_ps() -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Parse `ps -axwwo pid=,etime=,comm=` output into agent-CLI rows, dropping
-/// every line that isn't `claude`/`codex`. Pure and independent of `now` for
-/// which lines match; `now` only converts each survivor's elapsed time to an
-/// absolute start stamp.
+/// Parse `ps -axwwo pid=,pgid=,etime=,comm=` output into agent-CLI rows,
+/// dropping every line that isn't `claude`/`codex`. Pure and independent of
+/// `now` for which lines match; `now` only converts each survivor's elapsed
+/// time to an absolute start stamp.
 fn parse_ps_agent_rows(raw: &str, now: u64) -> Vec<AgentProcessRow> {
     raw.lines()
         .filter_map(|line| parse_ps_line(line, now))
         .collect()
 }
 
-/// One `pid  etime  comm` line. Column boundaries are found by scanning for
-/// whitespace runs rather than a fixed split, because `ps` right-pads `pid`
-/// and `etime` to varying widths depending on the widest value in the whole
-/// table.
+/// One `pid  pgid  etime  comm` line. Column boundaries are found by
+/// scanning for whitespace runs rather than a fixed split, because `ps`
+/// right-pads `pid`/`pgid`/`etime` to varying widths depending on the
+/// widest value in the whole table.
 fn parse_ps_line(line: &str, now: u64) -> Option<AgentProcessRow> {
     let trimmed = line.trim_start();
     let pid_end = trimmed.find(char::is_whitespace)?;
     let pid: u32 = trimmed[..pid_end].parse().ok()?;
     let after_pid = trimmed[pid_end..].trim_start();
-    let etime_end = after_pid.find(char::is_whitespace)?;
-    let etime_str = &after_pid[..etime_end];
-    let comm = after_pid[etime_end..].trim();
+    let pgid_end = after_pid.find(char::is_whitespace)?;
+    let pgid: i32 = after_pid[..pgid_end].parse().ok()?;
+    let after_pgid = after_pid[pgid_end..].trim_start();
+    let etime_end = after_pgid.find(char::is_whitespace)?;
+    let etime_str = &after_pgid[..etime_end];
+    let comm = after_pgid[etime_end..].trim();
     if comm.is_empty() {
         return None;
     }
@@ -208,6 +221,7 @@ fn parse_ps_line(line: &str, now: u64) -> Option<AgentProcessRow> {
         kind,
         cwd: None,
         started_unix,
+        pgid: Some(pgid),
     })
 }
 
@@ -274,12 +288,15 @@ mod linux {
                 continue;
             };
             let cwd = fs::read_link(format!("/proc/{pid}/cwd")).ok();
-            let started_unix = started_unix_for_pid(pid);
+            let fields = stat_fields_after_comm(pid);
+            let started_unix = fields.as_deref().and_then(started_unix_from_fields);
+            let pgid = fields.as_deref().and_then(pgid_from_fields);
             out.push(AgentProcessRow {
                 pid,
                 kind,
                 cwd,
                 started_unix,
+                pgid,
             });
         }
         Ok(out)
@@ -299,19 +316,32 @@ mod linux {
         }
     }
 
-    /// `starttime` (field 22 of `/proc/<pid>/stat`, clock ticks since boot)
-    /// plus the machine's boot epoch — the same two facts
-    /// `dispatch_inspect`'s liveness probe and `crate::boot_time` exist for,
-    /// reused here rather than re-derived.
-    fn started_unix_for_pid(pid: u32) -> Option<u64> {
+    /// Read `/proc/<pid>/stat` once and split off everything after the
+    /// `comm` field, shared by [`started_unix_from_fields`] and
+    /// [`pgid_from_fields`] so a pid's stat file is only read once per scan
+    /// rather than once per fact.
+    fn stat_fields_after_comm(pid: u32) -> Option<Vec<String>> {
         let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
         // Comm can itself contain spaces/parens; the *last* ")" is always
         // the comm field's own closing paren (same assumption `scanner.rs`'s
         // `pgid_for_pid` makes).
         let after_comm = stat.rsplit_once(')')?.1;
-        let fields: Vec<&str> = after_comm.split_whitespace().collect();
-        // `state` is field 3 overall (index 0 here); `starttime` is field 22
-        // overall, i.e. index 19 in this slice.
+        Some(after_comm.split_whitespace().map(str::to_owned).collect())
+    }
+
+    /// `pgrp` — field 5 overall (index 2 in [`stat_fields_after_comm`]'s
+    /// slice, after `state` and `ppid`) — the fleet-union dedup key, see
+    /// [`AgentProcessRow::pgid`]. Same field `scanner.rs`'s own
+    /// `linux::pgid_for_pid` reads for listeners.
+    fn pgid_from_fields(fields: &[String]) -> Option<i32> {
+        fields.get(2)?.parse().ok()
+    }
+
+    /// `starttime` (field 22 overall, index 19 in [`stat_fields_after_comm`]'s
+    /// slice, clock ticks since boot) plus the machine's boot epoch — the
+    /// same two facts `dispatch_inspect`'s liveness probe and
+    /// `crate::boot_time` exist for, reused here rather than re-derived.
+    fn started_unix_from_fields(fields: &[String]) -> Option<u64> {
         let starttime_ticks: u64 = fields.get(19)?.parse().ok()?;
         let boot = crate::boot_time::boot_epoch_unix()?;
         Some(boot + starttime_ticks / CLK_TCK)
@@ -337,6 +367,7 @@ mod tests {
             kind,
             cwd: cwd.map(PathBuf::from),
             started_unix: Some(1_000),
+            pgid: Some(pid as i32),
         }
     }
 
@@ -393,6 +424,11 @@ mod tests {
         );
         assert_eq!(sessions[2].repo_name, None, "no worktree covers /usr/bin");
         assert_eq!(sessions[3].repo_name, None, "no cwd, nothing to attribute");
+        assert_eq!(
+            sessions[0].pgid,
+            Some(1),
+            "pgid carries through attribution unchanged"
+        );
     }
 
     #[test]
@@ -407,9 +443,9 @@ mod tests {
     #[test]
     fn parses_ps_lines_and_drops_non_agent_processes() {
         let raw = "\
-  501 01:23:45 /usr/local/bin/claude
-  502    05:10 /opt/homebrew/bin/codex
-  600 1-02:00:00 /usr/bin/node
+  501   501 01:23:45 /usr/local/bin/claude
+  502   488    05:10 /opt/homebrew/bin/codex
+  600   600 1-02:00:00 /usr/bin/node
 ";
         let now = 10_000_000;
         let rows = parse_ps_agent_rows(raw, now);
@@ -418,9 +454,19 @@ mod tests {
         assert_eq!(rows[0].pid, 501);
         assert_eq!(rows[0].kind, AgentProcessKind::Claude);
         assert_eq!(rows[0].started_unix, Some(now - 5_025));
+        assert_eq!(
+            rows[0].pgid,
+            Some(501),
+            "session-leader pgid == its own pid"
+        );
         assert_eq!(rows[1].pid, 502);
         assert_eq!(rows[1].kind, AgentProcessKind::Codex);
         assert_eq!(rows[1].started_unix, Some(now - 310));
+        assert_eq!(
+            rows[1].pgid,
+            Some(488),
+            "a pgid distinct from pid must parse too, e.g. a dispatch's spawned agent"
+        );
     }
 
     #[test]

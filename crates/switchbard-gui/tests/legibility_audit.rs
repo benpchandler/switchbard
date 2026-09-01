@@ -649,6 +649,7 @@ fn seed_command_fleet(app: &mut HiveApp) {
         worktree_path: Some(PathBuf::from(format!("{REPO_PATH}/.worktrees/feature-x"))),
         worktree_branch: Some("feature/stack-ranking-core".to_string()),
         started_unix: Some(switchbard_core::dispatch_inspect::now_unix() - 900),
+        pgid: Some(5150),
     }];
     app.command_view.selected = Some(switchbard_gui::runtime::CommandRowKey::Dispatch((
         PathBuf::from(REPO_PATH),

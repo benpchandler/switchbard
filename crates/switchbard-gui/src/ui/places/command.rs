@@ -2,10 +2,14 @@
 //! IA V2's dispatch split (trajectory: *Information architecture V2*).
 //! Dispatch's task-delivery facet lives at Tasks / Dispatches
 //! (`ui::places::dispatches`); this place is agent-scoped instead: one row
-//! per agent session — a headless dispatch run *or* an interactive
-//! `claude`/`codex` CLI a human started by hand — with mission, live
-//! activity, worktree lease, SITREP age, and universal actions. Same
+//! per **distinct** agent session — a headless dispatch run *or* an
+//! interactive `claude`/`codex` CLI a human started by hand — with mission,
+//! live activity, worktree lease, SITREP age, and universal actions. Same
 //! underlying runs, two axes; see that module's doc for the split.
+//! "Distinct" is load-bearing: a dispatch run's own spawned `claude` process
+//! is, to the OS, indistinguishable from a human-started session — see
+//! [`is_dispatch_shadow`] for how the two source lists are deduplicated
+//! before this doc's "one row" claim actually holds.
 //!
 //! Also hosts the pre-existing Context/Hooks surfaces this place inherited
 //! from the old top-level Agents view (`Fleet | Context | Hooks` section
@@ -29,6 +33,19 @@
 //!   **no Kill action at all** — killing an arbitrary process this app never
 //!   spawned is a new capability this task's decision rights explicitly
 //!   reserve, not an existing verb to reuse.
+//!
+//!   Before a scanned session becomes a row, [`is_dispatch_shadow`] checks it
+//!   against every in-flight dispatch row already built this frame: a
+//!   dispatch's own `cat prompt | claude -p ...` (`dispatch::
+//!   build_claude_command`) is a `claude` process cwd'd in the dispatch
+//!   worktree, spawned under `spawn::spawn_in_session`'s `setsid()` — so the
+//!   OS-process scan sees it too, and without this check it would double-row
+//!   as a spurious "interactive session" with no Kill affordance, inflating
+//!   the All/Interactive facet counts. The pgid a dispatch's
+//!   `DispatchRunLiveness::Alive` records is the authoritative match (the
+//!   spawned `claude` shares its supervising shell's pgid); a same-worktree
+//!   match is the fallback for a session whose own pgid the OS scan
+//!   couldn't determine.
 //!
 //! ## The support-request card is evidence-only — no fabricated NEEDS_DECISION
 //!
@@ -56,7 +73,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::Duration;
 use switchbard_core::dispatch_inspect::{now_unix, DispatchRun};
-use switchbard_core::{BacklogTask, ContextKind, ContextScope, DispatchOptions};
+use switchbard_core::{AgentSession, BacklogTask, ContextKind, ContextScope, DispatchOptions};
 
 pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     egui::CentralPanel::default().show(ui, |ui| {
@@ -448,6 +465,7 @@ fn render_command_facet_bar(app: &mut HiveApp, ui: &mut egui::Ui, rows: &[Comman
 /// `HiveApp::agent_sessions_snapshot` (`workers::spawn_agent_sessions`).
 fn collect_command_rows(app: &HiveApp, now: u64, stale_after: Duration) -> Vec<CommandRow> {
     let mut rows = Vec::new();
+    let mut dispatch_shadows: Vec<DispatchShadow> = Vec::new();
     let filter = app.filter().to_lowercase();
 
     let backlog_repos = app.backlog_repos_snapshot();
@@ -470,6 +488,12 @@ fn collect_command_rows(app: &HiveApp, now: u64, stale_after: Duration) -> Vec<C
             else {
                 continue;
             };
+            if matches!(state, DispatchState::InFlight) {
+                dispatch_shadows.push(DispatchShadow {
+                    worktree_path: run.worktree_path.clone(),
+                    pgid: run.liveness.killable_pgid(),
+                });
+            }
             let orphaned = matches!(state, DispatchState::InFlight) && run.is_abandoned(now, true);
             let stalled =
                 matches!(state, DispatchState::InFlight) && run.looks_stalled(now, stale_after);
@@ -504,6 +528,12 @@ fn collect_command_rows(app: &HiveApp, now: u64, stale_after: Duration) -> Vec<C
 
     let repos = app.repos_snapshot();
     for session in app.agent_sessions_snapshot() {
+        if is_dispatch_shadow(&session, &dispatch_shadows) {
+            // This "interactive" process is actually the dispatch row
+            // already pushed above's own spawned agent — see this module's
+            // doc for why the OS scan can't tell the difference on its own.
+            continue;
+        }
         let in_scope = match session
             .repo_name
             .as_ref()
@@ -548,6 +578,40 @@ fn collect_command_rows(app: &HiveApp, now: u64, stale_after: Duration) -> Vec<C
     }
 
     rows
+}
+
+/// One in-flight dispatch row's process-identity fingerprint, checked
+/// against every `agent_sessions` scan result before it becomes a *second*
+/// row — see this module's doc header for why the OS scan can't already
+/// tell a dispatch's own spawned `claude` apart from a human-started one.
+struct DispatchShadow {
+    worktree_path: PathBuf,
+    /// `DispatchRunLiveness::Alive`'s pgid, when the run's liveness has been
+    /// positively verified — `None` for any other liveness (no sidecar,
+    /// unverifiable, gone), in which case only the worktree fallback below
+    /// applies.
+    pgid: Option<i32>,
+}
+
+/// True when `session` is the OS-visible face of a dispatch row already
+/// accounted for, not a distinct interactive session. Pgid is authoritative
+/// when known — a dispatch's spawned `claude` inherits its supervising
+/// shell's pgid (`spawn::spawn_in_session`'s `setsid()`) — so a session with
+/// a *known* pgid that doesn't match any shadow is trusted to be genuinely
+/// separate, even if it happens to share a worktree with an active dispatch
+/// (a human really can run a second interactive session alongside one).
+/// Only when the session's own pgid is unknown does the same-worktree match
+/// stand in, on the theory that a dispatch worktree is single-purpose enough
+/// that an unidentifiable session there is far more likely to be the
+/// dispatch's own process than a coincidental second one.
+fn is_dispatch_shadow(session: &AgentSession, shadows: &[DispatchShadow]) -> bool {
+    match session.pgid {
+        Some(pgid) => shadows.iter().any(|s| s.pgid == Some(pgid)),
+        None => session
+            .worktree_path
+            .as_ref()
+            .is_some_and(|wt| shadows.iter().any(|s| &s.worktree_path == wt)),
+    }
 }
 
 fn command_row_matches(row: &CommandRow, filter_lc: &str) -> bool {

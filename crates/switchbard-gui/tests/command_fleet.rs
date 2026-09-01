@@ -152,6 +152,10 @@ fn interactive_session(pid: u32) -> AgentSession {
         worktree_path: Some(PathBuf::from(format!("{REPO_PATH}/.worktrees/feature-x"))),
         worktree_branch: Some("feature/x".to_string()),
         started_unix: Some(now_unix().saturating_sub(120)),
+        // Deliberately its own pgid, distinct from any dispatch run's — see
+        // `a_dispatch_runs_own_claude_process_never_double_rows` for the
+        // fixture that *does* overlap, proving the dedup actually fires.
+        pgid: Some(pid as i32),
     }
 }
 
@@ -201,6 +205,56 @@ fn fleet_section_unions_dispatch_and_interactive_rows_and_facets_between_them() 
         "the Interactive facet must hide the dispatch row"
     );
     assert!(harness.query_by_label("interactive session").is_some());
+}
+
+/// TASK-98 review finding (BLOCKER): a dispatch run's own spawned `claude`
+/// process — `cat prompt | claude -p ...` under `spawn_in_session`'s
+/// `setsid()` (see `dispatch.rs`'s `build_claude_command`) — is a `claude`
+/// process cwd'd in the dispatch worktree, so the OS-level `agent_sessions`
+/// scan sees it too. Before `ui::places::command::is_dispatch_shadow`, this
+/// rendered as a *second*, spurious "interactive session" row with no Kill
+/// affordance, inflating the All/Interactive facet counts. Both
+/// `interactive_session` fixtures used elsewhere in this file deliberately
+/// live in a different worktree with a different pgid from any dispatch run
+/// — this is the one fixture that overlaps on purpose, on both worktree and
+/// pgid, to prove the dedup actually fires.
+#[test]
+fn a_dispatch_runs_own_claude_process_never_double_rows() {
+    let run = run_with(
+        "TASK-1",
+        120,
+        DispatchRunLiveness::Alive {
+            pgid: 7777,
+            supervised: true,
+        },
+    );
+    let shadow_session = AgentSession {
+        pid: 42,
+        kind: AgentProcessKind::Claude,
+        repo_name: None,
+        worktree_path: Some(run.worktree_path.clone()),
+        worktree_branch: Some(run.branch.clone()),
+        started_unix: Some(now_unix().saturating_sub(60)),
+        pgid: Some(7777),
+    };
+    let mut app = app_with_fleet(
+        vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
+        vec![run],
+        vec![shadow_session],
+    );
+    app.place = Place::Command;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_by_label("All · 1").is_some(),
+        "the dispatch row and its own shadowed process must count as exactly one row, not two"
+    );
+    assert!(harness.query_by_label("TASK-1 · TASK-1 work").is_some());
+    assert!(
+        harness.query_by_label("interactive session").is_none(),
+        "the dispatch's own claude process must never also render as an interactive row"
+    );
 }
 
 /// A failed dispatch row needs a human; the interactive row never does. The
