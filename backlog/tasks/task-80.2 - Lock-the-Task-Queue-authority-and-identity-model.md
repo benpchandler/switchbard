@@ -1,9 +1,10 @@
 ---
 id: TASK-80.2
 title: Lock the Task Queue authority and identity model
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-31 21:45'
+updated_date: '2026-09-01 01:42'
 labels:
   - architecture
   - github
@@ -26,3 +27,9 @@ Define stable identities and field authority for Switchbard-native tasks, GitHub
 - [ ] #3 Invalid, stale, transferred, deleted, inaccessible, and partially observed GitHub states have explicit behavior.
 - [ ] #4 Existing repo-local task storage remains valid and migration-free.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Owner clarification (2026-09-01): the Task Queue is the surface where the user tees up tasks for dispatch and sees what dispatch is working on - not a backlog-browsing lens. Design input for the authority model: 'Switchbard owns priority' now has a concrete authority - the stack rank in backlog/ranking.yml (TASK-82..85, shipped) and its computed flatten (expedite lane, project rank, sibling walk). The queue's tee-up order should consume that computed order rather than inventing a second priority representation; cross-repo composition goes through the hub ordering.yml overlay (trajectory: unified task hub slice 1), which remains deferred. Dispatch visibility side ('what's being worked on') should read the same run/claim state the Dispatches view already cross-checks (dispatch_inspect / looks_orphaned), not a new store.
+<!-- SECTION:NOTES:END -->

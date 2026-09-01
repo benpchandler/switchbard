@@ -2,8 +2,8 @@
 # not documents - never hand-edit. See docs/product-trajectory.md ("Stack ranking").
 expedite: []
 projects:
-  - Information Architecture V2
   - Task Queue
+  - Information Architecture V2
   - EGUI Polish
 tasks:
   EGUI Polish:
