@@ -134,21 +134,6 @@ fn goal_pace_pill(ui: &mut egui::Ui, pace: GoalPace) {
     status_pill(ui, kind, label, None);
 }
 
-fn known_project_names(repos: &[&GoalRepoRow]) -> Vec<String> {
-    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for row in repos {
-        for task in &row.repo.tasks {
-            if let Some(project) = &task.project {
-                names.insert(project.clone());
-            }
-        }
-        for def in &row.repo.project_defs {
-            names.insert(def.name.clone());
-        }
-    }
-    names.into_iter().collect()
-}
-
 fn scoped<'a>(app: &HiveApp, repos: &'a [GoalRepoRow]) -> Vec<&'a GoalRepoRow> {
     repos
         .iter()
@@ -334,12 +319,12 @@ fn render_new_goal_modal(app: &mut HiveApp, ctx: &egui::Context, repos: &[GoalRe
         .map(|row| goal_create::GoalModalRepoOption {
             key: row.key.clone(),
             label: row.repo_name.clone(),
+            project_names: row.repo.project_names(),
         })
         .collect();
-    let known_names = known_project_names(&scoped_rows);
     let fixed_target = repo_options.len() <= 1;
     if let Some((project_root, goal)) =
-        goal_create::render_goal_modal(app, ctx, &repo_options, &known_names, fixed_target)
+        goal_create::render_goal_modal(app, ctx, &repo_options, fixed_target)
     {
         app.spawn_goal_create(project_root, goal, ctx);
     }

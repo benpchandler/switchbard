@@ -23,10 +23,15 @@ use switchbard_core::{GoalMeasure, NewGoal};
 
 /// One repo the modal's target-repo picker can offer — the `(key, label)`
 /// pair every caller already has from its own repo listing (`Snapshot`'s
-/// `RepoRow`s in `ui::backlog`, the Goals place's own scoped-repo list).
+/// `RepoRow`s in `ui::backlog`, the Goals place's own scoped-repo list),
+/// plus that repo's own project names (`BacklogRepo::project_names`) so the
+/// scope dropdown follows the *chosen* repo — a goal's scope matches
+/// `task.project`/labels within its own repo, so offering another repo's
+/// project names would mint a scope that can never match anything.
 pub(crate) struct GoalModalRepoOption {
     pub key: PathBuf,
     pub label: String,
+    pub project_names: Vec<String>,
 }
 
 /// Open the goal composer. Every entry point (the Digest goals-section
@@ -45,7 +50,6 @@ pub(crate) fn render_goal_modal(
     app: &mut HiveApp,
     ctx: &egui::Context,
     repo_options: &[GoalModalRepoOption],
-    known_project_names: &[String],
     fixed_target: bool,
 ) -> Option<(PathBuf, NewGoal)> {
     if !app.backlog_view.new_goal.open {
@@ -65,6 +69,7 @@ pub(crate) fn render_goal_modal(
         return None;
     };
     let target_label = target.label.clone();
+    let target_project_names = target.project_names.clone();
 
     let mut open = true;
     let mut close = false;
@@ -132,7 +137,7 @@ pub(crate) fn render_goal_modal(
                         .selected_text("pick")
                         .width(72.0)
                         .show_ui(ui, |ui| {
-                            for name in known_project_names {
+                            for name in &target_project_names {
                                 ui.selectable_value(
                                     &mut app.backlog_view.new_goal.scope,
                                     name.clone(),

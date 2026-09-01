@@ -2716,6 +2716,72 @@ fn definition_of_done_checkbox_click_sets_the_synchronous_updating_status() {
     );
 }
 
+/// Owner-reported: a task's assign-project dropdown offered every repo's
+/// projects (a MusicProduction task listing switchbard's). Membership is
+/// name-keyed within one repo, so the dropdown must draw from
+/// `BacklogRepo::project_names` of the *task's own* repo only; the free-text
+/// field stays as the create-new escape hatch.
+#[test]
+fn project_assign_dropdown_offers_only_the_tasks_own_repos_projects() {
+    let mut own = task("TASK-1", "Own task", "To Do");
+    own.project = Some("Own Project".to_string());
+    let mut app = list_app_with_tasks(vec![own]);
+    let foreign_root = PathBuf::from("/foreign/repo");
+    let mut foreign_task = task("TASK-9", "Foreign task", "To Do");
+    foreign_task.project = Some("Foreign Project".to_string());
+    foreign_task.path = PathBuf::from("/foreign/repo/backlog/tasks/task-9.md");
+    app.backlog_repos.lock().unwrap().insert(
+        foreign_root,
+        BacklogRepo {
+            root: PathBuf::from("/foreign/repo"),
+            tasks: vec![foreign_task],
+            warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
+            goals: vec![],
+            ranking: switchbard_core::RepoRanking::default(),
+            loaded_at_unix: 0,
+            configured_statuses: vec![],
+        },
+    );
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+    let mut harness = harness(app);
+    harness.run();
+
+    // "Own Project" already renders once as the editor text field's value;
+    // the *popup option* is the extra node the click must add — a count
+    // delta proves the dropdown really opened rather than the assertions
+    // passing against a closed popup.
+    let own_before = harness
+        .query_all(kittest::by().label("Own Project"))
+        .count();
+    {
+        // The ComboBox reports its selected text ("assign") as its *value*,
+        // not its label — find it by role + value.
+        let combo = harness
+            .query_all(kittest::by().role(egui::accesskit::Role::ComboBox))
+            .find(|node| node.accesskit_node().value().as_deref() == Some("assign"))
+            .expect("the project assign combo renders in the detail rail");
+        combo.click_accesskit();
+    }
+    harness.run();
+
+    assert!(
+        harness
+            .query_all(kittest::by().label("Own Project"))
+            .count()
+            > own_before,
+        "the open dropdown offers the task's own repo's project as a new option node"
+    );
+    assert_eq!(
+        harness
+            .query_all(kittest::by().label("Foreign Project"))
+            .count(),
+        0,
+        "another repo's project must never be offered for this task"
+    );
+}
+
 #[test]
 fn milestone_clear_button_empties_the_milestone_field() {
     let mut harness = detail_harness_on(detail_task_with_checklists());

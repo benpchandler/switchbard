@@ -147,15 +147,15 @@ fn render_goal_modal_for_digest_place(
         .map(|row| super::goal_create::GoalModalRepoOption {
             key: row.key.clone(),
             label: row.label(),
+            project_names: row.repo.project_names(),
         })
         .collect();
-    let known_project_names = super::detail::known_project_names(snap);
     // Never a fixed target here: `selected_repo` is the Tasks place's own
     // picker, invisible from Digest — locking the modal's repo dropdown to
     // it would pin a choice the user cannot see (same family as the
     // goal-card scoping fix above).
     if let Some((project_root, goal)) =
-        super::goal_create::render_goal_modal(app, ctx, &repo_options, &known_project_names, false)
+        super::goal_create::render_goal_modal(app, ctx, &repo_options, false)
     {
         pending.goal_create = Some((project_root, goal));
     }
