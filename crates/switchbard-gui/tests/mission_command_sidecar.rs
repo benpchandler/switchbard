@@ -13,8 +13,10 @@ use std::process::{Command, Stdio};
 use std::time::Instant;
 use switchbard_core::mission_supervisor::MissionSupervisor;
 use switchbard_core::{MissionStatus, ProjectionFreshness};
+#[cfg(target_os = "macos")]
+use switchbard_gui::mission_control::empty_hello_request;
 use switchbard_gui::mission_control::{
-    empty_hello_request, HelperHealth, MissionControlModel, PendingContract, RequestOutcome,
+    HelperHealth, MissionControlModel, PendingContract, RequestOutcome,
 };
 use switchbard_gui::runtime::Place;
 use tempfile::TempDir;

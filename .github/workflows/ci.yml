@@ -7,6 +7,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  XPLAN_SIDECAR_PYTHON: "3.12.11"
 
 jobs:
   ci:
@@ -75,7 +76,8 @@ jobs:
           XPLAN_SOURCE="$RUNNER_TEMP/xplan-source"
           XPLAN_OUTPUT="$RUNNER_TEMP/xplan-output"
           scripts/checkout-pinned-xplan.sh --destination "$XPLAN_SOURCE"
-          uv run --locked --project "$XPLAN_SOURCE/sidecar" \
+          uv python install "$XPLAN_SIDECAR_PYTHON"
+          uv run --python "$XPLAN_SIDECAR_PYTHON" --locked --project "$XPLAN_SOURCE/sidecar" \
             python "$XPLAN_SOURCE/scripts/build_mission_sidecar.py" \
             --target host --output "$XPLAN_OUTPUT"
           scripts/acquire-xplan-mission-sidecar.sh \
