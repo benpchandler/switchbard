@@ -346,6 +346,14 @@ fn collect_rows(app: &HiveApp) -> Vec<DispatchRow> {
 
     let mut rows: Vec<DispatchRow> = Vec::new();
     for (root, repo) in &backlog_repos {
+        // TASK-96: the Dispatches view (Tasks place) aggregates over the
+        // sidebar's repo scope. `root` is a repo root path (`backlog_repos`
+        // is keyed straight off the tracked repo list, never a worktree
+        // path — see `workers::backlog_repo_roots`), so this is a plain
+        // membership check, same shape as `ui::backlog::scoped_repos`.
+        if !app.repo_scope.is_empty() && !app.repo_scope.contains(root) {
+            continue;
+        }
         let repo_name = repos
             .iter()
             .find(|repo| &repo.path == root)

@@ -28,10 +28,10 @@ use crate::runtime::worktree_create::{CreateWorktreeDialog, CreateWorktreeOutcom
 use crate::runtime::worktree_rename::RenameWorktreeDialog;
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
-    dispatch_run_holds_worktree, ActiveRun, ActiveRunSummary, AgentContextViewState, AgentsSection,
-    BacklogTaskKey, BacklogViewState, BoardMoveOutcome, ConfirmBulkRemoveWorktrees,
-    ConfirmRemoveWorktree, LandingEntry, OrderingState, PickerState, ViewTab, WorktreeMeta,
-    WorktreeSizeEntry,
+    dispatch_run_holds_worktree, migrate_filter_keys, ActiveRun, ActiveRunSummary,
+    AgentContextViewState, AgentsSection, BacklogTaskKey, BacklogViewState, BoardMoveOutcome,
+    ConfirmBulkRemoveWorktrees, ConfirmRemoveWorktree, LandingEntry, OrderingState, PickerState,
+    Place, TasksView, WorktreeMeta, WorktreeSizeEntry,
 };
 use crate::sync::{Kick, Progress, Status};
 use crate::ui;
@@ -277,7 +277,22 @@ pub struct HiveApp {
     /// When false (default), hide rows whose classifier verdict is NotServer
     /// (test scripts, build wrappers, ship-gate runners, etc.).
     pub show_non_servers: bool,
-    pub view_tab: ViewTab,
+    /// IA V2 (TASK-96): the sidebar's active place. Session-only, like the
+    /// old `view_tab` it replaces — every launch lands on `Place::Digest`
+    /// (the mock's landing place), never restored from disk.
+    pub place: Place,
+    /// TASK-96: which built-in view is active under the Tasks place. Reset
+    /// to `TasksView::All` whenever `place` leaves `Place::Tasks` by a route
+    /// other than the nav's own Dispatches subplace click, so switching away
+    /// and back to Tasks never strands the user on Dispatches by surprise —
+    /// see `ui::nav`'s click handlers, the only place that mutates this.
+    pub tasks_view: TasksView,
+    /// TASK-96: the sidebar's multi-select repo scope, mirrored from
+    /// `Config::ui.repo_scope` (a `Vec<String>` of repo root paths) into a
+    /// `BTreeSet<PathBuf>` for cheap `contains` checks on the render path.
+    /// Empty means "all repos" — every place's scoping helper treats an
+    /// empty set as "no restriction", never as "show nothing".
+    pub repo_scope: BTreeSet<PathBuf>,
     /// TASK-43: which in-flight dispatch run has its Kill button armed, if
     /// any. Confirm state only — one at a time, cleared on confirm/cancel —
     /// exactly like `backlog_view.dispatch_confirm` arms the Dispatch button
@@ -379,7 +394,13 @@ impl HiveApp {
     /// headless harnesses use it directly and drive [`render_ui`] by hand.
     ///
     /// [`render_ui`]: HiveApp::render_ui
-    pub fn new_headless(cfg: Config, repos: Vec<Repo>, worktrees: Vec<WorktreeRef>) -> Self {
+    pub fn new_headless(mut cfg: Config, repos: Vec<Repo>, worktrees: Vec<WorktreeRef>) -> Self {
+        // TASK-96: re-key `UiConfig.filters` from the pre-IA-V2 lens/tab
+        // names to the place/view names, once, before anything below reads
+        // from it. Idempotent — see `migrate_filter_keys`'s doc — so running
+        // it on an already-migrated config is a no-op, not a second rewrite.
+        cfg.ui.filters = migrate_filter_keys(std::mem::take(&mut cfg.ui.filters));
+        let repo_scope: BTreeSet<PathBuf> = cfg.ui.repo_scope.iter().map(PathBuf::from).collect();
         let browser_choice = cfg
             .ui
             .browser
@@ -401,7 +422,7 @@ impl HiveApp {
         {
             backlog_view.selected_repo = None;
         }
-        let server_filters = cfg.ui.filters.get("servers");
+        let server_filters = cfg.ui.filters.get("ops");
         let show_only_managed = server_filters
             .and_then(|memory| memory.facets.get("attributed_only"))
             .is_some_and(|value| value == "true");
@@ -462,7 +483,9 @@ impl HiveApp {
             status_migration_prompt: None,
             expanded_repos: BTreeSet::new(),
             show_non_servers,
-            view_tab: ViewTab::Servers,
+            place: Place::default(),
+            tasks_view: TasksView::default(),
+            repo_scope,
             agent_context_view,
             backlog_view,
             commonmark_cache: egui_commonmark::CommonMarkCache::default(),
@@ -572,14 +595,18 @@ impl HiveApp {
     /// directly in persisted config, so switching views restores each page's
     /// own last-used search instead of carrying one global string everywhere.
     pub fn active_filter_key(&self) -> &'static str {
-        match self.view_tab {
-            ViewTab::Servers => "servers",
-            ViewTab::Agents => match self.agent_context_view.section {
-                AgentsSection::Context => "agents.context",
-                AgentsSection::Hooks => "agents.hooks",
+        match self.place {
+            Place::Digest => "digest",
+            Place::Tasks => match self.tasks_view {
+                TasksView::All => "tasks.all",
+                TasksView::Dispatches => "tasks.dispatches",
             },
-            ViewTab::Backlog => "backlog",
-            ViewTab::Dispatch => "dispatch",
+            Place::Command => match self.agent_context_view.section {
+                AgentsSection::Context => "command.context",
+                AgentsSection::Hooks => "command.hooks",
+            },
+            Place::Goals => "goals",
+            Place::Ops => "ops",
         }
     }
 
@@ -599,23 +626,28 @@ impl HiveApp {
     fn persist_filter_facets(&mut self) {
         self.agent_context_view.persist_filters(&mut self.config.ui);
         self.backlog_view.persist_filters(&mut self.config.ui);
-        let servers = self
-            .config
-            .ui
-            .filters
-            .entry("servers".to_string())
-            .or_default();
+        // TASK-96: `repo_scope` is runtime-side (a `BTreeSet<PathBuf>`, for
+        // cheap `contains` checks on the render path); `Config::ui.repo_scope`
+        // is the persisted `Vec<String>` shape TASK-96 specified. Mirrored
+        // here alongside the other runtime-to-config syncs in this function
+        // rather than on every mutation site, same as `show_only_managed`/
+        // `staleness_filter` below.
+        self.config.ui.repo_scope = self
+            .repo_scope
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        let ops = self.config.ui.filters.entry("ops".to_string()).or_default();
         if self.show_only_managed {
-            servers
-                .facets
+            ops.facets
                 .insert("attributed_only".to_string(), "true".to_string());
         } else {
-            servers.facets.remove("attributed_only");
+            ops.facets.remove("attributed_only");
         }
         if self.staleness_filter == StalenessFilter::All {
-            servers.facets.remove("staleness");
+            ops.facets.remove("staleness");
         } else {
-            servers.facets.insert(
+            ops.facets.insert(
                 "staleness".to_string(),
                 self.staleness_filter.facet_value().to_string(),
             );
@@ -633,6 +665,74 @@ impl HiveApp {
         };
         self.config.ui.show_non_servers = self.show_non_servers;
         self.save_config();
+    }
+
+    /// TASK-96: the one place anything is added to or removed from the
+    /// sidebar's FAVORITES group — an explicit action only, never
+    /// auto-populated. `repo` is the backlog project root the object lives
+    /// under (the same key space `RepoRow::key`/`Config::repos[].path` use);
+    /// `key` is the object's own identity within that repo (task id, goal
+    /// name, project name, or `SavedView::name`).
+    pub fn toggle_favorite(&mut self, kind: config::FavoriteKind, repo: &Path, key: &str) {
+        let repo = repo.display().to_string();
+        let existing = self
+            .config
+            .ui
+            .favorites
+            .iter()
+            .position(|f| f.kind == kind && f.repo == repo && f.key == key);
+        match existing {
+            Some(index) => {
+                self.config.ui.favorites.remove(index);
+            }
+            None => {
+                self.config.ui.favorites.push(config::FavoriteRef {
+                    kind,
+                    repo,
+                    key: key.to_string(),
+                });
+            }
+        }
+        self.save_config();
+    }
+
+    /// Whether the star affordance for this exact object should render
+    /// filled. Read-only counterpart to [`toggle_favorite`][Self::toggle_favorite].
+    pub fn is_favorited(&self, kind: config::FavoriteKind, repo: &Path, key: &str) -> bool {
+        let repo_text = repo.display().to_string();
+        self.config
+            .ui
+            .favorites
+            .iter()
+            .any(|f| f.kind == kind && f.repo == repo_text && f.key == key)
+    }
+
+    /// TASK-96: what clicking a FAVORITES-group row in `ui::nav` does, by
+    /// kind — the decision record's mapping (task -> Tasks place + select
+    /// it; goal -> Goals place; project -> Tasks place + the project facet;
+    /// view -> Tasks place + apply the saved view). `ui::nav` is this
+    /// method's only caller.
+    pub fn navigate_to_favorite(&mut self, fav: &config::FavoriteRef) {
+        match fav.kind {
+            config::FavoriteKind::Task => {
+                self.place = Place::Tasks;
+                self.tasks_view = TasksView::All;
+                self.backlog_view.selected_task = Some((PathBuf::from(&fav.repo), fav.key.clone()));
+            }
+            config::FavoriteKind::Goal => {
+                self.place = Place::Goals;
+            }
+            config::FavoriteKind::Project => {
+                self.place = Place::Tasks;
+                self.tasks_view = TasksView::All;
+                self.backlog_view.project_filter = fav.key.clone();
+            }
+            config::FavoriteKind::View => {
+                self.place = Place::Tasks;
+                self.tasks_view = TasksView::All;
+                ui::backlog::apply_saved_view_by_name(self, &fav.key);
+            }
+        }
     }
 
     /// Common tail for any mutation of `config.repos`: persist, re-derive
@@ -2186,18 +2286,29 @@ impl HiveApp {
             perf.record_top_bar(top_start.elapsed());
         }
 
-        // Owner UX pass (2026-08-05): "Tracked repos" is now Servers-local
-        // (a left-side panel, not the global right-side one it used to be)
-        // — repo add/remove for every other view goes through the Settings
-        // window instead (`ui::settings`). Side panels must still render
-        // BEFORE the central panel so they claim their docked space first;
-        // otherwise the central panel sizes to the full window and the side
-        // panel overlays it. The Backlog view's own detail rail (also a
-        // right-side panel) follows the identical ordering rule, inside
-        // `ui::backlog::render` itself (it needs the same `Snapshot`/
-        // `Pending` the lens content does).
+        // IA V2 (TASK-96): the places sidebar is now the primary left panel,
+        // always rendered (it collapses to a narrow icon rail itself at
+        // narrow widths rather than disappearing) — it must claim its docked
+        // space before every other panel below for the same reason the
+        // "Tracked repos" panel always had to: an un-docked side panel lets
+        // the central panel size to the full window and then overlay it.
+        let nav_start = Instant::now();
+        ui::nav::render(self, ui);
+        if let Some(perf) = &mut self.perf {
+            perf.record_nav(nav_start.elapsed());
+        }
+
+        // Owner UX pass (2026-08-05): "Tracked repos" is Ops-local (a
+        // left-side panel nested inside the Ops place's own body, not the
+        // global right-side one it used to be) — repo add/remove for every
+        // other place goes through the Settings window instead
+        // (`ui::settings`). Still rendered before the central panel for the
+        // same docking-order reason as `nav` above. The Backlog view's own
+        // detail rail (also a right-side panel) follows the identical
+        // ordering rule, inside `ui::backlog::render` itself (it needs the
+        // same `Snapshot`/`Pending` the lens content does).
         let sidebar_start = Instant::now();
-        if self.view_tab == ViewTab::Servers {
+        if self.place == Place::Ops {
             ui::sidebar::render(self, ui);
         }
         if let Some(perf) = &mut self.perf {
@@ -2205,16 +2316,25 @@ impl HiveApp {
         }
 
         let central_start = Instant::now();
-        match self.view_tab {
-            ViewTab::Servers => ui::workspace::render(self, ui),
-            ViewTab::Agents => ui::agents::render(self, ui),
-            ViewTab::Dispatch => ui::dispatch::render(self, ui),
-            ViewTab::Backlog => ui::backlog::render(self, ui),
+        // IA V2 (TASK-96) transition routing: places route to the EXISTING
+        // surfaces (this slice replaces navigation, not the surfaces) — see
+        // `ui::nav`'s module doc for the full routing rationale, including
+        // why Digest/Goals get their own body functions in `ui::backlog::
+        // digest` rather than the whole `ui::backlog::render`.
+        match self.place {
+            Place::Digest => ui::backlog::digest::render_digest_place(self, ui),
+            Place::Tasks => match self.tasks_view {
+                TasksView::All => ui::backlog::render(self, ui),
+                TasksView::Dispatches => ui::dispatch::render(self, ui),
+            },
+            Place::Command => ui::agents::render(self, ui),
+            Place::Goals => ui::backlog::digest::render_goals_place(self, ui),
+            Place::Ops => ui::workspace::render(self, ui),
         }
         let central_elapsed = central_start.elapsed();
         if let Some(perf) = &mut self.perf {
             perf.record_central(central_elapsed);
-            if self.view_tab == ViewTab::Servers {
+            if self.place == Place::Ops {
                 perf.record_workspace(central_elapsed);
             }
         }
@@ -2452,6 +2572,14 @@ impl eframe::App for HiveApp {
         let theme_before = self.config.ui.theme;
         let sidebar_collapsed_before = self.config.ui.sidebar_collapsed;
         let filters_before = self.config.ui.filters.clone();
+        // TASK-96: `repo_scope` is mirrored into `config.ui.repo_scope` by
+        // `persist_filter_facets` below (runtime `BTreeSet<PathBuf>` ->
+        // persisted `Vec<String>`), same pattern as `filters_before` above.
+        // `favorites` mutates `config.ui.favorites` directly at its star
+        // affordance click sites (no runtime mirror), so it's captured here
+        // exactly like `theme_before`/`sidebar_collapsed_before`.
+        let repo_scope_before = self.config.ui.repo_scope.clone();
+        let favorites_before = self.config.ui.favorites.clone();
 
         self.render_ui(ui);
         self.persist_filter_facets();
@@ -2470,11 +2598,15 @@ impl eframe::App for HiveApp {
         let sidebar_collapsed_changed =
             self.config.ui.sidebar_collapsed != sidebar_collapsed_before;
         let filters_changed = self.config.ui.filters != filters_before;
+        let repo_scope_changed = self.config.ui.repo_scope != repo_scope_before;
+        let favorites_changed = self.config.ui.favorites != favorites_before;
         if ui_before != ui_after
             || zoom_changed
             || theme_changed
             || sidebar_collapsed_changed
             || filters_changed
+            || repo_scope_changed
+            || favorites_changed
         {
             self.save_ui_to_config();
         }

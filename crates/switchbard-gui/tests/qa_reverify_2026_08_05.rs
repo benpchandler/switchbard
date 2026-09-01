@@ -23,7 +23,7 @@ use egui_kittest::kittest::{self, Queryable};
 use switchbard_core::config::Config;
 use switchbard_core::{BacklogRepo, BacklogTask, BacklogTaskSource, Repo, WorktreeRef};
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey, ViewTab};
+use switchbard_gui::runtime::{BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey, Place};
 
 fn task(id: &str, title: &str, status: &str) -> BacklogTask {
     BacklogTask {
@@ -55,7 +55,7 @@ fn task(id: &str, title: &str, status: &str) -> BacklogTask {
 
 fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     app.backlog_repos.lock().unwrap().insert(
@@ -385,7 +385,7 @@ fn create_modal_fields_typed_via_kittest_persist_through_a_real_create() {
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     app.config_save_path = Some(isolated_config_save_path());
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(root.to_path_buf());
     app.backlog_repos.lock().unwrap().insert(
@@ -667,7 +667,7 @@ fn two_repo_app(root_a: &std::path::Path, root_b: &std::path::Path) -> HiveApp {
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     app.config_save_path = Some(isolated_config_save_path());
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     for root in [root_a, root_b] {
         app.backlog_repos.lock().unwrap().insert(

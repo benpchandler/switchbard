@@ -24,13 +24,13 @@ use std::path::PathBuf;
 
 use common::{harness, seeded_app};
 use switchbard_core::{AgentHook, AgentKind, ContextScope};
-use switchbard_gui::runtime::{AgentsSection, ViewTab};
+use switchbard_gui::runtime::{AgentsSection, Place};
 
 #[test]
 #[ignore = "wgpu image snapshot: machine-specific, run explicitly with `-- --ignored` (see module docs)"]
 fn agents_context_view_snapshot() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Agents;
+    app.place = Place::Command;
     let mut harness = harness(app);
     harness.run();
     harness.snapshot("agent_context_view");
@@ -40,7 +40,7 @@ fn agents_context_view_snapshot() {
 #[ignore = "wgpu image snapshot: machine-specific, run explicitly with `-- --ignored` (see module docs)"]
 fn agents_hooks_view_snapshot() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Agents;
+    app.place = Place::Command;
     app.agent_context_view.section = AgentsSection::Hooks;
     let hooks = vec![
         AgentHook {
@@ -88,7 +88,7 @@ fn agents_hooks_view_snapshot() {
 #[ignore = "wgpu image snapshot: machine-specific, run explicitly with `-- --ignored` (see module docs)"]
 fn agents_hooks_active_filters_narrow_snapshot() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Agents;
+    app.place = Place::Command;
     app.agent_context_view.section = AgentsSection::Hooks;
     app.agent_context_view.hook_scope = Some(ContextScope::Local);
     app.agent_context_view.hook_event = Some("PostToolUse".to_string());

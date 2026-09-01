@@ -31,7 +31,7 @@ use switchbard_core::{
     BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource, Repo, WorktreeRef,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey, ViewTab};
+use switchbard_gui::runtime::{BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey, Place};
 
 fn task(id: &str, title: &str, status: &str) -> BacklogTask {
     BacklogTask {
@@ -66,7 +66,7 @@ fn task(id: &str, title: &str, status: &str) -> BacklogTask {
 /// share.
 fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     app.backlog_repos.lock().unwrap().insert(
@@ -827,7 +827,7 @@ fn search_result_row_click_selects_the_task_without_changing_lens() {
 
 fn digest_harness_with(tasks: Vec<BacklogTask>) -> Harness<'static, HiveApp> {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogRepo {
@@ -1038,7 +1038,7 @@ fn board_non_editable_card_click_still_selects_it() {
 #[test]
 fn board_shows_the_icebox_column_even_with_zero_icebox_tasks() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::Board;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     app.backlog_repos.lock().unwrap().insert(
@@ -1133,6 +1133,13 @@ fn board_columns_are_exactly_what_the_project_declares() {
 fn board_column_add_task_opens_the_composer_with_that_columns_status() {
     let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Ordinary task", "To Do")]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    // IA V2 (TASK-96): the sidebar nav (`ui::nav`) now reserves a persistent
+    // ~184px on the left in every place, including Tasks — at the harness's
+    // former default width all 5 status columns no longer fit on screen, so
+    // the rightmost ones scroll out of the interactable viewport and this
+    // test's synthetic click silently lands nowhere. Widen so every column,
+    // including "In Progress", stays fully on screen.
+    harness.set_size(egui::vec2(1600.0, 860.0));
     harness.run();
 
     let in_progress_x = column_left_x(&harness, "In Progress");
@@ -1717,7 +1724,7 @@ fn board_drag_failure_rolls_back_the_card_and_reloads_the_cache() {
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     app.config_save_path = Some(isolated_config_save_path());
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::Board;
     app.backlog_view.sort_key = BacklogTaskSortKey::Task;
     app.backlog_view.selected_repo = Some(root.to_path_buf());
@@ -1890,7 +1897,7 @@ fn board_rail_edit_save_serializes_against_an_in_flight_drop_on_the_same_task() 
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     app.config_save_path = Some(isolated_config_save_path());
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     let repo = switchbard_core::load_backlog_repo(root).expect("load the real fixture repo");
     assert_eq!(repo.tasks[0].id, "TASK-1");
     app.backlog_repos
@@ -2098,6 +2105,11 @@ fn board_drop_back_to_origin_while_pending_queues_a_reversing_move() {
     ]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
     harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
+    // IA V2 (TASK-96): see the same widening in `board_column_add_task_
+    // opens_the_composer_with_that_columns_status` — the persistent nav
+    // sidebar now eats ~184px in every place, so the "In Progress" column
+    // this test drags into needs a wider harness to stay on screen.
+    harness.set_size(egui::vec2(1600.0, 860.0));
     harness.run();
 
     let key = (PathBuf::from(REPO_PATH), "TASK-2".to_string());
@@ -3015,13 +3027,17 @@ fn theme_persists_through_save_config_and_reload() {
 #[test]
 fn sidebar_collapse_button_hides_the_repo_list_both_directions() {
     // Owner UX pass (2026-08-05): "Tracked repos" is now a left-side panel
-    // local to the Servers view (freed up the right edge for the Backlog
-    // view's detail rail) — a Backlog-lens harness never renders it at all
-    // now, so this needs the default Servers view instead of
-    // `list_harness_with_tasks`. The collapse/expand glyphs flipped with
-    // the side: "◀" (toward the left edge) collapses, "▶" (away from it)
-    // expands — the mirror image of the old right-side panel's arrows.
-    let mut harness = harness(seeded_app());
+    // local to the Ops (formerly "Servers") place (freed up the right edge
+    // for the Backlog view's detail rail) — a Backlog-lens harness never
+    // renders it at all now, so this needs the Ops place instead of
+    // `list_harness_with_tasks`. IA V2 (TASK-96): `Place::Ops` is set
+    // explicitly because `Place::Digest`, not Ops, is the session default
+    // now. The collapse/expand glyphs flipped with the side: "◀" (toward
+    // the left edge) collapses, "▶" (away from it) expands — the mirror
+    // image of the old right-side panel's arrows.
+    let mut app = seeded_app();
+    app.place = Place::Ops;
+    let mut harness = harness(app);
     harness.run();
     assert!(!harness.state().config.ui.sidebar_collapsed);
     assert!(
@@ -3053,10 +3069,13 @@ fn sidebar_collapse_button_hides_the_repo_list_both_directions() {
 /// drives) — this proves the round trip itself.
 #[test]
 fn sidebar_collapsed_persists_through_save_config_and_reload() {
-    // Owner UX pass (2026-08-05): "Tracked repos" only renders in the
-    // (default) Servers view now — see the sibling test above for why this
-    // switched away from `list_harness_with_tasks`.
-    let mut harness = harness(seeded_app());
+    // Owner UX pass (2026-08-05): "Tracked repos" only renders in the Ops
+    // (formerly "Servers") place — see the sibling test above for why this
+    // switched away from `list_harness_with_tasks`, and for why `Place::Ops`
+    // is set explicitly now that `Place::Digest` is the session default.
+    let mut app = seeded_app();
+    app.place = Place::Ops;
+    let mut harness = harness(app);
     harness.run();
     harness.get_by_label("◀").click();
     harness.run();
@@ -3285,7 +3304,7 @@ fn save_button_completes_a_real_write_round_trip_against_a_real_fixture_repo() {
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     app.config_save_path = Some(isolated_config_save_path());
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(root.to_path_buf());
     app.backlog_repos.lock().unwrap().insert(
@@ -3372,7 +3391,7 @@ fn create_modal_reports_a_compact_created_message_against_a_real_fixture_repo() 
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     app.config_save_path = Some(isolated_config_save_path());
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(root.to_path_buf());
     app.backlog_repos.lock().unwrap().insert(
@@ -3482,7 +3501,7 @@ fn create_modal_task_is_visible_in_both_list_and_board_against_a_real_fixture_re
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     app.config_save_path = Some(isolated_config_save_path());
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(root.to_path_buf());
     app.backlog_repos.lock().unwrap().insert(
@@ -3614,7 +3633,7 @@ fn sub_task_hierarchy_renders_correctly_from_a_native_created_subtask() {
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     app.config_save_path = Some(isolated_config_save_path());
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(root.to_path_buf());
     let real_project =
@@ -4085,7 +4104,7 @@ fn accepting_the_offer_writes_the_config_and_the_column_appears() {
     native_task_create(root, "Ordinary task");
 
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::Board;
     app.backlog_view.selected_repo = Some(root.to_path_buf());
     app.backlog_repos.lock().unwrap().insert(

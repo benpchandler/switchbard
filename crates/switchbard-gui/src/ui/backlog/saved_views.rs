@@ -11,6 +11,7 @@ use crate::app::HiveApp;
 use crate::runtime::{BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey};
 use crate::ui::theme;
 use eframe::egui;
+use std::path::Path;
 use switchbard_core::config::SavedView;
 
 pub(super) fn render_saved_views_bar(app: &mut HiveApp, ui: &mut egui::Ui) {
@@ -36,6 +37,34 @@ pub(super) fn render_saved_views_bar(app: &mut HiveApp, ui: &mut egui::Ui) {
                     ui.label(egui::RichText::new("No saved views yet").color(theme::muted_text()));
                 }
             });
+        // TASK-96: the view-kind favorite star — only meaningful once a
+        // named saved view is actually active (an "Unsaved" combo state has
+        // nothing to favorite yet). `FavoriteRef::repo` is the empty string
+        // for this kind: a saved view is a top-level named entry in
+        // `Config::ui.saved_views`, not scoped to one repo the way a task,
+        // goal, or project is, so there is nothing else to key on.
+        if let Some(name) = app.backlog_view.active_saved_view.clone() {
+            let favorited = app.is_favorited(
+                switchbard_core::config::FavoriteKind::View,
+                Path::new(""),
+                &name,
+            );
+            let hover = if favorited {
+                "Remove from Favorites"
+            } else {
+                "Add to Favorites"
+            };
+            if theme::favorite_star_button(ui, favorited)
+                .on_hover_text(hover)
+                .clicked()
+            {
+                app.toggle_favorite(
+                    switchbard_core::config::FavoriteKind::View,
+                    Path::new(""),
+                    &name,
+                );
+            }
+        }
         if app.backlog_view.active_saved_view.is_some()
             && ui
                 .small_button("Delete")
@@ -92,7 +121,11 @@ fn current_as_saved_view(app: &HiveApp, name: String) -> SavedView {
     }
 }
 
-fn apply_saved_view(app: &mut HiveApp, view: &SavedView) {
+/// `pub(super)`, not private: TASK-96's favorite-view navigation
+/// (`ui::backlog::apply_saved_view_by_name`, called from `ui::nav`) applies
+/// a saved view the same way this module's own combo box does — one
+/// definition of "apply a saved view", not two.
+pub(super) fn apply_saved_view(app: &mut HiveApp, view: &SavedView) {
     app.backlog_view.selected_repo = view.selected_repo.clone();
     app.backlog_view.status_filter = view.status_filter.clone();
     app.backlog_view.priority_filter = view.priority_filter.clone();

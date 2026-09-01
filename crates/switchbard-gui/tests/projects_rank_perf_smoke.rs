@@ -45,7 +45,7 @@ use switchbard_core::{
     BacklogRepo, BacklogTask, BacklogTaskSource, Repo, RepoRanking, WorktreeRef,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{BacklogLens, ViewTab};
+use switchbard_gui::runtime::{BacklogLens, Place};
 
 const REPOS: usize = 4;
 const PROJECTS_PER_REPO: usize = 5;
@@ -144,7 +144,7 @@ fn build_fixture() -> HiveApp {
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     app.config_save_path = Some(isolated_config_save_path());
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::Projects;
     {
         let mut cached = app.backlog_repos.lock().unwrap();
