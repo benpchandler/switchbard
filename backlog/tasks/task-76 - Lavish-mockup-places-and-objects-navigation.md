@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-31 21:20'
-updated_date: '2026-09-01 01:01'
+updated_date: '2026-09-01 01:09'
 labels:
   - ia
   - design
@@ -42,4 +42,6 @@ Round 4 (2026-09-01, terminal): pin icon rejected. Adopt Linear's pattern instea
 Round 5 (2026-09-01): (a) Owner flags the attention feed ('Needs a human') as a super important area - built out with inline actions per row: PR Review/Merge, Open mock (visual review), dispatch Retry/Log, server Restart (Ops notifications added per owner note), worktree Remove, port Kill. Architecture answer recorded: feed rows are computed from their owning objects (PR probe, run reaper, server watch, port scan, removal_safety), deep-link to them, and reuse the same command verbs - not stored on tasks. Placement is open as Q2 (A Digest section / B Inbox place / C plus Tasks view). (b) Mock format rulings: frames get real window height; resolved questions removed from the artifact into a 'Decided so far' section; all open questions converted to lettered multiple choice with side-by-side renderings where possible (7c vs 7c-B for sub-issues). Open set: Q2, Q3, Q5-Q9, Q11, Q12.
 
 Round 6 (2026-09-01): (a) Q2 RESOLVED = A: attention feed lives on Digest; feed given full width with per-row actions; server/Ops notification rows included. (b) Q3 RESOLVED by broader ruling: Tasks grouping must be generic over every available field (project/status/initiative/priority/label/repo/...), never hardcoded options; filtering is a Filter-builder plus recent filters, no hardcoded action chips. (c) Dispatches must move toward the Mission Command console the owner has in mind - new Q14 (A run list + activity line / B + selected-run console w/ log tail, AC progress, SITREPs / C full fleet place); sidebar highlight bug fixed (Tasks no longer marked active on the Dispatches view). (d) Project page flagged confusing a third time - Q12 recommendation recorded as B (cut; expand group header in place), B alternative rendered. (e) Ops must retain ALL existing functionality - worktrees, services start/stop, listeners, open-in-browser, kill squatter, agent sessions, removal safety - now rendered. (f) Standing mock rule reaffirmed twice: no commentary inside frames. Open set: Q5-Q9, Q11, Q12, Q14.
+
+Round 7 (2026-09-01): (a) Group headers in Tasks must WIN the color-hierarchy against task rows (owner: grouping took a backseat, hard to distinguish groups; dark mode fared better) - headers now use the recessed faint surface, bold 12.5px, 2px top rule, taller padding, in both themes. Implementation note for EGUI Polish overlap: group headers need their own elevation token. (b) Burndown-on-project-page questioned again - clarified it plots remaining member tasks over time (per TASK-76 spec) and recorded that Q12=B cuts it with the page; more evidence toward B.
 <!-- SECTION:NOTES:END -->
