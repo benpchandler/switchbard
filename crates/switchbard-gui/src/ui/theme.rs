@@ -1247,6 +1247,11 @@ pub enum ActionIcon {
     Log,
     /// Deep-link to the task that needs a human.
     Respond,
+    /// Clear a stuck dispatch-run record (`dispatch::dismiss_run`) — a
+    /// record-level discard, so it wears the same trash-can glyph as the
+    /// other "remove this row" affordances ([`painted_trash_button`]),
+    /// never Kill's X (which signals a live process).
+    Dismiss,
 }
 
 /// A universal-action icon button: painted glyph, hover tooltip, and an
@@ -1369,6 +1374,45 @@ fn paint_action_icon(ui: &mut egui::Ui, rect: egui::Rect, icon: ActionIcon, colo
                 color,
                 egui::Stroke::NONE,
             ));
+        }
+        ActionIcon::Dismiss => {
+            // The same trash-can shape as `painted_trash_button`, at this
+            // set's stroke weight: handle, lid, slightly tapered body.
+            painter.line_segment(
+                [
+                    egui::pos2(c.x - 1.5, c.y - 5.0),
+                    egui::pos2(c.x + 1.5, c.y - 5.0),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(c.x - 4.0, c.y - 3.0),
+                    egui::pos2(c.x + 4.0, c.y - 3.0),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(c.x - 3.0, c.y - 2.0),
+                    egui::pos2(c.x - 2.5, c.y + 4.0),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(c.x + 3.0, c.y - 2.0),
+                    egui::pos2(c.x + 2.5, c.y + 4.0),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(c.x - 2.5, c.y + 4.0),
+                    egui::pos2(c.x + 2.5, c.y + 4.0),
+                ],
+                stroke,
+            );
         }
     }
 }
