@@ -4,9 +4,11 @@ title: 'Docs: queue protocol pointer in CLAUDE.md'
 status: To Do
 assignee: []
 created_date: '2026-09-01 02:24'
+updated_date: '2026-09-01 02:25'
 labels:
   - docs
   - dogfood
+  - dispatch
 dependencies: []
 priority: low
 project: Task Queue
