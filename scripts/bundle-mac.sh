@@ -93,11 +93,13 @@ while IFS= read -r nested; do
   if file "$nested" | grep -q 'Mach-O'; then
     codesign --force --sign - "$nested"
     codesign --verify --strict "$nested"
+  else
+    chmod a-x "$nested"
   fi
 done < <(find "$SIDECAR_DEST" -type f -print)
 
 echo "→ ad-hoc signing $APP_BUNDLE"
-codesign --force --deep --sign - "$APP_BUNDLE"
+codesign --force --sign - "$APP_BUNDLE"
 codesign --verify --deep --strict "$APP_BUNDLE"
 
 echo "✓ built $APP_BUNDLE"
