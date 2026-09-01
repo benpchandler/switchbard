@@ -1,11 +1,11 @@
 ---
 id: TASK-76
 title: 'Lavish mockup: places-and-objects navigation'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 21:20'
-updated_date: '2026-09-01 01:38'
+updated_date: '2026-09-01 10:51'
 labels:
   - ia
   - design
@@ -49,3 +49,9 @@ Round 8 (2026-09-01): process correction from owner - agent must run its own vis
 
 Round 9 (2026-09-01, first round after the poll-truncation fix): (a) Q12 RESOLVED = B and stronger: the project page is CUT entirely; the group header expands in place for summary, and the stack rank surfaces only as a sort/filter option in Tasks (Sort: rank next to Group by) - never a page or dedicated column. Q5 dissolves with it (delivery = status-cell badge + facet). (b) Q14 RESOLVED = C: Command becomes its own place - the fleet console (agents, missions, leases, SITREPs, support requests with respond affordance); Dispatches under Tasks remains the task-delivery facet; same runs, two axes. (c) Buttons: icon-only with tooltips for universal actions everywhere (open/merge/retry/log/kill/remove/edit/check-in); text labels only where no icon is unambiguous (empty-state CTAs, Roll). (d) Selected rows get a dedicated stronger tint + 3px stroke so selection never reads as a group header (owner: too close in color). Visual self-review run post-change (light render, tiles): icons, sort control, selection contrast, and Command console all verified. Open set: Q6, Q7, Q8, Q9, Q11.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Mockup delivered and reviewed across nine owner rounds in Lavish (~/.lavish/switchbard-ia-places.html, session 3941254e8bd08b0e); every direction question either resolved in the notes above or explicitly carried (Q6-Q9, Q11 remain open for follow-up work). The decided IA shipped end to end: TASK-96..101 implemented the places (PRs #80-#85), closure landed in PR #86, and the adversarial parity audit against the frozen mock closed in the polish pass PR #87 (tinted chip language, Dispatches/Command tables, Digest goal-card grid, narrow-width fix, one stroke authority, QA fixtures). A CI break the program surfaced (Linux dead-code in agent_sessions.rs, red main since PR #83) was fixed in PR #89.
+<!-- SECTION:FINAL_SUMMARY:END -->
