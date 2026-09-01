@@ -1,10 +1,10 @@
 ---
 id: TASK-97
 title: 'IA V2: Tasks place - generic grouping, filter builder, rank sort, expanding headers'
-status: In Progress
+status: In Review
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 06:06'
+updated_date: '2026-09-01 06:09'
 labels:
   - ia
   - gui
@@ -42,4 +42,6 @@ Test fallout from the routing change: backlog_controls.rs, legibility_audit.rs, 
 Evidence: mise run ci green. New tests: crates/switchbard-gui/tests/tasks_place.rs (14 tests: group-by x4 fields with computed roll-ups, expanding header, rank sort vs a fixture RepoRanking, filter add/remove/persist, stroke-ring selection, sub-issue indentation, List/Board facet sharing, group-by disabled in Board mode) plus fields.rs/state.rs/groups.rs unit tests (~15). Screenshots (both themes): docs/qa/screenshots/tasks_place_{list_grouped,header_expanded,board,narrow}_{light,dark}.png.
 
 Named gaps (not silently decided, filing follow-ups): (1) title clamp - directive #7 asks for a 2-line title clamp; List truncates to one line (legacy list.rs behavior, unchanged) and Board wraps unbounded, growing the card (legacy board.rs behavior, unchanged) - neither matches mock 7c's exact spec, both pre-existing, real widget-height rework needed. (2) Narrow width (~700px) - sidebar correctly collapses to the icon rail, but the list's title column and the persistent detail rail compete for space and title text can go fully invisible; a responsive column-width fix is needed, likely shared with the legacy List lens. (3) Creating a saved view from the Tasks place's filter-builder predicates has no UI path (loading one still works).
+
+PR #85 opened: https://github.com/benpchandler/switchbard/pull/85 (branch feat/task-97-tasks-place). Base a29256b (post-TASK-96); origin/main has since advanced with TASK-101 (Goals place, PR #81) touching overlapping files (app.rs, runtime/mod.rs, digest.rs, ui/backlog/mod.rs, ui/places/mod.rs) - rebase anticipated before merge per the mission brief, not yet requested.
 <!-- SECTION:NOTES:END -->
