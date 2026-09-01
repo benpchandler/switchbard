@@ -1,10 +1,10 @@
 ---
 id: TASK-97
 title: 'IA V2: Tasks place - generic grouping, filter builder, rank sort, expanding headers'
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 06:58'
+updated_date: '2026-09-01 08:18'
 labels:
   - ia
   - gui
@@ -47,3 +47,9 @@ PR #85 opened: https://github.com/benpchandler/switchbard/pull/85 (branch feat/t
 
 Medic pass (2026-09-01, PR #85 branch) addressed an independent review's findings: (1) BLOCKER - a ghost legacy filter (backlog_view.{status,priority,project,label}_filter) still narrowed sort::visible_task_rows with no UI escape hatch in the Tasks place. Fixed at the source: digest.rs's View-all and a Project favorite's click now push tasks_place.filters predicates instead of the legacy fields; saved_views::apply_saved_view translates the legacy four facets into tasks_place.filters when the Tasks place is active (with a fidelity-preserving new SavedView::tasks_filters/tasks_group_by/tasks_view_mode shape for views saved going forward); tasks::neutralize_legacy_filters resets the four fields to "all" every Tasks-place frame as a belt-and-suspenders guard. E2E regression tests: digest_view_all_then_removing_the_chip_on_tasks_restores_every_task, applying_a_legacy_only_saved_view_then_removing_the_translated_chip_restores_every_task (tests/tasks_place_saved_views.rs). (2) MAJOR - saved-view save/browse/delete was dead-reachable (its only caller was the orphaned legacy ui::backlog::render body). Restored inside the Tasks place's own facets frame (ui::places::tasks::render_tasks_place now calls saved_views::render_saved_views_bar); SavedView extended compatibly (serde defaults) to carry the Tasks place's own filters/group-by/view-mode. Tests: save round-trip via the real Enter-to-submit field, apply from a FAVORITES sidebar click, delete (tests/tasks_place_saved_views.rs). (3) should-fix - tests/tasks_place.rs's rank_sort test asserted presence, not order; rewritten to assert relative row y-position. (4) PARITY - 2-line title clamp: List keeps single-line truncate (ROW_HEIGHT/show_rows virtualization math stays exact) with the full title+description on hover; Board cards now get a real bounded 2-line clamp via a hand-built LayoutJob (wrap.max_rows=2), never growing the card — decision documented in list_body.rs's module doc. (5) PARITY/SEVERE - narrow width (~700px) was functionally unreadable: the detail rail's 320px MIN_WIDTH alone starved the central workspace. rail.rs now auto-collapses below ui::nav::NARROW_WIDTH_THRESHOLD (720px, the same breakpoint the sidebar already collapses at, now pub(crate) and shared); list_body.rs drops the Delivery/AC column first at the same threshold, giving the title column the reclaimed width. Screenshots regenerated and reviewed in both themes (docs/qa/screenshots/tasks_place_narrow_{light,dark}.png) - titles and the status-migration banner are fully readable now. (6) MINOR - orphaned sub-issue promotion (a filtered-out parent's visible child renders at depth 0) documented in list_body.rs's module doc and pinned by tests/tasks_place.rs's orphaned_sub_issue_promotes_to_a_top_level_row. Also fixed in passing (same bug class as finding 1, not separately filed): HiveApp::navigate_to_favorite's FavoriteKind::Project arm wrote the same invisible legacy project_filter; now pushes a tasks_place.filters predicate instead. mise run ci green throughout.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+PR #85: the real Tasks place - generic group-by over any TaskField (project/status/initiative/priority/label/repo/assignee/parent/source) with computed roll-up headers that expand in place (no project page), rank sort as a BacklogTaskSortKey, stroke-ring selection shared with Board. Medic pass fixed an independent review's findings pre-merge: BLOCKER - a ghost legacy filter still narrowed rows with no escape hatch, fixed at the source plus a per-frame guard; MAJOR - saved-view save/browse/delete was dead-reachable, restored inside the Tasks place's own facets frame; should-fix - rank-sort test asserted presence not order; PARITY - 2-line title clamp (Board) and narrow-width title/rail collision, both fixed and screenshotted; MINOR - orphaned sub-issue promotion documented and pinned by a test. mise run ci green throughout. Remaining named gaps (title clamp on List, narrow-width collision, saved-view-from-filter-builder) were tracked and closed separately as TASK-105/106/107 (all Done).
+<!-- SECTION:FINAL_SUMMARY:END -->
