@@ -93,6 +93,7 @@ pub struct RecoveredContract {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct JourneySummary {
     pub phase: String,
+    #[serde(skip)]
     pub command_id: String,
     pub mission_id: String,
     pub mission_revision: u64,

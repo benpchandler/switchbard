@@ -16,7 +16,7 @@ use switchbard_core::{MissionStatus, ProjectionFreshness};
 #[cfg(target_os = "macos")]
 use switchbard_gui::mission_control::empty_hello_request;
 use switchbard_gui::mission_control::{
-    HelperHealth, MissionControlModel, PendingContract, RequestOutcome,
+    HelperHealth, JourneySummary, MissionControlModel, PendingContract, RequestOutcome,
 };
 use switchbard_gui::runtime::Place;
 use tempfile::TempDir;
@@ -39,6 +39,28 @@ fn ready_model() -> MissionControlModel {
         projection_freshness: ProjectionFreshness::Fresh { age_seconds: 1 },
         ..MissionControlModel::default()
     }
+}
+
+#[test]
+fn journey_summary_keeps_internal_command_id_out_of_external_json() {
+    let summary = JourneySummary {
+        phase: "resume".to_owned(),
+        command_id: "fixture:resume".to_owned(),
+        mission_id: "mission-sidecar-v1".to_owned(),
+        mission_revision: 2,
+        global_revision: 2,
+        decision_id: "contract-review".to_owned(),
+        decision_version: 1,
+        status: "QUEUED".to_owned(),
+        recovered_contract: None,
+    };
+
+    let encoded = serde_json::to_value(&summary).expect("serialize journey summary");
+    assert_eq!(summary.command_id, "fixture:resume");
+    assert!(
+        encoded.get("command_id").is_none(),
+        "internal command identity must not widen the external journey contract"
+    );
 }
 
 fn pending_model() -> MissionControlModel {
