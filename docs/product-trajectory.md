@@ -50,6 +50,28 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 - Worktree-first model (one repo → many worktrees) remains foundational; never collapse.
 - Per-surface `Status` feedback and progressive-disclosure workspace cards continue as
   the UI direction.
+- **Mission Command supervision (owner-approved 2026-08-31, build-to-learn slice).**
+  A top-level Missions view may read xplan's optional, versioned local projection at
+  `~/.xplan/mission-command-snapshot.json` (or the bounded
+  `XPLAN_MISSION_SNAPSHOT` override). The view remains a read model with no direct mission
+  writes or LangGraph/Rust dependency. The original no-xplan-subprocess hypothesis is
+  superseded by the owner-approved bundled sidecar below: typed controls may invoke only
+  the verified xplan one-shot helper through `switchbard-core`, never a daemon. A dedicated
+  worker performs bounded polling off the render path; missing, unreadable, malformed,
+  unsupported, and stale snapshots remain explicit non-blocking states. The view shows
+  mission identities and lifecycle status, requirement proof, held decisions, approval
+  gates, units, feedback, evidence, reconciliation, and the next owner/action. It never
+  receives or renders mission/outcome prose, decision prompts, feedback summaries, lease
+  paths, evidence labels, or artifact locators. Active animation repaints only
+  while at least one visible mission is actually running. xplan remains the sole owner
+  of orchestration, persistence, and completion truth. The v1 read boundary is strict:
+  undeclared fields and contradictory lifecycle/proof combinations are malformed rather
+  than silently displayed. Structural identifiers are allowlisted and reject common
+  credential prefixes at delimiter boundaries; next actions are fixed producer text.
+  Evidence includes digest plus full source-revision provenance and is rejected unless
+  every record matches the mission's explicitly adopted Git revision. Developer-QA
+  fixture renders exercise state and stress coverage but are not human visual approval or
+  the final live queue and animated monitoring experience.
 - **Agents context + hooks (owner-approved 2026-08-28).** The former `Agent Context`
   top-level tab is `Agents`, with sibling `Context` and `Hooks` surfaces. Context keeps
   the existing file explorer. Hooks parses Claude user, shared-project, and
@@ -561,6 +583,15 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 
 Flag any of these the moment a task seems to assume it, and confirm with the owner
 before building.
+
+## Mission Command bundled sidecar (owner-approved optional control plane)
+
+Switchbard supervises xplan through one verified, bundled, one-shot helper process per request. The native UI may issue only `hello`, `queue_mission`, `get_pending_decision`, and `resume_decision`; xplan remains the sole writer of the SQLite event store, checkpoint cursor, and projection. LangGraph and Python stay inside the frozen xplan artifact rather than entering the Rust dependency graph.
+
+macOS preserves the manifest-pinned helper onedir below `Switchbard.app/Contents/Resources/xplan-mission-sidecar` and places a separately signed copy of the Switchbard binary at `Contents/Helpers/xplan-mission-sidecar-launcher`. That launcher accepts only `--state-root`, proxies the private request streams to the exact Resources payload without a shell, and propagates its status. Payload Mach-O signatures are verified without mutating the manifest-bound bytes before the launcher and outer app are signed; the completed bundle must pass deep strict verification and an offline hello. Linux packages the onedir below `libexec/xplan-mission-sidecar`. One schema-v1 pin binds the exact xplan source and uv lock plus exactly two independently selected target entries, `macos-arm64` and `linux-x86_64`, each with its own archive and manifest digest. Assembly verifies every artifact entry before copying, performs no runtime acquisition, and fails closed on missing, extra, malformed, stale, or cross-target material.
+Switchbard vendors a compact Git bundle containing the exact pinned xplan source revision so CI and release builds do not need network access or credentials for the xplan repository. The checkout helper verifies the bundle, detaches at the pinned commit, restores the canonical repository identity, and requires a clean tree. CI then builds with pinned CPython 3.12.11 before the ordinary source, lock, archive, and manifest checks run.
+
+The control and projection health indicators are independent. Queue drafts and decision answers remain visible until xplan acknowledges the exact command identity; ambiguous timeout, crash, or malformed-response outcomes are reconciled and retried with the same durable command id rather than being mislabeled as mission failure. The current native list and contract-review UI is the accepted first slice, not the future animated portfolio canvas.
 
 ## Known gaps / debt
 

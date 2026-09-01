@@ -29,6 +29,9 @@ cargo test -p switchbard-core <pat>   # single test by name substring
 
 Prefer plain Cargo? Each `mise` task maps to the obvious `cargo fmt` / `cargo clippy` / `cargo test` / `cargo build --release`.
 
+`mise run bundle` and `mise run package` require `XPLAN_SIDECAR_SOURCE` (a clean checkout of the pinned xplan revision from `xplan-sidecar-pin.json`) and `XPLAN_SIDECAR_ARCHIVE` (the sidecar archive built from it with `scripts/build_mission_sidecar.py`); the sidecar is packaged from those exact local inputs, never downloaded. Run `mise run bundle` without them for the full recipe.
+CI and Linux release builds materialize that same pinned revision from the sub-megabyte Git bundle in `vendor/xplan`, then build it with the pinned CPython 3.12.11 interpreter and verify the helper locally. This keeps Switchbard's build independent of cross-repository credentials while preserving xplan's exact Git identity and sole-writer authority.
+
 ## Gates (firm — CI fails on any)
 
 CI (`.github/workflows/ci.yml`) runs the `fmt`, `clippy`, and `test` mise tasks on both **macos-latest and ubuntu-latest** on every PR. The `clippy` and `test` tasks set `RUSTFLAGS=-D warnings`, so **any compiler warning fails the build — fix it, don't `#[allow]` it.** Run `mise run ci` green before pushing.
@@ -45,6 +48,8 @@ orchestrator && uv run pytest`; not part of `mise run ci` yet). It drains the
 dispatch queue via the `sb queue` protocol and never edits task
 files - see `orchestrator/README.md` and the trajectory's *Task Queue
 orchestration* entry. `switchbard-core` has **zero UI dependencies** and is heavily unit-tested; `switchbard-gui` is the only place egui appears; `switchbard-dispatch` is a thin headless binary over `switchbard-core` that drains the dispatch queue with the GUI closed; `switchbard-task` (installed binary: `sb`) is the terminal/agent frontend for Backlog-format tasks over the same native write layer (format fork, TASK-66).
+
+Mission Command uses one bundled xplan one-shot helper process per request. Switchbard may supervise only the strict `hello`, `queue_mission`, `get_pending_decision`, and `resume_decision` protocol through `switchbard-core`; xplan owns every mission write, while the egui layer renders cached state and emits typed intentions without process or filesystem I/O.
 
 **Managing this repo's backlog tasks:** use `sb` (or `cargo run -q -p switchbard-task --` for the workspace build) (`list [--in-project <NAME>]`, `view <id>`, `create`, `edit <id> --check-ac N / --append-notes / --final-summary / -s Done / -m <PROJECT>`, `archive`, `complete`, plus the `project` and `initiative` definition families) — its `--help` is the output contract. The repo-root flag is `--repo <DIR>` (`--project <DIR>` survives as a deprecated alias). The `queue` verb family (`queue list/send/withdraw/claim/release/prompt`, TASK-88) is the orchestrator protocol: dispatch work is teed up, claimed, and released through these verbs, never by mutating task state directly. It writes through the same `switchbard-core` layer as the GUI, which is the fork's one-writer invariant. The external `backlog` CLI is retired here (TASK-67): nothing in this repo invokes it, it is not on the toolchain, and task mutations must go through `sb` (or the GUI) — never hand-edit task markdown or the `backlog/projects/` / `backlog/initiatives/` definition files.
 
@@ -67,6 +72,9 @@ Re-exports are **explicit in `src/lib.rs`** (no glob re-exports). Module map:
 - `expected_port`, `resolve` — port inference; clusters listeners + services into `ResolvedService`.
 - `dispatch` — headless `claude -p` pipeline: dispatch-labeled task → worktree → agent run → PR.
 - `refine` — the grooming step upstream of `dispatch`: a read-only headless run that fills a task's description/ACs/plan, applied additively through the native write layer.
+- `mission_projection` - read-only adapter for xplan's optional Mission Command snapshot (`~/.xplan/mission-command-snapshot.json`, `XPLAN_MISSION_SNAPSHOT` override): strict versioned validation, bounded size/row caps, explicit missing/malformed/stale states.
+- `mission_sidecar_protocol` - typed frames for the strict helper protocol (`hello`, `queue_mission`, `get_pending_decision`, `resume_decision`); the UI never builds mission JSON directly.
+- `mission_supervisor` - verifies and runs the bundled xplan one-shot helper: manifest-pinned payload digests, one process per request, bounded stdio reads/joins, process-group reaping.
 - `git_probe` — read-only `git status` / ahead-behind / fetch age / recent commits.
 - `git_env` — `git_cmd()`: every git call goes through it; see Git safety below.
 - `spawn` / `kill` — `spawn_in_session()` (own session/process group) + `kill_pgid()` → `KillOutcome`.
@@ -74,10 +82,11 @@ Re-exports are **explicit in `src/lib.rs`** (no glob re-exports). Module map:
 
 ### `crates/switchbard-gui` — egui/eframe app
 
-`src/main.rs` only loads config, expands worktrees, hands to `HiveApp`. Everything else is in the library crate.
+`src/main.rs` loads config, expands worktrees, and hands to `HiveApp`; it also carries the argv0-dispatched `xplan-mission-sidecar-launcher` entry and the headless `--mission-sidecar-journey` evidence harness. Everything else is in the library crate.
 
 - `app.rs` — `HiveApp`: shared `Arc<Mutex<…>>` worker state + view-only fields; `update()` is pure dispatch. Header doc carries the mutation-method naming table (below).
-- `workers.rs` — six periodic background threads plus a run-reaper, all the same shape (snapshot under brief lock → work outside lock → write back → `ctx.request_repaint()` → `kick.wait(period)`). Periods, per-tick cost, and rationale are a living table in the module's own header doc (`workers.rs`'s cadence-policy table) rather than duplicated here — re-run `examples/scan_cadence_audit.rs` for fresh real-machine numbers before changing any of them.
+- `workers.rs` — the periodic background threads plus a run-reaper, all the same shape (snapshot under brief lock → work outside lock → write back → `ctx.request_repaint()` → `kick.wait(period)`). Periods, per-tick cost, and rationale are a living table in the module's own header doc (`workers.rs`'s cadence-policy table) rather than duplicated here — re-run `examples/scan_cadence_audit.rs` for fresh real-machine numbers before changing any of them.
+- `mission_control.rs` - plain-data Mission control state and typed xplan helper intentions: helper health vs projection freshness, queue drafts, contract review/recovery with durable command ids. No egui.
 - `sync/` — `Kick` (wake signal) and `Status` (one per UI surface so concurrent actions don't clobber).
 - `runtime/` — plain-data view types + `expand_worktrees()`.
 - `ui/` — the only module that touches egui. `theme.rs` is the single source for semantic colors and glyphs.

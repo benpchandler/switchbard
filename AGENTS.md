@@ -25,4 +25,5 @@ realign this file.
 - **`git -C`, never `cd <repo>`.** The `cd <repo> && git …` compound triggers a
   permission prompt in agent runtimes. (Full rationale: CLAUDE.md → Git safety.)
 - **Backlog.md task tracker.** File follow-ups as `task-N` markdown under
-  `backlog/tasks/` via the `backlog` CLI; never hand-edit the task files.
+  `backlog/tasks/` via the `sb` CLI (CLAUDE.md → Managing this repo's backlog
+  tasks); never hand-edit the task files.

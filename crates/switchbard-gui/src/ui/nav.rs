@@ -2,7 +2,7 @@
 //! surface, replacing the old top-bar "view:" tab row. Renders, top to
 //! bottom: the brand mark, the multi-select repo-scope selector, the
 //! FAVORITES group (only when non-empty — nothing here auto-populates), the
-//! five places (Digest / Tasks / Command / Goals / Ops) each with a glyph
+//! places (Digest / Tasks / Command / Missions / Goals / Ops) each with a glyph
 //! and a count badge, the Tasks place's two built-in subviews (All tasks /
 //! Dispatches) when Tasks is active, and a footer ambient dispatch lamp that
 //! reuses `ui::dispatch::DispatchSummary` — silent when idle, deep-linking
@@ -162,6 +162,7 @@ fn render_expanded(app: &mut HiveApp, ui: &mut egui::Ui, dispatch_summary: Dispa
                 render_tasks_subviews(app, ui, dispatch_summary);
             }
             place_row(app, ui, Place::Command, Glyph::Command, None);
+            place_row(app, ui, Place::Missions, Glyph::Missions, None);
             place_row(app, ui, Place::Goals, Glyph::Goals, Some(counts.goals));
             place_row(app, ui, Place::Ops, Glyph::Ops, Some(counts.ops));
 
@@ -436,6 +437,7 @@ fn render_rail(app: &mut HiveApp, ui: &mut egui::Ui) {
                 rail_glyph(app, ui, Place::Digest, Glyph::Digest);
                 rail_glyph(app, ui, Place::Tasks, Glyph::Tasks);
                 rail_glyph(app, ui, Place::Command, Glyph::Command);
+                rail_glyph(app, ui, Place::Missions, Glyph::Missions);
                 rail_glyph(app, ui, Place::Goals, Glyph::Goals);
                 rail_glyph(app, ui, Place::Ops, Glyph::Ops);
             });

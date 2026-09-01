@@ -48,8 +48,11 @@ use egui_kittest::Harness;
 use switchbard_core::config::ThemeChoice;
 use switchbard_core::dispatch_inspect::DispatchRun;
 use switchbard_core::{
-    AttributedListener, BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource,
-    GoalCheckIn, GoalDef, GoalInputs, GoalMeasure, GoalWeek, LocalListener, DISPATCHED_LABEL,
+    ApprovalStatus, AttributedListener, BacklogChecklistItem, BacklogRepo, BacklogTask,
+    BacklogTaskSource, DecisionStatus, GoalCheckIn, GoalDef, GoalInputs, GoalMeasure, GoalWeek,
+    LocalListener, MissionApproval, MissionDecision, MissionPortfolio, MissionProjection,
+    MissionProjectionLoad, MissionRequirement, MissionStatus, MissionUnit, PortfolioStatus,
+    ProjectedMission, ProjectionFreshness, RequirementStatus, UnitStatus, DISPATCHED_LABEL,
     DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
@@ -411,6 +414,61 @@ fn seed_live_listener(app: &HiveApp) {
             worktree_path: Some(REPO_PATH.into()),
             worktree_branch: Some("main".to_string()),
         });
+}
+
+fn seed_mission_projection(app: &HiveApp) {
+    let mission = ProjectedMission {
+        id: "MIS-LEGIBILITY".to_string(),
+        mission_revision: None,
+        status: MissionStatus::NeedsDecision,
+        contract_version: 2,
+        attempt_id: "ATT-LEGIBILITY".to_string(),
+        source_revision: None,
+        outcome_proven: false,
+        next_step: "Resolve the versioned decision".to_string(),
+        next_owner: "user".to_string(),
+        updated_at: "2026-09-01T12:00:00Z".to_string(),
+        requirements: vec![MissionRequirement {
+            id: "REQ-LEGIBILITY".to_string(),
+            evidence_kind: "visual".to_string(),
+            status: RequirementStatus::Open,
+            evidence_ids: Vec::new(),
+        }],
+        units: vec![MissionUnit {
+            id: "UNIT-LEGIBILITY".to_string(),
+            owner: "agent".to_string(),
+            status: UnitStatus::Held,
+            lease_count: 1,
+        }],
+        decision: Some(MissionDecision {
+            id: "DEC-LEGIBILITY".to_string(),
+            version: 1,
+            status: DecisionStatus::Open,
+            scope: None,
+        }),
+        approval: Some(MissionApproval {
+            id: "APR-LEGIBILITY".to_string(),
+            status: ApprovalStatus::Requested,
+        }),
+        feedback: Vec::new(),
+        evidence: Vec::new(),
+        reconciliation: None,
+    };
+    *app.mission_projection.lock().unwrap() = std::sync::Arc::new(MissionProjectionLoad::Ready {
+        path: PathBuf::from("/tmp/mission-command-snapshot.json"),
+        projection: MissionProjection {
+            schema_version: "xplan-mission-projection-v1".to_string(),
+            generated_at: "2026-09-01T12:00:00Z".to_string(),
+            revision: 1,
+            stale_after_seconds: 60,
+            portfolio: MissionPortfolio {
+                id: "DEVELOPER-QA-LEGIBILITY".to_string(),
+                status: PortfolioStatus::Open,
+                missions: vec![mission],
+            },
+        },
+        freshness: ProjectionFreshness::Fresh { age_seconds: 5 },
+    });
 }
 
 /// A Backlog task with real content in every task-15/16 surface: a
@@ -796,6 +854,12 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     dispatches_app.dispatches_view.facet = DispatchesFacet::Active;
     let dispatches_running = harness(dispatches_app);
 
+    let mut missions_app = seeded_app();
+    missions_app.config.ui.theme = theme;
+    missions_app.place = Place::Missions;
+    seed_mission_projection(&missions_app);
+    let missions = harness(missions_app);
+
     let mut digest_app = seeded_app();
     digest_app.config.ui.theme = theme;
     // TASK-97: Digest is its own place now (TASK-96 split it out of the
@@ -987,6 +1051,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
             format!("Tasks · Dispatches (running fixture){suffix}"),
             dispatches_running,
         ),
+        (format!("Missions · supervision states{suffix}"), missions),
         (
             format!("Backlog · Digest lens (default, with goal cards){suffix}"),
             digest,

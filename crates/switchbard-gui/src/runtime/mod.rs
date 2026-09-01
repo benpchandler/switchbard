@@ -41,17 +41,20 @@ pub struct OrderingState {
 }
 
 /// IA V2 (TASK-96, trajectory: *Information architecture V2*): the sidebar's
-/// five top-level places, replacing the old `ViewTab` surface-type tabs.
+/// top-level places, replacing the old `ViewTab` surface-type tabs.
 /// `Digest` is the landing place — every session starts here regardless of
 /// where the last one ended (see `HiveApp::new_headless`'s doc on why `place`
 /// is session-only, unlike `TasksView` and filter facets which are not
 /// persisted either but for the same "always land somewhere sane" reason).
+/// `Missions` is the read-only Mission Command supervision surface over
+/// xplan's versioned projection (see `ui::missions`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Place {
     #[default]
     Digest,
     Tasks,
     Command,
+    Missions,
     Goals,
     Ops,
 }
@@ -65,6 +68,7 @@ impl Place {
             Self::Digest => "Digest",
             Self::Tasks => "Tasks",
             Self::Command => "Command",
+            Self::Missions => "Missions",
             Self::Goals => "Goals",
             Self::Ops => "Ops",
         }

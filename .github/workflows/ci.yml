@@ -5,8 +5,16 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
+  XPLAN_SIDECAR_PYTHON: "3.12.11"
 
 jobs:
   ci:
@@ -39,3 +47,106 @@ jobs:
 
       - name: Run task — ${{ matrix.task }}
         run: mise run ${{ matrix.task }}
+
+  mission-sidecar:
+    name: mission-sidecar-${{ matrix.target }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: macos
+            arch: arm64
+            pin_target: macos-arm64
+            artifact: mission-sidecar-macos
+          - os: ubuntu-latest
+            target: linux
+            arch: x86_64
+            pin_target: linux-x86_64
+            artifact: mission-sidecar-linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.7"
+          enable-cache: false
+
+      - name: Build and verify exact xplan helper
+        run: |
+          set -euo pipefail
+          eval "$(python3 - <<'PY'
+          import json, shlex
+          pin=json.load(open('xplan-sidecar-pin.json'))
+          target=pin['targets']['${{ matrix.pin_target }}']
+          print(f"ARCHIVE_NAME={shlex.quote(target['archive_name'])}")
+          PY
+          )"
+          XPLAN_SOURCE="$RUNNER_TEMP/xplan-source"
+          XPLAN_OUTPUT="$RUNNER_TEMP/xplan-output"
+          export UV_PYTHON_INSTALL_DIR="$RUNNER_TEMP/uv-python"
+          export UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/xplan-sidecar-venv"
+          scripts/checkout-pinned-xplan.sh --destination "$XPLAN_SOURCE"
+          uv python install "$XPLAN_SIDECAR_PYTHON"
+          uv run --python "$XPLAN_SIDECAR_PYTHON" --locked --project "$XPLAN_SOURCE/sidecar" \
+            python "$XPLAN_SOURCE/scripts/build_mission_sidecar.py" \
+            --target host --output "$XPLAN_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/mission-sidecar-raw"
+          cp "$XPLAN_OUTPUT/$ARCHIVE_NAME" "$RUNNER_TEMP/mission-sidecar-raw/$ARCHIVE_NAME"
+          scripts/acquire-xplan-mission-sidecar.sh \
+            --pin xplan-sidecar-pin.json \
+            --target-os "${{ matrix.target }}" \
+            --arch "${{ matrix.arch }}" \
+            --source "$XPLAN_SOURCE" \
+            --artifact "$XPLAN_OUTPUT/$ARCHIVE_NAME" \
+            --mode ci \
+            --destination "$RUNNER_TEMP/mission-sidecar-artifact" \
+            | tee "$RUNNER_TEMP/acquire-summary.json"
+
+      - name: Upload raw helper archive
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-raw
+          path: ${{ runner.temp }}/mission-sidecar-raw
+          if-no-files-found: error
+
+      - name: Upload verified helper manifest tree
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/mission-sidecar-artifact
+          if-no-files-found: error
+
+      - name: Install mise tools
+        uses: jdx/mise-action@v4
+
+      - name: Cache cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-mission-sidecar-${{ hashFiles('mise.toml', '**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-mission-sidecar-
+
+      - name: Run live mission proofs against the verified helper
+        run: |
+          set -euo pipefail
+          HELPER="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["helper_path"])' "$RUNNER_TEMP/acquire-summary.json")"
+          STATE="$RUNNER_TEMP/mission-live-state"
+          mkdir -p "$STATE"
+          cargo run --quiet -p switchbard-gui --bin switchbard -- \
+            --mission-sidecar-journey queue \
+            --state-root "$STATE" \
+            --helper "$HELPER" \
+            --fixture sidecar-contract-review-v1
+          XPLAN_MISSION_HELPER="$HELPER" \
+            cargo test -p switchbard-gui --test mission_command_sidecar
+          XPLAN_MISSION_HELPER="$HELPER" XPLAN_MISSION_STATE="$STATE" \
+            cargo test -p switchbard-core --test mission_sidecar -- --exact \
+            mission_fresh_supervisor_recovers_pending_contract \
+            mission_projection_v2_enables_controls

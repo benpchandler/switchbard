@@ -46,6 +46,11 @@ all in one window, with no telemetry and no cloud account.**
 - 🎛️ **One control surface.** Start a service, stop a process group, kill an
   external squatter holding the port you need, or open `:port` in the browser of
   your choice.
+- 🛰️ **Mission Command supervision (first slice).** A Missions view over xplan's
+  local mission projection: review the exact mission contract, queue it, and
+  answer held decisions through a bundled one-shot helper - verified, spawned
+  per request, no runtime Python, and xplan stays the sole writer. Helper
+  health and projection freshness are reported independently.
 - 🔒 **Local-first.** No telemetry, no account, no background daemon. Config is a
   hand-editable TOML at `~/.switchbard/config.toml`.
 
@@ -89,6 +94,11 @@ bash scripts/bundle-mac.sh        # produces target/release/Switchbard.app
 open target/release/Switchbard.app
 ```
 
+Bundling embeds the pinned xplan mission sidecar and requires
+`XPLAN_SIDECAR_SOURCE` and `XPLAN_SIDECAR_ARCHIVE`; run `bash
+scripts/bundle-mac.sh` without them to print the exact recipe for producing
+both inputs.
+
 Or put the bare binary on your `PATH`:
 
 ```sh
@@ -127,7 +137,7 @@ started land in `$TMPDIR/switchbard-logs/`.
 
 ## How it works
 
-Switchbard is a three-crate Cargo workspace with no webview — a single native
+Switchbard is a four-crate Cargo workspace with no webview — a single native
 [egui](https://github.com/emilk/egui) /
 [eframe](https://github.com/emilk/egui/tree/master/crates/eframe) window:
 
@@ -141,6 +151,8 @@ Switchbard is a three-crate Cargo workspace with no webview — a single native
 - **`switchbard-dispatch`** — a thin headless binary reusing `switchbard-core`
   that drains the dispatch queue with the GUI closed. See
   [docs/INSTALL-DISPATCH.md](docs/INSTALL-DISPATCH.md).
+- **`switchbard-task`** — the `sb` CLI, a terminal/agent frontend for
+  Backlog-format tasks over the same native write layer as the GUI.
 
 ## Development
 

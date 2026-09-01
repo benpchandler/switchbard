@@ -11,6 +11,7 @@
 //! - `perf`     — opt-in runtime frame/render telemetry.
 
 pub mod app;
+pub mod mission_control;
 pub mod perf;
 pub mod runtime;
 pub mod sync;
