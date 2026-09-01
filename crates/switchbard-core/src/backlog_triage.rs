@@ -475,6 +475,7 @@ mod tests {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: crate::backlog::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![],
         };

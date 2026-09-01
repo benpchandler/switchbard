@@ -80,6 +80,14 @@ pub(super) fn render_task_detail(
             detail_lists::render_readonly_sections(ui, task);
             ui.add_space(10.0);
             detail_lists::render_refine(app, ui, &repo.key, task, editable, pending);
+            detail_lists::render_expedite(
+                ui,
+                &repo.key,
+                task,
+                &repo.repo.ranking,
+                editable,
+                pending,
+            );
             detail_lists::render_dispatch(app, ui, &repo.key, task, editable, pending);
             ui.add_space(10.0);
             detail_lists::render_archive(app, ui, &repo.key, task, editable, pending);

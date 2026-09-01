@@ -142,7 +142,7 @@ pub fn run_project(root: &Path, cmd: &ProjectCmd) -> Result<()> {
         ProjectCmd::List => {
             let repo = switchbard_core::load_backlog_repo(root)?;
             warn(&repo.warnings);
-            for project in flat_projects(&compute_hierarchy_rollup(&[&repo])) {
+            for project in flat_projects(&compute_hierarchy_rollup(&[&repo]), &repo.ranking) {
                 println!("{}", project_row(&project));
             }
             Ok(())
@@ -151,7 +151,10 @@ pub fn run_project(root: &Path, cmd: &ProjectCmd) -> Result<()> {
             let repo = switchbard_core::load_backlog_repo(root)?;
             warn(&repo.warnings);
             let rollup = compute_hierarchy_rollup(&[&repo]);
-            let Some(project) = flat_projects(&rollup).into_iter().find(|p| &p.name == name) else {
+            let Some(project) = flat_projects(&rollup, &repo.ranking)
+                .into_iter()
+                .find(|p| &p.name == name)
+            else {
                 anyhow::bail!(
                     "no project '{name}' — try `switchbard-task project list`, or define it with `switchbard-task project create`"
                 );
@@ -291,16 +294,23 @@ fn print_outcome(outcome: WriteOutcome, name: &str) {
     }
 }
 
-/// Every project across the rollup's initiative buckets, name-sorted — the
-/// flat view `project list`/`view` present (the nesting belongs to
-/// `initiative view` and the GUI lens).
-fn flat_projects(rollup: &switchbard_core::HierarchyRollup) -> Vec<ProjectRollup> {
+/// Every project across the rollup's initiative buckets — the flat view
+/// `project list`/`view` present (the nesting belongs to `initiative view`
+/// and the GUI lens). Ranked projects lead in rank order (trajectory:
+/// *Stack ranking*); the unranked rest keep the name sort.
+fn flat_projects(
+    rollup: &switchbard_core::HierarchyRollup,
+    ranking: &switchbard_core::RepoRanking,
+) -> Vec<ProjectRollup> {
     let mut projects: Vec<ProjectRollup> = rollup
         .initiatives
         .iter()
         .flat_map(|initiative| initiative.projects.iter().cloned())
         .collect();
-    projects.sort_by(|a, b| a.name.cmp(&b.name));
+    projects.sort_by(|a, b| {
+        let rank = |p: &ProjectRollup| ranking.project_rank(&p.name).unwrap_or(usize::MAX);
+        rank(a).cmp(&rank(b)).then_with(|| a.name.cmp(&b.name))
+    });
     projects
 }
 
@@ -360,12 +370,13 @@ fn project_view(project: &ProjectRollup, repo: &switchbard_core::BacklogRepo) ->
             out.push_str(&format!("\n{}\n", def.description));
         }
     }
-    let mut members: Vec<_> = repo
+    // `repo.tasks` already carries the computed rank order (ranked members
+    // first, then the status/priority/id fallback), so no re-sort here.
+    let members: Vec<_> = repo
         .tasks
         .iter()
         .filter(|task| task.project.as_deref() == Some(project.name.as_str()))
         .collect();
-    members.sort_by(|a, b| a.id.cmp(&b.id));
     if !members.is_empty() {
         out.push('\n');
         for task in members {

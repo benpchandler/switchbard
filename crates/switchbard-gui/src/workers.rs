@@ -1312,6 +1312,7 @@ mod tests {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: switchbard_core::RepoRanking::default(),
             loaded_at_unix,
             configured_statuses: vec![],
         }

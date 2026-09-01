@@ -21,6 +21,7 @@
 
 mod goals_cmd;
 mod hierarchy_cmd;
+mod rank_cmd;
 mod render;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -60,6 +61,13 @@ const MAX_ROOT_WALK: usize = 64;
                   GOALS: weekly numeric goals live in backlog/goals.yml (records, not \
                   markdown) - `goal create/list/view/check-in/roll`. Pace compares \
                   actual/target against the elapsed week: on-track, behind, met, missed.\n\n\
+                  RANKING: manual stack rank lives in backlog/ranking.yml (records, not \
+                  markdown). `rank project/task <X> --top|--before|--after <sibling>` ranks \
+                  within the sibling scope; `unrank` removes; `expedite <ID>` jumps a task \
+                  over the whole computed order (true interrupts only - a new task that \
+                  merely belongs high in its project takes `create --rank-top` instead). \
+                  `list` and `project list` print the computed order: expedited first, then \
+                  ranked, then everything else by status/priority/id.\n\n\
                   DISPATCH: flag a task for an autonomous run with \
                   `switchbard-task edit <ID> --add-label dispatch`."
 )]
@@ -121,6 +129,18 @@ enum Command {
     /// Weekly numeric goals tracked relative to target (backlog/goals.yml)
     #[command(subcommand)]
     Goal(goals_cmd::GoalCmd),
+    /// Stack-rank a project or task within its sibling scope
+    /// (backlog/ranking.yml); prints `Edited <X>` or `no changes`
+    #[command(subcommand)]
+    Rank(rank_cmd::RankCmd),
+    /// Remove a project or task from its ranked list
+    #[command(subcommand)]
+    Unrank(rank_cmd::UnrankCmd),
+    /// Add a task to the expedite lane - it jumps the entire computed
+    /// order (cross-project interrupts only)
+    Expedite { id: String },
+    /// Remove a task from the expedite lane
+    Unexpedite { id: String },
 }
 
 #[derive(Args)]
@@ -161,6 +181,8 @@ struct CreateArgs {
     /// Dependency task ids, comma-separated
     #[arg(long, value_delimiter = ',')]
     depends_on: Vec<String>,
+    #[command(flatten)]
+    rank: rank_cmd::CreatePlacementArgs,
 }
 
 #[derive(Args)]
@@ -275,6 +297,10 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Project(cmd) => hierarchy_cmd::run_project(&root, cmd),
         Command::Initiative(cmd) => hierarchy_cmd::run_initiative(&root, cmd),
         Command::Goal(cmd) => goals_cmd::run_goal(&root, cmd),
+        Command::Rank(cmd) => rank_cmd::run_rank(&root, cmd),
+        Command::Unrank(cmd) => rank_cmd::run_unrank(&root, cmd),
+        Command::Expedite { id } => rank_cmd::run_expedite(&root, id),
+        Command::Unexpedite { id } => rank_cmd::run_unexpedite(&root, id),
     }
 }
 
@@ -345,7 +371,7 @@ fn view(root: &Path, id: &str) -> Result<()> {
 }
 
 /// Case-insensitive id match, `TASK-` prefix optional on the query.
-fn find_task<'t>(tasks: &'t [BacklogTask], id: &str) -> Option<&'t BacklogTask> {
+pub(crate) fn find_task<'t>(tasks: &'t [BacklogTask], id: &str) -> Option<&'t BacklogTask> {
     let bare = bare_id(id);
     tasks
         .iter()
@@ -375,6 +401,9 @@ fn create(root: &Path, args: &CreateArgs) -> Result<()> {
     };
     let id = switchbard_core::create_backlog_task(root, &task)?;
     println!("{id}");
+    if let Some(place) = args.rank.to_placement_args() {
+        rank_cmd::rank_new_task(root, &id, &place)?;
+    }
     Ok(())
 }
 

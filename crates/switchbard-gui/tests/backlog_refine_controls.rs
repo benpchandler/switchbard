@@ -74,6 +74,7 @@ fn rail_app(task: BacklogTask) -> HiveApp {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: switchbard_core::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),

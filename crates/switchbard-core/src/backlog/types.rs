@@ -159,6 +159,10 @@ pub struct BacklogRepo {
     pub initiative_defs: Vec<super::hierarchy::InitiativeDef>,
     /// Weekly goals from `backlog/goals.yml` — see `super::goals`.
     pub goals: Vec<super::goals::GoalDef>,
+    /// The stack rank from `backlog/ranking.yml` — see `super::ranking`.
+    /// Already applied to `tasks`' order by `load_backlog_repo`; carried so
+    /// surfaces can render rank state (expedite badges, reorder controls).
+    pub ranking: super::ranking::RepoRanking,
     /// Milliseconds since the Unix epoch when this snapshot was read from
     /// disk (`unix_now`) — millisecond, not second, precision specifically
     /// so `workers::merge_backlog_repos` can use it to detect a stale
@@ -422,6 +426,7 @@ mod tests {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: crate::backlog::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: configured_statuses.iter().map(|s| s.to_string()).collect(),
         }

@@ -342,7 +342,7 @@ pub fn idle_dot() -> Color32 {
 // Painting via convex_polygon / circle_filled has the same visual weight,
 // costs nothing, and works regardless of font configuration.
 
-const ICON_SIZE: f32 = 14.0;
+pub const ICON_SIZE: f32 = 14.0;
 const DOT_RADIUS: f32 = 4.5;
 const DOT_RADIUS_SMALL: f32 = 2.5;
 /// Pixel gap between layered dots when count > 1.

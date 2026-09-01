@@ -592,3 +592,157 @@ fn goal_errors_name_the_next_step() {
         String::from_utf8_lossy(&missing_scope.stderr)
     );
 }
+
+#[test]
+fn rank_family_round_trips_and_orders_list_output() {
+    let dir = fixture_project();
+    let root = dir.path();
+    assert_eq!(
+        ok_stdout(root, &["create", "A1", "-m", "Alpha"]),
+        "TASK-1\n"
+    );
+    assert_eq!(
+        ok_stdout(root, &["create", "A2", "-m", "Alpha"]),
+        "TASK-2\n"
+    );
+    assert_eq!(
+        ok_stdout(root, &["create", "A3", "-m", "Alpha"]),
+        "TASK-3\n"
+    );
+    assert_eq!(ok_stdout(root, &["create", "B1", "-m", "Beta"]), "TASK-4\n");
+
+    assert_eq!(
+        ok_stdout(root, &["rank", "project", "Alpha", "--top"]),
+        "Edited Alpha\n"
+    );
+    assert_eq!(
+        ok_stdout(root, &["rank", "task", "2", "--top"]),
+        "Edited TASK-2\n",
+        "bare ids canonicalize to the stored id"
+    );
+    assert_eq!(
+        ok_stdout(root, &["rank", "task", "TASK-3", "--after", "task-2"]),
+        "Edited TASK-3\n"
+    );
+
+    let ids: Vec<String> = ok_stdout(root, &["list"])
+        .lines()
+        .map(|row| row.split('\t').next().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(
+        ids,
+        vec!["TASK-2", "TASK-3", "TASK-1", "TASK-4"],
+        "ranked Alpha stack first, then its unranked member, then Beta"
+    );
+
+    let projects: Vec<String> = ok_stdout(root, &["project", "list"])
+        .lines()
+        .map(|row| row.split('\t').next().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(projects, vec!["Alpha", "Beta"]);
+    assert_eq!(
+        ok_stdout(root, &["rank", "project", "Beta", "--top"]),
+        "Edited Beta\n"
+    );
+    let projects: Vec<String> = ok_stdout(root, &["project", "list"])
+        .lines()
+        .map(|row| row.split('\t').next().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(
+        projects,
+        vec!["Beta", "Alpha"],
+        "rank order leads name order"
+    );
+
+    assert_eq!(ok_stdout(root, &["unrank", "task", "3"]), "Edited TASK-3\n");
+    assert_eq!(ok_stdout(root, &["unrank", "task", "3"]), "no changes\n");
+    assert!(
+        root.join("backlog/ranking.yml").is_file(),
+        "ranking is a records file, not task frontmatter"
+    );
+}
+
+#[test]
+fn expedite_jumps_the_computed_order_and_create_places_new_tasks() {
+    let dir = fixture_project();
+    let root = dir.path();
+    assert_eq!(
+        ok_stdout(root, &["create", "A1", "-m", "Alpha"]),
+        "TASK-1\n"
+    );
+    assert_eq!(ok_stdout(root, &["create", "B1", "-m", "Beta"]), "TASK-2\n");
+    assert_eq!(
+        ok_stdout(root, &["rank", "project", "Alpha", "--top"]),
+        "Edited Alpha\n"
+    );
+
+    assert_eq!(ok_stdout(root, &["expedite", "2"]), "Edited TASK-2\n");
+    let ids: Vec<String> = ok_stdout(root, &["list"])
+        .lines()
+        .map(|row| row.split('\t').next().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(
+        ids,
+        vec!["TASK-2", "TASK-1"],
+        "the expedited task beats the ranked project"
+    );
+
+    // The incomplete-queue case: a new task takes a real position among its
+    // siblings at create time instead of being expedited.
+    assert_eq!(
+        ok_stdout(root, &["create", "Hot fix", "-m", "Alpha", "--rank-top"]),
+        "TASK-3\n",
+        "create's stdout stays the id alone"
+    );
+    let ids: Vec<String> = ok_stdout(root, &["list"])
+        .lines()
+        .map(|row| row.split('\t').next().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(ids, vec!["TASK-2", "TASK-3", "TASK-1"]);
+
+    assert_eq!(ok_stdout(root, &["unexpedite", "2"]), "Edited TASK-2\n");
+    assert_eq!(ok_stdout(root, &["unexpedite", "2"]), "no changes\n");
+}
+
+#[test]
+fn rank_errors_name_the_next_step_and_placement_is_required() {
+    let dir = fixture_project();
+    let root = dir.path();
+    assert_eq!(ok_stdout(root, &["create", "Only"]), "TASK-1\n");
+    assert_eq!(ok_stdout(root, &["create", "Finished"]), "TASK-2\n");
+    assert_eq!(
+        ok_stdout(root, &["edit", "TASK-2", "-s", "Done"]),
+        "Edited TASK-2\n"
+    );
+
+    let done = bin(root, &["expedite", "TASK-2"]);
+    assert_eq!(done.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&done.stderr).contains("only active, unfinished tasks"),
+        "{}",
+        String::from_utf8_lossy(&done.stderr)
+    );
+
+    let bad_anchor = bin(root, &["rank", "task", "1", "--after", "TASK-9"]);
+    assert_eq!(bad_anchor.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&bad_anchor.stderr).contains("list --all"),
+        "{}",
+        String::from_utf8_lossy(&bad_anchor.stderr)
+    );
+
+    let no_placement = bin(root, &["rank", "task", "1"]);
+    assert_ne!(
+        no_placement.status.code(),
+        Some(0),
+        "exactly one of --top/--before/--after is required"
+    );
+
+    let unknown_project = bin(root, &["rank", "project", "Ghost", "--top"]);
+    assert_eq!(unknown_project.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&unknown_project.stderr).contains("project list"),
+        "{}",
+        String::from_utf8_lossy(&unknown_project.stderr)
+    );
+}

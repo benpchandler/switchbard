@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "Projects lens stack-ranking smoke (400 tasks all ranked, debug)",
+  "scenario": "projects-rank-smoke",
+  "notes": "TASK-84/85 A/B: pre-change lens p95 24.854ms; post-change empty ranking 28.010ms; full rank data 28.376-28.502ms. Rank data ~0.4ms, arrow/pill widgets ~3.1ms at 400 rows (all ranked - worst case, feature is sparse). Dominant cost is pre-existing unvirtualized rows (TASK-13). Headless egui_kittest, debug build; first-frame outliers included in max.",
+  "source_csv": "/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-rank-perf-smoke-66287.csv",
+  "captured_at": "2026-09-01T00:07:34.178257-04:00",
+  "recorded_at": "2026-09-01T00:07:53.162025-04:00",
+  "git": {
+    "branch": "feature/stack-ranking-core",
+    "sha": "26de35f0d4beebead97eaca5e4d26a31a18debcd",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "all",
+    "last": null,
+    "source_frames": 204,
+    "matching_frames": 204,
+    "summarized_frames": 204
+  },
+  "counts_max": {
+    "rows": 0,
+    "expanded_rows": 0,
+    "services": 0,
+    "listeners": 0
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 23.751,
+      "p95": 28.489,
+      "p99": 29.528,
+      "max": 190.723
+    },
+    "top_bar": {
+      "p50": 0.411,
+      "p95": 0.485,
+      "p99": 0.566,
+      "max": 22.511
+    },
+    "central": {
+      "p50": 22.982,
+      "p95": 27.729,
+      "p99": 28.863,
+      "max": 151.502
+    },
+    "workspace": {
+      "p50": 0.0,
+      "p95": 0.0,
+      "p99": 0.0,
+      "max": 0.0
+    }
+  }
+}

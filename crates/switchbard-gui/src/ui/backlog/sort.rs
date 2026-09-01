@@ -487,6 +487,7 @@ mod tests {
                 project_defs: vec![],
                 initiative_defs: vec![],
                 goals: vec![],
+                ranking: switchbard_core::RepoRanking::default(),
                 loaded_at_unix: 0,
                 configured_statuses: vec![],
             },
@@ -690,6 +691,7 @@ mod tests {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: switchbard_core::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![],
         };

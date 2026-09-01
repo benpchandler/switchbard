@@ -17,7 +17,7 @@ use egui_kittest::Harness;
 use switchbard_core::config::Config;
 use switchbard_core::{
     AgentHook, AgentKind, BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource,
-    ContextKind, ContextScope, Repo, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL,
+    ContextKind, ContextScope, Repo, RepoRanking, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL,
     DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
@@ -70,6 +70,7 @@ fn board_lens_renders_kanban_columns_with_the_seeded_task() {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -152,6 +153,7 @@ fn global_search_overlay_finds_the_matching_task_across_repos() {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -614,6 +616,7 @@ fn backlog_view_surfaces_seeded_task() {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -721,6 +724,7 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
                 project_defs: vec![],
                 initiative_defs: vec![],
                 goals: vec![],
+                ranking: RepoRanking::default(),
                 loaded_at_unix: 0,
                 configured_statuses: vec![
                     "Icebox".into(),
@@ -776,6 +780,7 @@ fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -863,6 +868,7 @@ fn digest_leads_with_current_week_goals_and_omits_the_section_without_any() {
                 scope: None,
                 weeks,
             }],
+            ranking: switchbard_core::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec!["To Do".into(), "Done".into()],
         },
@@ -921,6 +927,7 @@ fn digest_offers_goal_creation_from_both_entry_points() {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec!["To Do".into(), "Done".into()],
         },
@@ -979,6 +986,7 @@ fn digest_offers_goal_creation_from_both_entry_points() {
                 scope: None,
                 weeks,
             }],
+            ranking: switchbard_core::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec!["To Do".into(), "Done".into()],
         },
@@ -1006,6 +1014,7 @@ fn portfolio_lens_renders_per_repo_health() {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -1065,6 +1074,7 @@ fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -1133,6 +1143,7 @@ fn parent_task_shows_rollup_and_expands_to_reveal_children() {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -1211,6 +1222,7 @@ fn saved_view_can_be_saved_and_deleted() {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -1353,6 +1365,7 @@ fn harness_on_task(task: BacklogTask) -> Harness<'static, HiveApp> {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -1552,6 +1565,7 @@ fn list_row_shows_the_dispatch_pill_for_a_queued_task() {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
@@ -1568,5 +1582,61 @@ fn list_row_shows_the_dispatch_pill_for_a_queued_task() {
     assert!(
         harness.query_all_by_label("QUEUED").next().is_some(),
         "the queued task's row should show the QUEUED pill"
+    );
+}
+
+/// Stack ranking (trajectory: *Stack ranking*): a ranked + expedited fixture
+/// in the Projects lens renders the expedite marker without any click, and
+/// the selected task's detail rail offers the lane's exit affordance.
+#[test]
+fn projects_lens_renders_the_expedite_marker_and_lane_toggle() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::Projects;
+    app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
+    let mut task = seeded_backlog_task();
+    task.project = Some("Ranked Project".to_string());
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), task.id.clone()));
+    let ranking = RepoRanking {
+        projects: vec!["Ranked Project".to_string()],
+        expedite: vec![task.id.clone()],
+        tasks: std::iter::once(("Ranked Project".to_string(), vec![task.id.clone()])).collect(),
+        ..RepoRanking::default()
+    };
+    app.backlog_repos.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogRepo {
+            root: PathBuf::from(REPO_PATH),
+            tasks: vec![task],
+            warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
+            goals: vec![],
+            ranking,
+            loaded_at_unix: 0,
+            configured_statuses: vec!["To Do".into(), "In Progress".into(), "Done".into()],
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness
+            .query_by_label("Ranked Project  ·  0/1 done")
+            .is_some(),
+        "the ranked project's group header renders"
+    );
+    // Two nodes is correct: the Projects-lens row pill and the detail
+    // rail's own lane pill both render the marker.
+    assert_eq!(
+        harness.query_all_by_label("expedited").count(),
+        2,
+        "an expedited task's row and detail rail both wear the lane marker"
+    );
+    assert!(
+        harness
+            .query_by_label("Remove from expedite lane")
+            .is_some(),
+        "the detail rail offers the lane's exit for the selected expedited task"
     );
 }

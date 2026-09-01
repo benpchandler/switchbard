@@ -302,14 +302,18 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
     before / after a sibling) and a newly discovered task lands properly
     ranked among its siblings instead of reflexively expedited. When the
     interrupt ships, it leaves the lane and the hierarchy is untouched.
-  - *Storage is `backlog/ordering.yml`*, one records file per repo owned by
-    `backlog/ordering.rs` (goals.yml precedent: records, not documents;
-    never hand-edit). Line-surgical writes through the shared write layer;
-    tolerant reads (malformed warns and loads empty). Rank does NOT live in
-    task frontmatter - inserting at a position would mass-rewrite every
-    file below it, breaking the byte-surgical discipline - and the old
-    CLI's `ordinal` stays unwritten. Entries naming done/archived/missing
-    ids are ignored on read and pruned on the next write to their scope.
+  - *Storage is `backlog/ranking.yml`*, one records file per repo owned by
+    `backlog/ranking.rs` (goals.yml precedent: records, not documents;
+    never hand-edit). Named `ranking`, not `ordering`, because the hub
+    repo's root-level `ordering.yml` (the cross-repo triage overlay,
+    `OrderingOverlay`) already exists as a different authority - two files
+    sharing one name would be a findability trap. Line-surgical writes
+    through the shared write layer; tolerant reads (malformed warns and
+    loads empty). Rank does NOT live in task frontmatter - inserting at a
+    position would mass-rewrite every file below it, breaking the
+    byte-surgical discipline - and the old CLI's `ordinal` stays
+    unwritten. Entries naming done/archived/missing ids are ignored on
+    read and pruned on the next write to their scope.
   - Surfaces (one slice, owner-chosen): a `rank` CLI verb family
     (`rank project <name>` / `rank task <id>` with `--top`/`--before`/
     `--after`, plus `unrank`), `expedite`/`unexpedite`, create-time

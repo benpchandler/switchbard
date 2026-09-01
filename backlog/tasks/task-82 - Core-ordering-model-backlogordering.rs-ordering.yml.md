@@ -1,9 +1,10 @@
 ---
 id: TASK-82
-title: 'Core ordering model: backlog/ordering.rs + ordering.yml'
-status: To Do
+title: 'Core ranking model: backlog/ranking.rs + ranking.yml'
+status: Done
 assignee: []
 created_date: '2026-08-31 22:01'
+updated_date: '2026-09-01 00:13'
 labels:
   - backlog
   - backend
@@ -20,8 +21,20 @@ The domain half of stack ranking (trajectory: 'Stack ranking'). A new switchbard
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 backlog/ordering.rs loads, validates, and line-surgically writes backlog/ordering.yml; a malformed file warns and loads empty
-- [ ] #2 compute_ranked_order (name TBD) yields expedite-first flattened repo order with sparse fallback to compare_tasks, covered by unit tests including empty/partial/stale-id fixtures
-- [ ] #3 Stale ids are ignored on read and pruned on the next write to their scope, proven by a test
-- [ ] #4 Ordering rides load_backlog_repo into snapshots with no new IO or worker
+- [x] #1 backlog/ordering.rs loads, validates, and line-surgically writes backlog/ordering.yml; a malformed file warns and loads empty
+- [x] #2 compute_ranked_order (name TBD) yields expedite-first flattened repo order with sparse fallback to compare_tasks, covered by unit tests including empty/partial/stale-id fixtures
+- [x] #3 Stale ids are ignored on read and pruned on the next write to their scope, proven by a test
+- [x] #4 Ordering rides load_backlog_repo into snapshots with no new IO or worker
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Shipped as backlog/ranking.rs + backlog/ranking.yml (renamed from the planned ordering.rs/ordering.yml: the hub's cross-repo triage overlay is already a root-level ordering.yml/OrderingOverlay, and two files sharing one name would be a findability trap - trajectory entry updated). Flatten refinement found by a failing test: sibling ranks are never compared across scopes; the comparator walks the two tasks' ancestor chains and compares true siblings only (rank, then today's comparator), so a parent always precedes its sub-issues and a partially ranked repo groups families. Fully unranked repos keep today's comparator byte-for-byte. Rank applies within the source/status tiers: expedite leads To Do but never floats above In Progress. Writes prune stale ids from the touched scope and fail closed on a malformed or restyled file.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+backlog/ranking.rs owns backlog/ranking.yml: tolerant reads (missing=empty, malformed warns+empty, load never fails), line-surgical scope-block writes that prune stale ids and fail closed on unrecognizable structure, RankPlacement (Top/Before/After) write ops for tasks and projects plus expedite/unexpedite, and sort_tasks - the computed repo-wide flatten (expedite lane, project rank, ancestor-chain sibling walk) applied inside load_backlog_repo so every snapshot rides it with no new worker. BacklogRepo carries the loaded RepoRanking for surfaces. 16 unit tests incl. round-trip, stale-prune, surgical-diff, fail-closed, and hierarchy-flatten fixtures; mise run ci green.
+<!-- SECTION:FINAL_SUMMARY:END -->
