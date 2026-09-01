@@ -415,6 +415,103 @@ fn shots_for_theme(theme: ThemeChoice) {
         snapshot(&mut h, &format!("backlog_dispatch_{state_name}{suffix}"));
     }
 
+    // TASK-101 (IA V2 Goals place): the index (pace chips, inline check-in,
+    // "automatic" for a measured goal, edit-target) and the goal page
+    // (this-week/history/Inputs cards) — mock §5's frozen reference.
+    {
+        let week = switchbard_core::week_monday_of(chrono::Local::now().date_naive())
+            .format("%Y-%m-%d")
+            .to_string();
+        let behind_goal = switchbard_core::GoalDef {
+            name: "Close out Stack Ranking".to_string(),
+            unit: "tasks".to_string(),
+            measure: switchbard_core::GoalMeasure::Tasks,
+            scope: Some("Stack Ranking".to_string()),
+            inputs: switchbard_core::GoalInputs {
+                tasks: vec!["TASK-61".to_string()],
+                projects: vec!["Stack Ranking".to_string()],
+            },
+            weeks: std::collections::BTreeMap::from([(
+                week.clone(),
+                switchbard_core::GoalWeek {
+                    target: 4,
+                    checkins: vec![],
+                },
+            )]),
+        };
+        let met_goal = switchbard_core::GoalDef {
+            name: "Dispatch throughput".to_string(),
+            unit: "tasks".to_string(),
+            measure: switchbard_core::GoalMeasure::Tasks,
+            scope: None,
+            inputs: switchbard_core::GoalInputs::default(),
+            weeks: std::collections::BTreeMap::from([(
+                week.clone(),
+                switchbard_core::GoalWeek {
+                    target: 8,
+                    checkins: vec![],
+                },
+            )]),
+        };
+        let manual_goal = switchbard_core::GoalDef {
+            name: "IA decision record".to_string(),
+            unit: "docs".to_string(),
+            measure: switchbard_core::GoalMeasure::Manual,
+            scope: None,
+            inputs: switchbard_core::GoalInputs::default(),
+            weeks: std::collections::BTreeMap::from([(
+                week,
+                switchbard_core::GoalWeek {
+                    target: 1,
+                    checkins: vec![],
+                },
+            )]),
+        };
+        let mut task_61 = sample_task(
+            "TASK-61",
+            "Landing worker: gh probe has no timeout",
+            "To Do",
+        );
+        task_61.project = None;
+        let mut task_70 = sample_task("TASK-70", "Freshly created task sometimes missing", "Done");
+        task_70.project = Some("Stack Ranking".to_string());
+        // Done *this* week, not `sample_task`'s fixed June date — otherwise
+        // the Inputs card's "done this week" count would read 0 despite a
+        // Done member task, which is misleading in a showcase screenshot.
+        task_70.updated_date = Some(format!(
+            "{} 12:00",
+            switchbard_core::week_monday_of(chrono::Local::now().date_naive()).format("%Y-%m-%d")
+        ));
+
+        let mut repo = project_with(vec![task_61.clone(), task_70]);
+        repo.goals = vec![behind_goal, met_goal, manual_goal];
+
+        let mut app = seeded_app();
+        app.config.ui.theme = theme;
+        app.place = Place::Goals;
+        app.backlog_repos
+            .lock()
+            .unwrap()
+            .insert(PathBuf::from(REPO_PATH), repo);
+        let mut h = harness(app);
+        h.run();
+        snapshot(&mut h, &format!("goals_index{suffix}"));
+
+        h.state_mut().goals_view.selected_goal = Some((
+            PathBuf::from(REPO_PATH),
+            "Close out Stack Ranking".to_string(),
+        ));
+        h.run();
+        snapshot(&mut h, &format!("goals_goal_page{suffix}"));
+
+        // Narrow-width stress (mock §7d): sidebar collapses to the icon
+        // rail; the index table still fits.
+        h.state_mut().goals_view.selected_goal = None;
+        h.set_size(egui::vec2(600.0, 700.0));
+        h.run_steps(3);
+        snapshot(&mut h, &format!("goals_index_narrow{suffix}"));
+    }
+
     // TASK-96 (IA V2 sidebar shell): the expanded places nav, with a
     // repo scope narrowed to one repo and every favorite kind populated so
     // the FAVORITES group, the scope selector's "1 repo" label, and every

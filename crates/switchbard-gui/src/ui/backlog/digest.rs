@@ -61,8 +61,41 @@ pub(crate) fn render_digest_place(app: &mut HiveApp, ui: &mut egui::Ui) {
     });
 
     let ctx = &ui.ctx().clone();
-    super::goal_create::render_goal_modal(app, ctx, &snap, &mut pending);
+    render_goal_modal_for_digest(app, ctx, &snap, &mut pending);
     super::apply_pending(app, ui, pending);
+}
+
+/// Builds this module's own `GoalModalRepoOption`/known-project-name inputs
+/// from the Digest's `Snapshot` and calls the now-shared (TASK-101)
+/// `goal_create::render_goal_modal`, queuing a create onto `pending` exactly
+/// as before the modal's signature stopped taking `Snapshot`/`Pending`
+/// directly — see that function's own doc for why (the Goals place needs the
+/// identical modal and cannot name either private type).
+fn render_goal_modal_for_digest(
+    app: &mut HiveApp,
+    ctx: &egui::Context,
+    snap: &Snapshot,
+    pending: &mut Pending,
+) {
+    let repo_options: Vec<super::goal_create::GoalModalRepoOption> = snap
+        .repos
+        .iter()
+        .map(|row| super::goal_create::GoalModalRepoOption {
+            key: row.key.clone(),
+            label: row.label(),
+        })
+        .collect();
+    let known_project_names = super::detail::known_project_names(snap);
+    let fixed_target = app.backlog_view.selected_repo.is_some();
+    if let Some((project_root, goal)) = super::goal_create::render_goal_modal(
+        app,
+        ctx,
+        &repo_options,
+        &known_project_names,
+        fixed_target,
+    ) {
+        pending.goal_create = Some((project_root, goal));
+    }
 }
 
 fn render_empty_digest(ui: &mut egui::Ui) {
@@ -77,34 +110,6 @@ fn render_empty_digest(ui: &mut egui::Ui) {
             .color(theme::muted_text()),
         );
     });
-}
-
-/// IA V2 (TASK-96) transition routing: the Goals **place**'s interim body —
-/// just `render_goals_section` (the Digest lens's own "This week's goals"
-/// section), given the same CentralPanel/Pending/modal plumbing
-/// `render_digest_place` gives the Digest place above. The decision record
-/// calls this out explicitly as interim: a real Goals index (create/edit
-/// affordances, inline check-in on every row) is a later fireteam's slice,
-/// not this one's.
-pub(crate) fn render_goals_place(app: &mut HiveApp, ui: &mut egui::Ui) {
-    let snap = Snapshot::collect(app);
-    let scoped = scoped_repos(app, &snap);
-    let mut pending = super::Pending::default();
-
-    let frame = egui::Frame::central_panel(&ui.ctx().style_of(ui.ctx().theme()))
-        .inner_margin(egui::Margin::same(12));
-    egui::CentralPanel::default().frame(frame).show(ui, |ui| {
-        egui::ScrollArea::vertical()
-            .id_salt("goals_place")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                render_goals_section(app, ui, &scoped, &mut pending);
-            });
-    });
-
-    let ctx = &ui.ctx().clone();
-    super::goal_create::render_goal_modal(app, ctx, &snap, &mut pending);
-    super::apply_pending(app, ui, pending);
 }
 
 pub(super) fn render_digest(

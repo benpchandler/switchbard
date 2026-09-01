@@ -232,8 +232,9 @@ fn each_place_routes_to_its_own_body() {
     harness.state_mut().place = Place::Goals;
     harness.run();
     assert!(
-        harness.query_by_label("+ Goal for this week").is_some(),
-        "Goals place's interim body is the Digest lens's own goals section"
+        harness.query_by_label("No goals this week").is_some(),
+        "Goals place (TASK-101) should render its own index, empty-state here \
+         since the fixture repos carry no goals.yml"
     );
 
     harness.state_mut().place = Place::Ops;

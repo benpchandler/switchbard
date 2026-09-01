@@ -387,6 +387,45 @@ pub fn check_in_goal(root: &Path, name: &str, week: &str, date: &str, value: i64
     write_lines(&path, &lines)
 }
 
+/// Change a goal's target for one week — the pencil "Edit target" affordance
+/// (Goals index row, goal page). Line-surgical like every other edit here:
+/// the week must already exist (`goal roll` adds a week key; this never
+/// creates one), and a target line this module didn't emit fails closed
+/// rather than guessing where to write.
+pub fn edit_goal_target(root: &Path, name: &str, week: &str, new_target: i64) -> Result<()> {
+    let name = validated_single_line("name", name)?;
+    let week = validated_week(week)?;
+    if new_target < 0 {
+        bail!("target must be zero or greater, got {new_target}");
+    }
+
+    let path = goals_path(root);
+    if !path.is_file() {
+        bail!("no goals defined yet — run `goal create` first");
+    }
+    let mut lines = read_lines(&path)?;
+    let (goal_start, goal_end) = goal_span(&lines, name)?;
+    let Some(week_line) = (goal_start..goal_end)
+        .find(|&i| lines[i].trim_end() == format!("{WEEK_KEY_INDENT}{week}:"))
+    else {
+        bail!("goal '{name}' has no week {week} — add it with `goal roll --week {week}`");
+    };
+    let target_line = week_line + 1;
+    let expected_prefix = format!("{WEEK_FIELD_INDENT}target: ");
+    if target_line >= goal_end || !lines[target_line].starts_with(&expected_prefix) {
+        bail!(
+            "{}: week {week} of goal '{name}' has no recognizable `target:` — restore the emitted structure before editing",
+            path.display()
+        );
+    }
+    let new_line = format!("{WEEK_FIELD_INDENT}target: {new_target}");
+    if lines[target_line] == new_line {
+        return Ok(()); // already this value — nothing to write
+    }
+    lines[target_line] = new_line;
+    write_lines(&path, &lines)
+}
+
 fn inputs_block(inputs: &GoalInputs) -> Vec<String> {
     // Always single-quote flow items: `yaml_scalar` decides quoting for
     // block scalars, but inside `[...]` an unquoted comma would split the
@@ -850,6 +889,59 @@ mod tests {
         let (goals, warnings) = load(&root);
         assert!(goals.is_empty(), "unknown measure skips the goal");
         assert!(warnings[0].contains("fortnightly"), "{warnings:?}");
+    }
+
+    #[test]
+    fn edit_target_is_surgical_idempotent_and_fails_closed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        create_goal(&root, &goal("Onboard users", "2026-09-01", 5)).expect("create");
+        create_goal(&root, &goal("Bystander", "2026-09-01", 2)).expect("create");
+        check_in_goal(&root, "Onboard users", "2026-09-01", "2026-09-02", 1).expect("check in");
+        let before = fs::read_to_string(root.join(GOALS_REL)).expect("read");
+
+        edit_goal_target(&root, "Onboard users", "2026-09-01", 8).expect("edit");
+        let after = fs::read_to_string(root.join(GOALS_REL)).expect("read");
+        let changed: Vec<&str> = after
+            .lines()
+            .zip(before.lines())
+            .filter(|(a, b)| a != b)
+            .map(|(a, _)| a)
+            .collect();
+        assert_eq!(
+            changed,
+            vec!["        target: 8"],
+            "exactly the target line changes, check-ins and the other goal survive"
+        );
+        let (goals, warnings) = load(&root);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let g = goals
+            .iter()
+            .find(|g| g.name == "Onboard users")
+            .expect("goal");
+        assert_eq!(g.weeks["2026-09-01"].target, 8);
+        assert_eq!(
+            g.weeks["2026-09-01"].checkins.len(),
+            1,
+            "check-ins untouched"
+        );
+
+        // Re-applying the same target writes nothing.
+        let unchanged = fs::read_to_string(root.join(GOALS_REL)).expect("read");
+        edit_goal_target(&root, "Onboard users", "2026-09-01", 8).expect("re-edit");
+        assert_eq!(
+            unchanged,
+            fs::read_to_string(root.join(GOALS_REL)).expect("read")
+        );
+
+        let err =
+            edit_goal_target(&root, "Onboard users", "2026-09-08", 3).expect_err("missing week");
+        assert!(err.to_string().contains("goal roll"), "{err}");
+        let err = edit_goal_target(&root, "Ghost", "2026-09-01", 3).expect_err("unknown goal");
+        assert!(err.to_string().contains("goal list"), "{err}");
+        let err = edit_goal_target(&root, "Onboard users", "2026-09-01", -1)
+            .expect_err("negative target");
+        assert!(err.to_string().contains("zero or greater"), "{err}");
     }
 
     #[test]
