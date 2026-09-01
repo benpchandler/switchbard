@@ -2,9 +2,10 @@
 //! probe data so they're easy to unit-test and stay out of the table render
 //! path.
 
-use crate::runtime::Activity;
+use crate::runtime::{Activity, WorktreeSizeEntry};
 use switchbard_core::{
-    humanize_age, CommitSummary, DriftDetail, DriftProbe, TrunkDetail, TrunkDivergence,
+    humanize_age, humanize_size, CommitSummary, DriftDetail, DriftProbe, LandedEvidence,
+    TrunkDetail, TrunkDivergence, WorktreeStaleness,
 };
 
 /// Format the dirty-cell tooltip: "N changed files" header + first ~10 raw
@@ -198,6 +199,56 @@ pub fn recent_commits_tooltip(commits: &[CommitSummary]) -> String {
     s
 }
 
+/// The Merged/NoUpstream/Live staleness badge's detail — TASK-100 medic
+/// pass: folded into the Git column's single compact chip
+/// (`git_chip::compute_git_chip`) instead of rendering as its own
+/// always-visible `staleness ...`/`staleness ?` fragment. Wording preserved
+/// verbatim from the retired always-visible badge (`ops::staleness`'s prior
+/// `render_staleness_badge`) so the hover still says exactly what the badge
+/// used to.
+pub fn staleness_tooltip(staleness: Option<&WorktreeStaleness>) -> String {
+    match staleness {
+        None => "Merged/NoUpstream/Live probe hasn't returned yet".to_string(),
+        Some(WorktreeStaleness::Unknown) => {
+            "git couldn't say whether this branch is merged or tracked".to_string()
+        }
+        Some(WorktreeStaleness::Merged { base, evidence }) => match evidence {
+            LandedEvidence::Ancestry => format!(
+                "Fully merged into {base} — a candidate for the bulk-remove sweep once clean"
+            ),
+            LandedEvidence::PatchEquivalent => format!(
+                "Already in {base} under different commits (rebase-merged) — a sweep \
+                 candidate once clean, though the branch itself is kept, since \
+                 `git branch -d` only looks at reachability"
+            ),
+        },
+        // The remote-drift section already says "no upstream" for this case
+        // (`ref_drift_tooltip`'s `NoUpstream` arm) — see `render_staleness_
+        // badge`'s original doc for why this fact gets one name, not two.
+        Some(WorktreeStaleness::NoUpstream) => String::new(),
+        Some(WorktreeStaleness::Live) => {
+            "Still ahead of/behind a configured upstream — probably active work".to_string()
+        }
+    }
+}
+
+/// The on-disk size label's detail — TASK-100 medic pass: folded into the
+/// Git column's single compact chip instead of rendering as its own
+/// always-visible `size ...`/`size ?` fragment. Wording preserved verbatim
+/// from the retired always-visible label (`ops::staleness`'s prior
+/// `render_size_label`).
+pub fn size_tooltip(entry: Option<&WorktreeSizeEntry>) -> String {
+    match entry {
+        None => "On-disk size is refreshed lazily in the background (du is slow)".to_string(),
+        Some(WorktreeSizeEntry { bytes: None, .. }) => {
+            "`du` failed for this worktree (missing dir, permission error)".to_string()
+        }
+        Some(WorktreeSizeEntry {
+            bytes: Some(bytes), ..
+        }) => format!("{} on disk ({bytes} bytes, du -sk)", humanize_size(*bytes)),
+    }
+}
+
 fn fetch_line(fetch_unix: Option<u64>) -> String {
     match fetch_unix {
         Some(t) => format!("Last `git fetch`: {}", humanize_age(t)),
@@ -233,5 +284,47 @@ fn truncation_suffix(shown: usize, total: usize, truncated: bool) -> String {
         format!(" (showing {shown} of {total})")
     } else {
         String::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn staleness_tooltip_never_repeats_the_no_upstream_chip_beside_it() {
+        // See the retired badge's own doc: the remote-drift section already
+        // says "no upstream" — this must stay empty, not print the word a
+        // second time next to it.
+        assert_eq!(staleness_tooltip(Some(&WorktreeStaleness::NoUpstream)), "");
+    }
+
+    #[test]
+    fn staleness_tooltip_distinguishes_pending_from_unknown() {
+        assert_ne!(
+            staleness_tooltip(None),
+            staleness_tooltip(Some(&WorktreeStaleness::Unknown))
+        );
+        assert!(staleness_tooltip(None).contains("hasn't returned yet"));
+        assert!(staleness_tooltip(Some(&WorktreeStaleness::Unknown)).contains("couldn't say"));
+    }
+
+    #[test]
+    fn size_tooltip_distinguishes_pending_failed_and_known() {
+        let pending = size_tooltip(None);
+        let failed = size_tooltip(Some(&WorktreeSizeEntry {
+            bytes: None,
+            computed_at: Instant::now(),
+        }));
+        let known = size_tooltip(Some(&WorktreeSizeEntry {
+            bytes: Some(2048),
+            computed_at: Instant::now(),
+        }));
+        assert!(pending.contains("refreshed lazily"));
+        assert!(failed.contains("failed"));
+        assert!(known.contains("2048 bytes"));
+        assert_ne!(pending, failed);
+        assert_ne!(failed, known);
     }
 }

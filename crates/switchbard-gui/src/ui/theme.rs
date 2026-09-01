@@ -820,6 +820,54 @@ pub fn painted_kill_button(ui: &mut egui::Ui) -> egui::Response {
     resp
 }
 
+/// Pencil icon — Rename a worktree's Switchbard label (TASK-100 medic pass:
+/// replaces the old `ui.small_button("Rename")` text button so the Actions
+/// cell's icon cluster is a uniform width row to row instead of drifting with
+/// the text — see `row::render_actions_cell`'s doc for the position-drift bug
+/// this fixes). Carries its own AccessKit label via `widget_info`, unlike the
+/// other painted icons in this file, which lean on the caller's
+/// `.on_hover_text` alone for their tooltip and are otherwise found by
+/// on-screen position in tests (see `bulk_remove_worktrees.rs`'s `click_at`):
+/// kittest has no other way to query a pencil silhouette by name.
+pub fn painted_rename_button(ui: &mut egui::Ui, color: Color32) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
+    let color = if resp.hovered() {
+        ui.visuals().strong_text_color()
+    } else {
+        color
+    };
+    let stroke = egui::Stroke::new(1.3, color);
+    let c = rect.center();
+    let painter = ui.painter();
+    // Shaft, tip to eraser.
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 3.5, c.y + 4.5),
+            egui::pos2(c.x + 3.0, c.y - 3.0),
+        ],
+        stroke,
+    );
+    // Nib, closing the tip into a point.
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 3.5, c.y + 4.5),
+            egui::pos2(c.x - 2.0, c.y + 3.0),
+        ],
+        stroke,
+    );
+    // Eraser cap.
+    painter.line_segment(
+        [
+            egui::pos2(c.x + 1.0, c.y - 4.5),
+            egui::pos2(c.x + 4.5, c.y - 1.0),
+        ],
+        stroke,
+    );
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Rename"));
+    resp
+}
+
 /// Non-interactive "↳" — a linked worktree's row in the Ops table indenting
 /// beneath its repo's primary row (TASK-100, mock §6's "hook-arrow branch"
 /// style). Painted for the same font-coverage reason as every other glyph in

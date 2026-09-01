@@ -10,7 +10,7 @@ use eframe::egui;
 /// Semantic kind of pill. Determines color + (optional) hover text. The
 /// caller still provides the body text since the wording often carries
 /// context (pid, port, uptime).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusKind {
     /// Healthy / running / clean.
     Good,

@@ -9,12 +9,11 @@
 
 use super::Snapshot;
 use crate::app::HiveApp;
-use crate::runtime::{is_retired_worktree, worktree_is_primary, WorktreeMeta, WorktreeSizeEntry};
-use crate::ui::components::{mono_label, status_pill, StatusKind};
+use crate::runtime::{is_retired_worktree, worktree_is_primary, WorktreeMeta};
 use crate::ui::theme;
 use eframe::egui;
 use std::path::PathBuf;
-use switchbard_core::{humanize_size, LandedEvidence, WorktreeStaleness};
+use switchbard_core::WorktreeStaleness;
 
 /// Which staleness class the Workspace filter chips currently narrow to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,80 +86,12 @@ pub(super) fn passes_staleness_filter(
     }
 }
 
-/// The staleness badge rendered inline on each worktree row, alongside the
-/// existing dirty/drift health pills (`render_health_inline` in `mod.rs`).
-pub(super) fn render_staleness_badge(ui: &mut egui::Ui, m: &WorktreeMeta) {
-    match &m.staleness {
-        None => {
-            ui.label(egui::RichText::new("staleness ...").color(theme::weak_text()))
-                .on_hover_text("Merged/NoUpstream/Live probe hasn't returned yet");
-        }
-        // Distinct from `None`: the probe ran and git could not answer. It
-        // used to fall through to the no-upstream class, quietly nominating a worktree for
-        // retirement on no evidence at all.
-        Some(WorktreeStaleness::Unknown) => {
-            status_pill(
-                ui,
-                StatusKind::Warn,
-                "staleness ?",
-                Some("git couldn't say whether this branch is merged or tracked"),
-            );
-        }
-        Some(WorktreeStaleness::Merged { base, evidence }) => {
-            // Same badge either way — the work is in the base and the worktree
-            // is a sweep candidate — but the hover distinguishes them, because
-            // a rebase-merged branch outlives its worktree: `git branch -d` is
-            // ancestry-based and refuses it.
-            let tip = match evidence {
-                LandedEvidence::Ancestry => format!(
-                    "Fully merged into {base} — a candidate for the bulk-remove sweep once clean"
-                ),
-                LandedEvidence::PatchEquivalent => format!(
-                    "Already in {base} under different commits (rebase-merged) — a sweep \
-                     candidate once clean, though the branch itself is kept, since \
-                     `git branch -d` only looks at reachability"
-                ),
-            };
-            status_pill(ui, StatusKind::Good, "merged", Some(&tip));
-        }
-        // Deliberately renders nothing. The condition is real, but the
-        // remote-drift chip a few pixels to the left already says exactly
-        // "no upstream" for it. This badge used to say "orphan" instead,
-        // which is how one fact came to have two names on one row; renaming
-        // it to match the chip would have printed the same phrase twice.
-        Some(WorktreeStaleness::NoUpstream) => {}
-        Some(WorktreeStaleness::Live) => {
-            status_pill(
-                ui,
-                StatusKind::Info,
-                "live",
-                Some("Still ahead of/behind a configured upstream — probably active work"),
-            );
-        }
-    }
-}
-
-/// The on-disk size label, sourced from the independently-cadenced `sizes`
-/// map (`workers::spawn_size`) rather than `WorktreeMeta` — see that map's
-/// doc for why size can't share the git-probe tick.
-pub(super) fn render_size_label(ui: &mut egui::Ui, entry: Option<&WorktreeSizeEntry>) {
-    match entry {
-        None => {
-            ui.label(egui::RichText::new("size ...").color(theme::weak_text()))
-                .on_hover_text("On-disk size is refreshed lazily in the background (du is slow — see workers::spawn_size)");
-        }
-        Some(WorktreeSizeEntry { bytes: None, .. }) => {
-            ui.label(egui::RichText::new("size ?").color(theme::weak_text()))
-                .on_hover_text("`du` failed for this worktree (missing dir, permission error)");
-        }
-        Some(WorktreeSizeEntry {
-            bytes: Some(bytes), ..
-        }) => {
-            mono_label(ui, &humanize_size(*bytes), None)
-                .on_hover_text(format!("{bytes} bytes on disk (du -sk)"));
-        }
-    }
-}
+// The staleness badge and the on-disk size label that used to render here
+// (`render_staleness_badge`, `render_size_label`) were folded into the Git
+// column's single compact chip by the TASK-100 medic pass — see
+// `git_chip.rs`'s module doc and `tooltips::staleness_tooltip`/`tooltips::
+// size_tooltip`, which carry their wording forward verbatim into the hover
+// detail instead of an always-visible `staleness ...`/`size ...` fragment.
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct StalenessCounts {
@@ -326,6 +257,7 @@ pub(super) fn render_filter_bar(ui: &mut egui::Ui, app: &mut HiveApp, snap: &Sna
 mod tests {
     use super::*;
     use crate::runtime::WorktreeMeta;
+    use switchbard_core::LandedEvidence;
 
     fn meta_with_staleness(staleness: Option<WorktreeStaleness>) -> WorktreeMeta {
         WorktreeMeta {

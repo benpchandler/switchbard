@@ -582,10 +582,12 @@ before building.
     Switchbard's own authority, the sweep removes the worktree, keeps the branch, and says
     so in the status line (`branch_left_rebase_merged`). Upgrading that to `-D` on the
     strength of patch equivalence is a deliberate, un-taken decision, not an oversight.
-- **Oversized UI file (Rule 4/6 debt):** `ui/workspace/mod.rs` (~1818 LOC) runs against
-  the repo's small-module ethos. Split it when next touched; do not pile new UI onto it.
-  (Mirrored in `power-of-10-overrides.md`.) The `ui/backlog.rs` half of this entry is
-  discharged: it is now `ui/backlog/`, 19 files, largest `board.rs` at ~883 LOC.
+- **Oversized UI file (Rule 4/6 debt) — discharged (TASK-100 medic pass):**
+  `ui/workspace/mod.rs` (~1818 LOC) is gone; TASK-100 replaced it wholesale with
+  `ui/places/ops/` (the merged one-row-per-worktree table). The mirrored entry in
+  `power-of-10-overrides.md` carries the file-by-file numbers. The `ui/backlog.rs` half
+  of this entry was already discharged: it is `ui/backlog/`, 19 files, largest `board.rs`
+  at ~883 LOC.
 - **Stale README hook reference (fixed on this branch):** `README.md` §Development
   previously referenced a tracked pre-push hook (`mise run hooks:install`) removed in
   commit `9ae32e2`, and described CI as macOS-only. Both corrected here: there is no

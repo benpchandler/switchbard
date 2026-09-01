@@ -29,12 +29,25 @@ relax the Power-of-10 floor here; the public-craft bar can only make it stricter
 
 ## Known debt (NOT exceptions — pay down, don't grandfather)
 
-- **Rule 4 (functions/modules short) — one oversized UI file:**
-  `crates/switchbard-gui/src/ui/workspace/mod.rs` (~1818 LOC) violates the repo's own
-  small-module ethos (standards Rule 6). This is **debt to split**, tracked in
-  `docs/product-trajectory.md` → Known gaps. Do not treat its existence as license
-  to add more; new UI work should carve toward smaller modules, not pile onto it.
+- **Rule 4 (functions/modules short) — oversized UI file, discharged (TASK-100):**
+  `crates/switchbard-gui/src/ui/workspace/mod.rs` (~1818 LOC) is gone. TASK-100 replaced
+  it with `ui/places/ops/` (merged Servers+Workspace into one row-per-worktree table);
+  the review that closed the PR caught this split adding a second oversized file
+  (`row.rs`, 898 LOC vs. the ~883 `board.rs` target below) and a medic pass carved it
+  further, the same way `ui/backlog.rs` did.
 
-  The former second entry here, `ui/backlog.rs` (~1710 LOC), has since been split
-  into `ui/backlog/` — 19 files, largest `board.rs` at ~883 LOC. That is the shape
-  the workspace split should aim for.
+  Current shape, `crates/switchbard-gui/src/ui/places/ops/` (9 files):
+  `ops.rs` 739 (place entry point + snapshot + modal wiring — not part of the original
+  debt, unchanged in scope by this split), `row.rs` 504 (row assembly: which cells, what
+  order, capped how many chips), `chips.rs` 480 (Services/Listening per-item chip
+  rendering + the tiered Open-button port resolution, carved out of `row.rs`),
+  `staleness.rs` 452, `landing.rs` 412, `tooltips.rs` 330 (gained the Git chip's
+  staleness/size hover text this pass folded out of `staleness.rs`), `git_chip.rs` 314
+  (new: the Git column's single compact chip, TASK-100 medic pass), `bulk_remove.rs` 183,
+  `create_worktree.rs` 128, `agent.rs` 72, `rename_worktree.rs` 68. Largest submodule
+  (`row.rs`, 504) is now well under the `board.rs` (~883) target that motivated this
+  entry — the split holds.
+
+  The former second entry here, `ui/backlog.rs` (~1710 LOC), was split earlier into
+  `ui/backlog/` — 19 files, largest `board.rs` at ~883 LOC — the shape both the
+  workspace and this Ops split aimed for.

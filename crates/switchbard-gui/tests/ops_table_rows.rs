@@ -15,7 +15,9 @@ use common::{harness, isolated_config_save_path};
 use egui_kittest::kittest::Queryable;
 use switchbard_core::config::Config;
 use switchbard_core::types::LocalListener;
-use switchbard_core::{AttributedListener, Repo, WorktreeRef};
+use switchbard_core::{
+    AttributedListener, DetectedService, Repo, ServerLikelihood, ServiceSource, WorktreeRef,
+};
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{Place, WorktreeMeta};
 
@@ -171,5 +173,97 @@ fn staleness_filter_narrows_the_table_rows() {
     assert!(
         harness.query_by_label("feat/b").is_none(),
         "an unprobed worktree must not survive a non-All staleness filter"
+    );
+}
+
+/// TASK-100 medic pass — MAJOR: a row busy enough to need more chips than
+/// fit used to lay them out with `horizontal_wrapped`, which grows onto a
+/// second line and paints straight through the table's fixed `ROW_HEIGHT`
+/// into the row below it (2026-09-01 screenshot review). Both the Services
+/// and Listening cells now cap what renders inline (`MAX_VISIBLE_SERVICE_
+/// CHIPS` / `MAX_VISIBLE_LISTENER_CHIPS` — a listener chip is wider, so its
+/// cap is smaller) and collapse the rest behind a single "+N" overflow chip
+/// instead of wrapping — this is the kittest half of the finding's
+/// "screenshot/kittest check proving no overpaint"; the screenshot half is
+/// `qa_screenshots.rs`'s `ops_table_busy_row` fixture.
+#[test]
+fn a_busy_row_caps_visible_chips_instead_of_wrapping_onto_a_second_line() {
+    let app = app_with_four_worktrees();
+    let target = PathBuf::from(format!("{REPO_PATH}-a"));
+
+    let services: Vec<DetectedService> = (0..5)
+        .map(|i| DetectedService {
+            name: format!("svc-{i}"),
+            command: format!("run svc-{i}"),
+            cwd_rel: PathBuf::from("."),
+            source: ServiceSource::Makefile,
+            source_file: PathBuf::from("Makefile"),
+            likelihood: ServerLikelihood::Server,
+            expected_port: None,
+        })
+        .collect();
+    app.services
+        .lock()
+        .unwrap()
+        .insert(target.clone(), services);
+
+    for (i, port) in [4001u16, 4002, 4003].into_iter().enumerate() {
+        app.state
+            .lock()
+            .unwrap()
+            .listeners
+            .push(AttributedListener {
+                listener: LocalListener {
+                    pid: 5000 + i as u32,
+                    pgid: 5000 + i as i32,
+                    port,
+                    command_name: format!("proc-{i}"),
+                    cwd: Some(target.clone()),
+                },
+                repo_name: Some(REPO_NAME.to_string()),
+                worktree_path: Some(target.clone()),
+                worktree_branch: Some("feat/a".to_string()),
+            });
+    }
+
+    let mut harness = harness(app);
+    harness.run();
+
+    // Services: 5 declared, capped at 3 visible inline chips.
+    for i in 0..3 {
+        assert!(
+            harness.query_by_label(&format!("svc-{i}")).is_some(),
+            "the first 3 services should render inline"
+        );
+    }
+    for i in 3..5 {
+        assert!(
+            harness.query_by_label(&format!("svc-{i}")).is_none(),
+            "services beyond the cap must not render as their own inline chip"
+        );
+    }
+    // Listening: 3 declared, capped at 1 visible inline chip — a listener
+    // chip (dot + port + open + kill) is much wider than a service chip, so
+    // its cap is smaller (`MAX_VISIBLE_LISTENER_CHIPS`); see that constant's
+    // doc for the measured widths behind the number.
+    assert!(
+        harness.query_by_label(":4001").is_some(),
+        "the first listener should render inline"
+    );
+    for port in [":4002", ":4003"] {
+        assert!(
+            harness.query_by_label(port).is_none(),
+            "listeners beyond the cap must collapse behind the overflow chip, not render their own"
+        );
+    }
+
+    // Both cells' overflow chips render the same literal text ("+2" — 5
+    // services capped at 3, and 3 listeners capped at 1): assert there are
+    // exactly two, one per cell, rather than a single ambiguous `query_by_
+    // label`.
+    assert_eq!(
+        harness.get_all_by_label("+2").count(),
+        2,
+        "one overflow chip for the hidden services, one for the hidden listeners"
     );
 }

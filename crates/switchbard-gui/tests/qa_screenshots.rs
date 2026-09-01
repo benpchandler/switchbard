@@ -767,6 +767,22 @@ fn shots_for_theme(theme: ThemeChoice) {
         h.run_steps(3);
         snapshot(&mut h, &format!("ops_table_narrow{suffix}"));
     }
+
+    // TASK-100 medic pass — MAJOR: a row busy enough to need more chips than
+    // fit used to `horizontal_wrapped` onto a second line, painting straight
+    // through the table's fixed `ROW_HEIGHT` into the row below it
+    // (2026-09-01 screenshot review). This is the visual half of the fix's
+    // evidence (the mechanical half is `ops_table_rows.rs`'s
+    // `a_busy_row_caps_visible_chips_instead_of_wrapping_onto_a_second_line`)
+    // — 5 services + 3 listeners on one worktree, proving the capped,
+    // single-line chip rows plus `.clip(true)` never paint outside their own
+    // row band, whatever sits above or below it.
+    {
+        let app = ops_screenshot_app_with_busy_row(theme);
+        let mut h = harness(app);
+        h.run();
+        snapshot(&mut h, &format!("ops_table_busy_row{suffix}"));
+    }
 }
 
 /// Two repos, each with a primary + one linked worktree; the primary of the
@@ -985,6 +1001,63 @@ fn ops_screenshot_app(theme: ThemeChoice) -> HiveApp {
             worktree_path: None,
             worktree_branch: None,
         });
+
+    app
+}
+
+/// `ops_screenshot_app` plus 5 services + 3 listeners piled onto its linked
+/// worktree — TASK-100 medic pass fixture for `ops_table_busy_row`, proving
+/// the capped Services/Listening cells stay inside their row band instead of
+/// wrapping into the row below (the bug the 2026-09-01 screenshot review
+/// flagged).
+fn ops_screenshot_app_with_busy_row(theme: ThemeChoice) -> HiveApp {
+    use switchbard_core::types::LocalListener;
+    use switchbard_core::{AttributedListener, DetectedService, ServerLikelihood, ServiceSource};
+
+    let app = ops_screenshot_app(theme);
+    let linked_path = PathBuf::from(format!("{REPO_PATH}/../switchbard-feature"));
+
+    let mut services = app
+        .services
+        .lock()
+        .unwrap()
+        .get(&linked_path)
+        .cloned()
+        .unwrap_or_default();
+    for name in ["svc-a", "svc-b", "svc-c", "svc-d", "svc-e"] {
+        services.push(DetectedService {
+            name: name.to_string(),
+            command: format!("cargo run -p {name}"),
+            cwd_rel: PathBuf::from("."),
+            source: ServiceSource::Makefile,
+            source_file: PathBuf::from("Makefile"),
+            likelihood: ServerLikelihood::Server,
+            expected_port: None,
+        });
+    }
+    app.services
+        .lock()
+        .unwrap()
+        .insert(linked_path.clone(), services);
+
+    for (i, port) in [7001u16, 7002, 7003].into_iter().enumerate() {
+        app.state
+            .lock()
+            .unwrap()
+            .listeners
+            .push(AttributedListener {
+                listener: LocalListener {
+                    pid: 7000 + i as u32,
+                    pgid: 7000 + i as i32,
+                    port,
+                    command_name: format!("worker-{i}"),
+                    cwd: Some(linked_path.clone()),
+                },
+                repo_name: Some(REPO_NAME.to_string()),
+                worktree_path: Some(linked_path.clone()),
+                worktree_branch: Some("feature/stack-ranking-core".to_string()),
+            });
+    }
 
     app
 }

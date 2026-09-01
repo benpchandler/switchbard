@@ -40,7 +40,9 @@ use switchbard_core::{
 
 mod agent;
 mod bulk_remove;
+mod chips;
 pub mod create_worktree;
+mod git_chip;
 pub mod landing;
 pub mod rename_worktree;
 mod row;
@@ -396,13 +398,13 @@ fn worktree_matches(w: &WorktreeRef, snap: &Snapshot, filter_lc: &str) -> bool {
     if let Some(svcs) = snap.services.get(&w.path) {
         if svcs
             .iter()
-            .any(|s| row::service_matches_filter(s, w, filter_lc))
+            .any(|s| chips::service_matches_filter(s, w, filter_lc))
         {
             return true;
         }
     }
     if let Some(list) = snap.listeners_by_wt.get(&w.path) {
-        if list.iter().any(|l| row::listener_matches(l, filter_lc)) {
+        if list.iter().any(|l| chips::listener_matches(l, filter_lc)) {
             return true;
         }
     }
@@ -420,7 +422,7 @@ pub fn unique_pgids_in_filter(app: &HiveApp) -> Vec<i32> {
         if show_only_managed && listener.worktree_path.is_none() {
             continue;
         }
-        if row::listener_matches(listener, &filter_lc) {
+        if chips::listener_matches(listener, &filter_lc) {
             set.insert(listener.listener.pgid);
         }
     }
@@ -667,7 +669,7 @@ mod tests {
     use switchbard_core::RemovalVerdict;
 
     /// The row's lavender "this holds work" signal (`has_unlanded_work`,
-    /// consumed by `row::render_trunk_chip` and the landing-stage chip) and
+    /// consumed by the landing-stage chip) and
     /// its `remove ok` badge (the Actions cell's trash icon color, via
     /// `RemovalSafety`) must never contradict each other — carried over
     /// verbatim from the retired swimlane view's identical regression test.
