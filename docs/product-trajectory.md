@@ -50,6 +50,26 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 - Worktree-first model (one repo → many worktrees) remains foundational; never collapse.
 - Per-surface `Status` feedback and progressive-disclosure workspace cards continue as
   the UI direction.
+- **Mission Command supervision (owner-approved 2026-08-31, build-to-learn slice).**
+  A top-level Missions view may read xplan's optional, versioned local projection at
+  `~/.xplan/mission-command-snapshot.json` (or the bounded
+  `XPLAN_MISSION_SNAPSHOT` override). It is a read model only: no mission writes, xplan
+  subprocess, LangGraph/Rust dependency, daemon, account, or telemetry. A dedicated
+  worker performs bounded polling off the render path; missing, unreadable, malformed,
+  unsupported, and stale snapshots remain explicit non-blocking states. The view shows
+  mission identities and lifecycle status, requirement proof, held decisions, approval
+  gates, units, feedback, evidence, reconciliation, and the next owner/action. It never
+  receives or renders mission/outcome prose, decision prompts, feedback summaries, lease
+  paths, evidence labels, or artifact locators. Active animation repaints only
+  while at least one visible mission is actually running. xplan remains the sole owner
+  of orchestration, persistence, and completion truth. The v1 read boundary is strict:
+  undeclared fields and contradictory lifecycle/proof combinations are malformed rather
+  than silently displayed. Structural identifiers are allowlisted and reject common
+  credential prefixes at delimiter boundaries; next actions are fixed producer text.
+  Evidence includes digest plus full source-revision provenance and is rejected unless
+  every record matches the mission's explicitly adopted Git revision. Developer-QA
+  fixture renders exercise state and stress coverage but are not human visual approval or
+  the final live queue and animated monitoring experience.
 - **Agents context + hooks (owner-approved 2026-08-28).** The former `Agent Context`
   top-level tab is `Agents`, with sibling `Context` and `Hooks` surfaces. Context keeps
   the existing file explorer. Hooks parses Claude user, shared-project, and

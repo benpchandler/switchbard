@@ -1104,6 +1104,8 @@ pub enum Glyph {
     Tasks,
     /// ⌁ — Command place.
     Command,
+    /// ⚑ — Missions place (Mission Command supervision).
+    Missions,
     /// ◎ — Goals place, and the Goal-kind favorite glyph.
     Goals,
     /// ⚙ — Ops place.
@@ -1177,6 +1179,28 @@ pub fn painted_glyph(ui: &mut egui::Ui, glyph: Glyph, color: Color32) -> egui::R
             ];
             painter.add(egui::Shape::convex_polygon(
                 pts.to_vec(),
+                color,
+                egui::Stroke::NONE,
+            ));
+        }
+        Glyph::Missions => {
+            // A pole with a filled triangular pennant — the mission flag,
+            // distinct from Command's bolt (local agents doing) versus this
+            // place's "standing missions under supervision".
+            painter.line_segment(
+                [
+                    egui::pos2(c.x - 4.0, c.y - 6.0),
+                    egui::pos2(c.x - 4.0, c.y + 6.0),
+                ],
+                stroke,
+            );
+            let pennant = [
+                egui::pos2(c.x - 4.0, c.y - 5.5),
+                egui::pos2(c.x + 5.0, c.y - 3.0),
+                egui::pos2(c.x - 4.0, c.y - 0.5),
+            ];
+            painter.add(egui::Shape::convex_polygon(
+                pennant.to_vec(),
                 color,
                 egui::Stroke::NONE,
             ));

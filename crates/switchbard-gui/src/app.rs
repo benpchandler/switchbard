@@ -52,10 +52,11 @@ use switchbard_core::dispatch_inspect::DispatchRun;
 use switchbard_core::instance_lock::{self, AcquireError, InstanceLock};
 use switchbard_core::{
     assess_branch_delete, collect_dirty_files, config, delete_branch, is_primary_worktree,
-    kill_dispatch_run, kill_pgid, load_agent_context_cache, load_backlog_repo, open_url,
-    probe_facts, remove_worktree, spawn_in_session, url_for_port, AgentContextMap, AgentSession,
-    AttachedProcesses, AttributedListener, BacklogRepo, BacklogTaskPatch, DetectedService, Fact,
-    KillOutcome, NewBacklogTask, Repo, WorktreeRef, BROWSER_APP_NAMES,
+    kill_dispatch_run, kill_pgid, load_agent_context_cache, load_backlog_repo,
+    mission_projection_path, open_url, probe_facts, remove_worktree, spawn_in_session,
+    url_for_port, AgentContextMap, AgentSession, AttachedProcesses, AttributedListener,
+    BacklogRepo, BacklogTaskPatch, DetectedService, Fact, KillOutcome, MissionProjectionLoad,
+    NewBacklogTask, Repo, WorktreeRef, BROWSER_APP_NAMES,
 };
 
 /// One `backlog` CLI writer's per-task serialization registry (task-42,
@@ -172,6 +173,11 @@ pub struct HiveApp {
     /// that worker's doc for why it can't share the git-probe tick or
     /// `sizes`' own cadence's Mutex).
     pub landing: Arc<Mutex<HashMap<PathBuf, LandingEntry>>>,
+    /// Optional xplan Mission Command snapshot, refreshed by its own bounded
+    /// worker. This cache is the GUI's only mission input; xplan remains the
+    /// writer and Switchbard remains usable in every load-error state.
+    pub mission_projection: Arc<Mutex<MissionProjectionLoad>>,
+    mission_projection_path: Option<PathBuf>,
     /// TASK-41: count of non-primary, clean, fully-merged worktrees, written
     /// once per git-probe tick by `workers::spawn_probe`. The top bar's "N
     /// retired worktrees" nudge reads this directly rather than recomputing
@@ -465,6 +471,8 @@ impl HiveApp {
             .and_then(|memory| memory.facets.get("staleness"))
             .and_then(|value| StalenessFilter::from_facet(value))
             .unwrap_or_default();
+        let mission_projection_path = mission_projection_path();
+        let mission_projection = initial_mission_projection(&mission_projection_path);
 
         Self {
             repos: Arc::new(Mutex::new(repos)),
@@ -483,6 +491,8 @@ impl HiveApp {
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             sizes: Arc::new(Mutex::new(HashMap::new())),
             landing: Arc::new(Mutex::new(HashMap::new())),
+            mission_projection: Arc::new(Mutex::new(mission_projection)),
+            mission_projection_path,
             retired_worktree_count: Arc::new(Mutex::new(0)),
             state: Arc::new(Mutex::new(ScanState::default())),
             scanner_kick: Kick::new(),
@@ -537,7 +547,7 @@ impl HiveApp {
         }
     }
 
-    /// Spawn the five background workers, wiring them to this app's shared
+    /// Spawn the background workers, wiring them to this app's shared
     /// state. Separated from `new_headless` so tests can build an app that
     /// never starts threads.
     fn spawn_workers(&self, ctx: egui::Context) {
@@ -557,6 +567,8 @@ impl HiveApp {
                 active_runs: self.active_runs.clone(),
                 sizes: self.sizes.clone(),
                 landing: self.landing.clone(),
+                mission_projection: self.mission_projection.clone(),
+                mission_projection_path: self.mission_projection_path.clone(),
                 retired_worktree_count: self.retired_worktree_count.clone(),
                 scanner_kick: self.scanner_kick.clone(),
                 probe_kick: self.probe_kick.clone(),
@@ -659,6 +671,7 @@ impl HiveApp {
                 AgentsSection::Context => "command.context",
                 AgentsSection::Hooks => "command.hooks",
             },
+            Place::Missions => "missions",
             Place::Goals => "goals",
             Place::Ops => "ops",
         }
@@ -2607,6 +2620,7 @@ impl HiveApp {
                 TasksView::Dispatches => ui::places::dispatches::render(self, ui),
             },
             Place::Command => ui::places::command::render(self, ui),
+            Place::Missions => ui::missions::render(self, ui),
             Place::Goals => ui::places::goals::render_goals_place(self, ui),
             Place::Ops => ui::places::ops::render(self, ui),
         }
@@ -2638,6 +2652,16 @@ impl HiveApp {
         if let Some(perf) = &mut self.perf {
             perf.finish_frame(frame_start.elapsed());
         }
+    }
+}
+
+fn initial_mission_projection(path: &Option<PathBuf>) -> MissionProjectionLoad {
+    match path {
+        Some(path) => MissionProjectionLoad::loading(path.clone()),
+        None => MissionProjectionLoad::Unavailable {
+            path: PathBuf::from("~/.xplan/mission-command-snapshot.json"),
+            message: "home directory is unavailable".to_string(),
+        },
     }
 }
 

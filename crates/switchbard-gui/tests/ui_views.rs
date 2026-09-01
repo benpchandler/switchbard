@@ -206,7 +206,7 @@ fn window_defaults_to_digest_place() {
     let harness = harness(seeded_app());
 
     assert_eq!(harness.state().place, Place::Digest);
-    // All five places are always offered in the sidebar nav.
+    // All places are always offered in the sidebar nav.
     assert!(
         harness.query_all_by_label("Digest").next().is_some(),
         "Digest place should be present (query_all: the active Digest place's own \
@@ -219,6 +219,10 @@ fn window_defaults_to_digest_place() {
     assert!(
         harness.query_by_label("Command").is_some(),
         "Command place should be present"
+    );
+    assert!(
+        harness.query_by_label("Missions").is_some(),
+        "Missions place should be present"
     );
     assert!(
         harness.query_by_label("Goals").is_some(),

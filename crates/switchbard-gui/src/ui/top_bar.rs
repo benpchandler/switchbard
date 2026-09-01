@@ -66,10 +66,10 @@ pub(crate) fn render(app: &mut HiveApp, ui: &mut egui::Ui, dispatch_summary: Dis
         // filter controls row survives, keyed off `app.place` (and, under
         // Tasks, `app.tasks_view`) instead of the old `ViewTab`, and only
         // renders for the places that actually have a top-bar-level filter:
-        // Ops and Tasks. Command keeps its own richer facet bar
+        // Ops, Tasks, and Missions. Command keeps its own richer facet bar
         // (`ui::agents::render_filters`); Digest and Goals are read-only
         // summary bodies with nothing here to filter.
-        if matches!(app.place, Place::Ops | Place::Tasks) {
+        if matches!(app.place, Place::Ops | Place::Tasks | Place::Missions) {
             ui.add_space(3.0);
             ui.horizontal_wrapped(|ui| {
                 render_filter_controls(app, ui);
@@ -85,6 +85,7 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
             TasksView::All => "matches task id, title, labels, assignee, or description",
             TasksView::Dispatches => "matches task id, title, repo, or branch",
         },
+        Place::Missions => "matches mission ID, status, next step, or owner",
         Place::Digest | Place::Command | Place::Goals => "",
     };
     filter_bar::search(ui, "top_bar_filter", app.filter_mut(), hint);
@@ -108,7 +109,7 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
                 app.staleness_filter = ops::staleness::StalenessFilter::All;
             }
         }
-        Place::Tasks => {
+        Place::Tasks | Place::Missions => {
             if filter_bar::clear(ui, !app.filter().is_empty()) {
                 app.filter_mut().clear();
             }

@@ -46,6 +46,7 @@
 //! | agent-context | 60s (was 30s), capped at `AGENT_CONTEXT_MAX_MISSING_PER_TICK` new worktrees per tick | ~47s in one unbroken burst pre-fix (cold scan of all 84 at once) | Recursive per-worktree filesystem walk; cheap in steady state (only rescans missing/>24h-stale entries) but a cold launch or adding several repos at once used to stall the thread for tens of seconds in a single tick. Capping the batch turns that into several bounded, interleaved ticks instead. |
 //! | backlog | 30s (unchanged) | ~0.15-0.2s over 6 repo *roots*, not per-worktree | Already cheap at this scale (one load per tracked repo, not per worktree) and users watch task state change in near-real-time — no evidence to slow this down. |
 //! | dispatch | 90s (unchanged) | negligible when the queue is empty (the common case); unbounded while a run is in flight (TASK-46 removed the wall-clock kill — see `spawn_dispatch`'s own doc) | Opt-in and rare by design — see its own doc. Unaffected by worktree count. |
+//! | mission projection | 2s focused / 16s unfocused | one bounded local JSON read, capped at 4 MiB / 500 missions | Decision and hold state should feel live, but the optional xplan snapshot never belongs on the render path. Missing and invalid files publish explicit cache states. |
 //! | size (TASK-41) | 300s, bounded catch-up batch of 5 | ~650ms **per worktree** average (measured 2026-08-19 via `examples/scan_cadence_audit.rs`, sampled 20/84 real worktrees, `du -sk`; a manual sweep of `~/Dev/.worktrees`'s larger checkouts saw individual calls up to ~1.5s) — an order of magnitude past every other per-worktree probe | `du` walks the whole tree (node_modules/target/build artifacts); see `worktree_size.rs`'s own doc. Never runs inline with the git-probe tick — its own worker, own cadence, catches up a bounded batch of never-yet-sized worktrees per tick (same shape as agent-context's cold-start batching below) rather than blocking on a full sweep. |
 //! | landing (feat/landing-stage) | 300s, bounded catch-up batch of 5 | `probe_push_state` is one free local `rev-parse`; `probe_pr_state` is ~1s of `gh` per branch by that function's own doc — same order of magnitude as `du`'s per-worktree cost above, so this worker reuses `size`'s exact period/batch rather than deriving a new pair | Only ever probes worktrees `spawn_probe` has already found to have unlanded commits (a clean worktree has no "why" to ask) with a real branch (a detached HEAD has nothing to push or open a PR from). Never runs inline with the git-probe tick, same reason `size` doesn't — see `spawn_landing`'s own doc and the hard constraint in `switchbard_core::landing`'s module doc: **never call `probe_pr_state` from the git-probe tick.** |
 //! | reaper | 2s (unchanged) | negligible, in-memory PGID check only | Not part of the worktree-count scaling problem this audit targets. |
@@ -79,8 +80,8 @@ use switchbard_core::{
     probe_worktree_lock, probe_worktree_size, save_agent_context_cache, scan_agent_context,
     scan_agent_sessions, scan_listeners, staleness_from_trunk, sweep_dead_sidecar, AgentContextMap,
     AgentSession, BacklogRepo, DetectedService, DispatchOptions, DriftProbe, Fact, LandingStage,
-    PushState, Repo, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL,
-    DISPATCH_LABEL,
+    MissionProjectionLoad, PushState, Repo, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL,
+    DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
@@ -128,6 +129,10 @@ const BACKLOG_PERIOD: Duration = Duration::from_secs(30);
 /// per queued task) — a short poll period would just mean more overlapping
 /// wakeups against a worker that's usually idle-checking an empty queue.
 const DISPATCH_PERIOD: Duration = Duration::from_secs(90);
+/// A tiny local JSON file with user-visible supervision state. Two seconds
+/// keeps decision/hold changes perceptibly fresh without putting file I/O on
+/// the render path; focus backoff stretches this to 16 seconds in background.
+const MISSION_PROJECTION_PERIOD: Duration = Duration::from_secs(2);
 const CONTEXT_CACHE_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24);
 const REAPER_PERIOD: Duration = Duration::from_secs(2);
 /// TASK-98: see this module's cadence-policy doc table for the "why 5s, not
@@ -261,6 +266,8 @@ pub struct Channels {
     /// refreshed by `spawn_landing` on its own slow cadence — see that
     /// worker's doc for why it can't share the git-probe tick.
     pub landing: Arc<Mutex<HashMap<PathBuf, LandingEntry>>>,
+    pub mission_projection: Arc<Mutex<MissionProjectionLoad>>,
+    pub mission_projection_path: Option<PathBuf>,
     pub scanner_kick: Kick,
     pub probe_kick: Kick,
     pub detection_kick: Kick,
@@ -282,7 +289,24 @@ pub fn spawn_all(ctx: egui::Context, ch: Channels) {
     spawn_size(ctx.clone(), ch.clone(), stagger_offset(6));
     spawn_landing(ctx.clone(), ch.clone(), stagger_offset(7));
     spawn_agent_sessions(ctx.clone(), ch.clone(), stagger_offset(8));
+    spawn_mission_projection(ctx.clone(), ch.clone());
     spawn_reaper(ctx, ch);
+}
+
+/// Optional xplan Mission Command projection: bounded file read off the UI
+/// thread, one cache swap, one repaint, then a focus-aware sleep. There is no
+/// subprocess and no path from this cache back to xplan.
+fn spawn_mission_projection(ctx: egui::Context, ch: Channels) {
+    let Some(path) = ch.mission_projection_path.clone() else {
+        return;
+    };
+    thread::spawn(move || loop {
+        let loaded = switchbard_core::load_mission_projection(&path);
+        *ch.mission_projection.lock().unwrap() = loaded;
+        ctx.request_repaint();
+        let focused = ctx.input(|i| i.focused);
+        thread::sleep(effective_period(MISSION_PROJECTION_PERIOD, focused));
+    });
 }
 
 /// Scanner: re-runs `lsof` every SCAN_PERIOD (or sooner if kicked), attributes
