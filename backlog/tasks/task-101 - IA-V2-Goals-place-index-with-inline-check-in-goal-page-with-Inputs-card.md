@@ -4,7 +4,7 @@ title: 'IA V2: Goals place - index with inline check-in + goal page with Inputs 
 status: In Review
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 05:30'
+updated_date: '2026-09-01 05:31'
 labels:
   - ia
   - gui
@@ -48,4 +48,6 @@ No filter-key changes: nothing here needs persisted facet state beyond session-o
 Evidence: mise run ci green. New tests: crates/switchbard-gui/tests/goals_place.rs (7 kittest tests - index rows/pace chips, empty state, manual check-in prefill+real-fixture-repo submit round trip, edit-target real-fixture-repo round trip, goal page cards, no-inputs state, attach/detach real-fixture-repo round trip) plus 1 new core test (edit_target_is_surgical_idempotent_and_fails_closed) and an updated nav_ia_v2.rs assertion (the interim-body check now asserts the real empty-state instead). Screenshots both themes + narrow width in docs/qa/screenshots/goals_index_*.png and goals_goal_page_*.png (via UPDATE_SNAPSHOTS=1 cargo test -p switchbard-gui --test qa_screenshots -- --ignored).
 
 Perf: no shared/perf-sensitive render path touched (Ops/Servers workspace, workers.rs cadence loops) - Goals place is a new, isolated module; app.rs edits are additive (new struct field + spawn methods + one routing-line change). No perf smoke run; noting the decision per CLAUDE.md's render-path rule rather than skipping silently.
+
+PR #81: https://github.com/benpchandler/switchbard/pull/81
 <!-- SECTION:NOTES:END -->
