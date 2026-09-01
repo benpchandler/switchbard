@@ -1,0 +1,31 @@
+# Stack ranking - written by switchbard (`rank` / `expedite` commands); records,
+# not documents - never hand-edit. See docs/product-trajectory.md ("Stack ranking").
+expedite: []
+projects:
+  - Information Architecture V2
+  - Task Queue
+  - EGUI Polish
+tasks:
+  EGUI Polish:
+    - TASK-78
+    - TASK-79
+  Information Architecture V2:
+    - TASK-76
+    - TASK-77
+  Task Queue:
+    - TASK-80
+root_tasks:
+  - TASK-39
+  - TASK-81
+  - TASK-38
+  - TASK-13
+  - TASK-61
+  - TASK-31
+  - TASK-36
+  - TASK-68
+subissues:
+  TASK-80:
+    - TASK-80.2
+    - TASK-80.3
+    - TASK-80.4
+    - TASK-80.1
