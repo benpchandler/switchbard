@@ -1,6 +1,11 @@
 [tools]
 rust = "1.95.0"
 
+[env]
+# Reuse rebuildable Cargo artifacts across linked worktrees. Callers such as CI
+# can keep a workspace-local target by setting CARGO_TARGET_DIR explicitly.
+CARGO_TARGET_DIR = { default = "{{ xdg_cache_home }}/switchbard/cargo-target" }
+
 [tasks.fmt]
 description = "Check Rust formatting"
 run = "cargo fmt --all -- --check"

@@ -14,6 +14,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_TARGET_DIR: target
   XPLAN_SIDECAR_PYTHON: "3.12.11"
 
 jobs:

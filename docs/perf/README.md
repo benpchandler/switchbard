@@ -9,8 +9,9 @@ Raw captures should stay out of git. Put them in `/tmp` or `docs/perf/raw/`
 To record a run:
 
 ```sh
+SWITCHBARD_TARGET_DIR="$(mise exec -- printenv CARGO_TARGET_DIR)"
 SWITCHBARD_PERF=1 SWITCHBARD_PERF_LOG=/tmp/switchbard-perf.csv \
-  target/release/Switchbard.app/Contents/MacOS/Switchbard
+  "$SWITCHBARD_TARGET_DIR/release/Switchbard.app/Contents/MacOS/Switchbard"
 
 python3 scripts/perf-summary.py \
   --csv /tmp/switchbard-perf.csv \

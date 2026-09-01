@@ -2,7 +2,7 @@
 #
 # Build Switchbard.app — a real macOS application bundle.
 #
-# Output: target/release/Switchbard.app (drag to /Applications)
+# Output: ${CARGO_TARGET_DIR:-target}/release/Switchbard.app
 #
 # This is the non-Developer-ID/un-notarized path used for alpha distribution.
 # We still ad-hoc sign the completed bundle so macOS sees a coherent app
@@ -17,7 +17,8 @@ BIN_NAME="switchbard"
 APP_NAME="Switchbard"
 ASSETS_DIR="crates/switchbard-gui/assets"
 ICNS="$ASSETS_DIR/icon.icns"
-TARGET_DIR="target/release"
+TARGET_ROOT="${CARGO_TARGET_DIR:-target}"
+TARGET_DIR="$TARGET_ROOT/release"
 APP_BUNDLE="$TARGET_DIR/${APP_NAME}.app"
 SIDECAR_SOURCE="${XPLAN_SIDECAR_SOURCE:-}"
 SIDECAR_ARCHIVE="${XPLAN_SIDECAR_ARCHIVE:-}"
