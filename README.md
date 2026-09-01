@@ -46,6 +46,11 @@ all in one window, with no telemetry and no cloud account.**
 - 🎛️ **One control surface.** Start a service, stop a process group, kill an
   external squatter holding the port you need, or open `:port` in the browser of
   your choice.
+- 🛰️ **Mission Command supervision (first slice).** A Missions view over xplan's
+  local mission projection: review the exact mission contract, queue it, and
+  answer held decisions through a bundled one-shot helper - verified, spawned
+  per request, no runtime Python, and xplan stays the sole writer. Helper
+  health and projection freshness are reported independently.
 - 🔒 **Local-first.** No telemetry, no account, no background daemon. Config is a
   hand-editable TOML at `~/.switchbard/config.toml`.
 
