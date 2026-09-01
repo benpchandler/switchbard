@@ -283,6 +283,46 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
     `goal roll` (explicitly cloning last week's targets into a new week key)
     is the recurrence story until demand says otherwise.
 
+- **Stack ranking (owner-approved 2026-08-31; Stack Ranking project).** Manual
+  stack rank within a repo: hierarchy-shaped, with a named exception lane.
+  - *Rank siblings within their parent scope* - projects against projects
+    within the repo, tasks within their project (repo-root tasks form one
+    sibling group), sub-issues within their parent task. Ranking is sparse:
+    only explicitly ranked items float, in rank order, above the unranked
+    rest, which keeps sorting by the existing computed comparator
+    (status - priority - id). A neglected rank list degrades gracefully
+    instead of lying.
+  - *The repo-wide "next up" order is computed, never stored* (roll-up
+    discipline): expedite lane first, then a top-down flatten - top-ranked
+    project's task stack, then the next project's, then unranked projects.
+  - *Expedite lane:* a short explicit list of task ids that jump the entire
+    computed order - true cross-project interrupts only. Owner insight
+    shaping v1: most historical queue-jumping was an *incomplete queue*,
+    not an emergency, so `create` takes rank-placement flags (top /
+    before / after a sibling) and a newly discovered task lands properly
+    ranked among its siblings instead of reflexively expedited. When the
+    interrupt ships, it leaves the lane and the hierarchy is untouched.
+  - *Storage is `backlog/ordering.yml`*, one records file per repo owned by
+    `backlog/ordering.rs` (goals.yml precedent: records, not documents;
+    never hand-edit). Line-surgical writes through the shared write layer;
+    tolerant reads (malformed warns and loads empty). Rank does NOT live in
+    task frontmatter - inserting at a position would mass-rewrite every
+    file below it, breaking the byte-surgical discipline - and the old
+    CLI's `ordinal` stays unwritten. Entries naming done/archived/missing
+    ids are ignored on read and pruned on the next write to their scope.
+  - Surfaces (one slice, owner-chosen): a `rank` CLI verb family
+    (`rank project <name>` / `rank task <id>` with `--top`/`--before`/
+    `--after`, plus `unrank`), `expedite`/`unexpedite`, create-time
+    placement flags; `list` and `project list` output honors the order.
+    GUI backlog surfaces sort by the computed order and get reorder
+    controls (move up/down on project and task rows, expedite toggle) -
+    run `design-state` before building the controls.
+  - This is the per-repo half of the unified-hub triage overlay (slice 1
+    above): the hub's cross-repo queue composes per-repo orders later.
+  - **Speculative, do NOT pre-build:** initiative-level ranking, the
+    cross-repo ordering overlay itself, drag-and-drop reorder (move
+    up/down buttons are v1 unless the design-state pass says otherwise).
+
 - **Refine — AI-assisted grooming, upstream of dispatch (owner-approved 2026-08-19).**
   A "Refine" button in the task detail rail, next to Dispatch. It feeds the task's
   current title/description/criteria/plan to a headless `claude -p` run at the repo
