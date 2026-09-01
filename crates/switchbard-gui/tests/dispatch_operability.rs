@@ -368,10 +368,7 @@ fn a_verifiably_live_run_offers_kill_and_never_dismiss() {
 /// forbids).
 #[test]
 fn a_failed_run_offers_dismiss_alongside_retry() {
-    let mut app = app_with(
-        vec![task("TASK-1", &[DISPATCH_FAILED_LABEL], "")],
-        vec![],
-    );
+    let mut app = app_with(vec![task("TASK-1", &[DISPATCH_FAILED_LABEL], "")], vec![]);
     app.place = Place::Tasks;
     app.tasks_view = TasksView::Dispatches;
     app.dispatches_view.facet = DispatchesFacet::Failed;

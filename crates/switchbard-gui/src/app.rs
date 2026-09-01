@@ -1652,7 +1652,12 @@ impl HiveApp {
     /// shape as [`Self::spawn_backlog_dispatch_toggle`]; kicks both workers so
     /// the row disappears on the next dispatch refresh rather than the next
     /// periodic tick.
-    pub fn spawn_dispatch_dismiss(&self, project_root: PathBuf, task_id: String, ctx: &egui::Context) {
+    pub fn spawn_dispatch_dismiss(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        ctx: &egui::Context,
+    ) {
         let status = self.backlog_status.clone();
         let repos = self.backlog_repos.clone();
         let backlog_kick = self.backlog_kick.clone();
