@@ -1,14 +1,14 @@
 ---
 id: TASK-102
 title: 'Docs: Task Queue section in README'
-status: To Do
+status: In Review
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 02:25'
+updated_date: '2026-09-01 02:28'
 labels:
   - docs
   - dogfood
-  - dispatch
+  - dispatched
 dependencies: []
 priority: low
 project: Task Queue
@@ -24,3 +24,11 @@ Add a '## Task Queue' section to README.md (after the existing feature overview)
 <!-- AC:BEGIN -->
 - [ ] #1 README.md contains a Task Queue section covering queue verbs, rank-ordered pickup, the orchestrator, and live progress
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Dispatch failed: unproven outcome: AC #1 unchecked: README.md contains a Task Queue section covering queue verbs, rank-ordered pickup, the orchestrator, and live progress
+
+Dispatch PR: https://github.com/benpchandler/switchbard/pull/76
+<!-- SECTION:NOTES:END -->

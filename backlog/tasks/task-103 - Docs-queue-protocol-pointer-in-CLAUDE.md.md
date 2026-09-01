@@ -1,14 +1,14 @@
 ---
 id: TASK-103
 title: 'Docs: queue protocol pointer in CLAUDE.md'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 02:25'
+updated_date: '2026-09-01 02:29'
 labels:
   - docs
   - dogfood
-  - dispatch
+  - dispatching
 dependencies: []
 priority: low
 project: Task Queue

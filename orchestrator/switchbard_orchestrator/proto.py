@@ -181,6 +181,10 @@ class Proto:
                     self.claude_bin, "-p",
                     "--permission-mode", "acceptEdits",
                     "--max-turns", str(self.max_turns),
+                    # The TASK-91 dogfood proved acceptEdits alone denies the
+                    # AC check-off command; the operating contract requires
+                    # it, so allow exactly the tools the contract names.
+                    "--allowedTools", f"Bash(git *) Bash({Path(self.task_bin).name} *)",
                 ],
                 stdin=prompt,
                 stdout=log,
