@@ -11,7 +11,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;
-use switchbard_core::mission_supervisor::MissionSupervisor;
+use switchbard_core::mission_supervisor::{MissionSupervisor, MissionSupervisorError};
 use switchbard_core::{MissionStatus, ProjectionFreshness};
 #[cfg(target_os = "macos")]
 use switchbard_gui::mission_control::empty_hello_request;
@@ -169,6 +169,33 @@ fn mission_control_health_and_projection_freshness_are_independent() {
     view.get_by_label("Tasks").click();
     view.run();
     assert_eq!(view.state().place, Place::Tasks);
+}
+
+#[test]
+fn mission_recovery_retries_after_a_transient_failure() {
+    let root = tempfile::tempdir().expect("recovery fixture root");
+    let helper = root.path().join("helper.sh");
+    executable(&helper, "#!/bin/sh\nread x\nexit 0\n");
+    let supervisor =
+        MissionSupervisor::from_test_fixture(&helper, root.path()).expect("fixture supervisor");
+    let mut model = ready_model();
+    model.supervisor = Some(supervisor);
+
+    let first = model
+        .begin_contract_recovery("mission-sidecar-v1", 1, "contract-review", 1)
+        .expect("recovery request");
+    assert!(first.is_some());
+    model.finish_contract_recovery(Err(MissionSupervisorError::Input("transient".to_owned())));
+    assert!(model.pending_contract.is_none());
+    assert!(matches!(model.helper_health, HelperHealth::Ready));
+
+    let retry = model
+        .begin_contract_recovery("mission-sidecar-v1", 1, "contract-review", 1)
+        .expect("recovery request after transient failure");
+    assert!(
+        retry.is_some(),
+        "one transient failure must not permanently dedupe the pending decision"
+    );
 }
 
 #[test]

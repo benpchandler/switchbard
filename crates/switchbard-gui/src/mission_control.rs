@@ -93,6 +93,7 @@ pub struct RecoveredContract {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct JourneySummary {
     pub phase: String,
+    pub command_id: String,
     pub mission_id: String,
     pub mission_revision: u64,
     pub global_revision: u64,
@@ -420,6 +421,7 @@ impl MissionControlModel {
         match result.and_then(|response| decode_pending(response.result())) {
             Ok(pending) => self.pending_contract = Some(pending),
             Err(error) => {
+                self.pending_recovery_identity = None;
                 if error.is_manifest_rejection() || error.is_bounded_failure() {
                     self.helper_health = HelperHealth::Unavailable(error.to_string());
                 }
@@ -761,8 +763,9 @@ fn run_fixture_queue(
         ],
         approval_required: true,
     };
-    let response = supervisor.invoke(queue_request(&draft, "fixture:queue".to_owned())?)?;
-    journey_summary("queue", response.result(), None)
+    let command_id = "fixture:queue".to_owned();
+    let response = supervisor.invoke(queue_request(&draft, command_id.clone())?)?;
+    journey_summary("queue", command_id, response.result(), None)
 }
 
 fn run_fixture_resume(
@@ -793,13 +796,15 @@ fn run_fixture_resume(
         requirements: pending.requirements.clone(),
         prompt: pending.prompt.clone(),
     };
-    let request = resume_request(&pending, answer, "fixture:resume".to_owned())?;
+    let command_id = "fixture:resume".to_owned();
+    let request = resume_request(&pending, answer, command_id.clone())?;
     let response = supervisor.invoke(request)?;
-    journey_summary("resume", response.result(), Some(recovered))
+    journey_summary("resume", command_id, response.result(), Some(recovered))
 }
 
 fn journey_summary(
     phase: &str,
+    command_id: String,
     result: &serde_json::Value,
     recovered_contract: Option<RecoveredContract>,
 ) -> Result<JourneySummary, MissionSupervisorError> {
@@ -818,6 +823,7 @@ fn journey_summary(
     }
     Ok(JourneySummary {
         phase: phase.to_owned(),
+        command_id,
         mission_id: text(result, "mission_id")?,
         mission_revision: number(result, "mission_revision")?,
         global_revision: number(result, "global_revision")?,

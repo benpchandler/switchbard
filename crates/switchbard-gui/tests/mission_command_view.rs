@@ -241,26 +241,46 @@ fn mission_tab_surfaces_active_held_proven_approval_and_done_states() {
 
 #[test]
 fn completion_fixtures_assign_the_correct_next_actor() {
-    let proven = mission("PROVEN", MissionStatus::OutcomeProven);
-    assert_eq!(proven.next_owner, "orchestrator");
-    assert_eq!(
-        proven.next_step,
-        "Reconcile the mission contract and evidence"
+    let app = app_with(ready(
+        vec![
+            mission("PROVEN", MissionStatus::OutcomeProven),
+            mission("APPROVAL", MissionStatus::ApprovalPending),
+            mission("DONE", MissionStatus::MissionDone),
+            mission("ACTIVE", MissionStatus::Running),
+        ],
+        ProjectionFreshness::Fresh { age_seconds: 3 },
+    ));
+    let mut view = harness(app);
+    view.run();
+
+    let expected = [
+        (
+            "Reconcile the mission contract and evidence",
+            Some("Owner: orchestrator"),
+        ),
+        (
+            "Grant or reject explicit completion approval",
+            Some("Owner: user"),
+        ),
+        ("No further mission action", None),
+        ("Monitor active unit evidence", Some("Owner: agent-alpha")),
+    ];
+    for (next_step, owner) in expected {
+        assert!(
+            view.query_all_by_label(next_step).next().is_some(),
+            "missing next step: {next_step}"
+        );
+        if let Some(owner) = owner {
+            assert!(
+                view.query_all_by_label(owner).next().is_some(),
+                "missing next actor: {owner}"
+            );
+        }
+    }
+    assert!(
+        view.query_all_by_label("Owner: ").next().is_none(),
+        "a done mission must render no next actor"
     );
-
-    let approval = mission("APPROVAL", MissionStatus::ApprovalPending);
-    assert_eq!(approval.next_owner, "user");
-    assert_eq!(
-        approval.next_step,
-        "Grant or reject explicit completion approval"
-    );
-
-    let done = mission("DONE", MissionStatus::MissionDone);
-    assert!(done.next_owner.is_empty());
-    assert_eq!(done.next_step, "No further mission action");
-
-    let active = mission("ACTIVE", MissionStatus::Running);
-    assert_eq!(active.next_step, "Monitor active unit evidence");
 }
 
 fn snapshot_path() -> PathBuf {

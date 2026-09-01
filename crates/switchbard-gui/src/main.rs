@@ -163,7 +163,7 @@ fn run_mission_sidecar_journey(args: &[String]) {
                 }
                 if let Some(screenshot) = arguments.screenshot.as_deref() {
                     if let Err(error) =
-                        render_acknowledged_journey(&arguments.state_root, screenshot)
+                        render_acknowledged_journey(&arguments.state_root, screenshot, &summary)
                     {
                         eprintln!("Switchbard mission journey rejected: {error}");
                         std::process::exit(2);
@@ -250,16 +250,31 @@ fn execute_journey(
     .map_err(|error| error.to_string())
 }
 
-fn render_acknowledged_journey(state_root: &Path, screenshot: &Path) -> Result<(), String> {
+fn render_acknowledged_journey(
+    state_root: &Path,
+    screenshot: &Path,
+    summary: &switchbard_gui::mission_control::JourneySummary,
+) -> Result<(), String> {
     let parent = screenshot
         .parent()
         .ok_or_else(|| "screenshot path has no parent".to_owned())?;
     std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let snapshot_path = state_root.join("mission-command-snapshot.json");
     std::env::set_var("EFRAME_SCREENSHOT_TO", screenshot);
     std::env::set_var(
         switchbard_core::mission_projection::MISSION_PROJECTION_ENV,
-        state_root.join("mission-command-snapshot.json"),
+        &snapshot_path,
     );
+    let projection = switchbard_core::load_mission_projection(&snapshot_path);
+    let switchbard_core::MissionProjectionLoad::Ready { freshness, .. } = &projection else {
+        return Err(format!(
+            "mission snapshot is not ready for evidence capture: {}",
+            snapshot_path.display()
+        ));
+    };
+    let freshness = freshness.clone();
+    let command_id = summary.command_id.clone();
+    let accepted_revision = summary.mission_revision;
     let cfg = config::load();
     let repos = cfg.repos.clone();
     let worktrees = expand_worktrees(&repos);
@@ -275,14 +290,16 @@ fn render_acknowledged_journey(state_root: &Path, screenshot: &Path) -> Result<(
         Box::new(move |cc| {
             let mut app = HiveApp::new(cc, cfg, repos, worktrees, None);
             app.place = switchbard_gui::runtime::Place::Missions;
+            *app.mission_projection
+                .lock()
+                .expect("mission projection lock") = Arc::new(projection);
             let mut model = app.mission_control.lock().expect("mission control lock");
             model.helper_health = switchbard_gui::mission_control::HelperHealth::Ready;
-            model.projection_freshness =
-                switchbard_core::ProjectionFreshness::Fresh { age_seconds: 0 };
+            model.projection_freshness = freshness;
             model.request_outcome =
                 switchbard_gui::mission_control::RequestOutcome::DecisionAcknowledged {
-                    command_id: "fixture:resume".to_owned(),
-                    accepted_revision: 2,
+                    command_id,
+                    accepted_revision,
                 };
             drop(model);
             Ok(Box::new(app))

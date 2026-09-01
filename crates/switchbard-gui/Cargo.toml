@@ -43,7 +43,7 @@ wgpu = { version = "30", default-features = false, features = ["metal"] }
 eframe = { version = "0.36", default-features = false, features = ["__screenshot", "accesskit", "default_fonts", "glow"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "x11", "wayland"] }
+eframe = { version = "0.36", default-features = false, features = ["__screenshot", "accesskit", "default_fonts", "glow", "x11", "wayland"] }
 
 [[bin]]
 name = "switchbard"

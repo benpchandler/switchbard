@@ -13,11 +13,16 @@ use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
 const TERMINATION_GRACE: Duration = Duration::from_millis(250);
+/// Upper bound on waiting for the stdio threads after the process group is
+/// reaped. A descendant that left the group (`setsid`) can keep the inherited
+/// pipe ends open past the group SIGKILL; the streams then never reach EOF,
+/// so the joins must carry their own deadline.
+const STREAM_JOIN_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone)]
 pub struct MissionSupervisorConfig {
@@ -204,9 +209,9 @@ impl MissionSupervisor {
         let status = wait_bounded(&mut child, pid, self.config.timeout);
         self.last_reaped
             .store(kill_process_group(pid), Ordering::SeqCst);
-        let _ = writer.join();
-        let stdout = join_reader(stdout)?;
-        let stderr = join_reader(stderr)?;
+        let _ = writer.recv_timeout(STREAM_JOIN_GRACE);
+        let stdout = join_reader(&stdout, STREAM_JOIN_GRACE)?;
+        let stderr = join_reader(&stderr, STREAM_JOIN_GRACE)?;
         classify_output(status?, stdout, stderr, &request)
     }
 
@@ -362,22 +367,31 @@ fn copy_allowed_environment(command: &mut Command) {
 fn spawn_writer(
     stdin: Option<std::process::ChildStdin>,
     input: Vec<u8>,
-) -> thread::JoinHandle<io::Result<()>> {
+) -> mpsc::Receiver<io::Result<()>> {
+    let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
-        let mut stdin = stdin.ok_or_else(|| io::Error::other("helper stdin unavailable"))?;
-        stdin.write_all(&input)?;
-        stdin.flush()
-    })
+        let result = match stdin {
+            Some(mut stdin) => stdin.write_all(&input).and_then(|()| stdin.flush()),
+            None => Err(io::Error::other("helper stdin unavailable")),
+        };
+        let _ = sender.send(result);
+    });
+    receiver
 }
 
 fn spawn_reader<R: Read + Send + 'static>(
     stream: Option<R>,
     limit: usize,
-) -> thread::JoinHandle<io::Result<BoundedOutput>> {
+) -> mpsc::Receiver<io::Result<BoundedOutput>> {
+    let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
-        let mut stream = stream.ok_or_else(|| io::Error::other("helper stream unavailable"))?;
-        read_bounded(&mut stream, limit)
-    })
+        let result = match stream {
+            Some(mut stream) => read_bounded(&mut stream, limit),
+            None => Err(io::Error::other("helper stream unavailable")),
+        };
+        let _ = sender.send(result);
+    });
+    receiver
 }
 
 fn read_bounded(stream: &mut impl Read, limit: usize) -> io::Result<BoundedOutput> {
@@ -443,12 +457,18 @@ fn kill_process_group(pgid: i32) -> bool {
 }
 
 fn join_reader(
-    reader: thread::JoinHandle<io::Result<BoundedOutput>>,
+    reader: &mpsc::Receiver<io::Result<BoundedOutput>>,
+    bound: Duration,
 ) -> Result<BoundedOutput, MissionSupervisorError> {
-    reader
-        .join()
-        .map_err(|_| MissionSupervisorError::Io("helper reader panicked".to_owned()))?
-        .map_err(io_error)
+    match reader.recv_timeout(bound) {
+        Ok(result) => result.map_err(io_error),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(MissionSupervisorError::Io(
+            "helper stream stayed open past the reap bound".to_owned(),
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(MissionSupervisorError::Io(
+            "helper reader panicked".to_owned(),
+        )),
+    }
 }
 
 fn classify_output(

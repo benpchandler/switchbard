@@ -143,6 +143,27 @@ fn mission_supervisor_bounds_kills_reaps_and_reuses_command_id() {
     }
 }
 
+#[test]
+fn mission_supervisor_bounds_reader_joins_when_a_descendant_escapes_the_group() {
+    let (_root, supervisor) = fixture(concat!(
+        "#!/bin/sh\n",
+        "read x\n",
+        "marker=\"${0%/*}/escaped\"\n",
+        "python3 -c \"import os,time; os.setsid(); open('$marker','w').close(); time.sleep(30)\" &\n",
+        "while [ ! -e \"$marker\" ]; do sleep 0.05; done\n",
+        "echo '{\"protocol_version\":\"xplan-mission-sidecar-v1\",\"request_id\":\"request-fixture:escapee\",\"command_id\":\"fixture:escapee\",\"result\":{}}'\n",
+    ));
+    let started = std::time::Instant::now();
+    let error = supervisor
+        .invoke(request(MissionCommand::Hello, "fixture:escapee", json!({})))
+        .expect_err("escaped descendant holding the pipe must not yield a trusted response");
+    assert!(error.is_ambiguous(), "misclassified escapee: {error:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "reader join was not bounded"
+    );
+}
+
 fn supervisor_failure_cases() -> [(&'static str, &'static str); 6] {
     [
         (
