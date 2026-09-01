@@ -1,14 +1,14 @@
 ---
 id: TASK-103
 title: 'Docs: queue protocol pointer in CLAUDE.md'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 02:29'
+updated_date: '2026-09-01 03:07'
 labels:
   - docs
   - dogfood
-  - dispatching
+  - dispatched
 dependencies: []
 priority: low
 project: Task Queue
@@ -24,3 +24,9 @@ One sentence in CLAUDE.md's backlog-management paragraph pointing at the sb queu
 <!-- AC:BEGIN -->
 - [ ] #1 CLAUDE.md mentions the queue verb family
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Dispatch PR: https://github.com/benpchandler/switchbard/pull/77
+<!-- SECTION:NOTES:END -->
