@@ -213,9 +213,23 @@ fn each_place_routes_to_its_own_body() {
     harness.state_mut().place = Place::Tasks;
     harness.state_mut().tasks_view = TasksView::All;
     harness.run();
+    // TASK-97: Tasks/All now renders the real Tasks place body (generic
+    // group-by, filter builder, rank sort, List/Board view modes) instead
+    // of the interim whole-legacy-Backlog-view routing TASK-96 left in
+    // place — the old lens-tab toolbar (Statistics included) is gone from
+    // here; see `ui::places::tasks`'s module doc for where that chrome
+    // went (nowhere — its code keeps compiling, unreached).
     assert!(
-        harness.query_by_label("Statistics").is_some(),
-        "Tasks/All should render the whole Backlog view, lens tabs included"
+        harness.query_by_label("Statistics").is_none(),
+        "Tasks/All must not carry the old lens-tab toolbar"
+    );
+    assert!(
+        harness.query_by_label("Group by").is_some(),
+        "Tasks/All should render the Tasks place's own group-by control"
+    );
+    assert!(
+        harness.query_by_label("First repo's own task").is_some(),
+        "Tasks/All should list the in-scope repo's task"
     );
 
     harness.state_mut().place = Place::Tasks;

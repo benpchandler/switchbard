@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use common::{app_with_items, harness, item, seeded_app, REPO_NAME, REPO_PATH};
 use eframe::egui;
-use egui_kittest::kittest::{self, NodeT, Queryable};
+use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use switchbard_core::config::Config;
 use switchbard_core::{
@@ -22,6 +22,7 @@ use switchbard_core::{
 };
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{AgentsSection, BacklogLens, Place, TasksView};
+use switchbard_gui::ui::places::tasks::state::TasksViewMode;
 
 fn seeded_backlog_task() -> BacklogTask {
     BacklogTask {
@@ -60,6 +61,7 @@ fn board_lens_renders_kanban_columns_with_the_seeded_task() {
     let mut app = seeded_app();
     app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::Board;
+    app.tasks_place.view_mode = TasksViewMode::Board;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
@@ -171,14 +173,24 @@ fn global_search_overlay_finds_the_matching_task_across_repos() {
         harness.query_by_label("Search all repos").is_some(),
         "the search window should be open"
     );
-    // Both the search overlay's result row and the underlying List lens's own
-    // row render the same "repo:id  title" label, so two nodes is correct.
+    // TASK-97: the search overlay's own result row still spells "repo:id
+    // title" (`search.rs`, unchanged) — but the underlying Tasks place's
+    // list row no longer repo-prefixes its title (`list::
+    // render_task_list_row`'s own note; the repo identifies itself via a
+    // separate badge column instead), so the two are now distinct labels,
+    // not the same one appearing twice.
     assert_eq!(
         harness
             .query_all_by_label(&format!("{REPO_NAME}:TASK-1  Seeded Backlog Task"))
             .count(),
-        2,
+        1,
         "the matching task should appear as a repo-prefixed search result"
+    );
+    assert!(
+        harness
+            .query_by_label("TASK-1  Seeded Backlog Task")
+            .is_some(),
+        "the underlying list row should also render, unprefixed"
     );
 
     harness.state_mut().backlog_view.search.query = "no-such-task-anywhere".to_string();
@@ -760,12 +772,16 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
         None,
         "the Backlog view defaults to the All-repos scope"
     );
+    // TASK-97: the row title never repo-prefixes (`list::
+    // render_task_list_row`'s own note) — a same-numbered task from a
+    // different repo is disambiguated by its own title text plus the
+    // separate repo-badge column asserted below, not a "repo:id" spelling.
     assert!(
-        harness.query_by_label("alpha:TASK-1  Alpha task").is_some(),
-        "row id is repo-prefixed in the All-repos scope"
+        harness.query_by_label("TASK-1  Alpha task").is_some(),
+        "row id renders in the All-repos scope"
     );
     assert!(
-        harness.query_by_label("beta:TASK-1  Beta task").is_some(),
+        harness.query_by_label("TASK-1  Beta task").is_some(),
         "a same-numbered task from a different repo renders as a distinct row"
     );
     assert!(
@@ -783,7 +799,7 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
 #[test]
 fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
     let mut app = seeded_app();
-    app.place = Place::Tasks;
+    app.place = Place::Digest;
     let mut in_progress_task = seeded_backlog_task();
     in_progress_task.status = "In Progress".to_string();
     app.backlog_repos.lock().unwrap().insert(
@@ -810,9 +826,9 @@ fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
     harness.run();
 
     assert_eq!(
-        harness.state().backlog_view.lens,
-        BacklogLens::Digest,
-        "Digest is the Backlog tab's default lens"
+        harness.state().place,
+        Place::Digest,
+        "Digest is its own place now (TASK-96/97)"
     );
     assert!(
         harness.query_all_by_label("In progress").next().is_some(),
@@ -838,10 +854,14 @@ fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
         .expect("the In progress section's View all button")
         .click();
     harness.run();
+    // TASK-97: Digest and Tasks are separate places — "View all" now
+    // navigates to the Tasks place directly (`ui::backlog::digest::
+    // render_section`'s click handler), rather than flipping a `lens`
+    // field that has no effect from `Place::Digest`.
     assert_eq!(
-        harness.state().backlog_view.lens,
-        BacklogLens::List,
-        "View all on a digest section should jump to the List lens"
+        harness.state().place,
+        Place::Tasks,
+        "View all on a digest section should navigate to the Tasks place"
     );
 }
 
@@ -867,7 +887,7 @@ fn digest_leads_with_current_week_goals_and_omits_the_section_without_any() {
     );
 
     let mut app = seeded_app();
-    app.place = Place::Tasks;
+    app.place = Place::Digest;
     app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogRepo {
@@ -915,7 +935,7 @@ fn digest_leads_with_current_week_goals_and_omits_the_section_without_any() {
 
     // And with no goals at all, no empty shell.
     let mut goalless = seeded_app();
-    goalless.place = Place::Tasks;
+    goalless.place = Place::Digest;
     let mut bare = common::harness(goalless);
     bare.run();
     assert!(
@@ -933,7 +953,7 @@ fn digest_leads_with_current_week_goals_and_omits_the_section_without_any() {
 fn digest_offers_goal_creation_from_both_entry_points() {
     // Zero goals (but a tracked backlog): the doorway button, no shell.
     let mut app = seeded_app();
-    app.place = Place::Tasks;
+    app.place = Place::Digest;
     app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogRepo {
@@ -986,7 +1006,7 @@ fn digest_offers_goal_creation_from_both_entry_points() {
         },
     );
     let mut app = seeded_app();
-    app.place = Place::Tasks;
+    app.place = Place::Digest;
     app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogRepo {
@@ -1016,48 +1036,11 @@ fn digest_offers_goal_creation_from_both_entry_points() {
     );
 }
 
-/// Portfolio lens (task-19): a read-only per-repo health table.
-#[test]
-fn portfolio_lens_renders_per_repo_health() {
-    let mut app = seeded_app();
-    app.place = Place::Tasks;
-    app.backlog_view.lens = BacklogLens::Portfolio;
-    app.backlog_repos.lock().unwrap().insert(
-        PathBuf::from(REPO_PATH),
-        BacklogRepo {
-            root: PathBuf::from(REPO_PATH),
-            tasks: vec![seeded_backlog_task()],
-            warnings: vec![],
-            project_defs: vec![],
-            initiative_defs: vec![],
-            goals: vec![],
-            ranking: RepoRanking::default(),
-            loaded_at_unix: 0,
-            configured_statuses: vec![
-                "Icebox".into(),
-                "To Do".into(),
-                "In Progress".into(),
-                "In Review".into(),
-                "Done".into(),
-            ],
-        },
-    );
-    let mut harness = harness(app);
-    harness.run();
-
-    assert!(
-        harness.query_all_by_label(REPO_NAME).next().is_some(),
-        "the repo name should render as a portfolio row"
-    );
-    assert!(
-        harness.query_by_label("Oldest open").is_some(),
-        "the oldest-open column header should render"
-    );
-    assert!(
-        harness.query_by_label("Last activity").is_some(),
-        "the last-activity column header should render"
-    );
-}
+// TASK-97 removed `portfolio_lens_renders_per_repo_health`: the Portfolio
+// lens is cut from the Tasks place (not part of List/Board, no equivalent
+// group-by/facet — see `ui::places::tasks`'s module doc) and has no home
+// anywhere else either. Its code keeps compiling (`ui::backlog::render`
+// stays `pub fn`) but nothing routes there anymore.
 
 /// Dependency/blocked visibility (task-18): a task with an open dependency
 /// should show a "blocked" marker in the List lens row and a per-dependency
@@ -1181,32 +1164,20 @@ fn parent_task_shows_rollup_and_expands_to_reveal_children() {
             .is_some(),
         "the parent row should show a 1/2 roll-up badge"
     );
+    // TASK-97 (decision record Q9 = A): sub-issues indent in place, always
+    // expanded — no per-parent collapse step, so both children are already
+    // visible with no `expanded_parents` state needed at all.
     assert!(
-        harness.query_by_label("TASK-1.2  Open child").is_none(),
-        "children stay collapsed until the parent is expanded"
+        harness.query_by_label("TASK-1.2  Open child").is_some(),
+        "children should already be visible — always expanded, no click needed"
+    );
+    assert!(
+        harness.query_by_label("TASK-1.1  Done child").is_some(),
+        "the done child should also already be visible"
     );
     assert!(
         harness.query_by_label("+ Subtask").is_some(),
         "the parent's detail pane should offer to create a subtask"
-    );
-
-    // The caret is the only unlabeled clickable control at the head of the
-    // parent's row; toggle expansion directly via view state instead of
-    // hunting for it by position, since it has no accessible label.
-    harness
-        .state_mut()
-        .backlog_view
-        .expanded_parents
-        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
-    harness.run();
-
-    assert!(
-        harness.query_by_label("TASK-1.2  Open child").is_some(),
-        "expanding the parent should reveal its children nested underneath"
-    );
-    assert!(
-        harness.query_by_label("TASK-1.1  Done child").is_some(),
-        "the done child should also render once expanded"
     );
 
     harness.get_by_label("+ Subtask").click();
@@ -1219,89 +1190,14 @@ fn parent_task_shows_rollup_and_expands_to_reveal_children() {
     assert!(harness.state().backlog_view.new_task.open);
 }
 
-/// Saved views (task-20): saving the current filter/lens combination under a
-/// name persists it to `Config::ui.saved_views` and marks it active;
-/// deleting it removes it from config. Uses the Statistics lens (no detail
-/// pane, so no ambiguous second "Save" button) to isolate the saved-views
-/// bar's own controls.
-#[test]
-fn saved_view_can_be_saved_and_deleted() {
-    let mut app = seeded_app();
-    app.place = Place::Tasks;
-    app.backlog_view.lens = BacklogLens::Statistics;
-    app.backlog_view.priority_filter = "high".to_string();
-    app.backlog_repos.lock().unwrap().insert(
-        PathBuf::from(REPO_PATH),
-        BacklogRepo {
-            root: PathBuf::from(REPO_PATH),
-            tasks: vec![seeded_backlog_task()],
-            warnings: vec![],
-            project_defs: vec![],
-            initiative_defs: vec![],
-            goals: vec![],
-            ranking: RepoRanking::default(),
-            loaded_at_unix: 0,
-            configured_statuses: vec![
-                "Icebox".into(),
-                "To Do".into(),
-                "In Progress".into(),
-                "In Review".into(),
-                "Done".into(),
-            ],
-        },
-    );
-    let mut harness = harness(app);
-    harness.run();
-
-    harness.state_mut().backlog_view.saved_view_name_draft = "High priority".to_string();
-    // The saved-views bar no longer has a Save button — Enter in the name
-    // field commits, so the button no longer spends its life disabled beside
-    // an empty field. That also retires the index-2 disambiguation this test
-    // used to need against the detail rail's two other "Save" buttons.
-    //
-    // The field carries no accessible label of its own, so it is located as
-    // the last TextInput in the window rather than by a fixed index (see the
-    // same note in `backlog_controls.rs`).
-    harness.run();
-    harness
-        .query_all(kittest::by().role(egui::accesskit::Role::TextInput))
-        .last()
-        .expect("the saved-views name field should render")
-        .focus();
-    harness.run();
-    harness.key_press(egui::Key::Enter);
-    harness.run();
-
-    assert_eq!(
-        harness.state().config.ui.saved_views.len(),
-        1,
-        "saving should persist one SavedView"
-    );
-    assert_eq!(
-        harness.state().config.ui.saved_views[0].priority_filter,
-        "high"
-    );
-    assert_eq!(harness.state().config.ui.saved_views[0].lens, "statistics");
-    assert_eq!(
-        harness.state().backlog_view.active_saved_view.as_deref(),
-        Some("High priority")
-    );
-
-    // Re-applying via the combo isn't exercised here: egui's ComboBox
-    // trigger has no accessible label in this harness (confirmed — it's
-    // absent from the accesskit tree entirely, not just unqueried), and its
-    // popup items only render once the trigger has been clicked open, which
-    // that same limitation blocks. `saved_views::apply_saved_view` itself is
-    // a handful of direct field assignments with no CLI call and no
-    // branching, unlike save/delete's config-mutation paths this test does
-    // cover end to end.
-    harness.get_by_label("Delete").click();
-    harness.run();
-    assert!(
-        harness.state().config.ui.saved_views.is_empty(),
-        "deleting the active saved view should remove it from config"
-    );
-}
+// TASK-97 removed `saved_view_can_be_saved_and_deleted`: it drove
+// `ui::backlog::saved_views::render_saved_views_bar`'s "Save current as…"
+// field, which the Tasks place does not reuse — per docs/product-
+// trajectory.md's "Information architecture V2" entry, saved filters are
+// now first-class named views surfaced through the sidebar's FAVORITES
+// group (TASK-96, `ui::nav`, `HiveApp::navigate_to_favorite`'s
+// `FavoriteKind::View` arm), not a toolbar row inside Tasks itself. See
+// `backlog_controls.rs`'s identical removal note for the full reasoning.
 
 /// Like [`harness_on_task`], but backed by a *real* task file in its own
 /// temp repo, for the two dispatch-toggle tests whose background thread
@@ -1603,13 +1499,14 @@ fn list_row_shows_the_dispatch_pill_for_a_queued_task() {
 }
 
 /// Stack ranking (trajectory: *Stack ranking*): a ranked + expedited fixture
-/// in the Projects lens renders the expedite marker without any click, and
-/// the selected task's detail rail offers the lane's exit affordance.
+/// in the Tasks place (grouped by Project — TASK-97 subsumed the old
+/// Projects lens into this generic group-by) renders the expedite marker
+/// without any click, and the selected task's detail rail offers the
+/// lane's exit affordance.
 #[test]
-fn projects_lens_renders_the_expedite_marker_and_lane_toggle() {
+fn tasks_place_grouped_by_project_renders_the_expedite_marker_and_lane_toggle() {
     let mut app = seeded_app();
     app.place = Place::Tasks;
-    app.backlog_view.lens = BacklogLens::Projects;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     let mut task = seeded_backlog_task();
     task.project = Some("Ranked Project".to_string());
@@ -1638,12 +1535,14 @@ fn projects_lens_renders_the_expedite_marker_and_lane_toggle() {
     harness.run();
 
     assert!(
-        harness
-            .query_by_label("Ranked Project  ·  0/1 done")
-            .is_some(),
+        harness.query_by_label("Ranked Project").is_some(),
         "the ranked project's group header renders"
     );
-    // Two nodes is correct: the Projects-lens row pill and the detail
+    assert!(
+        harness.query_by_label("0/1 done").is_some(),
+        "the group header's computed roll-up renders"
+    );
+    // Two nodes is correct: the Tasks place's own row pill and the detail
     // rail's own lane pill both render the marker.
     assert_eq!(
         harness.query_all_by_label("expedited").count(),

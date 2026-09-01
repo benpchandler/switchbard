@@ -501,9 +501,28 @@ fn render_section(
         ui.label(egui::RichText::new(format!("{}", rows.len())).color(theme::muted_text()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.small_button("View all").clicked() {
+                // TASK-97: Digest and Tasks are separate places now (TASK-96
+                // split them) — `backlog_view.lens`/`status_filter` alone no
+                // longer reach anything on screen from here, since the
+                // Tasks place reads its own `tasks_place.filters`, not the
+                // legacy single-value facets. Navigate there directly and
+                // translate the status into that place's filter-builder
+                // predicate model (replacing any existing Status predicate
+                // rather than stacking one per click).
+                app.place = crate::runtime::Place::Tasks;
+                app.tasks_view = crate::runtime::TasksView::All;
                 app.backlog_view.lens = BacklogLens::List;
                 if let Some(status) = view_all_status_filter {
                     app.backlog_view.status_filter = status.to_string();
+                    app.tasks_place.filters.retain(|predicate| {
+                        predicate.field != crate::ui::places::tasks::fields::TaskField::Status
+                    });
+                    app.tasks_place.filters.push(
+                        crate::ui::places::tasks::state::FilterPredicate {
+                            field: crate::ui::places::tasks::fields::TaskField::Status,
+                            value: status.to_string(),
+                        },
+                    );
                 }
             }
         });

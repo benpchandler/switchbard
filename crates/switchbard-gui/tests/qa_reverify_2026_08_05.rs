@@ -24,6 +24,7 @@ use switchbard_core::config::Config;
 use switchbard_core::{BacklogRepo, BacklogTask, BacklogTaskSource, Repo, WorktreeRef};
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey, Place};
+use switchbard_gui::ui::places::tasks::state::TasksViewMode;
 
 fn task(id: &str, title: &str, status: &str) -> BacklogTask {
     BacklogTask {
@@ -155,6 +156,7 @@ fn board_card_age_prefers_updated_date_over_created_date() {
 
     let mut app = list_app_with_tasks(vec![t]);
     app.backlog_view.lens = BacklogLens::Board;
+    app.tasks_place.view_mode = TasksViewMode::Board;
     let mut h = harness(app);
     h.run();
 
@@ -179,6 +181,7 @@ fn board_card_with_no_labels_and_no_dates_omits_the_line_entirely() {
     t.updated_date = None;
     let mut app = list_app_with_tasks(vec![t]);
     app.backlog_view.lens = BacklogLens::Board;
+    app.tasks_place.view_mode = TasksViewMode::Board;
     let mut h = harness(app);
     h.run();
 
@@ -322,35 +325,14 @@ fn milestone_and_label_filters_both_narrow_the_visible_set_together() {
     );
 }
 
-#[test]
-fn saved_view_round_trips_milestone_and_label_filters_through_a_real_reload() {
-    let mut h = harness(list_app_with_tasks(vec![task("TASK-1", "Task", "To Do")]));
-    h.state_mut().backlog_view.project_filter = "release-4.2".to_string();
-    h.state_mut().backlog_view.label_filter = "needs-triage".to_string();
-    h.run();
-
-    // Enter commits the name; the separate Save button is gone. The field
-    // has no accessible label of its own, so it is located as the last
-    // TextInput rather than by a fixed index (see `backlog_controls.rs`).
-    h.state_mut().backlog_view.saved_view_name_draft = "Release triage".to_string();
-    h.run();
-    h.query_all(kittest::by().role(egui::accesskit::Role::TextInput))
-        .last()
-        .expect("the saved-views name field should render")
-        .focus();
-    h.run();
-    h.key_press(egui::Key::Enter);
-    h.run();
-    h.state_mut().save_config();
-
-    let save_path = h.state().config_save_path.clone().unwrap();
-    let reloaded = switchbard_core::config::load_from(&save_path)
-        .expect("reloading the just-saved config should succeed");
-    assert_eq!(reloaded.ui.saved_views.len(), 1);
-    let view = &reloaded.ui.saved_views[0];
-    assert_eq!(view.project_filter, "release-4.2");
-    assert_eq!(view.label_filter, "needs-triage");
-}
+// TASK-97 removed `saved_view_round_trips_milestone_and_label_filters_
+// through_a_real_reload`: it drove `ui::backlog::saved_views::
+// render_saved_views_bar`'s "Save current as…" toolbar field, which the
+// Tasks place does not reuse — per docs/product-trajectory.md's
+// "Information architecture V2" entry, saved filters are now first-class
+// named views surfaced through the sidebar's FAVORITES group (TASK-96),
+// not a toolbar row inside Tasks itself. See `backlog_controls.rs`'s own
+// identical removal note for the full reasoning; not duplicated per-file.
 
 // ─── 4. Create modal: labels/assignee/milestone/dependencies actually
 //        persisting through the real CLI, typed via kittest (not

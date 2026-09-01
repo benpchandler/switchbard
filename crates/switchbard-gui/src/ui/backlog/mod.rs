@@ -60,25 +60,33 @@
 //! detail split for the same reason — the rail is the one place detail
 //! renders now, reusing `detail::render_task_detail` unchanged.
 
-mod board;
-mod create;
+// TASK-97: `board`, `create`, `list`, `rail`, `search`, `selection`, and
+// `sort` are widened to `pub(crate)` so `ui::places::tasks` (the new Tasks
+// place body) can reuse this module's row/board/detail-rail/create-modal/
+// search-overlay/selection machinery instead of forking it — the binding
+// directive's explicit instruction. Everything else here stays private/
+// `pub(super)`: it's either legacy-lens-only chrome the Tasks place cuts
+// (`toolbar`'s lens tabs, `projects`, `portfolio`, `stats`, `saved_views`)
+// or has no reuse need from outside this module.
+pub(crate) mod board;
+pub(crate) mod create;
 mod detail;
 mod detail_lists;
 pub(crate) mod digest;
 pub(crate) mod dispatch_ui;
 mod format;
 pub(crate) mod goal_create;
-mod list;
+pub(crate) mod list;
 mod portfolio;
 mod projects;
-mod rail;
+pub(crate) mod rail;
 mod saved_views;
-mod search;
-mod selection;
-mod sort;
+pub(crate) mod search;
+pub(crate) mod selection;
+pub(crate) mod sort;
 mod stats;
 pub mod status_migration;
-mod toolbar;
+pub(crate) mod toolbar;
 mod tree;
 
 use crate::app::HiveApp;
@@ -90,7 +98,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use switchbard_core::{BacklogRepo, BacklogTask, BacklogTaskPatch, NewBacklogTask, Repo};
 
-pub(in crate::ui::backlog) struct RepoRow {
+// TASK-97: `pub(crate)` (was `pub(in crate::ui::backlog)`) — `ui::places::
+// tasks` reuses `RepoRow`/`TaskRow`/`Snapshot` verbatim rather than forking
+// its own repo/task-row plumbing.
+pub(crate) struct RepoRow {
     pub key: PathBuf,
     pub repo: BacklogRepo,
     pub repo_name: String,
@@ -99,7 +110,7 @@ pub(in crate::ui::backlog) struct RepoRow {
 }
 
 impl RepoRow {
-    fn label(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         let mut label = format!("{} / {}", self.repo_name, self.worktree_label);
         if let Some(branch) = &self.branch {
             label.push_str(&format!(" · {branch}"));
@@ -126,7 +137,15 @@ impl RepoRow {
 /// One task paired with the repo it belongs to — the unit the list/detail
 /// panes render, regardless of whether the view is scoped to one repo or
 /// merging all of them.
-pub(in crate::ui::backlog) struct TaskRow<'a> {
+///
+/// `Copy` (TASK-97): both fields are shared references, so copying one is
+/// exactly as cheap as reborrowing — `ui::places::tasks` builds fresh
+/// `TaskRow`s on the fly while walking a group's sub-issue tree (same
+/// pattern `tree::render_task_tree_row` already uses via struct-literal
+/// construction) and benefits from not having to thread `&TaskRow` through
+/// every helper.
+#[derive(Clone, Copy)]
+pub(crate) struct TaskRow<'a> {
     pub repo: &'a RepoRow,
     pub task: &'a BacklogTask,
 }
@@ -137,12 +156,12 @@ impl TaskRow<'_> {
     }
 }
 
-pub(in crate::ui::backlog) struct Snapshot {
+pub(crate) struct Snapshot {
     pub repos: Vec<RepoRow>,
 }
 
 impl Snapshot {
-    fn collect(app: &HiveApp) -> Self {
+    pub(crate) fn collect(app: &HiveApp) -> Self {
         let backlog_repos = app.backlog_repos_snapshot();
         let repos = app.repos_snapshot();
         let worktrees = app.worktrees_snapshot();
@@ -200,7 +219,7 @@ impl Snapshot {
     /// Look up one repo by its worktree-root key, regardless of scope.
     /// Used wherever a single repo is needed even while the view as a
     /// whole is scoped to "All repos" (task creation target, detail pane).
-    pub(super) fn repo(&self, key: &Path) -> Option<&RepoRow> {
+    pub(crate) fn repo(&self, key: &Path) -> Option<&RepoRow> {
         self.repos.iter().find(|row| row.key == key)
     }
 }
@@ -227,10 +246,7 @@ pub(super) fn lens_filters(lens: BacklogLens) -> bool {
 /// project roots come straight from the tracked repo list, never from a
 /// worktree path, see `workers::backlog_repo_roots`), so the scope check is
 /// a plain set membership test.
-pub(in crate::ui::backlog) fn scoped_repos<'a>(
-    app: &HiveApp,
-    snap: &'a Snapshot,
-) -> Vec<&'a RepoRow> {
+pub(crate) fn scoped_repos<'a>(app: &HiveApp, snap: &'a Snapshot) -> Vec<&'a RepoRow> {
     let picked: Vec<&RepoRow> = match &app.backlog_view.selected_repo {
         None => snap.repos.iter().collect(),
         Some(path) => snap.repos.iter().filter(|row| &row.key == path).collect(),
@@ -297,7 +313,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
             // Only the lenses that actually apply the filter bar can claim
             // "N of M"; Digest and Statistics summarise the whole scope.
             let visible_count = lens_filters(app.backlog_view.lens).then_some(tasks.len());
-            toolbar::render_summary(app, ui, &snap, &mut pending, visible_count);
+            toolbar::render_summary(app, ui, &snap, &mut pending, visible_count, "Backlog");
             // Above the controls, not over them: the offer is information the
             // user can act on or ignore, and nothing below it is gated on an
             // answer — the board is already showing the truth either way.
@@ -384,7 +400,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
 
 /// Fall back to "All repos" if the scoped repo vanished (repo
 /// untracked, or no repos left at all) — never guess a replacement.
-fn reconcile_selected_repo(app: &mut HiveApp, snap: &Snapshot) {
+pub(crate) fn reconcile_selected_repo(app: &mut HiveApp, snap: &Snapshot) {
     if snap.repos.is_empty() {
         app.backlog_view.selected_repo = None;
         reset_task_selection(app);
@@ -400,7 +416,7 @@ fn reconcile_selected_repo(app: &mut HiveApp, snap: &Snapshot) {
 
 /// Fall back to the first visible task if the detail selection scrolled out
 /// of view (a filter changed, or the task itself vanished).
-fn reconcile_selected_task(app: &mut HiveApp, visible: &[TaskRow<'_>]) {
+pub(crate) fn reconcile_selected_task(app: &mut HiveApp, visible: &[TaskRow<'_>]) {
     let current_visible = app
         .backlog_view
         .selected_task
@@ -415,7 +431,7 @@ fn reconcile_selected_task(app: &mut HiveApp, visible: &[TaskRow<'_>]) {
 /// Clear task-level selection state (detail selection, bulk selection, the
 /// in-progress editor buffer). Does not touch `selected_repo` — callers
 /// that are changing scope set that separately.
-pub(in crate::ui::backlog) fn reset_task_selection(app: &mut HiveApp) {
+pub(crate) fn reset_task_selection(app: &mut HiveApp) {
     app.backlog_view.selected_task = None;
     app.backlog_view.bulk_selected_tasks.clear();
     app.backlog_view.bulk_selection_anchor = None;
@@ -437,7 +453,7 @@ fn render_empty(ui: &mut egui::Ui) {
 }
 
 #[derive(Default)]
-pub(in crate::ui::backlog) struct Pending {
+pub(crate) struct Pending {
     pub save: Option<(PathBuf, String, BacklogTaskPatch)>,
     /// One entry per repo a bulk action touches — a cross-repo bulk
     /// selection needs one `backlog` CLI invocation per repo root.
@@ -487,7 +503,7 @@ pub(in crate::ui::backlog) struct Pending {
     pub expedite_set: Option<(PathBuf, String, bool)>,
 }
 
-fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, pending: Pending) {
+pub(crate) fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, pending: Pending) {
     let ctx = &ui.ctx().clone();
     if let Some((project_root, task_id, patch)) = pending.save {
         app.spawn_backlog_save(project_root, task_id, patch, ctx);

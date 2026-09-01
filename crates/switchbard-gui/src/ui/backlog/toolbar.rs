@@ -47,13 +47,17 @@ pub(super) fn render_lens_tabs(app: &mut HiveApp, ui: &mut egui::Ui) {
 
 /// The summary line. `visible_count` is the number of tasks the current
 /// filters leave — `None` for a lens that does not filter (Digest,
-/// Statistics), where "N of M" would be a claim about nothing.
-pub(super) fn render_summary(
+/// Statistics), where "N of M" would be a claim about nothing. `heading` —
+/// TASK-97: the Tasks place reuses this for its own title row and needs
+/// "Tasks" (the mock's own heading), not the legacy "Backlog" every other
+/// call site still wants.
+pub(crate) fn render_summary(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
     snap: &Snapshot,
     pending: &mut Pending,
     visible_count: Option<usize>,
+    heading: &str,
 ) {
     let scoped = super::scoped_repos(app, snap);
     let task_count: usize = scoped.iter().map(|row| row.repo.tasks.len()).sum();
@@ -65,7 +69,7 @@ pub(super) fn render_summary(
     let ordering_warning = app.ordering_snapshot().warning;
 
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Backlog").heading().strong());
+        ui.label(egui::RichText::new(heading).heading().strong());
         ui.separator();
         // One count, and when a filter is narrowing the view it explains the
         // gap itself ("370 of 1509") rather than sitting next to a second,
@@ -225,7 +229,7 @@ fn render_bulk_progress(ui: &mut egui::Ui, progress: &BulkProgress) {
 /// refuses `task archive` on a Done task. A selection can legitimately span
 /// both, so the batch carries both halves rather than silently dropping one.
 #[derive(Default)]
-pub(super) struct ClearBatch {
+pub(crate) struct ClearBatch {
     /// Open tasks → `backlog/archive/tasks/`.
     pub archive: Vec<(PathBuf, Vec<String>)>,
     /// Done tasks → `backlog/completed/`.

@@ -10,6 +10,9 @@
 //! to their pre-existing `ui::backlog`/`ui::workspace`/`ui::agents` body
 //! until their own task lands.
 //!
+//! - [`tasks`] — TASK-97, landed: the Tasks place's real body — generic
+//!   group-by, the filter builder, rank sort, List/Board view modes,
+//!   sub-issue indent.
 //! - `digest` — TASK-99, landed: goal cards, in-flight work, the "needs a
 //!   human" attention feed.
 //! - `goals` — TASK-101, landed: the real Goals index and goal page.
@@ -22,12 +25,10 @@
 //!   view).
 //! - [`ops`] — TASK-100, landed: the Ops place (merged Servers/Workspace,
 //!   one row per worktree).
-//!
-//! Tasks place body is another fireteam's slice; nothing here licenses
-//! adding modules for it ahead of that work.
 
 pub mod command;
 pub mod digest;
 pub mod dispatches;
 pub(crate) mod goals;
 pub mod ops;
+pub mod tasks;

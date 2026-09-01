@@ -27,7 +27,7 @@ const COLLAPSED_WIDTH: f32 = 36.0;
 /// building its own — a Save click here queues into the exact same
 /// `apply_pending` call the lens content's own mutations do, so there's one
 /// CLI dispatch per frame, not two.
-pub(super) fn render_detail_rail(
+pub(crate) fn render_detail_rail(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
     snap: &Snapshot,

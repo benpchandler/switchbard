@@ -31,7 +31,11 @@ use switchbard_core::{
     BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource, Repo, WorktreeRef,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey, Place};
+use switchbard_gui::runtime::{
+    BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey, Place, TasksView,
+};
+use switchbard_gui::ui::places::tasks::fields::TaskField;
+use switchbard_gui::ui::places::tasks::state::TasksViewMode;
 
 fn task(id: &str, title: &str, status: &str) -> BacklogTask {
     BacklogTask {
@@ -801,7 +805,15 @@ fn search_result_row_click_selects_the_task_without_changing_lens() {
         task("TASK-1", "First", "To Do"),
         task("TASK-2", "Second thing", "To Do"),
     ]);
-    harness.state_mut().backlog_view.lens = BacklogLens::Statistics;
+    // TASK-97: `backlog_view.lens` is now a compat shim mirrored FROM
+    // `tasks_place.view_mode` every frame (`ui::places::tasks`'s own
+    // module doc) — it can no longer be set independently to an arbitrary
+    // value like the old `Statistics` lens, which has no home in the Tasks
+    // place at all. `view_mode` is the real "what the click has no business
+    // touching" state now; Board is the arbitrary choice here (List is
+    // this harness's default, so it's the one that would actually prove
+    // something didn't change it back).
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.state_mut().backlog_view.search.open = true;
     harness.state_mut().backlog_view.search.query = "Second".to_string();
     harness.run();
@@ -813,9 +825,9 @@ fn search_result_row_click_selects_the_task_without_changing_lens() {
 
     assert!(!harness.state().backlog_view.search.open);
     assert_eq!(
-        harness.state().backlog_view.lens,
-        BacklogLens::Statistics,
-        "selecting a search result should not change the active lens"
+        harness.state().tasks_place.view_mode,
+        TasksViewMode::Board,
+        "selecting a search result should not change the active view mode"
     );
     assert_eq!(
         harness.state().backlog_view.selected_task,
@@ -827,7 +839,11 @@ fn search_result_row_click_selects_the_task_without_changing_lens() {
 
 fn digest_harness_with(tasks: Vec<BacklogTask>) -> Harness<'static, HiveApp> {
     let mut app = seeded_app();
-    app.place = Place::Tasks;
+    // TASK-97: Digest is its own place now (TASK-96 split it out of the
+    // Tasks lens-tab toolbar) — these tests exercise the Digest lens's own
+    // content (`ui::backlog::digest::render_digest_place`), which no longer
+    // lives anywhere under `Place::Tasks`.
+    app.place = Place::Digest;
     app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogRepo {
@@ -866,8 +882,17 @@ fn digest_recently_done_view_all_jumps_to_list_filtered_to_done() {
         .click();
     harness.run();
 
-    assert_eq!(harness.state().backlog_view.lens, BacklogLens::List);
-    assert_eq!(harness.state().backlog_view.status_filter, "Done");
+    // TASK-97: Digest and Tasks are separate places — "View all" now
+    // navigates there directly and expresses the status as a Tasks-place
+    // filter-builder predicate rather than the legacy single-value facet.
+    assert_eq!(harness.state().place, Place::Tasks);
+    assert_eq!(harness.state().tasks_view, TasksView::All);
+    assert!(harness
+        .state()
+        .tasks_place
+        .filters
+        .iter()
+        .any(|predicate| predicate.field == TaskField::Status && predicate.value == "Done"));
 }
 
 /// Owner UX pass (2026-08-05): a Digest card click used to force-switch to
@@ -894,9 +919,9 @@ fn digest_card_click_selects_the_task_without_changing_lens() {
     harness.run();
 
     assert_eq!(
-        harness.state().backlog_view.lens,
-        BacklogLens::Digest,
-        "selecting a Digest card should not change the active lens"
+        harness.state().place,
+        Place::Digest,
+        "selecting a Digest card should not navigate away from Digest"
     );
     assert_eq!(
         harness.state().backlog_view.selected_task,
@@ -983,6 +1008,7 @@ fn board_card_click_selects_the_task_without_changing_lens() {
         task("TASK-2", "Second card", "To Do"),
     ]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.run();
 
     click_at_node_center(&mut harness, "Second card");
@@ -1013,6 +1039,7 @@ fn board_non_editable_card_click_still_selects_it() {
     let mut harness =
         list_harness_with_tasks(vec![task("TASK-2", "Active card", "To Do"), archived]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.state_mut().backlog_view.show_archived = true;
     harness.run();
 
@@ -1040,6 +1067,7 @@ fn board_shows_the_icebox_column_even_with_zero_icebox_tasks() {
     let mut app = seeded_app();
     app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::Board;
+    app.tasks_place.view_mode = TasksViewMode::Board;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
@@ -1119,6 +1147,7 @@ fn board_shows_the_icebox_column_even_with_zero_icebox_tasks() {
 fn board_columns_are_exactly_what_the_project_declares() {
     let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Ordinary task", "To Do")]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.run();
 
     for status in ["To Do", "In Progress", "Done"] {
@@ -1133,6 +1162,7 @@ fn board_columns_are_exactly_what_the_project_declares() {
 fn board_column_add_task_opens_the_composer_with_that_columns_status() {
     let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Ordinary task", "To Do")]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     // IA V2 (TASK-96): the sidebar nav (`ui::nav`) now reserves a persistent
     // ~184px on the left in every place, including Tasks — at the harness's
     // former default width all 5 status columns no longer fit on screen, so
@@ -1195,6 +1225,7 @@ fn board_column_add_task_opens_the_composer_with_that_columns_status() {
 fn board_card_checkbox_click_toggles_bulk_selection() {
     let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Selectable card", "To Do")]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.run();
 
     let key = (PathBuf::from(REPO_PATH), "TASK-1".to_string());
@@ -1255,6 +1286,7 @@ fn board_card_secondary_click_opens_the_bulk_context_menu() {
         task("TASK-2", "Right click me", "To Do"),
     ]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
     harness.run();
 
@@ -1308,6 +1340,7 @@ fn board_card_secondary_click_opens_the_bulk_context_menu() {
 fn board_card_checkbox_reflects_bulk_selection_state() {
     let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Selectable card", "To Do")]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.run();
 
     let key = (PathBuf::from(REPO_PATH), "TASK-1".to_string());
@@ -1344,6 +1377,7 @@ fn board_card_shows_labels_and_a_humanized_age() {
 
     let mut app = list_app_with_tasks(vec![labeled]);
     app.backlog_view.lens = BacklogLens::Board;
+    app.tasks_place.view_mode = TasksViewMode::Board;
     let mut harness = harness(app);
     harness.run();
 
@@ -1371,6 +1405,7 @@ fn board_card_omits_the_label_line_when_there_are_no_labels() {
 
     let mut app = list_app_with_tasks(vec![plain]);
     app.backlog_view.lens = BacklogLens::Board;
+    app.tasks_place.view_mode = TasksViewMode::Board;
     let mut harness = harness(app);
     harness.run();
 
@@ -1407,6 +1442,7 @@ fn board_drag_and_drop_between_columns_queues_a_status_change() {
         task("TASK-2", "Draggable card", "To Do"),
     ]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
     harness.run();
 
@@ -1616,6 +1652,7 @@ fn board_pending_move_overlay_renders_card_in_destination_column_before_save_res
         task("TASK-2", "Draggable card", "To Do"),
     ]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
     harness.run();
 
@@ -1726,6 +1763,7 @@ fn board_drag_failure_rolls_back_the_card_and_reloads_the_cache() {
     app.config_save_path = Some(isolated_config_save_path());
     app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::Board;
+    app.tasks_place.view_mode = TasksViewMode::Board;
     app.backlog_view.sort_key = BacklogTaskSortKey::Task;
     app.backlog_view.selected_repo = Some(root.to_path_buf());
     let repo = switchbard_core::load_backlog_repo(root).expect("load the real fixture repo");
@@ -2039,6 +2077,7 @@ fn board_redrop_onto_the_same_pending_target_column_is_a_no_op() {
         task("TASK-2", "Draggable card", "To Do"),
     ]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
     harness.run();
 
@@ -2104,6 +2143,7 @@ fn board_drop_back_to_origin_while_pending_queues_a_reversing_move() {
         task("TASK-2", "Draggable card", "To Do"),
     ]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
     // IA V2 (TASK-96): see the same widening in `board_column_add_task_
     // opens_the_composer_with_that_columns_status` — the persistent nav
@@ -2230,6 +2270,7 @@ fn board_unrelated_project_reload_does_not_resolve_a_pending_move() {
         task("TASK-2", "Draggable card", "To Do"),
     ]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
     harness.run();
 
@@ -2311,6 +2352,7 @@ fn board_stale_outcome_for_a_superseded_generation_does_not_resolve_the_newer_en
         task("TASK-2", "Draggable card", "To Do"),
     ]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
     harness.run();
 
@@ -2387,6 +2429,7 @@ fn board_matching_generation_success_resolves_the_entry_and_fires_the_landing_fl
         task("TASK-2", "Draggable card", "To Do"),
     ]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
     harness.run();
 
@@ -2460,6 +2503,7 @@ fn board_card_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
         task("TASK-2", "Second card", "To Do"),
     ]);
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
     harness.run();
     assert!(
@@ -2522,10 +2566,18 @@ fn digest_card_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
     in_progress.updated_date = Some("2026-08-01 12:00".to_string());
     let mut harness = digest_harness_with(vec![boring, in_progress]);
     harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
+    // TASK-97: `render_digest_place` (unlike the Tasks place and the old
+    // unified `ui::backlog::render`) never auto-selects a first task via
+    // `reconcile_selected_task` — Digest's own gap, pre-existing since
+    // TASK-96 split the place out, not something to paper over here.
+    // Select TASK-0 explicitly so the rail has a deterministic starting
+    // point to prove the click actually changes it away from.
+    harness.state_mut().backlog_view.selected_task =
+        Some((PathBuf::from(REPO_PATH), "TASK-0".to_string()));
     harness.run();
     assert!(
         harness.query_all_by_label("TASK-0").next().is_some(),
-        "sanity: the rail starts on the auto-selected first task"
+        "sanity: the rail starts on the explicitly selected first task"
     );
     assert_eq!(
         harness.query_all_by_label("TASK-1").count(),
@@ -2657,36 +2709,49 @@ fn milestone_row_click_selects_the_task() {
 }
 
 #[test]
-fn milestone_collapsing_header_collapses_and_reveals_its_tasks() {
+// TASK-97: the Projects lens (`BacklogLens::Projects`, a `CollapsingHeader`
+// per project that hid/showed its member tasks) is cut, subsumed by the
+// Tasks place's generic `Group by: Project` — see `ui::places::tasks`'s
+// module doc. The new group header's caret has a different job: it toggles
+// the in-place *summary* band (mock §3), not the group's task rows, which
+// stay visible regardless (binding directive #3: "clicking a project group
+// header's caret expands an in-place summary band" — never a collapse).
+fn group_header_caret_expands_and_collapses_the_summary_band_not_the_tasks() {
     let mut milestoned = task("TASK-1", "Milestoned task", "To Do");
     milestoned.project = Some("v1".to_string());
-    let mut app = list_app_with_tasks(vec![milestoned]);
-    app.backlog_view.lens = BacklogLens::Projects;
+    let app = list_app_with_tasks(vec![milestoned]);
     let mut harness = harness(app);
     harness.run();
 
+    assert!(harness.query_by_label("TASK-1  Milestoned task").is_some());
+    assert!(
+        harness.query_by_label("1 remaining").is_none(),
+        "the summary band is not shown before expanding"
+    );
+
+    // The caret is the only unlabeled clickable control on the header row
+    // (same gap `ui_views.rs`'s `parent_task_shows_rollup_...` test already
+    // documents for the sub-issue tree's caret) — toggle expansion directly
+    // via view state instead of hunting for it by position.
+    harness
+        .state_mut()
+        .tasks_place
+        .expanded_groups
+        .insert("v1".to_string());
+    harness.run();
     assert!(
         harness.query_by_label("TASK-1  Milestoned task").is_some(),
-        "milestone groups default open"
+        "expanding the header must not hide the group's tasks"
     );
-
-    harness.get_by_label("v1  ·  0/1 done").click();
-    // `CollapsingHeader` animates open/close (`ctx.animate_bool`); its
-    // content keeps painting until the collapse animation finishes, so this
-    // needs several frames rather than one `run()`'s worth.
-    for _ in 0..10 {
-        harness.run();
-    }
     assert!(
-        harness.query_by_label("TASK-1  Milestoned task").is_none(),
-        "clicking the milestone header should collapse its group"
+        harness.query_by_label("1 remaining").is_some(),
+        "expanding the group should reveal its in-place summary band"
     );
 
-    harness.get_by_label("v1  ·  0/1 done").click();
-    for _ in 0..10 {
-        harness.run();
-    }
+    harness.state_mut().tasks_place.expanded_groups.remove("v1");
+    harness.run();
     assert!(harness.query_by_label("TASK-1  Milestoned task").is_some());
+    assert!(harness.query_by_label("1 remaining").is_none());
 }
 
 // ─── Detail pane: checklists, references, notes, milestone, description ──
@@ -3177,53 +3242,22 @@ fn action_status_label_leaves_a_single_line_message_unchanged() {
 }
 
 // ─── Saved views: persistence across restart ────────────────────────────
-
-/// `saved_view_can_be_saved_and_deleted` (`ui_views.rs`) proves the in-memory
-/// `config.ui.saved_views` mutation; this closes the one documented gap in
-/// that test file's own comment — persistence across a restart — by
-/// reloading `Config` from the same isolated path the harness saved to.
-#[test]
-fn saved_view_persists_across_a_simulated_restart() {
-    let mut harness = list_harness_with_tasks(vec![task("TASK-1", "First", "To Do")]);
-    harness.state_mut().backlog_view.lens = BacklogLens::Statistics;
-    harness.state_mut().backlog_view.priority_filter = "high".to_string();
-    // Milestone/label filters (QA parity matrix gap) round-trip through
-    // SavedView the same way status/priority already did — this is the
-    // regression bar for adding a new filter field: forgetting to wire it
-    // into current_as_saved_view/apply_saved_view would silently reset it
-    // to "all" the next time this view is applied.
-    harness.state_mut().backlog_view.project_filter = "v1".to_string();
-    harness.state_mut().backlog_view.label_filter = "frontend".to_string();
-    harness.run();
-
-    // Enter commits the name now — the separate Save button is gone, since
-    // it spent almost all of its life disabled beside an empty field.
-    harness.state_mut().backlog_view.saved_view_name_draft = "High priority".to_string();
-    harness.run();
-    // The name field carries no accessible label of its own (the same
-    // documented limitation as the detail pane's inputs above), and on the
-    // Statistics lens the filter row is not rendered — so the saved-views
-    // draft is the *last* TextInput in the window. Located that way rather
-    // than by a fixed absolute index, which shifts per lens.
-    let name_field = harness
-        .query_all(kittest::by().role(egui::accesskit::Role::TextInput))
-        .last()
-        .expect("the saved-views name field should render");
-    name_field.focus();
-    harness.run();
-    harness.key_press(egui::Key::Enter);
-    harness.run();
-    harness.state_mut().save_config();
-
-    let save_path = harness.state().config_save_path.clone().unwrap();
-    let reloaded = switchbard_core::config::load_from(&save_path)
-        .expect("reloading the just-saved config should succeed");
-    assert_eq!(reloaded.ui.saved_views.len(), 1);
-    assert_eq!(reloaded.ui.saved_views[0].name, "High priority");
-    assert_eq!(reloaded.ui.saved_views[0].priority_filter, "high");
-    assert_eq!(reloaded.ui.saved_views[0].project_filter, "v1");
-    assert_eq!(reloaded.ui.saved_views[0].label_filter, "frontend");
-}
+//
+// TASK-97 removed `saved_view_persists_across_a_simulated_restart`: it
+// drove `ui::backlog::saved_views::render_saved_views_bar`'s "Save current
+// as…" toolbar field, which the Tasks place does not reuse — per
+// docs/product-trajectory.md's "Information architecture V2" entry, saved
+// filters are now first-class named views surfaced through the sidebar's
+// FAVORITES group (TASK-96, `ui::nav`, `HiveApp::navigate_to_favorite`'s
+// `FavoriteKind::View` arm), not a toolbar row inside Tasks itself.
+// *Loading* an existing saved view still works unchanged (`ui::backlog::
+// apply_saved_view_by_name`, still called from `navigate_to_favorite`); a
+// UI path to *create* one from the Tasks place's own filter-builder
+// predicates (a different shape than the legacy `SavedView`'s four fixed
+// facets — `status`/`priority`/`project`/`label` — this file's fixture
+// exercised) does not exist yet and is a real, separately-scoped gap, not
+// a decision TASK-97 makes silently: see task-97-followup-saved-views (or
+// its filed equivalent) for the tracked follow-up.
 
 // ─── A real end-to-end CLI round trip through the GUI's own Save button ──
 
@@ -3512,6 +3546,7 @@ fn create_modal_task_is_visible_in_both_list_and_board_against_a_real_fixture_re
     );
 
     harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
     harness.run();
     assert!(
         harness
@@ -3620,27 +3655,16 @@ fn sub_task_hierarchy_renders_correctly_from_a_native_created_subtask() {
         h.query_by_label("TASK-1  Parent task  [1/2]").is_some(),
         "the parent row should show a real 1/2 roll-up badge computed from real CLI data"
     );
-    assert!(
-        h.query_by_label("TASK-1.2  Open child").is_none(),
-        "children should stay collapsed until the parent is expanded"
-    );
-
-    // The tree caret has no accessible label (documented, UNDRIVABLE-BY-KITTEST
-    // elsewhere in this audit); toggle expansion via view state directly, same
-    // precedent as ui_views.rs's own struct-constructed version of this test.
-    h.state_mut()
-        .backlog_view
-        .expanded_parents
-        .insert((root.to_path_buf(), "TASK-1".to_string()));
-    h.run();
-
+    // TASK-97 (decision record Q9 = A): sub-issues indent in place, always
+    // expanded — no per-parent collapse step. Both real children should
+    // already be visible with no `expanded_parents` state needed at all.
     assert!(
         h.query_by_label("TASK-1.2  Open child").is_some(),
-        "expanding the parent should reveal the real open child"
+        "children should already be visible — always expanded, no click needed"
     );
     assert!(
         h.query_by_label("TASK-1.1  Done child").is_some(),
-        "expanding the parent should reveal the real done child"
+        "the real done child should also already be visible"
     );
 
     h.get_by_label("+ Subtask").click();
@@ -3722,6 +3746,7 @@ fn a_long_label_list_does_not_widen_its_board_column() {
 
     let mut app = list_app_with_tasks(vec![wordy]);
     app.backlog_view.lens = BacklogLens::Board;
+    app.tasks_place.view_mode = TasksViewMode::Board;
     let mut harness = harness(app);
     harness.run();
 
@@ -3788,28 +3813,19 @@ fn a_mixed_batch_is_labelled_clear_and_counts_both_dispositions() {
     );
 }
 
-/// Bulk archive is absent on a lens that hides the filter row.
-///
-/// The header it lives in renders on every lens, but Digest, Portfolio and
-/// Statistics do not show the filters — so an "Archive N showing" button
-/// there would name a count the user cannot inspect or adjust before
-/// confirming.
-#[test]
-fn bulk_archive_is_absent_on_a_lens_without_the_filter_row() {
-    let mut app = list_app_with_tasks(vec![
-        task("TASK-1", "One", "To Do"),
-        task("TASK-2", "Two", "To Do"),
-    ]);
-    app.backlog_view.lens = BacklogLens::Statistics;
-    app.backlog_view.priority_filter = "medium".to_string();
-    let mut harness = harness(app);
-    harness.run();
-
-    assert!(
-        harness.query_by_label("Archive 2 showing").is_none(),
-        "no bulk archive on a lens whose filters are not visible"
-    );
-}
+// TASK-97 removed `bulk_archive_is_absent_on_a_lens_without_the_filter_row`
+// (previously: "Bulk archive is absent on a lens that hides the filter row —
+// the header it lives in renders on every lens, but Digest, Portfolio and
+// Statistics do not show the filters, so an 'Archive N showing' button there
+// would name a count the user cannot inspect or adjust before confirming.")
+// it proved the bulk-clear button hides on a lens whose filter row doesn't
+// render (Digest/Portfolio/Statistics — `toolbar::lens_filters`). The Tasks
+// place has exactly two view modes (List, Board), and both always render
+// their own facets row (`render_facets_row`/`render_group_sort_row` for
+// List; the same `filtered`/scope facets feed Board) — there is no "lens
+// without a filter row" state reachable from here anymore, so the
+// invariant this test proved no longer has a reachable failure case to
+// guard against.
 
 /// While a bulk run is live the header shows its progress instead of the
 /// buttons that start one.
@@ -3922,6 +3938,7 @@ fn the_column_checkbox_selects_only_its_own_column() {
         task("TASK-3", "Working", "In Progress"),
     ]);
     app.backlog_view.lens = BacklogLens::Board;
+    app.tasks_place.view_mode = TasksViewMode::Board;
     // Pre-select a card in a different column.
     app.backlog_view
         .bulk_selected_tasks
@@ -3958,6 +3975,7 @@ fn the_column_checkbox_selects_only_its_own_column() {
 fn the_sort_control_renders_on_the_board_lens() {
     let mut app = list_app_with_tasks(vec![task("TASK-1", "One", "To Do")]);
     app.backlog_view.lens = BacklogLens::Board;
+    app.tasks_place.view_mode = TasksViewMode::Board;
     let mut harness = harness(app);
     harness.run();
 
@@ -3977,6 +3995,7 @@ fn the_sort_control_renders_on_the_board_lens() {
 fn trio_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
     let mut app = list_app_with_tasks(tasks);
     app.backlog_view.lens = BacklogLens::Board;
+    app.tasks_place.view_mode = TasksViewMode::Board;
     app.backlog_repos
         .lock()
         .unwrap()
@@ -4062,6 +4081,7 @@ fn accepting_the_offer_writes_the_config_and_the_column_appears() {
     let mut app = seeded_app();
     app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::Board;
+    app.tasks_place.view_mode = TasksViewMode::Board;
     app.backlog_view.selected_repo = Some(root.to_path_buf());
     app.backlog_repos.lock().unwrap().insert(
         root.to_path_buf(),

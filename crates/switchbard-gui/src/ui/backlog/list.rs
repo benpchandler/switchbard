@@ -131,7 +131,11 @@ fn task_col_width(ui: &egui::Ui, show_repo: bool) -> f32 {
     (ui.available_width() - trailing).max(140.0)
 }
 
-fn render_select_all_checkbox(app: &mut HiveApp, ui: &mut egui::Ui, tasks: &[TaskRow<'_>]) {
+pub(crate) fn render_select_all_checkbox(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    tasks: &[TaskRow<'_>],
+) {
     let all_selected = !tasks.is_empty()
         && tasks
             .iter()
@@ -208,7 +212,7 @@ pub(super) fn render_task_sort_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn render_task_list_row(
+pub(crate) fn render_task_list_row(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
     row: &TaskRow<'_>,
@@ -217,6 +221,14 @@ pub(super) fn render_task_list_row(
     show_repo: bool,
     depth: usize,
     children: &[&BacklogTask],
+    // TASK-97: the Tasks place's sub-issue tree is always expanded (decision
+    // record Q9 = A) — no per-parent collapse affordance, just permanent
+    // indentation (mock §7c shows no caret at all on a parent row). `true`
+    // suppresses the caret/`expanded_parents` toggle below; every pre-
+    // existing call site (the legacy List lens, still compiling per TASK-97's
+    // binding directive) passes `false` to keep its collapse-by-default
+    // behavior unchanged.
+    always_expanded: bool,
     pending: &mut Pending,
 ) {
     let task = row.task;
@@ -225,141 +237,182 @@ pub(super) fn render_task_list_row(
     let bulk_selected = app.backlog_view.bulk_selected_tasks.contains(&key);
     let selected = detail_selected || bulk_selected;
     let title_width = task_col_width(ui, show_repo) - (depth as f32 * TREE_INDENT);
-    let row_response = ui.horizontal(|ui| {
-        if depth > 0 {
-            ui.add_space(depth as f32 * TREE_INDENT);
-        }
-        if children.is_empty() {
-            ui.add_space(18.0); // keeps childless rows aligned with the caret column
-        } else {
-            let expanded = app.backlog_view.expanded_parents.contains(&key);
-            if theme::caret_button(ui, expanded).clicked() {
-                if expanded {
-                    app.backlog_view.expanded_parents.remove(&key);
-                } else {
-                    app.backlog_view.expanded_parents.insert(key.clone());
+    // TASK-97/TASK-38: the stroke-based selection ring shared with the
+    // Board lens's cards (`board::paint_card`) — same `theme::
+    // selected_row_stroke` authority, applied here so a selected row never
+    // reads as "just the title button highlighted" the way the old stock-
+    // egui `.selected()` button style alone did.
+    //
+    // Stroke only, deliberately no `theme::selected_row_tint()` fill: a row
+    // can carry a priority/status pill (`format::priority_color`'s
+    // `warn_orange` for "High") painted directly on top of this frame's
+    // background, and legibility_audit.rs's WCAG check caught that the
+    // tint's composite pushes that already-marginal dark-theme color below
+    // the 4.5:1 floor — the exact "translucent overlay produced a muddy
+    // composite that failed WCAG AA on the dark theme" problem `board::
+    // paint_card`'s own doc comment already names and avoids the same way.
+    let row_frame = if selected {
+        egui::Frame::NONE
+            .stroke(theme::selected_row_stroke())
+            .corner_radius(3.0)
+            .inner_margin(egui::Margin::symmetric(2, 1))
+    } else {
+        egui::Frame::NONE.inner_margin(egui::Margin::symmetric(2, 1))
+    };
+    let row_response = row_frame.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            if depth > 0 {
+                ui.add_space(depth as f32 * TREE_INDENT);
+            }
+            if children.is_empty() || always_expanded {
+                ui.add_space(18.0); // keeps childless rows aligned with the caret column
+            } else {
+                let expanded = app.backlog_view.expanded_parents.contains(&key);
+                if theme::caret_button(ui, expanded).clicked() {
+                    if expanded {
+                        app.backlog_view.expanded_parents.remove(&key);
+                    } else {
+                        app.backlog_view.expanded_parents.insert(key.clone());
+                    }
                 }
             }
-        }
-        let mut checked = bulk_selected;
-        let checkbox = ui
-            .add_sized([24.0, 26.0], egui::Checkbox::without_text(&mut checked))
-            .on_hover_text("Select task for bulk actions");
-        if checkbox.changed() {
-            let shift = ui.input(|input| input.modifiers.shift);
-            if shift {
-                selection::select_bulk_task_range(app, visible_keys, key.clone());
-            } else {
-                selection::set_bulk_task_selected(app, key.clone(), checked);
+            let mut checked = bulk_selected;
+            let checkbox = ui
+                .add_sized([24.0, 26.0], egui::Checkbox::without_text(&mut checked))
+                .on_hover_text("Select task for bulk actions");
+            if checkbox.changed() {
+                let shift = ui.input(|input| input.modifiers.shift);
+                if shift {
+                    selection::select_bulk_task_range(app, visible_keys, key.clone());
+                } else {
+                    selection::set_bulk_task_selected(app, key.clone(), checked);
+                }
             }
-        }
-        let title_text = if show_repo {
-            format!("{}:{}  {}", row.repo.repo_name, task.id, task.title)
-        } else {
-            format!("{}  {}", task.id, task.title)
-        };
-        let title_text = if children.is_empty() {
-            title_text
-        } else {
-            let done = children.iter().filter(|c| c.is_done()).count();
-            format!("{title_text}  [{done}/{}]", children.len())
-        };
-        let resp = ui
-            .add_sized(
-                [title_width, 26.0],
-                egui::Button::new(egui::RichText::new(title_text).strong())
-                    .selected(selected)
-                    .frame(false)
-                    .truncate(),
-            )
-            .on_hover_text(task.description.as_str());
-        if resp.clicked() {
-            let (shift, toggle_bulk) = ui.input(|input| {
-                (
-                    input.modifiers.shift,
-                    input.modifiers.command || input.modifiers.ctrl,
+            // TASK-97: the title never prefixes with the repo name, even when
+            // `show_repo` also renders the separate badge column below — the
+            // two used to be redundant (a title like "demo:TASK-2  …" next to
+            // its own "demo" badge). `show_repo` now means exactly one thing:
+            // whether the badge column renders (mock §2's bare "TASK-83" id
+            // plus a lone `repo-badge` span, never both spellings of the repo
+            // name on one row). The Tasks place passes `show_repo: true`
+            // unconditionally (directive #9: repo badges on rows, always).
+            let title_text = format!("{}  {}", task.id, task.title);
+            let title_text = if children.is_empty() {
+                title_text
+            } else {
+                let done = children.iter().filter(|c| c.is_done()).count();
+                format!("{title_text}  [{done}/{}]", children.len())
+            };
+            let resp = ui
+                .add_sized(
+                    [title_width, 26.0],
+                    egui::Button::new(egui::RichText::new(title_text).strong())
+                        .selected(selected)
+                        .frame(false)
+                        .truncate(),
                 )
-            });
-            if shift {
-                selection::select_bulk_task_range(app, visible_keys, key.clone());
-            } else if toggle_bulk {
-                selection::toggle_bulk_task_selection(app, key.clone());
-            } else {
-                app.backlog_view.selected_task = Some(key.clone());
-                app.backlog_view.bulk_selection_anchor = Some(key.clone());
-                app.backlog_view.editor.loaded_key = None;
+                .on_hover_text(task.description.as_str());
+            if resp.clicked() {
+                let (shift, toggle_bulk) = ui.input(|input| {
+                    (
+                        input.modifiers.shift,
+                        input.modifiers.command || input.modifiers.ctrl,
+                    )
+                });
+                if shift {
+                    selection::select_bulk_task_range(app, visible_keys, key.clone());
+                } else if toggle_bulk {
+                    selection::toggle_bulk_task_selection(app, key.clone());
+                } else {
+                    app.backlog_view.selected_task = Some(key.clone());
+                    app.backlog_view.bulk_selection_anchor = Some(key.clone());
+                    app.backlog_view.editor.loaded_key = None;
+                }
             }
-        }
-        if show_repo {
+            if show_repo {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(REPO_COL_WIDTH, 26.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        status_pill(
+                            ui,
+                            StatusKind::Neutral,
+                            row.repo.repo_name.clone(),
+                            Some(&row.repo.label()),
+                        );
+                    },
+                );
+            }
             ui.allocate_ui_with_layout(
-                egui::vec2(REPO_COL_WIDTH, 26.0),
+                egui::vec2(86.0, 26.0),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
-                    status_pill(
-                        ui,
-                        StatusKind::Neutral,
-                        row.repo.repo_name.clone(),
-                        Some(&row.repo.label()),
+                    status_pill(ui, format::status_kind(&task.status), &task.status, None);
+                },
+            );
+            ui.allocate_ui_with_layout(
+                egui::vec2(62.0, 26.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.label(
+                        egui::RichText::new(format::priority_title(&task.priority))
+                            .small()
+                            .color(format::priority_color(&task.priority)),
                     );
                 },
             );
-        }
-        ui.allocate_ui_with_layout(
-            egui::vec2(86.0, 26.0),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                status_pill(ui, format::status_kind(&task.status), &task.status, None);
-            },
-        );
-        ui.allocate_ui_with_layout(
-            egui::vec2(62.0, 26.0),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(52.0, 26.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    if !task.acceptance_criteria.is_empty() {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{}/{}",
+                                task.acceptance_done_count(),
+                                task.acceptance_criteria.len()
+                            ))
+                            .small()
+                            .color(theme::muted_text()),
+                        );
+                    } else {
+                        ui.label(egui::RichText::new("-").small().color(theme::muted_text()));
+                    }
+                },
+            );
+            if task.source != BacklogTaskSource::Active {
                 ui.label(
-                    egui::RichText::new(format::priority_title(&task.priority))
-                        .small()
-                        .color(format::priority_color(&task.priority)),
-                );
-            },
-        );
-        ui.allocate_ui_with_layout(
-            egui::vec2(52.0, 26.0),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                if !task.acceptance_criteria.is_empty() {
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{}/{}",
-                            task.acceptance_done_count(),
-                            task.acceptance_criteria.len()
-                        ))
+                    egui::RichText::new(task.source.label())
                         .small()
                         .color(theme::muted_text()),
-                    );
-                } else {
-                    ui.label(egui::RichText::new("-").small().color(theme::muted_text()));
-                }
-            },
-        );
-        if task.source != BacklogTaskSource::Active {
-            ui.label(
-                egui::RichText::new(task.source.label())
-                    .small()
-                    .color(theme::muted_text()),
-            );
-        }
-        // task-18: a lamp-language marker (StatusKind::Danger → warn_orange,
-        // the same "hot" tone Operator's Console uses for line/due alerts)
-        // for tasks with at least one open dependency.
-        if !task.is_done() && is_blocked(task, &row.repo.repo) {
-            status_pill(
-                ui,
-                StatusKind::Danger,
-                "blocked",
-                Some("Blocked by one or more open dependencies"),
-            );
-        }
-        dispatch_ui::render_dispatch_pill(ui, &dispatch_ui::dispatch_state(task));
+                );
+            }
+            // task-18: a lamp-language marker (StatusKind::Danger → warn_orange,
+            // the same "hot" tone Operator's Console uses for line/due alerts)
+            // for tasks with at least one open dependency.
+            if !task.is_done() && is_blocked(task, &row.repo.repo) {
+                status_pill(
+                    ui,
+                    StatusKind::Danger,
+                    "blocked",
+                    Some("Blocked by one or more open dependencies"),
+                );
+            }
+            // TASK-97: moved here from the now-cut Projects lens's own row
+            // renderer (`projects::render_row`) — "Expedited tasks surface per
+            // the core order" (binding directive #5) needs a visible marker on
+            // the row itself, not just in the detail rail's own lane pill, now
+            // that the Projects lens no longer exists to have shown it.
+            if row.repo.repo.ranking.is_expedited(&task.id) {
+                status_pill(
+                    ui,
+                    StatusKind::Danger,
+                    "expedited",
+                    Some("In the expedite lane — jumps the repo's whole computed order"),
+                );
+            }
+            dispatch_ui::render_dispatch_pill(ui, &dispatch_ui::dispatch_state(task));
+        });
     });
     if row_response.response.secondary_clicked() {
         selection::focus_context_selection(app, key.clone());
@@ -374,7 +427,7 @@ pub(super) fn render_task_list_row(
 /// card context menu — the Move/Priority actions and the Board lens's own
 /// selection state (`bulk_selected_tasks`, shared across both lenses) are
 /// identical, so Board reuses this rather than a parallel implementation.
-pub(super) fn render_task_context_menu(
+pub(crate) fn render_task_context_menu(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
     clicked: &TaskRow<'_>,

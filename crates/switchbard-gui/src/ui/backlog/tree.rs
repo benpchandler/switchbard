@@ -62,6 +62,7 @@ pub(super) fn render_task_tree_row(
         show_repo,
         depth,
         &kids,
+        false, // legacy List lens keeps its collapse-by-default behavior
         pending,
     );
     ui.add_space(5.0);

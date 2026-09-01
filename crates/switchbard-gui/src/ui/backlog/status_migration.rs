@@ -84,7 +84,7 @@ pub fn repo_label(repo_root: &std::path::Path) -> String {
 /// raised by a refused drop, which is more specific and shouldn't be
 /// overwritten by the generic one) and stops at the first gap — a queue of
 /// prompts for eight repos is a wall, not an offer.
-pub(super) fn detect(app: &mut HiveApp, roots: &[PathBuf]) {
+pub(crate) fn detect(app: &mut HiveApp, roots: &[PathBuf]) {
     if app.status_migration_prompt.is_some() {
         return;
     }
@@ -118,7 +118,7 @@ pub(super) fn detect(app: &mut HiveApp, roots: &[PathBuf]) {
 }
 
 /// Render the offer. Returns nothing; all state changes go through `app`.
-pub(super) fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
+pub(crate) fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     let Some(prompt) = app.status_migration_prompt.clone() else {
         return;
     };

@@ -115,7 +115,7 @@ fn column_order(app: &HiveApp, snap: &Snapshot) -> Vec<String> {
     ordered_status_vocabulary(scoped.iter().map(|row| &row.repo))
 }
 
-pub(super) fn render_board(
+pub(crate) fn render_board(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
     snap: &Snapshot,
@@ -821,7 +821,13 @@ fn paint_card(
         CardMotion::Landing(progress) => {
             egui::Stroke::new(2.0, theme::scale_alpha(theme::green(), 1.0 - progress))
         }
-        _ if selected => egui::Stroke::new(2.0, theme::sky()),
+        // TASK-97/TASK-38: sources its color from `theme::selected_row_
+        // stroke()` — the same authority the Tasks place's List rows and the
+        // Ops worktree rows already use — rather than `theme::sky()` ad hoc
+        // (they happen to be the same color today; routing through the
+        // shared accessor is what makes that a guarantee instead of a
+        // coincidence). Width stays 2.0, the card's own pre-existing weight.
+        _ if selected => egui::Stroke::new(2.0, theme::selected_row_stroke().color),
         _ => ui.visuals().widgets.noninteractive.bg_stroke,
     };
     let mut frame = egui::Frame::default()

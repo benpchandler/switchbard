@@ -328,6 +328,14 @@ pub struct HiveApp {
     /// TASK-98: Command place Fleet-section facet + selected-row support
     /// card. Session-only — see `CommandViewState`'s own doc.
     pub command_view: CommandViewState,
+    /// TASK-97: the Tasks place's own view state (group-by, view mode, the
+    /// filter builder's active predicates + recent sets) — separate from
+    /// `backlog_view` because these are Tasks-place-specific concepts the
+    /// orphaned legacy lens body never had. Persisted under the same
+    /// "tasks.all" `FilterMemory` key `backlog_view.persist_filters` already
+    /// writes to (different facet names, no collision) — see `ui::places::
+    /// tasks::state`.
+    pub tasks_place: ui::places::tasks::state::TasksPlaceState,
     /// Shared render cache for the task detail pane's markdown description
     /// (task-15 AC #3). `egui_commonmark` recommends one long-lived cache
     /// rather than rebuilding it every frame.
@@ -441,6 +449,7 @@ impl HiveApp {
         let show_non_servers = cfg.ui.show_non_servers;
         let agent_context_view = AgentContextViewState::restore_filters(&cfg.ui);
         let mut backlog_view = BacklogViewState::restore_filters(&cfg.ui);
+        let tasks_place = ui::places::tasks::state::TasksPlaceState::restore(&cfg.ui);
         if backlog_view
             .selected_repo
             .as_ref()
@@ -520,6 +529,7 @@ impl HiveApp {
             digest_view: DigestViewState::default(),
             dispatches_view: DispatchesViewState::default(),
             command_view: CommandViewState::default(),
+            tasks_place,
             commonmark_cache: egui_commonmark::CommonMarkCache::default(),
             browser_choice,
             onboarding: Arc::new(Mutex::new(DiscoveryState::default())),
@@ -670,6 +680,7 @@ impl HiveApp {
     fn persist_filter_facets(&mut self) {
         self.agent_context_view.persist_filters(&mut self.config.ui);
         self.backlog_view.persist_filters(&mut self.config.ui);
+        self.tasks_place.persist(&mut self.config.ui);
         // TASK-96: `repo_scope` is runtime-side (a `BTreeSet<PathBuf>`, for
         // cheap `contains` checks on the render path); `Config::ui.repo_scope`
         // is the persisted `Vec<String>` shape TASK-96 specified. Mirrored
@@ -775,7 +786,22 @@ impl HiveApp {
             config::FavoriteKind::Project => {
                 self.place = Place::Tasks;
                 self.tasks_view = TasksView::All;
-                self.backlog_view.project_filter = fav.key.clone();
+                // TASK-97 medic pass (BLOCKER finding, same class): this used
+                // to write the legacy `backlog_view.project_filter`, which
+                // the Tasks place's own UI exposes no chip for — a Project
+                // favorite click would silently narrow the list with no way
+                // to undo it short of navigating away. Push it through
+                // `tasks_place.filters` instead, the one predicate set the
+                // Tasks place actually renders a removable chip for.
+                self.tasks_place.filters.retain(|predicate| {
+                    predicate.field != ui::places::tasks::fields::TaskField::Project
+                });
+                self.tasks_place
+                    .filters
+                    .push(ui::places::tasks::state::FilterPredicate {
+                        field: ui::places::tasks::fields::TaskField::Project,
+                        value: fav.key.clone(),
+                    });
             }
             config::FavoriteKind::View => {
                 self.place = Place::Tasks;
@@ -2538,7 +2564,14 @@ impl HiveApp {
         match self.place {
             Place::Digest => ui::places::digest::render(self, ui),
             Place::Tasks => match self.tasks_view {
-                TasksView::All => ui::backlog::render(self, ui),
+                // TASK-97: the Tasks place's real body — generic group-by,
+                // filter builder, rank sort, List/Board view modes. Replaces
+                // the interim `ui::backlog::render` routing TASK-96 left in
+                // place; that whole legacy lens body (Digest/Statistics/
+                // Portfolio/Projects lenses, its lens-tab toolbar) stays
+                // compiling but is no longer reachable from here — see
+                // `ui::places::tasks`'s module doc.
+                TasksView::All => ui::places::tasks::render_tasks_place(self, ui),
                 TasksView::Dispatches => ui::places::dispatches::render(self, ui),
             },
             Place::Command => ui::places::command::render(self, ui),

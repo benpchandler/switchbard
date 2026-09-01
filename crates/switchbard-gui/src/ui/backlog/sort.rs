@@ -21,7 +21,7 @@ use switchbard_core::{
 /// entry point `list::render_task_list`, `toolbar`'s visible-count label, and
 /// `mod::ensure_selection` all share, so "what's currently on screen" only
 /// has one definition.
-pub(super) fn visible_task_rows<'a>(app: &HiveApp, snap: &'a Snapshot) -> Vec<TaskRow<'a>> {
+pub(crate) fn visible_task_rows<'a>(app: &HiveApp, snap: &'a Snapshot) -> Vec<TaskRow<'a>> {
     let filter_lc = app.filter().to_lowercase();
     let mut rows: Vec<TaskRow<'a>> = Vec::new();
     for repo in scoped_repos(app, snap) {
@@ -34,12 +34,63 @@ pub(super) fn visible_task_rows<'a>(app: &HiveApp, snap: &'a Snapshot) -> Vec<Ta
 
     match app.backlog_view.sort_key {
         BacklogTaskSortKey::Triage => sort_by_triage(app, &mut rows),
+        // TASK-97: "Sort: rank" — the Tasks place's sort-only surface for the
+        // stack-ranking order (decision record Q12 = B: rank is never a page
+        // or a dedicated column). `repo.tasks` is already in the computed
+        // `RepoRanking::sort_tasks` order by the time the GUI sees it
+        // (`load_backlog_repo` applies it at parse time — see `backlog::
+        // ranking::sort_tasks`'s own doc), so this reduces to "keep each
+        // row's position in its own repo's already-ranked list", the same
+        // `computed_position` trick `projects::initiative_groups` uses for
+        // its per-group row order — just applied across the whole scope.
+        BacklogTaskSortKey::Rank => sort_by_rank(app, snap, &mut rows),
         sort_key => {
             let direction = app.backlog_view.sort_direction;
             rows.sort_by(|a, b| compare_tasks(a.task, b.task, sort_key, direction));
         }
     }
     rows
+}
+
+/// Order by (scoped-repo order, then the task's position in that repo's
+/// already rank-computed `repo.tasks`). Cross-repo, "rank" has no single
+/// merged order to fall back on — `RepoRanking` ranks siblings *within* one
+/// repo — so repos sort in the same stable order `scoped_repos` returns
+/// them (name-sorted), and each repo's own tasks keep their computed order
+/// inside that block. Reusing this stable per-repo position (rather than
+/// re-deriving rank facts here) is what keeps this a thin sort, not a
+/// second ranking engine.
+fn sort_by_rank<'a>(app: &HiveApp, snap: &Snapshot, rows: &mut Vec<TaskRow<'a>>) {
+    let scoped = scoped_repos(app, snap);
+    let repo_order: HashMap<&std::path::Path, usize> = scoped
+        .iter()
+        .enumerate()
+        .map(|(index, row)| (row.key.as_path(), index))
+        .collect();
+    let position_in_repo: HashMap<(&std::path::Path, &str), usize> = scoped
+        .iter()
+        .flat_map(|row| {
+            row.repo
+                .tasks
+                .iter()
+                .enumerate()
+                .map(move |(index, task)| ((row.key.as_path(), task.id.as_str()), index))
+        })
+        .collect();
+    let key = |row: &TaskRow<'_>| -> (usize, usize) {
+        let repo_key = row.repo.key.as_path();
+        (
+            repo_order.get(repo_key).copied().unwrap_or(usize::MAX),
+            position_in_repo
+                .get(&(repo_key, row.task.id.as_str()))
+                .copied()
+                .unwrap_or(usize::MAX),
+        )
+    };
+    rows.sort_by_key(key);
+    if app.backlog_view.sort_direction == BacklogTaskSortDirection::Descending {
+        rows.reverse();
+    }
 }
 
 /// Rank via the pure core function, then re-attach each ranked entry back to
@@ -85,6 +136,10 @@ pub(super) fn compare_tasks(
         // invoked with this key. Kept in the match (rather than a wildcard)
         // so a future sort key can't silently fall through unhandled.
         BacklogTaskSortKey::Triage => Ordering::Equal,
+        // Rank sorts via `sort_by_rank` above, for the same reason (it needs
+        // each row's `RepoRow`, which a plain `&BacklogTask` comparator
+        // doesn't have).
+        BacklogTaskSortKey::Rank => Ordering::Equal,
         BacklogTaskSortKey::Task => cmp_ascii_case_insensitive(&a.id, &b.id)
             .then_with(|| cmp_ascii_case_insensitive(&a.title, &b.title)),
         BacklogTaskSortKey::Status => status_rank(&a.status)

@@ -721,6 +721,11 @@ pub enum BacklogTaskSortKey {
     Labels,
     Assignee,
     Project,
+    /// TASK-97: the Tasks place's "Sort: rank" option — the stack-ranking
+    /// order (`RepoRanking::sort_tasks`), sort-only per the decision record
+    /// (Q12 = B: never a page or a dedicated column). See `sort::
+    /// sort_by_rank`.
+    Rank,
 }
 
 impl BacklogTaskSortKey {
@@ -734,6 +739,7 @@ impl BacklogTaskSortKey {
             Self::Labels => "Labels",
             Self::Assignee => "Assignee",
             Self::Project => "Project",
+            Self::Rank => "Rank",
         }
     }
 
@@ -748,6 +754,7 @@ impl BacklogTaskSortKey {
             Self::Labels => "labels",
             Self::Assignee => "assignee",
             Self::Project => "project",
+            Self::Rank => "rank",
         }
     }
 
@@ -762,6 +769,7 @@ impl BacklogTaskSortKey {
             "project" => Self::Project,
             // Pre-rename spelling from old saved views.
             "milestone" => Self::Project,
+            "rank" => Self::Rank,
             _ => Self::Triage,
         }
     }
