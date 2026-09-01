@@ -875,11 +875,32 @@ fn paint_card(
                             } else {
                                 ui.visuals().text_color()
                             };
-                            ui.label(
-                                egui::RichText::new(&row.task.title)
-                                    .strong()
-                                    .color(title_color),
-                            );
+                            // TASK-97 medic pass (PARITY finding): mock §7c
+                            // clamps a title at two lines and never grows the
+                            // row past that — this card used to render a
+                            // plain wrapping `Label`, which grows the card
+                            // (and the whole column) without bound for a
+                            // long title. A hand-built `LayoutJob` with
+                            // `wrap.max_rows = 2` bounds it exactly (egui's
+                            // `Label` has no "clamp at N rows" option of its
+                            // own — only 1-row `.truncate()`); `.strong()`'s
+                            // color resolution is reproduced via
+                            // `RichText::append_to` rather than duplicated,
+                            // so this stays the same "strong" style Label
+                            // itself would have resolved to.
+                            let mut title_job = egui::text::LayoutJob::default();
+                            egui::RichText::new(&row.task.title)
+                                .strong()
+                                .color(title_color)
+                                .append_to(
+                                    &mut title_job,
+                                    ui.style(),
+                                    egui::FontSelection::Default,
+                                    ui.text_valign(),
+                                );
+                            title_job.wrap.max_rows = 2;
+                            title_job.wrap.break_anywhere = true;
+                            ui.add(egui::Label::new(title_job).wrap());
                             ui.horizontal(|ui| {
                                 ui.label(
                                     egui::RichText::new(format::priority_title(&row.task.priority))

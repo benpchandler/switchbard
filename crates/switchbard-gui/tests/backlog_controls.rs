@@ -35,7 +35,7 @@ use switchbard_gui::runtime::{
     BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey, Place, TasksView,
 };
 use switchbard_gui::ui::places::tasks::fields::TaskField;
-use switchbard_gui::ui::places::tasks::state::TasksViewMode;
+use switchbard_gui::ui::places::tasks::state::{FilterPredicate, TasksViewMode};
 
 fn task(id: &str, title: &str, status: &str) -> BacklogTask {
     BacklogTask {
@@ -734,7 +734,15 @@ fn project_filter_hides_tasks_outside_the_selected_milestone() {
     v2.project = Some("v2".to_string());
     let mut harness = list_harness_with_tasks(vec![v1, v2]);
 
-    harness.state_mut().backlog_view.project_filter = "v1".to_string();
+    // TASK-97 medic pass (BLOCKER finding): the legacy `backlog_view.
+    // project_filter` this test used to set is now inert inside the Tasks
+    // place (`ui::places::tasks::neutralize_legacy_filters` forces it back
+    // to "all" every frame) — the Tasks place's own filter-builder predicate
+    // set is the one mechanism that actually narrows the list now.
+    harness.state_mut().tasks_place.filters = vec![FilterPredicate {
+        field: TaskField::Project,
+        value: "v1".to_string(),
+    }];
     harness.run();
 
     assert!(harness.query_by_label("TASK-1  In v1").is_some());
@@ -755,7 +763,14 @@ fn label_filter_hides_tasks_without_the_selected_label() {
     backend.labels = vec!["backend".to_string()];
     let mut harness = list_harness_with_tasks(vec![frontend, backend]);
 
-    harness.state_mut().backlog_view.label_filter = "frontend".to_string();
+    // TASK-97 medic pass (BLOCKER finding): same as `project_filter_hides_
+    // tasks_outside_the_selected_milestone` above — the legacy facet is
+    // inert in the Tasks place now, so this proves the same behavior
+    // through `tasks_place.filters`.
+    harness.state_mut().tasks_place.filters = vec![FilterPredicate {
+        field: TaskField::Label,
+        value: "frontend".to_string(),
+    }];
     harness.run();
 
     assert!(harness.query_by_label("TASK-1  Frontend work").is_some());
@@ -893,6 +908,54 @@ fn digest_recently_done_view_all_jumps_to_list_filtered_to_done() {
         .filters
         .iter()
         .any(|predicate| predicate.field == TaskField::Status && predicate.value == "Done"));
+}
+
+/// TASK-97 medic pass (BLOCKER finding, end-to-end regression): "View all"
+/// used to *also* write the legacy `backlog_view.status_filter` — a second,
+/// invisible narrowing layer `sort::visible_task_rows` still reads, that the
+/// Tasks place's own UI renders no chip for. Proves the whole loop: Digest's
+/// "View all" lands on Tasks showing only the matching task, removing the
+/// resulting chip restores every task, and the legacy facet never carried a
+/// value in the first place (not just "got cleared later").
+#[test]
+fn digest_view_all_then_removing_the_chip_on_tasks_restores_every_task() {
+    let mut harness = digest_harness_with(vec![
+        task("TASK-1", "Active work", "In Progress"),
+        task("TASK-2", "Backlog item", "To Do"),
+    ]);
+
+    harness
+        .get_all_by_label("View all")
+        .nth(2)
+        .expect("In progress is the 3rd section's View all")
+        .click();
+    harness.run();
+    assert_eq!(harness.state().place, Place::Tasks);
+    assert_eq!(
+        harness.state().backlog_view.status_filter,
+        "all",
+        "the legacy single-value facet must never carry the navigated status"
+    );
+
+    // The click's own frame still painted the Digest place (the mutation
+    // landed mid-frame); this second run is the first one that actually
+    // renders the Tasks place body with the navigated predicate applied.
+    harness.run();
+    assert!(harness.query_by_label("TASK-1  Active work").is_some());
+    assert!(
+        harness.query_by_label("TASK-2  Backlog item").is_none(),
+        "the Status: In Progress predicate should hide the To Do task"
+    );
+
+    harness.get_by_label("Status: In Progress ✕").click();
+    harness.run();
+
+    assert!(
+        harness.query_by_label("TASK-2  Backlog item").is_some(),
+        "removing the chip should restore every task — no invisible legacy \
+         filter left narrowing the list"
+    );
+    assert!(harness.query_by_label("TASK-1  Active work").is_some());
 }
 
 /// Owner UX pass (2026-08-05): a Digest card click used to force-switch to
@@ -2607,7 +2670,13 @@ fn digest_card_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
 #[test]
 fn rail_shows_the_quiet_empty_state_when_no_task_is_visible() {
     let mut harness = list_harness_with_tasks(vec![task("TASK-1", "Only task", "To Do")]);
-    harness.state_mut().backlog_view.status_filter = "Done".to_string();
+    // TASK-97 medic pass (BLOCKER finding): same substitution as the
+    // project/label filter tests above — `backlog_view.status_filter` is
+    // inert in the Tasks place now.
+    harness.state_mut().tasks_place.filters = vec![FilterPredicate {
+        field: TaskField::Status,
+        value: "Done".to_string(),
+    }];
     harness.run();
 
     assert_eq!(
@@ -3243,21 +3312,19 @@ fn action_status_label_leaves_a_single_line_message_unchanged() {
 
 // ─── Saved views: persistence across restart ────────────────────────────
 //
-// TASK-97 removed `saved_view_persists_across_a_simulated_restart`: it
-// drove `ui::backlog::saved_views::render_saved_views_bar`'s "Save current
-// as…" toolbar field, which the Tasks place does not reuse — per
-// docs/product-trajectory.md's "Information architecture V2" entry, saved
-// filters are now first-class named views surfaced through the sidebar's
-// FAVORITES group (TASK-96, `ui::nav`, `HiveApp::navigate_to_favorite`'s
-// `FavoriteKind::View` arm), not a toolbar row inside Tasks itself.
-// *Loading* an existing saved view still works unchanged (`ui::backlog::
-// apply_saved_view_by_name`, still called from `navigate_to_favorite`); a
-// UI path to *create* one from the Tasks place's own filter-builder
-// predicates (a different shape than the legacy `SavedView`'s four fixed
-// facets — `status`/`priority`/`project`/`label` — this file's fixture
-// exercised) does not exist yet and is a real, separately-scoped gap, not
-// a decision TASK-97 makes silently: see task-97-followup-saved-views (or
-// its filed equivalent) for the tracked follow-up.
+// TASK-97 removed `saved_view_persists_across_a_simulated_restart` (it drove
+// `ui::backlog::saved_views::render_saved_views_bar`'s "Save current as…"
+// toolbar field, unreachable at the time — the Tasks place didn't call it).
+// A TASK-97 medic pass (task-107's fix) restored that gap: the bar now
+// renders inside the Tasks place's own facets frame
+// (`ui::places::tasks::render_tasks_place`), and `current_as_saved_view`/
+// `apply_saved_view` capture and restore `tasks_place.{filters,group_by,
+// view_mode}` alongside the legacy four facets this file's old fixture
+// exercised (`SavedView::tasks_filters`/`tasks_group_by`/`tasks_view_mode`,
+// `switchbard-core/src/config.rs`). See `tests/tasks_place_saved_views.rs`
+// for the restored save/apply/delete coverage on the now-reachable surface —
+// not re-added here, since the legacy four-facet shape this file's fixture
+// built is no longer what a freshly-saved view actually carries.
 
 // ─── A real end-to-end CLI round trip through the GUI's own Save button ──
 

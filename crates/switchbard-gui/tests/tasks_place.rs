@@ -238,11 +238,28 @@ fn rank_sort_orders_by_the_computed_repo_ranking() {
     let mut harness = harness(app);
     harness.run();
 
+    // TASK-97 medic pass (should-fix finding): the original version of this
+    // test only asserted the expedited task's *presence* — it would have
+    // passed even if Rank sort silently fell back to insertion order, since
+    // "Expedited, jumps the order" renders somewhere in the list either way.
+    // Asserting each row's rect's vertical position against the others
+    // proves the actual order: expedited first, then TASK-2, then TASK-3 —
+    // the rank order, not the construction order (TASK-2 first, TASK-1
+    // second) `repo_with` was built with above.
+    let y = |label: &str| harness.get_by_label(label).rect().top();
+    let expedited_y = y("TASK-1  Expedited, jumps the order");
+    let second_y = y("TASK-2  Second in rank order");
+    let third_y = y("TASK-3  Third in rank order");
+
     assert!(
-        harness
-            .query_by_label("Expedited, jumps the order")
-            .is_some(),
-        "the expedited task should render under Rank sort"
+        expedited_y < second_y,
+        "the expedited task should render above the second-ranked one \
+         (y={expedited_y} vs y={second_y})"
+    );
+    assert!(
+        second_y < third_y,
+        "the second-ranked task should render above the third-ranked one \
+         (y={second_y} vs y={third_y})"
     );
 }
 
@@ -416,6 +433,48 @@ fn sub_issues_render_indented_and_always_expanded_with_no_collapse_affordance() 
     assert!(
         harness.query_by_label("TASK-1.1  Child task").is_some(),
         "the sub-issue should render without needing an expand click — always expanded"
+    );
+}
+
+/// TASK-97 medic pass (MINOR finding, pinned): `list_body::flatten` only
+/// nests a child under its parent when the parent is *also* in the current
+/// frame's visible set (`list_body.rs`'s own module doc has the full
+/// rationale). Filter the parent out while its child stays visible — a
+/// `tasks_place.filters` predicate that only the child matches — and the
+/// child must still render, promoted to a top-level row (no indentation),
+/// not silently dropped because its parent doesn't match.
+#[test]
+fn orphaned_sub_issue_promotes_to_a_top_level_row() {
+    let parent = task("TASK-1", "Parent task", "In Progress");
+    let mut child = task("TASK-1.1", "Child task", "To Do");
+    child.parent = Some("TASK-1".to_string());
+    let sibling = task("TASK-2", "Unrelated top-level task", "To Do");
+    let mut app = tasks_app(vec![parent, child, sibling]);
+    app.tasks_place.group_by = None;
+    app.tasks_place.filters = vec![FilterPredicate {
+        field: TaskField::Status,
+        value: "To Do".to_string(),
+    }];
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness.query_by_label("TASK-1  Parent task").is_none(),
+        "precondition: the Status: To Do predicate filters out the In Progress parent"
+    );
+    let child_row = harness.get_by_label("TASK-1.1  Child task");
+    let sibling_row = harness.get_by_label("TASK-2  Unrelated top-level task");
+    let left_gap = (child_row.rect().left() - sibling_row.rect().left()).abs();
+    assert!(
+        // Sub-pixel layout jitter between rows (checkbox/text-width
+        // rounding) is well under a point; one real indent level is
+        // `list::TREE_INDENT` = 20.0 — the gap between "same depth" and
+        // "one level indented" is wide enough that a small tolerance can't
+        // hide a real regression.
+        left_gap < 4.0,
+        "an orphaned child (its parent filtered out) should render at the \
+         same left edge as any other top-level row, not indented under a \
+         parent that isn't on screen (gap={left_gap})"
     );
 }
 

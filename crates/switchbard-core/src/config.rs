@@ -151,7 +151,7 @@ pub struct FilterMemory {
 /// matching these strings back to its own enums (unrecognized values fall
 /// back to that enum's default rather than erroring — a saved view from an
 /// older Switchbard build should degrade gracefully, not corrupt the file).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SavedView {
     pub name: String,
     /// `None` means the All-repos scope. Named to match the GUI's own
@@ -185,6 +185,37 @@ pub struct SavedView {
     pub show_archived: bool,
     #[serde(default = "default_true")]
     pub show_drafts: bool,
+    /// TASK-97 medic pass: the Tasks place's filter-builder predicate set at
+    /// save time — an AND chain over `TaskField`, stored as plain id/value
+    /// pairs for the same zero-UI-dependency reason `lens`/`sort_key` are
+    /// strings (see this struct's own doc). Empty on a saved view written
+    /// before this field existed; `saved_views::apply_saved_view` falls back
+    /// to translating `status_filter`/`priority_filter`/`project_filter`/
+    /// `label_filter` for those (see its own doc for why that fallback is
+    /// unambiguous).
+    #[serde(default)]
+    pub tasks_filters: Vec<SavedFilterPredicate>,
+    /// The Tasks place's `Group by:` field id at save time (`TaskField::
+    /// as_id`), or empty for "None" (ungrouped). Empty also for a saved view
+    /// written before this field existed — indistinguishable from an
+    /// explicit "None", which is the same graceful-default posture every
+    /// other field on this struct takes for an older file.
+    #[serde(default)]
+    pub tasks_group_by: String,
+    /// The Tasks place's List/Board view mode id at save time (`TasksViewMode
+    /// ::as_id`). Empty (an older file, or never set) defaults to List.
+    #[serde(default)]
+    pub tasks_view_mode: String,
+}
+
+/// One saved AND-predicate for [`SavedView::tasks_filters`]: `field` is a
+/// `TaskField::as_id()` string (this crate can't name the GUI's `TaskField`
+/// enum directly — zero UI dependencies, see the crate doc), `value` is the
+/// predicate's matched value verbatim.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SavedFilterPredicate {
+    pub field: String,
+    pub value: String,
 }
 
 /// One explicitly favorited object in the IA V2 sidebar's FAVORITES group
@@ -398,6 +429,12 @@ mod tests {
                     show_completed: false,
                     show_archived: false,
                     show_drafts: true,
+                    tasks_filters: vec![SavedFilterPredicate {
+                        field: "status".into(),
+                        value: "In Progress".into(),
+                    }],
+                    tasks_group_by: "project".into(),
+                    tasks_view_mode: "list".into(),
                 }],
                 sidebar_collapsed: true,
                 filters: BTreeMap::from([(

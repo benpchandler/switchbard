@@ -1190,14 +1190,13 @@ fn parent_task_shows_rollup_and_expands_to_reveal_children() {
     assert!(harness.state().backlog_view.new_task.open);
 }
 
-// TASK-97 removed `saved_view_can_be_saved_and_deleted`: it drove
-// `ui::backlog::saved_views::render_saved_views_bar`'s "Save current as…"
-// field, which the Tasks place does not reuse — per docs/product-
-// trajectory.md's "Information architecture V2" entry, saved filters are
-// now first-class named views surfaced through the sidebar's FAVORITES
-// group (TASK-96, `ui::nav`, `HiveApp::navigate_to_favorite`'s
-// `FavoriteKind::View` arm), not a toolbar row inside Tasks itself. See
-// `backlog_controls.rs`'s identical removal note for the full reasoning.
+// TASK-97 removed `saved_view_can_be_saved_and_deleted` (it drove
+// `ui::backlog::saved_views::render_saved_views_bar`, unreachable at the
+// time). A TASK-97 medic pass (task-107's fix) restored it inside the Tasks
+// place's own facets frame — see `tests/tasks_place_saved_views.rs`'s
+// `deleting_the_active_saved_view_removes_it_and_clears_the_selection` for
+// the equivalent coverage on the now-reachable surface, and
+// `backlog_controls.rs`'s identical note for the full reasoning.
 
 /// Like [`harness_on_task`], but backed by a *real* task file in its own
 /// temp repo, for the two dispatch-toggle tests whose background thread

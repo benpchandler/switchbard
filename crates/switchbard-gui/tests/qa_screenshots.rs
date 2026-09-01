@@ -554,6 +554,9 @@ fn shots_for_theme(theme: ThemeChoice) {
                 show_completed: false,
                 show_archived: false,
                 show_drafts: true,
+                tasks_filters: Vec::new(),
+                tasks_group_by: String::new(),
+                tasks_view_mode: String::new(),
             });
         app.backlog_view.active_saved_view = Some("High priority".to_string());
         let mut h = harness(app);

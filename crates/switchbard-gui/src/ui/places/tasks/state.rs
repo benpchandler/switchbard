@@ -31,14 +31,18 @@ impl TasksViewMode {
         }
     }
 
-    fn as_id(self) -> &'static str {
+    /// `pub(crate)`, not private: `ui::backlog::saved_views` (a sibling
+    /// top-level module) needs this to encode/decode `SavedView::
+    /// tasks_view_mode` — the same stable-persistence-id discipline
+    /// `TaskField::as_id` documents.
+    pub(crate) fn as_id(self) -> &'static str {
         match self {
             Self::List => "list",
             Self::Board => "board",
         }
     }
 
-    fn from_id(id: &str) -> Self {
+    pub(crate) fn from_id(id: &str) -> Self {
         match id {
             "board" => Self::Board,
             _ => Self::List,

@@ -509,11 +509,20 @@ fn render_section(
                 // translate the status into that place's filter-builder
                 // predicate model (replacing any existing Status predicate
                 // rather than stacking one per click).
+                //
+                // TASK-97 medic pass (BLOCKER finding): this used to *also*
+                // write `backlog_view.status_filter` — a second, invisible
+                // narrowing layer `sort::visible_task_rows` still reads that
+                // the Tasks place's own filter-chip UI can never show or
+                // clear. Removing that write and relying solely on
+                // `tasks_place.filters` (the one predicate set with a chip
+                // and a "recent:" trail) is the fix; `tasks::
+                // neutralize_legacy_filters` is the belt-and-suspenders
+                // guard in case some other path still sets it.
                 app.place = crate::runtime::Place::Tasks;
                 app.tasks_view = crate::runtime::TasksView::All;
                 app.backlog_view.lens = BacklogLens::List;
                 if let Some(status) = view_all_status_filter {
-                    app.backlog_view.status_filter = status.to_string();
                     app.tasks_place.filters.retain(|predicate| {
                         predicate.field != crate::ui::places::tasks::fields::TaskField::Status
                     });

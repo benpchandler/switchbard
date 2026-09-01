@@ -24,7 +24,8 @@ use switchbard_core::config::Config;
 use switchbard_core::{BacklogRepo, BacklogTask, BacklogTaskSource, Repo, WorktreeRef};
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey, Place};
-use switchbard_gui::ui::places::tasks::state::TasksViewMode;
+use switchbard_gui::ui::places::tasks::fields::TaskField;
+use switchbard_gui::ui::places::tasks::state::{FilterPredicate, TasksViewMode};
 
 fn task(id: &str, title: &str, status: &str) -> BacklogTask {
     BacklogTask {
@@ -307,8 +308,21 @@ fn milestone_and_label_filters_both_narrow_the_visible_set_together() {
     assert!(h.query_by_label("TASK-2  Wrong milestone").is_some());
     assert!(h.query_by_label("TASK-3  Wrong label").is_some());
 
-    h.state_mut().backlog_view.project_filter = "Q3-hardening".to_string();
-    h.state_mut().backlog_view.label_filter = "security-review".to_string();
+    // TASK-97 medic pass (BLOCKER finding): the legacy `backlog_view.
+    // {project,label}_filter` fields this test used to set are now inert
+    // inside the Tasks place (`ui::places::tasks::neutralize_legacy_
+    // filters` forces them back to "all" every frame) — `tasks_place.
+    // filters` is the one AND-predicate set that actually narrows the list.
+    h.state_mut().tasks_place.filters = vec![
+        FilterPredicate {
+            field: TaskField::Project,
+            value: "Q3-hardening".to_string(),
+        },
+        FilterPredicate {
+            field: TaskField::Label,
+            value: "security-review".to_string(),
+        },
+    ];
     h.run();
 
     assert!(
@@ -326,13 +340,12 @@ fn milestone_and_label_filters_both_narrow_the_visible_set_together() {
 }
 
 // TASK-97 removed `saved_view_round_trips_milestone_and_label_filters_
-// through_a_real_reload`: it drove `ui::backlog::saved_views::
-// render_saved_views_bar`'s "Save current as…" toolbar field, which the
-// Tasks place does not reuse — per docs/product-trajectory.md's
-// "Information architecture V2" entry, saved filters are now first-class
-// named views surfaced through the sidebar's FAVORITES group (TASK-96),
-// not a toolbar row inside Tasks itself. See `backlog_controls.rs`'s own
-// identical removal note for the full reasoning; not duplicated per-file.
+// through_a_real_reload` (it drove `ui::backlog::saved_views::
+// render_saved_views_bar`, unreachable at the time). A TASK-97 medic pass
+// (task-107's fix) restored it inside the Tasks place's own facets frame —
+// see `tests/tasks_place_saved_views.rs` for the restored coverage on the
+// now-reachable surface. See `backlog_controls.rs`'s own identical removal
+// note for the full reasoning; not duplicated per-file.
 
 // ─── 4. Create modal: labels/assignee/milestone/dependencies actually
 //        persisting through the real CLI, typed via kittest (not

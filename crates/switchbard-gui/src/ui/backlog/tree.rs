@@ -63,6 +63,7 @@ pub(super) fn render_task_tree_row(
         depth,
         &kids,
         false, // legacy List lens keeps its collapse-by-default behavior
+        true,  // legacy List lens always shows the Delivery/AC column
         pending,
     );
     ui.add_space(5.0);

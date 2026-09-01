@@ -21,8 +21,18 @@ const TREE_INDENT: f32 = 20.0;
 /// Width of the trailing checkbox + status + priority + AC columns (i.e.
 /// everything to the right of the title). The repo badge column, present
 /// only in "All repos" scope, adds `REPO_COL_WIDTH` on top of this.
-const TRAILING_COLS_WIDTH: f32 = 236.0;
-const REPO_COL_WIDTH: f32 = 92.0;
+///
+/// `pub(crate)`: `ui::places::tasks::list_body`'s column header computes its
+/// own Task-label width against this same number (TASK-97 medic pass) —
+/// named and shared rather than a second hardcoded `236.0` that could drift.
+pub(crate) const TRAILING_COLS_WIDTH: f32 = 236.0;
+pub(crate) const REPO_COL_WIDTH: f32 = 92.0;
+/// The trailing AC-progress ("x/y" checked criteria) column's own width —
+/// the narrow-width "Delivery column drops first" column (mock §7d, TASK-97
+/// medic pass PARITY/SEVERE finding). Named so `task_col_width` and
+/// `list_body`'s header can subtract it out exactly when `show_delivery` is
+/// `false`, rather than re-deriving the number.
+pub(crate) const AC_COL_WIDTH: f32 = 52.0;
 
 /// Owner UX pass (2026-08-05): List used to embed its own left-list +
 /// right-detail split, since it was the only lens with a detail pane at
@@ -51,7 +61,9 @@ fn render_task_list(
     ui.horizontal(|ui| {
         render_select_all_checkbox(app, ui, &tasks);
         ui.add_sized(
-            [task_col_width(ui, show_repo), 18.0],
+            // The legacy List lens always shows the Delivery/AC column —
+            // only `ui::places::tasks::list_body` drops it at narrow widths.
+            [task_col_width(ui, show_repo, true), 18.0],
             egui::Label::new(
                 egui::RichText::new("Task")
                     .small()
@@ -122,12 +134,15 @@ fn render_task_list(
         });
 }
 
-fn task_col_width(ui: &egui::Ui, show_repo: bool) -> f32 {
-    let trailing = if show_repo {
+fn task_col_width(ui: &egui::Ui, show_repo: bool, show_delivery: bool) -> f32 {
+    let mut trailing = if show_repo {
         TRAILING_COLS_WIDTH + REPO_COL_WIDTH
     } else {
         TRAILING_COLS_WIDTH
     };
+    if !show_delivery {
+        trailing -= AC_COL_WIDTH;
+    }
     (ui.available_width() - trailing).max(140.0)
 }
 
@@ -229,6 +244,13 @@ pub(crate) fn render_task_list_row(
     // binding directive) passes `false` to keep its collapse-by-default
     // behavior unchanged.
     always_expanded: bool,
+    // TASK-97 medic pass (PARITY/SEVERE finding): the "Delivery" (AC
+    // progress, "x/y") column — mock §7d's "below 720px the facet bar wraps
+    // and the Delivery column drops first". `true` for every pre-existing
+    // call site (the legacy List lens, and this place at ordinary widths);
+    // `ui::places::tasks::list_body` passes `false` once the viewport drops
+    // below `ui::nav::NARROW_WIDTH_THRESHOLD`.
+    show_delivery: bool,
     pending: &mut Pending,
 ) {
     let task = row.task;
@@ -236,7 +258,7 @@ pub(crate) fn render_task_list_row(
     let detail_selected = app.backlog_view.selected_task.as_ref() == Some(&key);
     let bulk_selected = app.backlog_view.bulk_selected_tasks.contains(&key);
     let selected = detail_selected || bulk_selected;
-    let title_width = task_col_width(ui, show_repo) - (depth as f32 * TREE_INDENT);
+    let title_width = task_col_width(ui, show_repo, show_delivery) - (depth as f32 * TREE_INDENT);
     // TASK-97/TASK-38: the stroke-based selection ring shared with the
     // Board lens's cards (`board::paint_card`) — same `theme::
     // selected_row_stroke` authority, applied here so a selected row never
@@ -303,6 +325,21 @@ pub(crate) fn render_task_list_row(
                 let done = children.iter().filter(|c| c.is_done()).count();
                 format!("{title_text}  [{done}/{}]", children.len())
             };
+            // TASK-97 medic pass (PARITY finding): a List row stays a fixed
+            // `ROW_HEIGHT` (`list_body.rs`'s uniform-row virtualization math
+            // depends on it), so the title itself stays single-line
+            // `.truncate()` rather than clamping to two lines in place — the
+            // mock's own §7c two-line clamp is delivered on Board cards
+            // instead (`board::paint_card`, bounded, never grows), and this
+            // row's hover reveals what truncation hid: the full id+title
+            // (+ roll-up suffix) line, then the description below it. See
+            // `list_body.rs`'s module doc for why this option was chosen
+            // over raising `ROW_HEIGHT` to fit two rows.
+            let hover_text = if task.description.is_empty() {
+                title_text.clone()
+            } else {
+                format!("{title_text}\n\n{}", task.description)
+            };
             let resp = ui
                 .add_sized(
                     [title_width, 26.0],
@@ -311,7 +348,7 @@ pub(crate) fn render_task_list_row(
                         .frame(false)
                         .truncate(),
                 )
-                .on_hover_text(task.description.as_str());
+                .on_hover_text(hover_text);
             if resp.clicked() {
                 let (shift, toggle_bulk) = ui.input(|input| {
                     (
@@ -361,25 +398,27 @@ pub(crate) fn render_task_list_row(
                     );
                 },
             );
-            ui.allocate_ui_with_layout(
-                egui::vec2(52.0, 26.0),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    if !task.acceptance_criteria.is_empty() {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{}/{}",
-                                task.acceptance_done_count(),
-                                task.acceptance_criteria.len()
-                            ))
-                            .small()
-                            .color(theme::muted_text()),
-                        );
-                    } else {
-                        ui.label(egui::RichText::new("-").small().color(theme::muted_text()));
-                    }
-                },
-            );
+            if show_delivery {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(AC_COL_WIDTH, 26.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        if !task.acceptance_criteria.is_empty() {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{}/{}",
+                                    task.acceptance_done_count(),
+                                    task.acceptance_criteria.len()
+                                ))
+                                .small()
+                                .color(theme::muted_text()),
+                            );
+                        } else {
+                            ui.label(egui::RichText::new("-").small().color(theme::muted_text()));
+                        }
+                    },
+                );
+            }
             if task.source != BacklogTaskSource::Active {
                 ui.label(
                     egui::RichText::new(task.source.label())

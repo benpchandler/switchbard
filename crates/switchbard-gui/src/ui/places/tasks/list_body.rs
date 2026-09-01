@@ -11,6 +11,46 @@
 //! uniformity is what makes `show_rows`' viewport math correct; see the
 //! module's own row-height note below for why the summary band fits in one
 //! slot rather than needing its own variable-height carve-out.
+//!
+//! ## TASK-97 medic pass (PARITY finding): the two-line title clamp
+//!
+//! Mock §7c clamps a task title at two lines and never grows the row past
+//! that. Two ways to deliver that here were considered: raise [`ROW_HEIGHT`]
+//! to fit two clamped lines uniformly, or keep it fixed and clamp
+//! differently per surface. Raising it was rejected — `ROW_HEIGHT` is
+//! shared by *every* flat-list entry (headers and the summary band too, not
+//! just task rows), so widening it to fit a two-line title would inflate
+//! every header row for a case only task rows ever hit, and it would still
+//! only buy exactly two lines' worth of room before the same "never grow"
+//! rule needed enforcing again anyway. The chosen fix: task rows keep
+//! `ROW_HEIGHT` fixed and the title single-line `.truncate()`, with the full
+//! id/title/roll-up line and description on hover
+//! (`list::render_task_list_row`'s own comment) — `show_rows`' viewport math
+//! stays exact, untouched by content length. Board cards (no fixed row
+//! height, not virtualized) get the real two-line clamp instead
+//! (`board::paint_card`, bounded via `LayoutJob::wrap.max_rows`), which is
+//! where the mock's clamp actually shows.
+//!
+//! ## TASK-97 medic pass (PARITY/SEVERE finding): narrow-width column drop
+//!
+//! Below `ui::nav::NARROW_WIDTH_THRESHOLD` the Delivery (AC-progress)
+//! column drops first (mock §7d) — `render`/`render_column_header` compute
+//! `show_delivery` once per frame from the viewport width and thread it into
+//! every row, freeing its width for the title column rather than leaving it
+//! to shrink into the `.max(140.0)` floor `list::task_col_width` enforces.
+//!
+//! ## TASK-97 medic pass (MINOR finding): orphaned sub-issue promotion
+//!
+//! `flatten`'s `child_keys_in_view` only nests a row under its parent when
+//! the parent is *also* in the currently-visible set. A parent hidden by a
+//! filter/toggle (Done, a `tasks_place.filters` predicate, repo scope) while
+//! its child stays visible therefore promotes that child to a top-level
+//! entry at depth 0, with no "orphaned" marker of any kind — an accepted,
+//! deliberate behavior (the alternative, hiding an otherwise-matching child
+//! because its parent doesn't match, would be strictly worse: a task the
+//! user's filter says should be visible would silently vanish instead). See
+//! `orphaned_sub_issue_promotes_to_a_top_level_row` in `tests/tasks_place.rs`
+//! for the pinned regression.
 
 use std::collections::HashSet;
 
@@ -155,8 +195,14 @@ pub(super) fn render(
         groups.iter().flat_map(|g| g.rows.iter().copied()).collect();
     let visible_keys: Vec<BacklogTaskKey> = all_visible.iter().map(TaskRow::key).collect();
     let flat = flatten(groups, &app.tasks_place.expanded_groups, show_headers);
+    // TASK-97 medic pass (PARITY/SEVERE finding): the Delivery column drop —
+    // same breakpoint `ui::nav` collapses the sidebar at and `ui::backlog::
+    // rail` auto-collapses the detail rail at, so the whole workspace agrees
+    // on one narrow-width line.
+    let show_delivery =
+        ui.input(|i| i.viewport_rect().width()) >= crate::ui::nav::NARROW_WIDTH_THRESHOLD;
 
-    render_column_header(app, ui, &all_visible);
+    render_column_header(app, ui, &all_visible, show_delivery);
 
     if flat.is_empty() {
         ui.add_space(20.0);
@@ -201,6 +247,7 @@ pub(super) fn render(
                                 *depth as usize,
                                 &child_tasks,
                                 true,
+                                show_delivery,
                                 pending,
                             );
                         });
@@ -214,11 +261,25 @@ pub(super) fn render(
 /// render_select_all_checkbox` (toggles every *visible* row's bulk
 /// selection, same as the legacy List lens) rather than a fresh
 /// implementation, so the two never define "select all" differently.
-fn render_column_header(app: &mut HiveApp, ui: &mut egui::Ui, all_visible: &[TaskRow<'_>]) {
+fn render_column_header(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    all_visible: &[TaskRow<'_>],
+    show_delivery: bool,
+) {
     ui.horizontal(|ui| {
         list::render_select_all_checkbox(app, ui, all_visible);
+        // Mirrors `list::task_col_width`'s own trailing-width math (same
+        // named constants) so the "Task" header stays lined up over the
+        // title column whether or not the Delivery column is currently
+        // dropped.
+        let trailing = if show_delivery {
+            list::TRAILING_COLS_WIDTH
+        } else {
+            list::TRAILING_COLS_WIDTH - list::AC_COL_WIDTH
+        };
         ui.add_sized(
-            [ui.available_width() - 236.0, 18.0],
+            [ui.available_width() - trailing, 18.0],
             egui::Label::new(
                 egui::RichText::new("Task")
                     .small()

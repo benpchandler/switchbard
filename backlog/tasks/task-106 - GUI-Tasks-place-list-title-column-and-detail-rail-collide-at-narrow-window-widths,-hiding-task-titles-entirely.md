@@ -1,9 +1,10 @@
 ---
 id: TASK-106
 title: 'GUI: Tasks-place list title column and detail rail collide at narrow window widths, hiding task titles entirely'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-01 06:07'
+updated_date: '2026-09-01 06:59'
 labels:
   - gui
   - ia
@@ -26,7 +27,13 @@ Options needing a decision: collapse/hide the detail rail below some width thres
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Task titles remain visibly readable (non-zero, non-truncated-to-nothing width) in the Tasks place List body down to a defined minimum supported window width
-- [ ] #2 The chosen fix (rail collapse, column dropping, or minimum-width negotiation) is documented as the one rule call sites follow
-- [ ] #3 qa_screenshots_tasks_place.rs's narrow-width fixture (700px) shows visible task titles in both themes
+- [x] #1 Task titles remain visibly readable (non-zero, non-truncated-to-nothing width) in the Tasks place List body down to a defined minimum supported window width
+- [x] #2 The chosen fix (rail collapse, column dropping, or minimum-width negotiation) is documented as the one rule call sites follow
+- [x] #3 qa_screenshots_tasks_place.rs's narrow-width fixture (700px) shows visible task titles in both themes
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Fixed by TASK-97's medic pass (2026-09-01): rail.rs's detail rail now auto-collapses below ui::nav::NARROW_WIDTH_THRESHOLD (720px, the same breakpoint the sidebar already collapses at, promoted to pub(crate) and shared) instead of holding its 320px MIN_WIDTH regardless of window size; list_body.rs additionally drops the Delivery/AC-progress column at the same threshold, giving the title column the reclaimed width. docs/qa/screenshots/tasks_place_narrow_{light,dark}.png regenerated and visually reviewed - titles are fully readable, no cutoff.
+<!-- SECTION:FINAL_SUMMARY:END -->

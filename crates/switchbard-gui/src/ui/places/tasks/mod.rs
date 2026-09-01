@@ -61,6 +61,7 @@ use state::TasksViewMode;
 /// `app.rs`'s only caller.
 pub fn render_tasks_place(app: &mut HiveApp, ui: &mut egui::Ui) {
     let ctx = &ui.ctx().clone();
+    neutralize_legacy_filters(app);
     let snap = backlog::Snapshot::collect(app);
     backlog::reconcile_selected_repo(app, &snap);
     backlog::search::handle_shortcut(app, ctx);
@@ -137,6 +138,18 @@ pub fn render_tasks_place(app: &mut HiveApp, ui: &mut egui::Ui) {
                     render_facets_row(app, ui, &filtered);
                     ui.separator();
                     render_group_sort_row(app, ui);
+                    ui.separator();
+                    // TASK-97 medic pass (MAJOR finding): saved-view save/
+                    // browse/delete restored here — its only prior caller
+                    // was the orphaned legacy `ui::backlog::render` body,
+                    // which nothing routes to anymore (see this module's own
+                    // doc). `saved_views::apply_saved_view` now translates
+                    // into `tasks_place.{filters,group_by,view_mode}`, so
+                    // picking a saved view from this bar's combo box (or a
+                    // FAVORITES-group click — `HiveApp::navigate_to_favorite`
+                    // shares this same function) actually changes what's on
+                    // screen here, not just the dead legacy facets.
+                    backlog::saved_views::render_saved_views_bar(app, ui);
                 });
             ui.separator();
 
@@ -151,6 +164,25 @@ pub fn render_tasks_place(app: &mut HiveApp, ui: &mut egui::Ui) {
     backlog::search::render_overlay(app, ctx, &snap);
     backlog::create::render_create_modal(app, ctx, &snap, &mut pending);
     backlog::apply_pending(app, ui, pending);
+}
+
+/// TASK-97 medic pass (BLOCKER finding): `sort::visible_task_rows` (reused
+/// wholesale by this place, above) still narrows on four legacy single-value
+/// facets — `backlog_view.{status,priority,project,label}_filter` — that
+/// this place's own UI exposes no control for. Every write site that used to
+/// set one of them for this place has been moved onto `tasks_place.filters`
+/// instead (Digest's "View all", a saved-view apply, a Project favorite's
+/// click — the one predicate set this place actually renders a removable
+/// chip for), so this is a pure safety net, not the primary fix: force the
+/// four back to "all" on every Tasks-place frame, so a value smuggled in
+/// some other way (an old persisted filter memory, a future write site added
+/// without reading this doc) can never silently narrow the list with no UI
+/// to undo it.
+fn neutralize_legacy_filters(app: &mut HiveApp) {
+    app.backlog_view.status_filter = "all".to_string();
+    app.backlog_view.priority_filter = "all".to_string();
+    app.backlog_view.project_filter = "all".to_string();
+    app.backlog_view.label_filter = "all".to_string();
 }
 
 fn render_empty(ui: &mut egui::Ui) {

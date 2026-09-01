@@ -80,7 +80,13 @@ pub(crate) mod list;
 mod portfolio;
 mod projects;
 pub(crate) mod rail;
-mod saved_views;
+// TASK-97 medic pass (MAJOR finding): `pub(crate)`, not private — the Tasks
+// place (`ui::places::tasks`) is this module's only reachable caller now
+// (`render_saved_views_bar`'s previous and only caller, `ui::backlog::
+// render`, is the orphaned legacy body nothing routes to; see this file's
+// own module doc), so the saved-view creation/browse/delete UI needs to be
+// visible from a sibling top-level module, not just from within `backlog`.
+pub(crate) mod saved_views;
 pub(crate) mod search;
 pub(crate) mod selection;
 pub(crate) mod sort;

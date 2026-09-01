@@ -34,8 +34,20 @@ pub(crate) fn render_detail_rail(
     pending: &mut Pending,
 ) {
     let ctx = &ui.ctx().clone();
-    if app.backlog_view.detail_rail_collapsed {
-        render_collapsed(app, ui);
+    // TASK-97 medic pass (PARITY/SEVERE finding): below `ui::nav`'s own
+    // narrow-width breakpoint, `MIN_WIDTH` (320) alone starves the central
+    // Tasks place workspace down to a sliver — titles and the status-
+    // migration banner rendered cut off mid-word (`docs/qa/screenshots/
+    // tasks_place_narrow_*.png`, pre-fix). Auto-collapsing here mirrors
+    // `ui::nav`'s own hard override at the same threshold: a pure function
+    // of the viewport width, re-checked every frame, no persisted flag of
+    // its own — widening the window back out re-expands it live. Narrow
+    // wins over the user's own `detail_rail_collapsed` choice (no manual
+    // "stay expanded anyway" escape hatch at this width), same posture
+    // `ui::nav` takes for its own icon-rail collapse.
+    let narrow = ui.input(|i| i.viewport_rect().width()) < crate::ui::nav::NARROW_WIDTH_THRESHOLD;
+    if app.backlog_view.detail_rail_collapsed || narrow {
+        render_collapsed(app, ui, narrow);
         return;
     }
 
@@ -80,7 +92,12 @@ pub(crate) fn render_detail_rail(
 /// Keep a discoverable edge control when the rail is collapsed. A distinct
 /// panel id preserves the expanded panel's user-resized width in egui's
 /// persisted panel state instead of overwriting it with 28 points.
-fn render_collapsed(app: &mut HiveApp, ui: &mut egui::Ui) {
+///
+/// `narrow` suppresses the expand affordance: re-expanding while the window
+/// is still below the auto-collapse threshold would immediately re-starve
+/// the central workspace it was collapsed to protect, so there is nothing
+/// for the button to usefully do until the window widens past it.
+fn render_collapsed(app: &mut HiveApp, ui: &mut egui::Ui, narrow: bool) {
     let ctx = &ui.ctx().clone();
     let frame = egui::Frame::side_top_panel(&ctx.style_of(ctx.theme()))
         .fill(theme::rail_bg())
@@ -93,7 +110,10 @@ fn render_collapsed(app: &mut HiveApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(4.0);
-                if ui
+                if narrow {
+                    ui.label("◀")
+                        .on_hover_text("Widen the window to bring back the task-detail rail");
+                } else if ui
                     .small_button("◀")
                     .on_hover_text("Expand the task-detail rail")
                     .clicked()

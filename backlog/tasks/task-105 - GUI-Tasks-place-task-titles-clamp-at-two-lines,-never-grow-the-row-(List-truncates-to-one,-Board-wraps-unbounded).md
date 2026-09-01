@@ -1,9 +1,10 @@
 ---
 id: TASK-105
 title: 'GUI: Tasks-place task titles clamp at two lines, never grow the row (List truncates to one, Board wraps unbounded)'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-01 06:07'
+updated_date: '2026-09-01 06:59'
 labels:
   - gui
   - ia
@@ -27,7 +28,13 @@ Options needing a decision: (a) fix List and Board titles as one shared change, 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 List row titles clamp visually at two lines with an ellipsis, never showing a third line
-- [ ] #2 Board card titles clamp at two lines and never grow the card beyond a fixed max height
-- [ ] #3 List's virtualized row-height contract (list_body.rs's ROW_HEIGHT/show_rows) stays internally consistent with whatever clamp height is chosen
+- [x] #2 Board card titles clamp at two lines and never grow the card beyond a fixed max height
+- [x] #3 List's virtualized row-height contract (list_body.rs's ROW_HEIGHT/show_rows) stays internally consistent with whatever clamp height is chosen
 - [ ] #4 qa_screenshots_tasks_place.rs's long-title fixture (TASK-4) visibly clamps in both List and Board screenshots, both themes
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Fixed by TASK-97's medic pass (2026-09-01), with a deliberate deviation from AC #1/#4 as literally written - recorded here rather than silently checked. Board cards (AC #2): paint_card now builds a LayoutJob with wrap.max_rows=2 for the title (RichText::append_to reproduces the .strong() style resolution), giving a real bounded 2-line clamp that never grows the card - verified in docs/qa/screenshots/tasks_place_board_{light,dark}.png (TASK-4's long title). List rows (AC #1) deliberately keep single-line .truncate() rather than a true 2-line clamp: list_body.rs's ROW_HEIGHT=34/show_rows virtualization assumes every flattened row (headers, summary bands, task rows) is exactly one uniform height, and raising it to fit two lines would inflate every non-task row for a case only task rows hit. Chosen instead: single-line truncate with the full id/title/roll-up-suffix line plus description surfaced on hover (list.rs's render_task_list_row). AC #3 (virtualization contract stays internally consistent) holds - ROW_HEIGHT/show_rows math is untouched by content length either way. AC #4 (both List and Board screenshots visibly clamp) is therefore only half true: Board clamps, List does not (by design) - see list_body.rs's module doc for the full reasoning and the option that was rejected.
+<!-- SECTION:FINAL_SUMMARY:END -->
