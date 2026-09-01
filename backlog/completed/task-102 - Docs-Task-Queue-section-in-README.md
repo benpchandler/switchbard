@@ -1,10 +1,10 @@
 ---
 id: TASK-102
 title: 'Docs: Task Queue section in README'
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 02:28'
+updated_date: '2026-09-01 03:07'
 labels:
   - docs
   - dogfood
