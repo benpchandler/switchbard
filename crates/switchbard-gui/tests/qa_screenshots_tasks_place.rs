@@ -17,14 +17,15 @@ use std::path::{Path, PathBuf};
 
 use common::{harness, seeded_app, REPO_PATH};
 use eframe::egui;
-use egui_kittest::{Harness, SnapshotOptions};
+use egui_kittest::{kittest::Queryable as _, Harness, SnapshotOptions};
 use switchbard_core::config::ThemeChoice;
 use switchbard_core::{
     BacklogChecklistItem, BacklogRepo, BacklogTaskSource, GoalDef, GoalInputs, GoalMeasure,
-    GoalWeek, ProjectDef,
+    GoalWeek, ProjectDef, Repo, WorktreeRef,
 };
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{Place, TasksView};
+use switchbard_gui::ui::places::tasks::fields::TaskField;
 
 fn output_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/qa/screenshots")
@@ -167,6 +168,32 @@ fn app_with(theme: ThemeChoice) -> HiveApp {
     app
 }
 
+fn add_second_repo(app: &mut HiveApp) {
+    let root = PathBuf::from("/tmp/switchbard-ui-test/second");
+    app.repos.lock().unwrap().push(Repo {
+        name: "SecondRepo".to_string(),
+        path: root.clone(),
+    });
+    app.worktrees.lock().unwrap().push(WorktreeRef {
+        repo_name: "SecondRepo".to_string(),
+        path: root.clone(),
+        branch: Some("main".to_string()),
+        head: "abc1234".to_string(),
+    });
+    let mut repo = repo_with(
+        vec![task(
+            "TASK-7",
+            "A task from the second repository",
+            "To Do",
+            None,
+        )],
+        Vec::new(),
+        Vec::new(),
+    );
+    repo.root = root.clone();
+    app.backlog_repos.lock().unwrap().insert(root, repo);
+}
+
 fn shots_for_theme(theme: ThemeChoice) {
     let suffix = format!("_{theme:?}").to_lowercase();
 
@@ -223,9 +250,30 @@ fn shots_for_theme(theme: ThemeChoice) {
     }
 }
 
+fn repo_filter_shot(theme: ThemeChoice) {
+    let suffix = format!("_{theme:?}").to_lowercase();
+    let mut app = app_with(theme);
+    add_second_repo(&mut app);
+    app.tasks_place.group_by = None;
+    app.tasks_place.filter_builder_open = true;
+    app.tasks_place.draft_field = TaskField::Repo;
+    let mut harness = harness(app);
+    harness.run();
+    harness.get_by_value("Choose a value").click();
+    harness.run();
+    snapshot(&mut harness, &format!("tasks_place_repo_filter{suffix}"));
+}
+
 #[test]
 #[ignore = "pixel screenshots — GPU/driver/font sensitive, run explicitly (see module doc)"]
 fn tasks_place_screenshots_both_themes() {
     shots_for_theme(ThemeChoice::Light);
     shots_for_theme(ThemeChoice::Dark);
+}
+
+#[test]
+#[ignore = "pixel screenshots — GPU/driver/font sensitive, run explicitly (see module doc)"]
+fn tasks_place_repo_filter_screenshots_both_themes() {
+    repo_filter_shot(ThemeChoice::Light);
+    repo_filter_shot(ThemeChoice::Dark);
 }

@@ -119,7 +119,11 @@ pub(crate) fn render_saved_views_bar(app: &mut HiveApp, ui: &mut egui::Ui) {
 fn current_as_saved_view(app: &HiveApp, name: String) -> SavedView {
     SavedView {
         name,
-        selected_repo: app.backlog_view.selected_repo.clone(),
+        // IA V2 rejected one-repo-at-a-time switching. Repo scope belongs
+        // to the sidebar and task-level repo filters live in `tasks_filters`
+        // as visible predicates, so new saved views never write the removed
+        // legacy picker field.
+        selected_repo: None,
         // The legacy four single-value facets are dead weight for a view
         // saved from the Tasks place now (`tasks_place.filters` below is the
         // real source of truth) — written as "all" rather than mirroring
@@ -161,7 +165,10 @@ fn current_as_saved_view(app: &HiveApp, name: String) -> SavedView {
 /// a saved view the same way this module's own combo box does — one
 /// definition of "apply a saved view", not two.
 pub(super) fn apply_saved_view(app: &mut HiveApp, view: &SavedView) {
-    app.backlog_view.selected_repo = view.selected_repo.clone();
+    // `SavedView::selected_repo` remains readable for config compatibility,
+    // but IA V2 has no single-repo picker. Applying an old view must not
+    // resurrect a hidden scope underneath the sidebar's "All repos" state.
+    app.backlog_view.selected_repo = None;
     // TASK-97 medic pass: these four are never read for anything meaningful
     // once the Tasks place renders (`tasks::neutralize_legacy_filters`
     // forces them back to "all" every frame it's active) — reset here too so

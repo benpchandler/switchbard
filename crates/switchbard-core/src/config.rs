@@ -154,12 +154,11 @@ pub struct FilterMemory {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SavedView {
     pub name: String,
-    /// `None` means the All-repos scope. Named to match the GUI's own
-    /// `BacklogViewState::selected_repo` — deliberately *not*
-    /// `repo_filter`, which is a different, unrelated field there (the
-    /// repo picker's free-text search string). Serialized under the
-    /// pre-rename key `selected_project` so existing config files keep
-    /// loading and older builds keep reading ours.
+    /// Retained only to deserialize views saved before IA V2 removed the
+    /// single-repo picker. Current writers always store `None`; the sidebar
+    /// owns repo scope and a saved task-level repo filter lives in
+    /// `tasks_filters`. Serialized under the pre-rename key
+    /// `selected_project` so existing config files keep loading.
     #[serde(default, rename = "selected_project")]
     pub selected_repo: Option<PathBuf>,
     #[serde(default = "default_filter_all")]

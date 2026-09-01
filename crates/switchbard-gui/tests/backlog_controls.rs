@@ -2755,6 +2755,9 @@ fn project_assign_dropdown_offers_only_the_tasks_own_repos_projects() {
     let own_before = harness
         .query_all(kittest::by().label("Own Project"))
         .count();
+    let foreign_before = harness
+        .query_all(kittest::by().label("Foreign Project"))
+        .count();
     {
         // The ComboBox reports its selected text ("assign") as its *value*,
         // not its label — find it by role + value.
@@ -2777,8 +2780,8 @@ fn project_assign_dropdown_offers_only_the_tasks_own_repos_projects() {
         harness
             .query_all(kittest::by().label("Foreign Project"))
             .count(),
-        0,
-        "another repo's project must never be offered for this task"
+        foreign_before,
+        "opening the dropdown must not add another repo's project as an option"
     );
 }
 

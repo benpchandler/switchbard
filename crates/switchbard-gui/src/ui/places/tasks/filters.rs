@@ -2,7 +2,8 @@
 //! predicates over the same generic `TaskField` set `groups.rs` groups by,
 //! plus a "recent:" row of the last few filter sets (binding directive: no
 //! hardcoded chips — every value offered here comes from the current
-//! frame's actual data, not a fixed list).
+//! sidebar scope before the builder's own predicates are applied, not a
+//! fixed list or the already-narrowed result set).
 
 use eframe::egui;
 

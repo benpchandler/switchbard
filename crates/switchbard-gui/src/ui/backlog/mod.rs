@@ -244,10 +244,10 @@ pub(super) fn lens_filters(lens: BacklogLens) -> bool {
     )
 }
 
-/// TASK-96: `app.repo_scope` (the sidebar's multi-select scope) is the
-/// *outer* filter, applied on top of whatever `backlog_view.selected_repo`
-/// (the pre-existing single-repo picker) already narrows to — scope never
-/// fights the picker, it bounds it. `RepoRow::key` is a repo root path (the
+/// TASK-96: `app.repo_scope` is the sidebar's multi-select scope. The
+/// pre-existing `backlog_view.selected_repo` still supports the unreachable
+/// legacy Backlog body; the IA-V2 Tasks place clears it before calling here,
+/// so no hidden inner scope can contradict the sidebar. `RepoRow::key` is a repo root path (the
 /// same key space `Config::repos[].path`/`repo_scope` use — `backlog`'s
 /// project roots come straight from the tracked repo list, never from a
 /// worktree path, see `workers::backlog_repo_roots`), so the scope check is

@@ -170,6 +170,7 @@ fn saving_the_current_tasks_place_state_writes_a_named_saved_view() {
     );
     assert_eq!(saved.tasks_group_by, "status");
     assert_eq!(saved.tasks_view_mode, "list");
+    assert_eq!(saved.selected_repo, None);
     assert_eq!(
         harness.state().backlog_view.active_saved_view,
         Some("My rank queue".to_string())
@@ -272,6 +273,22 @@ fn applying_a_saved_view_directly_lands_predicates_on_the_removable_chip_not_the
         }]
     );
     assert_eq!(app.backlog_view.status_filter, "all");
+}
+
+#[test]
+fn applying_a_legacy_saved_view_does_not_restore_the_removed_repo_picker() {
+    let mut app = tasks_app(vec![task("TASK-1", "Visible task", "To Do")]);
+    app.config.ui.saved_views.push(SavedView {
+        selected_repo: Some(PathBuf::from("/tmp/removed-single-repo-scope")),
+        ..new_format_saved_view("Legacy repo view")
+    });
+
+    switchbard_gui::ui::backlog::apply_saved_view_by_name(&mut app, "Legacy repo view");
+
+    assert_eq!(
+        app.backlog_view.selected_repo, None,
+        "the sidebar remains the only repo scope after applying an old saved view"
+    );
 }
 
 #[test]
