@@ -374,9 +374,9 @@ fn failed_run_feed_row_offers_retry_and_deep_links_to_dispatches() {
         !text_containing(&harness, "Dispatch failed: TASK-1").is_empty(),
         "the failed-run row should surface the recorded reason"
     );
-    assert!(harness.query_by_label("↻ Retry").is_some());
+    assert!(harness.query_by_label("Retry").is_some());
     assert!(
-        harness.query_by_label("✕ Kill").is_none(),
+        harness.query_by_label("Kill").is_none(),
         "a failed (not stalled) run offers no Kill — nothing is running to kill"
     );
 
@@ -446,7 +446,7 @@ fn retry_re_flags_the_task_through_the_real_write_layer() {
 
     let mut harness = harness(app);
     harness.run();
-    harness.get_by_label("↻ Retry").click();
+    harness.get_by_label("Retry").click();
     harness.run_steps(4);
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -497,7 +497,7 @@ fn stalled_run_feed_row_kill_arms_the_shared_dispatch_kill_confirm() {
     harness.run();
 
     assert!(
-        harness.query_by_label("✕ Kill").is_some(),
+        harness.query_by_label("Kill").is_some(),
         "a stalled but verified-alive run offers Kill"
     );
     assert!(
@@ -505,7 +505,7 @@ fn stalled_run_feed_row_kill_arms_the_shared_dispatch_kill_confirm() {
         "precondition: nothing armed yet"
     );
 
-    harness.get_by_label("✕ Kill").click();
+    harness.get_by_label("Kill").click();
     harness.run();
 
     assert_eq!(
@@ -549,10 +549,10 @@ fn unattributed_listener_feed_row_offers_confirm_armed_kill_and_deep_links_to_op
         !text_containing(&harness, ":5173 squatter").is_empty(),
         "the port row should name the port and call it a squatter"
     );
-    assert!(harness.query_by_label("✕ Kill").is_some());
+    assert!(harness.query_by_label("Kill").is_some());
     assert!(harness.state().digest_view.port_kill_confirm.is_none());
 
-    harness.get_by_label("✕ Kill").click();
+    harness.get_by_label("Kill").click();
     harness.run();
     assert_eq!(
         harness.state().digest_view.port_kill_confirm,
@@ -633,7 +633,7 @@ fn removable_worktree_feed_row_remove_opens_the_shared_confirm_dialog_in_ops() {
         !text_containing(&harness, "worktree · removable").is_empty(),
         "a merged, clean, unattached worktree should surface as removable"
     );
-    assert!(harness.query_by_label("⌫ Remove…").is_some());
+    assert!(harness.query_by_label("Remove worktree").is_some());
     assert!(harness
         .state()
         .confirm_remove_worktree
@@ -641,13 +641,13 @@ fn removable_worktree_feed_row_remove_opens_the_shared_confirm_dialog_in_ops() {
         .unwrap()
         .is_none());
 
-    harness.get_by_label("⌫ Remove…").click();
+    harness.get_by_label("Remove worktree").click();
     harness.run();
 
     assert_eq!(
         harness.state().place,
         Place::Ops,
-        "Remove… deep-links to Ops, where the confirm dialog actually renders"
+        "Remove worktree deep-links to Ops, where the confirm dialog actually renders"
     );
     assert!(
         harness
@@ -656,7 +656,7 @@ fn removable_worktree_feed_row_remove_opens_the_shared_confirm_dialog_in_ops() {
             .lock()
             .unwrap()
             .is_some(),
-        "Remove… opens the exact same HiveApp::open_remove_worktree_confirm \
+        "Remove worktree opens the exact same HiveApp::open_remove_worktree_confirm \
          state Ops's own row uses — no second confirm dialog"
     );
 }

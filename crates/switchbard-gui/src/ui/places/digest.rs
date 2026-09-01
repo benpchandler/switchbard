@@ -256,88 +256,123 @@ fn repo_name_index(repos: &[Repo]) -> std::collections::HashMap<PathBuf, String>
 /// reason) and cloning only the handful of `String`s each row actually
 /// needs avoids the clone entirely — the same shape `dispatch_runs` and
 /// `repos` get below.
+///
+/// Lock discipline: one mutex at a time, never nested — the same ordering
+/// `ui::dispatch::summarize_dispatch` and `workers::refresh_dispatch_runs`
+/// hold to. The `backlog_repos` pass below collects owned `PendingRun`s
+/// (everything a `RunFeedRow` needs except what only `dispatch_runs` itself
+/// can answer) and drops that lock before `dispatch_runs` is ever taken, so
+/// the two locks are never held simultaneously.
 fn collect_task_rows(app: &HiveApp) -> (Vec<InFlightRow>, Vec<RunFeedRow>) {
     let repo_names = repo_name_index(&app.repos_snapshot());
-    let backlog_repos = app.backlog_repos.lock().unwrap();
-    let runs = app.dispatch_runs.lock().unwrap();
     let now = now_unix();
     let stale_after = DispatchOptions::default().stale_after;
 
     let mut in_flight = Vec::new();
-    let mut run_rows = Vec::new();
-    for (root, repo) in backlog_repos.iter() {
-        if !runtime::path_in_scope(root, &app.repo_scope) {
-            continue;
-        }
-        let repo_name = repo_names
-            .get(root)
-            .cloned()
-            .unwrap_or_else(|| root.display().to_string());
-        for task in &repo.tasks {
-            let category = dispatch_ui::dispatch_category(task);
-            let dispatching = category == DispatchCategory::InFlight;
-            let active =
-                task.source != switchbard_core::BacklogTaskSource::Archived && !task.is_done();
-            if active && (dispatching || task.status.eq_ignore_ascii_case("in progress")) {
-                in_flight.push(InFlightRow {
-                    repo_root: root.clone(),
-                    repo_name: repo_name.clone(),
-                    task_id: task.id.clone(),
-                    task_title: task.title.clone(),
-                    dispatching,
-                });
-            }
-
-            if !matches!(
-                category,
-                DispatchCategory::Failed | DispatchCategory::InFlight
-            ) {
+    let mut pending_runs = Vec::new();
+    {
+        let backlog_repos = app.backlog_repos.lock().unwrap();
+        for (root, repo) in backlog_repos.iter() {
+            if !runtime::path_in_scope(root, &app.repo_scope) {
                 continue;
             }
-            let key: BacklogTaskKey = (root.clone(), task.id.clone());
-            let run = runs.get(&key);
-            let kind = match category {
-                DispatchCategory::Failed => RunKind::Failed {
-                    reason: failure_reason(task),
-                },
-                DispatchCategory::InFlight => {
-                    let abandoned = run.is_some_and(|r| r.is_abandoned(now, true));
-                    let stalled = run.is_some_and(|r| r.looks_stalled(now, stale_after));
-                    if abandoned {
-                        RunKind::Orphaned
-                    } else if stalled {
-                        match run.and_then(|r| r.liveness.killable_pgid()) {
-                            Some(pgid) => match run.and_then(|r| r.started_at_unix) {
-                                Some(started_at_unix) => RunKind::Stalled {
-                                    pgid,
-                                    started_at_unix,
-                                },
-                                None => continue,
-                            },
-                            // No verified-live pgid to kill: same as the
-                            // Dispatches view, which renders no Kill button
-                            // in this case either (`render_kill_control`'s
-                            // own early return).
-                            None => RunKind::Orphaned,
-                        }
-                    } else {
-                        continue; // healthy — already in "In flight" above
-                    }
+            let repo_name = repo_names
+                .get(root)
+                .cloned()
+                .unwrap_or_else(|| root.display().to_string());
+            for task in &repo.tasks {
+                let category = dispatch_ui::dispatch_category(task);
+                let dispatching = category == DispatchCategory::InFlight;
+                let active =
+                    task.source != switchbard_core::BacklogTaskSource::Archived && !task.is_done();
+                if active && (dispatching || task.status.eq_ignore_ascii_case("in progress")) {
+                    in_flight.push(InFlightRow {
+                        repo_root: root.clone(),
+                        repo_name: repo_name.clone(),
+                        task_id: task.id.clone(),
+                        task_title: task.title.clone(),
+                        dispatching,
+                    });
                 }
-                _ => unreachable!(),
-            };
-            run_rows.push(RunFeedRow {
-                key,
-                repo_name: repo_name.clone(),
-                task_title: task.title.clone(),
-                elapsed_desc: run.and_then(|r| r.elapsed(now)).map(format_elapsed),
-                log_path: run.and_then(|r| r.log_path.clone()),
-                kind,
-            });
+
+                if !matches!(
+                    category,
+                    DispatchCategory::Failed | DispatchCategory::InFlight
+                ) {
+                    continue;
+                }
+                pending_runs.push(PendingRun {
+                    key: (root.clone(), task.id.clone()),
+                    repo_name: repo_name.clone(),
+                    task_title: task.title.clone(),
+                    category,
+                    failure_reason: (category == DispatchCategory::Failed)
+                        .then(|| failure_reason(task))
+                        .flatten(),
+                });
+            }
         }
+    } // `backlog_repos` lock dropped here — never held alongside `dispatch_runs`.
+
+    let mut run_rows = Vec::with_capacity(pending_runs.len());
+    let runs = app.dispatch_runs.lock().unwrap();
+    for pending in pending_runs {
+        let run = runs.get(&pending.key);
+        let kind = match pending.category {
+            DispatchCategory::Failed => RunKind::Failed {
+                reason: pending.failure_reason,
+            },
+            DispatchCategory::InFlight => {
+                let abandoned = run.is_some_and(|r| r.is_abandoned(now, true));
+                let stalled = run.is_some_and(|r| r.looks_stalled(now, stale_after));
+                if abandoned {
+                    RunKind::Orphaned
+                } else if stalled {
+                    match run.and_then(|r| r.liveness.killable_pgid()) {
+                        Some(pgid) => match run.and_then(|r| r.started_at_unix) {
+                            Some(started_at_unix) => RunKind::Stalled {
+                                pgid,
+                                started_at_unix,
+                            },
+                            None => continue,
+                        },
+                        // No verified-live pgid to kill: same as the
+                        // Dispatches view, which renders no Kill button
+                        // in this case either (`render_kill_control`'s
+                        // own early return).
+                        None => RunKind::Orphaned,
+                    }
+                } else {
+                    continue; // healthy — already in "In flight" above
+                }
+            }
+            _ => unreachable!(),
+        };
+        run_rows.push(RunFeedRow {
+            key: pending.key,
+            repo_name: pending.repo_name,
+            task_title: pending.task_title,
+            elapsed_desc: run.and_then(|r| r.elapsed(now)).map(format_elapsed),
+            log_path: run.and_then(|r| r.log_path.clone()),
+            kind,
+        });
     }
     in_flight.sort_by(|a, b| a.task_id.cmp(&b.task_id));
     (in_flight, run_rows)
+}
+
+/// A flagged task's owned data plus the failure reason (computable from the
+/// task alone) — everything [`RunFeedRow`] needs except what only a locked
+/// `dispatch_runs` lookup can answer (`elapsed_desc`, `log_path`, and the
+/// abandoned/stalled branch of `kind`). Collected while `backlog_repos` is
+/// locked, then consumed after that lock is dropped and `dispatch_runs` is
+/// locked in its place — see `collect_task_rows`'s own doc.
+struct PendingRun {
+    key: BacklogTaskKey,
+    repo_name: String,
+    task_title: String,
+    category: DispatchCategory,
+    failure_reason: Option<String>,
 }
 
 fn failure_reason(task: &BacklogTask) -> Option<String> {
@@ -485,20 +520,21 @@ fn feed_text(row: &RunFeedRow) -> String {
             None => format!("{task_id} claimed but its agent is gone"),
         },
         RunKind::Stalled { .. } => match &row.elapsed_desc {
-            Some(elapsed) => format!("{task_id} still running {elapsed} — check on it"),
-            None => format!("{task_id} still running — check on it"),
+            Some(elapsed) => format!("{task_id} still running {elapsed} - check on it"),
+            None => format!("{task_id} still running - check on it"),
         },
     };
     format!("{detail} · {} · {}", row.repo_name, row.task_title)
 }
 
 fn render_run_actions(app: &mut HiveApp, ui: &mut egui::Ui, row: &RunFeedRow) {
+    // Painted icon buttons (`theme::painted_retry_button`/`painted_log_button`),
+    // not literal glyphs: `↻`/`≡` render as tofu on a stock font install, the
+    // same failure this module's own header doc documents for `●▸▾↑↓✕•○`.
+    // `icon_button_label` sets the AccessKit name (and hover tooltip) to the
+    // exact verb name, matching every other painted icon button in the app.
     if let RunKind::Failed { .. } = &row.kind {
-        if ui
-            .small_button("↻ Retry")
-            .on_hover_text("Retry: re-flag this task for dispatch")
-            .clicked()
-        {
+        if theme::icon_button_label(theme::painted_retry_button(ui), "Retry").clicked() {
             let ctx = ui.ctx().clone();
             app.spawn_backlog_dispatch_toggle(row.key.0.clone(), row.key.1.clone(), true, &ctx);
         }
@@ -511,11 +547,7 @@ fn render_run_actions(app: &mut HiveApp, ui: &mut egui::Ui, row: &RunFeedRow) {
         render_stalled_kill(app, ui, row, *pgid, *started_at_unix);
     }
     if let Some(log_path) = &row.log_path {
-        if ui
-            .small_button("≡ Log")
-            .on_hover_text(format!("Open {}", log_path.display()))
-            .clicked()
-        {
+        if theme::icon_button_label(theme::painted_log_button(ui), "Log").clicked() {
             crate::ui::agent_context::open(log_path);
         }
     }
@@ -544,11 +576,7 @@ fn render_stalled_kill(
         if ui.small_button("Cancel").clicked() {
             app.dispatch_kill_confirm = None;
         }
-    } else if ui
-        .small_button("✕ Kill")
-        .on_hover_text("Stop this headless agent now")
-        .clicked()
-    {
+    } else if theme::icon_button_label(theme::painted_kill_button(ui), "Kill").clicked() {
         app.dispatch_kill_confirm = Some(row.key.clone());
     }
 }
@@ -565,7 +593,7 @@ fn render_port_row(app: &mut HiveApp, ui: &mut egui::Ui, row: &PortFeedRow) {
             let deep_link = ui
                 .add(
                     egui::Label::new(format!(
-                        ":{} squatter not owned by any worktree — {} (pid {})",
+                        ":{} squatter not owned by any worktree - {} (pid {})",
                         row.port, row.command_name, row.pid
                     ))
                     .sense(egui::Sense::click()),
@@ -598,11 +626,7 @@ fn render_port_kill(app: &mut HiveApp, ui: &mut egui::Ui, row: &PortFeedRow) {
         if ui.small_button("Cancel").clicked() {
             app.digest_view.port_kill_confirm = None;
         }
-    } else if ui
-        .add(theme::danger_button("✕ Kill"))
-        .on_hover_text(format!("Kill the process holding :{}", row.port))
-        .clicked()
-    {
+    } else if theme::icon_button_label(theme::painted_kill_button(ui), "Kill").clicked() {
         app.digest_view.port_kill_confirm = Some(row.pgid);
     }
 }
@@ -620,7 +644,7 @@ fn render_worktree_row(app: &mut HiveApp, ui: &mut egui::Ui, row: &WorktreeFeedR
             let deep_link = ui
                 .add(
                     egui::Label::new(format!(
-                        "{} — {branch} merged, clean, nothing attached",
+                        "{} · {branch} merged, clean, nothing attached",
                         row.repo_name
                     ))
                     .sense(egui::Sense::click()),
@@ -630,9 +654,11 @@ fn render_worktree_row(app: &mut HiveApp, ui: &mut egui::Ui, row: &WorktreeFeedR
                 app.place = Place::Ops;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add(theme::danger_button("⌫ Remove…"))
-                    .on_hover_text("Remove this worktree — opens the confirm dialog in Ops")
+                // Same painted trash icon `ui::workspace::mod`'s own Remove
+                // worktree row action uses, not `danger_button` with a literal
+                // `⌫` (tofu on a stock font install) — one Remove treatment
+                // everywhere it appears.
+                if theme::icon_button_label(theme::painted_trash_button(ui), "Remove worktree")
                     .clicked()
                 {
                     app.open_remove_worktree_confirm(

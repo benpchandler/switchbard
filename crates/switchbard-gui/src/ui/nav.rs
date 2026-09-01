@@ -31,10 +31,11 @@
 //! `BacklogLens::Digest`, a different surface from the Digest *place* above,
 //! see `ui::backlog::digest`'s module doc) or `ui::dispatch::render`
 //! (`TasksView::Dispatches`); `Place::Command` to `ui::agents::render`;
-//! `Place::Goals` to `ui::backlog::digest::render_goals_place` (the Digest
-//! lens's "This week's goals" section alone — an explicit interim body per
-//! the decision record, not a real Goals index); `Place::Ops` to
-//! `ui::workspace::render`. Nothing here licenses deleting any of those
+//! `Place::Goals` to `ui::places::goals::render_goals_place` (TASK-101's own
+//! Goals place — index with inline check-in, goal page with an Inputs card;
+//! superseded the interim `ui::backlog::digest::render_goals_place` this doc
+//! used to point at); `Place::Ops` to `ui::workspace::render`. Nothing here
+//! licenses deleting any of those
 //! surfaces or their internal lens code — other fireteams build the real
 //! place bodies for Command/Goals-index/etc. on top of this shell.
 
