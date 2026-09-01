@@ -184,7 +184,7 @@ pub struct HiveApp {
     /// Optional xplan Mission Command snapshot, refreshed by its own bounded
     /// worker. This cache is the GUI's only mission input; xplan remains the
     /// writer and Switchbard remains usable in every load-error state.
-    pub mission_projection: Arc<Mutex<MissionProjectionLoad>>,
+    pub mission_projection: Arc<Mutex<Arc<MissionProjectionLoad>>>,
     /// Native queue and contract-review state. This is plain cached state;
     /// helper work is dispatched to bounded background actions below.
     pub mission_control: Arc<Mutex<MissionControlModel>>,
@@ -515,7 +515,7 @@ impl HiveApp {
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             sizes: Arc::new(Mutex::new(HashMap::new())),
             landing: Arc::new(Mutex::new(HashMap::new())),
-            mission_projection: Arc::new(Mutex::new(mission_projection)),
+            mission_projection: Arc::new(Mutex::new(Arc::new(mission_projection))),
             mission_control: Arc::new(Mutex::new(MissionControlModel::default())),
             mission_projection_path,
             retired_worktree_count: Arc::new(Mutex::new(0)),

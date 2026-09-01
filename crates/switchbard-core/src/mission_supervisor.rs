@@ -202,7 +202,8 @@ impl MissionSupervisor {
         let stdout = spawn_reader(child.stdout.take(), self.config.stdout_limit);
         let stderr = spawn_reader(child.stderr.take(), self.config.stderr_limit);
         let status = wait_bounded(&mut child, pid, self.config.timeout);
-        self.last_reaped.store(true, Ordering::SeqCst);
+        self.last_reaped
+            .store(kill_process_group(pid), Ordering::SeqCst);
         let _ = writer.join();
         let stdout = join_reader(stdout)?;
         let stderr = join_reader(stderr)?;
@@ -430,6 +431,15 @@ fn terminate_and_reap(child: &mut Child, pgid: i32) -> Result<(), MissionSupervi
     let _ = unsafe { libc::kill(-pgid, libc::SIGKILL) };
     child.wait().map_err(io_error)?;
     Ok(())
+}
+
+/// Clear every surviving member of the helper's process group after the
+/// direct child has been waited on. A grandchild that inherited the stdout
+/// pipe would otherwise hold the reader threads open forever; SIGKILL to the
+/// group closes those pipe ends so the bounded reads always reach EOF.
+fn kill_process_group(pgid: i32) -> bool {
+    let result = unsafe { libc::kill(-pgid, libc::SIGKILL) };
+    result == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
 }
 
 fn join_reader(
@@ -671,10 +681,11 @@ impl Sha256 {
             self.block[self.block_len..self.block_len + count].copy_from_slice(&input[..count]);
             self.block_len += count;
             input = &input[count..];
-            if self.block_len == 64 {
-                compress(&mut self.state, &self.block);
-                self.block_len = 0;
+            if self.block_len < 64 {
+                return;
             }
+            compress(&mut self.state, &self.block);
+            self.block_len = 0;
         }
         while input.len() >= 64 {
             let block: &[u8; 64] = input[..64].try_into().expect("exact SHA-256 block");
@@ -769,6 +780,37 @@ mod tests {
         assert_eq!(
             hash.finalize_hex(),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn sha256_matches_the_nist_two_block_vector() {
+        let message = b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmno\
+ijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu";
+        let expected = "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1";
+        let mut whole = Sha256::new();
+        whole.update(message);
+        assert_eq!(whole.finalize_hex(), expected);
+        let mut chunked = Sha256::new();
+        for chunk in message.chunks(7) {
+            chunked.update(chunk);
+        }
+        assert_eq!(chunked.finalize_hex(), expected);
+    }
+
+    #[test]
+    fn sha256_matches_the_public_million_a_digest_across_block_boundaries() {
+        let mut hash = Sha256::new();
+        let chunk = [b'a'; 64 * 1024 + 3];
+        let mut written = 0usize;
+        while written < 1_000_000 {
+            let take = chunk.len().min(1_000_000 - written);
+            hash.update(&chunk[..take]);
+            written += take;
+        }
+        assert_eq!(
+            hash.finalize_hex(),
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
         );
     }
 }

@@ -88,7 +88,8 @@ jobs:
             --source "$XPLAN_SOURCE" \
             --artifact "$XPLAN_OUTPUT/$ARCHIVE_NAME" \
             --mode ci \
-            --destination "$RUNNER_TEMP/mission-sidecar-artifact"
+            --destination "$RUNNER_TEMP/mission-sidecar-artifact" \
+            | tee "$RUNNER_TEMP/acquire-summary.json"
 
       - name: Upload verified helper manifest tree
         uses: actions/upload-artifact@v4
@@ -96,3 +97,35 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ runner.temp }}/mission-sidecar-artifact
           if-no-files-found: error
+
+      - name: Install mise tools
+        uses: jdx/mise-action@v4
+
+      - name: Cache cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-mission-sidecar-${{ hashFiles('mise.toml', '**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-mission-sidecar-
+
+      - name: Run live mission proofs against the verified helper
+        run: |
+          set -euo pipefail
+          HELPER="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["helper_path"])' "$RUNNER_TEMP/acquire-summary.json")"
+          STATE="$RUNNER_TEMP/mission-live-state"
+          mkdir -p "$STATE"
+          cargo run --quiet -p switchbard-gui --bin switchbard -- \
+            --mission-sidecar-journey queue \
+            --state-root "$STATE" \
+            --helper "$HELPER" \
+            --fixture sidecar-contract-review-v1
+          XPLAN_MISSION_HELPER="$HELPER" \
+            cargo test -p switchbard-gui --test mission_command_sidecar
+          XPLAN_MISSION_HELPER="$HELPER" XPLAN_MISSION_STATE="$STATE" \
+            cargo test -p switchbard-core --test mission_sidecar -- --exact \
+            mission_fresh_supervisor_recovers_pending_contract \
+            mission_projection_v2_enables_controls

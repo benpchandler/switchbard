@@ -178,7 +178,7 @@ fn app_with(load: MissionProjectionLoad) -> switchbard_gui::app::HiveApp {
     app.place = Place::Missions;
     *app.mission_projection
         .lock()
-        .expect("invariant: test projection lock") = load;
+        .expect("invariant: test projection lock") = std::sync::Arc::new(load);
     app
 }
 

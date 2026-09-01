@@ -23,6 +23,7 @@ const MAX_MISSION_FEEDBACK: usize = 10_000;
 const MAX_MISSION_EVIDENCE: usize = 10_000;
 const MAX_EVIDENCE_IDS: usize = 10_000;
 const MAX_IDENTIFIER_BYTES: usize = 128;
+const GENERATED_AT_SKEW_TOLERANCE_SECONDS: i64 = 120;
 const CREDENTIAL_PREFIXES: &[&str] = &[
     "sk-",
     "sk_",
@@ -425,7 +426,17 @@ fn finish_projection(
         Ok(value) => value.with_timezone(&Utc),
         Err(error) => return malformed(path, format!("generated_at is not RFC 3339: {error}")),
     };
-    let age_seconds = now.signed_duration_since(generated).num_seconds().max(0) as u64;
+    let signed_age_seconds = now.signed_duration_since(generated).num_seconds();
+    if signed_age_seconds < -GENERATED_AT_SKEW_TOLERANCE_SECONDS {
+        return malformed(
+            path,
+            format!(
+                "generated_at is {}s in the future (tolerance {}s)",
+                -signed_age_seconds, GENERATED_AT_SKEW_TOLERANCE_SECONDS
+            ),
+        );
+    }
+    let age_seconds = signed_age_seconds.max(0) as u64;
     let freshness = freshness(age_seconds, projection.stale_after_seconds);
     MissionProjectionLoad::Ready {
         path: path.to_path_buf(),
@@ -1323,6 +1334,36 @@ mod tests {
                     age_seconds: 120,
                     limit_seconds: 60
                 },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn mission_projection_rejects_generated_at_far_in_the_future() {
+        let mut value = valid_projection_value();
+        value["generated_at"] = json!("2026-08-31T12:05:00Z");
+        let loaded = parse_projection(
+            Path::new("snapshot.json"),
+            value.to_string().as_bytes(),
+            at(0, 0),
+        );
+        let MissionProjectionLoad::Malformed { message, .. } = loaded else {
+            panic!("expected malformed future snapshot, got {loaded:?}");
+        };
+        assert!(message.contains("in the future"), "message: {message}");
+
+        let mut tolerated = valid_projection_value();
+        tolerated["generated_at"] = json!("2026-08-31T12:01:00Z");
+        let loaded = parse_projection(
+            Path::new("snapshot.json"),
+            tolerated.to_string().as_bytes(),
+            at(0, 0),
+        );
+        assert!(matches!(
+            loaded,
+            MissionProjectionLoad::Ready {
+                freshness: ProjectionFreshness::Fresh { age_seconds: 0 },
                 ..
             }
         ));

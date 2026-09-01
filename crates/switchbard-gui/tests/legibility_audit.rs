@@ -454,7 +454,7 @@ fn seed_mission_projection(app: &HiveApp) {
         evidence: Vec::new(),
         reconciliation: None,
     };
-    *app.mission_projection.lock().unwrap() = MissionProjectionLoad::Ready {
+    *app.mission_projection.lock().unwrap() = std::sync::Arc::new(MissionProjectionLoad::Ready {
         path: PathBuf::from("/tmp/mission-command-snapshot.json"),
         projection: MissionProjection {
             schema_version: "xplan-mission-projection-v1".to_string(),
@@ -468,7 +468,7 @@ fn seed_mission_projection(app: &HiveApp) {
             },
         },
         freshness: ProjectionFreshness::Fresh { age_seconds: 5 },
-    };
+    });
 }
 
 /// A Backlog task with real content in every task-15/16 surface: a

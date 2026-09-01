@@ -341,6 +341,8 @@ impl MissionControlModel {
             } else {
                 RequestOutcome::DomainRejected(code.to_owned())
             };
+        } else if matches!(error, MissionSupervisorError::Input(_)) {
+            self.request_outcome = RequestOutcome::Invalid(error.to_string());
         } else {
             self.helper_health = HelperHealth::Unavailable(error.to_string());
             self.request_outcome = RequestOutcome::DomainRejected(error.to_string());

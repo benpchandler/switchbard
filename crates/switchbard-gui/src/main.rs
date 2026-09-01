@@ -167,11 +167,10 @@ struct JourneyArgs {
     state_root: PathBuf,
     helper: PathBuf,
     answer: Option<String>,
-    screenshot: Option<PathBuf>,
 }
 
 fn parse_journey_args(args: &[String]) -> Result<JourneyArgs, String> {
-    if args.len() > 11 || args.is_empty() {
+    if args.len() > 9 || args.is_empty() {
         return Err("journey arguments are incomplete or oversized".to_owned());
     }
     let phase = args[0].clone();
@@ -179,7 +178,6 @@ fn parse_journey_args(args: &[String]) -> Result<JourneyArgs, String> {
     let mut helper = None;
     let mut fixture = None;
     let mut answer = None;
-    let mut screenshot = None;
     let mut index = 1;
     while index < args.len() {
         let value = args
@@ -191,7 +189,6 @@ fn parse_journey_args(args: &[String]) -> Result<JourneyArgs, String> {
             "--helper" if helper.is_none() => helper = Some(PathBuf::from(value)),
             "--fixture" if fixture.is_none() => fixture = Some(value),
             "--answer" if answer.is_none() => answer = Some(value),
-            "--screenshot" if screenshot.is_none() => screenshot = Some(PathBuf::from(value)),
             _ => return Err("journey option is unknown or duplicated".to_owned()),
         }
         index += 2;
@@ -199,11 +196,11 @@ fn parse_journey_args(args: &[String]) -> Result<JourneyArgs, String> {
     if fixture.as_deref() != Some("sidecar-contract-review-v1") {
         return Err("journey fixture is unsupported".to_owned());
     }
-    if phase == "queue" && (answer.is_some() || screenshot.is_some()) {
+    if phase == "queue" && answer.is_some() {
         return Err("queue journey does not accept resume fields".to_owned());
     }
-    if phase == "resume" && (answer.is_none() || screenshot.is_none()) {
-        return Err("resume journey requires answer and screenshot".to_owned());
+    if phase == "resume" && answer.is_none() {
+        return Err("resume journey requires an answer".to_owned());
     }
     if !matches!(phase.as_str(), "queue" | "resume") {
         return Err("journey phase is unsupported".to_owned());
@@ -213,27 +210,19 @@ fn parse_journey_args(args: &[String]) -> Result<JourneyArgs, String> {
         state_root: state_root.ok_or_else(|| "state root is required".to_owned())?,
         helper: helper.ok_or_else(|| "helper path is required".to_owned())?,
         answer,
-        screenshot,
     })
 }
 
 fn execute_journey(
     args: JourneyArgs,
 ) -> Result<switchbard_gui::mission_control::JourneySummary, String> {
-    let summary = switchbard_gui::mission_control::run_fixture_journey(
+    switchbard_gui::mission_control::run_fixture_journey(
         &args.phase,
         &args.helper,
         &args.state_root,
         args.answer.as_deref(),
     )
-    .map_err(|error| error.to_string())?;
-    if let Some(path) = args.screenshot {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        std::fs::write(path, APP_ICON_PNG).map_err(|error| error.to_string())?;
-    }
-    Ok(summary)
+    .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

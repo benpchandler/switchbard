@@ -18,17 +18,17 @@ use switchbard_core::{
 
 pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     let query = app.filter().trim().to_lowercase();
-    let state = app
-        .mission_projection
-        .lock()
-        .expect("invariant: mission projection cache lock")
-        .clone();
+    let state = std::sync::Arc::clone(
+        &app.mission_projection
+            .lock()
+            .expect("invariant: mission projection cache lock"),
+    );
     let mut action = None;
     egui::CentralPanel::default().show(ui, |ui| {
         render_heading(ui);
         action = render_controls(app, ui);
         ui.add_space(10.0);
-        match &state {
+        match &*state {
             MissionProjectionLoad::Loading { path } => render_loading(ui, path),
             MissionProjectionLoad::Missing { path } => render_missing(ui, path),
             MissionProjectionLoad::Unavailable { path, message } => {
@@ -275,10 +275,18 @@ fn render_contract_review(
     ui: &mut egui::Ui,
     model: &mut MissionControlModel,
 ) -> Option<ControlAction> {
+    let resume_available = matches!(model.helper_health, HelperHealth::Ready)
+        && !model.stale_decision_fixture()
+        && !matches!(
+            model.request_outcome,
+            RequestOutcome::SubmittingDecision | RequestOutcome::DecisionAcknowledged { .. }
+        );
+    let model = &mut *model;
     let pending = model
         .pending_contract
-        .clone()
+        .as_ref()
         .expect("checked pending contract");
+    let resume_answer = &mut model.resume_answer;
     egui::Frame::group(ui.style())
         .fill(theme::card_bg())
         .inner_margin(egui::Margin::same(12))
@@ -300,19 +308,12 @@ fn render_contract_review(
             ui.colored_label(theme::amber(), &pending.prompt);
             accessible_text_edit(
                 ui.add(
-                    egui::TextEdit::multiline(&mut model.resume_answer)
+                    egui::TextEdit::multiline(resume_answer)
                         .hint_text("Response")
                         .desired_rows(2),
                 ),
                 "Response",
             );
-            let resume_available = matches!(model.helper_health, HelperHealth::Ready)
-                && !model.stale_decision_fixture()
-                && !matches!(
-                    model.request_outcome,
-                    RequestOutcome::SubmittingDecision
-                        | RequestOutcome::DecisionAcknowledged { .. }
-                );
             ui.add_enabled(resume_available, egui::Button::new("Approve and resume"))
                 .clicked()
                 .then_some(ControlAction::Resume)

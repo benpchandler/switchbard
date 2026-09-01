@@ -267,7 +267,7 @@ pub struct Channels {
     /// refreshed by `spawn_landing` on its own slow cadence — see that
     /// worker's doc for why it can't share the git-probe tick.
     pub landing: Arc<Mutex<HashMap<PathBuf, LandingEntry>>>,
-    pub mission_projection: Arc<Mutex<MissionProjectionLoad>>,
+    pub mission_projection: Arc<Mutex<Arc<MissionProjectionLoad>>>,
     pub mission_control: Arc<Mutex<MissionControlModel>>,
     pub mission_projection_path: Option<PathBuf>,
     pub scanner_kick: Kick,
@@ -310,7 +310,7 @@ fn spawn_mission_projection(ctx: egui::Context, ch: Channels) {
             ch.mission_control.lock().unwrap().projection_freshness = freshness.clone();
         }
         spawn_pending_contract_recovery(&ctx, &ch, &loaded);
-        *ch.mission_projection.lock().unwrap() = loaded;
+        *ch.mission_projection.lock().unwrap() = Arc::new(loaded);
         ctx.request_repaint();
         let focused = ctx.input(|i| i.focused);
         ch.mission_projection_kick

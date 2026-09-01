@@ -29,6 +29,8 @@ cargo test -p switchbard-core <pat>   # single test by name substring
 
 Prefer plain Cargo? Each `mise` task maps to the obvious `cargo fmt` / `cargo clippy` / `cargo test` / `cargo build --release`.
 
+`mise run bundle` and `mise run package` require `XPLAN_SIDECAR_SOURCE` (a clean checkout of the pinned xplan revision from `xplan-sidecar-pin.json`) and `XPLAN_SIDECAR_ARCHIVE` (the sidecar archive built from it with `scripts/build_mission_sidecar.py`); the sidecar is packaged from those exact local inputs, never downloaded. Run `mise run bundle` without them for the full recipe.
+
 ## Gates (firm — CI fails on any)
 
 CI (`.github/workflows/ci.yml`) runs the `fmt`, `clippy`, and `test` mise tasks on both **macos-latest and ubuntu-latest** on every PR. The `clippy` and `test` tasks set `RUSTFLAGS=-D warnings`, so **any compiler warning fails the build — fix it, don't `#[allow]` it.** Run `mise run ci` green before pushing.

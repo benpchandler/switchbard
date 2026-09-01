@@ -30,7 +30,27 @@ if [[ ! -f "$ICNS" ]]; then
   exit 1
 fi
 if [[ -z "$SIDECAR_SOURCE" || -z "$SIDECAR_ARCHIVE" ]]; then
-  echo "✗ XPLAN_SIDECAR_SOURCE and XPLAN_SIDECAR_ARCHIVE are required" >&2
+  PIN_REPO="$(python3 -c 'import json; print(json.load(open("xplan-sidecar-pin.json"))["xplan_repository"])')"
+  PIN_REV="$(python3 -c 'import json; print(json.load(open("xplan-sidecar-pin.json"))["xplan_source_revision"])')"
+  PIN_ARCHIVE_NAME="$(python3 -c 'import json; print(json.load(open("xplan-sidecar-pin.json"))["targets"]["macos-arm64"]["archive_name"])')"
+  cat >&2 <<GUIDE
+✗ XPLAN_SIDECAR_SOURCE and XPLAN_SIDECAR_ARCHIVE are required
+
+The bundle embeds the exact pinned xplan mission sidecar; it is never
+downloaded at build or run time. Produce the two inputs once:
+
+  git clone $PIN_REPO /path/to/xplan
+  git -C /path/to/xplan checkout --detach $PIN_REV
+  uv run --locked --project /path/to/xplan/sidecar \\
+    python /path/to/xplan/scripts/build_mission_sidecar.py \\
+    --target host --output /path/to/sidecar-output
+
+then re-run with:
+
+  XPLAN_SIDECAR_SOURCE=/path/to/xplan \\
+  XPLAN_SIDECAR_ARCHIVE=/path/to/sidecar-output/$PIN_ARCHIVE_NAME \\
+  mise run bundle
+GUIDE
   exit 1
 fi
 

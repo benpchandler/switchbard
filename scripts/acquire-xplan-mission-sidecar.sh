@@ -161,7 +161,7 @@ PY
 MANIFEST="$(find "$STAGE" -name manifest.json -type f -print)"
 [[ -n "$MANIFEST" && "$(printf '%s\n' "$MANIFEST" | wc -l | tr -d ' ')" == "1" ]] || fail "archive must contain exactly one manifest"
 MANIFEST_DIGEST="$(shasum -a 256 "$MANIFEST" | awk '{print $1}')"
-[[ "$MANIFEST_DIGEST" == "$PIN_MANIFEST" ]] || fail "manifest digest does not match pin"
+[[ "$MANIFEST_DIGEST" == "$PIN_MANIFEST" ]] || fail "manifest digest does not match pin (expected $PIN_MANIFEST, observed $MANIFEST_DIGEST)"
 ARTIFACT_ROOT="$(dirname "$MANIFEST")"
 VERIFY="$SOURCE/scripts/verify_mission_sidecar_artifact.py"
 [[ -x "$VERIFY" ]] || fail "artifact verifier is unavailable"

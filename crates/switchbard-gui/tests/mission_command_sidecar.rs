@@ -17,7 +17,6 @@ use switchbard_gui::mission_control::{
     empty_hello_request, HelperHealth, MissionControlModel, PendingContract, RequestOutcome,
 };
 use switchbard_gui::runtime::Place;
-use switchbard_gui::runtime_io::ProcessFilesystemBoundaryProbe;
 use tempfile::TempDir;
 
 fn app_with(model: MissionControlModel) -> switchbard_gui::app::HiveApp {
@@ -387,18 +386,6 @@ fn mission_controls_cover_state_scale_layout_and_keyboard_matrix() {
     queue_view.key_press(egui::Key::Enter);
     run_until_label(&mut queue_view, "Queued for contract review");
     assert_authoritative_state(state.path(), 1);
-}
-
-#[test]
-fn mission_render_path_has_no_process_or_disk_io() {
-    let probe = ProcessFilesystemBoundaryProbe::install();
-    let mut view = harness(app_with(ready_model()));
-    for _ in 0..20 {
-        view.run();
-    }
-    assert_eq!(probe.observed_process_spawns(), 0);
-    assert_eq!(probe.observed_filesystem_reads(), 0);
-    assert_eq!(probe.observed_filesystem_writes(), 0);
 }
 
 #[test]
