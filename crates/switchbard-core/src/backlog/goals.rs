@@ -58,6 +58,23 @@ pub struct GoalWeek {
     pub checkins: Vec<GoalCheckIn>,
 }
 
+/// Explicitly attached inputs a [`GoalMeasure::Tasks`] goal counts, in
+/// addition to any `scope` match (owner requirement 2026-09-01: "attach
+/// tasks / projects to goals as input goals").
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GoalInputs {
+    /// Canonical task ids (`TASK-7`), as stored in task frontmatter.
+    pub tasks: Vec<String>,
+    /// Project names; every member task counts.
+    pub projects: Vec<String>,
+}
+
+impl GoalInputs {
+    pub fn is_empty(&self) -> bool {
+        self.tasks.is_empty() && self.projects.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoalDef {
     pub name: String,
@@ -66,6 +83,9 @@ pub struct GoalDef {
     /// For [`GoalMeasure::Tasks`]: a project name or label the counted
     /// tasks must match.
     pub scope: Option<String>,
+    /// Attached inputs, also counted for [`GoalMeasure::Tasks`]; empty when
+    /// nothing is attached.
+    pub inputs: GoalInputs,
     /// Keyed by the week's Monday (`YYYY-MM-DD`); `BTreeMap` keeps weeks
     /// chronological for free since the keys are ISO dates.
     pub weeks: BTreeMap<String, GoalWeek>,
@@ -101,7 +121,17 @@ struct GoalSer {
     #[serde(default)]
     scope: Option<String>,
     #[serde(default)]
+    inputs: Option<GoalInputsSer>,
+    #[serde(default)]
     weeks: BTreeMap<String, GoalWeekSer>,
+}
+
+#[derive(Deserialize, Default)]
+struct GoalInputsSer {
+    #[serde(default)]
+    tasks: Vec<String>,
+    #[serde(default)]
+    projects: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -151,6 +181,12 @@ pub(super) fn load_goals(root: &Path, warnings: &mut Vec<String>) -> Vec<GoalDef
             unit: goal.unit,
             measure,
             scope: goal.scope,
+            inputs: goal
+                .inputs
+                .map_or_else(GoalInputs::default, |i| GoalInputs {
+                    tasks: i.tasks,
+                    projects: i.projects,
+                }),
             weeks: goal
                 .weeks
                 .into_iter()
@@ -184,11 +220,17 @@ pub(super) fn load_goals(root: &Path, warnings: &mut Vec<String>) -> Vec<GoalDef
 //     - name: Onboard users
 //       unit: users
 //       measure: manual
+//       inputs:
+//         tasks: ['TASK-61']
+//         projects: ['Stack Ranking']
 //       weeks:
 //         2026-09-01:
 //           target: 5
 //           checkins:
 //             - { date: 2026-09-02, value: 1 }
+//
+// The `inputs:` block only exists while something is attached; detaching the
+// last input removes it.
 
 const GOAL_ITEM_INDENT: &str = "  ";
 const GOAL_FIELD_INDENT: &str = "    ";
@@ -251,9 +293,9 @@ pub fn create_goal(root: &Path, goal: &NewGoal) -> Result<()> {
     let name = validated_single_line("name", &goal.name)?;
     let unit = validated_single_line("unit", &goal.unit)?;
     let week = validated_week(&goal.week)?;
-    if goal.measure == GoalMeasure::Tasks && goal.scope.is_none() {
-        bail!("a tasks-measured goal needs --scope (a project name or label to count)");
-    }
+    // A tasks-measured goal may start with neither scope nor inputs — its
+    // actual is 0 until `attach_goal_inputs` (or a later scope) gives it
+    // something to count. The CLI surfaces that hint.
 
     let mut warnings = Vec::new();
     if load_goals(root, &mut warnings)
@@ -343,6 +385,151 @@ pub fn check_in_goal(root: &Path, name: &str, week: &str, date: &str, value: i64
         );
     }
     write_lines(&path, &lines)
+}
+
+fn inputs_block(inputs: &GoalInputs) -> Vec<String> {
+    // Always single-quote flow items: `yaml_scalar` decides quoting for
+    // block scalars, but inside `[...]` an unquoted comma would split the
+    // item. Quoting everything is safe for both emit and reload.
+    let flow = |items: &[String]| {
+        let quoted: Vec<String> = items
+            .iter()
+            .map(|s| format!("'{}'", s.replace('\'', "''")))
+            .collect();
+        format!("[{}]", quoted.join(", "))
+    };
+    vec![
+        format!("{GOAL_FIELD_INDENT}inputs:"),
+        format!("{WEEK_KEY_INDENT}tasks: {}", flow(&inputs.tasks)),
+        format!("{WEEK_KEY_INDENT}projects: {}", flow(&inputs.projects)),
+    ]
+}
+
+/// Replace (or remove, when `new_inputs` is empty) the goal's `inputs:`
+/// block, inserting before `weeks:` when absent. Line-surgical like every
+/// other write here: fails closed on a structure this module didn't emit.
+fn write_goal_inputs(root: &Path, name: &str, new_inputs: &GoalInputs) -> Result<()> {
+    let path = goals_path(root);
+    let mut lines = read_lines(&path)?;
+    let (goal_start, goal_end) = goal_span(&lines, name)?;
+    let block = if new_inputs.is_empty() {
+        Vec::new()
+    } else {
+        inputs_block(new_inputs)
+    };
+    let header = format!("{GOAL_FIELD_INDENT}inputs:");
+    if let Some(start) = (goal_start..goal_end).find(|&i| lines[i].trim_end() == header) {
+        let end = ((start + 1)..goal_end)
+            .find(|&i| indent_of(&lines[i]) <= GOAL_FIELD_INDENT.len())
+            .unwrap_or(goal_end);
+        lines.splice(start..end, block);
+    } else if block.is_empty() {
+        return Ok(()); // nothing attached, nothing stored — nothing to write
+    } else {
+        let Some(weeks_line) = (goal_start..goal_end)
+            .find(|&i| lines[i].trim_end() == format!("{GOAL_FIELD_INDENT}weeks:"))
+        else {
+            bail!(
+                "{}: goal '{name}' has no recognizable `weeks:` — restore the emitted structure before attaching inputs",
+                path.display()
+            );
+        };
+        lines.splice(weeks_line..weeks_line, block);
+    }
+    write_lines(&path, &lines)
+}
+
+/// Look up a goal by name, insisting the file parses cleanly first (an
+/// inputs edit rewrites the block, so a half-understood file is unsafe).
+fn parsed_goal(root: &Path, name: &str) -> Result<GoalDef> {
+    let path = goals_path(root);
+    if !path.is_file() {
+        bail!("no goals defined yet — run `goal create` first");
+    }
+    let mut warnings = Vec::new();
+    let goals = load_goals(root, &mut warnings);
+    if !warnings.is_empty() {
+        bail!(
+            "{} does not parse cleanly — fix it first: {}",
+            path.display(),
+            warnings.join("; ")
+        );
+    }
+    goals
+        .into_iter()
+        .find(|g| g.name == name)
+        .with_context(|| format!("no goal '{name}' — check `goal list` for the exact name"))
+}
+
+/// Attach tasks and/or projects to a tasks-measured goal as counted inputs.
+/// Duplicates dedupe silently; returns how many inputs were actually added
+/// (0 means everything was already attached and nothing was written).
+pub fn attach_goal_inputs(
+    root: &Path,
+    name: &str,
+    tasks: &[String],
+    projects: &[String],
+) -> Result<usize> {
+    let name = validated_single_line("name", name)?;
+    if tasks.is_empty() && projects.is_empty() {
+        bail!("nothing to attach — pass --task <ID> and/or --in-project <NAME>");
+    }
+    let goal = parsed_goal(root, name)?;
+    if goal.measure == GoalMeasure::Manual {
+        bail!(
+            "goal '{name}' is measured by manual check-ins — inputs only apply to `--measure tasks` goals"
+        );
+    }
+    let mut inputs = goal.inputs.clone();
+    let mut added = 0usize;
+    for task in tasks {
+        let task = validated_single_line("task id", task)?;
+        if !inputs.tasks.iter().any(|t| t.eq_ignore_ascii_case(task)) {
+            inputs.tasks.push(task.to_string());
+            added += 1;
+        }
+    }
+    for project in projects {
+        let project = validated_single_line("project", project)?;
+        if !inputs.projects.iter().any(|p| p == project) {
+            inputs.projects.push(project.to_string());
+            added += 1;
+        }
+    }
+    if added > 0 {
+        write_goal_inputs(root, name, &inputs)?;
+    }
+    Ok(added)
+}
+
+/// Detach previously attached inputs. Errors when none of the named inputs
+/// were attached (a likely typo); otherwise removes what matches and returns
+/// the count, dropping the whole `inputs:` block when it empties.
+pub fn detach_goal_inputs(
+    root: &Path,
+    name: &str,
+    tasks: &[String],
+    projects: &[String],
+) -> Result<usize> {
+    let name = validated_single_line("name", name)?;
+    if tasks.is_empty() && projects.is_empty() {
+        bail!("nothing to detach — pass --task <ID> and/or --in-project <NAME>");
+    }
+    let goal = parsed_goal(root, name)?;
+    let mut inputs = goal.inputs.clone();
+    let before = inputs.tasks.len() + inputs.projects.len();
+    inputs
+        .tasks
+        .retain(|t| !tasks.iter().any(|arg| arg.trim().eq_ignore_ascii_case(t)));
+    inputs
+        .projects
+        .retain(|p| !projects.iter().any(|arg| arg.trim() == p));
+    let removed = before - (inputs.tasks.len() + inputs.projects.len());
+    if removed == 0 {
+        bail!("none of those inputs are attached to '{name}' — see `goal view` for what is");
+    }
+    write_goal_inputs(root, name, &inputs)?;
+    Ok(removed)
 }
 
 /// Give every goal that lacks `to_week` a new week block carrying its most
@@ -491,17 +678,112 @@ mod tests {
     }
 
     #[test]
-    fn create_refuses_duplicates_and_tasks_measure_requires_scope() {
+    fn create_refuses_duplicates_and_scopeless_tasks_goals_are_allowed() {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = repo(&dir);
         create_goal(&root, &goal("Twice", "2026-09-01", 3)).expect("create");
         let err = create_goal(&root, &goal("Twice", "2026-09-08", 3)).expect_err("dup");
         assert!(err.to_string().contains("already exists"), "{err}");
 
-        let mut tasks_goal = goal("Scoped", "2026-09-01", 8);
+        // A tasks goal may start scopeless: inputs get attached afterwards.
+        let mut tasks_goal = goal("Scoped later", "2026-09-01", 8);
         tasks_goal.measure = GoalMeasure::Tasks;
-        let err = create_goal(&root, &tasks_goal).expect_err("scope required");
-        assert!(err.to_string().contains("--scope"), "{err}");
+        create_goal(&root, &tasks_goal).expect("scopeless tasks goal");
+        let (goals, warnings) = load(&root);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(goals.iter().any(|g| g.name == "Scoped later"));
+    }
+
+    #[test]
+    fn attach_detach_round_trip_is_surgical_and_dedupes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        let mut g = goal("Inputs", "2026-09-01", 4);
+        g.measure = GoalMeasure::Tasks;
+        create_goal(&root, &g).expect("create");
+        create_goal(&root, &goal("Bystander", "2026-09-01", 2)).expect("create");
+        let before = fs::read_to_string(root.join(GOALS_REL)).expect("read");
+
+        let added = attach_goal_inputs(
+            &root,
+            "Inputs",
+            &["TASK-61".to_string()],
+            &["Stack Ranking".to_string()],
+        )
+        .expect("attach");
+        assert_eq!(added, 2);
+        let after = fs::read_to_string(root.join(GOALS_REL)).expect("read");
+        let changed: Vec<&str> = after.lines().filter(|l| !before.contains(*l)).collect();
+        assert_eq!(
+            changed,
+            vec![
+                "    inputs:",
+                "      tasks: ['TASK-61']",
+                "      projects: ['Stack Ranking']",
+            ],
+            "only the inputs block appears"
+        );
+
+        // Re-attaching the same things adds nothing and writes nothing.
+        let unchanged = fs::read_to_string(root.join(GOALS_REL)).expect("read");
+        let added = attach_goal_inputs(
+            &root,
+            "Inputs",
+            &["task-61".to_string()],
+            &["Stack Ranking".to_string()],
+        )
+        .expect("re-attach");
+        assert_eq!(added, 0);
+        assert_eq!(
+            unchanged,
+            fs::read_to_string(root.join(GOALS_REL)).expect("read")
+        );
+
+        let (goals, _) = load(&root);
+        let loaded = goals.iter().find(|g| g.name == "Inputs").expect("goal");
+        assert_eq!(loaded.inputs.tasks, vec!["TASK-61"]);
+        assert_eq!(loaded.inputs.projects, vec!["Stack Ranking"]);
+
+        // Detaching everything drops the whole block.
+        let removed = detach_goal_inputs(
+            &root,
+            "Inputs",
+            &["task-61".to_string()],
+            &["Stack Ranking".to_string()],
+        )
+        .expect("detach");
+        assert_eq!(removed, 2);
+        let final_text = fs::read_to_string(root.join(GOALS_REL)).expect("read");
+        assert!(!final_text.contains("inputs:"), "{final_text}");
+        let (goals, warnings) = load(&root);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(goals
+            .iter()
+            .find(|g| g.name == "Inputs")
+            .expect("goal")
+            .inputs
+            .is_empty());
+    }
+
+    #[test]
+    fn attach_guards_manual_goals_empty_args_and_bad_detaches() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        create_goal(&root, &goal("Manual", "2026-09-01", 5)).expect("create");
+        let mut g = goal("Tasks", "2026-09-01", 5);
+        g.measure = GoalMeasure::Tasks;
+        create_goal(&root, &g).expect("create");
+
+        let err = attach_goal_inputs(&root, "Manual", &["TASK-1".to_string()], &[])
+            .expect_err("manual refuses inputs");
+        assert!(err.to_string().contains("check-ins"), "{err}");
+
+        let err = attach_goal_inputs(&root, "Tasks", &[], &[]).expect_err("nothing to attach");
+        assert!(err.to_string().contains("--task"), "{err}");
+
+        let err = detach_goal_inputs(&root, "Tasks", &["TASK-9".to_string()], &[])
+            .expect_err("nothing attached");
+        assert!(err.to_string().contains("goal view"), "{err}");
     }
 
     #[test]

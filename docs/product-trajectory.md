@@ -258,7 +258,8 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 - **Weekly goals (owner-approved 2026-08-31; TASK-70..74).** Weekly numeric
   goals tracked relative to target ("onboard 5 users this week" vs 4 actually
   onboarded). Two goal kinds: *task-derived* (actual computed from tasks done
-  within the goal week matching a scope - a project name or label) and
+  within the goal week matching a scope - a project name or label - and/or
+  the goal's attached inputs) and
   *manual-metric* (actual reported as dated, append-only check-in
   observations; "current" derives from the latest entry).
   - *Storage is `backlog/goals.yml`, one structured file per repo - NOT
@@ -274,8 +275,16 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   - *Pace is the load-bearing derived signal, computed never stored:*
     `actual/target` vs `elapsed_days/7` yields on-track / behind / met /
     missed; met and missed are the terminal verdicts at the week boundary.
+  - *Input goals (owner requirement 2026-09-01; TASK-92).* Tasks and
+    projects can be ATTACHED to a tasks-measured goal as counted inputs
+    (`inputs: {tasks, projects}` in `goals.yml`; `goal attach` /
+    `goal detach`, line-surgical like every other goals write). The actual
+    counts a task once if it matches the scope OR is an attached task OR
+    belongs to an attached project; a scopeless tasks goal is legal and
+    counts only its inputs. Attach canonicalizes task ids against the
+    backlog; manual goals refuse inputs (they take check-ins).
   - Surfaces: a `goal` CLI verb family (create / list / view / check-in /
-    roll) mirroring the `project` family's output contract, and a "This
+    roll / attach / detach) mirroring the `project` family's output contract, and a "This
     week's goals" section leading the Digest lens (progress bar with a
     today-tick at the elapsed-week fraction, pace pill, check-in affordance
     for manual goals).
@@ -364,6 +373,65 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
     path until the orchestrator has dogfood proof (TASK-91); GitHub
     delivery-awareness (TASK-80.x) sequences after this, per the owner's
     rank flip.
+
+- **Information architecture V2 - places and objects (owner-approved 2026-09-01;
+  TASK-76 mockup over 11 owner review rounds; this entry is TASK-77's decision
+  record).** Navigation reorganizes from surface types (seven sibling Backlog
+  lenses) to a sidebar of *places* over the object model: **Digest, Tasks,
+  Command, Goals, Ops**, scoped by a **multi-select repo switcher** - check any
+  set of tracked repos and every place aggregates over the selection. Frozen
+  visual reference: the TASK-76 Lavish artifact (both real theme palettes,
+  `~/.lavish/switchbard-ia-places.html`).
+  - *Tasks is the primary work list; "project" is a grouping, not a place.*
+    Group-by is generic over every available field (project, status,
+    initiative, priority, label, repo, ...) - never hardcoded options;
+    filtering is a filter-builder plus recent filters, no hardcoded chips.
+    The standalone project page is CUT: a group header expands in place for
+    its summary (computed roll-up, goal pace, description), and the stack
+    rank surfaces only as a sort option, never a page or dedicated column.
+    Repo badges sit on rows, always. Sub-issues indent in place, expanded.
+  - *Dispatch has two axes.* A built-in "Dispatches" view under Tasks is the
+    task-delivery facet (run status, kill/retry/log per row); **Command** is
+    the agent-scoped fleet console as its own place - agents, missions,
+    worktree leases, live activity lines, SITREP age, and support requests
+    (NEEDS_DECISION and kin) with respond affordances and blast-radius notes.
+    The sidebar footer lamp stays ambient status and deep-links.
+  - *Digest leads with goal cards, then in-flight work, then the attention
+    feed* - feed rows are computed from their owning objects (PR probe, run
+    reaper, server watch, port scan, `removal_safety`), deep-link there, and
+    reuse those surfaces' command verbs with inline icon actions; nothing is
+    stored on tasks.
+  - *Ops (renamed from "Repos" so repo only ever names the scope)* keeps the
+    entire Servers/Workspace toolset, fully merged to one row per worktree:
+    detected services with start, running services with stop / open-in-browser
+    / logs, listeners and external squatters with kill, git state, agent
+    sessions attributed per worktree, and removal behind the `removal_safety`
+    verdict.
+  - *Sidebar follows the Linear pattern:* a FAVORITES group at the top holds
+    explicitly favorited objects rendered with their type glyphs (no pin
+    icons; nothing auto-populates); saved filters are first-class named
+    views; under Tasks live only the built-in views (All tasks, Dispatches).
+  - *Implementation obligations, recorded in the mock's state matrix:*
+    selection uses the Board's stroke-based ring (unifies with TASK-38);
+    universal actions are icon buttons whose accessible names derive from the
+    same command-verb authority that names them everywhere (AccessKit label =
+    verb name); the focus ring reuses the selection stroke; task lists
+    inherit TASK-13 virtualization; dark-theme chip tints stay at low alpha
+    and dark `warn_orange` needs the contrast fix noted on TASK-78; goal
+    pages render the Inputs card over TASK-92's attach/detach.
+  - *Rejected along the way (recorded so they stay rejected):* a global
+    object tree with repo badges as the primary scope model;
+    one-repo-at-a-time switching; a Projects place or index page; a burndown
+    chart owning a page; pin icons; hardcoded grouping or filter chips;
+    text-labeled buttons for universal actions.
+  - *Persisted per-surface state migrates by surface key:* `UiConfig.filters`
+    records re-key from lens names to place/view names as each place lands
+    (unmatched old keys are dropped, not migrated by guess); expansion
+    toggles and selections stay session-only as today.
+  - Implementation tasks are defined only now that this record exists
+    (mockup -> decision record -> implementation, per the project
+    definition). The lens code being replaced keeps working until each place
+    lands; nothing here licenses a big-bang rewrite.
 
 - **Refine — AI-assisted grooming, upstream of dispatch (owner-approved 2026-08-19).**
   A "Refine" button in the task detail rail, next to Dispatch. It feeds the task's
