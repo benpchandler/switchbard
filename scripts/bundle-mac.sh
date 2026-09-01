@@ -97,7 +97,7 @@ while IFS= read -r nested; do
 done < <(find "$SIDECAR_DEST" -type f -print)
 
 echo "→ ad-hoc signing $APP_BUNDLE"
-codesign --force --sign - "$APP_BUNDLE"
+codesign --force --deep --sign - "$APP_BUNDLE"
 codesign --verify --deep --strict "$APP_BUNDLE"
 
 echo "✓ built $APP_BUNDLE"
