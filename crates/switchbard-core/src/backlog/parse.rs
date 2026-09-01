@@ -56,7 +56,8 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
         }
     }
 
-    tasks.sort_by(compare_tasks);
+    let ranking = super::ranking::load_ranking(root, &mut warnings);
+    super::ranking::sort_tasks(&mut tasks, &ranking);
     let project_defs = super::hierarchy::load_project_defs(root, &mut warnings);
     let initiative_defs = super::hierarchy::load_initiative_defs(root, &mut warnings);
     let goals = super::goals::load_goals(root, &mut warnings);
@@ -67,6 +68,7 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
         project_defs,
         initiative_defs,
         goals,
+        ranking,
         loaded_at_unix: unix_now(),
         configured_statuses: parse_config_statuses(root),
     })
@@ -607,7 +609,7 @@ fn id_from_filename(path: &Path) -> String {
     format!("TASK-{}", id.to_ascii_uppercase())
 }
 
-fn compare_tasks(a: &BacklogTask, b: &BacklogTask) -> Ordering {
+pub(super) fn compare_tasks(a: &BacklogTask, b: &BacklogTask) -> Ordering {
     source_rank(a.source)
         .cmp(&source_rank(b.source))
         .then_with(|| status_rank(&a.status).cmp(&status_rank(&b.status)))
@@ -616,7 +618,7 @@ fn compare_tasks(a: &BacklogTask, b: &BacklogTask) -> Ordering {
         .then_with(|| a.title.cmp(&b.title))
 }
 
-fn source_rank(source: BacklogTaskSource) -> usize {
+pub(super) fn source_rank(source: BacklogTaskSource) -> usize {
     match source {
         BacklogTaskSource::Active => 0,
         BacklogTaskSource::Draft => 1,
@@ -625,7 +627,7 @@ fn source_rank(source: BacklogTaskSource) -> usize {
     }
 }
 
-fn status_rank(status: &str) -> usize {
+pub(super) fn status_rank(status: &str) -> usize {
     match status.to_ascii_lowercase().as_str() {
         "in progress" => 0,
         "to do" => 1,

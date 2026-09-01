@@ -1,9 +1,10 @@
 ---
 id: TASK-83
 title: 'CLI: rank / expedite verbs and create-time placement'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-31 22:01'
+updated_date: '2026-08-31 23:48'
 labels:
   - backlog
   - cli

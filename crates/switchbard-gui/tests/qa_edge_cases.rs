@@ -18,7 +18,7 @@ use std::time::Instant;
 use common::{harness, seeded_app, REPO_PATH};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::SnapshotOptions;
-use switchbard_core::{BacklogRepo, OrderingOverlay};
+use switchbard_core::{BacklogRepo, OrderingOverlay, RepoRanking};
 use switchbard_gui::runtime::{BacklogLens, OrderingState, ViewTab};
 
 fn output_dir() -> PathBuf {
@@ -144,6 +144,7 @@ fn malformed_ordering_yaml_app() -> switchbard_gui::app::HiveApp {
             project_defs: vec![],
             initiative_defs: vec![],
             goals: vec![],
+            ranking: RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![
                 "Icebox".into(),
