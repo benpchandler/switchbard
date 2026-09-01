@@ -1,4 +1,4 @@
-//! Stdout payload rendering for `switchbard-task` — the stable shapes the
+//! Stdout payload rendering for `sb` — the stable shapes the
 //! help text promises (one TSV row per task for `list`, a fields-then-
 //! sections block for `view`). Presentation only; every fact comes from the
 //! parsed [`BacklogTask`].

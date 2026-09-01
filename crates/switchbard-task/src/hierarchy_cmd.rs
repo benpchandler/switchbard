@@ -156,7 +156,7 @@ pub fn run_project(root: &Path, cmd: &ProjectCmd) -> Result<()> {
                 .find(|p| &p.name == name)
             else {
                 anyhow::bail!(
-                    "no project '{name}' — try `switchbard-task project list`, or define it with `switchbard-task project create`"
+                    "no project '{name}' — try `sb project list`, or define it with `sb project create`"
                 );
             };
             print!("{}", project_view(&project, &repo));
@@ -245,7 +245,7 @@ pub fn run_initiative(root: &Path, cmd: &InitiativeCmd) -> Result<()> {
                 .find(|i| i.name.as_deref() == Some(name.as_str()))
             else {
                 anyhow::bail!(
-                    "no initiative '{name}' — try `switchbard-task initiative list`, or define it with `switchbard-task initiative create`"
+                    "no initiative '{name}' — try `sb initiative list`, or define it with `sb initiative create`"
                 );
             };
             print!("{}", initiative_view(initiative, &repo));
@@ -282,7 +282,7 @@ pub fn run_initiative(root: &Path, cmd: &InitiativeCmd) -> Result<()> {
 
 fn warn(warnings: &[String]) {
     for warning in warnings {
-        eprintln!("switchbard-task: warning: {warning}");
+        eprintln!("sb: warning: {warning}");
     }
 }
 
@@ -361,9 +361,7 @@ fn project_view(project: &ProjectRollup, repo: &switchbard_core::BacklogRepo) ->
         project.completion_pct()
     ));
     if !project.has_def {
-        out.push_str(
-            "Definition: none (reference-only — `switchbard-task project create` to add one)\n",
-        );
+        out.push_str("Definition: none (reference-only — `sb project create` to add one)\n");
     }
     if let Some(def) = repo.project_defs.iter().find(|d| d.name == project.name) {
         if !def.description.is_empty() {

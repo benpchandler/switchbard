@@ -1121,6 +1121,7 @@ mod tests {
             log_bytes: 0,
             log_modified_unix: None,
             liveness,
+            progress: switchbard_core::dispatch_inspect::RunProgress::default(),
         }
     }
 

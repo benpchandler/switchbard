@@ -75,10 +75,10 @@ pub use dispatch::{
     build_dispatch_prompt, claim_task_for_dispatch, dispatch_branch_name, dispatch_log_dir,
     dispatch_log_stem, dispatch_one, dispatch_pid_path, dispatch_worktree_path,
     drain_dispatch_queue, list_dispatch_queue, parse_dispatch_sidecar, read_dispatch_sidecar,
-    select_batch, sweep_dead_sidecar, DispatchOptions, DispatchOutcome, DispatchResult,
-    DispatchSidecar, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_TURNS, DEFAULT_STALE_AFTER,
-    DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_IN_PROGRESS_STATUS,
-    DISPATCH_LABEL, DISPATCH_REVIEW_STATUS, SIDECAR_VERSION,
+    release_as_dispatched, release_as_failed, select_batch, sweep_dead_sidecar, DispatchOptions,
+    DispatchOutcome, DispatchResult, DispatchSidecar, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_TURNS,
+    DEFAULT_STALE_AFTER, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL,
+    DISPATCH_IN_PROGRESS_STATUS, DISPATCH_LABEL, DISPATCH_REVIEW_STATUS, SIDECAR_VERSION,
 };
 pub use dispatch_kill::{kill_dispatch_run, DispatchKillOutcome, KillRefusal};
 pub use expected_port::{default_port_for_service, expected_port};

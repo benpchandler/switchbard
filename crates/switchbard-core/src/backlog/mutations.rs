@@ -203,7 +203,7 @@ pub fn append_backlog_notes(project_root: &Path, task_id: &str, note: &str) -> R
 /// the task lifecycle requires before Done. Not part of
 /// [`BacklogTaskPatch`] because no editing surface composes it with other
 /// fields; it is written once, at the end, by whoever finishes the task
-/// (today: the `switchbard-task` CLI).
+/// (today: the `sb` CLI).
 pub fn set_backlog_final_summary(
     project_root: &Path,
     task_id: &str,
@@ -392,7 +392,7 @@ mod tests {
     /// The related bug this fix also closes: `edit`/`archive`/`complete`/etc
     /// all resolve their target file through `resolve_task_file`, which used
     /// to require a literal `task-` filename prefix regardless of the
-    /// project's configured `task_prefix` — so `switchbard-task edit LED-11`
+    /// project's configured `task_prefix` — so `sb edit LED-11`
     /// failed with "no task LED-11" even though the file existed and `view`/
     /// `list` (which read frontmatter directly) found it fine. Reproduced
     /// live against a scratch LED-prefixed project before this fix.

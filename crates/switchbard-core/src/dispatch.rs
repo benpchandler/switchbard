@@ -557,16 +557,23 @@ pub fn build_dispatch_prompt(task: &BacklogTask) -> String {
         &task.acceptance_criteria,
     );
     push_checklist_section(&mut prompt, "Definition of Done", &task.definition_of_done);
-    prompt.push_str(
+    prompt.push_str(&format!(
         "## Operating contract\n\n\
          - Implement the task fully in this worktree.\n\
+         - As you genuinely satisfy each Acceptance Criterion, check it off in \
+           THIS worktree's copy of the task — `sb --repo . edit {id} \
+           --check-ac N` (one N per satisfied criterion) — and commit the \
+           check-offs. The orchestrator refuses to call a run complete while \
+           any criterion is unchecked; never check a criterion you have not \
+           actually proven.\n\
          - Run this repo's test/build gate before finishing, if one exists.\n\
          - Commit your changes with `git add -A && git commit` and a descriptive \
            message; do not push and do not open a pull request yourself — the \
            dispatch pipeline handles push and PR creation after you exit.\n\
          - If you cannot complete the task, leave the worktree uncommitted \
            rather than committing partial or broken work.\n",
-    );
+        id = task.id
+    ));
     prompt
 }
 
@@ -940,7 +947,12 @@ fn set_dispatch_status(repo_root: &Path, task_id: &str, status: &str) {
 /// back. Restoring rather than picking a fixed "failed" status keeps this a
 /// true inverse — a task that was in `Icebox` when someone flagged it returns
 /// to `Icebox`, not to whatever this module considers a sensible default.
-fn release_as_failed(repo_root: &Path, task_id: &str, reason: &str, prior_status: &str) {
+///
+/// Public since TASK-88: the `sb queue release` verb is the
+/// orchestrator's way to hand a claim back, and it must walk the exact same
+/// ladder this pipeline walks — two release implementations would be two
+/// claim vocabularies.
+pub fn release_as_failed(repo_root: &Path, task_id: &str, reason: &str, prior_status: &str) {
     // Best-effort: if the label swap itself fails there is nothing more we
     // can do here beyond leaving the task on `dispatching` for a human to
     // notice. Never panic a background worker over a bookkeeping write.
@@ -949,7 +961,8 @@ fn release_as_failed(repo_root: &Path, task_id: &str, reason: &str, prior_status
     let _ = append_backlog_notes(repo_root, task_id, &format!("Dispatch failed: {reason}"));
 }
 
-fn release_as_dispatched(repo_root: &Path, task_id: &str, pr_url: &str) -> Result<()> {
+/// Public since TASK-88 — see [`release_as_failed`]'s note.
+pub fn release_as_dispatched(repo_root: &Path, task_id: &str, pr_url: &str) -> Result<()> {
     swap_backlog_label(repo_root, task_id, DISPATCHING_LABEL, DISPATCHED_LABEL)?;
     set_dispatch_status(repo_root, task_id, DISPATCH_REVIEW_STATUS);
     append_backlog_notes(repo_root, task_id, &format!("Dispatch PR: {pr_url}"))?;

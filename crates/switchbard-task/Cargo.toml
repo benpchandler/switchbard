@@ -19,5 +19,5 @@ clap.workspace = true
 tempfile = "3"
 
 [[bin]]
-name = "switchbard-task"
+name = "sb"
 path = "src/main.rs"
