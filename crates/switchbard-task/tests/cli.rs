@@ -1,4 +1,4 @@
-//! End-to-end tests driving the real `switchbard-task` binary against real
+//! End-to-end tests driving the real `sb` binary against real
 //! on-disk fixture projects — the output contract the help text promises,
 //! proven at the process boundary (exit codes, stdout payload purity,
 //! stderr error shape), not just at the library layer `switchbard-core`'s
@@ -19,7 +19,7 @@ fn fixture_project() -> tempfile::TempDir {
 }
 
 fn bin(root: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_switchbard-task"))
+    Command::new(env!("CARGO_BIN_EXE_sb"))
         .arg("--repo")
         .arg(root)
         .args(args)
@@ -31,7 +31,7 @@ fn ok_stdout(root: &Path, args: &[&str]) -> String {
     let out = bin(root, args);
     assert!(
         out.status.success(),
-        "`switchbard-task {args:?}` failed: {}",
+        "`sb {args:?}` failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8(out.stdout).expect("stdout is utf-8")
@@ -169,14 +169,8 @@ fn errors_are_one_stderr_line_with_a_next_step_and_exit_code_one() {
     assert_eq!(missing.status.code(), Some(1));
     assert!(missing.stdout.is_empty(), "errors never touch stdout");
     let err = String::from_utf8_lossy(&missing.stderr);
-    assert!(
-        err.starts_with("switchbard-task: error: no task TASK-9"),
-        "{err}"
-    );
-    assert!(
-        err.contains("switchbard-task list"),
-        "errors carry a next step"
-    );
+    assert!(err.starts_with("sb: error: no task TASK-9"), "{err}");
+    assert!(err.contains("sb list"), "errors carry a next step");
 
     let bad_status = bin(root, &["edit", "TASK-1", "-s", "Blocked"]);
     assert_eq!(bad_status.status.code(), Some(1));
@@ -191,7 +185,7 @@ fn errors_are_one_stderr_line_with_a_next_step_and_exit_code_one() {
 #[test]
 fn outside_a_project_the_error_names_the_escape_hatch() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let out = Command::new(env!("CARGO_BIN_EXE_switchbard-task"))
+    let out = Command::new(env!("CARGO_BIN_EXE_sb"))
         .current_dir(dir.path())
         .args(["list"])
         .output()
@@ -209,7 +203,7 @@ fn outside_a_project_the_error_names_the_escape_hatch() {
 #[test]
 fn deprecated_project_flag_still_works_and_warns_on_stderr_only() {
     let dir = fixture_project();
-    let out = Command::new(env!("CARGO_BIN_EXE_switchbard-task"))
+    let out = Command::new(env!("CARGO_BIN_EXE_sb"))
         .arg("--project")
         .arg(dir.path())
         .args(["create", "Via legacy flag"])

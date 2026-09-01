@@ -1,9 +1,10 @@
 ---
 id: TASK-89
 title: 'LangGraph orchestrator: durable claim-run-verify-release graph'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-01 01:56'
+updated_date: '2026-09-01 02:02'
 labels:
   - task-queue
   - orchestrator

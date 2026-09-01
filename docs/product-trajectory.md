@@ -337,7 +337,7 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
     `list_dispatch_queue` gets for free since ranking landed in
     `load_backlog_repo`). Reordering the queue = re-ranking; that AC is
     already true by construction and gets proven end-to-end in TASK-91.
-  - *The protocol surface is a `queue` verb family on `switchbard-task`*
+  - *The protocol surface is a `queue` verb family on `sb` (the switchbard-task crate)*
     (TASK-88), designed against `~/.claude/standards/agent-facing-design.md`:
     claim is the acknowledgment (the existing `dispatch` -> `dispatching`
     label swap, before any work), releases carry outcome + note through the

@@ -941,7 +941,7 @@ fn set_dispatch_status(repo_root: &Path, task_id: &str, status: &str) {
 /// true inverse — a task that was in `Icebox` when someone flagged it returns
 /// to `Icebox`, not to whatever this module considers a sensible default.
 ///
-/// Public since TASK-88: the `switchbard-task queue release` verb is the
+/// Public since TASK-88: the `sb queue release` verb is the
 /// orchestrator's way to hand a claim back, and it must walk the exact same
 /// ladder this pipeline walks — two release implementations would be two
 /// claim vocabularies.

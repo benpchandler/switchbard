@@ -116,7 +116,7 @@ pub fn run_queue(root: &Path, cmd: &QueueCmd) -> Result<()> {
 fn load(root: &Path) -> Result<BacklogRepo> {
     let repo = switchbard_core::load_backlog_repo(root)?;
     for warning in &repo.warnings {
-        eprintln!("switchbard-task: warning: {warning}");
+        eprintln!("sb: warning: {warning}");
     }
     Ok(repo)
 }
@@ -124,7 +124,7 @@ fn load(root: &Path) -> Result<BacklogRepo> {
 fn resolve<'r>(repo: &'r BacklogRepo, id: &str) -> Result<&'r BacklogTask> {
     crate::find_task(&repo.tasks, id).ok_or_else(|| {
         anyhow!(
-            "no task {id} in {} — try `switchbard-task list --all`",
+            "no task {id} in {} — try `sb list --all`",
             repo.root.display()
         )
     })
