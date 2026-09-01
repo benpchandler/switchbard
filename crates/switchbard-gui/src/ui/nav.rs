@@ -52,8 +52,13 @@ use switchbard_core::{BacklogRepo, BacklogTaskSource, Repo};
 
 /// Below this window width the panel collapses to the icon rail (mock §4:
 /// "narrow width: sidebar collapses to the icon rail... below 720px the
-/// facet bar wraps").
-const NARROW_WIDTH_THRESHOLD: f32 = 720.0;
+/// facet bar wraps"). `pub(crate)` (TASK-97 medic pass): the mock's §7d
+/// narrow-width note names one breakpoint for the whole workspace — this
+/// sidebar's own icon-rail collapse, the Tasks place's detail-rail
+/// auto-collapse (`ui::backlog::rail`), and its Delivery-column drop
+/// (`ui::places::tasks::list_body`) all key off the same value rather than
+/// each guessing their own.
+pub(crate) const NARROW_WIDTH_THRESHOLD: f32 = 720.0;
 const EXPANDED_WIDTH: f32 = 184.0;
 const RAIL_WIDTH: f32 = 44.0;
 

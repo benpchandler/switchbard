@@ -15,7 +15,7 @@ use crate::runtime::BacklogTaskKey;
 /// bulk-selected key if the clicked row is part of that selection, otherwise
 /// just the clicked row (a right-click outside the current selection acts on
 /// that one row, matching common file-manager conventions).
-pub(super) fn selected_keys_for_menu(
+pub(crate) fn selected_keys_for_menu(
     app: &HiveApp,
     visible: &[TaskRow<'_>],
     clicked: &TaskRow<'_>,
@@ -34,7 +34,7 @@ pub(super) fn selected_keys_for_menu(
 
 /// Narrow `selected` to the keys whose task is still `editable()` — the
 /// Backlog CLI only edits active (non-completed/archived/draft) tasks.
-pub(super) fn editable_keys(
+pub(crate) fn editable_keys(
     visible: &[TaskRow<'_>],
     selected: &[BacklogTaskKey],
 ) -> Vec<BacklogTaskKey> {
@@ -52,7 +52,7 @@ pub(super) fn editable_keys(
 /// Drop any bulk-selected key (and the range anchor) that's no longer among
 /// the currently visible rows — called once per frame before rendering so a
 /// filter change can't leave a "ghost" selected task the user can't see.
-pub(super) fn retain_visible_bulk_selection(app: &mut HiveApp, visible: &[TaskRow<'_>]) {
+pub(crate) fn retain_visible_bulk_selection(app: &mut HiveApp, visible: &[TaskRow<'_>]) {
     app.backlog_view
         .bulk_selected_tasks
         .retain(|key| visible.iter().any(|row| row.key() == *key));
@@ -66,7 +66,7 @@ pub(super) fn retain_visible_bulk_selection(app: &mut HiveApp, visible: &[TaskRo
     }
 }
 
-pub(super) fn set_bulk_task_selected(app: &mut HiveApp, key: BacklogTaskKey, selected: bool) {
+pub(crate) fn set_bulk_task_selected(app: &mut HiveApp, key: BacklogTaskKey, selected: bool) {
     if selected {
         app.backlog_view.bulk_selected_tasks.insert(key.clone());
         app.backlog_view.bulk_selection_anchor = Some(key);
@@ -79,7 +79,7 @@ pub(super) fn set_bulk_task_selected(app: &mut HiveApp, key: BacklogTaskKey, sel
     }
 }
 
-pub(super) fn select_bulk_task_range(
+pub(crate) fn select_bulk_task_range(
     app: &mut HiveApp,
     visible_keys: &[BacklogTaskKey],
     key: BacklogTaskKey,
@@ -118,7 +118,7 @@ fn bulk_range_keys(
     visible_keys[start..=end].to_vec()
 }
 
-pub(super) fn toggle_bulk_task_selection(app: &mut HiveApp, key: BacklogTaskKey) {
+pub(crate) fn toggle_bulk_task_selection(app: &mut HiveApp, key: BacklogTaskKey) {
     if !app.backlog_view.bulk_selected_tasks.remove(&key) {
         app.backlog_view.bulk_selected_tasks.insert(key.clone());
     }
@@ -128,7 +128,7 @@ pub(super) fn toggle_bulk_task_selection(app: &mut HiveApp, key: BacklogTaskKey)
 /// Right-click on a row that isn't already part of the bulk selection
 /// collapses the selection to just that row before opening the context menu,
 /// so the menu's "N selected" count always matches what it's about to act on.
-pub(super) fn focus_context_selection(app: &mut HiveApp, key: BacklogTaskKey) {
+pub(crate) fn focus_context_selection(app: &mut HiveApp, key: BacklogTaskKey) {
     if !app.backlog_view.bulk_selected_tasks.contains(&key) {
         app.backlog_view.bulk_selected_tasks.clear();
         app.backlog_view.bulk_selected_tasks.insert(key.clone());

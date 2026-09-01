@@ -13,7 +13,7 @@ use switchbard_core::{ordered_status_vocabulary, NewBacklogTask};
 /// column's status. All entry points share this so the global "+ Task"
 /// control and per-column affordances cannot drift on repo targeting or
 /// accidentally retain a subtask parent.
-pub(super) fn open_new_task(app: &mut HiveApp, target_repo: Option<PathBuf>, status: Option<&str>) {
+pub(crate) fn open_new_task(app: &mut HiveApp, target_repo: Option<PathBuf>, status: Option<&str>) {
     app.backlog_view.new_task.target_repo = target_repo;
     app.backlog_view.new_task.parent = None;
     if let Some(status) = status {
@@ -22,7 +22,7 @@ pub(super) fn open_new_task(app: &mut HiveApp, target_repo: Option<PathBuf>, sta
     app.backlog_view.new_task.open = true;
 }
 
-pub(super) fn render_create_modal(
+pub(crate) fn render_create_modal(
     app: &mut HiveApp,
     ctx: &egui::Context,
     snap: &Snapshot,

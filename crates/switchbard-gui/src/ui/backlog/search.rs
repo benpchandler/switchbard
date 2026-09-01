@@ -18,7 +18,7 @@ use switchbard_core::BacklogTaskSource;
 
 const MAX_RESULTS: usize = 40;
 
-pub(super) fn handle_shortcut(app: &mut HiveApp, ctx: &egui::Context) {
+pub(crate) fn handle_shortcut(app: &mut HiveApp, ctx: &egui::Context) {
     let pressed = ctx.input_mut(|input| {
         input.consume_shortcut(&egui::KeyboardShortcut::new(
             egui::Modifiers::COMMAND,
@@ -36,7 +36,7 @@ pub(super) fn handle_shortcut(app: &mut HiveApp, ctx: &egui::Context) {
     }
 }
 
-pub(super) fn render_overlay(app: &mut HiveApp, ctx: &egui::Context, snap: &Snapshot) {
+pub(crate) fn render_overlay(app: &mut HiveApp, ctx: &egui::Context, snap: &Snapshot) {
     if !app.backlog_view.search.open {
         return;
     }

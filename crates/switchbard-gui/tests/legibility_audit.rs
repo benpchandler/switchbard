@@ -54,6 +54,7 @@ use switchbard_core::{
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{AgentsSection, BacklogLens, DispatchesFacet, Place, TasksView};
 use switchbard_gui::ui::legibility;
+use switchbard_gui::ui::places::tasks::state::TasksViewMode;
 
 /// One painted run of text with a single resolved size + color.
 struct TextRun {
@@ -742,10 +743,12 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
 
     let mut digest_app = seeded_app();
     digest_app.config.ui.theme = theme;
-    digest_app.place = Place::Tasks;
-    // Digest is `BacklogLens::default()` (task-21), so this fixture leaves
-    // `lens` unset deliberately — it's exercising the default a real launch
-    // sees, not just picking the enum's first variant.
+    // TASK-97: Digest is its own place now (TASK-96 split it out of the
+    // Tasks lens-tab toolbar) — `Place::Digest` routes to `ui::backlog::
+    // digest::render_digest_place`, the actual body this fixture audits.
+    // `Place::Tasks` no longer has any Digest content reachable under it at
+    // all (its `TasksView::All` routes to the Tasks place instead).
+    digest_app.place = Place::Digest;
     seed_backlog_project(&digest_app);
     // "Clean Up Old Tasks" (QA parity matrix LOW gap) is disabled without a
     // Done task and its confirm prompt only ever renders after a click —
@@ -821,17 +824,19 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     seed_backlog_project(&done_app);
     let done = harness(done_app);
 
-    let mut portfolio_app = seeded_app();
-    portfolio_app.config.ui.theme = theme;
-    portfolio_app.place = Place::Tasks;
-    portfolio_app.backlog_view.lens = BacklogLens::Portfolio;
-    seed_backlog_project(&portfolio_app);
-    let portfolio = harness(portfolio_app);
+    // TASK-97 removed the Portfolio/Milestones(Projects)/Statistics lens
+    // fixtures: those lenses are cut from the Tasks place (Portfolio and
+    // Statistics have no home anywhere anymore; Milestones/Projects is
+    // subsumed by the Tasks place's generic `Group by: Project`, itself
+    // already audited via the `board`/`list` fixtures' shared row/header
+    // rendering). Their code keeps compiling (`ui::backlog::render` stays
+    // `pub fn`, reachable nowhere) but is no longer reachable from any
+    // place, so there is nothing left for a legibility audit to reach here.
 
     let mut board_app = seeded_app();
     board_app.config.ui.theme = theme;
     board_app.place = Place::Tasks;
-    board_app.backlog_view.lens = BacklogLens::Board;
+    board_app.tasks_place.view_mode = TasksViewMode::Board;
     board_app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     seed_backlog_project(&board_app);
     // TASK-26 (owner-requested UX): bulk-select a task directly on state —
@@ -844,20 +849,6 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
         .bulk_selected_tasks
         .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
     let board = harness(board_app);
-
-    let mut milestones_app = seeded_app();
-    milestones_app.config.ui.theme = theme;
-    milestones_app.place = Place::Tasks;
-    milestones_app.backlog_view.lens = BacklogLens::Projects;
-    seed_backlog_project(&milestones_app);
-    let milestones = harness(milestones_app);
-
-    let mut stats_app = seeded_app();
-    stats_app.config.ui.theme = theme;
-    stats_app.place = Place::Tasks;
-    stats_app.backlog_view.lens = BacklogLens::Statistics;
-    seed_backlog_project(&stats_app);
-    let stats = harness(stats_app);
 
     // Owner UX pass (2026-08-05): the onboarding modal's two "success"
     // buttons (`theme::success_button`) were never in any fixture before
@@ -941,9 +932,6 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
             done,
         ),
         (format!("Backlog · Board lens{suffix}"), board),
-        (format!("Backlog · Milestones lens{suffix}"), milestones),
-        (format!("Backlog · Portfolio lens{suffix}"), portfolio),
-        (format!("Backlog · Statistics lens{suffix}"), stats),
         (format!("Settings window{suffix}"), settings),
     ]
 }

@@ -115,7 +115,7 @@ fn column_order(app: &HiveApp, snap: &Snapshot) -> Vec<String> {
     ordered_status_vocabulary(scoped.iter().map(|row| &row.repo))
 }
 
-pub(super) fn render_board(
+pub(crate) fn render_board(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
     snap: &Snapshot,
@@ -821,7 +821,13 @@ fn paint_card(
         CardMotion::Landing(progress) => {
             egui::Stroke::new(2.0, theme::scale_alpha(theme::green(), 1.0 - progress))
         }
-        _ if selected => egui::Stroke::new(2.0, theme::sky()),
+        // TASK-97/TASK-38: sources its color from `theme::selected_row_
+        // stroke()` — the same authority the Tasks place's List rows and the
+        // Ops worktree rows already use — rather than `theme::sky()` ad hoc
+        // (they happen to be the same color today; routing through the
+        // shared accessor is what makes that a guarantee instead of a
+        // coincidence). Width stays 2.0, the card's own pre-existing weight.
+        _ if selected => egui::Stroke::new(2.0, theme::selected_row_stroke().color),
         _ => ui.visuals().widgets.noninteractive.bg_stroke,
     };
     let mut frame = egui::Frame::default()
@@ -869,11 +875,32 @@ fn paint_card(
                             } else {
                                 ui.visuals().text_color()
                             };
-                            ui.label(
-                                egui::RichText::new(&row.task.title)
-                                    .strong()
-                                    .color(title_color),
-                            );
+                            // TASK-97 medic pass (PARITY finding): mock §7c
+                            // clamps a title at two lines and never grows the
+                            // row past that — this card used to render a
+                            // plain wrapping `Label`, which grows the card
+                            // (and the whole column) without bound for a
+                            // long title. A hand-built `LayoutJob` with
+                            // `wrap.max_rows = 2` bounds it exactly (egui's
+                            // `Label` has no "clamp at N rows" option of its
+                            // own — only 1-row `.truncate()`); `.strong()`'s
+                            // color resolution is reproduced via
+                            // `RichText::append_to` rather than duplicated,
+                            // so this stays the same "strong" style Label
+                            // itself would have resolved to.
+                            let mut title_job = egui::text::LayoutJob::default();
+                            egui::RichText::new(&row.task.title)
+                                .strong()
+                                .color(title_color)
+                                .append_to(
+                                    &mut title_job,
+                                    ui.style(),
+                                    egui::FontSelection::Default,
+                                    ui.text_valign(),
+                                );
+                            title_job.wrap.max_rows = 2;
+                            title_job.wrap.break_anywhere = true;
+                            ui.add(egui::Label::new(title_job).wrap());
                             ui.horizontal(|ui| {
                                 ui.label(
                                     egui::RichText::new(format::priority_title(&row.task.priority))

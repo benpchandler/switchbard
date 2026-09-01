@@ -5,16 +5,28 @@
 //! engagement-only state — which tasks you're looking at, not the tasks
 //! themselves — so it's persisted additively on `Config::ui.saved_views`,
 //! the single existing config source of truth, rather than a new store.
+//!
+//! ## TASK-97 medic pass (MAJOR finding): restored inside the Tasks place
+//!
+//! `render_saved_views_bar`'s only caller used to be the orphaned legacy
+//! `ui::backlog::render` body — dead-reachable, so saving/browsing/deleting
+//! a view had no UI anywhere the app actually routes to. `ui::places::
+//! tasks::mod::render_facets_row` is now this bar's caller, which is also
+//! why `current_as_saved_view`/`apply_saved_view` below capture and restore
+//! the Tasks place's own state (`tasks_place.{filters,group_by,view_mode}`),
+//! not just the four legacy single-value facets task-20 originally covered.
 
 use super::reset_task_selection;
 use crate::app::HiveApp;
 use crate::runtime::{BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey};
+use crate::ui::places::tasks::fields::TaskField;
+use crate::ui::places::tasks::state::{FilterPredicate, TasksViewMode};
 use crate::ui::theme;
 use eframe::egui;
 use std::path::Path;
-use switchbard_core::config::SavedView;
+use switchbard_core::config::{SavedFilterPredicate, SavedView};
 
-pub(super) fn render_saved_views_bar(app: &mut HiveApp, ui: &mut egui::Ui) {
+pub(crate) fn render_saved_views_bar(app: &mut HiveApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("View").color(theme::muted_text()));
         let current_label = app
@@ -108,16 +120,39 @@ fn current_as_saved_view(app: &HiveApp, name: String) -> SavedView {
     SavedView {
         name,
         selected_repo: app.backlog_view.selected_repo.clone(),
-        status_filter: app.backlog_view.status_filter.clone(),
-        priority_filter: app.backlog_view.priority_filter.clone(),
-        project_filter: app.backlog_view.project_filter.clone(),
-        label_filter: app.backlog_view.label_filter.clone(),
+        // The legacy four single-value facets are dead weight for a view
+        // saved from the Tasks place now (`tasks_place.filters` below is the
+        // real source of truth) — written as "all" rather than mirroring
+        // `tasks_place.filters`, so there is exactly one encoding of the
+        // active predicate set on a freshly-saved view, not two that could
+        // drift apart. `apply_saved_view`'s legacy-translation fallback only
+        // ever fires for a view saved *before* this field existed.
+        status_filter: "all".to_string(),
+        priority_filter: "all".to_string(),
+        project_filter: "all".to_string(),
+        label_filter: "all".to_string(),
         sort_key: app.backlog_view.sort_key.as_saved_id().to_string(),
         sort_direction: app.backlog_view.sort_direction.as_saved_id().to_string(),
         lens: app.backlog_view.lens.as_saved_id().to_string(),
         show_completed: app.backlog_view.show_completed,
         show_archived: app.backlog_view.show_archived,
         show_drafts: app.backlog_view.show_drafts,
+        tasks_filters: app
+            .tasks_place
+            .filters
+            .iter()
+            .map(|predicate| SavedFilterPredicate {
+                field: predicate.field.as_id().to_string(),
+                value: predicate.value.clone(),
+            })
+            .collect(),
+        tasks_group_by: app
+            .tasks_place
+            .group_by
+            .map(TaskField::as_id)
+            .unwrap_or("")
+            .to_string(),
+        tasks_view_mode: app.tasks_place.view_mode.as_id().to_string(),
     }
 }
 
@@ -127,10 +162,15 @@ fn current_as_saved_view(app: &HiveApp, name: String) -> SavedView {
 /// definition of "apply a saved view", not two.
 pub(super) fn apply_saved_view(app: &mut HiveApp, view: &SavedView) {
     app.backlog_view.selected_repo = view.selected_repo.clone();
-    app.backlog_view.status_filter = view.status_filter.clone();
-    app.backlog_view.priority_filter = view.priority_filter.clone();
-    app.backlog_view.project_filter = view.project_filter.clone();
-    app.backlog_view.label_filter = view.label_filter.clone();
+    // TASK-97 medic pass: these four are never read for anything meaningful
+    // once the Tasks place renders (`tasks::neutralize_legacy_filters`
+    // forces them back to "all" every frame it's active) — reset here too so
+    // a moment-of-apply glance at `backlog_view` never shows a stale value
+    // this crate no longer honors.
+    app.backlog_view.status_filter = "all".to_string();
+    app.backlog_view.priority_filter = "all".to_string();
+    app.backlog_view.project_filter = "all".to_string();
+    app.backlog_view.label_filter = "all".to_string();
     app.backlog_view.sort_key = BacklogTaskSortKey::from_saved_id(&view.sort_key);
     app.backlog_view.sort_direction = BacklogTaskSortDirection::from_saved_id(&view.sort_direction);
     app.backlog_view.lens = BacklogLens::from_saved_id(&view.lens);
@@ -139,4 +179,60 @@ pub(super) fn apply_saved_view(app: &mut HiveApp, view: &SavedView) {
     app.backlog_view.show_drafts = view.show_drafts;
     app.backlog_view.active_saved_view = Some(view.name.clone());
     reset_task_selection(app);
+
+    // TASK-97 medic pass (BLOCKER finding): every reachable caller of
+    // `apply_saved_view` (this bar's own combo, and `navigate_to_favorite`'s
+    // `View` arm) puts the Tasks place on screen either just before or in
+    // this same call — it is the only surface a saved view ever applies to
+    // now. Guarded on `app.place` anyway rather than assumed, so this stays
+    // honest if a future caller ever applies one from somewhere else.
+    if app.place == crate::runtime::Place::Tasks {
+        apply_tasks_place_state(app, view);
+    }
+}
+
+/// Restore `tasks_place.{filters,group_by,view_mode}` from `view`. New-
+/// format views (saved since this field existed) carry `tasks_filters`
+/// directly — exact fidelity, no lossy round-trip. A view saved before it
+/// existed has an empty `tasks_filters` *and* every legacy facet at "all"
+/// (nothing else ever wrote a non-"all" legacy facet and left `tasks_filters`
+/// empty — `current_as_saved_view` always writes both together), so falling
+/// back to translating the legacy four facets in that case is unambiguous:
+/// either both sides agree there were no predicates, or the legacy facets
+/// are the only record of what the user actually saved.
+fn apply_tasks_place_state(app: &mut HiveApp, view: &SavedView) {
+    let predicates: Vec<FilterPredicate> = if !view.tasks_filters.is_empty() {
+        view.tasks_filters
+            .iter()
+            .filter_map(|predicate| {
+                Some(FilterPredicate {
+                    field: TaskField::from_id(&predicate.field)?,
+                    value: predicate.value.clone(),
+                })
+            })
+            .collect()
+    } else {
+        let mut translated = Vec::new();
+        let mut push = |field: TaskField, value: &str| {
+            if value != "all" {
+                translated.push(FilterPredicate {
+                    field,
+                    value: value.to_string(),
+                });
+            }
+        };
+        push(TaskField::Status, &view.status_filter);
+        push(TaskField::Priority, &view.priority_filter);
+        push(TaskField::Project, &view.project_filter);
+        push(TaskField::Label, &view.label_filter);
+        translated
+    };
+    let previous = std::mem::replace(&mut app.tasks_place.filters, predicates);
+    app.tasks_place.remember_recent(previous);
+    app.tasks_place.group_by = if view.tasks_group_by.is_empty() {
+        None
+    } else {
+        TaskField::from_id(&view.tasks_group_by)
+    };
+    app.tasks_place.view_mode = TasksViewMode::from_id(&view.tasks_view_mode);
 }
