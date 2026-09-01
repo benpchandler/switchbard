@@ -432,6 +432,53 @@ pub(super) fn render_refine(
     });
 }
 
+/// Expedite (trajectory: *Stack ranking*): the exception lane's toggle.
+/// A short explicit list of task ids that jump the repo's entire computed
+/// order — true cross-project interrupts only; a task that merely belongs
+/// high in its project should be *ranked* (the Projects lens arrows)
+/// instead. State reads straight off the snapshot's `RepoRanking`; the
+/// row marker everywhere updates on the same refresh the write triggers.
+pub(super) fn render_expedite(
+    ui: &mut egui::Ui,
+    project_root: &Path,
+    task: &BacklogTask,
+    ranking: &switchbard_core::RepoRanking,
+    editable: bool,
+    pending: &mut Pending,
+) {
+    if !editable || task.is_done() {
+        return;
+    }
+    ui.separator();
+    ui.horizontal(|ui| {
+        if ranking.is_expedited(&task.id) {
+            crate::ui::components::status_pill(
+                ui,
+                crate::ui::components::StatusKind::Danger,
+                "expedited",
+                Some("In the expedite lane — jumps the repo's whole computed order"),
+            );
+            if ui
+                .button("Remove from expedite lane")
+                .on_hover_text("The task keeps any sibling rank it holds")
+                .clicked()
+            {
+                pending.expedite_set = Some((project_root.to_path_buf(), task.id.clone(), false));
+            }
+        } else if ui
+            .button("Expedite")
+            .on_hover_text(
+                "Jump this task over the repo's whole computed order — for true \
+                 interrupts. A task that just belongs high in its project should be \
+                 ranked there instead (Projects lens arrows).",
+            )
+            .clicked()
+        {
+            pending.expedite_set = Some((project_root.to_path_buf(), task.id.clone(), true));
+        }
+    });
+}
+
 /// Dispatch (task-11 GUI wiring): a per-task, strictly opt-in affordance.
 /// Flagging a task only sets its `dispatch` label through the CLI
 /// (`Pending::dispatch_toggle` → `HiveApp::spawn_backlog_dispatch_toggle`);

@@ -313,7 +313,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
                 }
                 BacklogLens::Projects => {
                     ui.separator();
-                    projects::render_projects(app, ui, &snap, tasks);
+                    projects::render_projects(app, ui, &snap, tasks, &mut pending);
                 }
                 BacklogLens::Portfolio => {
                     ui.separator();
@@ -425,6 +425,16 @@ pub(in crate::ui::backlog) struct Pending {
     /// Done tasks are completed, the rest archived. See
     /// `toolbar::ClearBatch` for why both halves travel together.
     pub bulk_clear: Option<toolbar::ClearBatch>,
+    /// `(repo root, task id, direction)` — one press of a Projects-lens
+    /// task-row rank arrow (trajectory: *Stack ranking*). Semantics live in
+    /// `switchbard_core::rank_task_move`, not here.
+    pub rank_move_task: Option<(PathBuf, String, switchbard_core::RankMove)>,
+    /// `(repo root, project name, direction)` — a project header's rank
+    /// arrow, over `switchbard_core::rank_project_move`.
+    pub rank_move_project: Option<(PathBuf, String, switchbard_core::RankMove)>,
+    /// `(repo root, task id, expedited?)` — the detail rail's expedite-lane
+    /// toggle.
+    pub expedite_set: Option<(PathBuf, String, bool)>,
 }
 
 fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, pending: Pending) {
@@ -470,5 +480,14 @@ fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, pending: Pending) {
     }
     if let Some(batch) = pending.bulk_clear {
         app.spawn_backlog_bulk_clear(batch.archive, batch.complete, ctx);
+    }
+    if let Some((project_root, task_id, direction)) = pending.rank_move_task {
+        app.spawn_backlog_rank_move_task(project_root, task_id, direction, ctx);
+    }
+    if let Some((project_root, name, direction)) = pending.rank_move_project {
+        app.spawn_backlog_rank_move_project(project_root, name, direction, ctx);
+    }
+    if let Some((project_root, task_id, expedited)) = pending.expedite_set {
+        app.spawn_backlog_expedite_set(project_root, task_id, expedited, ctx);
     }
 }

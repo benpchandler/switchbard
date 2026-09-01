@@ -83,6 +83,20 @@ impl RepoRanking {
     pub fn project_rank(&self, name: &str) -> Option<usize> {
         self.projects.iter().position(|p| p == name)
     }
+
+    /// The task's raw position in its scope's ranked list; `None` means
+    /// unranked. Raw, not pruned - a stale earlier entry can inflate the
+    /// index, so use this for affordance state (arrow enablement, badges),
+    /// never for placement math: the move/rank write ops re-derive the
+    /// pruned truth themselves and no-op harmlessly on a stale click.
+    pub fn task_rank_position(&self, task: &BacklogTask) -> Option<usize> {
+        let list = match scope_of(task) {
+            TaskScope::Project(name) => self.tasks.get(&name)?.as_slice(),
+            TaskScope::Root => self.root_tasks.as_slice(),
+            TaskScope::Subissue(parent) => self.subissues.get(&parent)?.as_slice(),
+        };
+        list.iter().position(|entry| entry == &task.id)
+    }
 }
 
 /// Where to insert an item within its sibling scope's ranked list.
@@ -713,6 +727,75 @@ fn write_expedite(root: &Path, stored: &[String], updated: &[String]) -> Result<
     Ok(WriteOutcome::Changed)
 }
 
+/// One step of the GUI's reorder arrows. The semantics are sparse-rank
+/// honest and live here so every surface shares one testable authority:
+/// - **Up** on a ranked item swaps it with the ranked sibling above;
+///   already-first is a no-op. Up on an *unranked* item enters the ranked
+///   set at its bottom (rank is sparse - there is no "one above" inside
+///   the unranked fallback tail to swap with).
+/// - **Down** on a ranked item swaps it with the ranked sibling below;
+///   down on the *last* ranked item removes its rank (it rejoins the
+///   fallback tail). Down on an unranked item is a no-op.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RankMove {
+    Up,
+    Down,
+}
+
+fn moved_list(pruned: Vec<String>, id: &str, direction: RankMove) -> Vec<String> {
+    let position = pruned.iter().position(|entry| entry == id);
+    let mut updated = pruned;
+    match (direction, position) {
+        (RankMove::Up, Some(0)) | (RankMove::Down, None) => {}
+        (RankMove::Up, Some(index)) => updated.swap(index, index - 1),
+        (RankMove::Up, None) => updated.push(id.to_string()),
+        (RankMove::Down, Some(index)) if index + 1 == updated.len() => {
+            updated.remove(index);
+        }
+        (RankMove::Down, Some(index)) => updated.swap(index, index + 1),
+    }
+    updated
+}
+
+/// Move a task one step among its ranked scope siblings - see [`RankMove`]
+/// for the exact arrow semantics. Prunes stale ids as it writes.
+pub fn rank_task_move(root: &Path, id: &str, direction: RankMove) -> Result<WriteOutcome> {
+    let repo = load_backlog_repo(root)?;
+    let task = rankable_task(&repo, id)?;
+    let scope = scope_of(task);
+    let mut warnings = Vec::new();
+    let ranking = load_ranking(root, &mut warnings);
+
+    let stored = stored_scope_list(&ranking, &scope).to_vec();
+    let updated = moved_list(
+        pruned_scope_list(&stored, &scope, &repo),
+        &task.id,
+        direction,
+    );
+    write_scope_list(root, &scope, &stored, &updated)
+}
+
+/// [`rank_task_move`]'s project twin, over the repo's ranked project list.
+pub fn rank_project_move(root: &Path, name: &str, direction: RankMove) -> Result<WriteOutcome> {
+    let name = validated_single_line("project", name)?;
+    let repo = load_backlog_repo(root)?;
+    let live = live_project_names(&repo);
+    let Some(canonical) = live.iter().find(|p| p.eq_ignore_ascii_case(name)).cloned() else {
+        bail!("no project named '{name}' - check `project list` for the exact name");
+    };
+    let mut warnings = Vec::new();
+    let ranking = load_ranking(root, &mut warnings);
+
+    let pruned: Vec<String> = ranking
+        .projects
+        .iter()
+        .filter(|entry| live.iter().any(|p| p == *entry))
+        .cloned()
+        .collect();
+    let updated = moved_list(pruned, &canonical, direction);
+    write_projects(root, &ranking.projects, &updated)
+}
+
 /// A project is a live rank target while any active, unfinished task names
 /// it or a definition holds a non-terminal status - the same births-and-
 /// deaths rule the hierarchy layer implies, applied to pruning.
@@ -1136,6 +1219,98 @@ mod tests {
             assert!(text.contains(key), "skeleton keeps `{key}`:\n{text}");
         }
         assert!(text.contains("root_tasks:\n  - TASK-1"), "{text}");
+    }
+
+    #[test]
+    fn move_arrows_swap_enter_and_leave_the_ranked_set_honestly() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        write_task(&root, "TASK-1", "To Do", Some("Alpha"));
+        write_task(&root, "TASK-2", "To Do", Some("Alpha"));
+        write_task(&root, "TASK-3", "To Do", Some("Alpha"));
+
+        // Up on an unranked task with no ranked siblings ranks it first.
+        assert!(rank_task_move(&root, "TASK-2", RankMove::Up)
+            .expect("move")
+            .changed());
+        // Up on another unranked task enters the ranked set at the bottom.
+        assert!(rank_task_move(&root, "TASK-3", RankMove::Up)
+            .expect("move")
+            .changed());
+        let (loaded, _) = ranking(&root);
+        assert_eq!(loaded.tasks["Alpha"], vec!["TASK-2", "TASK-3"]);
+
+        // Up swaps ranked siblings; up at the top is a no-op.
+        assert!(rank_task_move(&root, "TASK-3", RankMove::Up)
+            .expect("move")
+            .changed());
+        assert!(!rank_task_move(&root, "TASK-3", RankMove::Up)
+            .expect("no-op")
+            .changed());
+        let (loaded, _) = ranking(&root);
+        assert_eq!(loaded.tasks["Alpha"], vec!["TASK-3", "TASK-2"]);
+
+        // Down swaps; down on the LAST ranked task unranks it; down on an
+        // unranked task is a no-op.
+        assert!(rank_task_move(&root, "TASK-3", RankMove::Down)
+            .expect("move")
+            .changed());
+        assert!(rank_task_move(&root, "TASK-3", RankMove::Down)
+            .expect("unrank")
+            .changed());
+        let (loaded, _) = ranking(&root);
+        assert_eq!(loaded.tasks["Alpha"], vec!["TASK-2"]);
+        assert!(!rank_task_move(&root, "TASK-3", RankMove::Down)
+            .expect("no-op")
+            .changed());
+        assert!(!rank_task_move(&root, "TASK-1", RankMove::Down)
+            .expect("no-op")
+            .changed());
+    }
+
+    #[test]
+    fn project_moves_share_the_arrow_semantics_and_position_is_reported() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        write_task(&root, "TASK-1", "To Do", Some("Alpha"));
+        write_task(&root, "TASK-2", "To Do", Some("Beta"));
+
+        assert!(rank_project_move(&root, "Alpha", RankMove::Up)
+            .expect("move")
+            .changed());
+        assert!(rank_project_move(&root, "Beta", RankMove::Up)
+            .expect("move")
+            .changed());
+        assert!(rank_project_move(&root, "Beta", RankMove::Up)
+            .expect("swap")
+            .changed());
+        let (loaded, _) = ranking(&root);
+        assert_eq!(loaded.projects, vec!["Beta", "Alpha"]);
+
+        let repo_loaded = load_backlog_repo(&root).expect("load");
+        let alpha_task = repo_loaded
+            .tasks
+            .iter()
+            .find(|t| t.id == "TASK-1")
+            .expect("task");
+        assert!(rank_task(&root, "TASK-1", &RankPlacement::Top)
+            .expect("rank")
+            .changed());
+        let repo_loaded = load_backlog_repo(&root).expect("load");
+        let alpha_task2 = repo_loaded
+            .tasks
+            .iter()
+            .find(|t| t.id == "TASK-1")
+            .expect("task");
+        assert_eq!(repo_loaded.ranking.task_rank_position(alpha_task2), Some(0));
+        assert_eq!(
+            load_backlog_repo(&root)
+                .expect("load")
+                .ranking
+                .task_rank_position(alpha_task),
+            Some(0),
+            "position reads from the scope the task actually lives in"
+        );
     }
 
     #[test]

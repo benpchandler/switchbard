@@ -1538,6 +1538,105 @@ impl HiveApp {
         });
     }
 
+    /// One press of a Projects-lens task-row rank arrow (trajectory: *Stack
+    /// ranking*). The arrow semantics live in `switchbard_core::
+    /// rank_task_move`; this only runs the write off-thread and refreshes.
+    pub fn spawn_backlog_rank_move_task(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        direction: switchbard_core::RankMove,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let repos = self.backlog_repos.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::rank_task_move(&project_root, &task_id, direction) {
+                Ok(outcome) => {
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
+                    let verb = if outcome.changed() {
+                        "re-ranked"
+                    } else {
+                        "rank unchanged for"
+                    };
+                    status.set(with_stale_warning(reload, format!("{verb} {task_id}")));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("re-rank {task_id} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    /// [`Self::spawn_backlog_rank_move_task`]'s project-header twin.
+    pub fn spawn_backlog_rank_move_project(
+        &self,
+        project_root: PathBuf,
+        name: String,
+        direction: switchbard_core::RankMove,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let repos = self.backlog_repos.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::rank_project_move(&project_root, &name, direction) {
+                Ok(outcome) => {
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
+                    let verb = if outcome.changed() {
+                        "re-ranked"
+                    } else {
+                        "rank unchanged for"
+                    };
+                    status.set(with_stale_warning(reload, format!("{verb} project {name}")));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("re-rank project {name} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    /// The detail rail's expedite-lane toggle: `expedited = true` adds the
+    /// task to the lane (it jumps the repo's whole computed order),
+    /// `false` removes it.
+    pub fn spawn_backlog_expedite_set(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        expedited: bool,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let repos = self.backlog_repos.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let result = if expedited {
+                switchbard_core::expedite_task(&project_root, &task_id)
+            } else {
+                switchbard_core::unexpedite_task(&project_root, &task_id)
+            };
+            let verb = if expedited {
+                "expedited"
+            } else {
+                "unexpedited"
+            };
+            match result {
+                Ok(_) => {
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
+                    status.set(with_stale_warning(reload, format!("{verb} {task_id}")));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("{verb} {task_id} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
     pub fn spawn_backlog_dod_toggle(
         &self,
         project_root: PathBuf,

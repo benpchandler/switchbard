@@ -1584,3 +1584,59 @@ fn list_row_shows_the_dispatch_pill_for_a_queued_task() {
         "the queued task's row should show the QUEUED pill"
     );
 }
+
+/// Stack ranking (trajectory: *Stack ranking*): a ranked + expedited fixture
+/// in the Projects lens renders the expedite marker without any click, and
+/// the selected task's detail rail offers the lane's exit affordance.
+#[test]
+fn projects_lens_renders_the_expedite_marker_and_lane_toggle() {
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_view.lens = BacklogLens::Projects;
+    app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
+    let mut task = seeded_backlog_task();
+    task.project = Some("Ranked Project".to_string());
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), task.id.clone()));
+    let ranking = RepoRanking {
+        projects: vec!["Ranked Project".to_string()],
+        expedite: vec![task.id.clone()],
+        tasks: std::iter::once(("Ranked Project".to_string(), vec![task.id.clone()])).collect(),
+        ..RepoRanking::default()
+    };
+    app.backlog_repos.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogRepo {
+            root: PathBuf::from(REPO_PATH),
+            tasks: vec![task],
+            warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
+            goals: vec![],
+            ranking,
+            loaded_at_unix: 0,
+            configured_statuses: vec!["To Do".into(), "In Progress".into(), "Done".into()],
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness
+            .query_by_label("Ranked Project  ·  0/1 done")
+            .is_some(),
+        "the ranked project's group header renders"
+    );
+    // Two nodes is correct: the Projects-lens row pill and the detail
+    // rail's own lane pill both render the marker.
+    assert_eq!(
+        harness.query_all_by_label("expedited").count(),
+        2,
+        "an expedited task's row and detail rail both wear the lane marker"
+    );
+    assert!(
+        harness
+            .query_by_label("Remove from expedite lane")
+            .is_some(),
+        "the detail rail offers the lane's exit for the selected expedited task"
+    );
+}
