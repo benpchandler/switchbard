@@ -10,6 +10,7 @@ mod common;
 use std::path::PathBuf;
 
 use common::{harness, seeded_app, REPO_PATH};
+use eframe::egui;
 use egui_kittest::kittest::{NodeT, Queryable};
 use switchbard_core::config::FilterMemory;
 use switchbard_core::{
@@ -272,6 +273,35 @@ fn rank_sort_label_appears_only_in_the_sort_menu() {
 // ---------------------------------------------------------------------
 // Filter builder: add / remove / persist
 // ---------------------------------------------------------------------
+
+#[test]
+fn facets_controls_remain_horizontal_across_supported_widths() {
+    let mut bad = Vec::new();
+    for width in (600..=1400).step_by(25) {
+        let app = tasks_app(vec![task("TASK-1", "Visible task", "To Do")]);
+        let mut harness = harness(app);
+        harness.set_size(egui::vec2(width as f32, 548.0));
+        harness.run();
+
+        let filter = harness.get_by_label("+ Filter").rect();
+        let list = harness.get_by_label("List").rect();
+        let board = harness.get_by_label("Board").rect();
+        if filter.height() > 44.0
+            || filter.width() < 52.0
+            || list.width() < 36.0
+            || board.width() < 48.0
+            || filter.intersects(list)
+            || filter.intersects(board)
+            || list.intersects(board)
+        {
+            bad.push((width, filter, list, board));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "facets controls collapsed or overlapped: {bad:?}"
+    );
+}
 
 #[test]
 fn adding_a_filter_predicate_narrows_the_visible_tasks() {

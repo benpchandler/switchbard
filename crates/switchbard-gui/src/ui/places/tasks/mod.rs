@@ -199,8 +199,9 @@ fn render_empty(ui: &mut egui::Ui) {
     });
 }
 
-/// Row 1: free-text search, the filter builder + recent-filters row, and
-/// the List/Board segmented control.
+/// Row 1: free-text search and base visibility.
+/// Row 2: the List/Board selector, filter builder, active predicates, and
+/// recent filter sets.
 fn render_facets_row(app: &mut HiveApp, ui: &mut egui::Ui, filtered: &[TaskRow<'_>]) {
     ui.horizontal_wrapped(|ui| {
         filter_bar::search(ui, "tasks_place_search", app.filter_mut(), "Search tasks");
@@ -212,25 +213,30 @@ fn render_facets_row(app: &mut HiveApp, ui: &mut egui::Ui, filtered: &[TaskRow<'
         ui.checkbox(&mut app.backlog_view.show_completed, "Done");
         ui.checkbox(&mut app.backlog_view.show_archived, "Archived");
         ui.checkbox(&mut app.backlog_view.show_drafts, "Drafts");
+    });
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        render_view_mode_selector(app, ui);
         ui.separator();
         filters::render(app, ui, filtered);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            for (mode, label) in [
-                (TasksViewMode::Board, "Board"),
-                (TasksViewMode::List, "List"),
-            ] {
-                if ui
-                    .selectable_label(app.tasks_place.view_mode == mode, label)
-                    .clicked()
-                {
-                    app.tasks_place.view_mode = mode;
-                }
-            }
-        });
     });
 }
 
-/// Row 2: `Group by:` (List-only — a no-op combo shown disabled in Board
+fn render_view_mode_selector(app: &mut HiveApp, ui: &mut egui::Ui) {
+    for (mode, label) in [
+        (TasksViewMode::List, "List"),
+        (TasksViewMode::Board, "Board"),
+    ] {
+        if ui
+            .selectable_label(app.tasks_place.view_mode == mode, label)
+            .clicked()
+        {
+            app.tasks_place.view_mode = mode;
+        }
+    }
+}
+
+/// Row 3: `Group by:` (List-only, a no-op combo shown disabled in Board
 /// mode, since Board keeps its own status columns) and `Sort:`.
 fn render_group_sort_row(app: &mut HiveApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {

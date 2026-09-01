@@ -211,6 +211,16 @@ fn shots_for_theme(theme: ThemeChoice) {
         h.run();
         snapshot(&mut h, &format!("tasks_place_narrow{suffix}"));
     }
+
+    // Standard-width, short viewport: regression for the facets row that
+    // formerly collapsed "+ Filter" vertically and overlapped List/Board.
+    {
+        let app = app_with(theme);
+        let mut h = harness(app);
+        h.set_size(egui::vec2(1350.0, 548.0));
+        h.run();
+        snapshot(&mut h, &format!("tasks_place_facets_short{suffix}"));
+    }
 }
 
 #[test]

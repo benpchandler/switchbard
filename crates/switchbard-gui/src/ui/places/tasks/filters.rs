@@ -30,7 +30,10 @@ pub(super) fn matches(row: &TaskRow<'_>, predicates: &[FilterPredicate]) -> bool
 pub(super) fn render(app: &mut HiveApp, ui: &mut egui::Ui, all_tasks: &[TaskRow<'_>]) {
     ui.horizontal_wrapped(|ui| {
         let popup_id = ui.make_persistent_id("tasks_place_filter_builder");
-        let button = ui.button("+ Filter");
+        let button = ui.add_sized(
+            [56.0, ui.spacing().interact_size.y],
+            egui::Button::new("+ Filter"),
+        );
         if button.clicked() {
             app.tasks_place.filter_builder_open = !app.tasks_place.filter_builder_open;
         }
