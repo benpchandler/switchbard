@@ -13,9 +13,18 @@
 //! - `digest` — TASK-99, landed: goal cards, in-flight work, the "needs a
 //!   human" attention feed.
 //! - `goals` — TASK-101, landed: the real Goals index and goal page.
+//! - [`dispatches`] — TASK-98, landed: the Dispatches built-in view under
+//!   the Tasks place (task-scoped delivery state: run status, kill/retry/log
+//!   per row).
+//! - [`command`] — TASK-98, landed: the Command place (agent-scoped fleet
+//!   console: dispatch runs + interactive sessions, plus the pre-existing
+//!   Context/Hooks sections it inherited from the old top-level Agents
+//!   view).
 //!
-//! Command/Ops/Tasks place bodies are other fireteams' slices; nothing here
+//! Ops/Tasks place bodies are other fireteams' slices; nothing here
 //! licenses adding modules for them ahead of that work.
 
+pub mod command;
 pub mod digest;
+pub mod dispatches;
 pub(crate) mod goals;

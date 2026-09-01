@@ -5,7 +5,6 @@
 
 pub mod agent_context;
 pub mod agent_hooks;
-pub mod agents;
 pub mod backlog;
 pub mod column_widths;
 pub mod components;
