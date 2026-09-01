@@ -1,9 +1,10 @@
 ---
 id: TASK-91
 title: 'E2E proof: a real task through queue -> orchestrator -> monitored PR'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-01 01:56'
+updated_date: '2026-09-01 02:24'
 labels:
   - task-queue
   - dogfood
