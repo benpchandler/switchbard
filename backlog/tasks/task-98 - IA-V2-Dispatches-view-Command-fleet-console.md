@@ -1,10 +1,10 @@
 ---
 id: TASK-98
 title: 'IA V2: Dispatches view + Command fleet console'
-status: In Progress
+status: In Review
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 05:51'
+updated_date: '2026-09-01 05:52'
 labels:
   - ia
   - gui
@@ -34,6 +34,8 @@ Dispatch failed: claude exited with 1
 Named gap (per binding directive 5): no NEEDS_DECISION/SITREP store exists in switchbard-core. Command's support-request card renders evidence-only (state/elapsed/log path) from DispatchRun; it never fabricates decision text. A structured support-request store is real future work, not built here.
 
 Named gap: switchbard_core::agent_sessions classifies interactive sessions by exact process comm name (claude/codex). Real installs that run as a wrapping interpreter (node, a shim script) will not be detected — a deliberate honest boundary (no argv substring matching, to avoid false positives), documented in the module doc.
+
+PR #83: https://github.com/benpchandler/switchbard/pull/83
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
