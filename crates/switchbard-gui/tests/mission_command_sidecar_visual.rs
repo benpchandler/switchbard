@@ -9,10 +9,13 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 use switchbard_core::config::ThemeChoice;
 use switchbard_core::ProjectionFreshness;
 use switchbard_gui::mission_control::{HelperHealth, MissionControlModel, PendingContract};
 use switchbard_gui::runtime::Place;
+
+static EVIDENCE_LOCK: Mutex<()> = Mutex::new(());
 
 fn canonical_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/qa/screenshots")
@@ -125,6 +128,7 @@ fn digest(path: &Path) -> String {
 }
 
 fn record_evidence(state: &str, actual: &Path, canonical: &Path) {
+    let _guard = EVIDENCE_LOCK.lock().expect("visual evidence lock");
     let (width, height) = png_dimensions(actual);
     assert_eq!((width, height), png_dimensions(canonical));
     let target = evidence_path();
