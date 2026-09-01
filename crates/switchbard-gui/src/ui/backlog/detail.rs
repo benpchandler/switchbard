@@ -59,7 +59,7 @@ pub(super) fn render_task_detail(
                 .corner_radius(7.0)
                 .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
-                    render_editor(app, ui, snap, repo, task, editable, pending);
+                    render_editor(app, ui, repo, task, editable, pending);
                 });
             ui.add_space(10.0);
             detail_lists::render_subtasks(app, ui, &repo.key, task, &repo.repo, editable);
@@ -188,27 +188,9 @@ fn render_detail_header(
     }
 }
 
-/// Sorted union of every project name any snapshot repo references (task
-/// membership) or defines (def files) — the assign dropdown's option list.
-pub(super) fn known_project_names(snap: &Snapshot) -> Vec<String> {
-    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for repo in &snap.repos {
-        for task in &repo.repo.tasks {
-            if let Some(project) = &task.project {
-                names.insert(project.clone());
-            }
-        }
-        for def in &repo.repo.project_defs {
-            names.insert(def.name.clone());
-        }
-    }
-    names.into_iter().collect()
-}
-
 fn render_editor(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
-    snap: &Snapshot,
     repo: &RepoRow,
     task: &BacklogTask,
     editable: bool,
@@ -269,20 +251,22 @@ fn render_editor(
 
         ui.label("project");
         ui.horizontal(|ui| {
-            // Every known project name across the snapshot — membership is
-            // cross-repo name-matched, so offering every name is the point.
-            // Def-declared names appear even with zero member tasks (a
-            // just-created project must be assignable). The text field stays
-            // as the free-text escape hatch: referencing a brand-new name is
-            // how projects are born. The name scan runs *inside* `show_ui`,
-            // so it costs nothing until the dropdown is actually opened —
-            // the detail rail renders this editor every frame (render-path
-            // perf rule: no per-frame full scans).
+            // Only THIS task's repo's project names — task-referenced plus
+            // def-declared (`BacklogRepo::project_names`, the one authority).
+            // Membership is name-keyed within a repo, so a cross-repo union
+            // here offered assignments that would silently mint a same-named
+            // "project" in the wrong repo (owner-reported: a MusicProduction
+            // task's dropdown listing switchbard's projects). The text field
+            // stays as the free-text escape hatch: referencing a brand-new
+            // name is how projects are born. The name scan runs *inside*
+            // `show_ui`, so it costs nothing until the dropdown is actually
+            // opened — the detail rail renders this editor every frame
+            // (render-path perf rule: no per-frame full scans).
             egui::ComboBox::from_id_salt("backlog_editor_project")
                 .selected_text("assign")
                 .width(72.0)
                 .show_ui(ui, |ui| {
-                    for name in known_project_names(snap) {
+                    for name in repo.repo.project_names() {
                         ui.selectable_value(
                             &mut app.backlog_view.editor.project,
                             name.clone(),
@@ -292,7 +276,7 @@ fn render_editor(
                 });
             ui.add(
                 egui::TextEdit::singleline(&mut app.backlog_view.editor.project)
-                    .hint_text("none")
+                    .hint_text("none - type a name to start a new project")
                     .desired_width(ui.available_width() - 50.0),
             );
             if !app.backlog_view.editor.project.trim().is_empty()

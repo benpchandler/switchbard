@@ -134,17 +134,13 @@ fn render_goal_modal_for_digest_place(
         .map(|row| super::goal_create::GoalModalRepoOption {
             key: row.key.clone(),
             label: row.label(),
+            project_names: row.repo.project_names(),
         })
         .collect();
-    let known_project_names = super::detail::known_project_names(snap);
     let fixed_target = app.backlog_view.selected_repo.is_some();
-    if let Some((project_root, goal)) = super::goal_create::render_goal_modal(
-        app,
-        ctx,
-        &repo_options,
-        &known_project_names,
-        fixed_target,
-    ) {
+    if let Some((project_root, goal)) =
+        super::goal_create::render_goal_modal(app, ctx, &repo_options, fixed_target)
+    {
         pending.goal_create = Some((project_root, goal));
     }
 }

@@ -187,6 +187,27 @@ pub struct BacklogRepo {
 }
 
 impl BacklogRepo {
+    /// Every project name this repo knows — task-referenced names plus
+    /// def-declared ones (a just-created project with zero member tasks must
+    /// still be assignable), sorted and deduplicated. Project membership is
+    /// name-keyed **within one repo** (see `super::hierarchy`), so any
+    /// surface suggesting an assignment or scope for this repo's objects
+    /// must draw from this list and never from a cross-repo union
+    /// (owner-reported: a MusicProduction task's assign dropdown offering
+    /// switchbard's projects).
+    pub fn project_names(&self) -> Vec<String> {
+        let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for task in &self.tasks {
+            if let Some(project) = &task.project {
+                names.insert(project.clone());
+            }
+        }
+        for def in &self.project_defs {
+            names.insert(def.name.clone());
+        }
+        names.into_iter().collect()
+    }
+
     pub fn active_task_count(&self) -> usize {
         self.tasks
             .iter()
@@ -358,6 +379,60 @@ pub struct NewBacklogTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The assign-dropdown/goal-scope authority: task-referenced names union
+    /// def-declared ones, sorted, deduplicated — and only ever THIS repo's.
+    #[test]
+    fn project_names_unions_task_refs_and_defs_sorted() {
+        fn task_in(project: Option<&str>) -> BacklogTask {
+            BacklogTask {
+                id: "TASK-1".to_string(),
+                title: "Example".to_string(),
+                status: "To Do".to_string(),
+                priority: "medium".to_string(),
+                assignees: vec![],
+                labels: vec![],
+                dependencies: vec![],
+                references: vec![],
+                project: project.map(str::to_string),
+                parent: None,
+                created_date: None,
+                updated_date: None,
+                description: String::new(),
+                implementation_plan: String::new(),
+                implementation_notes: String::new(),
+                final_summary: String::new(),
+                acceptance_criteria: vec![],
+                definition_of_done: vec![],
+                source: BacklogTaskSource::Active,
+                path: std::path::PathBuf::from("/repo/backlog/tasks/TASK-1.md"),
+            }
+        }
+        fn def(name: &str) -> crate::backlog::hierarchy::ProjectDef {
+            crate::backlog::hierarchy::ProjectDef {
+                name: name.to_string(),
+                status: "Planned".to_string(),
+                target_date: None,
+                initiative: None,
+                lead: None,
+                description: String::new(),
+                path: std::path::PathBuf::from("/repo/backlog/projects/def.md"),
+            }
+        }
+        let repo = BacklogRepo {
+            root: std::path::PathBuf::from("/repo"),
+            tasks: vec![task_in(Some("Zeta")), task_in(Some("Alpha")), task_in(None)],
+            warnings: vec![],
+            project_defs: vec![def("Alpha"), def("Defined Only")],
+            initiative_defs: vec![],
+            goals: vec![],
+            ranking: crate::backlog::RepoRanking::default(),
+            loaded_at_unix: 0,
+            configured_statuses: vec![],
+        };
+
+        assert_eq!(repo.project_names(), vec!["Alpha", "Defined Only", "Zeta"]);
+    }
 
     /// This repo's own `backlog/config.yml` must declare every status the app
     /// offers for it.
