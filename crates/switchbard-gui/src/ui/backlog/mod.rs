@@ -67,7 +67,7 @@ mod detail_lists;
 pub(crate) mod digest;
 pub(crate) mod dispatch_ui;
 mod format;
-mod goal_create;
+pub(crate) mod goal_create;
 mod list;
 mod portfolio;
 mod projects;
@@ -360,7 +360,25 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
 
     search::render_overlay(app, ctx, &snap);
     create::render_create_modal(app, ctx, &snap, &mut pending);
-    goal_create::render_goal_modal(app, ctx, &snap, &mut pending);
+    let goal_repo_options: Vec<goal_create::GoalModalRepoOption> = snap
+        .repos
+        .iter()
+        .map(|row| goal_create::GoalModalRepoOption {
+            key: row.key.clone(),
+            label: row.label(),
+        })
+        .collect();
+    let known_project_names = detail::known_project_names(&snap);
+    let fixed_target = app.backlog_view.selected_repo.is_some();
+    if let Some((project_root, goal)) = goal_create::render_goal_modal(
+        app,
+        ctx,
+        &goal_repo_options,
+        &known_project_names,
+        fixed_target,
+    ) {
+        pending.goal_create = Some((project_root, goal));
+    }
     apply_pending(app, ui, pending);
 }
 

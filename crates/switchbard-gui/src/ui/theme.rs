@@ -584,6 +584,108 @@ pub fn painted_trash_button(ui: &mut egui::Ui) -> egui::Response {
     resp
 }
 
+/// Small pencil icon — the universal "edit" affordance (e.g. a goal's weekly
+/// target, Goals place TASK-101). Painter-drawn for the same font-coverage
+/// reason as every other icon in this file.
+pub fn painted_pencil_button(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
+    let color = if resp.hovered() { sky() } else { weak_text() };
+    let stroke = egui::Stroke::new(1.3, color);
+    let painter = ui.painter();
+    let c = rect.center();
+    // Shaft: a diagonal stroke from the tip to the eraser end.
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 4.5, c.y + 4.5),
+            egui::pos2(c.x + 3.5, c.y - 3.5),
+        ],
+        stroke,
+    );
+    // Tip: a short "V" closing the shaft's bottom-left end.
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 4.5, c.y + 4.5),
+            egui::pos2(c.x - 2.7, c.y + 5.2),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 2.7, c.y + 5.2),
+            egui::pos2(c.x - 2.0, c.y + 3.7),
+        ],
+        stroke,
+    );
+    // Cap: a short crossbar near the eraser end.
+    painter.line_segment(
+        [
+            egui::pos2(c.x + 1.5, c.y - 4.5),
+            egui::pos2(c.x + 4.5, c.y - 1.5),
+        ],
+        stroke,
+    );
+    resp
+}
+
+/// Small "+" icon — a universal creation affordance (New goal, Attach…).
+/// Painter-drawn for the same font-coverage reason as every other icon in
+/// this file.
+pub fn painted_plus_button(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
+    let color = if resp.hovered() { sky() } else { weak_text() };
+    let stroke = egui::Stroke::new(1.4, color);
+    let painter = ui.painter();
+    let c = rect.center();
+    painter.line_segment(
+        [egui::pos2(c.x - 5.0, c.y), egui::pos2(c.x + 5.0, c.y)],
+        stroke,
+    );
+    painter.line_segment(
+        [egui::pos2(c.x, c.y - 5.0), egui::pos2(c.x, c.y + 5.0)],
+        stroke,
+    );
+    resp
+}
+
+/// Small checkmark icon — the "confirm/submit" affordance (e.g. a manual
+/// goal's weekly check-in, Goals place TASK-101).
+pub fn painted_check_button(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
+    let color = if resp.hovered() { green() } else { weak_text() };
+    let stroke = egui::Stroke::new(1.6, color);
+    let painter = ui.painter();
+    let c = rect.center();
+    painter.line_segment(
+        [egui::pos2(c.x - 4.0, c.y), egui::pos2(c.x - 1.0, c.y + 3.5)],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 1.0, c.y + 3.5),
+            egui::pos2(c.x + 4.5, c.y - 4.0),
+        ],
+        stroke,
+    );
+    resp
+}
+
+/// Sets an icon-only button's AccessKit name to `label` and its hover
+/// tooltip to the same text — the IA V2 trajectory entry's implementation
+/// obligation that universal-action icon buttons derive their accessible
+/// names from the same command-verb authority that names them everywhere
+/// (AccessKit label equals the verb name). Every painted icon helper in
+/// this file returns a bare `Response` with no widget text for AccessKit to
+/// derive a name from, and `.on_hover_text` alone does **not** set one (see
+/// `ui::backlog::board`'s note on `accesskit_consumer::Node::labelled_by`);
+/// pair every icon button with this instead of `.on_hover_text` directly.
+pub fn icon_button_label(resp: egui::Response, label: &str) -> egui::Response {
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    resp.on_hover_text(label)
+}
+
 /// The star affordance for favoriting an object (TASK-96) — a task, goal,
 /// project, or saved view. `favorited` picks the filled (favorited) vs
 /// outlined (not) star; painted for the same font-coverage reason as

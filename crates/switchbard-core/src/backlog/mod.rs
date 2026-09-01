@@ -19,8 +19,8 @@ mod write;
 pub use allocate::{create_task_allocating_id, next_task_id, ACTIVE_BRANCH_DAYS};
 
 pub use goals::{
-    attach_goal_inputs, check_in_goal, create_goal, detach_goal_inputs, roll_goals, GoalCheckIn,
-    GoalDef, GoalInputs, GoalMeasure, GoalWeek, NewGoal,
+    attach_goal_inputs, check_in_goal, create_goal, detach_goal_inputs, edit_goal_target,
+    roll_goals, GoalCheckIn, GoalDef, GoalInputs, GoalMeasure, GoalWeek, NewGoal,
 };
 
 pub use hierarchy::{

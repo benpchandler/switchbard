@@ -770,6 +770,45 @@ impl Default for BacklogNewGoalState {
     }
 }
 
+/// Session-only state owned by the Goals **place** (`ui::places::goals`,
+/// TASK-101) — deliberately its own struct rather than folded into
+/// `BacklogViewState`: `new_goal`/`goal_checkin_drafts` above predate IA V2
+/// and are shared with the Digest lens's own goal cards, but goal-page
+/// selection and its two inline editors (edit-target, attach-input) are this
+/// place's alone. A relaunch always lands back on the index — nothing here
+/// is persisted, matching every other place's selection state.
+#[derive(Debug, Clone, Default)]
+pub struct GoalsPlaceState {
+    /// `(repo root, goal name)` — which goal page is open, if any. `None`
+    /// is the index.
+    pub selected_goal: Option<(PathBuf, String)>,
+    /// The pencil "Edit target" modal's draft.
+    pub edit_target: GoalEditTargetState,
+    /// The Inputs card's "+ Attach task or project" picker.
+    pub attach_input: GoalAttachInputState,
+}
+
+/// Draft for the "Edit target" modal (Goals index row, goal page's
+/// this-week card).
+#[derive(Debug, Clone, Default)]
+pub struct GoalEditTargetState {
+    pub open: bool,
+    pub repo_root: Option<PathBuf>,
+    pub goal_name: String,
+    pub week: String,
+    pub target: i64,
+}
+
+/// Draft for the Inputs card's attach picker — a text filter over the
+/// scoped repo's not-yet-attached tasks/projects.
+#[derive(Debug, Clone, Default)]
+pub struct GoalAttachInputState {
+    pub open: bool,
+    pub repo_root: Option<PathBuf>,
+    pub goal_name: String,
+    pub query: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct BacklogNewTaskState {
     pub open: bool,

@@ -30,8 +30,8 @@ use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
     dispatch_run_holds_worktree, migrate_filter_keys, ActiveRun, ActiveRunSummary,
     AgentContextViewState, AgentsSection, BacklogTaskKey, BacklogViewState, BoardMoveOutcome,
-    ConfirmBulkRemoveWorktrees, ConfirmRemoveWorktree, LandingEntry, OrderingState, PickerState,
-    Place, TasksView, WorktreeMeta, WorktreeSizeEntry,
+    ConfirmBulkRemoveWorktrees, ConfirmRemoveWorktree, GoalsPlaceState, LandingEntry,
+    OrderingState, PickerState, Place, TasksView, WorktreeMeta, WorktreeSizeEntry,
 };
 use crate::sync::{Kick, Progress, Status};
 use crate::ui;
@@ -302,6 +302,10 @@ pub struct HiveApp {
     pub dispatch_kill_confirm: Option<BacklogTaskKey>,
     pub agent_context_view: AgentContextViewState,
     pub backlog_view: BacklogViewState,
+    /// TASK-101: the Goals place's own session-only state (selected goal
+    /// page, edit-target/attach-input drafts) — see `GoalsPlaceState`'s doc
+    /// for why it isn't folded into `backlog_view`.
+    pub goals_view: GoalsPlaceState,
     /// Shared render cache for the task detail pane's markdown description
     /// (task-15 AC #3). `egui_commonmark` recommends one long-lived cache
     /// rather than rebuilding it every frame.
@@ -488,6 +492,7 @@ impl HiveApp {
             repo_scope,
             agent_context_view,
             backlog_view,
+            goals_view: GoalsPlaceState::default(),
             commonmark_cache: egui_commonmark::CommonMarkCache::default(),
             browser_choice,
             onboarding: Arc::new(Mutex::new(DiscoveryState::default())),
@@ -726,6 +731,7 @@ impl HiveApp {
             }
             config::FavoriteKind::Goal => {
                 self.place = Place::Goals;
+                self.goals_view.selected_goal = Some((PathBuf::from(&fav.repo), fav.key.clone()));
             }
             config::FavoriteKind::Project => {
                 self.place = Place::Tasks;
@@ -2065,6 +2071,128 @@ impl HiveApp {
         });
     }
 
+    /// Change a goal's target for one week (the pencil "Edit target"
+    /// affordance, Goals place TASK-101) through the core write layer, then
+    /// refresh that repo's cached snapshot.
+    pub fn spawn_goal_edit_target(
+        &self,
+        project_root: PathBuf,
+        goal_name: String,
+        week: String,
+        target: i64,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let repos = self.backlog_repos.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::edit_goal_target(&project_root, &goal_name, &week, target) {
+                Ok(()) => {
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
+                    status.set(with_stale_warning(
+                        reload,
+                        format!("{goal_name}: target set to {target}"),
+                    ));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("edit target for {goal_name} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    /// Attach tasks/projects to a goal as counted inputs (Goals place's
+    /// Inputs card "+ Attach task or project", TASK-101/TASK-92) through the
+    /// core write layer, then refresh that repo's cached snapshot.
+    pub fn spawn_goal_attach_input(
+        &self,
+        project_root: PathBuf,
+        goal_name: String,
+        tasks: Vec<String>,
+        projects: Vec<String>,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let repos = self.backlog_repos.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::attach_goal_inputs(&project_root, &goal_name, &tasks, &projects)
+            {
+                Ok(added) => {
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
+                    status.set(with_stale_warning(
+                        reload,
+                        format!("attached {added} input(s) to {goal_name}"),
+                    ));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("attach to {goal_name} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    /// The Inputs card's detach icon (TASK-101/TASK-92) — the inverse of
+    /// [`Self::spawn_goal_attach_input`].
+    pub fn spawn_goal_detach_input(
+        &self,
+        project_root: PathBuf,
+        goal_name: String,
+        tasks: Vec<String>,
+        projects: Vec<String>,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let repos = self.backlog_repos.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::detach_goal_inputs(&project_root, &goal_name, &tasks, &projects)
+            {
+                Ok(removed) => {
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
+                    status.set(with_stale_warning(
+                        reload,
+                        format!("detached {removed} input(s) from {goal_name}"),
+                    ));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("detach from {goal_name} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    /// "Roll into next week" (goal page's this-week card) / "Roll last
+    /// week" (Goals place's zero-goals empty state) — gives every goal in
+    /// `project_root` that lacks `to_week` a new week key carrying its most
+    /// recent earlier target (`roll_goals`). Repo-wide by construction (core
+    /// has no per-goal roll — see `roll_goals`'s own doc) and additive, so
+    /// this needs no confirmation: a goal that already has `to_week` is
+    /// untouched.
+    pub fn spawn_goal_roll(&self, project_root: PathBuf, to_week: String, ctx: &egui::Context) {
+        let status = self.backlog_status.clone();
+        let repos = self.backlog_repos.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::roll_goals(&project_root, &to_week) {
+                Ok(rolled) => {
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
+                    status.set(with_stale_warning(
+                        reload,
+                        format!("rolled {rolled} goal(s) into {to_week}"),
+                    ));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("roll to {to_week} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
     pub fn spawn_backlog_append_note(
         &self,
         project_root: PathBuf,
@@ -2343,7 +2471,7 @@ impl HiveApp {
                 TasksView::Dispatches => ui::dispatch::render(self, ui),
             },
             Place::Command => ui::agents::render(self, ui),
-            Place::Goals => ui::backlog::digest::render_goals_place(self, ui),
+            Place::Goals => ui::places::goals::render_goals_place(self, ui),
             Place::Ops => ui::workspace::render(self, ui),
         }
         let central_elapsed = central_start.elapsed();

@@ -15,6 +15,7 @@ pub mod legibility;
 pub mod nav;
 pub mod onboarding;
 pub mod path_display;
+pub mod places;
 pub mod settings;
 pub mod sidebar;
 pub mod theme;
