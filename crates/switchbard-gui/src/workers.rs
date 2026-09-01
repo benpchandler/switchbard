@@ -63,6 +63,7 @@
 //!   needs no new plumbing through `HiveApp`/`Channels`). A backgrounded
 //!   Switchbard alt-tabbed away doesn't need second-by-second freshness.
 
+use crate::mission_control::MissionControlModel;
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
     attached_processes_for, is_retired_worktree, ActiveRun, BacklogTaskKey, FileListSummary,
@@ -79,9 +80,9 @@ use switchbard_core::{
     probe_ref_drift_detail, probe_remote_drift, probe_trunk_detail, probe_trunk_divergence,
     probe_worktree_lock, probe_worktree_size, save_agent_context_cache, scan_agent_context,
     scan_agent_sessions, scan_listeners, staleness_from_trunk, sweep_dead_sidecar, AgentContextMap,
-    AgentSession, BacklogRepo, DetectedService, DispatchOptions, DriftProbe, Fact, LandingStage,
-    MissionProjectionLoad, PushState, Repo, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL,
-    DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
+    AgentSession, BacklogRepo, DecisionScope, DecisionStatus, DetectedService, DispatchOptions,
+    DriftProbe, Fact, LandingStage, MissionProjectionLoad, MissionStatus, PushState, Repo,
+    WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
@@ -267,6 +268,7 @@ pub struct Channels {
     /// worker's doc for why it can't share the git-probe tick.
     pub landing: Arc<Mutex<HashMap<PathBuf, LandingEntry>>>,
     pub mission_projection: Arc<Mutex<MissionProjectionLoad>>,
+    pub mission_control: Arc<Mutex<MissionControlModel>>,
     pub mission_projection_path: Option<PathBuf>,
     pub scanner_kick: Kick,
     pub probe_kick: Kick,
@@ -277,6 +279,7 @@ pub struct Channels {
     pub size_kick: Kick,
     pub landing_kick: Kick,
     pub agent_sessions_kick: Kick,
+    pub mission_projection_kick: Kick,
 }
 
 pub fn spawn_all(ctx: egui::Context, ch: Channels) {
@@ -294,18 +297,66 @@ pub fn spawn_all(ctx: egui::Context, ch: Channels) {
 }
 
 /// Optional xplan Mission Command projection: bounded file read off the UI
-/// thread, one cache swap, one repaint, then a focus-aware sleep. There is no
-/// subprocess and no path from this cache back to xplan.
+/// thread, one cache swap, one repaint, then a focus-aware sleep. A validated
+/// v2 contract hold may separately trigger one bounded private read through
+/// the supervisor; the projection itself is never written back to xplan.
 fn spawn_mission_projection(ctx: egui::Context, ch: Channels) {
     let Some(path) = ch.mission_projection_path.clone() else {
         return;
     };
     thread::spawn(move || loop {
         let loaded = switchbard_core::load_mission_projection(&path);
+        if let MissionProjectionLoad::Ready { freshness, .. } = &loaded {
+            ch.mission_control.lock().unwrap().projection_freshness = freshness.clone();
+        }
+        spawn_pending_contract_recovery(&ctx, &ch, &loaded);
         *ch.mission_projection.lock().unwrap() = loaded;
         ctx.request_repaint();
         let focused = ctx.input(|i| i.focused);
-        thread::sleep(effective_period(MISSION_PROJECTION_PERIOD, focused));
+        ch.mission_projection_kick
+            .wait(effective_period(MISSION_PROJECTION_PERIOD, focused));
+    });
+}
+
+fn spawn_pending_contract_recovery(
+    ctx: &egui::Context,
+    ch: &Channels,
+    loaded: &MissionProjectionLoad,
+) {
+    let MissionProjectionLoad::Ready { projection, .. } = loaded else {
+        return;
+    };
+    if !loaded.controls_enabled() {
+        return;
+    }
+    let Some(mission) = projection.portfolio.missions.iter().find(|mission| {
+        mission.status == MissionStatus::NeedsDecision
+            && mission.decision.as_ref().is_some_and(|decision| {
+                decision.status == DecisionStatus::Open
+                    && decision.scope == Some(DecisionScope::MissionContract)
+            })
+    }) else {
+        return;
+    };
+    let (Some(revision), Some(decision)) = (mission.mission_revision, mission.decision.as_ref())
+    else {
+        return;
+    };
+    let prepared = ch.mission_control.lock().unwrap().begin_contract_recovery(
+        &mission.id,
+        revision,
+        &decision.id,
+        decision.version,
+    );
+    let Ok(Some((supervisor, request))) = prepared else {
+        return;
+    };
+    let model = ch.mission_control.clone();
+    let ctx = ctx.clone();
+    thread::spawn(move || {
+        let result = supervisor.invoke(request);
+        model.lock().unwrap().finish_contract_recovery(result);
+        ctx.request_repaint();
     });
 }
 

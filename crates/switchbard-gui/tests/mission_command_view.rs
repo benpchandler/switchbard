@@ -45,6 +45,7 @@ fn mission(id: &str, status: MissionStatus) -> ProjectedMission {
     let (next_step, next_owner) = mission_next_action(status);
     ProjectedMission {
         id: id.to_string(),
+        mission_revision: None,
         status,
         contract_version: 2,
         attempt_id: format!("ATT-{id}"),
@@ -201,6 +202,7 @@ fn mixed_missions() -> Vec<ProjectedMission> {
         id: "DEC-1".to_string(),
         version: 3,
         status: DecisionStatus::Open,
+        scope: None,
     });
     held.feedback[0].status = FeedbackStatus::Queued;
     let mut approval = mission("APPROVAL", MissionStatus::ApprovalPending);

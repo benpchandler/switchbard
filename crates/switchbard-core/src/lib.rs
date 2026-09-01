@@ -19,6 +19,8 @@ pub mod instance_lock;
 pub mod kill;
 pub mod landing;
 pub mod mission_projection;
+pub mod mission_sidecar_protocol;
+pub mod mission_supervisor;
 pub mod open_url;
 pub mod refine;
 pub mod removal_safety;
@@ -99,13 +101,20 @@ pub use git_probe::{
 pub use kill::{kill_pgid, KillOutcome};
 pub use landing::{probe_pr_state, probe_push_state, LandingStage, PrState, PushState};
 pub use mission_projection::{
-    load_mission_projection, mission_projection_path, ApprovalStatus, DecisionStatus,
-    FeedbackStatus, MissionApproval, MissionDecision, MissionEvidence, MissionFeedback,
-    MissionPortfolio, MissionProjection, MissionProjectionLoad, MissionReconciliation,
-    MissionRequirement, MissionStatus, MissionUnit, PortfolioStatus, ProjectedMission,
-    ProjectionFreshness, ReconciliationStatus, RequirementStatus, UnitStatus,
+    load_mission_projection, mission_projection_path, ApprovalStatus, DecisionScope,
+    DecisionStatus, FeedbackStatus, MissionApproval, MissionDecision, MissionEvidence,
+    MissionFeedback, MissionPortfolio, MissionProjection, MissionProjectionLoad,
+    MissionReconciliation, MissionRequirement, MissionStatus, MissionUnit, PortfolioStatus,
+    ProjectedMission, ProjectionFreshness, ReconciliationStatus, RequirementStatus, UnitStatus,
     MAX_PROJECTED_MISSIONS, MISSION_PROJECTION_ENV, MISSION_PROJECTION_SCHEMA,
+    MISSION_PROJECTION_SCHEMA_V2,
 };
+pub use mission_sidecar_protocol::{
+    payload as mission_sidecar_payload, ContractReview, MissionCommand, MissionRequest,
+    MissionResponse, PendingDecisionPayload, QueueMissionPayload, QueueRequirement,
+    ResumeDecisionPayload, MAX_MISSION_REQUEST_BYTES, MISSION_SIDECAR_PROTOCOL,
+};
+pub use mission_supervisor::{MissionSupervisor, MissionSupervisorConfig, MissionSupervisorError};
 pub use open_url::{open_url, url_for_port, BROWSER_APP_NAMES};
 pub use refine::{
     build_refine_patch, build_refine_prompt, describe_refine_outcome, describe_refine_result,

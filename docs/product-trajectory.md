@@ -53,8 +53,10 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 - **Mission Command supervision (owner-approved 2026-08-31, build-to-learn slice).**
   A top-level Missions view may read xplan's optional, versioned local projection at
   `~/.xplan/mission-command-snapshot.json` (or the bounded
-  `XPLAN_MISSION_SNAPSHOT` override). It is a read model only: no mission writes, xplan
-  subprocess, LangGraph/Rust dependency, daemon, account, or telemetry. A dedicated
+  `XPLAN_MISSION_SNAPSHOT` override). The view remains a read model with no direct mission
+  writes or LangGraph/Rust dependency. The original no-xplan-subprocess hypothesis is
+  superseded by the owner-approved bundled sidecar below: typed controls may invoke only
+  the verified xplan one-shot helper through `switchbard-core`, never a daemon. A dedicated
   worker performs bounded polling off the render path; missing, unreadable, malformed,
   unsupported, and stale snapshots remain explicit non-blocking states. The view shows
   mission identities and lifecycle status, requirement proof, held decisions, approval
@@ -581,6 +583,14 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 
 Flag any of these the moment a task seems to assume it, and confirm with the owner
 before building.
+
+## Mission Command bundled sidecar (owner-approved optional control plane)
+
+Switchbard supervises xplan through one verified, bundled, one-shot helper process per request. The native UI may issue only `hello`, `queue_mission`, `get_pending_decision`, and `resume_decision`; xplan remains the sole writer of the SQLite event store, checkpoint cursor, and projection. LangGraph and Python stay inside the frozen xplan artifact rather than entering the Rust dependency graph.
+
+macOS packages the helper onedir below `Switchbard.app/Contents/Helpers/xplan-mission-sidecar`; Linux packages it below `libexec/xplan-mission-sidecar`. One schema-v1 pin binds the exact xplan source and uv lock plus exactly two independently selected target entries, `macos-arm64` and `linux-x86_64`, each with its own archive and manifest digest. Assembly verifies every artifact entry before copying, performs no runtime acquisition, and fails closed on missing, extra, malformed, stale, or cross-target material.
+
+The control and projection health indicators are independent. Queue drafts and decision answers remain visible until xplan acknowledges the exact command identity; ambiguous timeout, crash, or malformed-response outcomes are reconciled and retried with the same durable command id rather than being mislabeled as mission failure. The current native list and contract-review UI is the accepted first slice, not the future animated portfolio canvas.
 
 ## Known gaps / debt
 

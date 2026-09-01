@@ -23,6 +23,7 @@
 //! | `add_` / `remove_` / `move_` | Synchronous repo-list CRUD; calls `after_repos_mutation` on the UI thread. | `add_repo_from_path`, `remove_repo`, `move_repo` |
 //! | `spawn_` | Fire-and-forget threaded actions with no confirmation modal (start/stop/kill). | `spawn_start`, `spawn_stop_run`, `spawn_kill` |
 
+use crate::mission_control::{empty_hello_request, HelperHealth, MissionControlModel};
 use crate::perf::{PerfSession, PerfSummary};
 use crate::runtime::worktree_create::{CreateWorktreeDialog, CreateWorktreeOutcome};
 use crate::runtime::worktree_rename::RenameWorktreeDialog;
@@ -91,6 +92,13 @@ pub struct ScanState {
     pub listeners: Vec<AttributedListener>,
     pub last_scan: Option<Instant>,
     pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MissionRequestKind {
+    Queue,
+    Resume,
+    Retry,
 }
 
 pub struct HiveApp {
@@ -177,6 +185,9 @@ pub struct HiveApp {
     /// worker. This cache is the GUI's only mission input; xplan remains the
     /// writer and Switchbard remains usable in every load-error state.
     pub mission_projection: Arc<Mutex<MissionProjectionLoad>>,
+    /// Native queue and contract-review state. This is plain cached state;
+    /// helper work is dispatched to bounded background actions below.
+    pub mission_control: Arc<Mutex<MissionControlModel>>,
     mission_projection_path: Option<PathBuf>,
     /// TASK-41: count of non-primary, clean, fully-merged worktrees, written
     /// once per git-probe tick by `workers::spawn_probe`. The top bar's "N
@@ -200,6 +211,8 @@ pub struct HiveApp {
     /// `dispatch_kick`) but wired for symmetry with every other worker and
     /// so a future "watch this worktree now" action has a hook to call.
     pub agent_sessions_kick: Kick,
+    /// Wakes the projection reader after an acknowledged helper command.
+    pub mission_projection_kick: Kick,
     pub picker: Arc<Mutex<PickerState>>,
 
     // Per-view feedback channels. One per UI surface so messages don't
@@ -423,7 +436,18 @@ impl HiveApp {
         let cached = cached_agent_contexts(&worktrees);
         let mut app = Self::new_headless(cfg, repos, worktrees);
         app._instance_lock = instance_lock;
+        if let (Ok(executable), Some(state_root)) = (
+            std::env::current_exe(),
+            app.mission_projection_path
+                .as_ref()
+                .and_then(|path| path.parent())
+                .map(Path::to_path_buf),
+        ) {
+            *app.mission_control.lock().unwrap() =
+                MissionControlModel::from_bundled_executable(&executable, state_root);
+        }
         *app.agent_contexts.lock().unwrap() = cached;
+        app.spawn_mission_handshake(cc.egui_ctx.clone());
         app.spawn_workers(cc.egui_ctx.clone());
         app
     }
@@ -492,6 +516,7 @@ impl HiveApp {
             sizes: Arc::new(Mutex::new(HashMap::new())),
             landing: Arc::new(Mutex::new(HashMap::new())),
             mission_projection: Arc::new(Mutex::new(mission_projection)),
+            mission_control: Arc::new(Mutex::new(MissionControlModel::default())),
             mission_projection_path,
             retired_worktree_count: Arc::new(Mutex::new(0)),
             state: Arc::new(Mutex::new(ScanState::default())),
@@ -504,6 +529,7 @@ impl HiveApp {
             size_kick: Kick::new(),
             landing_kick: Kick::new(),
             agent_sessions_kick: Kick::new(),
+            mission_projection_kick: Kick::new(),
             config: cfg,
             config_save_path: None,
             _instance_lock: None,
@@ -568,6 +594,7 @@ impl HiveApp {
                 sizes: self.sizes.clone(),
                 landing: self.landing.clone(),
                 mission_projection: self.mission_projection.clone(),
+                mission_control: self.mission_control.clone(),
                 mission_projection_path: self.mission_projection_path.clone(),
                 retired_worktree_count: self.retired_worktree_count.clone(),
                 scanner_kick: self.scanner_kick.clone(),
@@ -579,6 +606,7 @@ impl HiveApp {
                 size_kick: self.size_kick.clone(),
                 landing_kick: self.landing_kick.clone(),
                 agent_sessions_kick: self.agent_sessions_kick.clone(),
+                mission_projection_kick: self.mission_projection_kick.clone(),
             },
         );
     }
@@ -622,6 +650,66 @@ impl HiveApp {
         self.backlog_kick.notify();
         self.size_kick.notify();
         self.landing_kick.notify();
+        self.mission_projection_kick.notify();
+    }
+
+    /// Submit a queue command without blocking egui. The draft is locked
+    /// before the thread starts, which prevents duplicate clicks while the
+    /// exact command identity remains available for reconciliation.
+    pub fn spawn_queue_mission(&self, ctx: egui::Context) {
+        self.spawn_mission_request(ctx, MissionRequestKind::Queue);
+    }
+
+    /// Resume the exact pending decision identity without process I/O on the
+    /// render thread.
+    pub fn spawn_resume_decision(&self, ctx: egui::Context) {
+        self.spawn_mission_request(ctx, MissionRequestKind::Resume);
+    }
+
+    /// Replay the previous ambiguous command with its original command id.
+    pub fn spawn_retry_mission(&self, ctx: egui::Context) {
+        self.spawn_mission_request(ctx, MissionRequestKind::Retry);
+    }
+
+    fn spawn_mission_handshake(&self, ctx: egui::Context) {
+        let supervisor = self.mission_control.lock().unwrap().supervisor.clone();
+        let Some(supervisor) = supervisor else {
+            return;
+        };
+        let model = self.mission_control.clone();
+        let kick = self.mission_projection_kick.clone();
+        thread::spawn(move || {
+            let result = supervisor.invoke(empty_hello_request());
+            model.lock().unwrap().helper_health = match result {
+                Ok(_) => HelperHealth::Ready,
+                Err(error) => HelperHealth::Unavailable(error.to_string()),
+            };
+            kick.notify();
+            ctx.request_repaint();
+        });
+    }
+
+    fn spawn_mission_request(&self, ctx: egui::Context, kind: MissionRequestKind) {
+        let prepared = {
+            let mut model = self.mission_control.lock().unwrap();
+            match kind {
+                MissionRequestKind::Queue => model.begin_queue(),
+                MissionRequestKind::Resume => model.begin_resume(),
+                MissionRequestKind::Retry => model.begin_retry(),
+            }
+        };
+        let Ok((supervisor, request)) = prepared else {
+            ctx.request_repaint();
+            return;
+        };
+        let model = self.mission_control.clone();
+        let kick = self.mission_projection_kick.clone();
+        thread::spawn(move || {
+            let result = supervisor.invoke(request.clone());
+            model.lock().unwrap().finish_request(&request, result);
+            kick.notify();
+            ctx.request_repaint();
+        });
     }
 
     pub fn mark_agent_contexts_stale(&self) {

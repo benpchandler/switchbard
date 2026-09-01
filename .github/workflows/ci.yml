@@ -39,3 +39,60 @@ jobs:
 
       - name: Run task — ${{ matrix.task }}
         run: mise run ${{ matrix.task }}
+
+  mission-sidecar:
+    name: mission-sidecar-${{ matrix.target }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: macos
+            arch: arm64
+            pin_target: macos-arm64
+            artifact: mission-sidecar-macos
+          - os: ubuntu-latest
+            target: linux
+            arch: x86_64
+            pin_target: linux-x86_64
+            artifact: mission-sidecar-linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build and verify exact xplan helper
+        run: |
+          set -euo pipefail
+          eval "$(python3 - <<'PY'
+          import json, shlex
+          pin=json.load(open('xplan-sidecar-pin.json'))
+          target=pin['targets']['${{ matrix.pin_target }}']
+          for key in ('xplan_repository','xplan_source_revision'):
+              print(f"{key.upper()}={shlex.quote(pin[key])}")
+          print(f"ARCHIVE_NAME={shlex.quote(target['archive_name'])}")
+          PY
+          )"
+          XPLAN_SOURCE="$RUNNER_TEMP/xplan-source"
+          XPLAN_OUTPUT="$RUNNER_TEMP/xplan-output"
+          git clone --quiet "$XPLAN_REPOSITORY" "$XPLAN_SOURCE"
+          git -C "$XPLAN_SOURCE" checkout --quiet --detach "$XPLAN_SOURCE_REVISION"
+          uv run --locked --project "$XPLAN_SOURCE/sidecar" \
+            python "$XPLAN_SOURCE/scripts/build_mission_sidecar.py" \
+            --target host --output "$XPLAN_OUTPUT"
+          scripts/acquire-xplan-mission-sidecar.sh \
+            --pin xplan-sidecar-pin.json \
+            --target-os "${{ matrix.target }}" \
+            --arch "${{ matrix.arch }}" \
+            --source "$XPLAN_SOURCE" \
+            --artifact "$XPLAN_OUTPUT/$ARCHIVE_NAME" \
+            --mode ci \
+            --destination "$RUNNER_TEMP/mission-sidecar-artifact"
+
+      - name: Upload verified helper manifest tree
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/mission-sidecar-artifact
+          if-no-files-found: error

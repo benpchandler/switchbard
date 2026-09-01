@@ -52,6 +52,9 @@ jobs:
       - name: Install mise tools
         uses: jdx/mise-action@v4
 
+      - name: Install uv for pinned xplan artifact build
+        uses: astral-sh/setup-uv@v6
+
       - name: Cache cargo registry + build
         uses: actions/cache@v4
         with:
@@ -69,6 +72,36 @@ jobs:
       - name: Build release binary
         run: mise run build
 
+      - name: Build and acquire exact xplan sidecar
+        id: sidecar
+        run: |
+          set -euo pipefail
+          eval "$(python3 - <<'PY'
+          import json, shlex
+          pin=json.load(open('xplan-sidecar-pin.json'))
+          target=pin['targets']['linux-x86_64']
+          for key in ('xplan_repository','xplan_source_revision'):
+              print(f"{key.upper()}={shlex.quote(pin[key])}")
+          print(f"ARCHIVE_NAME={shlex.quote(target['archive_name'])}")
+          PY
+          )"
+          XPLAN_SOURCE="$RUNNER_TEMP/xplan-source"
+          XPLAN_OUTPUT="$RUNNER_TEMP/xplan-output"
+          git clone --quiet "$XPLAN_REPOSITORY" "$XPLAN_SOURCE"
+          git -C "$XPLAN_SOURCE" checkout --quiet --detach "$XPLAN_SOURCE_REVISION"
+          uv run --locked --project "$XPLAN_SOURCE/sidecar" \
+            python "$XPLAN_SOURCE/scripts/build_mission_sidecar.py" \
+            --target host --output "$XPLAN_OUTPUT"
+          scripts/acquire-xplan-mission-sidecar.sh \
+            --pin xplan-sidecar-pin.json \
+            --target-os linux \
+            --arch x86_64 \
+            --source "$XPLAN_SOURCE" \
+            --artifact "$XPLAN_OUTPUT/$ARCHIVE_NAME" \
+            --mode ci \
+            --destination "$RUNNER_TEMP/xplan-sidecar"
+          echo "path=$RUNNER_TEMP/xplan-sidecar" >> "$GITHUB_OUTPUT"
+
       - name: Package tarball + checksum
         id: pkg
         run: |
@@ -79,6 +112,8 @@ jobs:
           STAGE="dist/${NAME}"
           mkdir -p "$STAGE"
           install -m 0755 target/release/switchbard "$STAGE/switchbard"
+          mkdir -p "$STAGE/libexec"
+          cp -R -P "${{ steps.sidecar.outputs.path }}" "$STAGE/libexec/xplan-mission-sidecar"
           cp LICENSE README.md docs/INSTALL-LINUX.md "$STAGE/"
           tar -C dist -czf "dist/${NAME}.tar.gz" "$NAME"
           ( cd dist && sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256" )

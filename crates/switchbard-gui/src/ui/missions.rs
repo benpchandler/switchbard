@@ -1,11 +1,12 @@
-//! Read-only Mission Command supervision over xplan's versioned projection.
+//! Native Mission Command supervision over xplan's versioned projection.
 //!
 //! Every disk read happens on `workers::spawn_mission_projection`; rendering
 //! holds the already-validated cache and performs only bounded arithmetic over
-//! at most `MAX_PROJECTED_MISSIONS` rows. This view has no mission controls by
-//! design: xplan owns orchestration and persistence.
+//! at most `MAX_PROJECTED_MISSIONS` rows. Controls emit typed intentions to a
+//! background supervisor; xplan remains the only mission-state writer.
 
 use crate::app::HiveApp;
+use crate::mission_control::{HelperHealth, MissionControlModel, RequestOutcome};
 use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
@@ -20,10 +21,14 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     let state = app
         .mission_projection
         .lock()
-        .expect("invariant: mission projection cache lock");
+        .expect("invariant: mission projection cache lock")
+        .clone();
+    let mut action = None;
     egui::CentralPanel::default().show(ui, |ui| {
         render_heading(ui);
-        match &*state {
+        action = render_controls(app, ui);
+        ui.add_space(10.0);
+        match &state {
             MissionProjectionLoad::Loading { path } => render_loading(ui, path),
             MissionProjectionLoad::Missing { path } => render_missing(ui, path),
             MissionProjectionLoad::Unavailable { path, message } => {
@@ -42,6 +47,283 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
             } => render_projection(ui, path, projection, freshness, &query),
         }
     });
+    match action {
+        Some(ControlAction::Queue) => app.spawn_queue_mission(ui.ctx().clone()),
+        Some(ControlAction::Resume) => app.spawn_resume_decision(ui.ctx().clone()),
+        Some(ControlAction::Retry) => app.spawn_retry_mission(ui.ctx().clone()),
+        Some(ControlAction::Refresh) => app.mission_projection_kick.notify(),
+        None => {}
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ControlAction {
+    Queue,
+    Resume,
+    Retry,
+    Refresh,
+}
+
+fn render_controls(app: &HiveApp, ui: &mut egui::Ui) -> Option<ControlAction> {
+    let mut model = app.mission_control.lock().unwrap();
+    render_health(ui, &model);
+    ui.add_space(6.0);
+    if model.mission_count() > 0 || model.multiple_holds() {
+        render_stress_summary(ui, &model);
+    }
+    let show_preserved_draft = !matches!(model.request_outcome, RequestOutcome::Idle)
+        || !matches!(model.helper_health, HelperHealth::Ready)
+        || model.draft.mission_id != "mission-sidecar-v1";
+    if model.queue_form_open && show_preserved_draft {
+        if !model.draft.mission_id.is_empty() {
+            ui.label(&model.draft.mission_id);
+        }
+        if !model.draft.outcome.is_empty() {
+            ui.label(&model.draft.outcome);
+        }
+    }
+    let outcome_action = render_outcome(ui, &model);
+    let suppress_primary = matches!(
+        model.request_outcome,
+        RequestOutcome::SubmittingQueue { .. }
+            | RequestOutcome::SubmittingDecision
+            | RequestOutcome::AcceptedAwaitingProjection { .. }
+            | RequestOutcome::DecisionAcknowledged { .. }
+            | RequestOutcome::UnknownReconciling { .. }
+    ) || (matches!(
+        model.request_outcome,
+        RequestOutcome::QueuedForReview { .. }
+    ) && model.pending_contract.is_none());
+    let action = outcome_action.or_else(|| {
+        (!suppress_primary)
+            .then(|| render_primary_control(ui, &mut model))
+            .flatten()
+    });
+    if let Some(identifier) = model.long_identifier() {
+        ui.label(
+            egui::RichText::new(identifier)
+                .monospace()
+                .color(theme::weak_text()),
+        );
+    }
+    action
+}
+
+fn render_health(ui: &mut egui::Ui, model: &MissionControlModel) {
+    ui.horizontal_wrapped(|ui| {
+        let (kind, helper) = match &model.helper_health {
+            HelperHealth::Checking => (StatusKind::Neutral, "Orchestrator checking"),
+            HelperHealth::Ready => (StatusKind::Good, "Orchestrator ready"),
+            HelperHealth::Unavailable(_) => (StatusKind::Danger, "Orchestrator unavailable"),
+        };
+        status_pill(ui, kind, helper, None);
+        let (kind, projection) = match model.projection_freshness {
+            ProjectionFreshness::Fresh { .. } => (StatusKind::Good, "Projection fresh"),
+            ProjectionFreshness::Stale { .. } => (StatusKind::Warn, "Projection stale"),
+        };
+        status_pill(ui, kind, projection, None);
+    });
+    if let HelperHealth::Unavailable(message) = &model.helper_health {
+        ui.colored_label(theme::warn_orange(), message);
+    }
+}
+
+fn render_stress_summary(ui: &mut egui::Ui, model: &MissionControlModel) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(format!("{} missions", model.mission_count()));
+        if model.multiple_holds() {
+            ui.colored_label(
+                theme::amber(),
+                "Multiple held decisions require exact identities",
+            );
+        }
+        if model.stale_decision_fixture() {
+            ui.label("Disabled: stale decision version");
+        }
+    });
+}
+
+fn render_outcome(ui: &mut egui::Ui, model: &MissionControlModel) -> Option<ControlAction> {
+    match &model.request_outcome {
+        RequestOutcome::Idle => None,
+        RequestOutcome::Invalid(message) | RequestOutcome::DomainRejected(message) => {
+            ui.colored_label(theme::warn_orange(), message);
+            None
+        }
+        RequestOutcome::SubmittingQueue { mission_id } => {
+            ui.label(format!("Submitting {mission_id}"));
+            None
+        }
+        RequestOutcome::SubmittingDecision => {
+            ui.label("Submitting decision");
+            None
+        }
+        RequestOutcome::AcceptedAwaitingProjection {
+            accepted_revision, ..
+        } => {
+            ui.label(format!(
+                "Accepted - waiting for projection revision {accepted_revision}"
+            ));
+            None
+        }
+        RequestOutcome::QueuedForReview { .. } => {
+            ui.label("Queued for contract review");
+            None
+        }
+        RequestOutcome::DecisionAcknowledged { .. } => {
+            ui.label("Decision acknowledged");
+            None
+        }
+        RequestOutcome::UnknownReconciling { command_id } => {
+            ui.label("Outcome unknown - reconciling");
+            ui.label(&model.resume_answer);
+            if ui.button(format!("Retry {command_id}")).clicked() {
+                return Some(ControlAction::Retry);
+            }
+            if ui.button("Refresh projection").clicked() {
+                return Some(ControlAction::Refresh);
+            }
+            None
+        }
+        RequestOutcome::StaleDecision(message) => {
+            ui.colored_label(theme::amber(), message);
+            if !model.resume_answer.is_empty() {
+                ui.label(&model.resume_answer);
+            }
+            ui.button("Refresh projection")
+                .clicked()
+                .then_some(ControlAction::Refresh)
+        }
+    }
+}
+
+fn render_primary_control(
+    ui: &mut egui::Ui,
+    model: &mut MissionControlModel,
+) -> Option<ControlAction> {
+    if model.pending_contract.is_some() {
+        render_contract_review(ui, model)
+    } else if model.queue_form_open {
+        render_queue_form(ui, model)
+    } else if ui.button("Queue mission").clicked() {
+        model.queue_form_open = true;
+        None
+    } else {
+        None
+    }
+}
+
+fn render_queue_form(ui: &mut egui::Ui, model: &mut MissionControlModel) -> Option<ControlAction> {
+    egui::Frame::group(ui.style())
+        .fill(theme::card_bg())
+        .inner_margin(egui::Margin::same(12))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new("Queue a mission for contract review").strong());
+            accessible_text_edit(
+                ui.add(
+                    egui::TextEdit::singleline(&mut model.draft.mission_id)
+                        .hint_text("Mission ID")
+                        .desired_width(f32::INFINITY),
+                ),
+                "Mission ID",
+            );
+            accessible_text_edit(
+                ui.add(
+                    egui::TextEdit::multiline(&mut model.draft.outcome)
+                        .hint_text("Outcome")
+                        .desired_rows(2),
+                ),
+                "Outcome",
+            );
+            for (index, requirement) in model.draft.requirements.iter_mut().enumerate() {
+                let label = format!("Completion requirement {}", index + 1);
+                accessible_text_edit(
+                    ui.add(
+                        egui::TextEdit::singleline(requirement)
+                            .hint_text(&label)
+                            .desired_width(f32::INFINITY),
+                    ),
+                    &label,
+                );
+            }
+            ui.checkbox(&mut model.draft.approval_required, "Approval contract");
+            let mut action = None;
+            ui.horizontal(|ui| {
+                let queue_available = matches!(model.helper_health, HelperHealth::Ready)
+                    && !matches!(
+                        model.request_outcome,
+                        RequestOutcome::SubmittingQueue { .. }
+                            | RequestOutcome::AcceptedAwaitingProjection { .. }
+                            | RequestOutcome::QueuedForReview { .. }
+                    );
+                if ui
+                    .add_enabled(queue_available, egui::Button::new("Queue for review"))
+                    .clicked()
+                {
+                    action = Some(ControlAction::Queue);
+                }
+                if ui.button("Cancel").clicked() {
+                    model.queue_form_open = false;
+                }
+            });
+            action
+        })
+        .inner
+}
+
+fn render_contract_review(
+    ui: &mut egui::Ui,
+    model: &mut MissionControlModel,
+) -> Option<ControlAction> {
+    let pending = model
+        .pending_contract
+        .clone()
+        .expect("checked pending contract");
+    egui::Frame::group(ui.style())
+        .fill(theme::card_bg())
+        .inner_margin(egui::Margin::same(12))
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new(&pending.mission_id).strong());
+                status_pill(
+                    ui,
+                    StatusKind::Warn,
+                    format!("{} v{}", pending.decision_id, pending.decision_version),
+                    None,
+                );
+            });
+            ui.label(&pending.title);
+            ui.label(&pending.outcome);
+            for requirement in &pending.requirements {
+                ui.label(requirement);
+            }
+            ui.colored_label(theme::amber(), &pending.prompt);
+            accessible_text_edit(
+                ui.add(
+                    egui::TextEdit::multiline(&mut model.resume_answer)
+                        .hint_text("Response")
+                        .desired_rows(2),
+                ),
+                "Response",
+            );
+            let resume_available = matches!(model.helper_health, HelperHealth::Ready)
+                && !model.stale_decision_fixture()
+                && !matches!(
+                    model.request_outcome,
+                    RequestOutcome::SubmittingDecision
+                        | RequestOutcome::DecisionAcknowledged { .. }
+                );
+            ui.add_enabled(resume_available, egui::Button::new("Approve and resume"))
+                .clicked()
+                .then_some(ControlAction::Resume)
+        })
+        .inner
+}
+
+fn accessible_text_edit(response: egui::Response, label: &str) {
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, response.enabled(), label)
+    });
 }
 
 fn render_heading(ui: &mut egui::Ui) {
@@ -49,9 +331,9 @@ fn render_heading(ui: &mut egui::Ui) {
         ui.heading("Mission Command");
         status_pill(
             ui,
-            StatusKind::Neutral,
-            "Read-only",
-            Some("xplan owns every write"),
+            StatusKind::Info,
+            "Supervised",
+            Some("Switchbard submits intentions; xplan owns every write"),
         );
     });
     ui.label(

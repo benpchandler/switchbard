@@ -13,6 +13,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 pub const MISSION_PROJECTION_SCHEMA: &str = "xplan-mission-projection-v1";
+pub const MISSION_PROJECTION_SCHEMA_V2: &str = "xplan-mission-projection-v2";
 pub const MISSION_PROJECTION_ENV: &str = "XPLAN_MISSION_SNAPSHOT";
 pub const MAX_PROJECTION_BYTES: u64 = 4 * 1024 * 1024;
 pub const MAX_PROJECTED_MISSIONS: usize = 500;
@@ -77,6 +78,8 @@ pub enum PortfolioStatus {
 #[serde(deny_unknown_fields)]
 pub struct ProjectedMission {
     pub id: String,
+    #[serde(default)]
+    pub mission_revision: Option<u64>,
     pub status: MissionStatus,
     pub contract_version: u64,
     pub attempt_id: String,
@@ -173,6 +176,8 @@ pub struct MissionDecision {
     pub id: String,
     pub version: u64,
     pub status: DecisionStatus,
+    #[serde(default)]
+    pub scope: Option<DecisionScope>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -180,6 +185,13 @@ pub struct MissionDecision {
 pub enum DecisionStatus {
     Open,
     Resolved,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DecisionScope {
+    MissionContract,
+    Unit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -283,6 +295,48 @@ impl MissionProjectionLoad {
     pub fn loading(path: PathBuf) -> Self {
         Self::Loading { path }
     }
+
+    #[must_use]
+    pub fn is_legacy_v1(&self) -> bool {
+        matches!(
+            self,
+            Self::Ready { projection, .. }
+                if projection.schema_version == MISSION_PROJECTION_SCHEMA
+        )
+    }
+
+    #[must_use]
+    pub fn is_v2(&self) -> bool {
+        matches!(
+            self,
+            Self::Ready { projection, .. }
+                if projection.schema_version == MISSION_PROJECTION_SCHEMA_V2
+        )
+    }
+
+    #[must_use]
+    pub fn controls_enabled(&self) -> bool {
+        self.is_v2()
+    }
+
+    #[must_use]
+    pub fn mission(&self, mission_id: &str) -> Option<&ProjectedMission> {
+        let Self::Ready { projection, .. } = self else {
+            return None;
+        };
+        projection
+            .portfolio
+            .missions
+            .iter()
+            .find(|mission| mission.id == mission_id)
+    }
+}
+
+impl ProjectedMission {
+    #[must_use]
+    pub fn mission_revision(&self) -> Option<u64> {
+        self.mission_revision
+    }
 }
 
 #[derive(Deserialize)]
@@ -338,16 +392,24 @@ fn parse_projection(path: &Path, bytes: &[u8], now: DateTime<Utc>) -> MissionPro
         Ok(envelope) => envelope,
         Err(error) => return malformed(path, error.to_string()),
     };
-    if envelope.schema_version != MISSION_PROJECTION_SCHEMA {
+    if !matches!(
+        envelope.schema_version.as_str(),
+        MISSION_PROJECTION_SCHEMA | MISSION_PROJECTION_SCHEMA_V2
+    ) {
         return MissionProjectionLoad::Unsupported {
             path: path.to_path_buf(),
             found: envelope.schema_version,
         };
     }
-    let projection: MissionProjection = match serde_json::from_slice(bytes) {
+    let mut projection: MissionProjection = match serde_json::from_slice(bytes) {
         Ok(projection) => projection,
         Err(error) => return malformed(path, error.to_string()),
     };
+    if projection.schema_version == MISSION_PROJECTION_SCHEMA {
+        for mission in &mut projection.portfolio.missions {
+            mission.mission_revision = None;
+        }
+    }
     finish_projection(path, projection, now)
 }
 
@@ -390,7 +452,10 @@ fn validate_projection(projection: &MissionProjection) -> Result<(), String> {
         .iter()
         .take(MAX_PROJECTED_MISSIONS)
     {
-        validate_mission(mission)?;
+        validate_mission(
+            mission,
+            projection.schema_version == MISSION_PROJECTION_SCHEMA_V2,
+        )?;
     }
     validate_portfolio_status(&projection.portfolio)
 }
@@ -405,6 +470,20 @@ fn validate_projection_header(projection: &MissionProjection) -> Result<(), Stri
         projection.portfolio.missions.len(),
         MAX_PROJECTED_MISSIONS,
     )?;
+    let v2 = projection.schema_version == MISSION_PROJECTION_SCHEMA_V2;
+    for mission in projection
+        .portfolio
+        .missions
+        .iter()
+        .take(MAX_PROJECTED_MISSIONS)
+    {
+        match (v2, mission.mission_revision) {
+            (true, Some(revision)) if revision > 0 => {}
+            (true, _) => return Err("projection v2 requires mission_revision".to_owned()),
+            (false, None) => {}
+            (false, Some(_)) => unreachable!("legacy revision is normalized before validation"),
+        }
+    }
     Ok(())
 }
 
@@ -431,12 +510,20 @@ fn validate_portfolio_status(portfolio: &MissionPortfolio) -> Result<(), String>
     Ok(())
 }
 
-fn validate_mission(mission: &ProjectedMission) -> Result<(), String> {
+fn validate_mission(mission: &ProjectedMission, v2: bool) -> Result<(), String> {
     validate_mission_identity(mission)?;
     validate_mission_bounds(mission)?;
     validate_mission_ids(mission)?;
     validate_evidence(mission)?;
     validate_control_identifiers(mission)?;
+    if v2
+        && mission
+            .decision
+            .as_ref()
+            .is_some_and(|item| item.scope.is_none())
+    {
+        return Err("projection v2 decision requires scope".to_owned());
+    }
     validate_versions(mission)?;
     validate_mission_state(mission)
 }
@@ -920,6 +1007,9 @@ fn validate_needs_decision(mission: &ProjectedMission) -> Result<(), String> {
         .take(MAX_MISSION_UNITS)
         .filter(|unit| unit.status == UnitStatus::Held)
         .count();
+    if held == 0 && mission.units.is_empty() {
+        return Ok(());
+    }
     if held != 1 {
         return Err("NEEDS_DECISION requires exactly one Held unit".to_string());
     }
@@ -1250,7 +1340,7 @@ mod tests {
         assert!(matches!(malformed, MissionProjectionLoad::Malformed { .. }));
 
         let unsupported =
-            valid_projection().replace(MISSION_PROJECTION_SCHEMA, "xplan-mission-projection-v2");
+            valid_projection().replace(MISSION_PROJECTION_SCHEMA, "xplan-mission-projection-v99");
         let unsupported =
             parse_projection(Path::new("snapshot.json"), unsupported.as_bytes(), at(0, 0));
         assert!(matches!(

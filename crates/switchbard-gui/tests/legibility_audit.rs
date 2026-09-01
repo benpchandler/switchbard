@@ -419,6 +419,7 @@ fn seed_live_listener(app: &HiveApp) {
 fn seed_mission_projection(app: &HiveApp) {
     let mission = ProjectedMission {
         id: "MIS-LEGIBILITY".to_string(),
+        mission_revision: None,
         status: MissionStatus::NeedsDecision,
         contract_version: 2,
         attempt_id: "ATT-LEGIBILITY".to_string(),
@@ -443,6 +444,7 @@ fn seed_mission_projection(app: &HiveApp) {
             id: "DEC-LEGIBILITY".to_string(),
             version: 1,
             status: DecisionStatus::Open,
+            scope: None,
         }),
         approval: Some(MissionApproval {
             id: "APR-LEGIBILITY".to_string(),
