@@ -64,6 +64,7 @@ use crate::runtime::{
     AgentContextAgent, AgentsSection, BacklogTaskKey, CommandFacet, CommandRowKey, Place, TasksView,
 };
 use crate::ui::backlog::dispatch_ui::{self, DispatchState};
+use crate::ui::components::table_shell;
 use crate::ui::dispatch::format_elapsed;
 use crate::ui::places::dispatches::now_doing_line;
 use crate::ui::theme::{self, ActionIcon};
@@ -74,6 +75,12 @@ use std::path::PathBuf;
 use std::time::Duration;
 use switchbard_core::dispatch_inspect::{now_unix, DispatchRun};
 use switchbard_core::{AgentSession, BacklogTask, ContextKind, ContextScope, DispatchOptions};
+
+/// Table row height (mock §2c: `Agent | Mission | Now | Lease | SITREP |
+/// []`) — the "Now" cell can carry a two-line "NEEDS YOU" chip plus its
+/// now-line, the same two-line ceiling `ui::places::dispatches`'s row
+/// height is sized for; the two tables share one convention.
+const ROW_HEIGHT: f32 = 40.0;
 
 pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     egui::CentralPanel::default().show(ui, |ui| {
@@ -409,20 +416,16 @@ fn render_fleet(app: &mut HiveApp, ui: &mut egui::Ui) {
         })
         .collect();
 
-    egui::ScrollArea::vertical()
-        .max_height(ui.available_height() * 0.6)
-        .show(ui, |ui| {
-            if visible.is_empty() {
-                ui.add_space(12.0);
-                ui.label(
-                    egui::RichText::new(format!("No {} rows", facet.label().to_lowercase()))
-                        .color(theme::muted_text()),
-                );
-            }
-            for row in &visible {
-                render_command_row(app, ui, row, now);
-            }
-        });
+    if visible.is_empty() {
+        ui.add_space(12.0);
+        ui.label(
+            egui::RichText::new(format!("No {} rows", facet.label().to_lowercase()))
+                .color(theme::muted_text()),
+        );
+    } else {
+        render_fleet_table(ui, app, &visible, now);
+    }
+    render_command_kill_confirm_banners(app, ui, &visible);
 
     if let Some(selected) = app.command_view.selected.clone() {
         if let Some(row) = rows.iter().find(|r| r.key == selected) {
@@ -432,6 +435,47 @@ fn render_fleet(app: &mut HiveApp, ui: &mut egui::Ui) {
             }
         }
     }
+}
+
+/// Mock §2c's aligned table: `Agent | Mission | Now | Lease | SITREP | []`,
+/// following `ui::places::ops::row`'s `TableBuilder` precedent (clip
+/// columns, a bounded [`ROW_HEIGHT`], a stroke-ring on the selected row) —
+/// the same shape `ui::places::dispatches::render_table` uses for its own
+/// mock §2b table.
+fn render_fleet_table(ui: &mut egui::Ui, app: &mut HiveApp, rows: &[&CommandRow], now: u64) {
+    egui::ScrollArea::vertical()
+        .id_salt("command_fleet_table_scroll")
+        .max_height(ui.available_height() * 0.6)
+        .show(ui, |ui| {
+            table_shell(ui, "command_fleet_table")
+                .column(egui_extras::Column::initial(80.0).at_least(60.0))
+                .column(
+                    egui_extras::Column::initial(200.0)
+                        .at_least(140.0)
+                        .clip(true),
+                )
+                .column(egui_extras::Column::remainder().at_least(160.0).clip(true))
+                .column(
+                    egui_extras::Column::initial(160.0)
+                        .at_least(110.0)
+                        .clip(true),
+                )
+                .column(egui_extras::Column::initial(70.0).at_least(60.0))
+                .column(egui_extras::Column::initial(90.0).at_least(70.0))
+                .header(22.0, |mut header| {
+                    for label in ["Agent", "Mission", "Now", "Lease", "SITREP", ""] {
+                        header.col(|ui| {
+                            ui.label(egui::RichText::new(label).strong().small());
+                        });
+                    }
+                })
+                .body(|body| {
+                    body.rows(ROW_HEIGHT, rows.len(), |mut table_row| {
+                        let row = rows[table_row.index()];
+                        render_command_table_row(&mut table_row, app, row, now);
+                    });
+                });
+        });
 }
 
 fn render_command_facet_bar(app: &mut HiveApp, ui: &mut egui::Ui, rows: &[CommandRow]) {
@@ -623,73 +667,122 @@ fn command_row_matches(row: &CommandRow, filter_lc: &str) -> bool {
         .any(|field| field.to_lowercase().contains(filter_lc))
 }
 
-fn render_command_row(app: &mut HiveApp, ui: &mut egui::Ui, row: &CommandRow, now: u64) {
+/// Row click-to-select wraps only the Mission cell's content in its own
+/// click-sensing scope — see `ui::places::dispatches::render_dispatch_
+/// table_row`'s doc for why a table row needs this instead of one shared
+/// frame-level `Sense::click()` the old stacked row used.
+fn render_command_table_row(
+    table_row: &mut egui_extras::TableRow<'_, '_>,
+    app: &mut HiveApp,
+    row: &CommandRow,
+    now: u64,
+) {
     let selected = app.command_view.selected.as_ref() == Some(&row.key);
-    let mut frame = egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(8, 6))
-        .corner_radius(4.0);
-    if selected {
-        frame = frame
-            .fill(theme::selected_row_tint())
-            .stroke(theme::selected_row_stroke());
-    }
-    let outer = frame.show(ui, |ui| {
-        let inner = ui.scope_builder(egui::UiBuilder::new().sense(egui::Sense::click()), |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.style_mut().interaction.selectable_labels = false;
 
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(row.agent_label).strong());
-                ui.label(&row.mission);
-                if row.needs_you {
-                    ui.colored_label(theme::amber(), "NEEDS YOU");
-                }
-            });
-            ui.label(egui::RichText::new(&row.now_line).color(theme::muted_text()));
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(&row.lease).color(theme::muted_text()));
-                let sitrep = match row.sitrep_age {
-                    Some(age) => format!("SITREP {}", format_elapsed(age)),
-                    None => "SITREP -".to_string(),
-                };
-                ui.label(egui::RichText::new(sitrep).color(theme::muted_text()));
-                // Right-aligned regardless of icon count — see
-                // `ui::places::dispatches::render_row`'s own comment for why
-                // (`right_to_left`, first call paints furthest right)
-                // rather than a fixed pixel gap (the earlier version of
-                // this row had exactly that alignment bug).
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    render_command_row_actions(app, ui, row, now);
-                });
-            });
-            // A separate, plain-layout line — see `ui::dispatch::
-            // render_kill_confirm_banner`'s doc for why this is not nested
-            // inside the right-aligned action cluster above.
-            if let CommandOrigin::Dispatch {
-                repo_root,
-                task,
-                state,
-                run,
-            } = &row.origin
-            {
-                if matches!(state, DispatchState::InFlight) {
-                    crate::ui::dispatch::render_kill_confirm_banner(
-                        app, ui, repo_root, &task.id, run,
-                    );
-                }
-            }
-        });
-        inner.response
+    // Agent cell.
+    table_row.col(|ui| {
+        ui.label(egui::RichText::new(row.agent_label).strong());
     });
-    if outer.inner.clicked() {
+
+    // Mission cell — its own click-sensing scope selects the row.
+    let mut mission_clicked = false;
+    table_row.col(|ui| {
+        ui.style_mut().interaction.selectable_labels = false;
+        let resp = ui
+            .scope_builder(egui::UiBuilder::new().sense(egui::Sense::click()), |ui| {
+                ui.label(&row.mission);
+            })
+            .response;
+        mission_clicked = resp.clicked();
+    });
+    if mission_clicked {
         app.command_view.selected = Some(row.key.clone());
+    }
+
+    // Now cell — the "NEEDS YOU" chip (mock's amber `NEEDS_DECISION` chip)
+    // leads when this row needs a human, then the live now-line.
+    table_row.col(|ui| {
+        ui.vertical(|ui| {
+            if row.needs_you {
+                theme::painted_chip(
+                    ui,
+                    Some(theme::chip_tint(theme::amber())),
+                    theme::amber(),
+                    "NEEDS YOU",
+                );
+            }
+            ui.label(
+                egui::RichText::new(&row.now_line)
+                    .small()
+                    .color(theme::muted_text()),
+            );
+        });
+    });
+
+    // Lease cell.
+    table_row.col(|ui| {
+        ui.label(
+            egui::RichText::new(&row.lease)
+                .small()
+                .monospace()
+                .color(theme::muted_text()),
+        );
+    });
+
+    // SITREP cell.
+    table_row.col(|ui| {
+        let sitrep = match row.sitrep_age {
+            Some(age) => format!("SITREP {}", format_elapsed(age)),
+            None => "SITREP -".to_string(),
+        };
+        ui.label(
+            egui::RichText::new(sitrep)
+                .small()
+                .color(theme::muted_text()),
+        );
+    });
+
+    // Actions cell.
+    table_row.col(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            render_command_row_actions(app, ui, row, now);
+        });
+    });
+
+    if selected {
+        let resp = table_row.response();
+        resp.ctx.debug_painter().rect_stroke(
+            resp.rect,
+            2.0,
+            theme::selected_row_stroke(),
+            egui::StrokeKind::Inside,
+        );
     }
 }
 
-/// Renders inside a `right_to_left` layout (see `render_command_row`'s call
-/// site), so every branch below calls its icons in the *reverse* of their
-/// intended left-to-right reading order — see `ui::places::dispatches::
-/// render_row_actions`'s own doc for the rule this follows.
+/// Every visible in-flight dispatch-origin row's kill-confirm banner — see
+/// `ui::places::dispatches::render_kill_confirm_banners`'s doc for why this
+/// lives below the table rather than inline in a fixed-height row.
+fn render_command_kill_confirm_banners(app: &mut HiveApp, ui: &mut egui::Ui, rows: &[&CommandRow]) {
+    for row in rows {
+        if let CommandOrigin::Dispatch {
+            repo_root,
+            task,
+            state,
+            run,
+        } = &row.origin
+        {
+            if matches!(state, DispatchState::InFlight) {
+                crate::ui::dispatch::render_kill_confirm_banner(app, ui, repo_root, &task.id, run);
+            }
+        }
+    }
+}
+
+/// Renders inside a `right_to_left` layout (see `render_command_table_row`'s
+/// Actions cell), so every branch below calls its icons in the *reverse* of
+/// their intended left-to-right reading order — see `ui::places::
+/// dispatches::render_row_actions`'s own doc for the rule this follows.
 fn render_command_row_actions(app: &mut HiveApp, ui: &mut egui::Ui, row: &CommandRow, now: u64) {
     match &row.origin {
         CommandOrigin::Dispatch {
@@ -777,16 +870,16 @@ fn render_support_card(app: &mut HiveApp, ui: &mut egui::Ui, row: &CommandRow, n
             let evidence = match state {
                 DispatchState::Failed { reason } => {
                     format!(
-                        "failed — {}",
+                        "failed - {}",
                         reason.as_deref().unwrap_or("no reason recorded")
                     )
                 }
                 DispatchState::InFlight if run.is_abandoned(now, true) => {
-                    "orphaned — the agent process is gone; nothing will pick this back up"
+                    "orphaned - the agent process is gone; nothing will pick this back up"
                         .to_string()
                 }
                 DispatchState::InFlight => {
-                    "stalled — past the advisory staleness threshold, still running".to_string()
+                    "stalled - past the advisory staleness threshold, still running".to_string()
                 }
                 _ => "needs attention".to_string(),
             };

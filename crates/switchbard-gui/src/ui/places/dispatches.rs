@@ -40,6 +40,7 @@
 use crate::app::HiveApp;
 use crate::runtime::{BacklogTaskKey, DispatchesFacet};
 use crate::ui::backlog::dispatch_ui::{self, DispatchState};
+use crate::ui::components::{status_pill, table_shell, StatusKind};
 use crate::ui::dispatch::format_elapsed;
 use crate::ui::theme::{self, ActionIcon};
 use eframe::egui;
@@ -48,6 +49,14 @@ use std::path::PathBuf;
 use std::time::Duration;
 use switchbard_core::dispatch_inspect::{now_unix, DispatchRun};
 use switchbard_core::{BacklogTask, DispatchOptions};
+
+/// Table row height (mock §2b: `Task | Status | Now doing | Elapsed | []`).
+/// Taller than Ops's flat 26px rows because the "Now doing" cell can carry a
+/// second, small "unsupervised — ..." line (`render_unsupervised_notice`)
+/// under the main now-doing text — every `TableBuilder` row in one `body.
+/// rows()` call must share one height, so this is sized for that two-line
+/// case rather than the common single-line one.
+const ROW_HEIGHT: f32 = 40.0;
 
 /// Bounded log tail for the selected-run detail card — enough to show a few
 /// lines of recent output without risking a multi-megabyte read on a chatty
@@ -160,20 +169,16 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
         // than snapping to nothing — but the detail card below only renders
         // for a row actually on screen, so it never shows stale detail for
         // an invisible row.
-        egui::ScrollArea::vertical()
-            .max_height(ui.available_height() * 0.6)
-            .show(ui, |ui| {
-                if visible.is_empty() {
-                    ui.add_space(12.0);
-                    ui.label(
-                        egui::RichText::new(format!("No {} runs", facet.label().to_lowercase()))
-                            .color(theme::muted_text()),
-                    );
-                }
-                for row in &visible {
-                    render_row(app, ui, row, now, stale_after);
-                }
-            });
+        if visible.is_empty() {
+            ui.add_space(12.0);
+            ui.label(
+                egui::RichText::new(format!("No {} runs", facet.label().to_lowercase()))
+                    .color(theme::muted_text()),
+            );
+        } else {
+            render_table(ui, app, &visible, now, stale_after);
+        }
+        render_kill_confirm_banners(app, ui, &visible, now);
 
         if let Some(selected) = app.dispatches_view.selected.clone() {
             if let Some(row) = rows.iter().find(|r| r.key() == selected) {
@@ -182,6 +187,170 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
             }
         }
     });
+}
+
+/// Mock §2b's aligned table: `Task | Status | Now doing | Elapsed | []`,
+/// following `ui::places::ops::row`'s `TableBuilder` precedent (clip
+/// columns, a bounded [`ROW_HEIGHT`], a stroke-ring on the selected row).
+/// Row click-to-select wraps only the Task cell's content in its own
+/// click-sensing scope (the table's own per-row `response()` is built from
+/// each cell's default `Sense::hover`, so a click has to be sensed inside
+/// one specific cell rather than read off the row union) — clicking the
+/// task id still selects the row exactly as clicking anywhere on the old
+/// stacked row did.
+fn render_table(
+    ui: &mut egui::Ui,
+    app: &mut HiveApp,
+    rows: &[&DispatchRow],
+    now: u64,
+    stale_after: Duration,
+) {
+    egui::ScrollArea::vertical()
+        .id_salt("dispatches_table_scroll")
+        .max_height(ui.available_height() * 0.6)
+        .show(ui, |ui| {
+            table_shell(ui, "dispatches_table")
+                .column(egui_extras::Column::initial(170.0).at_least(120.0))
+                .column(egui_extras::Column::initial(120.0).at_least(100.0))
+                .column(egui_extras::Column::remainder().at_least(200.0).clip(true))
+                .column(
+                    egui_extras::Column::initial(130.0)
+                        .at_least(100.0)
+                        .clip(true),
+                )
+                .column(egui_extras::Column::initial(90.0).at_least(70.0))
+                .header(22.0, |mut header| {
+                    for label in ["Task", "Status", "Now doing", "Elapsed", ""] {
+                        header.col(|ui| {
+                            ui.label(egui::RichText::new(label).strong().small());
+                        });
+                    }
+                })
+                .body(|body| {
+                    body.rows(ROW_HEIGHT, rows.len(), |mut table_row| {
+                        let row = rows[table_row.index()];
+                        render_dispatch_table_row(&mut table_row, app, row, now, stale_after);
+                    });
+                });
+        });
+}
+
+fn render_dispatch_table_row(
+    table_row: &mut egui_extras::TableRow<'_, '_>,
+    app: &mut HiveApp,
+    row: &DispatchRow,
+    now: u64,
+    stale_after: Duration,
+) {
+    let key = row.key();
+    let selected = app.dispatches_view.selected.as_ref() == Some(&key);
+    let orphaned = row.section(now) == Section::Orphaned;
+    let in_flight = matches!(row.state, DispatchState::InFlight) && !orphaned;
+
+    // Task cell — id + title, the id's own click-sensing scope selects the
+    // row (see this function's call site doc).
+    let mut task_clicked = false;
+    table_row.col(|ui| {
+        ui.style_mut().interaction.selectable_labels = false;
+        let resp = ui
+            .scope_builder(egui::UiBuilder::new().sense(egui::Sense::click()), |ui| {
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new(&row.task.id).strong().monospace());
+                    ui.label(
+                        egui::RichText::new(&row.task.title)
+                            .small()
+                            .color(theme::muted_text()),
+                    );
+                });
+            })
+            .response;
+        task_clicked = resp.clicked();
+    });
+    if task_clicked {
+        app.dispatches_view.selected = Some(key.clone());
+    }
+
+    // Status cell.
+    table_row.col(|ui| {
+        dispatch_ui::render_dispatch_pill(ui, &row.state);
+    });
+
+    // Now doing cell — the live evidence line, plus a second small line:
+    // the unsupervised/unverified notice when one applies (mock §2b's
+    // `.cap` sub-line under the "now doing" text), else the run's branch.
+    table_row.col(|ui| {
+        ui.vertical(|ui| {
+            ui.label(
+                egui::RichText::new(now_doing_line(&row.state, row.run.as_ref(), &row.task, now))
+                    .small()
+                    .color(theme::muted_text()),
+            );
+            if let Some(run) = &row.run {
+                if in_flight && !run.liveness.is_supervised() {
+                    render_unsupervised_notice(ui, run);
+                } else {
+                    ui.label(
+                        egui::RichText::new(&run.branch)
+                            .small()
+                            .monospace()
+                            .color(theme::muted_text()),
+                    );
+                }
+            }
+        });
+    });
+
+    // Elapsed cell.
+    table_row.col(|ui| {
+        render_elapsed_cell(ui, row, now, stale_after);
+    });
+
+    // Actions cell.
+    table_row.col(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            render_row_actions(app, ui, row, in_flight);
+        });
+    });
+
+    if selected {
+        let resp = table_row.response();
+        resp.ctx.debug_painter().rect_stroke(
+            resp.rect,
+            2.0,
+            theme::selected_row_stroke(),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+/// Every visible in-flight row's kill-confirm banner (mock's Kill/Confirm/
+/// Cancel flow) — a full-width strip below the table rather than inline in
+/// a fixed-height table row, since the banner's text only needs to exist
+/// while a kill is armed. `render_kill_confirm_banner` itself gates on
+/// whether `app.dispatch_kill_confirm` actually names this row, so calling
+/// it for every in-flight row here is the same "ask each row, only the
+/// armed one answers" shape `render_row_actions`'s Kill icon already uses.
+fn render_kill_confirm_banners(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    rows: &[&DispatchRow],
+    now: u64,
+) {
+    for row in rows {
+        let orphaned = row.section(now) == Section::Orphaned;
+        let in_flight = matches!(row.state, DispatchState::InFlight) && !orphaned;
+        if in_flight {
+            if let Some(run) = &row.run {
+                crate::ui::dispatch::render_kill_confirm_banner(
+                    app,
+                    ui,
+                    &row.repo_root,
+                    &row.task.id,
+                    run,
+                );
+            }
+        }
+    }
 }
 
 struct FacetCounts {
@@ -326,7 +495,7 @@ pub(crate) fn now_doing_line(
         // be "running cargo test", the exact false reassurance this row's
         // whole job is to avoid.
         if matches!(state, DispatchState::InFlight) && run.is_abandoned(now, true) {
-            return "Claimed, but nothing is running — the agent is gone".to_string();
+            return "Claimed, but nothing is running - the agent is gone".to_string();
         }
         if let Some(phase) = &run.progress.phase {
             return phase.clone();
@@ -343,7 +512,7 @@ pub(crate) fn now_doing_line(
         }
     }
     match state {
-        DispatchState::Queued => "queued — waiting for the dispatch worker's next poll".to_string(),
+        DispatchState::Queued => "queued - waiting for the dispatch worker's next poll".to_string(),
         DispatchState::InFlight => match run {
             Some(run) if run.log_has_output() => {
                 let age = run
@@ -355,7 +524,7 @@ pub(crate) fn now_doing_line(
                     format_elapsed(Duration::from_secs(age))
                 )
             }
-            Some(_) => "no activity recorded yet — this is normal early on".to_string(),
+            Some(_) => "no activity recorded yet - this is normal early on".to_string(),
             None => "claimed, waiting on the agent to start".to_string(),
         },
         DispatchState::Dispatched { .. } => "done · PR opened".to_string(),
@@ -366,104 +535,11 @@ pub(crate) fn now_doing_line(
     }
 }
 
-fn render_row(
-    app: &mut HiveApp,
-    ui: &mut egui::Ui,
-    row: &DispatchRow,
-    now: u64,
-    stale_after: Duration,
-) {
-    let key = row.key();
-    let selected = app.dispatches_view.selected.as_ref() == Some(&key);
-    let mut frame = egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(8, 6))
-        .corner_radius(4.0);
-    if selected {
-        frame = frame
-            .fill(theme::selected_row_tint())
-            .stroke(theme::selected_row_stroke());
-    }
-    let outer = frame.show(ui, |ui| {
-        let inner = ui.scope_builder(egui::UiBuilder::new().sense(egui::Sense::click()), |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.style_mut().interaction.selectable_labels = false;
-
-            ui.horizontal(|ui| {
-                dispatch_ui::render_dispatch_pill(ui, &row.state);
-                ui.label(egui::RichText::new(&row.task.id).strong());
-                ui.label(&row.task.title);
-                ui.label(
-                    egui::RichText::new(format!("[{}]", row.repo_name)).color(theme::muted_text()),
-                );
-            });
-            ui.label(
-                egui::RichText::new(now_doing_line(&row.state, row.run.as_ref(), &row.task, now))
-                    .color(theme::muted_text()),
-            );
-            render_elapsed_line(ui, row, now, stale_after);
-            let orphaned = row.section(now) == Section::Orphaned;
-            let in_flight = matches!(row.state, DispatchState::InFlight) && !orphaned;
-            if in_flight {
-                if let Some(run) = &row.run {
-                    if !run.liveness.is_supervised() {
-                        render_unsupervised_notice(ui, run);
-                    }
-                }
-            }
-            // Right-aligned regardless of how many icons a row has — the
-            // established `right_to_left` convention this app uses for
-            // action clusters (`ui::nav`, `ui::workspace`'s landing-stage
-            // row, `ui::backlog::digest`, …). Per that convention the
-            // *first* call paints furthest right, so `render_row_actions`
-            // calls the icons in reverse of their intended left-to-right
-            // reading order — see its own doc. An earlier version reserved
-            // a fixed pixel gap instead, which left rows with different
-            // icon counts ending at different x positions (VISUAL_QA_
-            // CHECKLIST: "repeated columns... consistent x positions").
-            //
-            // The outer `ui.horizontal` matters, not just the inner
-            // `right_to_left`: this row's content flows top-down
-            // (`ui.scope_builder`'s default vertical layout), and calling
-            // `with_layout(right_to_left, ..)` directly on a vertical
-            // parent lets it claim the *whole remaining rect* — width
-            // **and** height, which inside a `ScrollArea` is enormous —
-            // rather than one line. Every other `right_to_left` call in
-            // this codebase is nested inside a bounding `ui.horizontal`
-            // for exactly this reason; an earlier version of this call
-            // skipped it and rendered a room-sized selection highlight
-            // with the icons stranded in the middle of it.
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    render_row_actions(app, ui, row, in_flight);
-                });
-            });
-            // A separate, plain-layout line — see `ui::dispatch::
-            // render_kill_confirm_banner`'s doc for why this is not nested
-            // inside the right-aligned action cluster above.
-            if in_flight {
-                if let Some(run) = &row.run {
-                    crate::ui::dispatch::render_kill_confirm_banner(
-                        app,
-                        ui,
-                        &row.repo_root,
-                        &row.task.id,
-                        run,
-                    );
-                }
-            }
-        });
-        inner.response
-    });
-    if outer.inner.clicked() {
-        app.dispatches_view.selected = Some(key);
-    }
-}
-
-/// The elapsed-time line — TASK-46: no code path here promises a hard-kill
+/// The elapsed-time cell — TASK-46: no code path here promises a hard-kill
 /// deadline any more, so the wording is purely descriptive. State changes
 /// the *prefix* (running / abandoned after / ran), never just the number,
 /// because "5m" alone can't tell a healthy run from a dead one.
-fn render_elapsed_line(ui: &mut egui::Ui, row: &DispatchRow, now: u64, stale_after: Duration) {
+fn render_elapsed_cell(ui: &mut egui::Ui, row: &DispatchRow, now: u64, stale_after: Duration) {
     let Some(run) = &row.run else { return };
     let Some(elapsed) = run.elapsed(now) else {
         return;
@@ -473,7 +549,7 @@ fn render_elapsed_line(ui: &mut egui::Ui, row: &DispatchRow, now: u64, stale_aft
     let stalled = in_flight && run.looks_stalled(now, stale_after);
     let label = if in_flight {
         if stalled {
-            format!("running {} — check on it", format_elapsed(elapsed))
+            format!("running {} - check on it", format_elapsed(elapsed))
         } else {
             format!("running {}", format_elapsed(elapsed))
         }
@@ -487,10 +563,7 @@ fn render_elapsed_line(ui: &mut egui::Ui, row: &DispatchRow, now: u64, stale_aft
     } else {
         theme::muted_text()
     };
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(label).color(color));
-        ui.label(egui::RichText::new(&run.branch).color(theme::muted_text()));
-    });
+    ui.label(egui::RichText::new(label).small().color(color));
 }
 
 /// What to say about a run whose supervisor is gone — moved verbatim from
@@ -500,22 +573,23 @@ fn render_elapsed_line(ui: &mut egui::Ui, row: &DispatchRow, now: u64, stale_aft
 /// the app genuinely cannot say whether an agent is out there at all.
 fn render_unsupervised_notice(ui: &mut egui::Ui, run: &DispatchRun) {
     let text = match run.liveness.doubt() {
-        Some(doubt) => format!("unverified — {}", doubt.explain()),
+        Some(doubt) => format!("unverified - {}", doubt.explain()),
         None if run.liveness.killable_pgid().is_some() => {
-            "unsupervised — the app that started this run is gone, so nothing will release \
+            "unsupervised - the app that started this run is gone, so nothing will release \
              the task when it ends; kill it or resolve the task by hand"
                 .to_string()
         }
-        None => "unsupervised — no record of a live process for this run".to_string(),
+        None => "unsupervised - no record of a live process for this run".to_string(),
     };
     ui.label(egui::RichText::new(text).color(theme::amber()).italics());
 }
 
-/// Renders inside a `right_to_left` layout (see `render_row`'s call site),
-/// so every branch below calls its icons in the *reverse* of their intended
-/// left-to-right reading order — the first call paints furthest right, per
-/// this app's established convention (see `ui::workspace`'s landing-stage
-/// row for the same rule spelled out at its own call site).
+/// Renders inside a `right_to_left` layout (see `render_dispatch_table_row`'s
+/// Actions cell), so every branch below calls its icons in the *reverse* of
+/// their intended left-to-right reading order — the first call paints
+/// furthest right, per this app's established convention (see `ui::
+/// workspace`'s landing-stage row for the same rule spelled out at its own
+/// call site).
 fn render_row_actions(app: &mut HiveApp, ui: &mut egui::Ui, row: &DispatchRow, in_flight: bool) {
     let has_log = row.run.as_ref().and_then(|r| r.log_path.as_ref()).is_some();
 
@@ -596,7 +670,7 @@ fn render_detail_card(ui: &mut egui::Ui, row: &DispatchRow, now: u64) {
                     }
                     _ => {
                         ui.label(
-                            egui::RichText::new("log is empty — nothing written yet")
+                            egui::RichText::new("log is empty - nothing written yet")
                                 .italics()
                                 .color(theme::muted_text()),
                         );
@@ -626,14 +700,15 @@ fn render_detail_card(ui: &mut egui::Ui, row: &DispatchRow, now: u64) {
                         // theme`'s `Glyph` doc) says can't be trusted with
                         // an unverified symbol like ✓; better an honest
                         // color-only chip than a tofu box next to a real
-                        // task's AC list.
+                        // task's AC list. Mock §2b paints these as chips
+                        // (`.chip.green`/bare `.chip`), not plain text.
                         let text = format!("AC {}", item.index);
-                        let color = if item.checked {
-                            theme::green()
+                        let kind = if item.checked {
+                            StatusKind::Good
                         } else {
-                            theme::muted_text()
+                            StatusKind::Neutral
                         };
-                        ui.label(egui::RichText::new(text).small().color(color));
+                        status_pill(ui, kind, text, None);
                     }
                 }
                 if let Some(run) = &row.run {
@@ -646,7 +721,8 @@ fn render_detail_card(ui: &mut egui::Ui, row: &DispatchRow, now: u64) {
                         }
                         None => "SITREP: no activity yet".to_string(),
                     };
-                    ui.label(egui::RichText::new(sitrep).small().color(theme::amber()));
+                    // Mock §2b's `.chip.amber` SITREP chip.
+                    status_pill(ui, StatusKind::Warn, sitrep, None);
                 }
             });
         });
@@ -846,6 +922,6 @@ mod tests {
 
         let line = now_doing_line(&DispatchState::InFlight, Some(&in_flight), &task, NOW);
 
-        assert_eq!(line, "no activity recorded yet — this is normal early on");
+        assert_eq!(line, "no activity recorded yet - this is normal early on");
     }
 }

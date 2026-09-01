@@ -417,6 +417,13 @@ pub fn painted_meter(
     let radius = size.y / 2.0;
     let painter = ui.painter();
     painter.rect_filled(rect, radius, faint_bg());
+    // A hairline outline on the empty track — some callers (the Tasks-place
+    // expanded group-header band) sit this meter on their own `faint_bg()`
+    // surface, which otherwise makes a 0%-progress track (an all-too-common
+    // state: a project with nothing done yet) paint as literally nothing at
+    // all. The stroke keeps the meter's own shape legible regardless of what
+    // it's painted on top of, at every fraction.
+    painter.rect_stroke(rect, radius, surface_stroke(), egui::StrokeKind::Inside);
     let f = fraction.clamp(0.0, 1.0);
     if f > 0.0 {
         let fill_rect =

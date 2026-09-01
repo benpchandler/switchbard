@@ -70,7 +70,7 @@ pub(super) fn render_modal(app: &mut HiveApp, ctx: &egui::Context) {
                 ui.add_space(4.0);
                 ui.colored_label(
                     theme::amber(),
-                    "Nothing here is safe to remove — every selected worktree landed in \
+                    "Nothing here is safe to remove - every selected worktree landed in \
                      the needs-review list below.",
                 );
             } else {
@@ -86,7 +86,7 @@ pub(super) fn render_modal(app: &mut HiveApp, ctx: &egui::Context) {
                 ui.checkbox(
                     &mut delete_branches,
                     "Also delete each branch (plain `git branch -d`, only ever run on \
-                     already-merged branches — never force-deleted)",
+                     already-merged branches - never force-deleted)",
                 );
             }
 
@@ -94,7 +94,7 @@ pub(super) fn render_modal(app: &mut HiveApp, ctx: &egui::Context) {
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new(format!(
-                        "⚠ {} worktree{} left for review — never touched by this action:",
+                        "⚠ {} worktree{} left for review - never touched by this action:",
                         state.needs_review.len(),
                         if state.needs_review.len() == 1 {
                             ""
@@ -177,7 +177,7 @@ fn render_candidate_line(ui: &mut egui::Ui, c: &BulkRemoveCandidate, dot_color: 
             }
         }
         if let Some(reason) = &c.review_reason {
-            ui.label(egui::RichText::new(format!("— {reason}")).color(theme::weak_text()));
+            ui.label(egui::RichText::new(format!("- {reason}")).color(theme::weak_text()));
         }
     });
 }
