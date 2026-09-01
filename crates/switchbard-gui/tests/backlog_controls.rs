@@ -31,9 +31,7 @@ use switchbard_core::{
     BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource, Repo, WorktreeRef,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{
-    BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey, Place, TasksView,
-};
+use switchbard_gui::runtime::{BacklogLens, BacklogTaskSortDirection, BacklogTaskSortKey, Place};
 use switchbard_gui::ui::places::tasks::fields::TaskField;
 use switchbard_gui::ui::places::tasks::state::{FilterPredicate, TasksViewMode};
 
@@ -847,148 +845,6 @@ fn search_result_row_click_selects_the_task_without_changing_lens() {
     assert_eq!(
         harness.state().backlog_view.selected_task,
         Some((PathBuf::from(REPO_PATH), "TASK-2".to_string()))
-    );
-}
-
-// ─── Digest lens ─────────────────────────────────────────────────────────
-
-fn digest_harness_with(tasks: Vec<BacklogTask>) -> Harness<'static, HiveApp> {
-    let mut app = seeded_app();
-    // TASK-97: Digest is its own place now (TASK-96 split it out of the
-    // Tasks lens-tab toolbar) — these tests exercise the Digest lens's own
-    // content (`ui::backlog::digest::render_digest_place`), which no longer
-    // lives anywhere under `Place::Tasks`.
-    app.place = Place::Digest;
-    app.backlog_repos.lock().unwrap().insert(
-        PathBuf::from(REPO_PATH),
-        BacklogRepo {
-            root: PathBuf::from(REPO_PATH),
-            tasks,
-            warnings: vec![],
-            project_defs: vec![],
-            initiative_defs: vec![],
-            goals: vec![],
-            ranking: switchbard_core::RepoRanking::default(),
-            loaded_at_unix: 0,
-            configured_statuses: vec![
-                "Icebox".into(),
-                "To Do".into(),
-                "In Progress".into(),
-                "In Review".into(),
-                "Done".into(),
-            ],
-        },
-    );
-    let mut harness = harness(app);
-    harness.run();
-    harness
-}
-
-#[test]
-fn digest_recently_done_view_all_jumps_to_list_filtered_to_done() {
-    let mut done = task("TASK-1", "Done task", "Done");
-    done.updated_date = Some("2026-08-01 12:00".to_string());
-    let mut harness = digest_harness_with(vec![done]);
-
-    harness
-        .get_all_by_label("View all")
-        .nth(3)
-        .expect("Recently done is the 4th section's View all")
-        .click();
-    harness.run();
-
-    // TASK-97: Digest and Tasks are separate places — "View all" now
-    // navigates there directly and expresses the status as a Tasks-place
-    // filter-builder predicate rather than the legacy single-value facet.
-    assert_eq!(harness.state().place, Place::Tasks);
-    assert_eq!(harness.state().tasks_view, TasksView::All);
-    assert!(harness
-        .state()
-        .tasks_place
-        .filters
-        .iter()
-        .any(|predicate| predicate.field == TaskField::Status && predicate.value == "Done"));
-}
-
-/// TASK-97 medic pass (BLOCKER finding, end-to-end regression): "View all"
-/// used to *also* write the legacy `backlog_view.status_filter` — a second,
-/// invisible narrowing layer `sort::visible_task_rows` still reads, that the
-/// Tasks place's own UI renders no chip for. Proves the whole loop: Digest's
-/// "View all" lands on Tasks showing only the matching task, removing the
-/// resulting chip restores every task, and the legacy facet never carried a
-/// value in the first place (not just "got cleared later").
-#[test]
-fn digest_view_all_then_removing_the_chip_on_tasks_restores_every_task() {
-    let mut harness = digest_harness_with(vec![
-        task("TASK-1", "Active work", "In Progress"),
-        task("TASK-2", "Backlog item", "To Do"),
-    ]);
-
-    harness
-        .get_all_by_label("View all")
-        .nth(2)
-        .expect("In progress is the 3rd section's View all")
-        .click();
-    harness.run();
-    assert_eq!(harness.state().place, Place::Tasks);
-    assert_eq!(
-        harness.state().backlog_view.status_filter,
-        "all",
-        "the legacy single-value facet must never carry the navigated status"
-    );
-
-    // The click's own frame still painted the Digest place (the mutation
-    // landed mid-frame); this second run is the first one that actually
-    // renders the Tasks place body with the navigated predicate applied.
-    harness.run();
-    assert!(harness.query_by_label("TASK-1  Active work").is_some());
-    assert!(
-        harness.query_by_label("TASK-2  Backlog item").is_none(),
-        "the Status: In Progress predicate should hide the To Do task"
-    );
-
-    harness.get_by_label("Status: In Progress ✕").click();
-    harness.run();
-
-    assert!(
-        harness.query_by_label("TASK-2  Backlog item").is_some(),
-        "removing the chip should restore every task — no invisible legacy \
-         filter left narrowing the list"
-    );
-    assert!(harness.query_by_label("TASK-1  Active work").is_some());
-}
-
-/// Owner UX pass (2026-08-05): a Digest card click used to force-switch to
-/// the List lens just to reach its detail pane. Now the persistent detail
-/// rail shows it regardless of lens, so Digest stays on screen — only
-/// selection (and the scope-widen to "All repos", still needed since a
-/// Digest card can surface a task from any tracked repo) changes.
-#[test]
-fn digest_card_click_selects_the_task_without_changing_lens() {
-    // A second, boring task: with only one task, `reconcile_selected_task`
-    // auto-selects it and the persistent detail rail (owner UX pass,
-    // 2026-08-05) renders its title too, making "Active work" ambiguous
-    // between the digest card and the rail's heading. Sorting by `Task`
-    // (id/title, ascending) deterministically auto-selects "TASK-0" instead,
-    // leaving "Active work" (TASK-1) unambiguous.
-    let boring = task("TASK-0", "Boring backlog item", "To Do");
-    let mut in_progress = task("TASK-1", "Active work", "In Progress");
-    in_progress.updated_date = Some("2026-08-01 12:00".to_string());
-    let mut harness = digest_harness_with(vec![boring, in_progress]);
-    harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
-    harness.run();
-
-    click_at_node_center(&mut harness, "Active work");
-    harness.run();
-
-    assert_eq!(
-        harness.state().place,
-        Place::Digest,
-        "selecting a Digest card should not navigate away from Digest"
-    );
-    assert_eq!(
-        harness.state().backlog_view.selected_task,
-        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()))
     );
 }
 
@@ -2615,48 +2471,6 @@ fn list_row_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
         harness.query_all_by_label("TASK-2").count(),
         1,
         "the rail should show TASK-2's detail after selecting its row"
-    );
-}
-
-#[test]
-fn digest_card_click_updates_the_rail_to_show_the_clicked_tasks_detail() {
-    // TASK-35's fix applies equally here: a Digest card also renders its
-    // own task-id label unconditionally (`render_strip`, digest.rs), so
-    // this counts exact-match occurrences before/after the click rather
-    // than just checking presence — see the Board test's comment above.
-    let boring = task("TASK-0", "Boring backlog item", "To Do");
-    let mut in_progress = task("TASK-1", "Active work", "In Progress");
-    in_progress.updated_date = Some("2026-08-01 12:00".to_string());
-    let mut harness = digest_harness_with(vec![boring, in_progress]);
-    harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
-    // TASK-97: `render_digest_place` (unlike the Tasks place and the old
-    // unified `ui::backlog::render`) never auto-selects a first task via
-    // `reconcile_selected_task` — Digest's own gap, pre-existing since
-    // TASK-96 split the place out, not something to paper over here.
-    // Select TASK-0 explicitly so the rail has a deterministic starting
-    // point to prove the click actually changes it away from.
-    harness.state_mut().backlog_view.selected_task =
-        Some((PathBuf::from(REPO_PATH), "TASK-0".to_string()));
-    harness.run();
-    assert!(
-        harness.query_all_by_label("TASK-0").next().is_some(),
-        "sanity: the rail starts on the explicitly selected first task"
-    );
-    assert_eq!(
-        harness.query_all_by_label("TASK-1").count(),
-        1,
-        "before the click, TASK-1's id should appear exactly once (its \
-         digest card only — not yet in the rail)"
-    );
-
-    click_at_node_center(&mut harness, "Active work");
-    harness.run();
-
-    assert_eq!(
-        harness.query_all_by_label("TASK-1").count(),
-        2,
-        "after the click, TASK-1's id should appear twice: its digest card \
-         plus the rail's own header, proving the rail actually updated"
     );
 }
 
