@@ -1801,6 +1801,32 @@ impl HiveApp {
         });
     }
 
+    /// Create a weekly goal (New Goal modal) through the core write layer,
+    /// then refresh that repo's cached snapshot so the card appears.
+    pub fn spawn_goal_create(
+        &self,
+        project_root: PathBuf,
+        goal: switchbard_core::NewGoal,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let repos = self.backlog_repos.clone();
+        let kick = self.backlog_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let name = goal.name.clone();
+            match switchbard_core::create_goal(&project_root, &goal) {
+                Ok(()) => {
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
+                    status.set(with_stale_warning(reload, format!("created goal {name}")));
+                    kick.notify();
+                }
+                Err(e) => status.set(format!("create goal {name} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
     /// Record a weekly-goal check-in (Digest card affordance) through the
     /// core write layer, then refresh that repo's cached snapshot.
     pub fn spawn_goal_checkin(

@@ -904,6 +904,93 @@ fn digest_leads_with_current_week_goals_and_omits_the_section_without_any() {
     );
 }
 
+/// The "+ Goal" entry points (TASK-75): with no goals, the Digest offers a
+/// doorway instead of an empty section; with goals, the section header
+/// carries the button. Both open the New Goal modal.
+#[test]
+fn digest_offers_goal_creation_from_both_entry_points() {
+    // Zero goals (but a tracked backlog): the doorway button, no shell.
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_repos.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogRepo {
+            root: PathBuf::from(REPO_PATH),
+            tasks: vec![seeded_backlog_task()],
+            warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
+            goals: vec![],
+            loaded_at_unix: 0,
+            configured_statuses: vec!["To Do".into(), "Done".into()],
+        },
+    );
+    let mut harness = harness(app);
+    harness.run();
+    assert!(
+        harness
+            .query_all_by_label("This week's goals")
+            .next()
+            .is_none(),
+        "no empty section"
+    );
+    harness
+        .get_all_by_label("+ Goal for this week")
+        .next()
+        .expect("the zero-goals doorway renders")
+        .click();
+    harness.run();
+    assert!(
+        harness.state().backlog_view.new_goal.open,
+        "the doorway opens the New Goal modal"
+    );
+    assert!(
+        harness.query_all_by_label("New Goal").next().is_some(),
+        "the modal window renders"
+    );
+
+    // With a current-week goal, the section header carries "+ Goal".
+    let today = chrono::Local::now().date_naive();
+    let week = switchbard_core::week_monday_of(today)
+        .format("%Y-%m-%d")
+        .to_string();
+    let mut weeks = std::collections::BTreeMap::new();
+    weeks.insert(
+        week,
+        switchbard_core::GoalWeek {
+            target: 1,
+            checkins: vec![],
+        },
+    );
+    let mut app = seeded_app();
+    app.view_tab = ViewTab::Backlog;
+    app.backlog_repos.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        BacklogRepo {
+            root: PathBuf::from(REPO_PATH),
+            tasks: vec![seeded_backlog_task()],
+            warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
+            goals: vec![switchbard_core::GoalDef {
+                name: "Onboard users".to_string(),
+                unit: "users".to_string(),
+                measure: switchbard_core::GoalMeasure::Manual,
+                scope: None,
+                weeks,
+            }],
+            loaded_at_unix: 0,
+            configured_statuses: vec!["To Do".into(), "Done".into()],
+        },
+    );
+    let mut with_goals = common::harness(app);
+    with_goals.run();
+    assert!(
+        with_goals.query_all_by_label("+ Goal").next().is_some(),
+        "the section header carries the + Goal button"
+    );
+}
+
 /// Portfolio lens (task-19): a read-only per-repo health table.
 #[test]
 fn portfolio_lens_renders_per_repo_health() {

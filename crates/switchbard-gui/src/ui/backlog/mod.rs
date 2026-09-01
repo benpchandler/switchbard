@@ -67,6 +67,7 @@ mod detail_lists;
 mod digest;
 pub(crate) mod dispatch_ui;
 mod format;
+mod goal_create;
 mod list;
 mod portfolio;
 mod projects;
@@ -327,6 +328,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
 
     search::render_overlay(app, ctx, &snap);
     create::render_create_modal(app, ctx, &snap, &mut pending);
+    goal_create::render_goal_modal(app, ctx, &snap, &mut pending);
     apply_pending(app, ui, pending);
 }
 
@@ -411,6 +413,8 @@ pub(in crate::ui::backlog) struct Pending {
     /// (repo root, goal name, week monday, value) — a Digest goal card's
     /// check-in.
     pub goal_checkin: Option<(PathBuf, String, String, i64)>,
+    /// (repo root, goal) — the New Goal modal's create.
+    pub goal_create: Option<(PathBuf, switchbard_core::NewGoal)>,
     /// "Clean Up Old Tasks" (QA parity matrix LOW gap): one entry per
     /// repo with Done tasks to archive, same cross-repo shape as
     /// `bulk_save` — a bulk archive still needs one `backlog` CLI
@@ -457,6 +461,9 @@ fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, pending: Pending) {
     }
     if let Some((project_root, goal_name, week, value)) = pending.goal_checkin {
         app.spawn_goal_checkin(project_root, goal_name, week, value, ctx);
+    }
+    if let Some((project_root, goal)) = pending.goal_create {
+        app.spawn_goal_create(project_root, goal, ctx);
     }
     if let Some(per_project) = pending.cleanup {
         app.spawn_backlog_cleanup(per_project, ctx);
