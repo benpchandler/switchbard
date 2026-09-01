@@ -135,7 +135,12 @@ pub(crate) fn render_summary(
 /// cluster — split out of `render_summary` so the compact (stacked) and
 /// wide (single-row, right-aligned) layouts above can both call the same
 /// button set instead of duplicating it.
-fn render_toolbar_actions(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot, pending: &mut Pending) {
+fn render_toolbar_actions(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    snap: &Snapshot,
+    pending: &mut Pending,
+) {
     if ui
         .button("Refresh Backlog")
         .on_hover_text("Reload Backlog tasks from tracked worktrees")

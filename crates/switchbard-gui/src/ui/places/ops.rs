@@ -593,7 +593,7 @@ fn render_branch_delete_section(
             .unwrap_or_else(|| "another worktree".to_string());
         ui.colored_label(
             theme::muted_text(),
-            format!("Branch '{branch}' is checked out at {where_} — can't delete it here."),
+            format!("Branch '{branch}' is checked out at {where_} - can't delete it here."),
         );
         return;
     }

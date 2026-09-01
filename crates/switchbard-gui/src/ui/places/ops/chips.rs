@@ -108,7 +108,7 @@ pub(super) fn render_service_chip(
         } => {
             let resp = theme::painted_play_button(ui, theme::warn_orange());
             resp.on_hover_text(format!(
-                "{name} — blocked: :{port} already held by {holder_label}"
+                "{name} - blocked: :{port} already held by {holder_label}"
             ));
             ui.label(egui::RichText::new(name).color(theme::weak_text()));
         }

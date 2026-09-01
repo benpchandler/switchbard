@@ -139,11 +139,11 @@ const LIGHT: Palette = Palette {
     muted_text: Color32::from_rgb(0x50, 0x5A, 0x63), // ~5.5:1
     primary_worktree_tint: Color32::from_rgba_premultiplied(28, 25, 11, 28),
     selected_row_tint: Color32::from_rgba_premultiplied(10, 30, 46, 40),
-    panel_fill: Color32::from_rgb(0xE7, 0xEC, 0xF0),          // cool workspace board
-    faint_bg: Color32::from_rgb(0xD9, 0xE1, 0xE7),            // recessed controls and column wells
-    card_bg: Color32::from_rgb(0xFF, 0xFF, 0xFD),             // clean paper strip
-    nav_bg: Color32::from_rgb(0xF4, 0xF7, 0xF9),              // elevated navigation surface
-    rail_bg: Color32::from_rgb(0xF0, 0xF3, 0xF5),             // quiet detail workspace
+    panel_fill: Color32::from_rgb(0xE7, 0xEC, 0xF0), // cool workspace board
+    faint_bg: Color32::from_rgb(0xD9, 0xE1, 0xE7),   // recessed controls and column wells
+    card_bg: Color32::from_rgb(0xFF, 0xFF, 0xFD),    // clean paper strip
+    nav_bg: Color32::from_rgb(0xF4, 0xF7, 0xF9),     // elevated navigation surface
+    rail_bg: Color32::from_rgb(0xF0, 0xF3, 0xF5),    // quiet detail workspace
 };
 
 // Operator's Console (dark, direction A) — chassis #221F1B, lamp amber
@@ -177,9 +177,9 @@ const DARK: Palette = Palette {
     // tinted-chip fill* (`chip_tint`) over `card_bg`; `danger` keeps the old
     // value; see the field doc for why the two roles are tuned separately.
     warn_orange: Color32::from_rgb(0xF0, 0x90, 0x7A), // brightened for tinted chips, ~4.5+:1
-    danger: Color32::from_rgb(0xE8, 0x7A, 0x5A), // text role; button fill is danger_fill()
-    weak_text: Color32::from_rgb(0xE6, 0xE1, 0xD8), // crisp faceplate text
-    muted_text: Color32::from_rgb(0xB8, 0xB1, 0xA4), // readable secondary faceplate text
+    danger: Color32::from_rgb(0xE8, 0x7A, 0x5A),      // text role; button fill is danger_fill()
+    weak_text: Color32::from_rgb(0xE6, 0xE1, 0xD8),   // crisp faceplate text
+    muted_text: Color32::from_rgb(0xB8, 0xB1, 0xA4),  // readable secondary faceplate text
     primary_worktree_tint: Color32::from_rgba_premultiplied(28, 25, 11, 28),
     selected_row_tint: Color32::from_rgba_premultiplied(20, 42, 60, 52),
     // Surface values are spread as far as the AA contract allows, not packed
@@ -379,7 +379,12 @@ pub fn chip_tint(color: Color32) -> Color32 {
 /// informational tags) when `None`. The single rendering primitive every
 /// `status_pill`-style call site routes through, so "what does a chip look
 /// like" is a one-file diff (see `status_pill`, this component's caller).
-pub fn painted_chip(ui: &mut egui::Ui, tint: Option<Color32>, text_color: Color32, text: &str) -> egui::Response {
+pub fn painted_chip(
+    ui: &mut egui::Ui,
+    tint: Option<Color32>,
+    text_color: Color32,
+    text: &str,
+) -> egui::Response {
     let mut frame = egui::Frame::default()
         .corner_radius(egui::CornerRadius::same(8))
         .inner_margin(egui::Margin::symmetric(7, 2));
@@ -392,6 +397,33 @@ pub fn painted_chip(ui: &mut egui::Ui, tint: Option<Color32>, text_color: Color3
             ui.label(egui::RichText::new(text).small().color(text_color));
         })
         .response
+}
+
+/// A thin, flat-colored horizontal meter — the mock's `.meter`/`.meter i`
+/// (a recessed track, a rounded solid-color fill sized to `fraction`), used
+/// wherever a caller needs the fill to carry a specific semantic color (a
+/// goal's pace) rather than egui's stock `ProgressBar`, which always paints
+/// `Visuals::selection.bg_fill` regardless of what the caller means by the
+/// number. One painted primitive so the compact Digest goal card (mock §1)
+/// and the Tasks-place expanded group-header band (mock §3) render the same
+/// meter, not two different approximations of it.
+pub fn painted_meter(
+    ui: &mut egui::Ui,
+    fraction: f32,
+    fill: Color32,
+    size: egui::Vec2,
+) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let radius = size.y / 2.0;
+    let painter = ui.painter();
+    painter.rect_filled(rect, radius, faint_bg());
+    let f = fraction.clamp(0.0, 1.0);
+    if f > 0.0 {
+        let fill_rect =
+            egui::Rect::from_min_size(rect.min, egui::vec2(rect.width() * f, rect.height()));
+        painter.rect_filled(fill_rect, radius, fill);
+    }
+    resp
 }
 
 // Glyph icons — painted directly via `Painter` so they don't depend on which

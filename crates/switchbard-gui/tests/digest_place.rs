@@ -82,10 +82,13 @@ fn goal_def(name: &str) -> GoalDef {
 /// side-by-side `goalrow` — but `render_goal_card`'s frame claims its whole
 /// row's width to pin the favorite star flush right (every other caller
 /// stacks vertically), so the second card rendered invisibly on top of the
-/// first. Caught by `qa_screenshots.rs`'s pixel evidence, not by a
-/// kittest-only assertion (the widget was present in the accessibility tree
-/// either way) — this keeps a second, differently-targeted goal in the
-/// fixture so a future regression at least has a name.
+/// first. The fix (`render_compact_goal_grid`/`render_compact_goal_card`)
+/// gives each card an explicit `allocate_ui` width instead of sharing the
+/// row's; `goal_cards_lead_the_digest_place_ahead_of_in_flight_and_the_feed`
+/// now asserts the two cards' painted rects directly (not just that both are
+/// present in the accessibility tree, which the old bug's overlap would
+/// still have satisfied) so a future regression fails a kittest assertion,
+/// not just a pixel diff a human has to notice.
 fn second_goal_def(name: &str) -> GoalDef {
     let week = switchbard_core::week_monday_of(chrono::Local::now().date_naive())
         .format("%Y-%m-%d")
@@ -209,6 +212,32 @@ fn goal_cards_lead_the_digest_place_ahead_of_in_flight_and_the_feed() {
         harness.query_by_label("Dispatch throughput").is_some(),
         "a second goal card must render too, not be hidden behind the first \
          (regression: see second_goal_def's own doc)"
+    );
+    // The two cards' own labels must have distinct, non-overlapping painted
+    // rects — not just both be present in the accessibility tree, which the
+    // old horizontal_wrapped bug's overlap would still have satisfied (see
+    // second_goal_def's doc).
+    let rect_of = |label: &str| {
+        harness
+            .query_by_label(label)
+            .and_then(|node| node.accesskit_node().bounding_box())
+            .unwrap_or_else(|| panic!("no painted rect for '{label}'"))
+    };
+    let first = rect_of("Close out Stack Ranking");
+    let second = rect_of("Dispatch throughput");
+    assert_ne!(
+        (first.x0, first.y0),
+        (second.x0, second.y0),
+        "the two goal cards must not paint at the same position"
+    );
+    let overlaps = first.x0 < second.x1
+        && second.x0 < first.x1
+        && first.y0 < second.y1
+        && second.y0 < first.y1;
+    assert!(
+        !overlaps,
+        "goal cards overlap: {first:?} vs {second:?} (the render_goal_card \
+         width-contract regression this fixture exists to catch)"
     );
     assert!(
         harness.query_by_label("In flight").is_some(),

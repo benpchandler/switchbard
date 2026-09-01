@@ -32,7 +32,13 @@ pub enum StatusKind {
 }
 
 impl StatusKind {
-    fn color(self) -> egui::Color32 {
+    /// `pub(crate)`, not private: the compact Digest goal card and the
+    /// Tasks-place expanded group-header meter (`ui::backlog::digest`,
+    /// `ui::places::tasks::header`) both color a [`theme::painted_meter`]
+    /// fill by a goal's pace using this exact mapping, so the meter and its
+    /// neighboring pace pill can never show two different colors for the
+    /// same state.
+    pub(crate) fn color(self) -> egui::Color32 {
         match self {
             Self::Good => theme::green(),
             Self::Warn => theme::amber(),
