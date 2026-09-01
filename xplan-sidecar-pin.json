@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "xplan_repository": "https://github.com/benpchandler/xplan.git",
-  "xplan_source_revision": "955f21ca92e624cd2dec9a9eb645f573b5ee20b4",
-  "uv_lock_sha256": "1259ab51efbfe30e06ca215d6f629afee56d937dc77bcf953514c0aa493bc5bd",
+  "xplan_source_revision": "903a40df2e4a9cd21fb8aa92dba593884b053317",
+  "uv_lock_sha256": "de03b4a03f2add40387a1f3e88d3f0022575601c8df467f3b71e5f65c87cb48a",
   "protocol_version": "xplan-mission-sidecar-v1",
   "operations": [
     "hello",
@@ -16,14 +16,14 @@
     "macos-arm64": {
       "target_os": "macos",
       "arch": "arm64",
-      "archive_name": "xplan-mission-sidecar-0.14.5-955f21ca92e624cd2dec9a9eb645f573b5ee20b4-macos-arm64.tar.gz",
-      "manifest_sha256": "49155cadacdf6f8c1e18ebd85f7501807f8e3bf58d64ece7cb7b16513d58783b"
+      "archive_name": "xplan-mission-sidecar-0.14.6-903a40df2e4a9cd21fb8aa92dba593884b053317-macos-arm64.tar.gz",
+      "manifest_sha256": "0c4f708c14cc615897296cb5fee9f1856d92c7cd164c2dedbd6e2d383e19e518"
     },
     "linux-x86_64": {
       "target_os": "linux",
       "arch": "x86_64",
-      "archive_name": "xplan-mission-sidecar-0.14.5-955f21ca92e624cd2dec9a9eb645f573b5ee20b4-linux-x86_64.tar.gz",
-      "manifest_sha256": "3ae4e37aaa2829564959ada4f0ab3ef0cc7dda911eb5fb9a3888fc56f356f87b"
+      "archive_name": "xplan-mission-sidecar-0.14.6-903a40df2e4a9cd21fb8aa92dba593884b053317-linux-x86_64.tar.gz",
+      "manifest_sha256": "4ec2493961c150a2674a21fb44cbbc47fb22c11028dc25f128e8950dc3709684"
     }
   }
 }
