@@ -1,10 +1,10 @@
 ---
 id: TASK-100
 title: 'IA V2: Ops place - merged Servers/Workspace, one row per worktree'
-status: In Progress
+status: In Review
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 05:49'
+updated_date: '2026-09-01 05:50'
 labels:
   - ia
   - gui
