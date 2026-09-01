@@ -3022,77 +3022,33 @@ fn theme_persists_through_save_config_and_reload() {
     );
 }
 
-// ─── TASK-27: collapsible "Tracked repos" sidebar ───────────────────────
+// ─── TASK-100: "Tracked repos" retired as a separate panel ──────────────
 
+/// TASK-100 (Ops place merge): the left-side "Tracked repos" panel that used
+/// to nest inside Ops (TASK-27, then the 2026-08-05 owner UX pass) is gone —
+/// the merged mock (§6) is nav + the one-row-per-worktree table only. Repo
+/// add/remove survives exclusively through Settings now; see
+/// `settings_button_opens_a_window_with_the_repo_list` and
+/// `settings_remove_button_opens_the_shared_confirmation_modal` below for
+/// that half, and `tracked_repos_does_not_render_in_the_backlog_view` for
+/// the sibling proof that the Backlog view never rendered it either. This
+/// replaces the retired `sidebar_collapse_button_hides_the_repo_list_both_
+/// directions` / `sidebar_collapsed_persists_through_save_config_and_reload`
+/// pair, which exercised a collapse/expand toggle on a panel that no longer
+/// renders anywhere; `Config.ui.sidebar_collapsed` itself is left in place
+/// (harmless, unread) rather than migrated, matching this repo's "unmatched
+/// old keys are dropped, not migrated by guess" convention for retired UI
+/// state.
 #[test]
-fn sidebar_collapse_button_hides_the_repo_list_both_directions() {
-    // Owner UX pass (2026-08-05): "Tracked repos" is now a left-side panel
-    // local to the Ops (formerly "Servers") place (freed up the right edge
-    // for the Backlog view's detail rail) — a Backlog-lens harness never
-    // renders it at all now, so this needs the Ops place instead of
-    // `list_harness_with_tasks`. IA V2 (TASK-96): `Place::Ops` is set
-    // explicitly because `Place::Digest`, not Ops, is the session default
-    // now. The collapse/expand glyphs flipped with the side: "◀" (toward
-    // the left edge) collapses, "▶" (away from it) expands — the mirror
-    // image of the old right-side panel's arrows.
+fn tracked_repos_does_not_render_in_ops_either() {
     let mut app = seeded_app();
     app.place = Place::Ops;
     let mut harness = harness(app);
     harness.run();
-    assert!(!harness.state().config.ui.sidebar_collapsed);
-    assert!(
-        harness.query_by_label("Tracked repos").is_some(),
-        "expanded by default: the heading should render"
-    );
-
-    harness.get_by_label("◀").click();
-    harness.run();
-    assert!(harness.state().config.ui.sidebar_collapsed);
     assert!(
         harness.query_by_label("Tracked repos").is_none(),
-        "collapsed: the repo list content should not render"
-    );
-    assert!(
-        harness.query_by_label("▶").is_some(),
-        "collapsed: the rail should offer the expand toggle"
-    );
-
-    harness.get_by_label("▶").click();
-    harness.run();
-    assert!(!harness.state().config.ui.sidebar_collapsed);
-    assert!(harness.query_by_label("Tracked repos").is_some());
-}
-
-/// Same split as `theme_persists_through_save_config_and_reload`: the click
-/// only mutates `config.ui.sidebar_collapsed` in memory (persistence is
-/// `eframe::App::update`'s before/after diff, which this harness never
-/// drives) — this proves the round trip itself.
-#[test]
-fn sidebar_collapsed_persists_through_save_config_and_reload() {
-    // Owner UX pass (2026-08-05): "Tracked repos" only renders in the Ops
-    // (formerly "Servers") place — see the sibling test above for why this
-    // switched away from `list_harness_with_tasks`, and for why `Place::Ops`
-    // is set explicitly now that `Place::Digest` is the session default.
-    let mut app = seeded_app();
-    app.place = Place::Ops;
-    let mut harness = harness(app);
-    harness.run();
-    harness.get_by_label("◀").click();
-    harness.run();
-    assert!(harness.state().config.ui.sidebar_collapsed);
-
-    harness.state_mut().save_config();
-
-    let save_path = harness
-        .state()
-        .config_save_path
-        .clone()
-        .expect("test harness always sets an isolated config_save_path");
-    let reloaded = switchbard_core::config::load_from(&save_path)
-        .expect("reloading the just-saved config should succeed");
-    assert!(
-        reloaded.ui.sidebar_collapsed,
-        "sidebar_collapsed should round-trip through save_config/load_from"
+        "the Ops table (TASK-100) replaces the old Servers/Workspace \
+         swimlane view, which nested this panel — it must not come back"
     );
 }
 

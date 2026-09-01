@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "label": "TASK-100 Ops place merge - one-row-per-worktree table, 140-worktree smoke",
+  "scenario": "task-100-ops-place-smoke",
+  "notes": "Compare against docs/perf/runs/2026-09-01-task-96-ia-v2-workspace-smoke.json (same headless workspace_perf_smoke.rs harness, 200 frames, 143 worktrees, captured at 55361a0 just before this task started): frame p50 25.523ms p95 27.01ms max 146.228ms, workspace p50 23.816ms p95 24.945ms max 89.548ms. This run: frame p50 5.772ms p95 6.497ms max 81.706ms, workspace p50 4.966ms p95 5.446ms max 33.446ms -- roughly 4-5x faster at p50/p95. Two causes: (1) the merged table is genuinely virtualized (egui_extras::TableBuilder::body::rows only invokes its row closure for rows inside the viewport's clip rect), so counts_max.rows=25 here vs the old swimlane view's counts_max.rows=143/expanded_rows=134 (it rendered nearly every row's full content every frame regardless of scroll position); (2) a flat one-line-per-worktree row is simply less layout work than a CollapsingHeader body with two indented strips. No regression anywhere in the metrics.",
+  "source_csv": "/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-perf-smoke-99510.csv",
+  "captured_at": "2026-09-01T05:38:35.019199-04:00",
+  "recorded_at": "2026-09-01T05:38:44.225295-04:00",
+  "git": {
+    "branch": "feat/task-100-ops-place",
+    "sha": "a29256b33b8bc94a7582470e659b693572e19874",
+    "dirty": true
+  },
+  "selection": {
+    "filter": "all",
+    "last": null,
+    "source_frames": 204,
+    "matching_frames": 204,
+    "summarized_frames": 204
+  },
+  "counts_max": {
+    "rows": 25,
+    "expanded_rows": 25,
+    "services": 0,
+    "listeners": 0
+  },
+  "metrics_ms": {
+    "total": {
+      "p50": 5.772,
+      "p95": 6.497,
+      "p99": 9.099,
+      "max": 81.706
+    },
+    "top_bar": {
+      "p50": 0.282,
+      "p95": 0.327,
+      "p99": 0.401,
+      "max": 22.454
+    },
+    "central": {
+      "p50": 4.966,
+      "p95": 5.446,
+      "p99": 7.07,
+      "max": 33.446
+    },
+    "workspace": {
+      "p50": 4.966,
+      "p95": 5.446,
+      "p99": 7.07,
+      "max": 33.446
+    }
+  }
+}

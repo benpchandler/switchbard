@@ -737,7 +737,7 @@ struct LandingBatch {
 /// branch (a detached HEAD has nothing to push or open a PR from) with
 /// something unlanded (a clean worktree has no "why" to ask). Everything
 /// else gets no cache entry, which is exactly the "render nothing" state the
-/// chip wants for those rows — see `ui::workspace::landing::landing_chip`.
+/// chip wants for those rows — see `ui::places::ops::landing::landing_chip`.
 ///
 /// Pure and worker-thread-free, split out of `spawn_landing`'s loop
 /// specifically so this filter (the two hard constraints the mission around
