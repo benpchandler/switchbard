@@ -335,14 +335,29 @@ pub fn compute_goal_statuses(
                     )
                 }
                 crate::GoalMeasure::Tasks => {
-                    let scope = goal.scope.as_deref().unwrap_or_default();
+                    let scope = goal.scope.as_deref();
+                    let inputs = &goal.inputs;
                     let count = repos
                         .iter()
                         .flat_map(|r| in_scope_tasks(r))
                         .filter(|task| {
+                            // A task counts once if it matches the scope OR
+                            // is an attached input (directly, or via an
+                            // attached project) — one pass, so overlap
+                            // cannot double-count.
+                            let matches = scope.is_some_and(|s| {
+                                task.project.as_deref() == Some(s)
+                                    || task.labels.iter().any(|l| l == s)
+                            }) || inputs
+                                .tasks
+                                .iter()
+                                .any(|t| t.eq_ignore_ascii_case(&task.id))
+                                || task
+                                    .project
+                                    .as_deref()
+                                    .is_some_and(|p| inputs.projects.iter().any(|ip| ip == p));
                             task.is_done()
-                                && (task.project.as_deref() == Some(scope)
-                                    || task.labels.iter().any(|l| l == scope))
+                                && matches
                                 && task
                                     .updated_date
                                     .as_deref()
@@ -915,6 +930,7 @@ mod tests {
             unit: "users".to_string(),
             measure: crate::GoalMeasure::Manual,
             scope: None,
+            inputs: crate::GoalInputs::default(),
             weeks,
         }
     }
@@ -1012,6 +1028,7 @@ mod tests {
             unit: "tasks".to_string(),
             measure: crate::GoalMeasure::Tasks,
             scope: Some("Lucella cutover".to_string()),
+            inputs: crate::GoalInputs::default(),
             weeks: std::collections::BTreeMap::from([(
                 "2026-08-31".to_string(),
                 crate::GoalWeek {
@@ -1028,6 +1045,52 @@ mod tests {
             "project match + label match; out-of-week, open, and archived excluded"
         );
         assert_eq!(statuses[0].pace, GoalPace::Behind);
+    }
+
+    #[test]
+    fn attached_inputs_count_alongside_scope_without_double_counting() {
+        // Week of Mon 2026-08-31. Four done-in-week tasks:
+        //   TASK-1: matches the scope AND is directly attached (counts once)
+        //   TASK-2: only attached directly
+        //   TASK-3: only a member of an attached project
+        //   TASK-4: matches nothing
+        let mut both = task("TASK-1", "Done", "high", BacklogTaskSource::Active);
+        both.project = Some("Scoped".to_string());
+        both.updated_date = Some("2026-09-02 10:00".to_string());
+        let mut attached_task = task("TASK-2", "Done", "high", BacklogTaskSource::Active);
+        attached_task.updated_date = Some("2026-09-03 10:00".to_string());
+        let mut attached_member = task("TASK-3", "Done", "high", BacklogTaskSource::Active);
+        attached_member.project = Some("Attached project".to_string());
+        attached_member.updated_date = Some("2026-09-04 10:00".to_string());
+        let mut unrelated = task("TASK-4", "Done", "high", BacklogTaskSource::Active);
+        unrelated.updated_date = Some("2026-09-04 10:00".to_string());
+
+        let mut repo = project("/a", vec![both, attached_task, attached_member, unrelated]);
+        repo.goals = vec![crate::GoalDef {
+            name: "Inputs goal".to_string(),
+            unit: "tasks".to_string(),
+            measure: crate::GoalMeasure::Tasks,
+            scope: Some("Scoped".to_string()),
+            inputs: crate::GoalInputs {
+                tasks: vec!["task-1".to_string(), "TASK-2".to_string()],
+                projects: vec!["Attached project".to_string()],
+            },
+            weeks: std::collections::BTreeMap::from([(
+                "2026-08-31".to_string(),
+                crate::GoalWeek {
+                    target: 3,
+                    checkins: vec![],
+                },
+            )]),
+        }];
+
+        let statuses = compute_goal_statuses(&[&repo], "2026-08-31", date("2026-09-05"));
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(
+            statuses[0].actual, 3,
+            "scope∪attached-task∪attached-project, overlap counted once, unrelated excluded"
+        );
+        assert_eq!(statuses[0].pace, GoalPace::Met);
     }
 
     #[test]
