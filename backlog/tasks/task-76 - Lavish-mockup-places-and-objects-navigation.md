@@ -1,11 +1,11 @@
 ---
 id: TASK-76
 title: 'Lavish mockup: places-and-objects navigation'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 21:20'
-updated_date: '2026-09-01 01:50'
+updated_date: '2026-09-01 02:05'
 labels:
   - ia
   - design
@@ -53,3 +53,9 @@ Round 10 (2026-09-01): (a) Selection vs group headers, third pass: adopted the B
 
 Round 10b (2026-09-01): owner challenged the 'AccessKit not doable in a mock' gap - correct split applied. The mock now carries the accessibility CONTRACT: all 31 icon buttons get aria-label + role=button + tabindex, text buttons focusable, :focus-visible ring reuses the selection stroke. What remains implementation-only: the egui/AccessKit runtime node tree (labels must derive from the engine Command verb names - one authority for verb naming and accessible naming) and keyboard-reachable tooltips. Matrix row updated from GAP to PARTIAL with that split.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Places-and-objects IA mockup built in switchbard's real theme palettes and reviewed by the owner across 11 Lavish annotation rounds; every direction question resolved and recorded in notes for TASK-77. Final direction: places Digest / Tasks / Command / Goals / Ops scoped by a multi-select repo switcher; projects demoted to generic field grouping inside Tasks (group headers expand in place; stack rank is a sort option; no project page); Dispatches as a built-in Tasks view plus Command as the agent-scoped fleet console; Linear-style favorites; attention feed on Digest with icon-only actions; goals get inputs (attached tasks/projects) per owner requirement. Evidence: artifact ~/.lavish/switchbard-ia-places.html (frozen input to TASK-77), computed WCAG audit both themes (incl. theme.rs dark-warn finding routed to EGUI Polish), aria-label/focus contract on all 31 icon buttons, screenshot-verified renders each round.
+<!-- SECTION:FINAL_SUMMARY:END -->
