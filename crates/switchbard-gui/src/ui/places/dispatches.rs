@@ -594,17 +594,45 @@ fn render_row_actions(app: &mut HiveApp, ui: &mut egui::Ui, row: &DispatchRow, i
     let has_log = row.run.as_ref().and_then(|r| r.log_path.as_ref()).is_some();
 
     if in_flight {
-        // Reads left-to-right as "Watch, Kill".
+        // Reads left-to-right as "Watch, Kill" — or "Watch, Dismiss" when
+        // there is no live process to signal: a run the app cannot verify as
+        // alive (no killable pgid) can sit here forever once its log has
+        // been cleaned out of $TMPDIR and no sidecar was written, because
+        // `is_abandoned` has no evidence left to adjudicate with
+        // (owner-reported, TASK-307). Kill and Dismiss are mutually
+        // exclusive on purpose: while a pgid is verifiably alive, the only
+        // honest offer is to kill it, and once nothing is verifiably
+        // running, the only honest offer is to discard the record.
         if let Some(run) = &row.run {
-            crate::ui::dispatch::render_kill_icon(app, ui, &row.repo_root, &row.task.id, run);
+            if run.liveness.killable_pgid().is_some() {
+                crate::ui::dispatch::render_kill_icon(app, ui, &row.repo_root, &row.task.id, run);
+            } else if theme::action_icon_button(ui, ActionIcon::Dismiss, "Dismiss", true).clicked()
+            {
+                app.spawn_dispatch_dismiss(row.repo_root.clone(), row.task.id.clone(), ui.ctx());
+            }
         }
         if theme::action_icon_button(ui, ActionIcon::Watch, "Watch", has_log).clicked() {
             if let Some(path) = row.run.as_ref().and_then(|r| r.log_path.clone()) {
                 app.open_dispatch_path(&path);
             }
         }
+    } else if matches!(row.state, DispatchState::InFlight) {
+        // Still labelled `dispatching` but not `in_flight` — the Orphaned
+        // section: positive proof the run died with nothing releasing the
+        // claim. Reads left-to-right as "Log, Dismiss".
+        if theme::action_icon_button(ui, ActionIcon::Dismiss, "Dismiss", true).clicked() {
+            app.spawn_dispatch_dismiss(row.repo_root.clone(), row.task.id.clone(), ui.ctx());
+        }
+        if theme::action_icon_button(ui, ActionIcon::Log, "Log", has_log).clicked() {
+            if let Some(path) = row.run.as_ref().and_then(|r| r.log_path.clone()) {
+                app.open_dispatch_path(&path);
+            }
+        }
     } else if matches!(row.state, DispatchState::Failed { .. }) {
-        // Reads left-to-right as "Retry, Log".
+        // Reads left-to-right as "Retry, Log, Dismiss".
+        if theme::action_icon_button(ui, ActionIcon::Dismiss, "Dismiss", true).clicked() {
+            app.spawn_dispatch_dismiss(row.repo_root.clone(), row.task.id.clone(), ui.ctx());
+        }
         if theme::action_icon_button(ui, ActionIcon::Log, "Log", has_log).clicked() {
             if let Some(path) = row.run.as_ref().and_then(|r| r.log_path.clone()) {
                 app.open_dispatch_path(&path);

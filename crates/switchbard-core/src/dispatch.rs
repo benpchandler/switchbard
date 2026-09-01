@@ -150,7 +150,7 @@ use crate::git_env::git_cmd;
 use crate::kill::kill_pgid;
 use crate::spawn::{spawn_in_session, wait_for_exit, WaitOutcome};
 use crate::worktree_create::{create_worktree, CreateBranchMode, CreateWorktreeOptions};
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -969,6 +969,50 @@ pub fn release_as_dispatched(repo_root: &Path, task_id: &str, pr_url: &str) -> R
     Ok(())
 }
 
+/// The human verb for a run record nothing else will ever clear: drop the
+/// `dispatching` / `dispatch-failed` labels so the Dispatch surfaces stop
+/// rendering a run for this task.
+///
+/// Why this exists: a task's label *is* its run state (module doc), and the
+/// two labels above are only ever cleared by the pipeline's own release
+/// step. When the supervising app dies mid-run — and the log has since been
+/// cleaned out of `$TMPDIR`, and no sidecar was written — there is no
+/// evidence left for `DispatchRun::is_abandoned` to adjudicate with, so the
+/// row sits under "In flight" forever with no affordance to remove it
+/// (owner-reported, TASK-307: `dispatching` stranded on a task that had been
+/// Done for weeks). The app cannot honestly decide such a run is dead; a
+/// human can, and this is that decision's single write path.
+///
+/// Deliberately narrow: it never touches `dispatch` (that is the queue
+/// opt-in — withdrawing is the Dispatch toggle's job) or `dispatched` (a
+/// finished run's PR record is history, not a stuck claim), never signals a
+/// process, and never edits status — the task keeps whatever state it
+/// carries. Appends a one-line note so the dismissal is visible in the
+/// task's own history rather than a silent label edit.
+///
+/// Errors when the task carries neither run-state label — dismissing a run
+/// that is not stuck is a caller bug worth surfacing, not a quiet no-op.
+pub fn dismiss_run(repo_root: &Path, task_id: &str) -> Result<String> {
+    let mut cleared = Vec::new();
+    for label in [DISPATCHING_LABEL, DISPATCH_FAILED_LABEL] {
+        if crate::backlog::remove_backlog_label(repo_root, task_id, label)? {
+            cleared.push(label);
+        }
+    }
+    if cleared.is_empty() {
+        bail!("{task_id} carries no dispatching/dispatch-failed label - nothing to dismiss");
+    }
+    append_backlog_notes(
+        repo_root,
+        task_id,
+        &format!(
+            "Dispatch run dismissed by user (no live process recorded); cleared: {}",
+            cleared.join(", ")
+        ),
+    )?;
+    Ok(format!("Dismissed dispatch run for {task_id}"))
+}
+
 fn describe_result(result: &DispatchResult) -> String {
     match result {
         DispatchResult::PrOpened { url } => format!("PR opened: {url}"),
@@ -1093,6 +1137,64 @@ mod tests {
             .collect();
 
         assert_eq!(ids, vec!["TASK-1".to_string(), "TASK-4".to_string()]);
+    }
+
+    #[test]
+    fn dismiss_run_clears_stuck_run_labels_and_leaves_a_note() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("backlog/tasks")).unwrap();
+        write_fixture_task(dir.path(), "TASK-1", &["dispatching", "james"]);
+
+        let msg = dismiss_run(dir.path(), "TASK-1").unwrap();
+        assert!(msg.contains("TASK-1"));
+
+        let repo = load_backlog_repo(dir.path()).unwrap();
+        let task = repo.tasks.iter().find(|t| t.id == "TASK-1").unwrap();
+        assert!(
+            !task.labels.iter().any(|l| l == DISPATCHING_LABEL),
+            "the stuck claim label is gone"
+        );
+        assert!(
+            task.labels.iter().any(|l| l == "james"),
+            "unrelated labels survive"
+        );
+        let text = fs::read_to_string(dir.path().join("backlog/tasks/TASK-1.md")).unwrap();
+        assert!(
+            text.contains("Dispatch run dismissed by user"),
+            "the dismissal is visible in the task's own notes"
+        );
+    }
+
+    #[test]
+    fn dismiss_run_clears_a_failed_run_record_too() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("backlog/tasks")).unwrap();
+        write_fixture_task(dir.path(), "TASK-2", &["dispatch-failed"]);
+
+        dismiss_run(dir.path(), "TASK-2").unwrap();
+
+        let repo = load_backlog_repo(dir.path()).unwrap();
+        let task = repo.tasks.iter().find(|t| t.id == "TASK-2").unwrap();
+        assert!(!task.labels.iter().any(|l| l == DISPATCH_FAILED_LABEL));
+    }
+
+    #[test]
+    fn dismiss_run_refuses_a_task_with_no_run_state() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("backlog/tasks")).unwrap();
+        // `dispatch` alone is the queue opt-in, not a run — withdrawing it is
+        // the Dispatch toggle's job, so dismiss must refuse rather than eat it.
+        write_fixture_task(dir.path(), "TASK-3", &["dispatch"]);
+
+        let err = dismiss_run(dir.path(), "TASK-3").unwrap_err();
+        assert!(err.to_string().contains("nothing to dismiss"));
+
+        let repo = load_backlog_repo(dir.path()).unwrap();
+        let task = repo.tasks.iter().find(|t| t.id == "TASK-3").unwrap();
+        assert!(
+            task.labels.iter().any(|l| l == DISPATCH_LABEL),
+            "the queue opt-in survives a refused dismiss"
+        );
     }
 
     fn write_fixture_task(root: &Path, id: &str, labels: &[&str]) {
