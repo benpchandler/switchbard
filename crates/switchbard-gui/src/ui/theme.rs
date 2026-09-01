@@ -584,6 +584,217 @@ pub fn painted_trash_button(ui: &mut egui::Ui) -> egui::Response {
     resp
 }
 
+/// The star affordance for favoriting an object (TASK-96) — a task, goal,
+/// project, or saved view. `favorited` picks the filled (favorited) vs
+/// outlined (not) star; painted for the same font-coverage reason as
+/// [`Glyph`]. One shared definition so a task's, a goal's, a project's, and
+/// a saved view's star always look identical — "same-purpose controls use
+/// the same component" (`VISUAL_QA_CHECKLIST.md`).
+///
+/// Drawn as two overlapping equilateral triangles (a six-point "sparkle"
+/// star) rather than a single five-point outline: `egui::Shape::
+/// convex_polygon` — this file's one fill primitive for a closed shape — is
+/// documented as convex-only, and a true five-point star silhouette is
+/// concave. Two triangles are each individually convex, so the fill is
+/// always tessellated correctly, and the composite still reads unambiguously
+/// as "star" at icon size.
+pub fn favorite_star_button(ui: &mut egui::Ui, favorited: bool) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
+    let color = if favorited {
+        amber()
+    } else if resp.hovered() {
+        weak_text()
+    } else {
+        muted_text()
+    };
+    let c = rect.center();
+    let r = 5.2;
+    let up = triangle_points(c, r, 0.0);
+    let down = triangle_points(c, r, std::f32::consts::PI);
+    if favorited {
+        let painter = ui.painter();
+        painter.add(egui::Shape::convex_polygon(
+            up.to_vec(),
+            color,
+            egui::Stroke::NONE,
+        ));
+        painter.add(egui::Shape::convex_polygon(
+            down.to_vec(),
+            color,
+            egui::Stroke::NONE,
+        ));
+    } else {
+        let stroke = egui::Stroke::new(1.1, color);
+        let painter = ui.painter();
+        for tri in [up, down] {
+            for i in 0..3 {
+                painter.line_segment([tri[i], tri[(i + 1) % 3]], stroke);
+            }
+        }
+    }
+    resp
+}
+
+/// Three points of an equilateral triangle centered on `c` with circumradius
+/// `r`, rotated by `offset_rad` — `0.0` points up, `PI` points down. Shared
+/// by both triangles [`favorite_star_button`] overlays into a sparkle.
+fn triangle_points(c: egui::Pos2, r: f32, offset_rad: f32) -> [egui::Pos2; 3] {
+    std::array::from_fn(|i| {
+        let angle =
+            -std::f32::consts::FRAC_PI_2 + offset_rad + (i as f32) * std::f32::consts::TAU / 3.0;
+        let (sin, cos) = angle.sin_cos();
+        egui::pos2(c.x + cos * r, c.y + sin * r)
+    })
+}
+
+/// IA V2 sidebar glyphs (TASK-96) — the nav's five place icons plus the two
+/// favorite-type icons not already covered by a place (Project, View; the
+/// Task and Goal favorite glyphs reuse [`Glyph::Tasks`]/[`Glyph::Goals`],
+/// matching the frozen mock, which reuses the exact same ▤/◎ for both).
+///
+/// Painted via [`Painter`][egui::Painter], **not** rendered as literal
+/// Unicode characters (⌂ ▤ ⌁ ◎ ⚙ ▣ ⌕ in the mock). This module's header doc
+/// already established why for this exact family of geometric/symbol code
+/// points: `●▸▾↑↓✕•○` rendered as empty tofu squares on a stock install
+/// before `caret_button`/`triangle_button`/`painted_dot`/
+/// `painted_trash_button` replaced them, and nothing about *this* set of
+/// glyphs is known to be covered by the embedded Barlow/JetBrains fonts or
+/// their fallbacks — TASK-96 chose the proven-safe path over spending a test
+/// run confirming font coverage that could silently regress on a future
+/// font swap. `⚙` is the one glyph in the set already used verbatim
+/// elsewhere in this app (the Settings button) and evidently renders, but it
+/// is painted here too rather than left as text: the Visual QA convention
+/// this repo holds itself to bans mixing icon treatments in one row (see
+/// `VISUAL_QA_CHECKLIST.md`'s Components section, "Icons use a consistent
+/// family, stroke/fill treatment, and optical size").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Glyph {
+    /// ⌂ — Digest place.
+    Digest,
+    /// ▤ — Tasks place, and the Task-kind favorite glyph.
+    Tasks,
+    /// ⌁ — Command place.
+    Command,
+    /// ◎ — Goals place, and the Goal-kind favorite glyph.
+    Goals,
+    /// ⚙ — Ops place.
+    Ops,
+    /// ▣ — Project-kind favorite glyph.
+    Project,
+    /// ⌕ — View-kind (saved view) favorite glyph.
+    View,
+}
+
+/// Paint one [`Glyph`] into an `ICON_SIZE` box and return the (hover-only)
+/// response, matching every other painted-icon helper in this file. Callers
+/// that need a click wrap the allocated rect themselves (the nav's place
+/// rows sense clicks on the whole row, not the icon alone) — see
+/// `ui::nav`.
+pub fn painted_glyph(ui: &mut egui::Ui, glyph: Glyph, color: Color32) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::hover());
+    let c = rect.center();
+    let stroke = egui::Stroke::new(1.3, color);
+    let painter = ui.painter();
+    match glyph {
+        Glyph::Digest => {
+            // Roofline peak + a square body outline — the universal "home"
+            // silhouette, simplified to two line segments and a rect.
+            painter.line_segment(
+                [egui::pos2(c.x - 5.0, c.y - 0.5), egui::pos2(c.x, c.y - 5.0)],
+                stroke,
+            );
+            painter.line_segment(
+                [egui::pos2(c.x, c.y - 5.0), egui::pos2(c.x + 5.0, c.y - 0.5)],
+                stroke,
+            );
+            painter.rect_stroke(
+                egui::Rect::from_center_size(egui::pos2(c.x, c.y + 2.5), egui::vec2(7.0, 5.0)),
+                1.0,
+                stroke,
+                egui::StrokeKind::Outside,
+            );
+        }
+        Glyph::Tasks => {
+            // A bordered rect with three horizontal "row" strokes — the
+            // primary work list's own icon, reused verbatim for a favorited
+            // task.
+            painter.rect_stroke(
+                egui::Rect::from_center_size(c, egui::vec2(10.0, 10.0)),
+                1.5,
+                stroke,
+                egui::StrokeKind::Outside,
+            );
+            for dy in [-2.5, 0.5, 3.5] {
+                painter.line_segment(
+                    [
+                        egui::pos2(c.x - 3.2, c.y + dy),
+                        egui::pos2(c.x + 3.2, c.y + dy),
+                    ],
+                    egui::Stroke::new(1.0, color),
+                );
+            }
+        }
+        Glyph::Command => {
+            // A simplified lightning-bolt polyline — the fleet console's
+            // "agents are actively doing things" mark.
+            let pts = [
+                egui::pos2(c.x + 1.5, c.y - 6.0),
+                egui::pos2(c.x - 3.0, c.y + 0.5),
+                egui::pos2(c.x + 0.3, c.y + 0.5),
+                egui::pos2(c.x - 1.5, c.y + 6.0),
+                egui::pos2(c.x + 3.5, c.y - 1.0),
+                egui::pos2(c.x + 0.2, c.y - 1.0),
+            ];
+            painter.add(egui::Shape::convex_polygon(
+                pts.to_vec(),
+                color,
+                egui::Stroke::NONE,
+            ));
+        }
+        Glyph::Goals => {
+            // Concentric rings — a target, reused for a favorited goal.
+            painter.circle_stroke(c, 5.5, stroke);
+            painter.circle_filled(c, 1.8, color);
+        }
+        Glyph::Ops => {
+            // A hub circle with six short radial teeth — a simplified gear,
+            // painted rather than left as the "⚙" text glyph so the whole
+            // place row shares one icon treatment (see this enum's doc).
+            painter.circle_stroke(c, 3.2, stroke);
+            for i in 0..6 {
+                let angle = (i as f32) * std::f32::consts::TAU / 6.0;
+                let (sin, cos) = angle.sin_cos();
+                let inner = egui::pos2(c.x + cos * 4.2, c.y + sin * 4.2);
+                let outer = egui::pos2(c.x + cos * 6.2, c.y + sin * 6.2);
+                painter.line_segment([inner, outer], stroke);
+            }
+        }
+        Glyph::Project => {
+            // A filled square with a visible border — "a grouping you can
+            // hold in your hand", distinct from Tasks' open row-lined rect.
+            let square = egui::Rect::from_center_size(c, egui::vec2(8.0, 8.0));
+            painter.rect_filled(square, 1.0, scale_alpha(color, 0.35));
+            painter.rect_stroke(square, 1.0, stroke, egui::StrokeKind::Outside);
+        }
+        Glyph::View => {
+            // A magnifying glass — lens + handle.
+            let lens_center = egui::pos2(c.x - 1.0, c.y - 1.0);
+            painter.circle_stroke(lens_center, 3.6, stroke);
+            let handle_dir = egui::vec2(0.72, 0.72);
+            painter.line_segment(
+                [
+                    lens_center + handle_dir * 3.6,
+                    lens_center + handle_dir * 6.6,
+                ],
+                stroke,
+            );
+        }
+    }
+    resp
+}
+
 /// Expand / collapse caret. Triangle points down when `open`, right when not.
 /// Returns the click response so callers can toggle their state on click.
 pub fn caret_button(ui: &mut egui::Ui, open: bool) -> egui::Response {

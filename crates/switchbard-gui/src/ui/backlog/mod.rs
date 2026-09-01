@@ -64,7 +64,7 @@ mod board;
 mod create;
 mod detail;
 mod detail_lists;
-mod digest;
+pub(crate) mod digest;
 pub(crate) mod dispatch_ui;
 mod format;
 mod goal_create;
@@ -219,13 +219,45 @@ pub(super) fn lens_filters(lens: BacklogLens) -> bool {
     )
 }
 
+/// TASK-96: `app.repo_scope` (the sidebar's multi-select scope) is the
+/// *outer* filter, applied on top of whatever `backlog_view.selected_repo`
+/// (the pre-existing single-repo picker) already narrows to — scope never
+/// fights the picker, it bounds it. `RepoRow::key` is a repo root path (the
+/// same key space `Config::repos[].path`/`repo_scope` use — `backlog`'s
+/// project roots come straight from the tracked repo list, never from a
+/// worktree path, see `workers::backlog_repo_roots`), so the scope check is
+/// a plain set membership test.
 pub(in crate::ui::backlog) fn scoped_repos<'a>(
     app: &HiveApp,
     snap: &'a Snapshot,
 ) -> Vec<&'a RepoRow> {
-    match &app.backlog_view.selected_repo {
+    let picked: Vec<&RepoRow> = match &app.backlog_view.selected_repo {
         None => snap.repos.iter().collect(),
         Some(path) => snap.repos.iter().filter(|row| &row.key == path).collect(),
+    };
+    picked
+        .into_iter()
+        .filter(|row| crate::runtime::path_in_scope(&row.key, &app.repo_scope))
+        .collect()
+}
+
+/// TASK-96: apply a saved view by name — the one entry point
+/// `HiveApp::navigate_to_favorite` (`app.rs`) uses for a `View`-kind
+/// favorite's click, sharing `saved_views::apply_saved_view` with the Tasks
+/// place's own "View" combo box rather than re-deriving what "apply" means.
+/// A name that no longer names a saved view (deleted since it was
+/// favorited) is a silent no-op — the caller has already moved to the Tasks
+/// place regardless, which is the safe, honest landing.
+pub fn apply_saved_view_by_name(app: &mut HiveApp, name: &str) {
+    if let Some(view) = app
+        .config
+        .ui
+        .saved_views
+        .iter()
+        .find(|view| view.name == name)
+        .cloned()
+    {
+        saved_views::apply_saved_view(app, &view);
     }
 }
 

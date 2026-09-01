@@ -19,7 +19,7 @@ use common::{harness, seeded_app, REPO_PATH};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::SnapshotOptions;
 use switchbard_core::{BacklogRepo, OrderingOverlay, RepoRanking};
-use switchbard_gui::runtime::{BacklogLens, OrderingState, ViewTab};
+use switchbard_gui::runtime::{BacklogLens, OrderingState, Place};
 
 fn output_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/qa/screenshots")
@@ -59,7 +59,7 @@ fn real_455_task_repo_loads_and_renders_the_list_lens_within_a_render_path_budge
     );
 
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(root.clone());
     app.backlog_repos.lock().unwrap().insert(root, repo);
@@ -103,7 +103,7 @@ fn real_empty_repo_loads_with_zero_tasks_and_no_warnings() {
     );
 
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(root.clone());
     app.backlog_repos.lock().unwrap().insert(root, repo);
@@ -132,7 +132,7 @@ fn malformed_ordering_yaml_app() -> switchbard_gui::app::HiveApp {
     assert!(warning.contains("malformed"));
 
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     app.backlog_repos.lock().unwrap().insert(

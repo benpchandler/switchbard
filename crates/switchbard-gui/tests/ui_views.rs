@@ -21,7 +21,7 @@ use switchbard_core::{
     DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{AgentsSection, BacklogLens, ViewTab};
+use switchbard_gui::runtime::{AgentsSection, BacklogLens, Place, TasksView};
 
 fn seeded_backlog_task() -> BacklogTask {
     BacklogTask {
@@ -58,7 +58,7 @@ fn seeded_backlog_task() -> BacklogTask {
 #[test]
 fn board_lens_renders_kanban_columns_with_the_seeded_task() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::Board;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     app.backlog_repos.lock().unwrap().insert(
@@ -112,7 +112,7 @@ fn board_lens_renders_kanban_columns_with_the_seeded_task() {
 #[test]
 fn hooks_section_surfaces_disabled_state_instead_of_registrations() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Agents;
+    app.place = Place::Command;
     app.agent_context_view.section = AgentsSection::Hooks;
     app.agent_contexts
         .lock()
@@ -137,7 +137,7 @@ fn hooks_section_surfaces_disabled_state_instead_of_registrations() {
 #[test]
 fn global_search_overlay_finds_the_matching_task_across_repos() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     // The List lens's own row renders the same "repo:id  title" label the
     // search result does (see the assertion below); the Digest lens
     // (task-21's default) doesn't render that format at all.
@@ -190,35 +190,44 @@ fn global_search_overlay_finds_the_matching_task_across_repos() {
 }
 
 #[test]
-fn window_defaults_to_servers_view() {
+fn window_defaults_to_digest_place() {
     let harness = harness(seeded_app());
 
-    assert_eq!(harness.state().view_tab, ViewTab::Servers);
-    // Both view tabs are always offered in the top bar.
+    assert_eq!(harness.state().place, Place::Digest);
+    // All five places are always offered in the sidebar nav.
     assert!(
-        harness.query_by_label("Servers").is_some(),
-        "Servers tab should be present"
+        harness.query_all_by_label("Digest").next().is_some(),
+        "Digest place should be present (query_all: the active Digest place's own \
+         heading shares the nav row's label)"
     );
     assert!(
-        harness.query_by_label("Agents").is_some(),
-        "Agents tab should be present"
+        harness.query_by_label("Tasks").is_some(),
+        "Tasks place should be present"
     );
     assert!(
-        harness.query_by_label("Backlog").is_some(),
-        "Backlog tab should be present"
+        harness.query_by_label("Command").is_some(),
+        "Command place should be present"
+    );
+    assert!(
+        harness.query_by_label("Goals").is_some(),
+        "Goals place should be present"
+    );
+    assert!(
+        harness.query_by_label("Ops").is_some(),
+        "Ops place should be present"
     );
 }
 
 #[test]
-fn clicking_agents_tab_switches_view() {
+fn clicking_command_place_switches_view() {
     let mut harness = harness(seeded_app());
 
-    // In the default Servers view the only "Agents" widget is the tab,
+    // In the default Digest place the only "Command" widget is the nav row,
     // so this is unambiguous.
-    harness.get_by_label("Agents").click();
+    harness.get_by_label("Command").click();
     harness.run();
 
-    assert_eq!(harness.state().view_tab, ViewTab::Agents);
+    assert_eq!(harness.state().place, Place::Command);
     assert!(harness.query_all_by_label("Context").next().is_some());
     assert!(harness.query_by_label("Hooks").is_some());
 }
@@ -226,7 +235,7 @@ fn clicking_agents_tab_switches_view() {
 #[test]
 fn hooks_section_surfaces_configured_repo_hook() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Agents;
+    app.place = Place::Command;
     app.agent_context_view.section = AgentsSection::Hooks;
     app.agent_contexts
         .lock()
@@ -277,7 +286,7 @@ fn hooks_section_surfaces_configured_repo_hook() {
 #[test]
 fn hooks_section_explains_empty_registration_state() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Agents;
+    app.place = Place::Command;
     app.agent_context_view.section = AgentsSection::Hooks;
     let mut harness = harness(app);
     harness.run();
@@ -305,7 +314,7 @@ fn context_search_filters_individual_assets_not_just_repo_cards() {
             "beta-notes.md",
         ),
     ]);
-    app.view_tab = ViewTab::Agents;
+    app.place = Place::Command;
     *app.filter_mut() = "alpha".to_string();
     let mut harness = harness(app);
     harness.run();
@@ -318,7 +327,7 @@ fn context_search_filters_individual_assets_not_just_repo_cards() {
 #[test]
 fn agents_queries_are_scoped_per_section_and_restore_on_return() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Agents;
+    app.place = Place::Command;
     *app.filter_mut() = "context-query".to_string();
     assert_eq!(app.filter(), "context-query");
 
@@ -338,12 +347,12 @@ fn agents_queries_are_scoped_per_section_and_restore_on_return() {
 /// the "Clear filters" label on this page - this one in the top bar (painted
 /// first) and the staleness bar's own narrower Clear (painted second, inside
 /// the central panel) - so `get_all_by_label` plus paint order picks the
-/// page-wide one, matching the pattern `clicking_agents_tab_switches_view`
+/// page-wide one, matching the pattern `clicking_command_place_switches_view`
 /// already documents for disambiguating a shared label.
 #[test]
 fn servers_clear_filters_matches_the_shipped_defaults() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Servers;
+    app.place = Place::Ops;
     let mut harness = harness(app);
     harness.run();
 
@@ -385,7 +394,7 @@ fn servers_clear_filters_matches_the_shipped_defaults() {
 #[test]
 fn context_clear_restores_the_persistable_filter_defaults() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Agents;
+    app.place = Place::Command;
     app.agent_context_view.scope = ContextScope::Directory;
     app.agent_context_view.kind = Some(ContextKind::Skill);
     *app.filter_mut() = "review".to_string();
@@ -428,7 +437,7 @@ fn restart_drops_a_persisted_backlog_project_that_is_no_longer_tracked() {
 #[test]
 fn hooks_facets_compose_and_clear_from_the_shared_filter_bar() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Agents;
+    app.place = Place::Command;
     app.agent_context_view.section = AgentsSection::Hooks;
     app.agent_context_view.hook_event = Some("PostToolUse".to_string());
     app.agent_context_view.hook_type = Some("command".to_string());
@@ -485,7 +494,7 @@ fn hooks_facets_compose_and_clear_from_the_shared_filter_bar() {
 #[test]
 fn hooks_page_explains_itself_when_facets_hide_every_repo() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Agents;
+    app.place = Place::Command;
     app.agent_context_view.section = AgentsSection::Hooks;
     app.agent_context_view.hook_scope = Some(ContextScope::Directory);
     app.agent_contexts
@@ -518,19 +527,20 @@ fn hooks_page_explains_itself_when_facets_hide_every_repo() {
 }
 
 #[test]
-fn clicking_backlog_tab_switches_view() {
+fn clicking_tasks_place_switches_view() {
     let mut harness = harness(seeded_app());
 
-    harness.get_by_label("Backlog").click();
+    harness.get_by_label("Tasks").click();
     harness.run();
 
-    assert_eq!(harness.state().view_tab, ViewTab::Backlog);
+    assert_eq!(harness.state().place, Place::Tasks);
+    assert_eq!(harness.state().tasks_view, TasksView::All);
 }
 
 #[test]
 fn agent_context_view_surfaces_seeded_assets() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Agents;
+    app.place = Place::Command;
     let mut harness = harness(app);
     harness.run();
 
@@ -582,7 +592,7 @@ fn agent_context_estimate_uses_effective_instructions_not_all_assets() {
     nested_instruction.applies_to = Some(PathBuf::from(format!("{REPO_PATH}/apps/web")));
 
     let mut app = app_with_items(vec![instruction, skill, nested_instruction]);
-    app.view_tab = ViewTab::Agents;
+    app.place = Place::Command;
     let mut harness = harness(app);
     harness.run();
 
@@ -605,7 +615,7 @@ fn agent_context_estimate_uses_effective_instructions_not_all_assets() {
 #[test]
 fn backlog_view_surfaces_seeded_task() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
@@ -690,7 +700,7 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
     // `HiveApp` must redirect `save_config` away from the real
     // `~/.switchbard/config.toml` (TASK-22).
     app.config_save_path = Some(common::isolated_config_save_path());
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
 
     for (repo_name, title) in [("alpha", "Alpha task"), ("beta", "Beta task")] {
@@ -768,7 +778,7 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
 #[test]
 fn digest_lens_is_the_backlog_default_and_surfaces_in_progress_tasks() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     let mut in_progress_task = seeded_backlog_task();
     in_progress_task.status = "In Progress".to_string();
     app.backlog_repos.lock().unwrap().insert(
@@ -852,7 +862,7 @@ fn digest_leads_with_current_week_goals_and_omits_the_section_without_any() {
     );
 
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogRepo {
@@ -900,7 +910,7 @@ fn digest_leads_with_current_week_goals_and_omits_the_section_without_any() {
 
     // And with no goals at all, no empty shell.
     let mut goalless = seeded_app();
-    goalless.view_tab = ViewTab::Backlog;
+    goalless.place = Place::Tasks;
     let mut bare = common::harness(goalless);
     bare.run();
     assert!(
@@ -918,7 +928,7 @@ fn digest_leads_with_current_week_goals_and_omits_the_section_without_any() {
 fn digest_offers_goal_creation_from_both_entry_points() {
     // Zero goals (but a tracked backlog): the doorway button, no shell.
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogRepo {
@@ -971,7 +981,7 @@ fn digest_offers_goal_creation_from_both_entry_points() {
         },
     );
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogRepo {
@@ -1005,7 +1015,7 @@ fn digest_offers_goal_creation_from_both_entry_points() {
 #[test]
 fn portfolio_lens_renders_per_repo_health() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::Portfolio;
     app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
@@ -1051,7 +1061,7 @@ fn portfolio_lens_renders_per_repo_health() {
 #[test]
 fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
 
@@ -1115,7 +1125,7 @@ fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
 #[test]
 fn parent_task_shows_rollup_and_expands_to_reveal_children() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
 
@@ -1212,7 +1222,7 @@ fn parent_task_shows_rollup_and_expands_to_reveal_children() {
 #[test]
 fn saved_view_can_be_saved_and_deleted() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::Statistics;
     app.backlog_view.priority_filter = "high".to_string();
     app.backlog_repos.lock().unwrap().insert(
@@ -1321,7 +1331,7 @@ fn harness_on_disk_task(labels: &[&str]) -> (tempfile::TempDir, Harness<'static,
     let repo = switchbard_core::load_backlog_repo(&root).expect("seeded repo loads");
 
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(root.clone());
     app.backlog_view.selected_task = Some((root.clone(), "TASK-1".to_string()));
@@ -1354,7 +1364,7 @@ fn wait_for_labels(root: &std::path::Path, expected: &[&str]) {
 /// state test below shares, varying only the seeded task's labels/notes.
 fn harness_on_task(task: BacklogTask) -> Harness<'static, HiveApp> {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), task.id.clone()));
@@ -1555,7 +1565,7 @@ fn list_row_shows_the_dispatch_pill_for_a_queued_task() {
     plain.path = PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-2.md"));
 
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     app.backlog_repos.lock().unwrap().insert(
@@ -1593,7 +1603,7 @@ fn list_row_shows_the_dispatch_pill_for_a_queued_task() {
 #[test]
 fn projects_lens_renders_the_expedite_marker_and_lane_toggle() {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::Projects;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     let mut task = seeded_backlog_task();

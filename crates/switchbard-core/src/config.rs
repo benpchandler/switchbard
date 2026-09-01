@@ -96,6 +96,21 @@ pub struct UiConfig {
     /// migration or a dependency from core onto GUI enums.
     #[serde(default)]
     pub filters: BTreeMap<String, FilterMemory>,
+    /// IA V2 (TASK-96): the sidebar's multi-select repo scope — a set of
+    /// tracked-repo root paths every place aggregates over. Empty means "all
+    /// repos", not "no repos" (the GUI's `nav` module renders that state as
+    /// "All repos" rather than an empty list). Stored as plain strings
+    /// (worktree-independent — a repo root, never a worktree path), matching
+    /// the binding shape TASK-96 specified, rather than `PathBuf` like most
+    /// of this file's other path fields.
+    #[serde(default)]
+    pub repo_scope: Vec<String>,
+    /// IA V2 (TASK-96): explicitly favorited objects, rendered as the
+    /// sidebar's FAVORITES group in insertion order. Nothing auto-populates
+    /// this — every entry comes from a star affordance on the object itself
+    /// (task detail rail, goal card, saved view, project row).
+    #[serde(default)]
+    pub favorites: Vec<FavoriteRef>,
 }
 
 // Hand-written so the default scale is 1.0, not the f32 `Default` of 0.0 (which
@@ -112,6 +127,8 @@ impl Default for UiConfig {
             saved_views: Vec::new(),
             sidebar_collapsed: false,
             filters: BTreeMap::new(),
+            repo_scope: Vec::new(),
+            favorites: Vec::new(),
         }
     }
 }
@@ -168,6 +185,29 @@ pub struct SavedView {
     pub show_archived: bool,
     #[serde(default = "default_true")]
     pub show_drafts: bool,
+}
+
+/// One explicitly favorited object in the IA V2 sidebar's FAVORITES group
+/// (TASK-96). `repo` + `key` together locate the object: for `Task` and
+/// `Goal`, `key` is the id/name within that repo's backlog; for `Project`,
+/// `key` is the project name; for `View`, `key` is the `SavedView::name` in
+/// this same `UiConfig`. `repo` is a plain string path (not `PathBuf`) to
+/// match the binding shape TASK-96 specified — same rationale as
+/// `UiConfig::repo_scope`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FavoriteRef {
+    pub kind: FavoriteKind,
+    pub repo: String,
+    pub key: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FavoriteKind {
+    Project,
+    Task,
+    Goal,
+    View,
 }
 
 fn default_filter_all() -> String {
@@ -367,6 +407,19 @@ mod tests {
                         facets: BTreeMap::from([("event".into(), "PostToolUse".into())]),
                     },
                 )]),
+                repo_scope: vec!["/Users/me/foo".into()],
+                favorites: vec![
+                    FavoriteRef {
+                        kind: FavoriteKind::Project,
+                        repo: "/Users/me/foo".into(),
+                        key: "Stack Ranking".into(),
+                    },
+                    FavoriteRef {
+                        kind: FavoriteKind::Task,
+                        repo: "/Users/me/foo".into(),
+                        key: "TASK-1".into(),
+                    },
+                ],
             },
         };
         save_to(&path, &cfg).unwrap();
@@ -573,6 +626,21 @@ path = "/Users/me/Dev/switchbard"
             .filter(|entry| entry.file_name().to_string_lossy().contains("tombstone"))
             .count();
         assert_eq!(tombstones, 0);
+    }
+
+    #[test]
+    fn repo_scope_and_favorites_default_to_empty_when_unset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("partial.toml");
+        // A pre-TASK-96 config has neither key at all.
+        fs::write(
+            &path,
+            "version = 1\n[[repos]]\nname = \"a\"\npath = \"/a\"\n",
+        )
+        .unwrap();
+        let cfg = load_from(&path).unwrap();
+        assert!(cfg.ui.repo_scope.is_empty());
+        assert!(cfg.ui.favorites.is_empty());
     }
 
     #[test]

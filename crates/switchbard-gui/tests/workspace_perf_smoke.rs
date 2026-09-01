@@ -33,7 +33,7 @@ use common::{harness, isolated_config_save_path};
 use switchbard_core::config::Config;
 use switchbard_core::{DriftProbe, Repo, WorktreeRef, WorktreeStaleness};
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{WorktreeMeta, WorktreeSizeEntry};
+use switchbard_gui::runtime::{Place, WorktreeMeta, WorktreeSizeEntry};
 
 /// `repos * (1 primary + per_repo linked)` worktrees, close to the real
 /// 2026-08-19 machine's ~138 across 11 repos this task's brief cites.
@@ -71,6 +71,13 @@ fn build_fixture() -> HiveApp {
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees.clone());
     app.config_save_path = Some(isolated_config_save_path());
+    // IA V2 (TASK-96): `place` now defaults to `Place::Digest`, not the old
+    // `ViewTab::Servers` default this smoke used to get for free — without
+    // this, the harness would render the (lightweight) Digest body instead
+    // of the Workspace/Ops surface this test exists to measure, and both
+    // `workspace_ms` and the row-count assertions below would silently
+    // measure nothing.
+    app.place = Place::Ops;
 
     // Seed meta + size for every worktree so rows hit the real Merged/
     // Orphan/Live/size render branches instead of the cheap "pending" path —
@@ -177,7 +184,11 @@ fn workspace_render_perf_smoke_with_140ish_worktrees() {
         let Some(total) = cols.get(1).and_then(|s| s.parse::<f64>().ok()) else {
             continue;
         };
-        let Some(workspace) = cols.get(5).and_then(|s| s.parse::<f64>().ok()) else {
+        // Column index 6, not 5: TASK-96 inserted `nav_ms` into the CSV
+        // schema right after `top_bar_ms` (see `perf.rs`'s header —
+        // "frame,total_ms,top_bar_ms,nav_ms,sidebar_ms,central_ms,
+        // workspace_ms,..."), shifting every column after it by one.
+        let Some(workspace) = cols.get(6).and_then(|s| s.parse::<f64>().ok()) else {
             continue;
         };
         total_ms.push(total);

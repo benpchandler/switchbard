@@ -51,7 +51,7 @@ pub(super) fn render_task_detail(
                 .stroke(theme::surface_stroke())
                 .corner_radius(7.0)
                 .inner_margin(egui::Margin::same(10))
-                .show(ui, |ui| render_detail_header(ui, repo, task, editable));
+                .show(ui, |ui| render_detail_header(app, ui, repo, task, editable));
             ui.add_space(8.0);
             egui::Frame::default()
                 .fill(theme::card_bg())
@@ -94,7 +94,13 @@ pub(super) fn render_task_detail(
         });
 }
 
-fn render_detail_header(ui: &mut egui::Ui, repo: &RepoRow, task: &BacklogTask, editable: bool) {
+fn render_detail_header(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    repo: &RepoRow,
+    task: &BacklogTask,
+    editable: bool,
+) {
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(&task.id)
@@ -122,6 +128,32 @@ fn render_detail_header(ui: &mut egui::Ui, repo: &RepoRow, task: &BacklogTask, e
                 Some("Blocked by one or more open dependencies — see Dependencies below"),
             );
         }
+        // TASK-96: the task-kind favorite star, flush right — explicit
+        // affordance, no auto-population. `repo.key` is the backlog
+        // project root (the same key `FavoriteRef::repo` uses everywhere
+        // else this app favorites something).
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let favorited = app.is_favorited(
+                switchbard_core::config::FavoriteKind::Task,
+                &repo.key,
+                &task.id,
+            );
+            let hover = if favorited {
+                "Remove from Favorites"
+            } else {
+                "Add to Favorites"
+            };
+            if theme::favorite_star_button(ui, favorited)
+                .on_hover_text(hover)
+                .clicked()
+            {
+                app.toggle_favorite(
+                    switchbard_core::config::FavoriteKind::Task,
+                    &repo.key,
+                    &task.id,
+                );
+            }
+        });
     });
     ui.label(egui::RichText::new(&task.title).heading().strong());
     ui.label(

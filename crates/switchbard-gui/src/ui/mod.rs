@@ -12,6 +12,7 @@ pub mod components;
 pub mod dispatch;
 pub mod filter_bar;
 pub mod legibility;
+pub mod nav;
 pub mod onboarding;
 pub mod path_display;
 pub mod settings;

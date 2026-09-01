@@ -40,22 +40,179 @@ pub struct OrderingState {
     pub warning: Option<String>,
 }
 
-/// Top-level central-panel tab.
+/// IA V2 (TASK-96, trajectory: *Information architecture V2*): the sidebar's
+/// five top-level places, replacing the old `ViewTab` surface-type tabs.
+/// `Digest` is the landing place — every session starts here regardless of
+/// where the last one ended (see `HiveApp::new_headless`'s doc on why `place`
+/// is session-only, unlike `TasksView` and filter facets which are not
+/// persisted either but for the same "always land somewhere sane" reason).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ViewTab {
+pub enum Place {
     #[default]
-    Servers,
-    Agents,
-    Backlog,
-    Dispatch,
+    Digest,
+    Tasks,
+    Command,
+    Goals,
+    Ops,
 }
 
-/// Sibling surfaces within the top-level Agents view.
+impl Place {
+    /// Stable name for accessibility labels / hover text — never shown
+    /// verbatim to a screen reader without the glyph's own `.on_hover_text`,
+    /// but kept as the one spelling every call site shares.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Digest => "Digest",
+            Self::Tasks => "Tasks",
+            Self::Command => "Command",
+            Self::Goals => "Goals",
+            Self::Ops => "Ops",
+        }
+    }
+}
+
+/// The two built-in views under the Tasks place (TASK-96 decision record:
+/// "under Tasks live only the built-in views (All tasks, Dispatches)").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TasksView {
+    #[default]
+    All,
+    Dispatches,
+}
+
+/// Sibling surfaces within the top-level Command place (formerly "Agents").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AgentsSection {
     #[default]
     Context,
     Hooks,
+}
+
+/// TASK-96: `UiConfig.filters` records re-key from the old lens/tab names to
+/// the new place/view names as each place lands — the decision record's
+/// rule is that an old key not named here is **dropped, not guessed**.
+/// `(old key, new key)` pairs; see [`migrate_filter_keys`].
+const FILTER_KEY_MIGRATIONS: &[(&str, &str)] = &[
+    ("servers", "ops"),
+    ("backlog", "tasks.all"),
+    ("dispatch", "tasks.dispatches"),
+    ("agents.context", "command.context"),
+    ("agents.hooks", "command.hooks"),
+];
+
+/// The current (post-migration) filter-surface keys — a key already spelled
+/// this way passes through unchanged, which is what makes running the
+/// migration twice a no-op. Kept as the one list [`migrate_filter_keys`]'s
+/// idempotency depends on; a new place's own restore/persist key should be
+/// added here the same day it starts writing under it.
+const CURRENT_FILTER_KEYS: &[&str] = &[
+    "digest",
+    "tasks.all",
+    "tasks.dispatches",
+    "command.context",
+    "command.hooks",
+    "command",
+    "goals",
+    "ops",
+];
+
+/// Pure re-key of `UiConfig.filters` from the pre-IA-V2 lens/tab names to the
+/// place/view names TASK-96 introduces. Applied once, on load
+/// (`HiveApp::new_headless`), never per-frame.
+///
+/// A key found in [`FILTER_KEY_MIGRATIONS`] is renamed, carrying its
+/// `FilterMemory` value across unchanged. A key already spelled as one of
+/// [`CURRENT_FILTER_KEYS`] passes through as-is (this is what makes the
+/// function idempotent — a config already migrated stays exactly as it is on
+/// every subsequent load). Anything else — an unrecognized old key, a typo, a
+/// hand-edited config — is dropped outright rather than guessed at, per the
+/// TASK-77 decision record.
+pub fn migrate_filter_keys(
+    filters: std::collections::BTreeMap<String, switchbard_core::config::FilterMemory>,
+) -> std::collections::BTreeMap<String, switchbard_core::config::FilterMemory> {
+    filters
+        .into_iter()
+        .filter_map(|(key, value)| {
+            if let Some((_, new_key)) = FILTER_KEY_MIGRATIONS.iter().find(|(old, _)| *old == key) {
+                Some((new_key.to_string(), value))
+            } else if CURRENT_FILTER_KEYS.contains(&key.as_str()) {
+                Some((key, value))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod filter_migration_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use switchbard_core::config::FilterMemory;
+
+    fn memory(query: &str) -> FilterMemory {
+        FilterMemory {
+            query: query.to_string(),
+            facets: std::collections::BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn mapped_keys_rename_and_keep_their_value() {
+        let mut filters = BTreeMap::new();
+        filters.insert("servers".to_string(), memory("attributed"));
+        filters.insert("backlog".to_string(), memory("triage"));
+        filters.insert("dispatch".to_string(), memory("failed"));
+        filters.insert("agents.context".to_string(), memory("ctx"));
+        filters.insert("agents.hooks".to_string(), memory("hooks"));
+
+        let migrated = migrate_filter_keys(filters);
+
+        assert_eq!(
+            migrated.get("ops").map(|m| m.query.as_str()),
+            Some("attributed")
+        );
+        assert_eq!(
+            migrated.get("tasks.all").map(|m| m.query.as_str()),
+            Some("triage")
+        );
+        assert_eq!(
+            migrated.get("tasks.dispatches").map(|m| m.query.as_str()),
+            Some("failed")
+        );
+        assert_eq!(
+            migrated.get("command.context").map(|m| m.query.as_str()),
+            Some("ctx")
+        );
+        assert_eq!(
+            migrated.get("command.hooks").map(|m| m.query.as_str()),
+            Some("hooks")
+        );
+        assert_eq!(migrated.len(), 5);
+    }
+
+    #[test]
+    fn unmatched_keys_are_dropped_not_guessed() {
+        let mut filters = BTreeMap::new();
+        filters.insert("agents".to_string(), memory("codex")); // bare shared facet, no mapping given
+        filters.insert("some-future-typo".to_string(), memory("x"));
+
+        let migrated = migrate_filter_keys(filters);
+
+        assert!(migrated.is_empty());
+    }
+
+    #[test]
+    fn migration_is_idempotent() {
+        let mut filters = BTreeMap::new();
+        filters.insert("servers".to_string(), memory("attributed"));
+        filters.insert("dispatch".to_string(), memory("failed"));
+
+        let once = migrate_filter_keys(filters);
+        let twice = migrate_filter_keys(once.clone());
+
+        assert_eq!(once, twice);
+    }
 }
 
 /// Identifies one task across every tracked Backlog project: the project's
@@ -277,7 +434,14 @@ impl Default for BacklogViewState {
 impl BacklogViewState {
     pub fn restore_filters(ui: &switchbard_core::config::UiConfig) -> Self {
         let mut state = Self::default();
-        let Some(memory) = ui.filters.get("backlog") else {
+        // TASK-96: this same `FilterMemory` entry also carries the Tasks/All
+        // free-text query (`HiveApp::active_filter_key` now returns
+        // "tasks.all" for `Place::Tasks`/`TasksView::All`) — the two must
+        // read/write the identical key or the query and these facets would
+        // silently split across two map entries. `migrate_filter_keys`
+        // already renamed any pre-IA-V2 "backlog" entry to "tasks.all" once,
+        // on load, so there is no old-key fallback to read here.
+        let Some(memory) = ui.filters.get("tasks.all") else {
             return state;
         };
         // "repo"/"repo_query" are the current keys; "project"/"project_query"
@@ -323,7 +487,7 @@ impl BacklogViewState {
     }
 
     pub fn persist_filters(&self, ui: &mut switchbard_core::config::UiConfig) {
-        let memory = ui.filters.entry("backlog".to_string()).or_default();
+        let memory = ui.filters.entry("tasks.all".to_string()).or_default();
         set_optional_facet(
             &mut memory.facets,
             "repo_query",
@@ -724,7 +888,13 @@ impl AgentContextViewState {
     /// navigation state at their safe session defaults.
     pub fn restore_filters(ui: &switchbard_core::config::UiConfig) -> Self {
         let mut state = Self::default();
-        let shared = ui.filters.get("agents");
+        // TASK-96: the Command place's shared agent-kind facet moved from
+        // "agents" to "command" — not one of `FILTER_KEY_MIGRATIONS`'s five
+        // pairs (the decision record's map names only the query-bearing
+        // per-section keys), so a pre-IA-V2 "agents" entry is dropped by
+        // `migrate_filter_keys` rather than carried across; this just picks
+        // the new key up going forward.
+        let shared = ui.filters.get("command");
         state.agent = match shared
             .and_then(|memory| memory.facets.get("agent"))
             .map(String::as_str)
@@ -733,7 +903,11 @@ impl AgentContextViewState {
             Some("all") => AgentContextAgent::All,
             _ => AgentContextAgent::Claude,
         };
-        if let Some(memory) = ui.filters.get("agents.context") {
+        // Same rationale as `BacklogViewState::restore_filters`: these two
+        // entries also carry Command's own free-text query per section
+        // (`active_filter_key` returns "command.context"/"command.hooks"),
+        // so the facet keys must match exactly.
+        if let Some(memory) = ui.filters.get("command.context") {
             state.scope = match memory.facets.get("scope").map(String::as_str) {
                 Some("directory") => ContextScope::Directory,
                 _ => ContextScope::Local,
@@ -750,7 +924,7 @@ impl AgentContextViewState {
                     _ => None,
                 });
         }
-        if let Some(memory) = ui.filters.get("agents.hooks") {
+        if let Some(memory) = ui.filters.get("command.hooks") {
             state.hook_scope = memory
                 .facets
                 .get("scope")
@@ -767,7 +941,7 @@ impl AgentContextViewState {
     }
 
     pub fn persist_filters(&self, ui: &mut switchbard_core::config::UiConfig) {
-        let shared = ui.filters.entry("agents".to_string()).or_default();
+        let shared = ui.filters.entry("command".to_string()).or_default();
         shared.facets.insert(
             "agent".to_string(),
             match self.agent {
@@ -778,7 +952,7 @@ impl AgentContextViewState {
             .to_string(),
         );
 
-        let context = ui.filters.entry("agents.context".to_string()).or_default();
+        let context = ui.filters.entry("command.context".to_string()).or_default();
         context.facets.insert(
             "scope".to_string(),
             match self.scope {
@@ -806,7 +980,7 @@ impl AgentContextViewState {
             }
         }
 
-        let hooks = ui.filters.entry("agents.hooks".to_string()).or_default();
+        let hooks = ui.filters.entry("command.hooks".to_string()).or_default();
         set_optional_facet(
             &mut hooks.facets,
             "scope",
@@ -1015,6 +1189,26 @@ pub struct WorktreeSizeEntry {
 pub struct LandingEntry {
     pub stage: LandingStage,
     pub computed_at: Instant,
+}
+
+/// TASK-96 (post-review widening): is `path` — a tracked repo's root —
+/// inside the sidebar's multi-select scope? An empty `scope` means "all
+/// repos". This is **the** scope-membership primitive; every scope-aware
+/// surface in this app (Workspace/Ops, Agents/Command, Backlog's
+/// `scoped_repos`, the Dispatches list, the dispatch summary the nav badge
+/// and footer lamp read) routes through this function or [`repo_in_scope`]
+/// rather than re-deriving `scope.is_empty() || scope.contains(..)` inline —
+/// "no restriction" must not drift into "no repos" on one surface while
+/// another still reads it correctly, and a hand-rolled copy is exactly how
+/// that drift happens.
+pub fn path_in_scope(path: &Path, scope: &BTreeSet<PathBuf>) -> bool {
+    scope.is_empty() || scope.contains(path)
+}
+
+/// `Repo`-typed convenience wrapper over [`path_in_scope`] for the surfaces
+/// that already have a `&Repo` in hand (Workspace/Ops, Agents/Command).
+pub fn repo_in_scope(repo: &Repo, scope: &BTreeSet<PathBuf>) -> bool {
+    path_in_scope(&repo.path, scope)
 }
 
 /// Is `w` the primary checkout of its repo? A cheap "same path" check — good
@@ -1462,7 +1656,7 @@ mod tests {
         // A config written before the repo-vocabulary rename stored the repo
         // scope under "project"/"project_query".
         let mut ui = switchbard_core::config::UiConfig::default();
-        let memory = ui.filters.entry("backlog".to_string()).or_default();
+        let memory = ui.filters.entry("tasks.all".to_string()).or_default();
         memory
             .facets
             .insert("project".to_string(), "/tmp/legacy".to_string());
@@ -1476,7 +1670,7 @@ mod tests {
 
         // Re-persisting writes the new keys and drops the legacy spellings.
         restored.persist_filters(&mut ui);
-        let memory = ui.filters.get("backlog").expect("backlog memory");
+        let memory = ui.filters.get("tasks.all").expect("tasks.all memory");
         assert_eq!(
             memory.facets.get("repo").map(String::as_str),
             Some("/tmp/legacy")
@@ -1490,7 +1684,7 @@ mod tests {
 
         // New keys win when both spellings are present.
         let mut both = switchbard_core::config::UiConfig::default();
-        let memory = both.filters.entry("backlog".to_string()).or_default();
+        let memory = both.filters.entry("tasks.all".to_string()).or_default();
         memory
             .facets
             .insert("project".to_string(), "/tmp/old".to_string());
@@ -1723,7 +1917,7 @@ mod tests {
     #[test]
     fn project_name_facet_restores_from_the_legacy_milestone_key_and_purges_it() {
         let mut ui = switchbard_core::config::UiConfig::default();
-        let memory = ui.filters.entry("backlog".to_string()).or_default();
+        let memory = ui.filters.entry("tasks.all".to_string()).or_default();
         memory
             .facets
             .insert("milestone".to_string(), "Lucella cutover".to_string());
@@ -1732,7 +1926,7 @@ mod tests {
         assert_eq!(restored.project_filter, "Lucella cutover");
 
         restored.persist_filters(&mut ui);
-        let memory = ui.filters.get("backlog").expect("backlog memory");
+        let memory = ui.filters.get("tasks.all").expect("tasks.all memory");
         assert_eq!(
             memory.facets.get("project_name").map(String::as_str),
             Some("Lucella cutover")

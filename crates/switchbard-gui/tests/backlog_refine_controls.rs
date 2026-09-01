@@ -27,7 +27,7 @@ use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
 use switchbard_core::{BacklogRepo, BacklogTask, BacklogTaskSource};
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{BacklogLens, ViewTab};
+use switchbard_gui::runtime::{BacklogLens, Place};
 
 fn task(source: BacklogTaskSource) -> BacklogTask {
     BacklogTask {
@@ -59,7 +59,7 @@ fn task(source: BacklogTaskSource) -> BacklogTask {
 /// repo`, and editability matters to this button.
 fn rail_app(task: BacklogTask) -> HiveApp {
     let mut app = seeded_app();
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     app.backlog_view.show_archived = true;

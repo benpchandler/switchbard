@@ -28,6 +28,85 @@ struct DigestRow<'a> {
     subtitle: Option<String>,
 }
 
+/// IA V2 (TASK-96) transition routing: the Digest **place**'s body —
+/// everything `render_digest` below draws, wrapped in exactly the snapshot
+/// collection / pending-mutation plumbing `ui::backlog::render` would
+/// otherwise supply. Deliberately does **not** call the whole
+/// `ui::backlog::render`: that would also draw the lens-tabs/toolbar chrome
+/// meant for the *Tasks* place, and TASK-96's routing map calls for "the
+/// existing Backlog Digest lens body" here, not "the whole Backlog view"
+/// (contrast `Place::Tasks`'s routing, which does reuse the whole thing).
+///
+/// Still renders the persistent detail rail (`rail::render_detail_rail`) so
+/// clicking a task in any Digest section shows its detail exactly as it
+/// would from the Tasks place — Digest place and Tasks place share one
+/// `backlog_view.selected_task`, deliberately: there is only one "the task
+/// you're looking at" per the owner UX pass's rail doc.
+pub(crate) fn render_digest_place(app: &mut HiveApp, ui: &mut egui::Ui) {
+    let snap = Snapshot::collect(app);
+    let mut pending = super::Pending::default();
+
+    if !snap.repos.is_empty() {
+        super::rail::render_detail_rail(app, ui, &snap, &mut pending);
+    }
+
+    let frame = egui::Frame::central_panel(&ui.ctx().style_of(ui.ctx().theme()))
+        .inner_margin(egui::Margin::same(12));
+    egui::CentralPanel::default().frame(frame).show(ui, |ui| {
+        if snap.repos.is_empty() {
+            render_empty_digest(ui);
+            return;
+        }
+        render_digest(app, ui, &snap, &mut pending);
+    });
+
+    let ctx = &ui.ctx().clone();
+    super::goal_create::render_goal_modal(app, ctx, &snap, &mut pending);
+    super::apply_pending(app, ui, pending);
+}
+
+fn render_empty_digest(ui: &mut egui::Ui) {
+    ui.vertical_centered(|ui| {
+        ui.add_space(80.0);
+        ui.heading("Digest");
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new(
+                "No tracked worktrees have a backlog/config.yml or backlog/tasks directory.",
+            )
+            .color(theme::muted_text()),
+        );
+    });
+}
+
+/// IA V2 (TASK-96) transition routing: the Goals **place**'s interim body —
+/// just `render_goals_section` (the Digest lens's own "This week's goals"
+/// section), given the same CentralPanel/Pending/modal plumbing
+/// `render_digest_place` gives the Digest place above. The decision record
+/// calls this out explicitly as interim: a real Goals index (create/edit
+/// affordances, inline check-in on every row) is a later fireteam's slice,
+/// not this one's.
+pub(crate) fn render_goals_place(app: &mut HiveApp, ui: &mut egui::Ui) {
+    let snap = Snapshot::collect(app);
+    let scoped = scoped_repos(app, &snap);
+    let mut pending = super::Pending::default();
+
+    let frame = egui::Frame::central_panel(&ui.ctx().style_of(ui.ctx().theme()))
+        .inner_margin(egui::Margin::same(12));
+    egui::CentralPanel::default().frame(frame).show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("goals_place")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                render_goals_section(app, ui, &scoped, &mut pending);
+            });
+    });
+
+    let ctx = &ui.ctx().clone();
+    super::goal_create::render_goal_modal(app, ctx, &snap, &mut pending);
+    super::apply_pending(app, ui, pending);
+}
+
 pub(super) fn render_digest(
     app: &mut HiveApp,
     ui: &mut egui::Ui,
@@ -247,6 +326,30 @@ fn render_goal_card(
                         .color(theme::muted_text()),
                 );
             }
+            // TASK-96: the goal-kind favorite star, flush right — explicit
+            // affordance, no auto-population.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let favorited = app.is_favorited(
+                    switchbard_core::config::FavoriteKind::Goal,
+                    &repo.key,
+                    &status.name,
+                );
+                let hover = if favorited {
+                    "Remove from Favorites"
+                } else {
+                    "Add to Favorites"
+                };
+                if theme::favorite_star_button(ui, favorited)
+                    .on_hover_text(hover)
+                    .clicked()
+                {
+                    app.toggle_favorite(
+                        switchbard_core::config::FavoriteKind::Goal,
+                        &repo.key,
+                        &status.name,
+                    );
+                }
+            });
         });
         ui.horizontal(|ui| {
             let bar =

@@ -33,7 +33,7 @@ use switchbard_core::{
     DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{BacklogLens, ViewTab};
+use switchbard_gui::runtime::{BacklogLens, Place};
 
 fn output_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/qa/screenshots")
@@ -106,7 +106,7 @@ fn project_with(tasks: Vec<BacklogTask>) -> BacklogRepo {
 fn app_with(theme: ThemeChoice, lens: BacklogLens, tasks: Vec<BacklogTask>) -> HiveApp {
     let mut app = seeded_app();
     app.config.ui.theme = theme;
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = lens;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     app.backlog_repos
@@ -184,6 +184,11 @@ fn shots_for_theme(theme: ThemeChoice) {
     {
         let mut app = seeded_app();
         app.config.ui.theme = theme;
+        // TASK-96: the top bar's filter row (holding the global filter
+        // input this shot exists to prove) only renders for Ops/Tasks now
+        // — `seeded_app()`'s default `Place::Digest` has no filter row at
+        // all, which is what this screenshot is not testing.
+        app.place = Place::Ops;
         let mut h = harness(app);
         h.run();
         h.query_all(kittest::by().role(egui::accesskit::Role::TextInput))
@@ -408,6 +413,49 @@ fn shots_for_theme(theme: ThemeChoice) {
         let mut h = harness(app);
         h.run();
         snapshot(&mut h, &format!("backlog_dispatch_{state_name}{suffix}"));
+    }
+
+    // TASK-96 (IA V2 sidebar shell): the expanded places nav, with a
+    // repo scope narrowed to one repo and every favorite kind populated so
+    // the FAVORITES group, the scope selector's "1 repo" label, and every
+    // place's count badge all have something real to show.
+    {
+        let mut app = app_with(
+            theme,
+            BacklogLens::Digest,
+            vec![sample_task("TASK-1", "Nav screenshot task", "In Progress")],
+        );
+        app.place = Place::Digest;
+        app.repo_scope = std::iter::once(PathBuf::from(REPO_PATH)).collect();
+        app.config.ui.favorites = vec![
+            switchbard_core::config::FavoriteRef {
+                kind: switchbard_core::config::FavoriteKind::Project,
+                repo: REPO_PATH.to_string(),
+                key: "Stack Ranking".to_string(),
+            },
+            switchbard_core::config::FavoriteRef {
+                kind: switchbard_core::config::FavoriteKind::Task,
+                repo: REPO_PATH.to_string(),
+                key: "TASK-1".to_string(),
+            },
+            switchbard_core::config::FavoriteRef {
+                kind: switchbard_core::config::FavoriteKind::Goal,
+                repo: REPO_PATH.to_string(),
+                key: "Dispatch throughput".to_string(),
+            },
+        ];
+        let mut h = harness(app);
+        h.run();
+        snapshot(&mut h, &format!("nav_expanded{suffix}"));
+    }
+
+    // TASK-96 narrow-width icon rail (mock §4/§7d).
+    {
+        let app = app_with(theme, BacklogLens::Digest, vec![]);
+        let mut h = harness(app);
+        h.set_size(egui::vec2(600.0, 700.0));
+        h.run();
+        snapshot(&mut h, &format!("nav_rail_narrow{suffix}"));
     }
 }
 

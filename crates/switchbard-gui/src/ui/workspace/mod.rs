@@ -213,7 +213,17 @@ impl Snapshot {
         }
 
         Self {
-            repos: app.repos_snapshot(),
+            // TASK-96: the sidebar's repo scope is the outer filter every
+            // place aggregates over — filtering `repos` here (the source
+            // every render loop in this module iterates) is the one place
+            // Ops needs to apply it; `worktrees`/`services`/`listeners_by_wt`
+            // etc. are all keyed off worktree paths whose owning repo is
+            // matched by name via this same filtered `repos` list.
+            repos: app
+                .repos_snapshot()
+                .into_iter()
+                .filter(|repo| crate::runtime::repo_in_scope(repo, &app.repo_scope))
+                .collect(),
             worktrees: app.worktrees_snapshot(),
             meta,
             sizes: app.sizes.lock().unwrap().clone(),

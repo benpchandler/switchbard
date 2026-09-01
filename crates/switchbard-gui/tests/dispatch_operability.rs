@@ -29,7 +29,7 @@ use switchbard_core::{
     DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::ViewTab;
+use switchbard_gui::runtime::{Place, TasksView};
 
 fn task(id: &str, labels: &[&str], notes: &str) -> BacklogTask {
     BacklogTask {
@@ -178,12 +178,15 @@ fn text_containing(harness: &Harness<'_, HiveApp>, needle: &str) -> Vec<String> 
 /// likely to introduce, so it is asserted first.
 #[test]
 fn top_bar_shows_no_dispatch_chip_when_nothing_is_flagged() {
-    let harness = harness_with(vec![task("TASK-1", &[], "")], vec![]);
+    let mut app = app_with(vec![task("TASK-1", &[], "")], vec![]);
+    app.place = Place::Tasks;
+    let mut harness = harness(app);
+    harness.run();
 
     assert_eq!(dispatch_chip(&harness), None);
     assert!(
         harness.query_by_label("Dispatches").is_some(),
-        "the tab itself still renders, unbadged"
+        "the Tasks place's Dispatches subview still renders, unbadged"
     );
 }
 
@@ -191,7 +194,7 @@ fn top_bar_shows_no_dispatch_chip_when_nothing_is_flagged() {
 /// it must not leave a chip lit forever.
 #[test]
 fn a_dispatched_task_awaiting_review_lights_no_chip() {
-    let harness = harness_with(
+    let mut app = app_with(
         vec![task(
             "TASK-1",
             &[DISPATCHED_LABEL],
@@ -199,6 +202,9 @@ fn a_dispatched_task_awaiting_review_lights_no_chip() {
         )],
         vec![run("TASK-1", 3_000)],
     );
+    app.place = Place::Tasks;
+    let mut harness = harness(app);
+    harness.run();
 
     assert_eq!(dispatch_chip(&harness), None);
     assert!(harness.query_by_label("Dispatches").is_some());
@@ -220,15 +226,26 @@ fn top_bar_chip_counts_running_agents_and_navigates_to_the_dispatches_tab() {
         "chip should count both runs and lead with the oldest one's elapsed time: {chip:?}"
     );
     assert_eq!(
-        harness.state().view_tab,
-        ViewTab::Servers,
-        "precondition: the chip is visible from a tab that is not Dispatches"
+        harness.state().place,
+        Place::Digest,
+        "precondition: the chip is visible from a place that is not Tasks/Dispatches"
     );
 
-    harness.get_by_label(chip.as_str()).click();
+    // IA V2 (TASK-96): the nav footer's ambient lamp (`ui::nav`) renders the
+    // exact same `DispatchSummary::chip_text()` the top bar's own chip does
+    // — "two renderings of the same fact" by nav's own doc — so the label is
+    // no longer unique. `get_all_by_label` plus paint order (`top_bar::
+    // render` runs before `nav::render` in `HiveApp::render_ui`) picks the
+    // top-bar chip specifically, matching this test's own name.
+    harness
+        .get_all_by_label(chip.as_str())
+        .next()
+        .expect("chip renders in both the top bar and the nav footer lamp")
+        .click();
     harness.run();
 
-    assert_eq!(harness.state().view_tab, ViewTab::Dispatch);
+    assert_eq!(harness.state().place, Place::Tasks);
+    assert_eq!(harness.state().tasks_view, TasksView::Dispatches);
 }
 
 /// The attention flip, through the real widget: a failed run changes the
@@ -278,7 +295,7 @@ fn top_bar_chip_treats_a_run_past_its_stale_after_threshold_as_needing_attention
 /// queue of flagged-but-unstarted tasks does not inflate it.
 #[test]
 fn dispatches_tab_badge_counts_runs_not_queue_depth() {
-    let harness = harness_with(
+    let mut app = app_with(
         vec![
             task("TASK-1", &[DISPATCHING_LABEL], ""),
             task("TASK-2", &[DISPATCH_FAILED_LABEL], ""),
@@ -287,6 +304,9 @@ fn dispatches_tab_badge_counts_runs_not_queue_depth() {
         ],
         vec![run("TASK-1", 90)],
     );
+    app.place = Place::Tasks;
+    let mut harness = harness(app);
+    harness.run();
 
     assert!(
         harness.query_by_label("Dispatches (2)").is_some(),
@@ -312,7 +332,8 @@ fn an_in_flight_row_shows_its_running_time_and_no_hard_kill_deadline() {
         vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
         vec![live_run("TASK-1", 300, 4242)],
     );
-    app.view_tab = ViewTab::Dispatch;
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::Dispatches;
     let mut harness = harness(app);
     harness.run();
 
@@ -333,7 +354,8 @@ fn a_stale_in_flight_row_still_reads_as_running_not_as_doomed() {
         vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
         vec![live_run("TASK-1", 31 * 60, 4242)],
     );
-    app.view_tab = ViewTab::Dispatch;
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::Dispatches;
     let mut harness = harness(app);
     harness.run();
 
@@ -359,7 +381,8 @@ fn the_kill_button_is_confirm_armed_and_cancellable() {
         vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
         vec![live_run("TASK-1", 300, 4242)],
     );
-    app.view_tab = ViewTab::Dispatch;
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::Dispatches;
     let mut harness = harness(app);
     harness.run();
 
@@ -400,7 +423,8 @@ fn a_run_without_a_verified_process_offers_no_kill_and_no_deadline() {
         vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
         vec![run("TASK-1", 300)],
     );
-    app.view_tab = ViewTab::Dispatch;
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::Dispatches;
     let mut harness = harness(app);
     harness.run();
 
@@ -443,7 +467,8 @@ fn an_unverifiable_sidecar_never_arms_a_kill_whatever_the_reason() {
                 DispatchRunLiveness::Unverifiable(doubt),
             )],
         );
-        app.view_tab = ViewTab::Dispatch;
+        app.place = Place::Tasks;
+        app.tasks_view = TasksView::Dispatches;
         let mut harness = harness(app);
         harness.run();
 
@@ -473,7 +498,8 @@ fn a_run_whose_group_died_reads_as_abandoned_and_offers_no_kill() {
         vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
         vec![run_with("TASK-1", 300, DispatchRunLiveness::Gone)],
     );
-    app.view_tab = ViewTab::Dispatch;
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::Dispatches;
     let mut harness = harness(app);
     harness.run();
 
@@ -511,7 +537,8 @@ fn an_unsupervised_live_run_offers_an_honestly_labelled_kill() {
             },
         )],
     );
-    app.view_tab = ViewTab::Dispatch;
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::Dispatches;
     let mut harness = harness(app);
     harness.run();
 
@@ -545,7 +572,8 @@ fn a_supervised_kill_promises_the_release_the_pipeline_will_actually_do() {
         vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
         vec![live_run("TASK-1", 300, 4242)],
     );
-    app.view_tab = ViewTab::Dispatch;
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::Dispatches;
     let mut harness = harness(app);
     harness.run();
 
@@ -567,7 +595,8 @@ fn a_supervised_kill_promises_the_release_the_pipeline_will_actually_do() {
 #[test]
 fn a_queued_task_offers_no_kill_button() {
     let mut app = app_with(vec![task("TASK-1", &[DISPATCH_LABEL], "")], vec![]);
-    app.view_tab = ViewTab::Dispatch;
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::Dispatches;
     let mut harness = harness(app);
     harness.run();
 

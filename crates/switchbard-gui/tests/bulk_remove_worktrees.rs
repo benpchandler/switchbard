@@ -37,6 +37,7 @@ use switchbard_core::dispatch_inspect::{DispatchRun, DispatchRunLiveness};
 use switchbard_core::git_cmd;
 use switchbard_core::{Repo, WorktreeRef};
 use switchbard_gui::app::HiveApp;
+use switchbard_gui::runtime::Place;
 
 /// One repo, one primary + three linked worktrees covering the three
 /// classification outcomes the bulk dialog must distinguish:
@@ -141,6 +142,11 @@ fn app_with_worktrees(repo: PathBuf, worktrees: Vec<WorktreeRef>) -> HiveApp {
     // MUST be set on every test-constructed HiveApp — see `common::
     // isolated_config_save_path`'s doc (this is exactly how TASK-22 happened).
     app.config_save_path = Some(isolated_config_save_path());
+    // IA V2 (TASK-96): `place` now defaults to `Place::Digest`, not the old
+    // `ViewTab::Servers` default this fixture used to get for free — every
+    // worktree row this suite clicks lives in the Ops place's Workspace
+    // body, which otherwise never renders.
+    app.place = Place::Ops;
     app
 }
 
@@ -381,8 +387,26 @@ fn click_at(harness: &egui_kittest::Harness<'static, HiveApp>, pos: egui::Pos2) 
 /// anchored to the head SHA, which has since been deleted from the row.
 fn blank_spot_in_row(harness: &egui_kittest::Harness<'static, HiveApp>) -> egui::Pos2 {
     let name = harness.get_by_label("wt-clean-merged").rect();
+    let row_y = name.center().y;
+
+    // TASK-96: the row's own bulk-select checkbox (same query
+    // `the_row_checkbox_toggles_selection_exactly_once` uses) as the row's
+    // real left edge. Without this anchor, `nodes_on_row_line` below also
+    // picks up whatever else happens to cross this same `row_y` clear across
+    // the window — the IA V2 places nav and the legacy "Tracked repos"
+    // panel both run the full window height to its left — and "the widest
+    // gap between spans" then finds the gap *between unrelated side panels*
+    // rather than blank space inside this row.
+    let checkbox_left = harness
+        .get_all_by_role(egui::accesskit::Role::CheckBox)
+        .filter(|n| n.rect().y_range().contains(row_y))
+        .map(|n| n.rect().left())
+        .next()
+        .expect("the linked row has exactly one checkbox");
+
     let mut spans = Vec::new();
-    nodes_on_row_line(harness, name.center().y, &mut spans);
+    nodes_on_row_line(harness, row_y, &mut spans);
+    spans.retain(|r| r.left() + 0.5 >= checkbox_left);
     spans.sort_by(|a: &egui::Rect, b| a.left().total_cmp(&b.left()));
 
     let mut best: Option<(f32, egui::Pos2)> = None;
@@ -391,7 +415,7 @@ fn blank_spot_in_row(harness: &egui_kittest::Harness<'static, HiveApp>) -> egui:
         if best.is_none_or(|(w, _)| gap > w) {
             best = Some((
                 gap,
-                egui::pos2((pair[0].right() + pair[1].left()) / 2.0, name.center().y),
+                egui::pos2((pair[0].right() + pair[1].left()) / 2.0, row_y),
             ));
         }
     }
@@ -407,7 +431,20 @@ fn blank_spot_in_row(harness: &egui_kittest::Harness<'static, HiveApp>) -> egui:
     pos
 }
 
-/// Every accesskit node whose vertical span crosses `row_y`, in row order.
+/// A container tall enough to be a whole panel rather than one row's own
+/// widget — TASK-96's `ui::nav` (and the pre-existing `ui::sidebar` "Tracked
+/// repos" panel beside it) both run the full window height, so their own
+/// outer container nodes trivially cross *any* `row_y` on the page. Left
+/// unfiltered, that giant span sorts to the far left and turns "the widest
+/// gap between real per-row widgets" into "the widest gap that happens to
+/// include a whole unrelated side panel" — which is blank space, but not on
+/// this row.
+const MAX_ROW_WIDGET_HEIGHT: f32 = 60.0;
+
+/// Every accesskit node whose vertical span crosses `row_y` *and* is no
+/// taller than one row plausibly is, in row order — see
+/// `MAX_ROW_WIDGET_HEIGHT`'s doc for why the height cap is load-bearing, not
+/// cosmetic.
 fn nodes_on_row_line(
     harness: &egui_kittest::Harness<'static, HiveApp>,
     row_y: f32,
@@ -415,10 +452,11 @@ fn nodes_on_row_line(
 ) {
     fn walk(node: &egui_kittest::Node<'_>, row_y: f32, out: &mut Vec<egui::Rect>) {
         if let Some(b) = node.accesskit_node().raw_bounds() {
-            if (b.y0 as f32) <= row_y && row_y <= (b.y1 as f32) {
+            let (y0, y1) = (b.y0 as f32, b.y1 as f32);
+            if y0 <= row_y && row_y <= y1 && (y1 - y0) <= MAX_ROW_WIDGET_HEIGHT {
                 out.push(egui::Rect::from_min_max(
-                    egui::pos2(b.x0 as f32, b.y0 as f32),
-                    egui::pos2(b.x1 as f32, b.y1 as f32),
+                    egui::pos2(b.x0 as f32, y0),
+                    egui::pos2(b.x1 as f32, y1),
                 ));
             }
         }

@@ -276,6 +276,37 @@ fn render_project(
                     egui::ProgressBar::new(done as f32 / total.max(1) as f32)
                         .desired_width(PROGRESS_BAR_WIDTH),
                 );
+                // TASK-96: the project-kind favorite star, flush right —
+                // explicit affordance, no auto-population. Keyed by
+                // `rank_root` (the first scoped repo where this project
+                // name is live — the same repo a rank arrow here writes
+                // to); a name-merged project with no live repo at all
+                // (cannot happen for a rollup-born group, per this struct's
+                // own doc) has nothing to favorite.
+                if let Some(rank_root) = &project.rank_root {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let favorited = app.is_favorited(
+                            switchbard_core::config::FavoriteKind::Project,
+                            rank_root,
+                            &project.rollup.name,
+                        );
+                        let hover = if favorited {
+                            "Remove from Favorites"
+                        } else {
+                            "Add to Favorites"
+                        };
+                        if theme::favorite_star_button(ui, favorited)
+                            .on_hover_text(hover)
+                            .clicked()
+                        {
+                            app.toggle_favorite(
+                                switchbard_core::config::FavoriteKind::Project,
+                                rank_root,
+                                &project.rollup.name,
+                            );
+                        }
+                    });
+                }
             });
             for row in &project.rows {
                 render_row(app, ui, row, show_repo, pending);

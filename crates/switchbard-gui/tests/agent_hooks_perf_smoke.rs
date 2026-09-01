@@ -12,7 +12,7 @@ use common::{harness, isolated_config_save_path};
 use switchbard_core::config::Config;
 use switchbard_core::{AgentContextMap, AgentHook, AgentKind, ContextScope, Repo, WorktreeRef};
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{AgentsSection, ViewTab};
+use switchbard_gui::runtime::{AgentsSection, Place};
 
 const REPOS: usize = 8;
 const HOOKS_PER_REPO: usize = 30;
@@ -39,7 +39,7 @@ fn build_fixture() -> HiveApp {
     config.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(config, repos, worktrees.clone());
     app.config_save_path = Some(isolated_config_save_path());
-    app.view_tab = ViewTab::Agents;
+    app.place = Place::Command;
     app.agent_context_view.section = AgentsSection::Hooks;
     let maps = worktrees
         .iter()

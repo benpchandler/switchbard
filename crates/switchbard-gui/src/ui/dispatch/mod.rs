@@ -23,10 +23,13 @@
 //! and recomputes just `elapsed` from the cached start stamp, so the elapsed
 //! time still ticks live at frame rate without a `read_dir` per row.
 //!
-//! [`summarize_dispatch`] holds that line for the *top bar*, which renders on
-//! every frame of every tab. It walks the same two caches without cloning a
-//! task or a run — the row-building path below clones because it renders the
-//! rows; the summary only counts them.
+//! [`summarize_dispatch`] holds that line for the top bar's chip and the
+//! nav's badge/footer lamp (`ui::nav`), all three of which render on every
+//! frame regardless of which place is active — computed once per frame by
+//! `HiveApp::render_ui` and passed down, never recomputed per-reader. It
+//! walks the same two caches without cloning a task or a run — the
+//! row-building path below clones because it renders the rows; the summary
+//! only counts them.
 //!
 //! ## The Kill button
 //!
@@ -48,9 +51,15 @@ use std::time::Duration;
 use switchbard_core::dispatch_inspect::{now_unix, DispatchRun};
 use switchbard_core::{BacklogTask, DispatchOptions};
 
-/// Ambient dispatch counts for the top bar — the chip and the Dispatches tab
-/// badge, i.e. the answer to "is anything running?" from a tab that is not
-/// this one.
+/// Ambient dispatch counts shared by the top bar's chip, the nav's Tasks
+/// place "Dispatches (N)" badge, and the nav's footer lamp — the answer to
+/// "is anything running?" from wherever you are. Scoped by the sidebar's
+/// repo scope (TASK-96 post-review), the same as the Dispatches list itself
+/// (`collect_rows`): one scoping rule everywhere, so narrowing scope can
+/// never leave an ambient indicator claiming a run the list doesn't show.
+/// Computed once per frame in `HiveApp::render_ui` and passed down to every
+/// reader — see that call site's own comment for why it must not be
+/// recomputed per-caller.
 ///
 /// The buckets are **disjoint**, so `queued + in_flight + needs_attention` is
 /// a real total rather than a double count. A stalled run lands in
@@ -196,6 +205,14 @@ pub(crate) fn summarize_dispatch(app: &HiveApp) -> DispatchSummary {
         let repos = app.backlog_repos.lock().unwrap();
         repos
             .iter()
+            // Post-review (TASK-96): scoped, matching `collect_rows` below —
+            // one scoping rule everywhere. Previously this fed the nav
+            // badge/footer lamp and the top-bar chip unscoped while the
+            // Dispatches list itself was already scoped, so narrowing scope
+            // could leave the badge/chip claiming runs the list didn't show
+            // at all. `root` is a repo root path (see `collect_rows`'s own
+            // doc), so this is the same `path_in_scope` check.
+            .filter(|(root, _)| crate::runtime::path_in_scope(root, &app.repo_scope))
             .flat_map(|(root, repo)| {
                 repo.tasks.iter().filter_map(move |task| {
                     match dispatch_ui::dispatch_category(task) {
@@ -346,6 +363,15 @@ fn collect_rows(app: &HiveApp) -> Vec<DispatchRow> {
 
     let mut rows: Vec<DispatchRow> = Vec::new();
     for (root, repo) in &backlog_repos {
+        // TASK-96: the Dispatches view (Tasks place) aggregates over the
+        // sidebar's repo scope. `root` is a repo root path (`backlog_repos`
+        // is keyed straight off the tracked repo list, never a worktree
+        // path — see `workers::backlog_repo_roots`), so this is the same
+        // `path_in_scope` membership check `ui::backlog::scoped_repos` and
+        // `summarize_dispatch` below use.
+        if !crate::runtime::path_in_scope(root, &app.repo_scope) {
+            continue;
+        }
         let repo_name = repos
             .iter()
             .find(|repo| &repo.path == root)

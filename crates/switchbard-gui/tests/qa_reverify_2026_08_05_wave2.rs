@@ -27,7 +27,7 @@ use egui_kittest::kittest::Queryable;
 use switchbard_core::config::Config;
 use switchbard_core::{BacklogTaskSource, Repo, WorktreeRef};
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{BacklogLens, ViewTab};
+use switchbard_gui::runtime::{BacklogLens, Place};
 
 /// Native fixture init — the directory shape plus a config declaring the
 /// standard trio, matching what `backlog init --defaults` used to produce
@@ -94,7 +94,7 @@ fn single_repo_app(root: &std::path::Path) -> HiveApp {
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     app.config_save_path = Some(isolated_config_save_path());
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(root.to_path_buf());
     app.backlog_repos.lock().unwrap().insert(
@@ -323,7 +323,7 @@ fn clean_up_old_tasks_completes_multiple_done_tasks_per_repo_across_two_real_rep
     cfg.ui.onboarding_dismissed = true;
     let mut app = HiveApp::new_headless(cfg, repos, worktrees);
     app.config_save_path = Some(isolated_config_save_path());
-    app.view_tab = ViewTab::Backlog;
+    app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     for root in [repo_a.path(), repo_b.path()] {
         app.backlog_repos.lock().unwrap().insert(

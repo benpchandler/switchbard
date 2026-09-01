@@ -18,6 +18,11 @@ const LOG_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 pub struct FrameSample {
     pub total: Duration,
     pub top_bar: Duration,
+    /// TASK-96: the IA V2 places sidebar (`ui::nav`) — always rendered,
+    /// unlike `sidebar` below.
+    pub nav: Duration,
+    /// The legacy "Tracked repos" panel (`ui::sidebar`) — Ops-place-only
+    /// since TASK-96, previously Servers-tab-only.
     pub sidebar: Duration,
     pub central: Duration,
     pub workspace: Duration,
@@ -141,6 +146,10 @@ impl PerfSession {
         self.current.top_bar = duration;
     }
 
+    pub fn record_nav(&mut self, duration: Duration) {
+        self.current.nav = duration;
+    }
+
     pub fn record_sidebar(&mut self, duration: Duration) {
         self.current.sidebar = duration;
     }
@@ -220,7 +229,7 @@ fn open_perf_log(path: &Path) -> Option<BufWriter<File>> {
     let mut writer = BufWriter::new(file);
     let _ = writeln!(
         writer,
-        "frame,total_ms,top_bar_ms,sidebar_ms,central_ms,workspace_ms,onboarding_ms,rows,expanded_rows,services,listeners"
+        "frame,total_ms,top_bar_ms,nav_ms,sidebar_ms,central_ms,workspace_ms,onboarding_ms,rows,expanded_rows,services,listeners"
     );
     Some(writer)
 }
@@ -232,10 +241,11 @@ impl PerfSession {
         };
         let _ = writeln!(
             writer,
-            "{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{},{},{},{}",
+            "{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{},{},{},{}",
             self.frame_index,
             ms(sample.total),
             ms(sample.top_bar),
+            ms(sample.nav),
             ms(sample.sidebar),
             ms(sample.central),
             ms(sample.workspace),

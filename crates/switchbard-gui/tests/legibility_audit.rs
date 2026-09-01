@@ -51,7 +51,7 @@ use switchbard_core::{
     LocalListener, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{AgentsSection, BacklogLens, ViewTab};
+use switchbard_gui::runtime::{AgentsSection, BacklogLens, Place};
 use switchbard_gui::ui::legibility;
 
 /// One painted run of text with a single resolved size + color.
@@ -578,8 +578,12 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     write_preview_fixture();
     let suffix = format!(" [{theme:?}]");
 
-    let mut servers_app = seeded_app(); // defaults to ViewTab::Servers
+    // IA V2 (TASK-96): `Place::Digest` is the session default now, not the
+    // Ops/workspace view — explicit here so this fixture keeps auditing the
+    // Ops view (top bar + sidebar + workspace) it is named and seeded for.
+    let mut servers_app = seeded_app();
     servers_app.config.ui.theme = theme;
+    servers_app.place = Place::Ops;
     seed_live_listener(&servers_app);
     let servers = harness(servers_app);
 
@@ -592,36 +596,38 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     // others — see `seed_selected_linked_worktree`.
     let mut selected_app = seeded_app();
     selected_app.config.ui.theme = theme;
+    selected_app.place = Place::Ops;
     seed_selected_linked_worktree(&mut selected_app);
     let selected_row = harness(selected_app);
 
     let mut sidebar_collapsed_app = seeded_app();
     sidebar_collapsed_app.config.ui.theme = theme;
+    sidebar_collapsed_app.place = Place::Ops;
     sidebar_collapsed_app.config.ui.sidebar_collapsed = true;
     let sidebar_collapsed = harness(sidebar_collapsed_app);
 
     let mut agent_app = seeded_app();
     agent_app.config.ui.theme = theme;
-    agent_app.view_tab = ViewTab::Agents;
+    agent_app.place = Place::Command;
     seed_live_listener(&agent_app);
     let agent = harness(agent_app);
 
     let mut hooks_app = seeded_app();
     hooks_app.config.ui.theme = theme;
-    hooks_app.view_tab = ViewTab::Agents;
+    hooks_app.place = Place::Command;
     hooks_app.agent_context_view.section = AgentsSection::Hooks;
     let hooks = harness(hooks_app);
 
     let mut drawer_app = seeded_app();
     drawer_app.config.ui.theme = theme;
-    drawer_app.view_tab = ViewTab::Agents;
+    drawer_app.place = Place::Command;
     drawer_app.agent_context_view.selected_id = Some("claude-md".to_string());
     seed_live_listener(&drawer_app);
     let drawer = harness(drawer_app);
 
     let mut digest_app = seeded_app();
     digest_app.config.ui.theme = theme;
-    digest_app.view_tab = ViewTab::Backlog;
+    digest_app.place = Place::Tasks;
     // Digest is `BacklogLens::default()` (task-21), so this fixture leaves
     // `lens` unset deliberately — it's exercising the default a real launch
     // sees, not just picking the enum's first variant.
@@ -637,7 +643,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
 
     let mut list_app = seeded_app();
     list_app.config.ui.theme = theme;
-    list_app.view_tab = ViewTab::Backlog;
+    list_app.place = Place::Tasks;
     // Explicit: `BacklogLens::default()` is `Digest`, not `List`, since
     // task-21 — without this, this fixture would silently audit Digest
     // twice and never touch the List lens's detail pane at all.
@@ -659,7 +665,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     // the audited draw list too.
     let mut dispatched_app = seeded_app();
     dispatched_app.config.ui.theme = theme;
-    dispatched_app.view_tab = ViewTab::Backlog;
+    dispatched_app.place = Place::Tasks;
     dispatched_app.backlog_view.lens = BacklogLens::List;
     dispatched_app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     dispatched_app.backlog_view.selected_task =
@@ -669,7 +675,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
 
     let mut dispatch_failed_app = seeded_app();
     dispatch_failed_app.config.ui.theme = theme;
-    dispatch_failed_app.view_tab = ViewTab::Backlog;
+    dispatch_failed_app.place = Place::Tasks;
     dispatch_failed_app.backlog_view.lens = BacklogLens::List;
     dispatch_failed_app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     dispatch_failed_app.backlog_view.selected_task =
@@ -686,7 +692,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     // state.
     let mut done_app = seeded_app();
     done_app.config.ui.theme = theme;
-    done_app.view_tab = ViewTab::Backlog;
+    done_app.place = Place::Tasks;
     done_app.backlog_view.lens = BacklogLens::List;
     done_app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     done_app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-9".to_string()));
@@ -702,14 +708,14 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
 
     let mut portfolio_app = seeded_app();
     portfolio_app.config.ui.theme = theme;
-    portfolio_app.view_tab = ViewTab::Backlog;
+    portfolio_app.place = Place::Tasks;
     portfolio_app.backlog_view.lens = BacklogLens::Portfolio;
     seed_backlog_project(&portfolio_app);
     let portfolio = harness(portfolio_app);
 
     let mut board_app = seeded_app();
     board_app.config.ui.theme = theme;
-    board_app.view_tab = ViewTab::Backlog;
+    board_app.place = Place::Tasks;
     board_app.backlog_view.lens = BacklogLens::Board;
     board_app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     seed_backlog_project(&board_app);
@@ -726,14 +732,14 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
 
     let mut milestones_app = seeded_app();
     milestones_app.config.ui.theme = theme;
-    milestones_app.view_tab = ViewTab::Backlog;
+    milestones_app.place = Place::Tasks;
     milestones_app.backlog_view.lens = BacklogLens::Projects;
     seed_backlog_project(&milestones_app);
     let milestones = harness(milestones_app);
 
     let mut stats_app = seeded_app();
     stats_app.config.ui.theme = theme;
-    stats_app.view_tab = ViewTab::Backlog;
+    stats_app.place = Place::Tasks;
     stats_app.backlog_view.lens = BacklogLens::Statistics;
     seed_backlog_project(&stats_app);
     let stats = harness(stats_app);

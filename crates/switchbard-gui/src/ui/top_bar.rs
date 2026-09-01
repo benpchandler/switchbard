@@ -3,9 +3,9 @@
 //! `workspace` panel below.
 
 use crate::app::{self, HiveApp};
-use crate::runtime::ViewTab;
+use crate::runtime::{Place, TasksView};
 use crate::ui::components::action_status_label;
-use crate::ui::dispatch::{self, DispatchSummary};
+use crate::ui::dispatch::DispatchSummary;
 use crate::ui::filter_bar;
 use crate::ui::theme;
 use crate::ui::theme::ThemeChoice;
@@ -13,12 +13,13 @@ use crate::ui::workspace;
 use eframe::egui;
 use switchbard_core::BROWSER_APP_NAMES;
 
-pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
+/// `dispatch_summary` is computed exactly once per frame by
+/// `HiveApp::render_ui` and passed to every reader (this chip, the nav
+/// badge, the nav footer lamp) — see that call site's comment and
+/// `ui::dispatch::summarize_dispatch`'s own doc for why it must not be
+/// recomputed here.
+pub(crate) fn render(app: &mut HiveApp, ui: &mut egui::Ui, dispatch_summary: DispatchSummary) {
     let ctx = &ui.ctx().clone();
-    // Counted once and shared by the chip and the tab badge: they are two
-    // renderings of the same fact, and computing it twice per frame would be
-    // two chances for them to disagree as well as twice the work.
-    let dispatch_summary = dispatch::summarize_dispatch(app);
     let frame = egui::Frame::side_top_panel(&ctx.style_of(ctx.theme()))
         .fill(theme::nav_bg())
         .inner_margin(egui::Margin::symmetric(10, 7))
@@ -46,62 +47,35 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
             ui.separator();
             render_actions(app, ui);
         });
-        ui.add_space(3.0);
-        ui.horizontal_wrapped(|ui| {
-            render_view_tabs(app, ui, dispatch_summary);
-            if app.view_tab != ViewTab::Agents {
-                ui.separator();
+        // IA V2 (TASK-96): the "view:" tab row is gone — the places sidebar
+        // (`ui::nav`) is the sole navigation surface now. The per-place
+        // filter controls row survives, keyed off `app.place` (and, under
+        // Tasks, `app.tasks_view`) instead of the old `ViewTab`, and only
+        // renders for the places that actually have a top-bar-level filter:
+        // Ops and Tasks. Command keeps its own richer facet bar
+        // (`ui::agents::render_filters`); Digest and Goals are read-only
+        // summary bodies with nothing here to filter.
+        if matches!(app.place, Place::Ops | Place::Tasks) {
+            ui.add_space(3.0);
+            ui.horizontal_wrapped(|ui| {
                 render_filter_controls(app, ui);
-            }
-        });
+            });
+        }
     });
 }
 
-/// Owner UX pass (2026-08-05): the view switcher gets its own `nav_bg()`
-/// band, distinct from the plain panel background the filter row sits on
-/// right next to it — navigation should read as its own zone, not blend
-/// into the content controls beside it.
-fn render_view_tabs(app: &mut HiveApp, ui: &mut egui::Ui, dispatch_summary: DispatchSummary) {
-    egui::Frame::default()
-        .fill(theme::card_bg())
-        .stroke(theme::surface_stroke())
-        .corner_radius(6.0)
-        .inner_margin(egui::Margin::symmetric(9, 4))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("view:");
-                ui.selectable_value(&mut app.view_tab, ViewTab::Servers, "Servers");
-                ui.selectable_value(&mut app.view_tab, ViewTab::Agents, "Agents");
-                ui.selectable_value(&mut app.view_tab, ViewTab::Backlog, "Backlog");
-                // "Dispatches", not "Dispatch": the per-task flag button in the
-                // Backlog detail rail is already labeled "Dispatch", and this
-                // repo deliberately keeps that string unique in the
-                // accessibility tree (see `detail_lists::render_dispatch`'s note
-                // on why it has no section header). The plural also reads as
-                // "the list of runs", which is what the view is.
-                // TASK-43: the badge count is appended to the same string
-                // rather than drawn as a separate widget, so the tab keeps a
-                // single accessible name and a test can assert the count by
-                // reading the label it can already find.
-                let dispatch_label = match dispatch_summary.badge_count() {
-                    0 => "Dispatches".to_string(),
-                    n => format!("Dispatches ({n})"),
-                };
-                ui.selectable_value(&mut app.view_tab, ViewTab::Dispatch, dispatch_label);
-            });
-        });
-}
-
 fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
-    let hint = match app.view_tab {
-        ViewTab::Servers => "matches repo, branch, service, command, port, listener cwd",
-        ViewTab::Agents => "matches repo, context path, hook event, matcher, or command",
-        ViewTab::Backlog => "matches task id, title, labels, assignee, or description",
-        ViewTab::Dispatch => "matches task id, title, repo, or branch",
+    let hint = match app.place {
+        Place::Ops => "matches repo, branch, service, command, port, listener cwd",
+        Place::Tasks => match app.tasks_view {
+            TasksView::All => "matches task id, title, labels, assignee, or description",
+            TasksView::Dispatches => "matches task id, title, repo, or branch",
+        },
+        Place::Digest | Place::Command | Place::Goals => "",
     };
     filter_bar::search(ui, "top_bar_filter", app.filter_mut(), hint);
-    match app.view_tab {
-        ViewTab::Servers => {
+    match app.place {
+        Place::Ops => {
             ui.separator();
             ui.checkbox(&mut app.show_only_managed, "only attributed listeners");
             ui.checkbox(&mut app.show_non_servers, "show non-server scripts");
@@ -120,12 +94,12 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
                 app.staleness_filter = workspace::staleness::StalenessFilter::All;
             }
         }
-        ViewTab::Backlog | ViewTab::Dispatch => {
+        Place::Tasks => {
             if filter_bar::clear(ui, !app.filter().is_empty()) {
                 app.filter_mut().clear();
             }
         }
-        ViewTab::Agents => {}
+        Place::Digest | Place::Command | Place::Goals => {}
     }
 }
 
@@ -201,7 +175,8 @@ fn render_dispatch_chip(app: &mut HiveApp, ui: &mut egui::Ui, summary: DispatchS
         .on_hover_text(hover)
         .clicked()
     {
-        app.view_tab = ViewTab::Dispatch;
+        app.place = Place::Tasks;
+        app.tasks_view = TasksView::Dispatches;
     }
 }
 

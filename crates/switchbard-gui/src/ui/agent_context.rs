@@ -44,7 +44,13 @@ struct ContextEstimate {
 
 pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     let snap = Snapshot {
-        repos: app.repos_snapshot(),
+        // TASK-96: Command aggregates over the sidebar's repo scope, same
+        // filter Ops applies to its own `Snapshot::collect`.
+        repos: app
+            .repos_snapshot()
+            .into_iter()
+            .filter(|repo| crate::runtime::repo_in_scope(repo, &app.repo_scope))
+            .collect(),
         worktrees: app.worktrees_snapshot(),
         maps: app
             .agent_contexts
