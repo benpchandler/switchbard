@@ -1,15 +1,35 @@
-//! The Digest lens (task-21): "what should I do today" — the Backlog tab's
-//! default landing screen. Four sections, each capped and cross-repo:
-//! overdue, newly unblocked, in progress, and recently done. Each section is
-//! an entry point back into triage — clicking a task jumps to the List lens
-//! with it selected; each section header can jump to the List lens filtered
-//! to match.
+//! The Digest **lens** (task-21): "what should I do today" — one of the
+//! Tasks place's own internal lens tabs (`BacklogLens::Digest`, reachable
+//! from `ui::backlog::toolbar::render_lens_tabs` while `Place::Tasks` /
+//! `TasksView::All` is active). Four sections, each capped and cross-repo:
+//! overdue, newly unblocked, in progress, and recently done.
+//!
+//! **Not to be confused with the Digest *place*** (`ui::places::digest`,
+//! TASK-99) — the sidebar's own top-level landing surface, a different mock
+//! section entirely (goal cards / in-flight / attention feed) reached
+//! without ever opening Tasks. TASK-96's routing map originally pointed
+//! `Place::Digest` at this lens's body as an interim measure; TASK-99
+//! replaced that routing with `ui::places::digest::render`, but this lens
+//! and its tab stay reachable exactly as before — nav.rs's own doc is
+//! explicit that nothing licenses deleting Backlog lens code out from under
+//! Tasks, and this file's four sections are still that lens's real content.
 //!
 //! Unlike the List/Board lenses, Digest reads directly from `scoped_repos`
 //! rather than the toolbar-filtered `tasks` list — the same choice `stats.rs`
 //! makes. A "Recently Done" section would otherwise render empty whenever
 //! the user has the Done filter off elsewhere, which defeats the point of a
 //! landing page.
+//!
+//! ## Goal-card machinery, shared with the Digest place
+//!
+//! [`render_goal_card`] (and its pace pill / meter / check-in draft
+//! plumbing) is reused rather than forked by TASK-99's
+//! [`render_goal_cards_for_digest_place`] — see that function's own doc for
+//! why the header/empty-state framing still differs from
+//! [`render_goals_section`] (this lens's own "This week's goals" heading)
+//! while every behavior-bearing piece is one implementation. The Goals
+//! **place** (TASK-101, `ui::places::goals`) is a real, independent index
+//! now and does not call into either — it builds its own rows.
 
 use super::{format, scoped_repos, Pending, RepoRow, Snapshot};
 use crate::app::HiveApp;
@@ -28,50 +48,78 @@ struct DigestRow<'a> {
     subtitle: Option<String>,
 }
 
-/// IA V2 (TASK-96) transition routing: the Digest **place**'s body —
-/// everything `render_digest` below draws, wrapped in exactly the snapshot
-/// collection / pending-mutation plumbing `ui::backlog::render` would
-/// otherwise supply. Deliberately does **not** call the whole
-/// `ui::backlog::render`: that would also draw the lens-tabs/toolbar chrome
-/// meant for the *Tasks* place, and TASK-96's routing map calls for "the
-/// existing Backlog Digest lens body" here, not "the whole Backlog view"
-/// (contrast `Place::Tasks`'s routing, which does reuse the whole thing).
+/// TASK-99: the Digest place's goal-cards section (mock §1's `goalrow` /
+/// §7a's empty state). Fully self-contained — builds and applies its own
+/// `Pending` — so `ui::places::digest` never needs to see `RepoRow`/
+/// `Pending`/`Snapshot`, all private to this module tree; it just calls this
+/// one function with `(app, ui)`.
 ///
-/// Still renders the persistent detail rail (`rail::render_detail_rail`) so
-/// clicking a task in any Digest section shows its detail exactly as it
-/// would from the Tasks place — Digest place and Tasks place share one
-/// `backlog_view.selected_task`, deliberately: there is only one "the task
-/// you're looking at" per the owner UX pass's rail doc.
-pub(crate) fn render_digest_place(app: &mut HiveApp, ui: &mut egui::Ui) {
+/// Deliberately does **not** reuse `render_goals_section`: that function's
+/// "This week's goals" heading + inline "+ Goal" button belong to the Goals
+/// **place**'s own body now (TASK-101, `ui::places::goals`, a fully
+/// independent module this task must not change out from under it). The two
+/// share every behavior-bearing piece instead: the same
+/// `compute_goal_statuses` call, the same [`render_goal_card`] per status,
+/// the same `goal_create::render_goal_modal` plumbing (TASK-101's
+/// `pub(crate)` refactor — plain `GoalModalRepoOption` data instead of this
+/// module's private `Snapshot`/`Pending` — is exactly the shape this
+/// function already needed).
+pub(crate) fn render_goal_cards_for_digest_place(app: &mut HiveApp, ui: &mut egui::Ui) {
     let snap = Snapshot::collect(app);
-    let mut pending = super::Pending::default();
+    let scoped = scoped_repos(app, &snap);
+    let mut pending = Pending::default();
+    let today = chrono::Local::now().date_naive();
+    let week = switchbard_core::week_monday_of(today)
+        .format("%Y-%m-%d")
+        .to_string();
+    let per_repo: Vec<(&RepoRow, Vec<switchbard_core::GoalStatus>)> = scoped
+        .iter()
+        .map(|repo| {
+            (
+                *repo,
+                switchbard_core::compute_goal_statuses(&[&repo.repo], &week, today),
+            )
+        })
+        .filter(|(_, statuses)| !statuses.is_empty())
+        .collect();
 
-    if !snap.repos.is_empty() {
-        super::rail::render_detail_rail(app, ui, &snap, &mut pending);
+    if per_repo.is_empty() {
+        let scoped_roots: Vec<std::path::PathBuf> =
+            scoped.iter().map(|repo| repo.key.clone()).collect();
+        render_zero_goal_state(app, ui, &week, &scoped_roots);
+    } else {
+        // One per line, not a side-by-side row: `render_goal_card`'s frame
+        // pins its favorite star flush right via an inner
+        // `Layout::right_to_left`, which claims the rest of its *row's*
+        // width to do it — exactly what every other caller
+        // (`render_goals_section`, stacking vertically) already relies on.
+        // Wrapping cards into a `horizontal_wrapped` row fights that same
+        // width claim and left a second card invisible, overlapping the
+        // first, in TASK-99's own screenshot QA pass. The mock's
+        // side-by-side `goalrow` is a visual choice this shared component
+        // was never built for; reusing it as-is (this task's mandate) means
+        // reusing its real width contract too.
+        for (repo, statuses) in &per_repo {
+            for status in statuses {
+                render_goal_card(app, ui, repo, status, &mut pending);
+                ui.add_space(4.0);
+            }
+        }
     }
 
-    let frame = egui::Frame::central_panel(&ui.ctx().style_of(ui.ctx().theme()))
-        .inner_margin(egui::Margin::same(12));
-    egui::CentralPanel::default().frame(frame).show(ui, |ui| {
-        if snap.repos.is_empty() {
-            render_empty_digest(ui);
-            return;
-        }
-        render_digest(app, ui, &snap, &mut pending);
-    });
-
     let ctx = &ui.ctx().clone();
-    render_goal_modal_for_digest(app, ctx, &snap, &mut pending);
+    render_goal_modal_for_digest_place(app, ctx, &snap, &mut pending);
     super::apply_pending(app, ui, pending);
 }
 
-/// Builds this module's own `GoalModalRepoOption`/known-project-name inputs
-/// from the Digest's `Snapshot` and calls the now-shared (TASK-101)
-/// `goal_create::render_goal_modal`, queuing a create onto `pending` exactly
-/// as before the modal's signature stopped taking `Snapshot`/`Pending`
-/// directly — see that function's own doc for why (the Goals place needs the
-/// identical modal and cannot name either private type).
-fn render_goal_modal_for_digest(
+/// Builds this function's own `GoalModalRepoOption`/known-project-name
+/// inputs from the Digest place's `Snapshot` and calls the shared
+/// (TASK-101) `goal_create::render_goal_modal`, queuing a create onto
+/// `pending` — the same adaptation `ui::backlog::render`'s own top level
+/// does for the Tasks place, each caller building the plain-data view its
+/// own `Snapshot` type supplies since `GoalModalRepoOption` cannot name
+/// `RepoRow` itself.
+fn render_goal_modal_for_digest_place(
     app: &mut HiveApp,
     ctx: &egui::Context,
     snap: &Snapshot,
@@ -98,17 +146,57 @@ fn render_goal_modal_for_digest(
     }
 }
 
-fn render_empty_digest(ui: &mut egui::Ui) {
-    ui.vertical_centered(|ui| {
-        ui.add_space(80.0);
-        ui.heading("Digest");
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new(
-                "No tracked worktrees have a backlog/config.yml or backlog/tasks directory.",
-            )
-            .color(theme::muted_text()),
-        );
+/// Mock §7a, verbatim: "No goals this week" / "Week of `<monday>` ends
+/// today." / **+ New goal** (existing `goal_create::open_new_goal` doorway)
+/// / **Roll last week** (`HiveApp::spawn_goal_roll` — TASK-101 landed the
+/// first GUI wiring of `roll_goals` for the Goals place's own "Roll into
+/// next week"; this reuses that exact method rather than adding a second
+/// one). Rolls every currently-scoped repo: the empty state has no single
+/// repo to target the way a check-in or a new goal does, since by
+/// definition nothing scoped has a goal for this week yet.
+fn render_zero_goal_state(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    week: &str,
+    scoped_roots: &[std::path::PathBuf],
+) {
+    let ctx = ui.ctx().clone();
+    let frame = egui::Frame::default()
+        .fill(theme::card_bg())
+        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+        .corner_radius(3.0)
+        .inner_margin(egui::Margin::symmetric(14, 12));
+    frame.show(ui, |ui| {
+        ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new("No goals this week").strong());
+            // `week` itself stays the ISO `%Y-%m-%d` key `roll_goals`/
+            // `spawn_goal_roll` need — only the label gets the friendlier
+            // "Aug 31" the page header (mock §1's chip) already uses.
+            let friendly = chrono::NaiveDate::parse_from_str(week, "%Y-%m-%d")
+                .map(|d| d.format("%b %-d").to_string())
+                .unwrap_or_else(|_| week.to_string());
+            ui.label(
+                egui::RichText::new(format!("Week of {friendly} ends today."))
+                    .color(theme::muted_text()),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button("+ New goal").clicked() {
+                    super::goal_create::open_new_goal(app, app.backlog_view.selected_repo.clone());
+                }
+                if ui
+                    .button("Roll last week")
+                    .on_hover_text(
+                        "Carry every scoped repo's most recent earlier goal target into this week",
+                    )
+                    .clicked()
+                {
+                    for root in scoped_roots {
+                        app.spawn_goal_roll(root.clone(), week.to_string(), &ctx);
+                    }
+                }
+            });
+        });
     });
 }
 
@@ -215,9 +303,9 @@ pub(super) fn render_digest(
         });
 }
 
-/// "This week's goals" — the section leading the Digest when any scoped
-/// repo has a goal with a target set for the current week; absent entirely
-/// otherwise (a glance surface earns no empty shells). Cards show
+/// "This week's goals" — the section leading the Digest **lens** when any
+/// scoped repo has a goal with a target set for the current week; absent
+/// entirely otherwise (a glance surface earns no empty shells). Cards show
 /// actual/target, a pace pill, and a progress bar whose "today" tick marks
 /// the elapsed-week fraction — fill past the tick reads as ahead, short of
 /// it as behind, with no arithmetic. Manual goals carry an inline check-in;

@@ -9,5 +9,13 @@
 //! imply every `Place` variant has one yet; unmigrated places keep routing
 //! to their pre-existing `ui::backlog`/`ui::workspace`/`ui::agents` body
 //! until their own task lands.
+//!
+//! - `digest` — TASK-99, landed: goal cards, in-flight work, the "needs a
+//!   human" attention feed.
+//! - `goals` — TASK-101, landed: the real Goals index and goal page.
+//!
+//! Command/Ops/Tasks place bodies are other fireteams' slices; nothing here
+//! licenses adding modules for them ahead of that work.
 
+pub mod digest;
 pub(crate) mod goals;

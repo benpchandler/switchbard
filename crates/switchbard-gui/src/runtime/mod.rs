@@ -1049,6 +1049,18 @@ fn set_optional_facet(
     }
 }
 
+/// UI-local state for the Digest place (TASK-99). View-only — the attention
+/// feed itself is computed fresh every frame from the objects that own each
+/// fact (dispatch runs, listeners, worktree removal_safety), never stored
+/// here; this struct only remembers which port-kill row has its confirm step
+/// armed, the same one-at-a-time shape `HiveApp::dispatch_kill_confirm` uses
+/// for the Dispatches view's own Kill button. A pgid, not a row identity: a
+/// port row's identity *is* the pgid holding it.
+#[derive(Debug, Clone, Default)]
+pub struct DigestViewState {
+    pub port_kill_confirm: Option<i32>,
+}
+
 /// Active-run summary shown in the remove-worktree dialog. Stripped down from
 /// `ActiveRun` because the dialog only needs the user-visible name + the pgid
 /// it'll signal.

@@ -953,7 +953,12 @@ fn short_path(path: &Path) -> String {
     parts.into_iter().rev().collect::<Vec<_>>().join("/")
 }
 
-fn open(path: &Path) {
+/// `pub(crate)`: also the Digest place's "Log" row action (TASK-99) — a
+/// dispatch run's log file, opened the same way an agent-context file is
+/// (`render_detail_drawer`'s own "Open" button, above). No other "open this
+/// path" verb exists anywhere in the app; this is it, reused rather than
+/// re-spawning a second `open` invocation.
+pub(crate) fn open(path: &Path) {
     let _ = std::process::Command::new("open").arg(path).spawn();
 }
 

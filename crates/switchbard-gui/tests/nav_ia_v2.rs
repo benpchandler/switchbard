@@ -198,8 +198,12 @@ fn each_place_routes_to_its_own_body() {
     let mut harness = harness(app);
     harness.run();
     assert!(
-        harness.query_by_label("Overdue").is_some(),
-        "Digest place should render the Digest lens's own sections"
+        harness.query_by_label("In flight").is_some(),
+        "Digest place (TASK-99) should render its own In flight section"
+    );
+    assert!(
+        harness.query_by_label("Needs a human").is_some(),
+        "Digest place (TASK-99) should render its own attention feed section"
     );
     assert!(
         harness.query_by_label("Statistics").is_none(),

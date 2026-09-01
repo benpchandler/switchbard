@@ -23,17 +23,18 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use common::{harness, seeded_app, REPO_PATH};
+use common::{harness, seeded_app, REPO_NAME, REPO_PATH};
 use eframe::egui;
 use egui_kittest::kittest::{self, Queryable};
 use egui_kittest::{Harness, SnapshotOptions};
 use switchbard_core::config::ThemeChoice;
 use switchbard_core::{
-    BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource, DISPATCHED_LABEL,
-    DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
+    AttributedListener, BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource, Fact,
+    GoalDef, GoalInputs, GoalMeasure, GoalWeek, LandedEvidence, LocalListener, WorktreeRef,
+    WorktreeStaleness, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{BacklogLens, Place};
+use switchbard_gui::runtime::{BacklogLens, Place, WorktreeMeta};
 
 fn output_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/qa/screenshots")
@@ -116,6 +117,62 @@ fn app_with(theme: ThemeChoice, lens: BacklogLens, tasks: Vec<BacklogTask>) -> H
     app
 }
 
+/// TASK-99: a `HiveApp` landed on `Place::Digest` (the sidebar's own
+/// landing place — `app_with`, above, is for the Tasks place's Backlog
+/// lenses, a different surface). Seeds an empty-but-tracked backlog repo
+/// (no tasks, no goals) so the place renders its real zero-goal empty state
+/// (mock §7a) rather than the *different* "no tracked worktrees have a
+/// backlog/" state `seeded_app()` alone would hit — callers that want a
+/// populated Digest overwrite this same repo entry with real content.
+fn digest_place_app(theme: ThemeChoice) -> HiveApp {
+    let mut app = seeded_app();
+    app.config.ui.theme = theme;
+    app.place = Place::Digest;
+    app.backlog_repos
+        .lock()
+        .unwrap()
+        .insert(PathBuf::from(REPO_PATH), project_with(vec![]));
+    app
+}
+
+/// `sample_task`/`task_with` split rather than one giant constructor:
+/// dispatch labels/notes are the one axis this file's screenshots vary
+/// task-by-task, and `BacklogTask` has no builder methods of its own.
+fn task_with(task: BacklogTask, labels: &[&str], notes: &str) -> BacklogTask {
+    BacklogTask {
+        labels: labels.iter().map(|l| l.to_string()).collect(),
+        implementation_notes: notes.to_string(),
+        ..task
+    }
+}
+
+/// A manual-measure weekly goal with one check-in — `actual`/`target` drive
+/// the pace pill and meter fill directly, matching mock §1's "behind"
+/// (Close out Stack Ranking, 1/4) and "on-track" (Dispatch throughput, 7/8)
+/// cards.
+fn goal_def(name: &str, target: i64, actual: i64) -> GoalDef {
+    let week = switchbard_core::week_monday_of(chrono::Local::now().date_naive())
+        .format("%Y-%m-%d")
+        .to_string();
+    GoalDef {
+        name: name.to_string(),
+        unit: "tasks".to_string(),
+        measure: GoalMeasure::Manual,
+        scope: None,
+        inputs: GoalInputs::default(),
+        weeks: std::collections::BTreeMap::from([(
+            week.clone(),
+            GoalWeek {
+                target,
+                checkins: vec![switchbard_core::GoalCheckIn {
+                    date: week,
+                    value: actual,
+                }],
+            },
+        )]),
+    }
+}
+
 fn shots_for_theme(theme: ThemeChoice) {
     let suffix = format!("_{theme:?}").to_lowercase();
 
@@ -147,6 +204,126 @@ fn shots_for_theme(theme: ThemeChoice) {
         let mut h = harness(app);
         h.run();
         snapshot(&mut h, &format!("backlog_digest{suffix}"));
+    }
+
+    // TASK-99: the Digest *place* (mock §1) — goal cards, "In flight", and
+    // every "Needs a human" row type populated at once (failed run, stalled
+    // run, port squatter, removable worktree).
+    {
+        let app = digest_place_app(theme);
+        let repo_root = PathBuf::from(REPO_PATH);
+        let dispatching = task_with(
+            sample_task("TASK-83", "Dispatching now", "To Do"),
+            &[DISPATCHING_LABEL],
+            "",
+        );
+        let in_progress = sample_task("TASK-76", "In-progress task", "In Progress");
+        let failed = task_with(
+            sample_task("TASK-61", "Failed dispatch run", "To Do"),
+            &[DISPATCH_FAILED_LABEL],
+            "Dispatch failed: agent error after 22m",
+        );
+        let stalled = task_with(
+            sample_task("TASK-90", "Stalled dispatch run", "To Do"),
+            &[DISPATCHING_LABEL],
+            "",
+        );
+        app.backlog_repos.lock().unwrap().insert(
+            repo_root.clone(),
+            BacklogRepo {
+                root: repo_root.clone(),
+                tasks: vec![dispatching, in_progress, failed, stalled],
+                warnings: vec![],
+                project_defs: vec![],
+                initiative_defs: vec![],
+                goals: vec![
+                    goal_def("Close out Stack Ranking", 4, 1),
+                    goal_def("Dispatch throughput", 8, 7),
+                ],
+                ranking: switchbard_core::RepoRanking::default(),
+                loaded_at_unix: 0,
+                configured_statuses: vec![
+                    "To Do".into(),
+                    "In Progress".into(),
+                    "In Review".into(),
+                    "Done".into(),
+                ],
+            },
+        );
+        app.dispatch_runs.lock().unwrap().insert(
+            (repo_root.clone(), "TASK-90".to_string()),
+            switchbard_core::dispatch_inspect::DispatchRun {
+                task_id: "TASK-90".to_string(),
+                branch: "dispatch/task-90".to_string(),
+                worktree_path: repo_root.join(".worktrees/dispatch-task-90"),
+                worktree_exists: false,
+                log_path: Some(PathBuf::from("/tmp/switchbard-logs/dispatch-task-90.log")),
+                prompt_path: None,
+                started_at_unix: Some(
+                    switchbard_core::dispatch_inspect::now_unix().saturating_sub(
+                        switchbard_core::DispatchOptions::default()
+                            .stale_after
+                            .as_secs()
+                            + 300,
+                    ),
+                ),
+                log_bytes: 0,
+                log_modified_unix: None,
+                liveness: switchbard_core::dispatch_inspect::DispatchRunLiveness::Alive {
+                    pgid: 4242,
+                    supervised: true,
+                },
+                progress: switchbard_core::dispatch_inspect::RunProgress::default(),
+            },
+        );
+        app.state
+            .lock()
+            .unwrap()
+            .listeners
+            .push(AttributedListener {
+                listener: LocalListener {
+                    pid: 4242,
+                    pgid: 9001,
+                    port: 5173,
+                    command_name: "node".to_string(),
+                    cwd: None,
+                },
+                repo_name: None,
+                worktree_path: None,
+                worktree_branch: None,
+            });
+        let linked = PathBuf::from(format!("{REPO_PATH}-linked"));
+        app.worktrees.lock().unwrap().push(WorktreeRef {
+            repo_name: REPO_NAME.to_string(),
+            path: linked.clone(),
+            branch: Some("feat/goal-modal".to_string()),
+            head: "abc9999".to_string(),
+        });
+        app.meta.lock().unwrap().insert(
+            linked,
+            WorktreeMeta {
+                dirty_files: Some(vec![]),
+                lock: Fact::Known(None),
+                staleness: Some(WorktreeStaleness::Merged {
+                    base: "main".to_string(),
+                    evidence: LandedEvidence::Ancestry,
+                }),
+                ..Default::default()
+            },
+        );
+        let mut h = harness(app);
+        h.run();
+        snapshot(&mut h, &format!("digest_place_populated{suffix}"));
+    }
+
+    // TASK-99 mock §7a: the Digest place's zero-goal empty state — "No
+    // goals this week" / "+ New goal" / "Roll last week", with In flight and
+    // the attention feed both also empty (a genuinely quiet day).
+    {
+        let app = digest_place_app(theme);
+        let mut h = harness(app);
+        h.run();
+        snapshot(&mut h, &format!("digest_place_zero_goals{suffix}"));
     }
 
     // List lens with a fully-populated task selected in the detail pane.
