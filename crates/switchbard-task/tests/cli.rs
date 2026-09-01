@@ -571,12 +571,14 @@ fn goal_errors_name_the_next_step() {
         String::from_utf8_lossy(&no_file.stderr)
     );
 
-    let missing_scope = bin(
+    // A scopeless tasks goal now succeeds (inputs attach later); the CLI
+    // notes the next step on stderr instead of refusing.
+    let scopeless = bin(
         root,
         &[
             "goal",
             "create",
-            "Bad",
+            "Scopeless",
             "--target",
             "3",
             "--unit",
@@ -585,12 +587,85 @@ fn goal_errors_name_the_next_step() {
             "tasks",
         ],
     );
-    assert_eq!(missing_scope.status.code(), Some(1));
+    assert_eq!(scopeless.status.code(), Some(0));
     assert!(
-        String::from_utf8_lossy(&missing_scope.stderr).contains("--scope"),
+        String::from_utf8_lossy(&scopeless.stderr).contains("goal attach"),
         "{}",
-        String::from_utf8_lossy(&missing_scope.stderr)
+        String::from_utf8_lossy(&scopeless.stderr)
     );
+}
+
+#[test]
+fn goal_inputs_attach_count_and_detach_round_trip() {
+    let dir = fixture_project();
+    let root = dir.path();
+    assert_eq!(
+        ok_stdout(
+            root,
+            &[
+                "goal",
+                "create",
+                "Inputs",
+                "--target",
+                "2",
+                "--unit",
+                "tasks",
+                "--measure",
+                "tasks",
+            ]
+        ),
+        "Inputs\n"
+    );
+    // One directly attached task (id given bare), one attached project.
+    assert_eq!(ok_stdout(root, &["create", "Direct"]), "TASK-1\n");
+    assert_eq!(
+        ok_stdout(root, &["create", "Member", "-m", "Attached proj"]),
+        "TASK-2\n"
+    );
+    assert_eq!(ok_stdout(root, &["edit", "1", "-s", "Done"]), "Edited 1\n");
+    assert_eq!(ok_stdout(root, &["edit", "2", "-s", "Done"]), "Edited 2\n");
+
+    assert_eq!(
+        ok_stdout(
+            root,
+            &[
+                "goal",
+                "attach",
+                "Inputs",
+                "--task",
+                "1",
+                "--in-project",
+                "Attached proj",
+            ]
+        ),
+        "Attached 2 inputs to Inputs\n"
+    );
+    let viewed = ok_stdout(root, &["goal", "view", "Inputs"]);
+    assert!(
+        viewed.contains("Input tasks: TASK-1\n")
+            && viewed.contains("Input projects: Attached proj\n"),
+        "{viewed}"
+    );
+    let listed = ok_stdout(root, &["goal", "list"]);
+    assert!(
+        listed.contains("Inputs\t") && listed.contains("\t2/2\t100%\tmet\n"),
+        "{listed}"
+    );
+
+    let unknown = bin(root, &["goal", "attach", "Inputs", "--task", "99"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&unknown.stderr).contains("no task '99'"),
+        "{}",
+        String::from_utf8_lossy(&unknown.stderr)
+    );
+
+    assert_eq!(
+        ok_stdout(root, &["goal", "detach", "Inputs", "--task", "TASK-1"]),
+        "Detached 1 inputs from Inputs\n"
+    );
+    let listed = ok_stdout(root, &["goal", "list"]);
+    assert!(listed.contains("\t1/2\t50%\t"), "{listed}");
 }
 
 #[test]

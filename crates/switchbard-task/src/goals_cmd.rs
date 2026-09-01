@@ -31,6 +31,13 @@ pub enum GoalCmd {
     },
     /// Print one goal: fields, then every week's target, actual, and pace
     View { name: String },
+    /// Attach tasks and/or projects to a tasks-measured goal as counted
+    /// inputs; prints `Attached <N> inputs to <NAME>` (0 = all were
+    /// already attached)
+    Attach(Box<InputArgs>),
+    /// Detach previously attached inputs; prints
+    /// `Detached <N> inputs from <NAME>`
+    Detach(Box<InputArgs>),
     /// Give every goal lacking the week a new entry carrying its latest
     /// earlier target; prints `Rolled <N> goals into the week of <MONDAY>`
     Roll {
@@ -65,6 +72,20 @@ pub struct GoalCreateArgs {
 }
 
 #[derive(Args)]
+pub struct InputArgs {
+    /// Goal name
+    pub name: String,
+    /// A task id to count (repeatable); accepts `TASK-7`, `task-7`, or `7`
+    #[arg(long = "task", value_name = "ID")]
+    pub tasks: Vec<String>,
+    /// A project name whose member tasks count (repeatable; named
+    /// `--in-project` to match the membership flag elsewhere and to avoid
+    /// the global `--project <DIR>` repo alias)
+    #[arg(long = "in-project", value_name = "NAME")]
+    pub projects: Vec<String>,
+}
+
+#[derive(Args)]
 pub struct CheckInArgs {
     /// Goal name
     pub name: String,
@@ -95,7 +116,27 @@ pub fn run_goal(root: &Path, cmd: &GoalCmd) -> Result<()> {
                 target: args.target,
             };
             switchbard_core::create_goal(root, &goal)?;
+            if measure == GoalMeasure::Tasks && args.scope.is_none() {
+                eprintln!(
+                    "switchbard-task: note: '{}' has no --scope; attach what it counts with `goal attach {} --task <ID> --in-project <NAME>`",
+                    args.name, args.name
+                );
+            }
             println!("{}", args.name);
+            Ok(())
+        }
+        GoalCmd::Attach(args) => {
+            let repo = switchbard_core::load_backlog_repo(root)?;
+            let tasks = canonical_task_ids(&repo, &args.tasks)?;
+            let added =
+                switchbard_core::attach_goal_inputs(root, &args.name, &tasks, &args.projects)?;
+            println!("Attached {added} inputs to {}", args.name);
+            Ok(())
+        }
+        GoalCmd::Detach(args) => {
+            let removed =
+                switchbard_core::detach_goal_inputs(root, &args.name, &args.tasks, &args.projects)?;
+            println!("Detached {removed} inputs from {}", args.name);
             Ok(())
         }
         GoalCmd::CheckIn(args) => {
@@ -158,6 +199,21 @@ fn today() -> chrono::NaiveDate {
     chrono::Local::now().date_naive()
 }
 
+/// Resolve each `--task` argument against the backlog and return the
+/// canonical stored ids, so `7` / `task-7` attach as `TASK-7` and a typo
+/// fails here instead of silently counting nothing.
+fn canonical_task_ids(repo: &switchbard_core::BacklogRepo, ids: &[String]) -> Result<Vec<String>> {
+    ids.iter()
+        .map(|id| {
+            crate::find_task(&repo.tasks, id)
+                .map(|task| task.id.clone())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("no task '{id}' — check `switchbard-task list` for the id")
+                })
+        })
+        .collect()
+}
+
 /// Normalize an optional `--week` value (any date in the week) to that
 /// week's Monday; `None` means this week.
 fn monday_arg(week: Option<&str>) -> Result<String> {
@@ -193,6 +249,15 @@ fn goal_view(repo: &switchbard_core::BacklogRepo, goal: &switchbard_core::GoalDe
     out.push_str(&format!("Measure: {}\n", goal.measure.label()));
     if let Some(scope) = &goal.scope {
         out.push_str(&format!("Scope: {scope}\n"));
+    }
+    if !goal.inputs.tasks.is_empty() {
+        out.push_str(&format!("Input tasks: {}\n", goal.inputs.tasks.join(", ")));
+    }
+    if !goal.inputs.projects.is_empty() {
+        out.push_str(&format!(
+            "Input projects: {}\n",
+            goal.inputs.projects.join(", ")
+        ));
     }
     if !goal.weeks.is_empty() {
         out.push('\n');
