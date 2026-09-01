@@ -21,13 +21,13 @@ or `bootstrap` for you.
    `KeepAlive`" below.
 
 Nothing auto-flags a task for dispatch. You (or the GUI, once it grows the
-Dispatch button) label a task `dispatch` via the `backlog` CLI; this binary
+Dispatch button) label a task `dispatch` via
+`sb edit <ID> --add-label dispatch`; this binary
 only drains whatever's already labeled that way.
 
 ## Requirements
 
-- `git`, `gh` (authenticated: `gh auth status`), `claude`, and `backlog` on
-  `$PATH`.
+- `git`, `gh` (authenticated: `gh auth status`), and `claude` on `$PATH`.
 - Repos in `~/.switchbard/config.toml` that use Backlog.md and have a GitHub
   remote you're allowed to open PRs on.
 

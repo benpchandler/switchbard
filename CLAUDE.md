@@ -72,6 +72,9 @@ Re-exports are **explicit in `src/lib.rs`** (no glob re-exports). Module map:
 - `expected_port`, `resolve` — port inference; clusters listeners + services into `ResolvedService`.
 - `dispatch` — headless `claude -p` pipeline: dispatch-labeled task → worktree → agent run → PR.
 - `refine` — the grooming step upstream of `dispatch`: a read-only headless run that fills a task's description/ACs/plan, applied additively through the native write layer.
+- `mission_projection` - read-only adapter for xplan's optional Mission Command snapshot (`~/.xplan/mission-command-snapshot.json`, `XPLAN_MISSION_SNAPSHOT` override): strict versioned validation, bounded size/row caps, explicit missing/malformed/stale states.
+- `mission_sidecar_protocol` - typed frames for the strict helper protocol (`hello`, `queue_mission`, `get_pending_decision`, `resume_decision`); the UI never builds mission JSON directly.
+- `mission_supervisor` - verifies and runs the bundled xplan one-shot helper: manifest-pinned payload digests, one process per request, bounded stdio reads/joins, process-group reaping.
 - `git_probe` — read-only `git status` / ahead-behind / fetch age / recent commits.
 - `git_env` — `git_cmd()`: every git call goes through it; see Git safety below.
 - `spawn` / `kill` — `spawn_in_session()` (own session/process group) + `kill_pgid()` → `KillOutcome`.
@@ -79,10 +82,11 @@ Re-exports are **explicit in `src/lib.rs`** (no glob re-exports). Module map:
 
 ### `crates/switchbard-gui` — egui/eframe app
 
-`src/main.rs` only loads config, expands worktrees, hands to `HiveApp`. Everything else is in the library crate.
+`src/main.rs` loads config, expands worktrees, and hands to `HiveApp`; it also carries the argv0-dispatched `xplan-mission-sidecar-launcher` entry and the headless `--mission-sidecar-journey` evidence harness. Everything else is in the library crate.
 
 - `app.rs` — `HiveApp`: shared `Arc<Mutex<…>>` worker state + view-only fields; `update()` is pure dispatch. Header doc carries the mutation-method naming table (below).
-- `workers.rs` — six periodic background threads plus a run-reaper, all the same shape (snapshot under brief lock → work outside lock → write back → `ctx.request_repaint()` → `kick.wait(period)`). Periods, per-tick cost, and rationale are a living table in the module's own header doc (`workers.rs`'s cadence-policy table) rather than duplicated here — re-run `examples/scan_cadence_audit.rs` for fresh real-machine numbers before changing any of them.
+- `workers.rs` — the periodic background threads plus a run-reaper, all the same shape (snapshot under brief lock → work outside lock → write back → `ctx.request_repaint()` → `kick.wait(period)`). Periods, per-tick cost, and rationale are a living table in the module's own header doc (`workers.rs`'s cadence-policy table) rather than duplicated here — re-run `examples/scan_cadence_audit.rs` for fresh real-machine numbers before changing any of them.
+- `mission_control.rs` - plain-data Mission control state and typed xplan helper intentions: helper health vs projection freshness, queue drafts, contract review/recovery with durable command ids. No egui.
 - `sync/` — `Kick` (wake signal) and `Status` (one per UI surface so concurrent actions don't clobber).
 - `runtime/` — plain-data view types + `expand_worktrees()`.
 - `ui/` — the only module that touches egui. `theme.rs` is the single source for semantic colors and glyphs.

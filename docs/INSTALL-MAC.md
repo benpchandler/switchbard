@@ -62,6 +62,13 @@ You need Rust `1.95.0` with `rustfmt` and `clippy`. Mise is the recommended
 way to match the CI toolchain, but it is not required if your Rust install
 already matches.
 
+Packaging embeds the pinned xplan mission sidecar (`xplan-sidecar-pin.json`)
+and requires two inputs: `XPLAN_SIDECAR_SOURCE` (a clean checkout of the pinned
+xplan revision) and `XPLAN_SIDECAR_ARCHIVE` (the sidecar archive built from
+it). Run `mise run bundle` (or `bash scripts/bundle-mac.sh`) without them to
+print the exact recipe for producing both, then export them before the
+packaging commands below.
+
 ```sh
 git clone https://github.com/benpchandler/switchbard
 cd switchbard
