@@ -189,6 +189,7 @@ fn run_ps() -> Result<String> {
 /// dropping every line that isn't `claude`/`codex`. Pure and independent of
 /// `now` for which lines match; `now` only converts each survivor's elapsed
 /// time to an absolute start stamp.
+#[cfg(not(target_os = "linux"))]
 fn parse_ps_agent_rows(raw: &str, now: u64) -> Vec<AgentProcessRow> {
     raw.lines()
         .filter_map(|line| parse_ps_line(line, now))
@@ -199,6 +200,7 @@ fn parse_ps_agent_rows(raw: &str, now: u64) -> Vec<AgentProcessRow> {
 /// scanning for whitespace runs rather than a fixed split, because `ps`
 /// right-pads `pid`/`pgid`/`etime` to varying widths depending on the
 /// widest value in the whole table.
+#[cfg(not(target_os = "linux"))]
 fn parse_ps_line(line: &str, now: u64) -> Option<AgentProcessRow> {
     let trimmed = line.trim_start();
     let pid_end = trimmed.find(char::is_whitespace)?;
@@ -226,6 +228,7 @@ fn parse_ps_line(line: &str, now: u64) -> Option<AgentProcessRow> {
 }
 
 /// BSD `ps`'s `etime` format: `[[DD-]HH:]MM:SS`. Returns total seconds.
+#[cfg(not(target_os = "linux"))]
 fn parse_ps_etime(s: &str) -> Option<u64> {
     let (days, rest) = match s.split_once('-') {
         Some((d, r)) => (d.parse::<u64>().ok()?, r),
@@ -431,6 +434,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "linux"))]
     #[test]
     fn ps_etime_parses_every_bsd_width() {
         assert_eq!(parse_ps_etime("00:05"), Some(5));
@@ -440,6 +444,7 @@ mod tests {
         assert_eq!(parse_ps_etime("garbage"), None);
     }
 
+    #[cfg(not(target_os = "linux"))]
     #[test]
     fn parses_ps_lines_and_drops_non_agent_processes() {
         let raw = "\
@@ -469,6 +474,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "linux"))]
     #[test]
     fn a_malformed_ps_line_is_skipped_not_panicked_on() {
         let rows = parse_ps_agent_rows("not a valid line\n\n   \n", 0);
