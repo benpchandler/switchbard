@@ -189,6 +189,94 @@ impl DispatchRunLiveness {
     }
 }
 
+/// Live progress parsed from a run's events sidecar (`<stem>.events.jsonl`,
+/// written by the orchestrator - trajectory: *Task Queue orchestration*,
+/// TASK-90). Every field is best-effort: a run driven by the built-in Rust
+/// pipeline has no sidecar and renders exactly as before, and a malformed
+/// line is skipped, never fatal - missing progress must degrade to today's
+/// view, not to an error.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RunProgress {
+    /// The node the run is currently inside (last `node_enter`); cleared by
+    /// a terminal `release`/`run_end` event.
+    pub phase: Option<String>,
+    /// Milliseconds since the epoch of the newest event of any kind - the
+    /// heartbeat. Staleness here means "the orchestrator stopped talking",
+    /// a different fact from the agent log's own mtime.
+    pub last_event_unix_ms: Option<u64>,
+    /// The exact unproven remainder from a completion-integrity interrupt.
+    pub interrupt_remainder: Vec<String>,
+    /// Terminal outcome the sidecar reported (`dispatched` / `failed`).
+    pub outcome: Option<String>,
+}
+
+impl RunProgress {
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+/// Parse one events sidecar. Tolerant by contract (see [`RunProgress`]):
+/// unreadable file -> `None`; unparseable or unknown lines are skipped;
+/// unknown fields ignored.
+pub fn parse_run_events(text: &str) -> RunProgress {
+    let mut progress = RunProgress::default();
+    for line in text.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if let Some(ts) = value.get("ts_ms").and_then(serde_json::Value::as_u64) {
+            progress.last_event_unix_ms = Some(ts);
+        }
+        match value.get("event").and_then(serde_json::Value::as_str) {
+            Some("node_enter") => {
+                progress.phase = value
+                    .get("node")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+            }
+            Some("interrupt") => {
+                progress.interrupt_remainder = value
+                    .get("remainder")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            }
+            Some("release") | Some("run_end") => {
+                progress.phase = None;
+                if let Some(outcome) = value.get("outcome").and_then(serde_json::Value::as_str) {
+                    progress.outcome = Some(outcome.to_string());
+                }
+            }
+            // A fresh run_start clears a previous attempt's leftovers.
+            Some("run_start") => {
+                progress.phase = None;
+                progress.interrupt_remainder.clear();
+                progress.outcome = None;
+            }
+            _ => {}
+        }
+    }
+    progress
+}
+
+fn read_run_events(task_id: &str, started_at_unix: u64) -> RunProgress {
+    let path = dispatch_log_dir().join(format!(
+        "{}.events.jsonl",
+        dispatch_log_stem(task_id, started_at_unix)
+    ));
+    match std::fs::read_to_string(&path) {
+        Ok(text) => parse_run_events(&text),
+        Err(_) => RunProgress::default(),
+    }
+}
+
 /// One dispatch run, reconstructed from disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchRun {
@@ -214,6 +302,9 @@ pub struct DispatchRun {
     /// refresh. The *only* source of a kill handle — see the module doc's
     /// "the one place this does adjudicate" section.
     pub liveness: DispatchRunLiveness,
+    /// Live progress from the orchestrator's events sidecar; empty for
+    /// runs driven by the built-in pipeline (no sidecar).
+    pub progress: RunProgress,
 }
 
 /// How long after the agent exits the pipeline is still allowed to be working
@@ -339,6 +430,9 @@ pub fn inspect_dispatch_run(repo_root: &Path, task_id: &str) -> DispatchRun {
         Some(started) => probe_liveness(task_id, started),
         None => DispatchRunLiveness::NoSidecar,
     };
+    let progress = started_at_unix
+        .map(|started| read_run_events(task_id, started))
+        .unwrap_or_default();
 
     DispatchRun {
         task_id: task_id.to_string(),
@@ -351,6 +445,7 @@ pub fn inspect_dispatch_run(repo_root: &Path, task_id: &str) -> DispatchRun {
         log_bytes,
         log_modified_unix,
         liveness,
+        progress,
     }
 }
 
@@ -499,6 +594,7 @@ mod tests {
             log_bytes,
             log_modified_unix: (log_bytes > 0).then_some(started.unwrap_or(0)),
             liveness: DispatchRunLiveness::NoSidecar,
+            progress: RunProgress::default(),
         }
     }
 
@@ -609,6 +705,57 @@ mod tests {
     fn a_released_run_is_not_orphaned_however_old() {
         let run = run_with(Some(0), 42);
         assert!(!run.looks_orphaned(u64::MAX / 2, false));
+    }
+
+    fn parse_events(lines: &[&str]) -> RunProgress {
+        parse_run_events(&lines.join("\n"))
+    }
+
+    /// TASK-90: the sidecar parse is tolerant by contract - malformed lines
+    /// skip, unknown events/fields are ignored, and the computed phase /
+    /// heartbeat / remainder follow the event stream.
+    #[test]
+    fn run_events_parse_phases_heartbeats_and_remainders_tolerantly() {
+        assert!(parse_events(&[]).is_empty(), "no events, no progress");
+        assert!(
+            parse_events(&["not json", "{\"event\": 7}"]).is_empty(),
+            "garbage degrades to empty, never errors"
+        );
+
+        let live = parse_events(&[
+            r#"{"ts_ms": 1000, "task_id": "TASK-1", "event": "run_start", "mode": "new"}"#,
+            r#"{"ts_ms": 2000, "task_id": "TASK-1", "event": "node_enter", "node": "claim"}"#,
+            r#"{"ts_ms": 3000, "task_id": "TASK-1", "event": "node_exit", "node": "claim", "ok": true}"#,
+            r#"{"ts_ms": 4000, "task_id": "TASK-1", "event": "node_enter", "node": "run_agent"}"#,
+            r#"{"ts_ms": 9000, "task_id": "TASK-1", "event": "heartbeat", "log_bytes": 42}"#,
+        ]);
+        assert_eq!(live.phase.as_deref(), Some("run_agent"));
+        assert_eq!(live.last_event_unix_ms, Some(9000));
+        assert!(live.interrupt_remainder.is_empty());
+        assert_eq!(live.outcome, None);
+
+        let interrupted = parse_events(&[
+            r#"{"ts_ms": 1, "event": "node_enter", "node": "reconcile"}"#,
+            r#"{"ts_ms": 2, "event": "interrupt", "remainder": ["AC #2 unchecked: proof"]}"#,
+            r#"{"ts_ms": 3, "event": "release", "outcome": "failed", "reason": "unproven"}"#,
+        ]);
+        assert_eq!(interrupted.phase, None, "a release ends the phase");
+        assert_eq!(interrupted.outcome.as_deref(), Some("failed"));
+        assert_eq!(
+            interrupted.interrupt_remainder,
+            vec!["AC #2 unchecked: proof"]
+        );
+
+        let resumed = parse_events(&[
+            r#"{"ts_ms": 1, "event": "interrupt", "remainder": ["stale"]}"#,
+            r#"{"ts_ms": 2, "event": "run_start", "mode": "resume"}"#,
+            r#"{"ts_ms": 3, "event": "node_enter", "node": "reconcile"}"#,
+        ]);
+        assert!(
+            resumed.interrupt_remainder.is_empty(),
+            "a fresh attempt clears the previous remainder"
+        );
+        assert_eq!(resumed.phase.as_deref(), Some("reconcile"));
     }
 
     #[test]

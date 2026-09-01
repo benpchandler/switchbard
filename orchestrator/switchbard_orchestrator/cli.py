@@ -57,9 +57,15 @@ class Driver:
     def _config(self, task_id: str) -> dict:
         return {"configurable": {"thread_id": thread_id(self.proto.repo_root, task_id)}}
 
-    def _emitter(self, task_id: str) -> Emitter:
-        stem = dispatch_log_stem(task_id, now_unix())
+    def _emitter(self, task_id: str, stem: str) -> Emitter:
         return Emitter(dispatch_log_dir() / f"{stem}.events.jsonl", task_id)
+
+    def _stem_for(self, task_id: str, fresh: bool) -> str:
+        if not fresh:
+            checkpointed = self.graph_state(task_id).get("log_stem")
+            if checkpointed:
+                return checkpointed
+        return dispatch_log_stem(task_id, now_unix())
 
     def _finish(self, task_id: str, emitter: Emitter, result: dict) -> str:
         """Turn a graph result into the stdout contract line; convert an
@@ -80,22 +86,31 @@ class Driver:
         return f"{task_id}\tfailed\t{result.get('failure', 'unknown failure')}"
 
     def graph_state(self, task_id: str) -> dict:
-        graph = build_run_graph(self.proto, self._emitter(task_id), self.opts, self.saver)
+        graph = build_run_graph(
+            self.proto, Emitter(Path("/dev/null"), task_id), self.opts, self.saver
+        )
         snapshot = graph.get_state(self._config(task_id))
         return dict(snapshot.values or {})
 
     def run_new(self, task_id: str, title: str) -> str:
-        emitter = self._emitter(task_id)
+        stem = self._stem_for(task_id, fresh=True)
+        emitter = self._emitter(task_id, stem)
         emitter.emit("run_start", mode="new")
         graph = build_run_graph(self.proto, emitter, self.opts, self.saver)
         result = graph.invoke(
-            {"task_id": task_id, "title": title, "base_branch": self.opts.base_branch},
+            {
+                "task_id": task_id,
+                "title": title,
+                "base_branch": self.opts.base_branch,
+                "log_stem": stem,
+            },
             self._config(task_id),
         )
         return self._finish(task_id, emitter, result)
 
     def run_resume(self, task_id: str, resume_interrupt: bool) -> str:
-        emitter = self._emitter(task_id)
+        stem = self._stem_for(task_id, fresh=False)
+        emitter = self._emitter(task_id, stem)
         emitter.emit("run_start", mode="resume")
         graph = build_run_graph(self.proto, emitter, self.opts, self.saver)
         payload = Command(resume="resumed") if resume_interrupt else None
@@ -103,9 +118,7 @@ class Driver:
         return self._finish(task_id, emitter, result)
 
     def has_checkpoint(self, task_id: str) -> bool:
-        graph = build_run_graph(self.proto, self._emitter(task_id), self.opts, self.saver)
-        snapshot = graph.get_state(self._config(task_id))
-        return bool(snapshot.values)
+        return bool(self.graph_state(task_id))
 
 
 def cmd_drain(args: argparse.Namespace) -> int:

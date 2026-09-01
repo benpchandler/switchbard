@@ -499,6 +499,8 @@ fn render_run_details(
         ui.label(egui::RichText::new(&run.branch).color(theme::muted_text()));
     });
 
+    render_run_progress(ui, run, now);
+
     if in_flight && !supervised {
         render_unsupervised_notice(ui, run);
     }
@@ -553,6 +555,54 @@ fn render_run_details(
 /// countdown promising an enforcement mechanism that, even before TASK-46
 /// removed it globally, was never armed for an unsupervised run in the first
 /// place.
+/// Live orchestrator progress (trajectory: *Task Queue orchestration*,
+/// TASK-90): the run's current graph phase, heartbeat age, terminal
+/// outcome, and - for a completion-integrity interrupt - the exact
+/// unproven remainder. Renders nothing for sidecar-less runs (the built-in
+/// Rust pipeline), so legacy runs look exactly as before.
+fn render_run_progress(ui: &mut egui::Ui, run: &DispatchRun, now: u64) {
+    let progress = &run.progress;
+    if progress.is_empty() {
+        return;
+    }
+    ui.horizontal(|ui| {
+        if let Some(phase) = &progress.phase {
+            ui.label(
+                egui::RichText::new(format!("phase: {phase}"))
+                    .color(theme::dispatch_accent())
+                    .strong(),
+            );
+        } else if let Some(outcome) = &progress.outcome {
+            ui.label(
+                egui::RichText::new(format!("orchestrator: {outcome}")).color(theme::muted_text()),
+            );
+        }
+        if let Some(ms) = progress.last_event_unix_ms {
+            let age = now.saturating_sub(ms / 1000);
+            // Heartbeats arrive every ~15s while a phase is live; a minute
+            // of silence with a phase still open is worth a nudge, not an
+            // alarm - the run may be in a long blocking step.
+            let color = if progress.phase.is_some() && age > 60 {
+                theme::warn_orange()
+            } else {
+                theme::muted_text()
+            };
+            ui.label(egui::RichText::new(format!("heartbeat {age}s ago")).color(color));
+        }
+    });
+    if !progress.interrupt_remainder.is_empty() && progress.outcome.as_deref() != Some("dispatched")
+    {
+        ui.label(
+            egui::RichText::new("unproven remainder")
+                .color(theme::warn_orange())
+                .strong(),
+        );
+        for item in &progress.interrupt_remainder {
+            ui.label(egui::RichText::new(format!("· {item}")).color(theme::warn_orange()));
+        }
+    }
+}
+
 fn render_unsupervised_notice(ui: &mut egui::Ui, run: &DispatchRun) {
     let text = match run.liveness.doubt() {
         Some(doubt) => format!("unverified — {}", doubt.explain()),
@@ -736,6 +786,7 @@ mod tests {
             log_bytes,
             log_modified_unix: finished_ago.map(|ago| NOW - ago),
             liveness,
+            progress: switchbard_core::dispatch_inspect::RunProgress::default(),
         }
     }
 

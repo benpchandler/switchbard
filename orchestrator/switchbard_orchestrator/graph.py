@@ -34,6 +34,7 @@ from .proto import dispatch_branch, dispatch_log_dir, dispatch_log_stem, now_uni
 class RunState(TypedDict, total=False):
     task_id: str
     title: str
+    log_stem: str
     prior_status: str
     base_branch: str
     worktree: str
@@ -85,7 +86,10 @@ def build_run_graph(proto, emitter: Emitter, opts: RunOptions, checkpointer=None
     def prepare(state: RunState) -> RunState:
         task_id = state["task_id"]
         worktree = proto.prepare_worktree(task_id, state.get("base_branch", opts.base_branch))
-        stem = dispatch_log_stem(task_id, now_unix())
+        # The driver mints one stem per run and the log, prompt, and events
+        # files all share it - that shared stem is how `dispatch_inspect`
+        # joins the events sidecar to the run it is looking at.
+        stem = state.get("log_stem") or dispatch_log_stem(task_id, now_unix())
         log_dir = dispatch_log_dir()
         log_dir.mkdir(parents=True, exist_ok=True)
         # Keep one log/prompt pair per run attempt; the events file for the
