@@ -21,7 +21,7 @@ use switchbard_core::{
     WorktreeRef, DISPATCHING_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{Place, TasksView};
+use switchbard_gui::runtime::{AgentsSection, DispatchesFacet, Place, TasksView};
 
 const REPO_B_NAME: &str = "second";
 const REPO_B_PATH: &str = "/tmp/switchbard-ui-test/second";
@@ -229,8 +229,14 @@ fn each_place_routes_to_its_own_body() {
     harness.state_mut().place = Place::Command;
     harness.run();
     assert!(
-        harness.query_by_label("Agents").is_some(),
-        "Command should render the existing Agents view"
+        // Not "Command" alone — the nav sidebar's own place row already
+        // renders that label, so it is no longer unique (same reason
+        // `dispatch_operability.rs`'s chip test switched to `get_all_by_
+        // label`). The subtitle is this place body's own text.
+        harness
+            .query_by_label("the agent-scoped fleet console")
+            .is_some(),
+        "Command should render its own fleet console (TASK-98), not the old Agents heading"
     );
 
     harness.state_mut().place = Place::Goals;
@@ -423,6 +429,9 @@ fn narrowing_scope_hides_the_other_repos_context_item_in_command() {
         },
     );
     app.place = Place::Command;
+    // TASK-98: Command's default section is now `Fleet`, not `Context` —
+    // this test exercises the Context section specifically.
+    app.agent_context_view.section = AgentsSection::Context;
     app.repo_scope = std::iter::once(PathBuf::from(REPO_PATH)).collect();
     let mut harness = harness(app);
     harness.run();
@@ -455,6 +464,10 @@ fn narrowing_scope_hides_the_other_repos_row_in_the_dispatches_list() {
     }
     app.place = Place::Tasks;
     app.tasks_view = TasksView::Dispatches;
+    // Both tasks only carry `DISPATCH_LABEL` (queued, no run yet), which
+    // facets as `Queued`, not the default `Active` — see `ui::places::
+    // dispatches::facet_for`.
+    app.dispatches_view.facet = DispatchesFacet::Queued;
     app.repo_scope = std::iter::once(PathBuf::from(REPO_PATH)).collect();
     let mut harness = harness(app);
     harness.run();

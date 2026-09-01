@@ -528,13 +528,15 @@ fn feed_text(row: &RunFeedRow) -> String {
 }
 
 fn render_run_actions(app: &mut HiveApp, ui: &mut egui::Ui, row: &RunFeedRow) {
-    // Painted icon buttons (`theme::painted_retry_button`/`painted_log_button`),
-    // not literal glyphs: `↻`/`≡` render as tofu on a stock font install, the
-    // same failure this module's own header doc documents for `●▸▾↑↓✕•○`.
-    // `icon_button_label` sets the AccessKit name (and hover tooltip) to the
-    // exact verb name, matching every other painted icon button in the app.
+    // `theme::action_icon_button` — the same painted Watch/Kill/Retry/Log/
+    // Respond icon set `ui::places::dispatches`/`ui::places::command` use
+    // (TASK-98), consolidated here (TASK-98 rebase onto TASK-99) rather than
+    // duplicated: it already sets the AccessKit name and hover tooltip to
+    // the exact verb name, and paints instead of relying on literal `↻`/`≡`
+    // glyphs, which render as tofu on a stock font install (the same
+    // failure this module's own header doc documents for `●▸▾↑↓✕•○`).
     if let RunKind::Failed { .. } = &row.kind {
-        if theme::icon_button_label(theme::painted_retry_button(ui), "Retry").clicked() {
+        if theme::action_icon_button(ui, theme::ActionIcon::Retry, "Retry", true).clicked() {
             let ctx = ui.ctx().clone();
             app.spawn_backlog_dispatch_toggle(row.key.0.clone(), row.key.1.clone(), true, &ctx);
         }
@@ -547,7 +549,7 @@ fn render_run_actions(app: &mut HiveApp, ui: &mut egui::Ui, row: &RunFeedRow) {
         render_stalled_kill(app, ui, row, *pgid, *started_at_unix);
     }
     if let Some(log_path) = &row.log_path {
-        if theme::icon_button_label(theme::painted_log_button(ui), "Log").clicked() {
+        if theme::action_icon_button(ui, theme::ActionIcon::Log, "Log", true).clicked() {
             crate::ui::agent_context::open(log_path);
         }
     }
@@ -576,7 +578,7 @@ fn render_stalled_kill(
         if ui.small_button("Cancel").clicked() {
             app.dispatch_kill_confirm = None;
         }
-    } else if theme::icon_button_label(theme::painted_kill_button(ui), "Kill").clicked() {
+    } else if theme::action_icon_button(ui, theme::ActionIcon::Kill, "Kill", true).clicked() {
         app.dispatch_kill_confirm = Some(row.key.clone());
     }
 }
@@ -626,7 +628,7 @@ fn render_port_kill(app: &mut HiveApp, ui: &mut egui::Ui, row: &PortFeedRow) {
         if ui.small_button("Cancel").clicked() {
             app.digest_view.port_kill_confirm = None;
         }
-    } else if theme::icon_button_label(theme::painted_kill_button(ui), "Kill").clicked() {
+    } else if theme::action_icon_button(ui, theme::ActionIcon::Kill, "Kill", true).clicked() {
         app.digest_view.port_kill_confirm = Some(row.pgid);
     }
 }

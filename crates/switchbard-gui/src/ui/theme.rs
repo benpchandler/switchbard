@@ -672,108 +672,6 @@ pub fn painted_check_button(ui: &mut egui::Ui) -> egui::Response {
     resp
 }
 
-/// Small circular-arrow icon — the "retry" affordance (Digest's attention
-/// feed, TASK-99: re-flagging a failed dispatch). Painter-drawn for the same
-/// font-coverage reason as every other icon in this file: a literal `↻`
-/// renders as a tofu square on a stock install, the same failure this
-/// module's header doc already documents for `●▸▾↑↓✕•○`.
-///
-/// Approximated as a ~300° arc (a polyline sampled around a circle, leaving
-/// a gap for the arrowhead) plus a small triangular arrowhead at the open
-/// end — `Painter` has no arc primitive, so this is built the same way
-/// [`favorite_star_button`] builds its star: line segments and one filled
-/// `convex_polygon`.
-pub fn painted_retry_button(ui: &mut egui::Ui) -> egui::Response {
-    let (rect, resp) =
-        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
-    let color = if resp.hovered() { sky() } else { weak_text() };
-    let stroke = egui::Stroke::new(1.4, color);
-    let painter = ui.painter();
-    let c = rect.center();
-    let radius = 4.5;
-    const ARC_STEPS: usize = 16;
-    let start_deg: f32 = -40.0;
-    let sweep_deg: f32 = 300.0;
-    let points: Vec<egui::Pos2> = (0..=ARC_STEPS)
-        .map(|i| {
-            let t = (start_deg + sweep_deg * (i as f32 / ARC_STEPS as f32)).to_radians();
-            egui::pos2(c.x + t.cos() * radius, c.y + t.sin() * radius)
-        })
-        .collect();
-    painter.add(egui::Shape::line(points.clone(), stroke));
-    if let (Some(&tip), Some(&prev)) = (points.last(), points.get(points.len().saturating_sub(2))) {
-        let dir = (tip - prev).normalized();
-        let normal = egui::vec2(-dir.y, dir.x);
-        let head = vec![
-            tip + dir * 1.5,
-            tip - dir * 2.5 + normal * 2.2,
-            tip - dir * 2.5 - normal * 2.2,
-        ];
-        painter.add(egui::Shape::convex_polygon(head, color, egui::Stroke::NONE));
-    }
-    resp
-}
-
-/// Small document icon — the "open log" affordance (Digest's attention
-/// feed, TASK-99: opening a dispatch run's captured log file). Painter-drawn
-/// for the same font-coverage reason as every other icon in this file; a
-/// literal `≡` renders as a tofu square on a stock install.
-pub fn painted_log_button(ui: &mut egui::Ui) -> egui::Response {
-    let (rect, resp) =
-        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
-    let color = if resp.hovered() { sky() } else { weak_text() };
-    let stroke = egui::Stroke::new(1.2, color);
-    let painter = ui.painter();
-    let c = rect.center();
-    painter.rect_stroke(
-        egui::Rect::from_center_size(c, egui::vec2(9.0, 11.0)),
-        1.0,
-        stroke,
-        egui::StrokeKind::Outside,
-    );
-    for dy in [-3.0, 0.0, 3.0] {
-        painter.line_segment(
-            [
-                egui::pos2(c.x - 2.7, c.y + dy),
-                egui::pos2(c.x + 2.7, c.y + dy),
-            ],
-            egui::Stroke::new(1.0, color),
-        );
-    }
-    resp
-}
-
-/// Small X-cross icon — the "kill" affordance (Digest's attention feed,
-/// TASK-99: stopping a stalled dispatch run or a port-squatting process).
-/// Painter-drawn for the same font-coverage reason as every other icon in
-/// this file — `✕` is explicitly one of the glyphs this module's header doc
-/// names as rendering tofu on a stock install. Hover color mirrors
-/// [`painted_trash_button`]'s destructive-on-hover treatment rather than a
-/// filled `danger_button`, so every destructive icon action in the app reads
-/// the same way.
-pub fn painted_kill_button(ui: &mut egui::Ui) -> egui::Response {
-    let (rect, resp) =
-        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
-    let color = if resp.hovered() {
-        danger()
-    } else {
-        weak_text()
-    };
-    let stroke = egui::Stroke::new(1.6, color);
-    let painter = ui.painter();
-    let c = rect.center();
-    let r = 4.0;
-    painter.line_segment(
-        [egui::pos2(c.x - r, c.y - r), egui::pos2(c.x + r, c.y + r)],
-        stroke,
-    );
-    painter.line_segment(
-        [egui::pos2(c.x - r, c.y + r), egui::pos2(c.x + r, c.y - r)],
-        stroke,
-    );
-    resp
-}
-
 /// Sets an icon-only button's AccessKit name to `label` and its hover
 /// tooltip to the same text — the IA V2 trajectory entry's implementation
 /// obligation that universal-action icon buttons derive their accessible
@@ -997,6 +895,179 @@ pub fn painted_glyph(ui: &mut egui::Ui, glyph: Glyph, color: Color32) -> egui::R
         }
     }
     resp
+}
+
+/// TASK-98: the universal dispatch-run-action icon set (mock §2b/§2c's
+/// `.ibtn` row: Watch/Kill/Retry/Log/Respond). Painted rather than rendered
+/// as the mock's literal `◉ ✕ ↻ ≡ ↩` characters, for the exact font-coverage
+/// reason this file's [`Glyph`] doc already established for a different
+/// symbol set — these are unverified against the embedded fonts too, and the
+/// same "no mixed icon treatments in one row" convention applies once
+/// `painted_dot`/`painted_trash_button` sit beside them.
+///
+/// The single authority for these five verbs: `ui::places::dispatches` and
+/// `ui::places::command` (TASK-98) use the full set, and `ui::places::digest`
+/// (TASK-99) reuses Retry/Log/Kill for its attention feed's run-action
+/// affordances rather than duplicating its own painted icons — Retry/Log/Kill
+/// mean the exact same thing (re-flag a dispatch, open a captured log, stop a
+/// run) wherever a row offers them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionIcon {
+    /// Open a run's log, or an interactive session's worktree folder.
+    Watch,
+    Kill,
+    /// Re-flag a failed task for dispatch.
+    Retry,
+    Log,
+    /// Deep-link to the task that needs a human.
+    Respond,
+}
+
+/// A universal-action icon button: painted glyph, hover tooltip, and an
+/// explicit AccessKit label. The mock's accessibility contract (aria-label
+/// and tabindex on every icon/text button, deriving labels from the Command
+/// verb names) is met by setting `verb` as *both* the tooltip and the
+/// accessible name, never a generic "button" or the icon's own name. `verb`
+/// should be exactly the word used everywhere else this action is named
+/// (Kill/Retry/Log/Watch/Respond — the same spellings `ui::places::
+/// dispatches`/`ui::places::command`'s own doc and the existing dispatch
+/// Kill control use), so a screen reader and a sighted user's tooltip always
+/// agree.
+pub fn action_icon_button(
+    ui: &mut egui::Ui,
+    icon: ActionIcon,
+    verb: &str,
+    enabled: bool,
+) -> egui::Response {
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), sense);
+    let color = if !enabled {
+        weak_text()
+    } else if response.hovered() && icon == ActionIcon::Kill {
+        danger()
+    } else if response.hovered() {
+        lavender()
+    } else {
+        muted_text()
+    };
+    paint_action_icon(ui, rect, icon, color);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, verb));
+    response.on_hover_text(verb)
+}
+
+fn paint_action_icon(ui: &mut egui::Ui, rect: egui::Rect, icon: ActionIcon, color: Color32) {
+    let stroke = egui::Stroke::new(1.3, color);
+    let painter = ui.painter();
+    let c = rect.center();
+    match icon {
+        ActionIcon::Watch => {
+            // An open eye: a lens outline plus a filled pupil.
+            painter.circle_stroke(c, 5.2, stroke);
+            painter.circle_filled(c, 1.8, color);
+        }
+        ActionIcon::Kill => {
+            // A plain X — the same shape `danger`-toned controls use
+            // everywhere else in this app.
+            let r = 4.2;
+            painter.line_segment(
+                [egui::pos2(c.x - r, c.y - r), egui::pos2(c.x + r, c.y + r)],
+                stroke,
+            );
+            painter.line_segment(
+                [egui::pos2(c.x - r, c.y + r), egui::pos2(c.x + r, c.y - r)],
+                stroke,
+            );
+        }
+        ActionIcon::Retry => {
+            // A circular arrow: a ~300° arc plus a small arrowhead at its
+            // open end, reading as "go again" at icon size.
+            paint_arc(painter, c, 5.0, -200.0, 160.0, stroke);
+            let (sin, cos) = (160f32).to_radians().sin_cos();
+            let tip = egui::pos2(c.x + cos * 5.0, c.y + sin * 5.0);
+            let head = [
+                tip,
+                tip + egui::vec2(-3.2, -1.0),
+                tip + egui::vec2(-1.4, 3.0),
+            ];
+            painter.add(egui::Shape::convex_polygon(
+                head.to_vec(),
+                color,
+                egui::Stroke::NONE,
+            ));
+        }
+        ActionIcon::Log => {
+            // Three horizontal rules — a compact "list/log" glyph.
+            for dy in [-3.5, 0.0, 3.5] {
+                painter.line_segment(
+                    [
+                        egui::pos2(c.x - 4.5, c.y + dy),
+                        egui::pos2(c.x + 4.5, c.y + dy),
+                    ],
+                    stroke,
+                );
+            }
+        }
+        ActionIcon::Respond => {
+            // A reply arrow (↩): a horizontal shaft entering from the right,
+            // a quarter-circle turn down to the left, ending in a
+            // left-pointing arrowhead — every segment shares an endpoint
+            // with its neighbor so the shape reads as one continuous arrow
+            // rather than three disconnected marks at this icon's 14px size
+            // (the first version of this icon had exactly that bug: a
+            // shaft positioned above the arc instead of tangent to it).
+            let arc_center = egui::pos2(c.x + 1.0, c.y + 0.5);
+            let r = 3.2;
+            // -90 deg = straight up from `arc_center` (this file's angle
+            // convention: 0 = +x, clockwise in screen space); 180 deg =
+            // straight left. The quarter sweep between them is the turn.
+            paint_arc(painter, arc_center, r, -90.0, 180.0, stroke);
+            painter.line_segment(
+                [
+                    egui::pos2(arc_center.x, arc_center.y - r),
+                    egui::pos2(c.x + 4.5, arc_center.y - r),
+                ],
+                stroke,
+            );
+            let tip = egui::pos2(c.x - 4.2, arc_center.y);
+            let head = [
+                tip,
+                egui::pos2(c.x - 1.3, arc_center.y - 1.6),
+                egui::pos2(c.x - 1.3, arc_center.y + 1.6),
+            ];
+            painter.add(egui::Shape::convex_polygon(
+                head.to_vec(),
+                color,
+                egui::Stroke::NONE,
+            ));
+        }
+    }
+}
+
+/// Polyline approximation of a circular arc from `start_deg` to `end_deg`
+/// (0° = +x axis, clockwise in screen space), centered on `c` with the given
+/// radius. Shared by [`ActionIcon::Retry`] and [`ActionIcon::Respond`], the
+/// two icons in this set that need a curve rather than straight segments.
+fn paint_arc(
+    painter: &egui::Painter,
+    c: egui::Pos2,
+    radius: f32,
+    start_deg: f32,
+    end_deg: f32,
+    stroke: egui::Stroke,
+) {
+    const STEPS: usize = 14;
+    let points: Vec<egui::Pos2> = (0..=STEPS)
+        .map(|i| {
+            let t = start_deg + (end_deg - start_deg) * (i as f32) / (STEPS as f32);
+            let (sin, cos) = t.to_radians().sin_cos();
+            egui::pos2(c.x + cos * radius, c.y + sin * radius)
+        })
+        .collect();
+    painter.add(egui::Shape::line(points, stroke));
 }
 
 /// Expand / collapse caret. Triangle points down when `open`, right when not.

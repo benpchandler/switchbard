@@ -1,4 +1,5 @@
 pub mod agent_context;
+pub mod agent_sessions;
 pub mod attribution;
 pub mod backlog;
 pub mod backlog_relations;
@@ -35,6 +36,9 @@ pub use agent_context::{
     load_agent_context_cache_from, read_context_preview, save_agent_context_cache,
     save_agent_context_cache_to, scan_agent_context, AgentContextItem, AgentContextMap, AgentHook,
     AgentHookWarning, AgentKind, ContextKind, ContextScope,
+};
+pub use agent_sessions::{
+    attribute_agent_sessions, scan_agent_sessions, AgentProcessKind, AgentProcessRow, AgentSession,
 };
 pub use attribution::attribute;
 pub use backlog::{

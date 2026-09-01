@@ -46,12 +46,13 @@ use eframe::egui::{epaint::Shape, Color32, Pos2, Rect};
 use egui_kittest::kittest::{by, Queryable};
 use egui_kittest::Harness;
 use switchbard_core::config::ThemeChoice;
+use switchbard_core::dispatch_inspect::DispatchRun;
 use switchbard_core::{
     AttributedListener, BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource,
     LocalListener, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{AgentsSection, BacklogLens, Place};
+use switchbard_gui::runtime::{AgentsSection, BacklogLens, DispatchesFacet, Place, TasksView};
 use switchbard_gui::ui::legibility;
 
 /// One painted run of text with a single resolved size + color.
@@ -564,6 +565,98 @@ fn seed_backlog_project(app: &HiveApp) {
     );
 }
 
+/// A real log file for TASK-6's dispatch run, so `ui::places::dispatches`'s
+/// detail card actually paints a log tail (`read_log_tail` reads real
+/// filesystem bytes — a `None` `log_path` would silently skip that text and
+/// leave it out of the audit entirely).
+fn write_dispatch_log_fixture() -> PathBuf {
+    let path = std::path::Path::new(REPO_PATH).join("task-6-dispatch.log");
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(
+        &path,
+        "$ cargo test -p switchbard-core rank\ntest rank::create_places_at_tail ... ok\n",
+    );
+    path
+}
+
+/// TASK-98: `DispatchRun` fixtures for the two dispatch-labeled tasks
+/// `seed_backlog_project` already seeds (TASK-6 in flight, TASK-8 failed),
+/// cached exactly the way `workers::refresh_dispatch_runs` would have left
+/// them — both `ui::places::dispatches` and `ui::places::command` read this
+/// same cache.
+fn seed_dispatch_runs(app: &HiveApp) {
+    let log_path = write_dispatch_log_fixture();
+    let mut runs = app.dispatch_runs.lock().unwrap();
+    runs.insert(
+        (PathBuf::from(REPO_PATH), "TASK-6".to_string()),
+        DispatchRun {
+            task_id: "TASK-6".to_string(),
+            branch: "dispatch/task-6".to_string(),
+            worktree_path: PathBuf::from(format!("{REPO_PATH}/.worktrees/dispatch-task-6")),
+            worktree_exists: true,
+            log_path: Some(log_path),
+            prompt_path: None,
+            started_at_unix: Some(switchbard_core::dispatch_inspect::now_unix() - 840),
+            log_bytes: 0,
+            log_modified_unix: None,
+            liveness: switchbard_core::dispatch_inspect::DispatchRunLiveness::Alive {
+                pgid: 4242,
+                supervised: true,
+            },
+            progress: switchbard_core::dispatch_inspect::RunProgress::default(),
+        },
+    );
+    runs.insert(
+        (PathBuf::from(REPO_PATH), "TASK-8".to_string()),
+        DispatchRun {
+            task_id: "TASK-8".to_string(),
+            branch: "dispatch/task-8".to_string(),
+            worktree_path: PathBuf::from(format!("{REPO_PATH}/.worktrees/dispatch-task-8")),
+            worktree_exists: false,
+            log_path: Some(PathBuf::from("/tmp/switchbard-logs/task-8-dispatch.log")),
+            prompt_path: None,
+            started_at_unix: Some(switchbard_core::dispatch_inspect::now_unix() - 1_320),
+            log_bytes: 900,
+            log_modified_unix: Some(switchbard_core::dispatch_inspect::now_unix() - 1_260),
+            liveness: switchbard_core::dispatch_inspect::DispatchRunLiveness::NoSidecar,
+            progress: switchbard_core::dispatch_inspect::RunProgress::default(),
+        },
+    );
+}
+
+/// TASK-98: the Dispatches view (Tasks place) with TASK-6's in-flight run
+/// selected — every text register the detail card paints (log tail, AC
+/// chips, SITREP age) is part of this audit, not just the row list.
+fn seed_dispatches_running(app: &mut HiveApp) {
+    seed_backlog_project(app);
+    seed_dispatch_runs(app);
+    app.dispatches_view.selected = Some((PathBuf::from(REPO_PATH), "TASK-6".to_string()));
+}
+
+/// TASK-98: the Command place's Fleet section — TASK-6 (dispatch, in
+/// flight), TASK-8 (dispatch, failed → needs you, selected so the
+/// support-request card renders), and one interactive `claude` session in a
+/// second worktree.
+fn seed_command_fleet(app: &mut HiveApp) {
+    seed_backlog_project(app);
+    seed_dispatch_runs(app);
+    *app.agent_sessions.lock().unwrap() = vec![switchbard_core::AgentSession {
+        pid: 5150,
+        kind: switchbard_core::AgentProcessKind::Claude,
+        repo_name: Some(REPO_NAME.to_string()),
+        worktree_path: Some(PathBuf::from(format!("{REPO_PATH}/.worktrees/feature-x"))),
+        worktree_branch: Some("feature/stack-ranking-core".to_string()),
+        started_unix: Some(switchbard_core::dispatch_inspect::now_unix() - 900),
+        pgid: Some(5150),
+    }];
+    app.command_view.selected = Some(switchbard_gui::runtime::CommandRowKey::Dispatch((
+        PathBuf::from(REPO_PATH),
+        "TASK-8".to_string(),
+    )));
+}
+
 /// Build the harnesses for every view we audit, under `theme`. Covers the top
 /// bar + sidebar + each central view, the Agents Context drawer with a file
 /// selected (the exact surface in the reported screenshot: small gray paths +
@@ -609,6 +702,10 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     let mut agent_app = seeded_app();
     agent_app.config.ui.theme = theme;
     agent_app.place = Place::Command;
+    // TASK-98: Command's default section is now Fleet, not Context — this
+    // fixture is specifically of the Context section; Fleet gets its own
+    // fixture below.
+    agent_app.agent_context_view.section = AgentsSection::Context;
     seed_live_listener(&agent_app);
     let agent = harness(agent_app);
 
@@ -621,9 +718,34 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     let mut drawer_app = seeded_app();
     drawer_app.config.ui.theme = theme;
     drawer_app.place = Place::Command;
+    drawer_app.agent_context_view.section = AgentsSection::Context;
     drawer_app.agent_context_view.selected_id = Some("claude-md".to_string());
     seed_live_listener(&drawer_app);
     let drawer = harness(drawer_app);
+
+    // TASK-98: Command's Fleet section — one dispatch-in-flight row, one
+    // dispatch-failed (needs-you) row, and one interactive session, so
+    // every text register the Fleet section paints (agent label, mission,
+    // now-line, lease, SITREP, the NEEDS YOU flag, and the support-request
+    // card) is part of this audit.
+    let mut fleet_app = seeded_app();
+    fleet_app.config.ui.theme = theme;
+    fleet_app.place = Place::Command;
+    seed_command_fleet(&mut fleet_app);
+    fleet_app.command_view.facet = switchbard_gui::runtime::CommandFacet::All;
+    let fleet = harness(fleet_app);
+
+    // TASK-98: the Dispatches view under Tasks — one running (in-flight)
+    // task with its detail card selected and expanded, so the facet bar,
+    // row pill/now-line/elapsed/action icons, and the detail card's log
+    // tail + AC chips + SITREP age are all part of this audit.
+    let mut dispatches_app = seeded_app();
+    dispatches_app.config.ui.theme = theme;
+    dispatches_app.place = Place::Tasks;
+    dispatches_app.tasks_view = TasksView::Dispatches;
+    seed_dispatches_running(&mut dispatches_app);
+    dispatches_app.dispatches_view.facet = DispatchesFacet::Active;
+    let dispatches_running = harness(dispatches_app);
 
     let mut digest_app = seeded_app();
     digest_app.config.ui.theme = theme;
@@ -812,6 +934,11 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
         (
             format!("Agents · Context file selected (path + preview){suffix}"),
             drawer,
+        ),
+        (format!("Command · Fleet (mixed rows){suffix}"), fleet),
+        (
+            format!("Tasks · Dispatches (running fixture){suffix}"),
+            dispatches_running,
         ),
         (format!("Backlog · Digest lens (default){suffix}"), digest),
         (format!("Backlog · List lens (task detail){suffix}"), list),

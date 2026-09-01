@@ -30,8 +30,9 @@ use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
     dispatch_run_holds_worktree, migrate_filter_keys, ActiveRun, ActiveRunSummary,
     AgentContextViewState, AgentsSection, BacklogTaskKey, BacklogViewState, BoardMoveOutcome,
-    ConfirmBulkRemoveWorktrees, ConfirmRemoveWorktree, DigestViewState, GoalsPlaceState,
-    LandingEntry, OrderingState, PickerState, Place, TasksView, WorktreeMeta, WorktreeSizeEntry,
+    CommandViewState, ConfirmBulkRemoveWorktrees, ConfirmRemoveWorktree, DigestViewState,
+    DispatchesViewState, GoalsPlaceState, LandingEntry, OrderingState, PickerState, Place,
+    TasksView, WorktreeMeta, WorktreeSizeEntry,
 };
 use crate::sync::{Kick, Progress, Status};
 use crate::ui;
@@ -52,7 +53,7 @@ use switchbard_core::instance_lock::{self, AcquireError, InstanceLock};
 use switchbard_core::{
     assess_branch_delete, collect_dirty_files, config, delete_branch, is_primary_worktree,
     kill_dispatch_run, kill_pgid, load_agent_context_cache, load_backlog_repo, open_url,
-    probe_facts, remove_worktree, spawn_in_session, url_for_port, AgentContextMap,
+    probe_facts, remove_worktree, spawn_in_session, url_for_port, AgentContextMap, AgentSession,
     AttachedProcesses, AttributedListener, BacklogRepo, BacklogTaskPatch, DetectedService, Fact,
     KillOutcome, NewBacklogTask, Repo, WorktreeRef, BROWSER_APP_NAMES,
 };
@@ -144,6 +145,12 @@ pub struct HiveApp {
     /// recomputes from the repo + task id, never a second source of truth —
     /// it exists only to keep `read_dir`/`metadata` calls off the render path.
     pub dispatch_runs: Arc<Mutex<HashMap<BacklogTaskKey, DispatchRun>>>,
+    /// TASK-98: live `claude`/`codex` interactive CLI processes, attributed
+    /// to a worktree — refreshed by `workers::spawn_agent_sessions` on its
+    /// own cadence (see that worker's doc). The Command place's Fleet
+    /// section unions this with `dispatch_runs` for its row set; nothing
+    /// else reads it.
+    pub agent_sessions: Arc<Mutex<Vec<AgentSession>>>,
     /// Tasks with a Refine run currently in flight (TASK-44). Purely a
     /// concurrency guard for the detail rail's Refine button, deliberately
     /// *not* a label on the task: unlike dispatch, a refine run is one
@@ -182,6 +189,11 @@ pub struct HiveApp {
     pub dispatch_kick: Kick,
     pub size_kick: Kick,
     pub landing_kick: Kick,
+    /// TASK-98: wakes `workers::spawn_agent_sessions` early — currently
+    /// unused (nothing forces an early rescan the way flagging a task wakes
+    /// `dispatch_kick`) but wired for symmetry with every other worker and
+    /// so a future "watch this worktree now" action has a hook to call.
+    pub agent_sessions_kick: Kick,
     pub picker: Arc<Mutex<PickerState>>,
 
     // Per-view feedback channels. One per UI surface so messages don't
@@ -310,6 +322,12 @@ pub struct HiveApp {
     /// arming). See `DigestViewState`'s own doc for why nothing else about
     /// the attention feed lives here.
     pub digest_view: DigestViewState,
+    /// TASK-98: Dispatches view facet + selected-run detail card. Session-only
+    /// — see `DispatchesViewState`'s own doc.
+    pub dispatches_view: DispatchesViewState,
+    /// TASK-98: Command place Fleet-section facet + selected-row support
+    /// card. Session-only — see `CommandViewState`'s own doc.
+    pub command_view: CommandViewState,
     /// Shared render cache for the task detail pane's markdown description
     /// (task-15 AC #3). `egui_commonmark` recommends one long-lived cache
     /// rather than rebuilding it every frame.
@@ -450,6 +468,7 @@ impl HiveApp {
             board_move_started: Arc::new(Mutex::new(HashMap::new())),
             task_write_locks: Arc::new(Mutex::new(HashMap::new())),
             dispatch_runs: Arc::new(Mutex::new(HashMap::new())),
+            agent_sessions: Arc::new(Mutex::new(Vec::new())),
             refining_tasks: Arc::new(Mutex::new(BTreeSet::new())),
             ordering: Arc::new(Mutex::new(OrderingState::default())),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
@@ -465,6 +484,7 @@ impl HiveApp {
             dispatch_kick: Kick::new(),
             size_kick: Kick::new(),
             landing_kick: Kick::new(),
+            agent_sessions_kick: Kick::new(),
             config: cfg,
             config_save_path: None,
             _instance_lock: None,
@@ -498,6 +518,8 @@ impl HiveApp {
             backlog_view,
             goals_view: GoalsPlaceState::default(),
             digest_view: DigestViewState::default(),
+            dispatches_view: DispatchesViewState::default(),
+            command_view: CommandViewState::default(),
             commonmark_cache: egui_commonmark::CommonMarkCache::default(),
             browser_choice,
             onboarding: Arc::new(Mutex::new(DiscoveryState::default())),
@@ -520,6 +542,7 @@ impl HiveApp {
                 agent_contexts: self.agent_contexts.clone(),
                 backlog_repos: self.backlog_repos.clone(),
                 dispatch_runs: self.dispatch_runs.clone(),
+                agent_sessions: self.agent_sessions.clone(),
                 ordering: self.ordering.clone(),
                 active_runs: self.active_runs.clone(),
                 sizes: self.sizes.clone(),
@@ -533,6 +556,7 @@ impl HiveApp {
                 dispatch_kick: self.dispatch_kick.clone(),
                 size_kick: self.size_kick.clone(),
                 landing_kick: self.landing_kick.clone(),
+                agent_sessions_kick: self.agent_sessions_kick.clone(),
             },
         );
     }
@@ -551,6 +575,10 @@ impl HiveApp {
 
     pub fn dispatch_runs_snapshot(&self) -> HashMap<BacklogTaskKey, DispatchRun> {
         self.dispatch_runs.lock().unwrap().clone()
+    }
+
+    pub fn agent_sessions_snapshot(&self) -> Vec<AgentSession> {
+        self.agent_sessions.lock().unwrap().clone()
     }
 
     /// Whether a Refine run is in flight for this task right now — what the
@@ -612,6 +640,12 @@ impl HiveApp {
                 TasksView::Dispatches => "tasks.dispatches",
             },
             Place::Command => match self.agent_context_view.section {
+                // TASK-98: Fleet's own free-text search shares the "command"
+                // key with the shared agent-kind facet's `.facets` map (see
+                // `AgentContextViewState::persist_filters`) — that entry's
+                // `.query` field was unused before Fleet existed, so this is
+                // a genuinely free slot, not a collision.
+                AgentsSection::Fleet => "command",
                 AgentsSection::Context => "command.context",
                 AgentsSection::Hooks => "command.hooks",
             },
@@ -1353,6 +1387,24 @@ impl HiveApp {
                 self.server_status.set(format!("opened {url} in {label}"));
             }
             Err(e) => self.server_status.set(format!("open failed: {e}")),
+        }
+    }
+
+    /// TASK-98: the Dispatches/Command "Watch"/"Log" verb — open a local
+    /// path (a dispatch run's log file, or an interactive session's
+    /// worktree folder) in the OS's own handler. Reuses `open_url` rather
+    /// than a second file-opening implementation: it already does exactly
+    /// this (`open`/`xdg-open` a path, no browser override) for local
+    /// listener ports, and a filesystem path is just another string `open`/
+    /// `xdg-open` knows how to hand off. No new streaming or log-tailing
+    /// infrastructure — this launches whatever the OS opens `.log` files
+    /// (or folders) with.
+    pub fn open_dispatch_path(&self, path: &Path) {
+        match open_url(&path.display().to_string(), None) {
+            Ok(()) => self
+                .backlog_status
+                .set(format!("opened {}", path.display())),
+            Err(e) => self.backlog_status.set(format!("open failed: {e}")),
         }
     }
 
@@ -2467,16 +2519,18 @@ impl HiveApp {
         // IA V2 (TASK-96) transition routing: places route to the EXISTING
         // surfaces (this slice replaces navigation, not the surfaces) — see
         // `ui::nav`'s module doc for the full routing rationale. Digest
-        // (TASK-99) and Goals (TASK-101) each have their own place module
-        // now (`ui::places::digest`/`ui::places::goals`); Command/Ops still
-        // route to their pre-IA-V2 surfaces until their own place lands.
+        // (TASK-99), Goals (TASK-101), and Command (TASK-98, including the
+        // Tasks place's Dispatches built-in view) each have their own place
+        // module now (`ui::places::digest`/`ui::places::goals`/
+        // `ui::places::command`/`ui::places::dispatches`); Ops still routes
+        // to its pre-IA-V2 surface until its own place lands.
         match self.place {
             Place::Digest => ui::places::digest::render(self, ui),
             Place::Tasks => match self.tasks_view {
                 TasksView::All => ui::backlog::render(self, ui),
-                TasksView::Dispatches => ui::dispatch::render(self, ui),
+                TasksView::Dispatches => ui::places::dispatches::render(self, ui),
             },
-            Place::Command => ui::agents::render(self, ui),
+            Place::Command => ui::places::command::render(self, ui),
             Place::Goals => ui::places::goals::render_goals_place(self, ui),
             Place::Ops => ui::workspace::render(self, ui),
         }

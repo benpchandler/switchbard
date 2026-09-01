@@ -81,11 +81,96 @@ pub enum TasksView {
 }
 
 /// Sibling surfaces within the top-level Command place (formerly "Agents").
+/// TASK-98: `Fleet` — the agent-scoped console (dispatch runs + interactive
+/// sessions, `ui::places::command`) — is the new default landing surface;
+/// `Context`/`Hooks` are the pre-existing "what agents read and run" info
+/// carried over verbatim from the old top-level Agents view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AgentsSection {
     #[default]
+    Fleet,
     Context,
     Hooks,
+}
+
+/// TASK-98: which facet of the Dispatches view is showing. Mirrors the
+/// three-way split `ui::dispatch::DispatchSummary` already computes
+/// (queued / in-flight / needs-attention) plus a fourth bucket for finished
+/// (awaiting-review) runs the summary deliberately excludes from all three —
+/// see `ui::places::dispatches::facet_for`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DispatchesFacet {
+    #[default]
+    Active,
+    Queued,
+    Finished,
+    Failed,
+}
+
+impl DispatchesFacet {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Active => "Active",
+            Self::Queued => "Queued",
+            Self::Finished => "Finished",
+            Self::Failed => "Failed",
+        }
+    }
+
+    pub const ALL: [Self; 4] = [Self::Active, Self::Queued, Self::Finished, Self::Failed];
+}
+
+/// TASK-98: session-only view state for the Dispatches view (`ui::places::
+/// dispatches`) — which facet is showing and which run's detail card is
+/// expanded. Not persisted, matching `dispatch_kill_confirm`'s own
+/// session-only rationale: a stale selection surviving a relaunch would
+/// point at a run that may no longer exist.
+#[derive(Debug, Clone, Default)]
+pub struct DispatchesViewState {
+    pub facet: DispatchesFacet,
+    pub selected: Option<BacklogTaskKey>,
+}
+
+/// TASK-98: which facet of the Command fleet is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CommandFacet {
+    #[default]
+    All,
+    Dispatch,
+    Interactive,
+    NeedsYou,
+}
+
+impl CommandFacet {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Dispatch => "Dispatch",
+            Self::Interactive => "Interactive",
+            Self::NeedsYou => "Needs you",
+        }
+    }
+
+    pub const ALL: [Self; 4] = [Self::All, Self::Dispatch, Self::Interactive, Self::NeedsYou];
+}
+
+/// Identifies one Command fleet row for selection — a dispatch run (keyed
+/// the same way every other dispatch surface keys one, by repo root + task
+/// id) or an interactive session (keyed by pid, the only identity the OS
+/// scan carries; see `switchbard_core::agent_sessions`' module doc for why
+/// this app holds no more durable identity for one than that).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandRowKey {
+    Dispatch(BacklogTaskKey),
+    Interactive(u32),
+}
+
+/// TASK-98: session-only view state for the Command place (`ui::places::
+/// command`), the Fleet section's counterpart to `DispatchesViewState`.
+#[derive(Debug, Clone, Default)]
+pub struct CommandViewState {
+    pub facet: CommandFacet,
+    pub selected: Option<CommandRowKey>,
 }
 
 /// TASK-96: `UiConfig.filters` records re-key from the old lens/tab names to
@@ -906,7 +991,7 @@ pub struct AgentContextViewState {
 impl Default for AgentContextViewState {
     fn default() -> Self {
         Self {
-            section: AgentsSection::Context,
+            section: AgentsSection::Fleet,
             scope: ContextScope::Local,
             kind: None,
             selected_id: None,

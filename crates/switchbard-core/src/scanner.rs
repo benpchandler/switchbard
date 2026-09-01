@@ -132,8 +132,13 @@ fn fill_cwds(listeners: &mut [LocalListener]) -> Result<()> {
     Ok(())
 }
 
+/// `pid -> cwd` via one batched `lsof -d cwd` call. `pub(crate)` rather than
+/// private: `agent_sessions::scan_agent_sessions` reuses this exact lookup
+/// for the same reason a listener needs it — cwd is the only thing either
+/// scan can attribute a worktree from — rather than re-shelling to `lsof`
+/// a second time per scan tick.
 #[cfg(not(target_os = "linux"))]
-fn cwds_for_pids(pids: &[u32]) -> HashMap<u32, PathBuf> {
+pub(crate) fn cwds_for_pids(pids: &[u32]) -> HashMap<u32, PathBuf> {
     let mut out = HashMap::new();
     if pids.is_empty() {
         return out;

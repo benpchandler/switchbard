@@ -49,6 +49,7 @@
 //! | size (TASK-41) | 300s, bounded catch-up batch of 5 | ~650ms **per worktree** average (measured 2026-08-19 via `examples/scan_cadence_audit.rs`, sampled 20/84 real worktrees, `du -sk`; a manual sweep of `~/Dev/.worktrees`'s larger checkouts saw individual calls up to ~1.5s) — an order of magnitude past every other per-worktree probe | `du` walks the whole tree (node_modules/target/build artifacts); see `worktree_size.rs`'s own doc. Never runs inline with the git-probe tick — its own worker, own cadence, catches up a bounded batch of never-yet-sized worktrees per tick (same shape as agent-context's cold-start batching below) rather than blocking on a full sweep. |
 //! | landing (feat/landing-stage) | 300s, bounded catch-up batch of 5 | `probe_push_state` is one free local `rev-parse`; `probe_pr_state` is ~1s of `gh` per branch by that function's own doc — same order of magnitude as `du`'s per-worktree cost above, so this worker reuses `size`'s exact period/batch rather than deriving a new pair | Only ever probes worktrees `spawn_probe` has already found to have unlanded commits (a clean worktree has no "why" to ask) with a real branch (a detached HEAD has nothing to push or open a PR from). Never runs inline with the git-probe tick, same reason `size` doesn't — see `spawn_landing`'s own doc and the hard constraint in `switchbard_core::landing`'s module doc: **never call `probe_pr_state` from the git-probe tick.** |
 //! | reaper | 2s (unchanged) | negligible, in-memory PGID check only | Not part of the worktree-count scaling problem this audit targets. |
+//! | agent-sessions (TASK-98) | 5s | one `ps`/`/proc` walk, independent of worktree count — same shape as `scanner`'s own cost | Conservative rather than matching `scanner`'s 3s: an interactive agent session changing is a human starting/stopping a terminal, not a live listening socket the Servers view has to track second-by-second. 5s keeps the Command place's Fleet section close to live without adding a second sub-3s subprocess tick alongside the scanner's. |
 //!
 //! Two cross-cutting mechanisms apply on top of the table above:
 //! - **Startup stagger** (`stagger_offset`): each worker's *first* tick is
@@ -70,15 +71,16 @@ use crate::sync::Kick;
 use eframe::egui;
 use switchbard_core::dispatch_inspect::{inspect_dispatch_run, DispatchRun};
 use switchbard_core::{
-    agent_context_needs_rescan, attribute, detect_services, drain_dispatch_queue, find_hub_repo,
-    is_backlog_repo, list_dispatch_queue, load_backlog_repo, load_ordering_overlay,
-    probe_dirty_files, probe_fetch_age, probe_head_commit_time, probe_ignored_files,
-    probe_pr_state, probe_push_state, probe_recent_commits, probe_ref_drift_detail,
-    probe_remote_drift, probe_trunk_detail, probe_trunk_divergence, probe_worktree_lock,
-    probe_worktree_size, save_agent_context_cache, scan_agent_context, scan_listeners,
-    staleness_from_trunk, sweep_dead_sidecar, AgentContextMap, BacklogRepo, DetectedService,
-    DispatchOptions, DriftProbe, Fact, LandingStage, PushState, Repo, WorktreeRef,
-    DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
+    agent_context_needs_rescan, attribute, attribute_agent_sessions, detect_services,
+    drain_dispatch_queue, find_hub_repo, is_backlog_repo, list_dispatch_queue, load_backlog_repo,
+    load_ordering_overlay, probe_dirty_files, probe_fetch_age, probe_head_commit_time,
+    probe_ignored_files, probe_pr_state, probe_push_state, probe_recent_commits,
+    probe_ref_drift_detail, probe_remote_drift, probe_trunk_detail, probe_trunk_divergence,
+    probe_worktree_lock, probe_worktree_size, save_agent_context_cache, scan_agent_context,
+    scan_agent_sessions, scan_listeners, staleness_from_trunk, sweep_dead_sidecar, AgentContextMap,
+    AgentSession, BacklogRepo, DetectedService, DispatchOptions, DriftProbe, Fact, LandingStage,
+    PushState, Repo, WorktreeRef, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL,
+    DISPATCH_LABEL,
 };
 
 /// How many commits we list per side (ahead / behind) in the drift tooltip.
@@ -128,6 +130,9 @@ const BACKLOG_PERIOD: Duration = Duration::from_secs(30);
 const DISPATCH_PERIOD: Duration = Duration::from_secs(90);
 const CONTEXT_CACHE_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24);
 const REAPER_PERIOD: Duration = Duration::from_secs(2);
+/// TASK-98: see this module's cadence-policy doc table for the "why 5s, not
+/// `scanner`'s 3s" rationale.
+const AGENT_SESSIONS_PERIOD: Duration = Duration::from_secs(5);
 /// TASK-41: on-disk size (`du`) is by far the most expensive per-worktree
 /// probe in the app — measured ~0.8-1.5s each against real worktrees (see
 /// this module's cadence-policy doc table), roughly an order of magnitude
@@ -236,6 +241,9 @@ pub struct Channels {
     pub agent_contexts: Arc<Mutex<HashMap<PathBuf, AgentContextMap>>>,
     pub backlog_repos: Arc<Mutex<HashMap<PathBuf, BacklogRepo>>>,
     pub dispatch_runs: Arc<Mutex<HashMap<BacklogTaskKey, DispatchRun>>>,
+    /// TASK-98: live interactive `claude`/`codex` sessions, refreshed by
+    /// `spawn_agent_sessions` — see that worker's doc.
+    pub agent_sessions: Arc<Mutex<Vec<AgentSession>>>,
     pub ordering: Arc<Mutex<OrderingState>>,
     pub active_runs: Arc<Mutex<HashMap<i32, ActiveRun>>>,
     /// TASK-41: on-disk size per worktree, refreshed by `spawn_size` on its
@@ -261,6 +269,7 @@ pub struct Channels {
     pub dispatch_kick: Kick,
     pub size_kick: Kick,
     pub landing_kick: Kick,
+    pub agent_sessions_kick: Kick,
 }
 
 pub fn spawn_all(ctx: egui::Context, ch: Channels) {
@@ -272,6 +281,7 @@ pub fn spawn_all(ctx: egui::Context, ch: Channels) {
     spawn_dispatch(ctx.clone(), ch.clone(), stagger_offset(5));
     spawn_size(ctx.clone(), ch.clone(), stagger_offset(6));
     spawn_landing(ctx.clone(), ch.clone(), stagger_offset(7));
+    spawn_agent_sessions(ctx.clone(), ch.clone(), stagger_offset(8));
     spawn_reaper(ctx, ch);
 }
 
@@ -298,6 +308,29 @@ fn spawn_scanner(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
             ctx.request_repaint();
             let focused = ctx.input(|i| i.focused);
             ch.scanner_kick.wait(effective_period(SCAN_PERIOD, focused));
+        }
+    });
+}
+
+/// Agent sessions (TASK-98): re-scans the OS for running `claude`/`codex`
+/// processes every `AGENT_SESSIONS_PERIOD` (or sooner if kicked), attributes
+/// each to a worktree, publishes the result to `ch.agent_sessions`. Same
+/// shape as `spawn_scanner` — this is the same kind of read-only OS-process
+/// scan, just for interactive agent CLIs instead of listening sockets. Feeds
+/// the Command place's Fleet section (`ui::places::command`) exclusively;
+/// nothing else reads `agent_sessions`.
+fn spawn_agent_sessions(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
+    thread::spawn(move || {
+        ch.agent_sessions_kick.wait(initial_delay);
+        loop {
+            let wts = ch.worktrees.lock().unwrap().clone();
+            if let Ok(rows) = scan_agent_sessions() {
+                *ch.agent_sessions.lock().unwrap() = attribute_agent_sessions(&rows, &wts);
+                ctx.request_repaint();
+            }
+            let focused = ctx.input(|i| i.focused);
+            ch.agent_sessions_kick
+                .wait(effective_period(AGENT_SESSIONS_PERIOD, focused));
         }
     });
 }

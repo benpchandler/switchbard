@@ -315,6 +315,7 @@ fn context_search_filters_individual_assets_not_just_repo_cards() {
         ),
     ]);
     app.place = Place::Command;
+    app.agent_context_view.section = AgentsSection::Context;
     *app.filter_mut() = "alpha".to_string();
     let mut harness = harness(app);
     harness.run();
@@ -328,6 +329,7 @@ fn context_search_filters_individual_assets_not_just_repo_cards() {
 fn agents_queries_are_scoped_per_section_and_restore_on_return() {
     let mut app = seeded_app();
     app.place = Place::Command;
+    app.agent_context_view.section = AgentsSection::Context;
     *app.filter_mut() = "context-query".to_string();
     assert_eq!(app.filter(), "context-query");
 
@@ -395,6 +397,7 @@ fn servers_clear_filters_matches_the_shipped_defaults() {
 fn context_clear_restores_the_persistable_filter_defaults() {
     let mut app = seeded_app();
     app.place = Place::Command;
+    app.agent_context_view.section = AgentsSection::Context;
     app.agent_context_view.scope = ContextScope::Directory;
     app.agent_context_view.kind = Some(ContextKind::Skill);
     *app.filter_mut() = "review".to_string();
@@ -541,6 +544,7 @@ fn clicking_tasks_place_switches_view() {
 fn agent_context_view_surfaces_seeded_assets() {
     let mut app = seeded_app();
     app.place = Place::Command;
+    app.agent_context_view.section = AgentsSection::Context;
     let mut harness = harness(app);
     harness.run();
 
@@ -593,6 +597,7 @@ fn agent_context_estimate_uses_effective_instructions_not_all_assets() {
 
     let mut app = app_with_items(vec![instruction, skill, nested_instruction]);
     app.place = Place::Command;
+    app.agent_context_view.section = AgentsSection::Context;
     let mut harness = harness(app);
     harness.run();
 

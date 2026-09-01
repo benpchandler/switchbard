@@ -29,7 +29,7 @@ use switchbard_core::{
     DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{Place, TasksView};
+use switchbard_gui::runtime::{DispatchesFacet, Place, TasksView};
 
 fn task(id: &str, labels: &[&str], notes: &str) -> BacklogTask {
     BacklogTask {
@@ -356,6 +356,9 @@ fn a_stale_in_flight_row_still_reads_as_running_not_as_doomed() {
     );
     app.place = Place::Tasks;
     app.tasks_view = TasksView::Dispatches;
+    // A stalled in-flight row facets as `Failed` (needs-attention), not the
+    // default `Active` facet — see `ui::places::dispatches::facet_for`.
+    app.dispatches_view.facet = DispatchesFacet::Failed;
     let mut harness = harness(app);
     harness.run();
 
@@ -387,7 +390,7 @@ fn the_kill_button_is_confirm_armed_and_cancellable() {
     harness.run();
 
     assert!(harness.state().dispatch_kill_confirm.is_none());
-    harness.get_by_label("Kill run").click();
+    harness.get_by_label("Kill").click();
     harness.run();
 
     assert_eq!(
@@ -399,14 +402,14 @@ fn the_kill_button_is_confirm_armed_and_cancellable() {
         !text_containing(&harness, "pgid 4242").is_empty(),
         "the confirmation names the process group it is about to signal"
     );
-    assert!(harness.query_by_label("Confirm kill").is_some());
+    assert!(harness.query_by_label("Confirm").is_some());
 
-    harness.get_by_label("Cancel kill").click();
+    harness.get_by_label("Cancel").click();
     harness.run();
 
     assert!(harness.state().dispatch_kill_confirm.is_none());
-    assert!(harness.query_by_label("Confirm kill").is_none());
-    assert!(harness.query_by_label("Kill run").is_some());
+    assert!(harness.query_by_label("Confirm").is_none());
+    assert!(harness.query_by_label("Kill").is_some());
 }
 
 /// No verified process, no button — and (TASK-46 made this universally true,
@@ -428,7 +431,7 @@ fn a_run_without_a_verified_process_offers_no_kill_and_no_deadline() {
     let mut harness = harness(app);
     harness.run();
 
-    assert!(harness.query_by_label("Kill run").is_none());
+    assert!(harness.query_by_label("Kill").is_none());
     assert!(
         text_containing(&harness, "hard kill in").is_empty(),
         "no code path promises a hard-kill deadline any more"
@@ -473,7 +476,7 @@ fn an_unverifiable_sidecar_never_arms_a_kill_whatever_the_reason() {
         harness.run();
 
         assert!(
-            harness.query_by_label("Kill run").is_none(),
+            harness.query_by_label("Kill").is_none(),
             "{doubt:?} must not arm a kill"
         );
         assert!(
@@ -500,10 +503,12 @@ fn a_run_whose_group_died_reads_as_abandoned_and_offers_no_kill() {
     );
     app.place = Place::Tasks;
     app.tasks_view = TasksView::Dispatches;
+    // An orphaned run facets as `Failed` (needs-attention), not `Active`.
+    app.dispatches_view.facet = DispatchesFacet::Failed;
     let mut harness = harness(app);
     harness.run();
 
-    assert!(harness.query_by_label("Kill run").is_none());
+    assert!(harness.query_by_label("Kill").is_none());
     assert!(
         !text_containing(&harness, "Claimed, but nothing is running").is_empty(),
         "the row belongs in the attention section, not under 'In flight'"
@@ -551,7 +556,7 @@ fn an_unsupervised_live_run_offers_an_honestly_labelled_kill() {
         "the row has to say the release step won't happen on its own"
     );
 
-    harness.get_by_label("Kill run").click();
+    harness.get_by_label("Kill").click();
     harness.run();
 
     let confirm = text_containing(&harness, "pgid 4242");
@@ -577,7 +582,7 @@ fn a_supervised_kill_promises_the_release_the_pipeline_will_actually_do() {
     let mut harness = harness(app);
     harness.run();
 
-    harness.get_by_label("Kill run").click();
+    harness.get_by_label("Kill").click();
     harness.run();
 
     let confirm = text_containing(&harness, "pgid 4242");
@@ -597,8 +602,9 @@ fn a_queued_task_offers_no_kill_button() {
     let mut app = app_with(vec![task("TASK-1", &[DISPATCH_LABEL], "")], vec![]);
     app.place = Place::Tasks;
     app.tasks_view = TasksView::Dispatches;
+    app.dispatches_view.facet = DispatchesFacet::Queued;
     let mut harness = harness(app);
     harness.run();
 
-    assert!(harness.query_by_label("Kill run").is_none());
+    assert!(harness.query_by_label("Kill").is_none());
 }
