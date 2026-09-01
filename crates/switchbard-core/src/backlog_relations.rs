@@ -117,6 +117,61 @@ fn find_task<'a>(project: &'a BacklogRepo, id: &str) -> Option<&'a BacklogTask> 
     project.tasks.iter().find(|task| task.id == id)
 }
 
+/// A parent-chain walk is bounded: sub-issues nest one decimal level in
+/// practice, so a longer chain is a data cycle, not a hierarchy. Same
+/// constant and rationale as `backlog::ranking`'s internal walk.
+const MAX_PARENT_HOPS: usize = 8;
+
+/// A task's parent id: the `parent_task_id` frontmatter when present, else
+/// derived from a decimal id (`TASK-7.2` -> `TASK-7`) — the same rule the
+/// ranking scope logic applies, so grouping and sorting can never disagree
+/// about who a sub-issue belongs to.
+fn parent_id(task: &BacklogTask) -> Option<String> {
+    if let Some(parent) = &task.parent {
+        return Some(parent.clone());
+    }
+    task.id
+        .rsplit_once('.')
+        .map(|(parent, _)| parent.to_string())
+}
+
+/// The project a task belongs to for grouping/sorting purposes: its own
+/// `project:`, or — for a sub-issue without one (the common shape; children
+/// rarely repeat the parent's membership) — the nearest ancestor's, walking
+/// parent links within the same repo. `None` when neither the task nor any
+/// present ancestor names one.
+pub fn effective_project<'a>(task: &'a BacklogTask, project: &'a BacklogRepo) -> Option<&'a str> {
+    let mut current = task;
+    for _ in 0..MAX_PARENT_HOPS {
+        if let Some(name) = &current.project {
+            return Some(name.as_str());
+        }
+        match parent_id(current).and_then(|p| find_task(project, &p)) {
+            Some(parent) => current = parent,
+            None => return None,
+        }
+    }
+    None
+}
+
+/// How many ancestors of `task` are present in `project` — 0 for a
+/// top-level task, 1 for a sub-issue whose parent is loaded. The tree
+/// views' indentation depth; bounded like every parent walk here.
+pub fn ancestor_depth(task: &BacklogTask, project: &BacklogRepo) -> usize {
+    let mut depth = 0;
+    let mut current = task;
+    for _ in 0..MAX_PARENT_HOPS {
+        match parent_id(current).and_then(|p| find_task(project, &p)) {
+            Some(parent) => {
+                depth += 1;
+                current = parent;
+            }
+            None => break,
+        }
+    }
+    depth
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

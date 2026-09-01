@@ -104,10 +104,14 @@ fn initiative_groups<'a>(scoped: &[&RepoRow], tasks: &'a [TaskRow<'a>]) -> Group
             .unwrap_or(usize::MAX)
     };
 
+    // Group by *effective* project — a sub-issue without its own `project:`
+    // belongs to its nearest ancestor's (`effective_project`, the same rule
+    // the computed sort applies), so TASK-80's sub-issues render inside the
+    // Task Queue group rather than sinking into Unassigned.
     let mut rows_by_project: BTreeMap<&str, Vec<&TaskRow<'_>>> = BTreeMap::new();
     let mut unassigned: Vec<&TaskRow<'_>> = Vec::new();
     for row in tasks {
-        match row.task.project.as_deref() {
+        match switchbard_core::effective_project(row.task, &row.repo.repo) {
             Some(project) => rows_by_project.entry(project).or_default().push(row),
             None => unassigned.push(row),
         }
@@ -383,7 +387,14 @@ fn render_row(
     let key = row.key();
     let selected = app.backlog_view.selected_task.as_ref() == Some(&key);
     let rankable = row.task.editable() && !row.task.is_done();
+    // Sub-issues indent one step per present ancestor; the computed sort
+    // already places them directly after their parent (ancestor-chain
+    // comparator), so indentation alone reads as nesting.
+    let depth = switchbard_core::ancestor_depth(row.task, &row.repo.repo);
     ui.horizontal(|ui| {
+        if depth > 0 {
+            ui.add_space(16.0 * depth as f32);
+        }
         if rankable {
             let rank = row.repo.repo.ranking.task_rank_position(row.task);
             if let Some(direction) = rank_arrows(ui, rank, "task", "its sibling scope") {
@@ -609,6 +620,39 @@ mod tests {
             .map(|r| r.task.id.as_str())
             .collect();
         assert_eq!(unassigned_ids, vec!["TASK-5", "TASK-2"]);
+    }
+
+    /// A sub-issue without its own `project:` groups under its nearest
+    /// ancestor's project (the sort's own rule), not Unassigned — found by
+    /// owner dogfooding: TASK-80's whole sub-issue stack was invisible in
+    /// the Task Queue group.
+    #[test]
+    fn subissues_without_their_own_project_group_under_their_parents() {
+        let mut sub = task("TASK-1.1", None, false);
+        sub.parent = Some("TASK-1".to_string());
+        let row = repo_row(
+            vec![task("TASK-1", Some("Alpha"), false), sub],
+            vec![],
+            vec![],
+        );
+        let tasks = rows(&row);
+        let groups = initiative_groups(&[&row], &tasks);
+
+        let (_, projects) = &groups.initiatives[0];
+        let ids: Vec<&str> = projects[0]
+            .rows
+            .iter()
+            .map(|r| r.task.id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["TASK-1", "TASK-1.1"],
+            "child rides the parent's group"
+        );
+        assert!(
+            groups.unassigned.is_empty(),
+            "the sub-issue no longer sinks into Unassigned"
+        );
     }
 
     /// The lens joins *visible* rows onto repo-wide structure: a project
