@@ -1,10 +1,10 @@
 ---
 id: TASK-101
 title: 'IA V2: Goals place - index with inline check-in + goal page with Inputs card'
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 05:31'
+updated_date: '2026-09-01 08:18'
 labels:
   - ia
   - gui
@@ -51,3 +51,9 @@ Perf: no shared/perf-sensitive render path touched (Ops/Servers workspace, worke
 
 PR #81: https://github.com/benpchandler/switchbard/pull/81
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+PR #81: the real Goals place replacing TASK-96's interim body - index (pace rows, inline cumulative check-in pre-filled with the current value, edit-target, new-goal) and goal page (this-week card, history from real recorded goals.yml weeks only, Inputs card over TASK-92's attach/detach). Core addition: edit_goal_target (line-surgical, fails closed). Reused rather than forked the existing goal-write core surface, check-in draft map, and New Goal modal (widened to pub(crate) for cross-module use). Added theme::icon_button_label plus three new painted icons, closing the AccessKit-label-equals-verb-name gap for this surface. No independent review findings were logged against PR #81 pre-merge (single feat commit, merged clean); mise run ci green, 7 new kittest tests plus 1 core test. Named gap: no perf smoke run (new isolated module, no shared render path touched), noted rather than skipped silently.
+<!-- SECTION:FINAL_SUMMARY:END -->

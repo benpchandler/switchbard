@@ -1,10 +1,10 @@
 ---
 id: TASK-99
 title: 'IA V2: Digest place - goal cards, in-flight, attention feed'
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 05:52'
+updated_date: '2026-09-01 08:18'
 labels:
   - ia
   - gui
@@ -40,3 +40,9 @@ Perf: collect_task_rows (ui/places/digest.rs) locks backlog_repos/dispatch_runs 
 
 PR #84: https://github.com/benpchandler/switchbard/pull/84 - branch feat/task-99-digest-place, rebased on origin/main (a29256b..55279f4, TASK-101 Goals place merged) with conflicts resolved: render_digest_place/render_goals_place (interim bodies) deleted per upstream's own TASK-101 deletion of render_goals_place and this task's own supersession of render_digest_place; render_goal_cards_for_digest_place updated to call the new pub(crate) goal_create::render_goal_modal(repo_options, known_project_names, fixed_target) API; my own duplicate HiveApp::spawn_goal_roll dropped in favor of TASK-101's identical method of the same name (their Goals place needed it too, landed first).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+PR #84: the Digest landing place - goal cards lead (reusing render_goal_card verbatim), then in-flight tasks, then an attention feed computed live from existing probes (dispatch runs, port scan, removal_safety) with inline actions that call the owning surfaces' own verbs (no second implementation). Pre-merge review fixes (04a086b): un-nested the backlog_repos/dispatch_runs lock acquisition in collect_task_rows to match the app's one-mutex-at-a-time discipline; fixed a stale nav.rs module doc pointing at the retired interim Goals body; replaced tofu-rendering glyph buttons with theme.rs painted icon primitives paired with AccessKit labels; removed stray em dashes from user-visible feed text. mise run ci green. Named gaps, recorded and not fabricated: no PR-probe feed rows (no PR probe exists in core) and no server-exited rows (scanner has no history to detect a listener going away).
+<!-- SECTION:FINAL_SUMMARY:END -->

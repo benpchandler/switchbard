@@ -1,10 +1,10 @@
 ---
 id: TASK-96
 title: 'IA V2: sidebar shell - places nav, multi-select repo scope, favorites'
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 04:41'
+updated_date: '2026-09-01 08:18'
 labels:
   - ia
   - gui
@@ -67,3 +67,9 @@ Post-review fixes applied (independent review, MERGE-WITH-FIXES) before merge:
 - Added the missing Goals-place scoping test the reviewer flagged.
 - Re-verified: mise run ci green (43/43 test-result blocks, 0 failures).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+PR #80: sidebar shell replacing the lens tab row with places (Digest/Tasks/Command/Goals/Ops), multi-select repo scope every surface aggregates over, FAVORITES group, ambient dispatch lamp, and narrow-width icon rail. Filter keys migrated from lens to place/view names via a pure, idempotent migrate_filter_keys (unmatched keys dropped). Pre-merge review fixes: scoped summarize_dispatch and the top-bar chip to match the already-scoped Dispatches list (one scoping rule via new path_in_scope); computed the dispatch summary once per frame instead of per-panel; stopped a double disk write on favorite-toggle; added the missing Goals-place scoping test. mise run ci green, 14 new nav_ia_v2.rs tests, perf smoke within noise of the pre-change baseline. Named gaps: long repo/task name truncation not independently stress-tested; no keyboard-nav test written.
+<!-- SECTION:FINAL_SUMMARY:END -->

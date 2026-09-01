@@ -1,10 +1,10 @@
 ---
 id: TASK-98
 title: 'IA V2: Dispatches view + Command fleet console'
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 05:52'
+updated_date: '2026-09-01 08:18'
 labels:
   - ia
   - gui

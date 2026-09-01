@@ -432,6 +432,12 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
     (mockup -> decision record -> implementation, per the project
     definition). The lens code being replaced keeps working until each place
     lands; nothing here licenses a big-bang rewrite.
+  - *Landed 2026-09-01* via TASK-96..101 (PRs #80-#85), with a parity polish
+    pass in flight. The legacy lens bodies (Statistics, Portfolio, Projects,
+    milestones grouping) are retained but unreachable from Place routing,
+    pending the cleanup task filed against them. The Command support-request
+    store named above remains future work, gated on a design decision on the
+    record's shape and writer.
 
 - **Refine — AI-assisted grooming, upstream of dispatch (owner-approved 2026-08-19).**
   A "Refine" button in the task detail rail, next to Dispatch. It feeds the task's
