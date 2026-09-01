@@ -49,7 +49,8 @@ use switchbard_core::config::ThemeChoice;
 use switchbard_core::dispatch_inspect::DispatchRun;
 use switchbard_core::{
     AttributedListener, BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource,
-    LocalListener, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
+    GoalCheckIn, GoalDef, GoalInputs, GoalMeasure, GoalWeek, LocalListener, DISPATCHED_LABEL,
+    DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_LABEL,
 };
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{AgentsSection, BacklogLens, DispatchesFacet, Place, TasksView};
@@ -566,6 +567,60 @@ fn seed_backlog_project(app: &HiveApp) {
     );
 }
 
+/// This week's Monday, formatted the way `GoalDef::weeks` keys itself.
+fn legibility_this_week() -> String {
+    switchbard_core::week_monday_of(chrono::Local::now().date_naive())
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
+/// Three manual-measure goals with a check-in each, seeded onto the
+/// already-inserted `REPO_PATH` repo — TASK-76 chip parity pass: neither the
+/// Goals **place** (mock §5's index) nor the Digest **place**'s goal-card
+/// row (mock §1) had ever been in this audit before the tinted-chip rework,
+/// so the pace pill's chip-on-tint contrast was never actually measured.
+/// Exact actual/target values don't need to land on a specific `GoalPace` —
+/// this audit is pace-agnostic, it just needs each row painting a real chip.
+fn seed_goals(app: &HiveApp) {
+    let week = legibility_this_week();
+    let goal = |name: &str, target: i64, actual: i64| GoalDef {
+        name: name.to_string(),
+        unit: "tasks".to_string(),
+        measure: GoalMeasure::Manual,
+        scope: None,
+        inputs: GoalInputs::default(),
+        weeks: std::collections::BTreeMap::from([(
+            week.clone(),
+            GoalWeek {
+                target,
+                checkins: vec![GoalCheckIn {
+                    date: week.clone(),
+                    value: actual,
+                }],
+            },
+        )]),
+    };
+    let mut repos = app.backlog_repos.lock().unwrap();
+    let repo = repos
+        .entry(PathBuf::from(REPO_PATH))
+        .or_insert_with(|| BacklogRepo {
+            root: PathBuf::from(REPO_PATH),
+            tasks: vec![],
+            warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
+            goals: vec![],
+            ranking: switchbard_core::RepoRanking::default(),
+            loaded_at_unix: 0,
+            configured_statuses: vec!["To Do".into(), "In Progress".into(), "Done".into()],
+        });
+    repo.goals = vec![
+        goal("Close out Stack Ranking", 4, 1),
+        goal("IA decision record", 1, 0),
+        goal("Dispatch throughput", 8, 8),
+    ];
+}
+
 /// A real log file for TASK-6's dispatch run, so `ui::places::dispatches`'s
 /// detail card actually paints a log tail (`read_log_tail` reads real
 /// filesystem bytes — a `None` `log_path` would silently skip that text and
@@ -757,7 +812,22 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     // above use to reach a click-only state) gets its "Archive N Done
     // tasks?" text and Confirm/Cancel buttons into this audit.
     digest_app.backlog_view.cleanup_confirm = true;
+    // TASK-76 chip parity pass: the Digest place's own §1 goal-card row
+    // (`ui::backlog::digest::render_goal_cards_for_digest_place`) is
+    // reached only when the scoped repo actually has goals — without this,
+    // its pace-pill and "auto ·"/"manual check-ins" kind chip never painted
+    // in this audit at all, chip-on-tint contrast included.
+    seed_goals(&digest_app);
     let digest = harness(digest_app);
+
+    // TASK-76 chip parity pass: the Goals place (mock §5) — one row per
+    // goal, its pace chip, and the manual-measure check-in input — was never
+    // in this audit before the tinted-chip rework.
+    let mut goals_app = seeded_app();
+    goals_app.config.ui.theme = theme;
+    goals_app.place = Place::Goals;
+    seed_goals(&goals_app);
+    let goals_index = harness(goals_app);
 
     let mut list_app = seeded_app();
     list_app.config.ui.theme = theme;
@@ -917,7 +987,11 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
             format!("Tasks · Dispatches (running fixture){suffix}"),
             dispatches_running,
         ),
-        (format!("Backlog · Digest lens (default){suffix}"), digest),
+        (
+            format!("Backlog · Digest lens (default, with goal cards){suffix}"),
+            digest,
+        ),
+        (format!("Goals place (index){suffix}"), goals_index),
         (format!("Backlog · List lens (task detail){suffix}"), list),
         (
             format!("Backlog · List lens (dispatched task detail){suffix}"),

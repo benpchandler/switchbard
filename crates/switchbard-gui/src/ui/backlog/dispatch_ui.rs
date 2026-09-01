@@ -143,8 +143,13 @@ fn find_note_token(notes: &str, prefix: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Compact pill for List rows / Board strips. `None` for `NotFlagged` — a
-/// row with nothing to say about dispatch shouldn't render an empty pill.
+/// Compact tinted chip for List rows / Board strips / Digest / Dispatches /
+/// Command — the mock's `.chip.amber`/`.chip.sky` dispatch pill
+/// (TASK-76 parity pass). `None` for `NotFlagged` — a row with nothing to
+/// say about dispatch shouldn't render an empty chip. Text stays the
+/// existing uppercase wording (`query_by_label("DISPATCHING")` etc. is load-
+/// bearing across several test suites) — only the paint routine changes,
+/// from a bare `ui.label` to `theme::painted_chip`'s tinted pill.
 pub(crate) fn render_dispatch_pill(ui: &mut egui::Ui, state: &DispatchState) {
     let (text, color) = match state {
         DispatchState::NotFlagged => return,
@@ -153,7 +158,7 @@ pub(crate) fn render_dispatch_pill(ui: &mut egui::Ui, state: &DispatchState) {
         DispatchState::Dispatched { .. } => ("DISPATCHED", theme::green()),
         DispatchState::Failed { .. } => ("DISPATCH FAILED", theme::danger()),
     };
-    ui.label(egui::RichText::new(text).small().strong().color(color));
+    theme::painted_chip(ui, Some(theme::chip_tint(color)), color, text);
 }
 
 #[cfg(test)]

@@ -84,11 +84,6 @@ struct Palette {
     /// it — every label on the row still has to clear AA against the result,
     /// which `legibility_audit` measures from the real draw list.
     selected_row_tint: Color32,
-    /// The outline on a bulk-selected row. The fill alone is too quiet to
-    /// answer "which rows did 'Select all merged + clean' just take?" at a
-    /// glance, and an outline carries that at any alpha without touching the
-    /// contrast of the text inside it.
-    selected_row_stroke: Color32,
     /// The window/central-panel background — Flight Strips' "board" /
     /// Operator's Console's "chassis". The nav strip (`nav_bg`) and rail
     /// (`rail_bg`) sit visually *above* this; recessed surfaces (`faint_bg`,
@@ -133,13 +128,17 @@ const LIGHT: Palette = Palette {
     lavender: Color32::from_rgb(0x3F, 0x3F, 0xB0), // ~6.4:1 (unchanged, already ample)
     sky: Color32::from_rgb(0x15, 0x5A, 0x8A),   // ~5.7:1; matches the mock's dispatch blue
     dispatch_accent: Color32::from_rgb(0x15, 0x5A, 0x8A), // same as sky, ~5.7:1
-    warn_orange: Color32::from_rgb(0xB3, 0x39, 0x1F), // design's "overdue" red, ~4.6:1
+    // TASK-76 parity pass: darkened from the mock's literal "overdue" red
+    // #B3391F (~4.3:1 as chip text on `chip_tint`'s tinted fill over
+    // `panel_fill` — the legibility audit's real, painted-background
+    // measurement, not the ~4.6:1 the old comment cited against a plain
+    // panel) to clear AA on the tinted chip too.
+    warn_orange: Color32::from_rgb(0xA3, 0x30, 0x18), // ~5.0:1 on its own chip tint
     danger: Color32::from_rgb(0xA8, 0x36, 0x36), // text role, ~5.0:1 (button fill is danger_fill())
     weak_text: Color32::from_rgb(0x20, 0x26, 0x2B), // design's "ink"
     muted_text: Color32::from_rgb(0x50, 0x5A, 0x63), // ~5.5:1
     primary_worktree_tint: Color32::from_rgba_premultiplied(28, 25, 11, 28),
     selected_row_tint: Color32::from_rgba_premultiplied(10, 30, 46, 40),
-    selected_row_stroke: Color32::from_rgb(0x15, 0x5A, 0x8A), // matches `sky`
     panel_fill: Color32::from_rgb(0xE7, 0xEC, 0xF0),          // cool workspace board
     faint_bg: Color32::from_rgb(0xD9, 0xE1, 0xE7),            // recessed controls and column wells
     card_bg: Color32::from_rgb(0xFF, 0xFF, 0xFD),             // clean paper strip
@@ -172,13 +171,17 @@ const DARK: Palette = Palette {
     lavender: Color32::from_rgb(0x9E, 0x9E, 0xFF), // ~6.2:1
     sky: Color32::from_rgb(0x6F, 0xB8, 0xE8),   // ~6.9:1
     dispatch_accent: Color32::from_rgb(0xE8, 0xB0, 0x4B), // same as lamp amber, ~7.6:1
-    warn_orange: Color32::from_rgb(0xE8, 0x7A, 0x5A), // brightened "line hot", ~5.2:1
+    // TASK-76 parity pass: brightened again, from the previous #E87A5A to
+    // the frozen mock's own dark `--warn`, #F0907A — #E87A5A holds AA
+    // against `panel_fill` but drops below 4.5:1 as *chip text on the new
+    // tinted-chip fill* (`chip_tint`) over `card_bg`; `danger` keeps the old
+    // value; see the field doc for why the two roles are tuned separately.
+    warn_orange: Color32::from_rgb(0xF0, 0x90, 0x7A), // brightened for tinted chips, ~4.5+:1
     danger: Color32::from_rgb(0xE8, 0x7A, 0x5A), // text role; button fill is danger_fill()
     weak_text: Color32::from_rgb(0xE6, 0xE1, 0xD8), // crisp faceplate text
     muted_text: Color32::from_rgb(0xB8, 0xB1, 0xA4), // readable secondary faceplate text
     primary_worktree_tint: Color32::from_rgba_premultiplied(28, 25, 11, 28),
     selected_row_tint: Color32::from_rgba_premultiplied(20, 42, 60, 52),
-    selected_row_stroke: Color32::from_rgb(0x6F, 0xB8, 0xE8), // matches `sky`
     // Surface values are spread as far as the AA contract allows, not packed
     // into a narrow band. The previous set squeezed all five into luminance
     // 0.006-0.022 — rail vs panel measured 1.02:1, i.e. the same colour —
@@ -251,8 +254,18 @@ pub fn selected_row_tint() -> Color32 {
     active_palette().selected_row_tint
 }
 
+/// The outline on a bulk-selected row. The fill alone (`selected_row_tint`)
+/// is too quiet to answer "which rows did 'Select all merged + clean' just
+/// take?" at a glance, and an outline carries that at any alpha without
+/// touching the contrast of the text inside it.
+///
+/// TASK-76 parity pass: delegates to [`sky`] rather than duplicating its hex
+/// — both `LIGHT`/`DARK` `selected_row_stroke` constants had been hand-copies
+/// of `sky`'s value, kept in sync only by comment (`// matches sky`), which
+/// is exactly the two-sources-for-one-fact shape this codebase treats as a
+/// bug class. One accent hue, one authority.
 pub fn selected_row_stroke() -> egui::Stroke {
-    egui::Stroke::new(1.0, active_palette().selected_row_stroke)
+    egui::Stroke::new(1.0, sky())
 }
 /// Recessed background (kanban column bodies, code/notes blocks, and every
 /// text input's fill via `apply()`'s `visuals.extreme_bg_color`). See
@@ -333,6 +346,52 @@ pub fn drop_target_stroke() -> egui::Stroke {
 /// semantic here.
 pub fn idle_dot() -> Color32 {
     muted_text()
+}
+
+/// Low-alpha tinted background for a `.chip`-style pill, matching `color`'s
+/// own hue — the frozen design mock's visual language for every status/
+/// pace/dispatch indicator (`~/.lavish/switchbard-ia-places.html`'s
+/// `.chip.{green,amber,sky,lav,warn}`: a rounded pill, tinted fill, colored
+/// text, no border), TASK-76's headline parity gap against the pre-existing
+/// bare-`colored_label` pills.
+///
+/// Alpha follows the mock's own `:root`/`body.dark` custom properties
+/// exactly: dark is a flat **.07** across every hue; light is **.10**,
+/// except amber's own tint, which the mock deliberately raises to **.12**
+/// (amber at .10 read too faint against the paper-white light card in the
+/// mock's own tuning pass — kept here as the one named exception rather than
+/// generalized, since it is not a rule, just this one hue's own value).
+/// Derived from the live accent color (not a second stored hex) so a future
+/// palette retune can't desync tint from text the way `selected_row_stroke`
+/// did — see that function's doc.
+pub fn chip_tint(color: Color32) -> Color32 {
+    let alpha = match ACTIVE.with(Cell::get) {
+        ThemeChoice::Dark => 0.07,
+        ThemeChoice::Light if color == amber() => 0.12,
+        ThemeChoice::Light => 0.10,
+    };
+    scale_alpha(color, alpha)
+}
+
+/// Paint one `.chip`-style pill: `text` in `text_color`, on a rounded
+/// (`~9px`) low-alpha tint of that same color when `tint` is `Some`, or on a
+/// bordered/unfilled pill (the mock's neutral base `.chip`, e.g. "To Do",
+/// informational tags) when `None`. The single rendering primitive every
+/// `status_pill`-style call site routes through, so "what does a chip look
+/// like" is a one-file diff (see `status_pill`, this component's caller).
+pub fn painted_chip(ui: &mut egui::Ui, tint: Option<Color32>, text_color: Color32, text: &str) -> egui::Response {
+    let mut frame = egui::Frame::default()
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(7, 2));
+    frame = match tint {
+        Some(bg) => frame.fill(bg),
+        None => frame.stroke(surface_stroke()),
+    };
+    frame
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(text).small().color(text_color));
+        })
+        .response
 }
 
 // Glyph icons — painted directly via `Painter` so they don't depend on which
