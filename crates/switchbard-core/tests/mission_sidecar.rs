@@ -220,12 +220,40 @@ fn mission_fresh_supervisor_recovers_pending_contract() {
 
 #[test]
 fn mission_projection_v1_is_read_only() {
-    let Ok(value) = std::env::var("XPLAN_MISSION_STATE") else {
-        return;
-    };
-    let state = PathBuf::from(value);
-    let loaded =
-        switchbard_core::load_mission_projection(&state.join("mission-command-snapshot.json"));
+    let root = tempfile::tempdir().expect("temporary legacy snapshot root");
+    let path = root.path().join("mission-command-snapshot.json");
+    let snapshot = json!({
+        "schema_version": "xplan-mission-projection-v1",
+        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "revision": 7,
+        "stale_after_seconds": 60,
+        "portfolio": {"id": "PORT-1", "status": "OPEN", "missions": [{
+            "id": "mission-sidecar-v1", "status": "RUNNING", "contract_version": 1,
+            "attempt_id": "ATT-1", "source_revision": "b".repeat(40),
+            "outcome_proven": false,
+            "next_step": "Monitor active unit evidence", "next_owner": "agent",
+            "updated_at": "2026-08-31T12:00:00Z",
+            "requirements": [
+                {"id": "REQ-1", "evidence_kind": "browser",
+                 "status": "PROVEN", "evidence_ids": ["EVD-1"]},
+                {"id": "REQ-2", "evidence_kind": "review",
+                 "status": "OPEN", "evidence_ids": []}
+            ],
+            "units": [{"id": "UNIT-1", "owner": "agent", "status": "ACTIVE", "lease_count": 1}],
+            "decision": {"id": "DEC-1", "version": 1, "status": "RESOLVED"},
+            "approval": {"id": "APR-1", "status": "GRANTED"},
+            "feedback": [{"id": "FDBK-1", "version": 1, "status": "ACKNOWLEDGED"}],
+            "evidence": [{
+                "id": "EVD-1", "requirement_id": "REQ-1", "kind": "browser",
+                "artifact_digest": "a".repeat(64), "source_revision": "b".repeat(40),
+                "recorded_at": "2026-08-31T12:00:00Z"
+            }],
+            "reconciliation": {"id": "REC-1", "status": "FAIL", "mission_revision": 6,
+                               "evidence_ids": ["EVD-1"]}
+        }]}
+    });
+    fs::write(&path, snapshot.to_string()).expect("write legacy v1 snapshot");
+    let loaded = switchbard_core::load_mission_projection(&path);
     assert!(loaded.is_legacy_v1());
     assert!(!loaded.controls_enabled());
     assert_eq!(
