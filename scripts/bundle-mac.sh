@@ -22,7 +22,8 @@ APP_BUNDLE="$TARGET_DIR/${APP_NAME}.app"
 SIDECAR_SOURCE="${XPLAN_SIDECAR_SOURCE:-}"
 SIDECAR_ARCHIVE="${XPLAN_SIDECAR_ARCHIVE:-}"
 SIDECAR_STAGE="$TARGET_DIR/xplan-mission-sidecar-stage"
-SIDECAR_DEST="$APP_BUNDLE/Contents/Helpers/xplan-mission-sidecar"
+SIDECAR_PAYLOAD="$APP_BUNDLE/Contents/Resources/xplan-mission-sidecar"
+SIDECAR_LAUNCHER="$APP_BUNDLE/Contents/Helpers/xplan-mission-sidecar-launcher"
 
 if [[ ! -f "$ICNS" ]]; then
   echo "✗ missing $ICNS — regenerate from $ASSETS_DIR/icon.png with iconutil" >&2
@@ -58,8 +59,9 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 mkdir -p "$APP_BUNDLE/Contents/Helpers"
 
 cp "$TARGET_DIR/$BIN_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+cp "$TARGET_DIR/$BIN_NAME" "$SIDECAR_LAUNCHER"
 cp "$ICNS"                 "$APP_BUNDLE/Contents/Resources/icon.icns"
-cp -R -P "$SIDECAR_STAGE" "$SIDECAR_DEST"
+cp -R -P "$SIDECAR_STAGE" "$SIDECAR_PAYLOAD"
 
 VERSION="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
 
@@ -88,19 +90,52 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "→ verifying nested xplan helper signatures before outer signing"
+echo "→ verifying manifest-pinned xplan payload signatures before outer signing"
 while IFS= read -r nested; do
   if file "$nested" | grep -q 'Mach-O'; then
-    codesign --force --sign - "$nested"
     codesign --verify --strict "$nested"
   else
     chmod a-x "$nested"
   fi
-done < <(find "$SIDECAR_DEST" -type f -print)
+done < <(find "$SIDECAR_PAYLOAD" -type f -print)
+
+echo "→ ad-hoc signing dedicated xplan launcher"
+codesign --force --sign - "$SIDECAR_LAUNCHER"
+codesign --verify --strict "$SIDECAR_LAUNCHER"
 
 echo "→ ad-hoc signing $APP_BUNDLE"
 codesign --force --sign - "$APP_BUNDLE"
 codesign --verify --deep --strict "$APP_BUNDLE"
+
+echo "→ verifying offline xplan hello through packaged launcher"
+HELLO_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/switchbard-sidecar-hello.XXXXXX")"
+cleanup_hello() { rm -rf "$HELLO_ROOT"; }
+trap cleanup_hello EXIT
+mkdir -p "$HELLO_ROOT/home" "$HELLO_ROOT/tmp" "$HELLO_ROOT/state"
+HELLO_RESPONSE="$(env -i \
+  HOME="$HELLO_ROOT/home" \
+  PATH="/usr/bin:/bin" \
+  LANG=C \
+  TMPDIR="$HELLO_ROOT/tmp" \
+  "$SIDECAR_LAUNCHER" --state-root "$HELLO_ROOT/state" <<'JSON'
+{"protocol_version":"xplan-mission-sidecar-v1","request_id":"request-fixture:hello","command_id":"fixture:hello","command":"hello","payload":{}}
+JSON
+)"
+python3 - "$HELLO_RESPONSE" <<'PY'
+import json, sys
+response = json.loads(sys.argv[1])
+expected = {"protocol_version", "request_id", "command_id", "result"}
+if set(response) != expected:
+    raise SystemExit("packaged hello response envelope is not exact")
+if response["protocol_version"] != "xplan-mission-sidecar-v1":
+    raise SystemExit("packaged hello protocol is not exact")
+if response["request_id"] != "request-fixture:hello" or response["command_id"] != "fixture:hello":
+    raise SystemExit("packaged hello identity is not exact")
+if not isinstance(response["result"], dict):
+    raise SystemExit("packaged hello result is malformed")
+PY
+cleanup_hello
+trap - EXIT
 
 echo "✓ built $APP_BUNDLE"
 echo "  drag to /Applications, or run: open $APP_BUNDLE"

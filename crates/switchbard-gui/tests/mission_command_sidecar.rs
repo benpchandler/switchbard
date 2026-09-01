@@ -6,13 +6,15 @@ use common::{harness, seeded_app};
 use eframe::egui;
 use egui_kittest::kittest::Queryable;
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::Instant;
 use switchbard_core::mission_supervisor::MissionSupervisor;
 use switchbard_core::{MissionStatus, ProjectionFreshness};
 use switchbard_gui::mission_control::{
-    HelperHealth, MissionControlModel, PendingContract, RequestOutcome,
+    empty_hello_request, HelperHealth, MissionControlModel, PendingContract, RequestOutcome,
 };
 use switchbard_gui::runtime::Place;
 use switchbard_gui::runtime_io::ProcessFilesystemBoundaryProbe;
@@ -23,6 +25,11 @@ fn app_with(model: MissionControlModel) -> switchbard_gui::app::HiveApp {
     app.place = Place::Missions;
     *app.mission_control.lock().expect("mission control lock") = model;
     app
+}
+
+fn executable(path: &Path, source: &str) {
+    fs::write(path, source).expect("write executable fixture");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).expect("make fixture executable");
 }
 
 fn ready_model() -> MissionControlModel {
@@ -66,7 +73,7 @@ fn ambiguous_helper(root: &Path) -> Option<(PathBuf, PathBuf)> {
     let log = root.join("requests.jsonl");
     let marker = root.join("resume-lost-once");
     let script = format!(
-        "#!/bin/sh\ninput='{0}/request.$$'\n/bin/cat > \"$input\"\n/bin/cat \"$input\" >> '{1}'\necho >> '{1}'\nif /usr/bin/grep -q '\"command\": \"resume_decision\"' \"$input\" && [ ! -e '{2}' ]; then\n  /usr/bin/touch '{2}'\n  '{3}' < \"$input\" > '{0}/lost-response.json'\n  exit 71\nfi\nexec '{3}' < \"$input\"\n",
+        "#!/bin/sh\ninput='{0}/request.$$'\n/bin/cat > \"$input\"\n/bin/cat \"$input\" >> '{1}'\necho >> '{1}'\nif /usr/bin/grep -q '\"command\": \"resume_decision\"' \"$input\" && [ ! -e '{2}' ]; then\n  /usr/bin/touch '{2}'\n  '{3}' \"$@\" < \"$input\" > '{0}/lost-response.json'\n  exit 71\nfi\nexec '{3}' \"$@\" < \"$input\"\n",
         root.display(),
         log.display(),
         marker.display(),
@@ -409,4 +416,96 @@ fn mission_controls_50_row_p95_is_within_33ms() {
     let p95 = samples[189];
     eprintln!("MISSION_SIDECAR_P95_MS={p95:.3}");
     assert!(p95 <= 33.0, "50-row p95 {p95:.3}ms exceeds 33ms");
+}
+
+#[test]
+fn packaged_launcher_proxies_exact_streams_and_exit_status() {
+    let root = tempfile::tempdir().expect("temporary app bundle");
+    let contents = root.path().join("Switchbard.app/Contents");
+    let launcher = contents.join("Helpers/xplan-mission-sidecar-launcher");
+    let payload = contents.join("Resources/xplan-mission-sidecar/xplan-mission-sidecar");
+    fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+    fs::create_dir_all(payload.parent().unwrap()).unwrap();
+    fs::copy(env!("CARGO_BIN_EXE_switchbard"), &launcher).expect("copy packaged launcher");
+    fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+    executable(
+        &payload,
+        r#"#!/bin/sh
+record="${0%/*}/proxy-record"
+printf '%s\n' "$@" > "$record.argv"
+/bin/cat > "$record.stdin"
+printf 'payload-stdout\n'
+printf 'payload-stderr\n' >&2
+exit 23
+"#,
+    );
+    let state_root = root.path().join("private-state");
+    let mut child = Command::new(&launcher)
+        .arg("--state-root")
+        .arg(&state_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn packaged launcher");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"private-request\n")
+        .unwrap();
+    let output = child
+        .wait_with_output()
+        .expect("wait for packaged launcher");
+    assert_eq!(output.status.code(), Some(23));
+    assert_eq!(output.stdout, b"payload-stdout\n");
+    assert_eq!(output.stderr, b"payload-stderr\n");
+    let record = payload.parent().unwrap().join("proxy-record");
+    assert_eq!(
+        fs::read_to_string(record.with_extension("argv")).unwrap(),
+        format!("--state-root\n{}\n", state_root.display())
+    );
+    assert_eq!(
+        fs::read_to_string(record.with_extension("stdin")).unwrap(),
+        "private-request\n"
+    );
+    let rejected = Command::new(&launcher)
+        .args(["--state-root", state_root.to_str().unwrap(), "extra"])
+        .output()
+        .expect("run invalid launcher invocation");
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(String::from_utf8(rejected.stderr)
+        .unwrap()
+        .contains("expected exactly --state-root <path>"));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn bundled_supervisor_binds_launcher_and_resources_manifest() {
+    let root = tempfile::tempdir().expect("temporary app bundle");
+    let contents = root.path().join("Switchbard.app/Contents");
+    let executable_path = contents.join("MacOS/Switchbard");
+    let launcher = contents.join("Helpers/xplan-mission-sidecar-launcher");
+    let payload = contents.join("Resources/xplan-mission-sidecar/xplan-mission-sidecar");
+    fs::create_dir_all(executable_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+    fs::create_dir_all(payload.parent().unwrap()).unwrap();
+    fs::copy(env!("CARGO_BIN_EXE_switchbard"), &launcher).expect("copy packaged launcher");
+    fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+    executable(
+        &payload,
+        "#!/bin/sh\nread request\nprintf '%s\\n' '{\"protocol_version\":\"xplan-mission-sidecar-v1\",\"request_id\":\"request-switchbard:hello\",\"command_id\":\"switchbard:hello\",\"result\":{\"ok\":true}}'\n",
+    );
+    let manifest = MissionSupervisor::build_test_manifest(&payload).unwrap();
+    fs::write(payload.parent().unwrap().join("manifest.json"), manifest).unwrap();
+    let state_root = root.path().join("state");
+    let model = MissionControlModel::from_bundled_executable(&executable_path, state_root);
+    assert!(matches!(model.helper_health, HelperHealth::Checking));
+    let response = model
+        .supervisor
+        .as_ref()
+        .expect("bundled supervisor")
+        .invoke(empty_hello_request())
+        .expect("hello through packaged layout");
+    assert_eq!(response.result()["ok"], true);
 }

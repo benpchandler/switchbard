@@ -28,19 +28,21 @@ fn request(command: MissionCommand, command_id: &str, payload: Value) -> Mission
 
 fn fixture(helper: &str) -> (TempDir, MissionSupervisor) {
     let root = tempfile::tempdir().expect("temporary supervisor fixture");
-    let helper_path = root
-        .path()
-        .join("Contents/Helpers/xplan-mission-sidecar/helper");
+    let contents = root.path().join("Contents");
+    let helper_path = contents.join("Helpers/xplan-mission-sidecar-launcher");
+    let payload_path = contents.join("Resources/xplan-mission-sidecar/xplan-mission-sidecar");
     fs::create_dir_all(helper_path.parent().expect("helper parent")).expect("helper directory");
+    fs::create_dir_all(payload_path.parent().expect("payload parent")).expect("payload directory");
     executable(&helper_path, helper);
+    executable(&payload_path, "#!/bin/sh\nexit 0\n");
     let manifest_path = root
         .path()
-        .join("Contents/Helpers/xplan-mission-sidecar/manifest.json");
-    let manifest = MissionSupervisor::build_test_manifest(&helper_path).expect("test manifest");
+        .join("Contents/Resources/xplan-mission-sidecar/manifest.json");
+    let manifest = MissionSupervisor::build_test_manifest(&payload_path).expect("test manifest");
     fs::write(&manifest_path, manifest).expect("write test manifest");
     let config = MissionSupervisorConfig {
-        executable_root: root.path().to_path_buf(),
-        helper_path: PathBuf::from("Contents/Helpers/xplan-mission-sidecar/helper"),
+        executable_root: contents,
+        helper_path: PathBuf::from("Helpers/xplan-mission-sidecar-launcher"),
         manifest_path,
         state_root: root.path().join("state"),
         timeout: Duration::from_secs(2),
@@ -70,9 +72,7 @@ printf '%s\n' '{"protocol_version":"xplan-mission-sidecar-v1","request_id":"requ
     assert_eq!(response.command_id(), "fixture:hello");
     assert_eq!(response.protocol_version(), "xplan-mission-sidecar-v1");
     assert_eq!(response.result()["ok"], true);
-    let record = root
-        .path()
-        .join("Contents/Helpers/xplan-mission-sidecar/record");
+    let record = root.path().join("Contents/Helpers/record");
     let environment = fs::read_to_string(record.with_extension("env")).unwrap();
     let arguments = fs::read_to_string(record.with_extension("argv")).unwrap();
     let stdin = fs::read_to_string(record.with_extension("stdin")).unwrap();
@@ -82,13 +82,29 @@ printf '%s\n' '{"protocol_version":"xplan-mission-sidecar-v1","request_id":"requ
     assert!(stdin.contains("fixture:hello") && !stdin.contains(root.path().to_str().unwrap()));
     fs::write(
         root.path()
-            .join("Contents/Helpers/xplan-mission-sidecar/helper"),
+            .join("Contents/Helpers/xplan-mission-sidecar-launcher"),
         "#!/bin/sh\nexit 0\n",
     )
     .unwrap();
     assert!(supervisor
         .invoke(request(MissionCommand::Hello, "fixture:tamper", json!({})))
         .expect_err("tampered helper must reject")
+        .is_manifest_rejection());
+    let (payload_root, payload_supervisor) = fixture(script);
+    fs::write(
+        payload_root
+            .path()
+            .join("Contents/Resources/xplan-mission-sidecar/xplan-mission-sidecar"),
+        "#!/bin/sh\nexit 0\n# tampered\n",
+    )
+    .unwrap();
+    assert!(payload_supervisor
+        .invoke(request(
+            MissionCommand::Hello,
+            "fixture:payload-tamper",
+            json!({}),
+        ))
+        .expect_err("tampered payload must reject")
         .is_manifest_rejection());
     for (name, response) in strict_identity_failures() {
         let (_case_root, case_supervisor) = fixture(response);

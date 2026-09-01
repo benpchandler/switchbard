@@ -5,7 +5,10 @@
 //! 2. Expand the configured repos into their live worktree list.
 //! 3. Hand off to eframe to run the GUI.
 
-use std::path::PathBuf;
+use std::ffi::{OsStr, OsString};
+use std::os::unix::process::ExitStatusExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus, Stdio};
 use std::sync::Arc;
 
 use eframe::egui;
@@ -19,8 +22,17 @@ use switchbard_gui::runtime::worktrees::expand_worktrees;
 /// drives the runtime window + Dock icon under `cargo run`; the `.icns`
 /// drives Finder/Launchpad/Dock for the installed bundle.
 const APP_ICON_PNG: &[u8] = include_bytes!("../assets/icon.png");
+const MISSION_SIDECAR_LAUNCHER: &str = "xplan-mission-sidecar-launcher";
+const MISSION_SIDECAR_PAYLOAD: &str = "Resources/xplan-mission-sidecar/xplan-mission-sidecar";
 
 fn main() -> eframe::Result<()> {
+    let launcher_args: Vec<OsString> = std::env::args_os().collect();
+    if launcher_args
+        .first()
+        .is_some_and(|argv0| is_mission_sidecar_launcher(argv0))
+    {
+        std::process::exit(run_mission_sidecar_launcher(&launcher_args[1..]));
+    }
     let args: Vec<String> = std::env::args().collect();
     if args
         .get(1)
@@ -29,6 +41,10 @@ fn main() -> eframe::Result<()> {
         run_mission_sidecar_journey(&args[2..]);
         return Ok(());
     }
+    run_gui()
+}
+
+fn run_gui() -> eframe::Result<()> {
     let cfg = config::load();
     let repos = cfg.repos.clone();
     let worktrees = expand_worktrees(&repos);
@@ -73,6 +89,66 @@ fn main() -> eframe::Result<()> {
             )))
         }),
     )
+}
+
+fn is_mission_sidecar_launcher(argv0: &OsStr) -> bool {
+    Path::new(argv0).file_name() == Some(OsStr::new(MISSION_SIDECAR_LAUNCHER))
+}
+
+fn run_mission_sidecar_launcher(args: &[OsString]) -> i32 {
+    let state_root = match parse_mission_sidecar_launcher_args(args) {
+        Ok(path) => path,
+        Err(message) => {
+            eprintln!("Switchbard mission launcher rejected: {message}");
+            return 2;
+        }
+    };
+    let executable = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("Switchbard mission launcher unavailable: {error}");
+            return 127;
+        }
+    };
+    match proxy_mission_sidecar(&executable, state_root) {
+        Ok(status) => child_exit_code(status),
+        Err(error) => {
+            eprintln!("Switchbard mission launcher unavailable: {error}");
+            127
+        }
+    }
+}
+
+fn parse_mission_sidecar_launcher_args(args: &[OsString]) -> Result<&OsStr, &'static str> {
+    if args.len() != 2 || args[0] != OsStr::new("--state-root") || args[1].is_empty() {
+        return Err("expected exactly --state-root <path>");
+    }
+    Ok(&args[1])
+}
+
+fn proxy_mission_sidecar(
+    launcher: &Path,
+    state_root: &OsStr,
+) -> Result<ExitStatus, std::io::Error> {
+    let contents = launcher
+        .parent()
+        .filter(|path| path.file_name() == Some(OsStr::new("Helpers")))
+        .and_then(Path::parent)
+        .ok_or_else(|| std::io::Error::other("launcher is outside Contents/Helpers"))?;
+    let payload = contents.join(MISSION_SIDECAR_PAYLOAD);
+    Command::new(payload)
+        .arg("--state-root")
+        .arg(state_root)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+}
+
+fn child_exit_code(status: ExitStatus) -> i32 {
+    status
+        .code()
+        .unwrap_or_else(|| status.signal().map_or(1, |signal| 128 + signal))
 }
 
 fn run_mission_sidecar_journey(args: &[String]) {
@@ -158,4 +234,47 @@ fn execute_journey(
         std::fs::write(path, APP_ICON_PNG).map_err(|error| error.to_string())?;
     }
     Ok(summary)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn packaged_launcher_identity_and_layout_are_exact() {
+        assert!(is_mission_sidecar_launcher(OsStr::new(
+            "/Applications/Switchbard.app/Contents/Helpers/xplan-mission-sidecar-launcher"
+        )));
+        assert!(!is_mission_sidecar_launcher(OsStr::new(
+            "/Applications/Switchbard.app/Contents/MacOS/Switchbard"
+        )));
+        let launcher = Path::new(
+            "/Applications/Switchbard.app/Contents/Helpers/xplan-mission-sidecar-launcher",
+        );
+        let error = proxy_mission_sidecar(launcher, OsStr::new("/absent-state"))
+            .expect_err("fixture has no packaged payload");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn packaged_launcher_accepts_only_state_root() {
+        let valid = [OsString::from("--state-root"), OsString::from("/tmp/state")];
+        assert_eq!(
+            parse_mission_sidecar_launcher_args(&valid).unwrap(),
+            OsStr::new("/tmp/state")
+        );
+        for invalid in [
+            Vec::new(),
+            vec![OsString::from("--state-root")],
+            vec![OsString::from("--state-root"), OsString::new()],
+            vec![OsString::from("--helper"), OsString::from("payload")],
+            vec![
+                OsString::from("--state-root"),
+                OsString::from("/tmp/state"),
+                OsString::from("extra"),
+            ],
+        ] {
+            assert!(parse_mission_sidecar_launcher_args(&invalid).is_err());
+        }
+    }
 }

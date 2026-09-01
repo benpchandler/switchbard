@@ -513,20 +513,23 @@ fn bundled_supervisor(
         MissionSupervisorError::Manifest("Switchbard executable has no parent".to_owned())
     })?;
     #[cfg(target_os = "macos")]
-    let helper_root = binary_dir
-        .parent()
-        .ok_or_else(|| {
-            MissionSupervisorError::Manifest("Switchbard.app has no Contents root".to_owned())
-        })?
-        .join("Helpers/xplan-mission-sidecar");
+    let contents_root = binary_dir.parent().ok_or_else(|| {
+        MissionSupervisorError::Manifest("Switchbard.app has no Contents root".to_owned())
+    })?;
+    #[cfg(target_os = "macos")]
+    let config = MissionSupervisorConfig {
+        executable_root: contents_root.to_path_buf(),
+        helper_path: PathBuf::from("Helpers/xplan-mission-sidecar-launcher"),
+        manifest_path: contents_root.join("Resources/xplan-mission-sidecar/manifest.json"),
+        state_root: state_root.to_path_buf(),
+        timeout: Duration::from_secs(20),
+        stdout_limit: 1_048_576,
+        stderr_limit: 65_536,
+    };
     #[cfg(target_os = "linux")]
     let helper_root = binary_dir.join("libexec/xplan-mission-sidecar");
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    return Err(MissionSupervisorError::Manifest(
-        "Mission control is packaged only for macOS and Linux".to_owned(),
-    ));
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    MissionSupervisor::new(MissionSupervisorConfig {
+    #[cfg(target_os = "linux")]
+    let config = MissionSupervisorConfig {
         executable_root: helper_root.clone(),
         helper_path: PathBuf::from("xplan-mission-sidecar"),
         manifest_path: helper_root.join("manifest.json"),
@@ -534,7 +537,13 @@ fn bundled_supervisor(
         timeout: Duration::from_secs(20),
         stdout_limit: 1_048_576,
         stderr_limit: 65_536,
-    })
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    return Err(MissionSupervisorError::Manifest(
+        "Mission control is packaged only for macOS and Linux".to_owned(),
+    ));
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    MissionSupervisor::new(config)
 }
 
 fn queue_request(
