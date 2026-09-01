@@ -9,12 +9,13 @@ mod common;
 
 use std::path::PathBuf;
 
-use common::{harness, seeded_app, REPO_PATH};
+use common::{harness, isolated_config_save_path, seeded_app, REPO_PATH};
 use eframe::egui;
 use egui_kittest::kittest::{NodeT, Queryable};
-use switchbard_core::config::FilterMemory;
+use switchbard_core::config::{Config, FilterMemory};
 use switchbard_core::{
     BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource, Repo, RepoRanking,
+    WorktreeRef,
 };
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{BacklogTaskSortKey, Place, TasksView};
@@ -77,6 +78,47 @@ fn tasks_app(tasks: Vec<BacklogTask>) -> HiveApp {
         .lock()
         .unwrap()
         .insert(PathBuf::from(REPO_PATH), repo_with(tasks));
+    app
+}
+
+const SECOND_REPO_PATH: &str = "/tmp/switchbard-ui-test/second";
+
+fn two_repo_tasks_app(mut config: Config) -> HiveApp {
+    config.ui.onboarding_dismissed = true;
+    let repos = vec![
+        Repo {
+            name: "demo".to_string(),
+            path: PathBuf::from(REPO_PATH),
+        },
+        Repo {
+            name: "second".to_string(),
+            path: PathBuf::from(SECOND_REPO_PATH),
+        },
+    ];
+    let worktrees = repos
+        .iter()
+        .map(|repo| WorktreeRef {
+            repo_name: repo.name.clone(),
+            path: repo.path.clone(),
+            branch: Some("main".to_string()),
+            head: "abc1234".to_string(),
+        })
+        .collect();
+    let mut app = HiveApp::new_headless(config, repos, worktrees);
+    app.config_save_path = Some(isolated_config_save_path());
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::All;
+    app.tasks_place.group_by = None;
+    app.backlog_repos.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        repo_with(vec![task("TASK-1", "First repo task", "To Do")]),
+    );
+    let mut second_repo = repo_with(vec![task("TASK-2", "Second repo task", "To Do")]);
+    second_repo.root = PathBuf::from(SECOND_REPO_PATH);
+    app.backlog_repos
+        .lock()
+        .unwrap()
+        .insert(PathBuf::from(SECOND_REPO_PATH), second_repo);
     app
 }
 
@@ -367,6 +409,79 @@ fn removing_the_last_filter_predicate_restores_every_task_and_remembers_it_as_re
         "the cleared set should be remembered as recent"
     );
     assert!(harness.query_by_label("recent:").is_some());
+}
+
+#[test]
+fn legacy_repo_picker_state_cannot_hide_repos_or_filter_values() {
+    let mut config = Config::default();
+    config
+        .ui
+        .filters
+        .entry("tasks.all".to_string())
+        .or_default()
+        .facets
+        .insert("repo".to_string(), REPO_PATH.to_string());
+    let mut app = two_repo_tasks_app(config);
+    app.tasks_place.filter_builder_open = true;
+    app.tasks_place.draft_field = TaskField::Repo;
+
+    let mut harness = harness(app);
+    harness.run();
+    harness.get_by_value("Choose a value").click();
+    harness.run();
+
+    assert_eq!(
+        harness.state().backlog_view.selected_repo,
+        None,
+        "the removed one-repo picker must not survive as an invisible scope"
+    );
+    assert!(harness.query_by_label("TASK-1  First repo task").is_some());
+    assert!(
+        harness.query_by_label("TASK-2  Second repo task").is_some(),
+        "All repos must include tasks outside the obsolete persisted picker value"
+    );
+    assert!(
+        harness.query_all_by_label("second").count() >= 2,
+        "the second repo must appear on its task row and in the open Repo value picker"
+    );
+    assert!(
+        !harness
+            .state()
+            .config
+            .ui
+            .filters
+            .get("tasks.all")
+            .expect("tasks.all filter memory")
+            .facets
+            .contains_key("repo"),
+        "loading the config must purge the obsolete repo facet"
+    );
+}
+
+#[test]
+fn filter_value_picker_uses_the_pre_predicate_task_set() {
+    let mut app = two_repo_tasks_app(Config::default());
+    app.tasks_place.filters = vec![FilterPredicate {
+        field: TaskField::Repo,
+        value: "demo".to_string(),
+    }];
+    app.tasks_place.filter_builder_open = true;
+    app.tasks_place.draft_field = TaskField::Repo;
+
+    let mut harness = harness(app);
+    harness.run();
+    harness.get_by_value("Choose a value").click();
+    harness.run();
+
+    assert!(harness.query_by_label("TASK-1  First repo task").is_some());
+    assert!(
+        harness.query_by_label("TASK-2  Second repo task").is_none(),
+        "the active Repo predicate should still narrow the task rows"
+    );
+    assert!(
+        harness.query_by_label("second").is_some(),
+        "the open picker must still offer values outside the active predicate result"
+    );
 }
 
 // TASK-97: `HiveApp::persist_filter_facets` (called from `eframe::App::

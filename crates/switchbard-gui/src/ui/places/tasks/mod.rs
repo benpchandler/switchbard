@@ -80,9 +80,10 @@ pub fn render_tasks_place(app: &mut HiveApp, ui: &mut egui::Ui) {
     // completed/archived/drafts toggles, the free-text search, and the
     // active sort key (including TASK-97's new `Rank`) — reused wholesale,
     // then narrowed by the filter builder's own AND predicates on top.
-    let sorted = sort::visible_task_rows(app, &snap);
-    let filtered: Vec<TaskRow<'_>> = sorted
-        .into_iter()
+    let available = sort::visible_task_rows(app, &snap);
+    let filtered: Vec<TaskRow<'_>> = available
+        .iter()
+        .copied()
         .filter(|row| filters::matches(row, &app.tasks_place.filters))
         .collect();
     backlog::reconcile_selected_task(app, &filtered);
@@ -135,7 +136,7 @@ pub fn render_tasks_place(app: &mut HiveApp, ui: &mut egui::Ui) {
                 .corner_radius(6.0)
                 .inner_margin(egui::Margin::symmetric(10, 7))
                 .show(ui, |ui| {
-                    render_facets_row(app, ui, &filtered);
+                    render_facets_row(app, ui, &available);
                     ui.separator();
                     render_group_sort_row(app, ui);
                     ui.separator();
@@ -166,23 +167,19 @@ pub fn render_tasks_place(app: &mut HiveApp, ui: &mut egui::Ui) {
     backlog::apply_pending(app, ui, pending);
 }
 
-/// TASK-97 medic pass (BLOCKER finding): `sort::visible_task_rows` (reused
-/// wholesale by this place, above) still narrows on four legacy single-value
-/// facets — `backlog_view.{status,priority,project,label}_filter` — that
-/// this place's own UI exposes no control for. Every write site that used to
-/// set one of them for this place has been moved onto `tasks_place.filters`
-/// instead (Digest's "View all", a saved-view apply, a Project favorite's
-/// click — the one predicate set this place actually renders a removable
-/// chip for), so this is a pure safety net, not the primary fix: force the
-/// four back to "all" on every Tasks-place frame, so a value smuggled in
-/// some other way (an old persisted filter memory, a future write site added
-/// without reading this doc) can never silently narrow the list with no UI
-/// to undo it.
+/// Clear every legacy Backlog toolbar control the Tasks place cannot show.
+/// The sidebar is the only repo scope in IA V2; task-level narrowing belongs
+/// in `tasks_place.filters`, where it renders as a removable chip. Keeping a
+/// stale single-repo picker, fixed facet, or staleness toggle here would hide
+/// rows with no visible escape hatch.
 fn neutralize_legacy_filters(app: &mut HiveApp) {
+    app.backlog_view.selected_repo = None;
+    app.backlog_view.repo_filter.clear();
     app.backlog_view.status_filter = "all".to_string();
     app.backlog_view.priority_filter = "all".to_string();
     app.backlog_view.project_filter = "all".to_string();
     app.backlog_view.label_filter = "all".to_string();
+    app.backlog_view.stale_only = false;
 }
 
 fn render_empty(ui: &mut egui::Ui) {
@@ -202,7 +199,7 @@ fn render_empty(ui: &mut egui::Ui) {
 /// Row 1: free-text search and base visibility.
 /// Row 2: the List/Board selector, filter builder, active predicates, and
 /// recent filter sets.
-fn render_facets_row(app: &mut HiveApp, ui: &mut egui::Ui, filtered: &[TaskRow<'_>]) {
+fn render_facets_row(app: &mut HiveApp, ui: &mut egui::Ui, available: &[TaskRow<'_>]) {
     ui.horizontal_wrapped(|ui| {
         filter_bar::search(ui, "tasks_place_search", app.filter_mut(), "Search tasks");
         ui.separator();
@@ -218,7 +215,7 @@ fn render_facets_row(app: &mut HiveApp, ui: &mut egui::Ui, filtered: &[TaskRow<'
     ui.horizontal_wrapped(|ui| {
         render_view_mode_selector(app, ui);
         ui.separator();
-        filters::render(app, ui, filtered);
+        filters::render(app, ui, available);
     });
 }
 

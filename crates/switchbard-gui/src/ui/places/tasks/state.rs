@@ -8,10 +8,13 @@
 //! `BacklogViewState::persist_filters` already writes to (binding
 //! directive: persistence key names are reserved, not TASK-97's to
 //! rename). Different facet keys, so the two `persist`/`restore` passes
-//! never collide; see [`FACET_*`] for the exact names.
+//! never collide; `runtime::TASKS_FACET_*` owns the exact names.
 
 use std::collections::BTreeSet;
 
+use crate::runtime::{
+    TASKS_FACET_FILTERS, TASKS_FACET_GROUP_BY, TASKS_FACET_RECENT, TASKS_FACET_VIEW_MODE,
+};
 use switchbard_core::config::UiConfig;
 
 use super::fields::TaskField;
@@ -58,11 +61,6 @@ pub struct FilterPredicate {
     pub field: TaskField,
     pub value: String,
 }
-
-const FACET_GROUP_BY: &str = "group_by";
-const FACET_VIEW_MODE: &str = "view_mode";
-const FACET_FILTERS: &str = "filters";
-const FACET_RECENT: &str = "recent_filters";
 
 /// How many past filter sets `recent_filter_sets` remembers — the mock's
 /// "recent:" row shows a handful, not a growing history.
@@ -115,20 +113,20 @@ impl TasksPlaceState {
         let Some(memory) = ui.filters.get("tasks.all") else {
             return state;
         };
-        if let Some(value) = memory.facets.get(FACET_GROUP_BY) {
+        if let Some(value) = memory.facets.get(TASKS_FACET_GROUP_BY) {
             state.group_by = if value.is_empty() {
                 None
             } else {
                 TaskField::from_id(value)
             };
         }
-        if let Some(value) = memory.facets.get(FACET_VIEW_MODE) {
+        if let Some(value) = memory.facets.get(TASKS_FACET_VIEW_MODE) {
             state.view_mode = TasksViewMode::from_id(value);
         }
-        if let Some(value) = memory.facets.get(FACET_FILTERS) {
+        if let Some(value) = memory.facets.get(TASKS_FACET_FILTERS) {
             state.filters = decode_set(value);
         }
-        if let Some(value) = memory.facets.get(FACET_RECENT) {
+        if let Some(value) = memory.facets.get(TASKS_FACET_RECENT) {
             state.recent_filter_sets = value.split(SET_SEP).map(decode_set).collect();
         }
         state
@@ -137,25 +135,25 @@ impl TasksPlaceState {
     pub fn persist(&self, ui: &mut UiConfig) {
         let memory = ui.filters.entry("tasks.all".to_string()).or_default();
         memory.facets.insert(
-            FACET_GROUP_BY.to_string(),
+            TASKS_FACET_GROUP_BY.to_string(),
             self.group_by
                 .map(TaskField::as_id)
                 .unwrap_or("")
                 .to_string(),
         );
         memory.facets.insert(
-            FACET_VIEW_MODE.to_string(),
+            TASKS_FACET_VIEW_MODE.to_string(),
             self.view_mode.as_id().to_string(),
         );
         if self.filters.is_empty() {
-            memory.facets.remove(FACET_FILTERS);
+            memory.facets.remove(TASKS_FACET_FILTERS);
         } else {
             memory
                 .facets
-                .insert(FACET_FILTERS.to_string(), encode_set(&self.filters));
+                .insert(TASKS_FACET_FILTERS.to_string(), encode_set(&self.filters));
         }
         if self.recent_filter_sets.is_empty() {
-            memory.facets.remove(FACET_RECENT);
+            memory.facets.remove(TASKS_FACET_RECENT);
         } else {
             let joined = self
                 .recent_filter_sets
@@ -163,7 +161,7 @@ impl TasksPlaceState {
                 .map(|set| encode_set(set))
                 .collect::<Vec<_>>()
                 .join(&SET_SEP.to_string());
-            memory.facets.insert(FACET_RECENT.to_string(), joined);
+            memory.facets.insert(TASKS_FACET_RECENT.to_string(), joined);
         }
     }
 

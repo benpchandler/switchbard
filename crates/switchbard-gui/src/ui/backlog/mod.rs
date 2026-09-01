@@ -6,15 +6,16 @@
 //!
 //! ## Unified scope
 //!
-//! `app.backlog_view.selected_repo` doubles as the scope switch: `None`
-//! (the default) is "All repos" — every tracked repo's tasks merged
+//! The default scope is "All repos" — every tracked repo's tasks merged
 //! into one triage-ranked list (`sort::visible_task_rows` +
 //! `switchbard_core::triage_rank`), each row tagged with a repo badge and
-//! `repo:id`-formatted task id. `Some(path)` narrows to that one repo,
-//! matching how the view worked before the unified scope. See `sort.rs` for
-//! the ranking/filtering pipeline and `runtime::BacklogTaskKey` for why
-//! selection is keyed on `(project_root, task_id)` rather than a bare id —
-//! ids are only unique within a repo.
+//! `repo:id`-formatted task id. `app.backlog_view.selected_repo` is legacy
+//! session-only narrowing for this unreachable pre-IA-V2 body; see its doc
+//! on `runtime::BacklogViewState` for its current, reduced role. See
+//! `sort.rs` for the ranking/filtering pipeline and
+//! `runtime::BacklogTaskKey` for why selection is keyed on
+//! `(project_root, task_id)` rather than a bare id — ids are only unique
+//! within a repo.
 //!
 //! ## Module map
 //! - `format`     — presentation-only helpers (status/priority labels+colors).
@@ -244,10 +245,10 @@ pub(super) fn lens_filters(lens: BacklogLens) -> bool {
     )
 }
 
-/// TASK-96: `app.repo_scope` (the sidebar's multi-select scope) is the
-/// *outer* filter, applied on top of whatever `backlog_view.selected_repo`
-/// (the pre-existing single-repo picker) already narrows to — scope never
-/// fights the picker, it bounds it. `RepoRow::key` is a repo root path (the
+/// TASK-96: `app.repo_scope` is the sidebar's multi-select scope. The
+/// pre-existing `backlog_view.selected_repo` still supports the unreachable
+/// legacy Backlog body; the IA-V2 Tasks place clears it before calling here,
+/// so no hidden inner scope can contradict the sidebar. `RepoRow::key` is a repo root path (the
 /// same key space `Config::repos[].path`/`repo_scope` use — `backlog`'s
 /// project roots come straight from the tracked repo list, never from a
 /// worktree path, see `workers::backlog_repo_roots`), so the scope check is

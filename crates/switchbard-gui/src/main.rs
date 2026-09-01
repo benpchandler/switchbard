@@ -320,10 +320,11 @@ mod tests {
         assert!(!is_mission_sidecar_launcher(OsStr::new(
             "/Applications/Switchbard.app/Contents/MacOS/Switchbard"
         )));
-        let launcher = Path::new(
-            "/Applications/Switchbard.app/Contents/Helpers/xplan-mission-sidecar-launcher",
-        );
-        let error = proxy_mission_sidecar(launcher, OsStr::new("/absent-state"))
+        let fixture = tempfile::tempdir().expect("temporary app bundle");
+        let launcher = fixture
+            .path()
+            .join("Switchbard.app/Contents/Helpers/xplan-mission-sidecar-launcher");
+        let error = proxy_mission_sidecar(&launcher, OsStr::new("/absent-state"))
             .expect_err("fixture has no packaged payload");
         assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
     }

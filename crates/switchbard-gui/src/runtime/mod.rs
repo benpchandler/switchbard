@@ -205,32 +205,63 @@ const CURRENT_FILTER_KEYS: &[&str] = &[
     "ops",
 ];
 
-/// Pure re-key of `UiConfig.filters` from the pre-IA-V2 lens/tab names to the
-/// place/view names TASK-96 introduces. Applied once, on load
-/// (`HiveApp::new_headless`), never per-frame.
+/// Facets the IA-V2 Tasks place can actually show and clear. The old Backlog
+/// toolbar stored a single-repo picker plus fixed status/priority/project/
+/// label/staleness facets under the same surface key. Carrying those values
+/// forward would create invisible filters because the Tasks place exposes
+/// only the generic predicate builder and the three source toggles.
+const TASKS_FACET_COMPLETED: &str = "completed";
+const TASKS_FACET_ARCHIVED: &str = "archived";
+const TASKS_FACET_DRAFTS: &str = "drafts";
+pub(crate) const TASKS_FACET_GROUP_BY: &str = "group_by";
+pub(crate) const TASKS_FACET_VIEW_MODE: &str = "view_mode";
+pub(crate) const TASKS_FACET_FILTERS: &str = "filters";
+pub(crate) const TASKS_FACET_RECENT: &str = "recent_filters";
+const TASKS_ALL_PERSISTED_FACETS: &[&str] = &[
+    TASKS_FACET_COMPLETED,
+    TASKS_FACET_ARCHIVED,
+    TASKS_FACET_DRAFTS,
+    TASKS_FACET_GROUP_BY,
+    TASKS_FACET_VIEW_MODE,
+    TASKS_FACET_FILTERS,
+    TASKS_FACET_RECENT,
+];
+
+/// Re-key and schema migration of `UiConfig.filters` from the pre-IA-V2
+/// lens/tab surfaces to the place/view surfaces TASK-96 introduces. Applied
+/// once, on load (`HiveApp::new_headless`), never per-frame.
 ///
 /// A key found in [`FILTER_KEY_MIGRATIONS`] is renamed, carrying its
-/// `FilterMemory` value across unchanged. A key already spelled as one of
-/// [`CURRENT_FILTER_KEYS`] passes through as-is (this is what makes the
-/// function idempotent — a config already migrated stays exactly as it is on
-/// every subsequent load). Anything else — an unrecognized old key, a typo, a
-/// hand-edited config — is dropped outright rather than guessed at, per the
-/// TASK-77 decision record.
+/// `FilterMemory` value into its current facet schema. A key already spelled
+/// as one of [`CURRENT_FILTER_KEYS`] passes through the same schema check
+/// (which makes the function idempotent). Anything else — an unrecognized old
+/// key, a typo, or a hand-edited config — is dropped outright rather than
+/// guessed at, per the TASK-77 decision record.
 pub fn migrate_filter_keys(
     filters: std::collections::BTreeMap<String, switchbard_core::config::FilterMemory>,
 ) -> std::collections::BTreeMap<String, switchbard_core::config::FilterMemory> {
     filters
         .into_iter()
-        .filter_map(|(key, value)| {
+        .filter_map(|(key, mut value)| {
             if let Some((_, new_key)) = FILTER_KEY_MIGRATIONS.iter().find(|(old, _)| *old == key) {
+                sanitize_filter_memory(new_key, &mut value);
                 Some((new_key.to_string(), value))
             } else if CURRENT_FILTER_KEYS.contains(&key.as_str()) {
+                sanitize_filter_memory(&key, &mut value);
                 Some((key, value))
             } else {
                 None
             }
         })
         .collect()
+}
+
+fn sanitize_filter_memory(key: &str, memory: &mut switchbard_core::config::FilterMemory) {
+    if key == "tasks.all" {
+        memory
+            .facets
+            .retain(|facet, _| TASKS_ALL_PERSISTED_FACETS.contains(&facet.as_str()));
+    }
 }
 
 #[cfg(test)]
@@ -301,6 +332,40 @@ mod filter_migration_tests {
         let twice = migrate_filter_keys(once.clone());
 
         assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn tasks_all_drops_facets_the_new_surface_cannot_show_or_clear() {
+        let mut filters = BTreeMap::new();
+        let mut tasks = memory("sampler");
+        tasks
+            .facets
+            .insert("repo".to_string(), "/tmp/music".to_string());
+        tasks
+            .facets
+            .insert("status".to_string(), "In Progress".to_string());
+        tasks
+            .facets
+            .insert("group_by".to_string(), "project".to_string());
+        tasks
+            .facets
+            .insert("drafts".to_string(), "false".to_string());
+        filters.insert("tasks.all".to_string(), tasks);
+
+        let migrated = migrate_filter_keys(filters);
+        let tasks = migrated.get("tasks.all").expect("tasks.all memory");
+
+        assert_eq!(tasks.query, "sampler");
+        assert_eq!(
+            tasks.facets.get("group_by").map(String::as_str),
+            Some("project")
+        );
+        assert_eq!(
+            tasks.facets.get("drafts").map(String::as_str),
+            Some("false")
+        );
+        assert!(!tasks.facets.contains_key("repo"));
+        assert!(!tasks.facets.contains_key("status"));
     }
 }
 
@@ -377,13 +442,10 @@ pub struct BoardMoveOutcome {
 
 /// UI-local filters and edit buffers for the Backlog project-management view.
 ///
-/// `selected_repo` doubles as the scope switch: `None` (the default) is
-/// the unified "All projects" scope — the task list merges every tracked
-/// project, triage-ranked, with a repo badge per row. `Some(path)` narrows
-/// to that one project, matching how the view worked before the unified
-/// scope. Reusing the field rather than adding a parallel enum keeps "which
-/// project(s) am I looking at" in one place, and it's exactly the field the
-/// existing project picker combo box already drives.
+/// `selected_repo` remains as session-only compatibility state for the
+/// unreachable legacy Backlog body and fixed-target modals. The IA-V2 Tasks
+/// place clears it before deriving rows: the sidebar owns repo scope and the
+/// generic filter builder owns visible task-level repo predicates.
 #[derive(Debug, Clone)]
 pub struct BacklogViewState {
     pub selected_repo: Option<PathBuf>,
@@ -533,81 +595,35 @@ impl BacklogViewState {
         let Some(memory) = ui.filters.get("tasks.all") else {
             return state;
         };
-        // "repo"/"repo_query" are the current keys; "project"/"project_query"
-        // are the pre-rename spellings, read as fallbacks so an existing
-        // config restores once and re-persists under the new keys.
-        state.repo_filter = memory
-            .facets
-            .get("repo_query")
-            .or_else(|| memory.facets.get("project_query"))
-            .cloned()
-            .unwrap_or_default();
-        state.selected_repo = memory
-            .facets
-            .get("repo")
-            .or_else(|| memory.facets.get("project"))
-            .map(PathBuf::from);
-        state.status_filter = memory
-            .facets
-            .get("status")
-            .cloned()
-            .unwrap_or_else(|| "all".to_string());
-        state.priority_filter = memory
-            .facets
-            .get("priority")
-            .cloned()
-            .unwrap_or_else(|| "all".to_string());
-        state.project_filter = memory
-            .facets
-            .get("project_name")
-            .or_else(|| memory.facets.get("milestone"))
-            .cloned()
-            .unwrap_or_else(|| "all".to_string());
-        state.label_filter = memory
-            .facets
-            .get("label")
-            .cloned()
-            .unwrap_or_else(|| "all".to_string());
-        state.show_completed = facet_bool(memory, "completed", false);
-        state.show_archived = facet_bool(memory, "archived", false);
-        state.show_drafts = facet_bool(memory, "drafts", true);
-        state.stale_only = facet_bool(memory, "stale", false);
+        state.show_completed = facet_bool(memory, TASKS_FACET_COMPLETED, false);
+        state.show_archived = facet_bool(memory, TASKS_FACET_ARCHIVED, false);
+        state.show_drafts = facet_bool(memory, TASKS_FACET_DRAFTS, true);
         state
     }
 
     pub fn persist_filters(&self, ui: &mut switchbard_core::config::UiConfig) {
         let memory = ui.filters.entry("tasks.all".to_string()).or_default();
-        set_optional_facet(
+        memory
+            .facets
+            .retain(|facet, _| TASKS_ALL_PERSISTED_FACETS.contains(&facet.as_str()));
+        persist_bool(
             &mut memory.facets,
-            "repo_query",
-            (!self.repo_filter.is_empty()).then(|| self.repo_filter.clone()),
+            TASKS_FACET_COMPLETED,
+            self.show_completed,
+            false,
         );
-        set_optional_facet(
+        persist_bool(
             &mut memory.facets,
-            "repo",
-            self.selected_repo
-                .as_ref()
-                .map(|path| path.display().to_string()),
+            TASKS_FACET_ARCHIVED,
+            self.show_archived,
+            false,
         );
-        // Purge the pre-rename keys so a config only ever carries one
-        // spelling. "project" held a repo *path* before the rename, which is
-        // why the project-name facet uses the fresh key "project_name".
-        memory.facets.remove("project_query");
-        memory.facets.remove("project");
-        memory.facets.remove("milestone");
-        persist_non_default(&mut memory.facets, "status", &self.status_filter, "all");
-        persist_non_default(&mut memory.facets, "priority", &self.priority_filter, "all");
-        persist_non_default(
+        persist_bool(
             &mut memory.facets,
-            "project_name",
-            &self.project_filter,
-            "all",
+            TASKS_FACET_DRAFTS,
+            self.show_drafts,
+            true,
         );
-        persist_non_default(&mut memory.facets, "label", &self.label_filter, "all");
-        persist_bool(&mut memory.facets, "completed", self.show_completed, false);
-        persist_bool(&mut memory.facets, "archived", self.show_archived, false);
-        persist_bool(&mut memory.facets, "drafts", self.show_drafts, true);
-        persist_bool(&mut memory.facets, "stale", self.stale_only, false);
     }
 }
 
@@ -617,15 +633,6 @@ fn facet_bool(memory: &switchbard_core::config::FilterMemory, key: &str, default
         .get(key)
         .and_then(|value| value.parse().ok())
         .unwrap_or(default)
-}
-
-fn persist_non_default(
-    facets: &mut std::collections::BTreeMap<String, String>,
-    key: &str,
-    value: &str,
-    default: &str,
-) {
-    set_optional_facet(facets, key, (value != default).then(|| value.to_string()));
 }
 
 fn persist_bool(
@@ -1775,7 +1782,7 @@ mod tests {
     }
 
     #[test]
-    fn backlog_filter_facets_round_trip_without_transient_actions() {
+    fn tasks_source_toggles_round_trip_without_hidden_or_transient_state() {
         let mut ui = switchbard_core::config::UiConfig::default();
         let state = BacklogViewState {
             selected_repo: Some(PathBuf::from("/tmp/demo")),
@@ -1790,17 +1797,22 @@ mod tests {
         state.persist_filters(&mut ui);
         let restored = BacklogViewState::restore_filters(&ui);
 
-        assert_eq!(restored.selected_repo, Some(PathBuf::from("/tmp/demo")));
-        assert_eq!(restored.status_filter, "In Progress");
-        assert_eq!(restored.priority_filter, "high");
+        assert_eq!(restored.selected_repo, None);
+        assert_eq!(restored.status_filter, "all");
+        assert_eq!(restored.priority_filter, "all");
         assert!(restored.show_completed);
-        assert!(restored.stale_only);
+        assert!(!restored.stale_only);
         assert!(!restored.bulk_archive_confirm);
         assert!(restored.bulk_selected_tasks.is_empty());
+        let memory = ui.filters.get("tasks.all").expect("tasks.all memory");
+        assert!(!memory.facets.contains_key("repo"));
+        assert!(!memory.facets.contains_key("status"));
+        assert!(!memory.facets.contains_key("priority"));
+        assert!(!memory.facets.contains_key("stale"));
     }
 
     #[test]
-    fn backlog_repo_facets_restore_from_pre_rename_keys_and_persist_purges_them() {
+    fn removed_repo_picker_facets_are_ignored_and_purged() {
         // A config written before the repo-vocabulary rename stored the repo
         // scope under "project"/"project_query".
         let mut ui = switchbard_core::config::UiConfig::default();
@@ -1813,24 +1825,18 @@ mod tests {
             .insert("project_query".to_string(), "budg".to_string());
 
         let restored = BacklogViewState::restore_filters(&ui);
-        assert_eq!(restored.selected_repo, Some(PathBuf::from("/tmp/legacy")));
-        assert_eq!(restored.repo_filter, "budg");
+        assert_eq!(restored.selected_repo, None);
+        assert!(restored.repo_filter.is_empty());
 
-        // Re-persisting writes the new keys and drops the legacy spellings.
+        // Re-persisting drops every spelling of the removed picker.
         restored.persist_filters(&mut ui);
         let memory = ui.filters.get("tasks.all").expect("tasks.all memory");
-        assert_eq!(
-            memory.facets.get("repo").map(String::as_str),
-            Some("/tmp/legacy")
-        );
-        assert_eq!(
-            memory.facets.get("repo_query").map(String::as_str),
-            Some("budg")
-        );
         assert!(!memory.facets.contains_key("project"));
         assert!(!memory.facets.contains_key("project_query"));
+        assert!(!memory.facets.contains_key("repo"));
+        assert!(!memory.facets.contains_key("repo_query"));
 
-        // New keys win when both spellings are present.
+        // Current spellings are equally obsolete and cannot become scope.
         let mut both = switchbard_core::config::UiConfig::default();
         let memory = both.filters.entry("tasks.all".to_string()).or_default();
         memory
@@ -1840,7 +1846,7 @@ mod tests {
             .facets
             .insert("repo".to_string(), "/tmp/new".to_string());
         let restored = BacklogViewState::restore_filters(&both);
-        assert_eq!(restored.selected_repo, Some(PathBuf::from("/tmp/new")));
+        assert_eq!(restored.selected_repo, None);
     }
 
     fn ready_probe(ahead: u32, behind: u32, base: &str) -> Option<DriftProbe> {
@@ -2063,7 +2069,7 @@ mod tests {
     }
 
     #[test]
-    fn project_name_facet_restores_from_the_legacy_milestone_key_and_purges_it() {
+    fn removed_fixed_project_facet_is_ignored_and_purged() {
         let mut ui = switchbard_core::config::UiConfig::default();
         let memory = ui.filters.entry("tasks.all".to_string()).or_default();
         memory
@@ -2071,14 +2077,11 @@ mod tests {
             .insert("milestone".to_string(), "Lucella cutover".to_string());
 
         let restored = BacklogViewState::restore_filters(&ui);
-        assert_eq!(restored.project_filter, "Lucella cutover");
+        assert_eq!(restored.project_filter, "all");
 
         restored.persist_filters(&mut ui);
         let memory = ui.filters.get("tasks.all").expect("tasks.all memory");
-        assert_eq!(
-            memory.facets.get("project_name").map(String::as_str),
-            Some("Lucella cutover")
-        );
+        assert!(!memory.facets.contains_key("project_name"));
         assert!(!memory.facets.contains_key("milestone"));
     }
 }

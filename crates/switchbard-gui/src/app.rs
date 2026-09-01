@@ -478,15 +478,8 @@ impl HiveApp {
             .unwrap_or(0);
         let show_non_servers = cfg.ui.show_non_servers;
         let agent_context_view = AgentContextViewState::restore_filters(&cfg.ui);
-        let mut backlog_view = BacklogViewState::restore_filters(&cfg.ui);
+        let backlog_view = BacklogViewState::restore_filters(&cfg.ui);
         let tasks_place = ui::places::tasks::state::TasksPlaceState::restore(&cfg.ui);
-        if backlog_view
-            .selected_repo
-            .as_ref()
-            .is_some_and(|selected| !repos.iter().any(|repo| repo.path == *selected))
-        {
-            backlog_view.selected_repo = None;
-        }
         let server_filters = cfg.ui.filters.get("ops");
         let show_only_managed = server_filters
             .and_then(|memory| memory.facets.get("attributed_only"))
