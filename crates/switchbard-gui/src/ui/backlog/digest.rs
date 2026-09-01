@@ -163,6 +163,15 @@ fn render_goals_section(
         .filter(|(_, statuses)| !statuses.is_empty())
         .collect();
     if per_repo.is_empty() {
+        // No section shell — but creating the first goal needs a doorway.
+        if ui
+            .small_button("+ Goal for this week")
+            .on_hover_text("Define a weekly target (backlog/goals.yml)")
+            .clicked()
+        {
+            super::goal_create::open_new_goal(app, app.backlog_view.selected_repo.clone());
+        }
+        ui.add_space(10.0);
         return;
     }
 
@@ -173,6 +182,11 @@ fn render_goals_section(
             egui::RichText::new(format!("week of {week}  ·  day {days_elapsed} of 7"))
                 .color(theme::muted_text()),
         );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button("+ Goal").clicked() {
+                super::goal_create::open_new_goal(app, app.backlog_view.selected_repo.clone());
+            }
+        });
     });
     ui.separator();
     for (repo, statuses) in per_repo {

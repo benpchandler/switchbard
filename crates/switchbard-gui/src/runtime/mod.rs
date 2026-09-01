@@ -141,6 +141,8 @@ pub struct BoardMoveOutcome {
 #[derive(Debug, Clone)]
 pub struct BacklogViewState {
     pub selected_repo: Option<PathBuf>,
+    /// The "New Goal" modal's session-only draft (TASK-75).
+    pub new_goal: BacklogNewGoalState,
     /// Session-only draft values for the Digest goal cards' check-in field,
     /// keyed by (repo root, goal name). Seeded from the goal's current
     /// actual the first time a card renders.
@@ -237,6 +239,7 @@ impl Default for BacklogViewState {
     fn default() -> Self {
         Self {
             selected_repo: None,
+            new_goal: BacklogNewGoalState::default(),
             goal_checkin_drafts: HashMap::new(),
             selected_task: None,
             bulk_selected_tasks: BTreeSet::new(),
@@ -573,6 +576,34 @@ pub struct BacklogEditorState {
     /// it to the task's existing reference list and saves immediately —
     /// unlike the other editor fields, it isn't held for the batch Save.
     pub new_reference: String,
+}
+
+/// Draft state for the "New Goal" modal (TASK-75). Session-only, like the
+/// task composer's `BacklogNewTaskState`.
+#[derive(Debug, Clone)]
+pub struct BacklogNewGoalState {
+    pub open: bool,
+    pub target_repo: Option<PathBuf>,
+    pub name: String,
+    pub target: i64,
+    pub unit: String,
+    /// `false` = manual check-ins, `true` = counted from done-in-week tasks.
+    pub measure_tasks: bool,
+    pub scope: String,
+}
+
+impl Default for BacklogNewGoalState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            target_repo: None,
+            name: String::new(),
+            target: 1,
+            unit: String::new(),
+            measure_tasks: false,
+            scope: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

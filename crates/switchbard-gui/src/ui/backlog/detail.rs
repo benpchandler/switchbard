@@ -150,7 +150,7 @@ fn render_detail_header(ui: &mut egui::Ui, repo: &RepoRow, task: &BacklogTask, e
 
 /// Sorted union of every project name any snapshot repo references (task
 /// membership) or defines (def files) — the assign dropdown's option list.
-fn known_project_names(snap: &Snapshot) -> Vec<String> {
+pub(super) fn known_project_names(snap: &Snapshot) -> Vec<String> {
     let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for repo in &snap.repos {
         for task in &repo.repo.tasks {
