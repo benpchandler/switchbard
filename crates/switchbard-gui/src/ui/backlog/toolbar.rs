@@ -68,7 +68,20 @@ pub(crate) fn render_summary(
     let warning_count: usize = scoped.iter().map(|row| row.repo.warnings.len()).sum();
     let ordering_warning = app.ordering_snapshot().warning;
 
-    ui.horizontal(|ui| {
+    // Below ~640px (mock §7d's narrow-width stress state, matching
+    // `render_project_toolbar`'s own `compact` threshold) the heading/count
+    // text and the right-aligned action buttons no longer both fit on one
+    // line. A plain `ui.horizontal` doesn't reflow when that happens — its
+    // left-to-right cursor and a nested `right_to_left` layout each lay out
+    // against the row's *original* full width independently, so instead of
+    // wrapping they paint on top of each other (2026-09 parity audit
+    // screenshot: "Completed: 0/6 showing" bleeding into "Clean Up Old
+    // Tasks"). Stacking the info line and the action row separately below
+    // the threshold gives each its own full-width budget instead of sharing
+    // one that neither actually reflows within.
+    let compact = ui.available_width() < 640.0;
+
+    let render_info = |ui: &mut egui::Ui| {
         ui.label(egui::RichText::new(heading).heading().strong());
         ui.separator();
         // One count, and when a filter is narrowing the view it explains the
@@ -100,40 +113,65 @@ pub(crate) fn render_summary(
             ui.separator();
             status_pill(ui, StatusKind::Warn, "ordering.yml", Some(warning.as_str()));
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .button("Refresh Backlog")
-                .on_hover_text("Reload Backlog tasks from tracked worktrees")
-                .clicked()
-            {
-                app.backlog_kick.notify();
-                app.backlog_status.set("refreshing Backlog repos");
-            }
-            if ui
-                .button("+ Task")
-                .on_hover_text("Create a task in a Backlog repo")
-                .clicked()
-            {
-                let target = app
-                    .backlog_view
-                    .selected_repo
-                    .clone()
-                    .or_else(|| snap.repos.first().map(|row| row.key.clone()));
-                create::open_new_task(app, target, None);
-            }
+    };
 
-            // While a bulk run is live the bar takes the buttons' place
-            // rather than sitting beside them: both actions mutate the same
-            // task set through the same one-CLI-call-per-task loop, so
-            // offering to start a second one mid-run is offering a race.
-            if let Some(progress) = app.bulk_progress.snapshot() {
-                render_bulk_progress(ui, &progress);
-            } else {
-                render_cleanup_button(app, ui, snap, pending);
-                render_bulk_clear_button(app, ui, snap, pending);
-            }
+    if compact {
+        ui.horizontal_wrapped(render_info);
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            render_toolbar_actions(app, ui, snap, pending);
         });
-    });
+    } else {
+        ui.horizontal(|ui| {
+            render_info(ui);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                render_toolbar_actions(app, ui, snap, pending);
+            });
+        });
+    }
+}
+
+/// "Refresh Backlog" / "+ Task" / the bulk-progress-or-cleanup-and-clear
+/// cluster — split out of `render_summary` so the compact (stacked) and
+/// wide (single-row, right-aligned) layouts above can both call the same
+/// button set instead of duplicating it.
+fn render_toolbar_actions(
+    app: &mut HiveApp,
+    ui: &mut egui::Ui,
+    snap: &Snapshot,
+    pending: &mut Pending,
+) {
+    if ui
+        .button("Refresh Backlog")
+        .on_hover_text("Reload Backlog tasks from tracked worktrees")
+        .clicked()
+    {
+        app.backlog_kick.notify();
+        app.backlog_status.set("refreshing Backlog repos");
+    }
+    if ui
+        .button("+ Task")
+        .on_hover_text("Create a task in a Backlog repo")
+        .clicked()
+    {
+        let target = app
+            .backlog_view
+            .selected_repo
+            .clone()
+            .or_else(|| snap.repos.first().map(|row| row.key.clone()));
+        create::open_new_task(app, target, None);
+    }
+
+    // While a bulk run is live the bar takes the buttons' place rather than
+    // sitting beside them: both actions mutate the same task set through
+    // the same one-CLI-call-per-task loop, so offering to start a second
+    // one mid-run is offering a race.
+    if let Some(progress) = app.bulk_progress.snapshot() {
+        render_bulk_progress(ui, &progress);
+    } else {
+        render_cleanup_button(app, ui, snap, pending);
+        render_bulk_clear_button(app, ui, snap, pending);
+    }
 }
 
 /// "Clean Up Old Tasks" (QA parity matrix LOW gap): complete every Done,

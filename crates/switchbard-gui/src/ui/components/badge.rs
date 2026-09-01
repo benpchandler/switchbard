@@ -8,9 +8,9 @@ use eframe::egui;
 
 use crate::ui::theme;
 
-/// "—" — the value is known to be absent or in-sync. Always subdued.
+/// "-" — the value is known to be absent or in-sync. Always subdued.
 pub fn weak_dash(ui: &mut egui::Ui) {
-    ui.label(egui::RichText::new("—").color(theme::weak_text()));
+    ui.label(egui::RichText::new("-").color(theme::weak_text()));
 }
 
 /// "…" — the value is being computed / probe in flight. Always subdued.

@@ -78,11 +78,16 @@ pub(super) fn render_summary(ui: &mut egui::Ui, group: &Group<'_>, row_height: f
                     } else {
                         group.done as f32 / group.total as f32
                     };
-                    ui.add(
-                        egui::ProgressBar::new(fraction)
-                            .desired_width(120.0)
-                            .desired_height(6.0),
-                    );
+                    // Mock §3's real progress meter, not a dot — colored by
+                    // the attached goal's pace when one counts this group
+                    // (the same color its pace pill paints below), or the
+                    // neutral accent when no goal is attached at all.
+                    let meter_color = group
+                        .goal
+                        .as_ref()
+                        .map(|goal| goal_pace_label(goal.pace).0.color())
+                        .unwrap_or_else(theme::sky);
+                    theme::painted_meter(ui, fraction, meter_color, egui::vec2(120.0, 6.0));
                     if let Some(goal) = &group.goal {
                         let (kind, label) = goal_pace_label(goal.pace);
                         status_pill(

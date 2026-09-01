@@ -34,9 +34,12 @@
 use super::{format, scoped_repos, Pending, RepoRow, Snapshot};
 use crate::app::HiveApp;
 use crate::runtime::BacklogLens;
+use crate::ui::components::StatusKind;
 use crate::ui::theme;
 use eframe::egui;
-use switchbard_core::{is_newly_unblocked, triage_entry_from_task, BacklogTask, TriageDue};
+use switchbard_core::{
+    is_newly_unblocked, triage_entry_from_task, BacklogTask, GoalMeasure, TriageDue,
+};
 
 /// Cap per section — a digest is a glance, not another full list.
 const SECTION_LIMIT: usize = 6;
@@ -88,23 +91,23 @@ pub(crate) fn render_goal_cards_for_digest_place(app: &mut HiveApp, ui: &mut egu
             scoped.iter().map(|repo| repo.key.clone()).collect();
         render_zero_goal_state(app, ui, &week, &scoped_roots);
     } else {
-        // One per line, not a side-by-side row: `render_goal_card`'s frame
-        // pins its favorite star flush right via an inner
-        // `Layout::right_to_left`, which claims the rest of its *row's*
-        // width to do it — exactly what every other caller
-        // (`render_goals_section`, stacking vertically) already relies on.
-        // Wrapping cards into a `horizontal_wrapped` row fights that same
-        // width claim and left a second card invisible, overlapping the
-        // first, in TASK-99's own screenshot QA pass. The mock's
-        // side-by-side `goalrow` is a visual choice this shared component
-        // was never built for; reusing it as-is (this task's mandate) means
-        // reusing its real width contract too.
-        for (repo, statuses) in &per_repo {
-            for status in statuses {
-                render_goal_card(app, ui, repo, status, &mut pending);
-                ui.add_space(4.0);
-            }
-        }
+        // TASK-76 parity pass: mock §1's `goalrow` is a 3-across grid of
+        // compact, read-only glance tiles — a different shape from
+        // `render_goal_card`'s full-width, inline-editable row (still used
+        // verbatim by the Goals **place** index and the old Backlog Digest
+        // **lens**, `render_goals_section`, neither of which this task
+        // touches). An earlier attempt at the side-by-side layout reused
+        // that row's frame directly inside a `horizontal_wrapped` and left a
+        // second card invisibly overlapping the first, because that frame's
+        // favorite-star `Layout::right_to_left` claims the rest of its
+        // *row's* width to place itself — see the retired comment this
+        // replaces. `render_compact_goal_grid` below owns an explicit width
+        // per card instead of sharing one.
+        let cards: Vec<(&RepoRow, &switchbard_core::GoalStatus)> = per_repo
+            .iter()
+            .flat_map(|(repo, statuses)| statuses.iter().map(move |status| (*repo, status)))
+            .collect();
+        render_compact_goal_grid(ui, &cards);
     }
 
     let ctx = &ui.ctx().clone();
@@ -370,16 +373,118 @@ fn render_goals_section(
     ui.add_space(14.0);
 }
 
-fn goal_pace_pill(ui: &mut egui::Ui, pace: switchbard_core::GoalPace) {
-    use crate::ui::components::StatusKind;
+/// The one place a `GoalPace` becomes a chip kind + label — shared by
+/// [`goal_pace_pill`] (the full-width row's pill) and the compact grid card
+/// below, so the two can never disagree about what "behind" looks like.
+fn goal_pace_kind_label(pace: switchbard_core::GoalPace) -> (StatusKind, &'static str) {
     use switchbard_core::GoalPace;
-    let (kind, label) = match pace {
+    match pace {
         GoalPace::OnTrack => (StatusKind::Good, "on track"),
         GoalPace::Behind => (StatusKind::Warn, "behind"),
         GoalPace::Met => (StatusKind::Good, "met"),
         GoalPace::Missed => (StatusKind::Danger, "missed"),
-    };
+    }
+}
+
+fn goal_pace_pill(ui: &mut egui::Ui, pace: switchbard_core::GoalPace) {
+    let (kind, label) = goal_pace_kind_label(pace);
     crate::ui::components::status_pill(ui, kind, label, None);
+}
+
+/// Minimum width one compact card claims before the grid drops a column —
+/// mock §1's `goalrow` (`grid-template-columns:repeat(3,1fr)`) at the
+/// mock's own `.page{max-width:1180px}` reading width, scaled down: three
+/// cards need to stay legible (name + a big number + a chip pair) without
+/// wrapping their own content, which this floor protects.
+const COMPACT_CARD_MIN_WIDTH: f32 = 168.0;
+const COMPACT_CARD_GAP: f32 = 8.0;
+const COMPACT_CARD_MAX_COLUMNS: usize = 3;
+
+/// Mock §1's `goalrow`: up to [`COMPACT_CARD_MAX_COLUMNS`] cards per line,
+/// wrapping to further rows — collapsing toward a single column only when
+/// the pane is genuinely too narrow for two, per the mission brief ("stack
+/// only when the pane is genuinely narrow"). Every card gets an explicit
+/// `allocate_ui` width instead of sharing the row's width the way
+/// `render_goal_card`'s `horizontal_wrapped` attempt did (see this
+/// function's call site's doc for that bug) — the fix this task exists for.
+fn render_compact_goal_grid(ui: &mut egui::Ui, cards: &[(&RepoRow, &switchbard_core::GoalStatus)]) {
+    let available = ui.available_width();
+    let columns = (((available + COMPACT_CARD_GAP) / (COMPACT_CARD_MIN_WIDTH + COMPACT_CARD_GAP))
+        .floor() as usize)
+        .clamp(1, COMPACT_CARD_MAX_COLUMNS.min(cards.len().max(1)));
+    let card_width =
+        (available - COMPACT_CARD_GAP * (columns.saturating_sub(1)) as f32) / columns as f32;
+
+    for row in cards.chunks(columns) {
+        ui.horizontal(|ui| {
+            for (repo, status) in row {
+                ui.allocate_ui(egui::vec2(card_width, COMPACT_CARD_HEIGHT), |ui| {
+                    render_compact_goal_card(ui, repo, status, card_width);
+                });
+                ui.add_space(COMPACT_CARD_GAP);
+            }
+        });
+        ui.add_space(COMPACT_CARD_GAP);
+    }
+}
+
+const COMPACT_CARD_HEIGHT: f32 = 84.0;
+
+/// One mock §1 glance tile: name, the big `actual / target unit` number, a
+/// thin pace-colored meter, and the pace + kind chip pair — read-only. A
+/// check-in draft/button belongs on the Goals **place** index
+/// (`ui::places::goals`), the mock's own home for it, not here.
+fn render_compact_goal_card(
+    ui: &mut egui::Ui,
+    repo: &RepoRow,
+    status: &switchbard_core::GoalStatus,
+    width: f32,
+) {
+    let frame = egui::Frame::default()
+        .fill(theme::card_bg())
+        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(10, 8));
+    frame.show(ui, |ui| {
+        ui.set_width(width - 20.0);
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new(&status.name).strong());
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(status.actual.to_string())
+                        .size(18.0)
+                        .strong(),
+                );
+                ui.label(
+                    egui::RichText::new(format!("/ {} {}", status.target, status.unit))
+                        .small()
+                        .color(theme::muted_text()),
+                );
+            });
+            let (kind, _) = goal_pace_kind_label(status.pace);
+            theme::painted_meter(
+                ui,
+                status.progress_fraction(),
+                kind.color(),
+                egui::vec2(width - 20.0, 5.0),
+            );
+            ui.horizontal_wrapped(|ui| {
+                goal_pace_pill(ui, status.pace);
+                // Keyed on `measure`, not the presence of `scope`: an
+                // input-attached auto goal (`GoalInputs::projects`/`tasks`
+                // rather than the legacy `scope` field) has `measure ==
+                // Tasks` but `scope == None`, and still needs to read as
+                // automatic, not manual.
+                let kind_text = match (status.measure, &status.scope) {
+                    (GoalMeasure::Manual, _) => "manual check-ins".to_string(),
+                    (GoalMeasure::Tasks, Some(scope)) => format!("auto · counts {scope}"),
+                    (GoalMeasure::Tasks, None) => "auto · counts attached tasks".to_string(),
+                };
+                crate::ui::components::status_pill(ui, StatusKind::Neutral, kind_text, None);
+            });
+        });
+    });
+    let _ = repo;
 }
 
 fn render_goal_card(

@@ -143,17 +143,33 @@ fn find_note_token(notes: &str, prefix: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Compact pill for List rows / Board strips. `None` for `NotFlagged` — a
-/// row with nothing to say about dispatch shouldn't render an empty pill.
+/// Compact tinted chip for List rows / Board strips / Digest / Dispatches /
+/// Command — the mock's `.chip.amber`/`.chip.warn` dispatch pill
+/// (TASK-76 parity pass). `None` for `NotFlagged` — a row with nothing to
+/// say about dispatch shouldn't render an empty chip. Text stays the
+/// existing uppercase wording (`query_by_label("DISPATCHING")` etc. is load-
+/// bearing across several test suites) — only the paint routine changes,
+/// from a bare `ui.label` to `theme::painted_chip`'s tinted pill.
+///
+/// Queued/InFlight use [`theme::amber`], not [`theme::dispatch_accent`]:
+/// the mock's every literal "dispatching"/"queued" chip is `.chip.amber`
+/// (`--dispatch` is a same-valued but otherwise-unused token in the mock's
+/// own CSS, not a chip class) — `dispatch_accent` equals `sky` in the light
+/// palette, which read as a wrong blue chip here even though Digest's own
+/// in-flight row (plain `StatusKind::Warn`) already rendered amber
+/// correctly. `dispatch_accent` stays the right color for the sidebar/top-
+/// bar ambient lamp, which is a dot, not a chip. Failed uses
+/// [`theme::warn_orange`] to match the mock's `.chip.warn` "failed" chip —
+/// `danger` is a button-fill role with no chip class in the mock at all.
 pub(crate) fn render_dispatch_pill(ui: &mut egui::Ui, state: &DispatchState) {
     let (text, color) = match state {
         DispatchState::NotFlagged => return,
-        DispatchState::Queued => ("QUEUED", theme::dispatch_accent()),
-        DispatchState::InFlight => ("DISPATCHING", theme::dispatch_accent()),
+        DispatchState::Queued => ("QUEUED", theme::amber()),
+        DispatchState::InFlight => ("DISPATCHING", theme::amber()),
         DispatchState::Dispatched { .. } => ("DISPATCHED", theme::green()),
-        DispatchState::Failed { .. } => ("DISPATCH FAILED", theme::danger()),
+        DispatchState::Failed { .. } => ("DISPATCH FAILED", theme::warn_orange()),
     };
-    ui.label(egui::RichText::new(text).small().strong().color(color));
+    theme::painted_chip(ui, Some(theme::chip_tint(color)), color, text);
 }
 
 #[cfg(test)]

@@ -327,7 +327,7 @@ fn render_capped_chip_row<T>(
     overflow_detail: impl FnOnce(&[T]) -> String,
 ) {
     if items.is_empty() {
-        ui.label(egui::RichText::new("—").color(theme::weak_text()));
+        ui.label(egui::RichText::new("-").color(theme::weak_text()));
         return;
     }
     let visible_count = items.len().min(max_visible);
@@ -355,7 +355,7 @@ fn render_agent_cell(ui: &mut egui::Ui, snap: &Snapshot, wt_path: &Path) {
             );
         }
         None => {
-            ui.label(egui::RichText::new("—").color(theme::weak_text()));
+            ui.label(egui::RichText::new("-").color(theme::weak_text()));
         }
     }
 }
@@ -450,7 +450,7 @@ fn render_actions_cell(
         }
         if let Some(log_path) = running_log {
             if theme::painted_logs_button(ui, theme::weak_text())
-                .on_hover_text(format!("View logs — {}", log_path.display()))
+                .on_hover_text(format!("View logs - {}", log_path.display()))
                 .clicked()
             {
                 app.open_log_file(&log_path);
@@ -471,10 +471,10 @@ fn render_squatter_row(
         );
     });
     table_row.col(|ui| {
-        ui.label(egui::RichText::new("—").color(theme::weak_text()));
+        ui.label(egui::RichText::new("-").color(theme::weak_text()));
     });
     table_row.col(|ui| {
-        ui.label(egui::RichText::new("—").color(theme::weak_text()));
+        ui.label(egui::RichText::new("-").color(theme::weak_text()));
     });
     table_row.col(|ui| {
         ui.horizontal(|ui| {
@@ -488,7 +488,7 @@ fn render_squatter_row(
         });
     });
     table_row.col(|ui| {
-        ui.label(egui::RichText::new("—").color(theme::weak_text()));
+        ui.label(egui::RichText::new("-").color(theme::weak_text()));
     });
     table_row.col(|ui| {
         if theme::painted_kill_button(ui)

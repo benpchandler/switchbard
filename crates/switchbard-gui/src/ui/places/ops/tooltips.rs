@@ -72,7 +72,7 @@ pub fn drift_tooltip(
 /// the row looks like it is hiding something.
 pub fn trunk_tooltip(divergence: &TrunkDivergence, detail: Option<&TrunkDetail>) -> String {
     let mut s = format!(
-        "Measured against `{}` — the same comparison the removal checks use.\n{} unlanded, {} behind\n",
+        "Measured against `{}` - the same comparison the removal checks use.\n{} unlanded, {} behind\n",
         divergence.base, divergence.unlanded, divergence.behind
     );
     let Some(d) = detail else {
@@ -93,7 +93,7 @@ pub fn trunk_tooltip(divergence: &TrunkDivergence, detail: Option<&TrunkDetail>)
     }
     if d.already_upstream > 0 {
         s.push_str(&format!(
-            "\n{} further commit{} already upstream under a different SHA (rebase-merged) — not at risk.\n",
+            "\n{} further commit{} already upstream under a different SHA (rebase-merged) - not at risk.\n",
             d.already_upstream,
             if d.already_upstream == 1 { " is" } else { "s are" }
         ));
@@ -150,7 +150,7 @@ pub fn in_sync_tooltip(fetch_unix: Option<u64>) -> String {
     let mut s = String::from("in sync with upstream\n");
     s.push_str(&fetch_line(fetch_unix));
     s.push_str(
-        "\nNote: Switchbard doesn't run `git fetch` — this reflects your local view \
+        "\nNote: Switchbard doesn't run `git fetch` - this reflects your local view \
          of origin, not what's actually there right now.",
     );
     s
@@ -214,10 +214,10 @@ pub fn staleness_tooltip(staleness: Option<&WorktreeStaleness>) -> String {
         }
         Some(WorktreeStaleness::Merged { base, evidence }) => match evidence {
             LandedEvidence::Ancestry => format!(
-                "Fully merged into {base} — a candidate for the bulk-remove sweep once clean"
+                "Fully merged into {base} - a candidate for the bulk-remove sweep once clean"
             ),
             LandedEvidence::PatchEquivalent => format!(
-                "Already in {base} under different commits (rebase-merged) — a sweep \
+                "Already in {base} under different commits (rebase-merged) - a sweep \
                  candidate once clean, though the branch itself is kept, since \
                  `git branch -d` only looks at reachability"
             ),
@@ -227,7 +227,7 @@ pub fn staleness_tooltip(staleness: Option<&WorktreeStaleness>) -> String {
         // badge`'s original doc for why this fact gets one name, not two.
         Some(WorktreeStaleness::NoUpstream) => String::new(),
         Some(WorktreeStaleness::Live) => {
-            "Still ahead of/behind a configured upstream — probably active work".to_string()
+            "Still ahead of/behind a configured upstream - probably active work".to_string()
         }
     }
 }

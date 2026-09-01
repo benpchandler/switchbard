@@ -25,6 +25,18 @@ pub(crate) fn render(app: &mut HiveApp, ui: &mut egui::Ui, dispatch_summary: Dis
         .inner_margin(egui::Margin::symmetric(10, 7))
         .stroke(theme::surface_stroke());
     egui::Panel::top("top").frame(frame).show(ui, |ui| {
+        // TASK-76 parity pass: status info and action controls are two
+        // separate `horizontal_wrapped` rows, not one. A single wrapped row
+        // spanning "Switchbard" through the Browser combo box down to
+        // Settings let a widget deep in the sequence (the Browser
+        // `ComboBox`) get clipped at the panel's right edge instead of
+        // wrapping cleanly at ~600px — each widget's wrap decision depends
+        // on how much of the row's *original* width every earlier sibling
+        // already consumed, and a combo box's own popup-affecting layout
+        // doesn't always resolve that the same way a plain label does. Two
+        // shorter, purpose-scoped rows (status glyphs; then controls) each
+        // get a fresh wrap budget, so a narrow window drops to more, always
+        // fully visible, lines instead of clipping one widget.
         ui.horizontal_wrapped(|ui| {
             ui.label(egui::RichText::new("Switchbard").heading().strong());
             ui.separator();
@@ -44,7 +56,9 @@ pub(crate) fn render(app: &mut HiveApp, ui: &mut egui::Ui, dispatch_summary: Dis
             ui.label(format!("({attributed} attributed)"));
             render_retired_worktrees_nudge(app, ui);
             render_dispatch_chip(app, ui, dispatch_summary);
-            ui.separator();
+        });
+        ui.add_space(2.0);
+        ui.horizontal_wrapped(|ui| {
             render_actions(app, ui);
         });
         // IA V2 (TASK-96): the "view:" tab row is gone — the places sidebar

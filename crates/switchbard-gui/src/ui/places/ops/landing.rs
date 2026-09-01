@@ -101,7 +101,7 @@ pub(super) fn landing_chip(
         return Some(LandingChipView::Chip {
             text: "detached".to_string(),
             tone: LandingChipTone::Warn,
-            tooltip: "Unlanded commits on a detached HEAD — there is no branch to push or open \
+            tooltip: "Unlanded commits on a detached HEAD - there is no branch to push or open \
                       a pull request from, so this work cannot land by any push/PR path until \
                       it is given one."
                 .to_string(),
@@ -119,7 +119,7 @@ pub(super) fn landing_chip(
         LandingStage::Unpushed => Some(LandingChipView::Chip {
             text: "unpushed".to_string(),
             tone: LandingChipTone::Warn,
-            tooltip: "Committed locally, never pushed — nothing to review yet.".to_string(),
+            tooltip: "Committed locally, never pushed - nothing to review yet.".to_string(),
         }),
         LandingStage::PushedNoPr => Some(LandingChipView::Chip {
             text: "no PR".to_string(),
@@ -135,13 +135,13 @@ pub(super) fn landing_chip(
         LandingStage::Rejected { number, url } => Some(LandingChipView::Chip {
             text: format!("PR #{number} closed"),
             tone: LandingChipTone::Danger,
-            tooltip: format!("Closed without merging — reopening would undo that decision: {url}"),
+            tooltip: format!("Closed without merging - reopening would undo that decision: {url}"),
         }),
         LandingStage::MergedButUnlanded { number, url } => Some(LandingChipView::Chip {
             text: format!("PR #{number} merged"),
             tone: LandingChipTone::Good,
             tooltip: format!(
-                "Merged on GitHub — the unlanded count here is a known squash-merge false \
+                "Merged on GitHub - the unlanded count here is a known squash-merge false \
                  negative (patch-id based); this branch is actually done: {url}"
             ),
         }),
@@ -169,7 +169,7 @@ pub(super) fn render_landing_chip(ui: &mut egui::Ui, view: Option<LandingChipVie
         Some(LandingChipView::Pending) => {
             ui.label(egui::RichText::new("landing ...").color(theme::weak_text()))
                 .on_hover_text(
-                    "Push/PR state hasn't been checked yet — refreshed in the background, \
+                    "Push/PR state hasn't been checked yet - refreshed in the background, \
                      a bounded batch every few minutes (workers::spawn_landing)",
                 );
         }
@@ -224,7 +224,7 @@ mod tests {
             LandingChipView::Chip {
                 text: "detached".to_string(),
                 tone: LandingChipTone::Warn,
-                tooltip: "Unlanded commits on a detached HEAD — there is no branch to push or \
+                tooltip: "Unlanded commits on a detached HEAD - there is no branch to push or \
                           open a pull request from, so this work cannot land by any push/PR \
                           path until it is given one."
                     .to_string(),
@@ -286,7 +286,7 @@ mod tests {
             LandingChipView::Chip {
                 text: "unpushed".to_string(),
                 tone: LandingChipTone::Warn,
-                tooltip: "Committed locally, never pushed — nothing to review yet.".to_string(),
+                tooltip: "Committed locally, never pushed - nothing to review yet.".to_string(),
             }
         );
     }
