@@ -112,7 +112,8 @@ fn run_until_label(
     view: &mut egui_kittest::Harness<'_, switchbard_gui::app::HiveApp>,
     label: &str,
 ) {
-    for _ in 0..100 {
+    let deadline = Instant::now() + std::time::Duration::from_secs(30);
+    while Instant::now() < deadline {
         view.run();
         if view.query_by_label(label).is_some() {
             return;
@@ -367,6 +368,7 @@ fn mission_controls_cover_state_scale_layout_and_keyboard_matrix() {
     // IA V2: narrow width collapses the sidebar to the icon rail — the
     // place body's heading is the chrome that must survive here.
     assert!(view.query_by_label("Mission Command").is_some());
+    drop(view);
     let Some((state, model)) = live_model() else {
         return;
     };

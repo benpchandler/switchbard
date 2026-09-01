@@ -80,6 +80,8 @@ jobs:
           uv run --python "$XPLAN_SIDECAR_PYTHON" --locked --project "$XPLAN_SOURCE/sidecar" \
             python "$XPLAN_SOURCE/scripts/build_mission_sidecar.py" \
             --target host --output "$XPLAN_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/mission-sidecar-raw"
+          cp "$XPLAN_OUTPUT/$ARCHIVE_NAME" "$RUNNER_TEMP/mission-sidecar-raw/$ARCHIVE_NAME"
           scripts/acquire-xplan-mission-sidecar.sh \
             --pin xplan-sidecar-pin.json \
             --target-os "${{ matrix.target }}" \
@@ -89,6 +91,14 @@ jobs:
             --mode ci \
             --destination "$RUNNER_TEMP/mission-sidecar-artifact" \
             | tee "$RUNNER_TEMP/acquire-summary.json"
+
+      - name: Upload raw helper archive
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-raw
+          path: ${{ runner.temp }}/mission-sidecar-raw
+          if-no-files-found: error
 
       - name: Upload verified helper manifest tree
         uses: actions/upload-artifact@v4
