@@ -17,23 +17,25 @@
 //! `ui::sidebar` panel's `Config::ui.sidebar_collapsed`, which is a manual
 //! user toggle for a different panel entirely).
 //!
-//! ## Transition routing (TASK-96)
+//! ## Transition routing (TASK-96, updated TASK-99)
 //!
 //! This module owns *navigation state* only (`HiveApp::place`/`tasks_view`/
 //! `repo_scope`) — it never renders a place's body. `HiveApp::render_ui`
 //! reads `self.place`/`self.tasks_view` after this module runs and routes to
-//! the existing surface: `Place::Digest` to `ui::backlog::digest::
-//! render_digest_place` (the Digest lens's own content, not the whole
-//! Backlog view — Digest is its own place now, so it must not also carry the
-//! Tasks place's lens-tab chrome); `Place::Tasks` to the whole
-//! `ui::backlog::render` (`TasksView::All`, its internal lens tabs staying
-//! reachable exactly as before) or `ui::dispatch::render`
+//! the existing surface: `Place::Digest` to `ui::places::digest::render`
+//! (TASK-99's own place module — goal cards, in-flight work, the "needs a
+//! human" attention feed; superseded the interim `ui::backlog::digest::
+//! render_digest_place` this doc used to point at); `Place::Tasks` to the
+//! whole `ui::backlog::render` (`TasksView::All`, its internal lens tabs
+//! staying reachable exactly as before — including the Backlog tab's own
+//! `BacklogLens::Digest`, a different surface from the Digest *place* above,
+//! see `ui::backlog::digest`'s module doc) or `ui::dispatch::render`
 //! (`TasksView::Dispatches`); `Place::Command` to `ui::agents::render`;
 //! `Place::Goals` to `ui::backlog::digest::render_goals_place` (the Digest
 //! lens's "This week's goals" section alone — an explicit interim body per
 //! the decision record, not a real Goals index); `Place::Ops` to
 //! `ui::workspace::render`. Nothing here licenses deleting any of those
-//! surfaces or their internal lens code — five more fireteams build the real
+//! surfaces or their internal lens code — other fireteams build the real
 //! place bodies for Command/Goals-index/etc. on top of this shell.
 
 use crate::app::HiveApp;

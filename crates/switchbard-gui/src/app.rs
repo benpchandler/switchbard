@@ -30,8 +30,8 @@ use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
     dispatch_run_holds_worktree, migrate_filter_keys, ActiveRun, ActiveRunSummary,
     AgentContextViewState, AgentsSection, BacklogTaskKey, BacklogViewState, BoardMoveOutcome,
-    ConfirmBulkRemoveWorktrees, ConfirmRemoveWorktree, GoalsPlaceState, LandingEntry,
-    OrderingState, PickerState, Place, TasksView, WorktreeMeta, WorktreeSizeEntry,
+    ConfirmBulkRemoveWorktrees, ConfirmRemoveWorktree, DigestViewState, GoalsPlaceState,
+    LandingEntry, OrderingState, PickerState, Place, TasksView, WorktreeMeta, WorktreeSizeEntry,
 };
 use crate::sync::{Kick, Progress, Status};
 use crate::ui;
@@ -306,6 +306,10 @@ pub struct HiveApp {
     /// page, edit-target/attach-input drafts) — see `GoalsPlaceState`'s doc
     /// for why it isn't folded into `backlog_view`.
     pub goals_view: GoalsPlaceState,
+    /// TASK-99: the Digest place's own view-only state (port-kill confirm
+    /// arming). See `DigestViewState`'s own doc for why nothing else about
+    /// the attention feed lives here.
+    pub digest_view: DigestViewState,
     /// Shared render cache for the task detail pane's markdown description
     /// (task-15 AC #3). `egui_commonmark` recommends one long-lived cache
     /// rather than rebuilding it every frame.
@@ -493,6 +497,7 @@ impl HiveApp {
             agent_context_view,
             backlog_view,
             goals_view: GoalsPlaceState::default(),
+            digest_view: DigestViewState::default(),
             commonmark_cache: egui_commonmark::CommonMarkCache::default(),
             browser_choice,
             onboarding: Arc::new(Mutex::new(DiscoveryState::default())),
@@ -2461,11 +2466,12 @@ impl HiveApp {
         let central_start = Instant::now();
         // IA V2 (TASK-96) transition routing: places route to the EXISTING
         // surfaces (this slice replaces navigation, not the surfaces) — see
-        // `ui::nav`'s module doc for the full routing rationale, including
-        // why Digest/Goals get their own body functions in `ui::backlog::
-        // digest` rather than the whole `ui::backlog::render`.
+        // `ui::nav`'s module doc for the full routing rationale. Digest
+        // (TASK-99) and Goals (TASK-101) each have their own place module
+        // now (`ui::places::digest`/`ui::places::goals`); Command/Ops still
+        // route to their pre-IA-V2 surfaces until their own place lands.
         match self.place {
-            Place::Digest => ui::backlog::digest::render_digest_place(self, ui),
+            Place::Digest => ui::places::digest::render(self, ui),
             Place::Tasks => match self.tasks_view {
                 TasksView::All => ui::backlog::render(self, ui),
                 TasksView::Dispatches => ui::dispatch::render(self, ui),
