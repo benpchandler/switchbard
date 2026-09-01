@@ -57,8 +57,8 @@ pub use backlog::{
     STANDARD_STATUSES,
 };
 pub use backlog_relations::{
-    blocking_dependencies, blocks, children, dependency_statuses, is_blocked, is_newly_unblocked,
-    subtask_progress,
+    ancestor_depth, blocking_dependencies, blocks, children, dependency_statuses,
+    effective_project, is_blocked, is_newly_unblocked, subtask_progress,
 };
 pub use backlog_stats::{
     compute_burndown, compute_burndown_by_project, compute_cross_repo_stats, compute_goal_statuses,
