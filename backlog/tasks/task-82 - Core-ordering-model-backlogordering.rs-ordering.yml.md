@@ -1,10 +1,10 @@
 ---
 id: TASK-82
-title: 'Core ordering model: backlog/ordering.rs + ordering.yml'
+title: 'Core ranking model: backlog/ranking.rs + ranking.yml'
 status: Done
 assignee: []
 created_date: '2026-08-31 22:01'
-updated_date: '2026-08-31 23:48'
+updated_date: '2026-09-01 00:13'
 labels:
   - backlog
   - backend
