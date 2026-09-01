@@ -21,6 +21,7 @@
 
 mod goals_cmd;
 mod hierarchy_cmd;
+mod queue_cmd;
 mod rank_cmd;
 mod render;
 
@@ -69,7 +70,14 @@ const MAX_ROOT_WALK: usize = 64;
                   `list` and `project list` print the computed order: expedited first, then \
                   ranked, then everything else by status/priority/id.\n\n\
                   DISPATCH: flag a task for an autonomous run with \
-                  `switchbard-task edit <ID> --add-label dispatch`."
+                  `switchbard-task edit <ID> --add-label dispatch`.\n\n\
+                  QUEUE: the `queue` family is the orchestrator's protocol surface - \
+                  `queue list` (dispatch queue in stack-rank order), `queue send/withdraw <ID>`, \
+                  `queue claim <ID>` (acknowledge: dispatch -> dispatching, prints the prior \
+                  status - keep it for `release`), `queue release <ID> --outcome \
+                  dispatched|failed`, `queue prompt <ID>` (the exact headless-agent prompt). \
+                  Claim before work; releases walk the same label ladder the built-in \
+                  dispatch pipeline uses."
 )]
 struct Cli {
     /// Repo root to act on (default: nearest ancestor of the current
@@ -141,6 +149,9 @@ enum Command {
     Expedite { id: String },
     /// Remove a task from the expedite lane
     Unexpedite { id: String },
+    /// The dispatch queue protocol (list/send/withdraw/claim/release/prompt)
+    #[command(subcommand)]
+    Queue(queue_cmd::QueueCmd),
 }
 
 #[derive(Args)]
@@ -301,6 +312,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Unrank(cmd) => rank_cmd::run_unrank(&root, cmd),
         Command::Expedite { id } => rank_cmd::run_expedite(&root, id),
         Command::Unexpedite { id } => rank_cmd::run_unexpedite(&root, id),
+        Command::Queue(cmd) => queue_cmd::run_queue(&root, cmd),
     }
 }
 

@@ -327,6 +327,44 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
     cross-repo ordering overlay itself, drag-and-drop reorder (move
     up/down buttons are v1 unless the design-state pass says otherwise).
 
+- **Task Queue orchestration (owner-directed 2026-09-01; TASK-88..91).** The
+  owner's goal statement, verbatim intent: users send tasks to the queue,
+  an orchestration agent picks them up for dispatch **using LangGraph** and
+  monitors them to completion; tasks can be reordered; live progress is
+  visible. Decisions:
+  - *The queue is not a new store.* It remains the dispatch-labeled task
+    set, now ordered by the stack rank's computed flatten (which
+    `list_dispatch_queue` gets for free since ranking landed in
+    `load_backlog_repo`). Reordering the queue = re-ranking; that AC is
+    already true by construction and gets proven end-to-end in TASK-91.
+  - *The protocol surface is a `queue` verb family on `switchbard-task`*
+    (TASK-88), designed against `~/.claude/standards/agent-facing-design.md`:
+    claim is the acknowledgment (the existing `dispatch` -> `dispatching`
+    label swap, before any work), releases carry outcome + note through the
+    native write layer, and `queue prompt` exposes `build_dispatch_prompt`
+    so the orchestrator never re-derives the prompt. The orchestrator only
+    ever mutates tasks through this CLI - the one-writer invariant extends
+    to it.
+  - *The orchestrator is Python + LangGraph at `orchestrator/`* (TASK-89),
+    adopting the substrate the xplan `langgraph-mission-shadow` probe
+    validated (durable SQLite-checkpointed StateGraph, interrupt with the
+    exact remainder, restart-safe resume). Its per-task graph is
+    claim -> worktree -> agent run (headless `claude -p`, `acceptEdits`,
+    turn-bound, no wall-clock kill - the LED-580 lesson stands) ->
+    gate -> reconcile -> PR -> release. *Reconcile* carries the shadow's
+    completion-integrity model into production shape: every AC must map to
+    evidence; task-green without outcome-proof interrupts rather than
+    releasing a false `dispatched`. uv-managed, pinned deps; not in
+    `mise run ci` v1 (its own gate lands with the crate when it stabilizes).
+  - *Live progress* (TASK-90) is an append-only JSONL events sidecar next
+    to the run log (`<stem>.events.jsonl`) that `dispatch_inspect` folds
+    into `DispatchRun`; the Dispatches view renders current phase and
+    heartbeat age. Missing/malformed sidecar degrades to today's view.
+  - The existing Rust `switchbard-dispatch` drain stays as the fallback
+    path until the orchestrator has dogfood proof (TASK-91); GitHub
+    delivery-awareness (TASK-80.x) sequences after this, per the owner's
+    rank flip.
+
 - **Refine — AI-assisted grooming, upstream of dispatch (owner-approved 2026-08-19).**
   A "Refine" button in the task detail rail, next to Dispatch. It feeds the task's
   current title/description/criteria/plan to a headless `claude -p` run at the repo

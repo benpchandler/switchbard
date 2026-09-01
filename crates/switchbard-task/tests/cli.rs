@@ -746,3 +746,171 @@ fn rank_errors_name_the_next_step_and_placement_is_required() {
         String::from_utf8_lossy(&unknown_project.stderr)
     );
 }
+
+#[test]
+fn queue_family_walks_the_claim_ladder_in_rank_order() {
+    let dir = fixture_project();
+    let root = dir.path();
+    // `release --outcome dispatched` moves the task to In Review, which the
+    // write layer validates against config.yml - declare the standard set.
+    std::fs::write(
+        root.join("backlog/config.yml"),
+        "statuses: [\"Icebox\", \"To Do\", \"In Progress\", \"In Review\", \"Done\"]\n",
+    )
+    .expect("config");
+    assert_eq!(ok_stdout(root, &["create", "Low rank"]), "TASK-1\n");
+    assert_eq!(
+        ok_stdout(root, &["create", "Top rank", "--rank-top"]),
+        "TASK-2\n"
+    );
+
+    assert_eq!(ok_stdout(root, &["queue", "send", "1"]), "Edited TASK-1\n");
+    assert_eq!(
+        ok_stdout(root, &["queue", "send", "TASK-2"]),
+        "Edited TASK-2\n"
+    );
+    assert_eq!(ok_stdout(root, &["queue", "send", "2"]), "no changes\n");
+
+    let rows: Vec<String> = ok_stdout(root, &["queue", "list"])
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            "TASK-2\tqueued\tmedium\t\tTop rank",
+            "TASK-1\tqueued\tmedium\t\tLow rank",
+        ],
+        "the queue is the stack-rank computed order"
+    );
+
+    // Claim acknowledges: prints the prior status, moves to In Progress.
+    assert_eq!(ok_stdout(root, &["queue", "claim", "2"]), "To Do\n");
+    let rows = ok_stdout(root, &["queue", "list"]);
+    assert!(
+        rows.starts_with("TASK-2\tclaimed"),
+        "a claimed task stays visible in the live queue: {rows}"
+    );
+
+    // Double-claim refused; withdraw of an in-flight task refused.
+    let double = bin(root, &["queue", "claim", "2"]);
+    assert_eq!(double.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&double.stderr).contains("already claimed"),
+        "{}",
+        String::from_utf8_lossy(&double.stderr)
+    );
+    let withdraw = bin(root, &["queue", "withdraw", "2"]);
+    assert_eq!(withdraw.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&withdraw.stderr).contains("release it first"),
+        "{}",
+        String::from_utf8_lossy(&withdraw.stderr)
+    );
+
+    // Failed release restores the prior status and lands on dispatch-failed.
+    assert_eq!(
+        ok_stdout(
+            root,
+            &[
+                "queue",
+                "release",
+                "2",
+                "--outcome",
+                "failed",
+                "--note",
+                "agent exited 1",
+                "--prior-status",
+                "To Do",
+            ],
+        ),
+        "Edited TASK-2\n"
+    );
+    let view = ok_stdout(root, &["view", "2"]);
+    assert!(view.contains("Status: To Do"), "{view}");
+    assert!(view.contains("dispatch-failed"), "{view}");
+    assert!(view.contains("Dispatch failed: agent exited 1"), "{view}");
+
+    // Successful release: In Review + PR note, visible under list --all.
+    assert_eq!(ok_stdout(root, &["queue", "claim", "1"]), "To Do\n");
+    assert_eq!(
+        ok_stdout(
+            root,
+            &[
+                "queue",
+                "release",
+                "1",
+                "--outcome",
+                "dispatched",
+                "--pr",
+                "https://example.test/pr/7",
+            ],
+        ),
+        "Edited TASK-1\n"
+    );
+    let view = ok_stdout(root, &["view", "1"]);
+    assert!(view.contains("Status: In Review"), "{view}");
+    assert!(
+        view.contains("Dispatch PR: https://example.test/pr/7"),
+        "{view}"
+    );
+    assert_eq!(
+        ok_stdout(root, &["queue", "list"]),
+        "",
+        "released runs leave the live queue"
+    );
+    let all = ok_stdout(root, &["queue", "list", "--all"]);
+    assert!(all.contains("TASK-1\tdispatched"), "{all}");
+    assert!(all.contains("TASK-2\tfailed"), "{all}");
+}
+
+#[test]
+fn queue_errors_name_the_next_step_and_prompt_matches_the_pipeline() {
+    let dir = fixture_project();
+    let root = dir.path();
+    assert_eq!(
+        ok_stdout(root, &["create", "Prompted", "-d", "Why.", "--ac", "Proof"]),
+        "TASK-1\n"
+    );
+
+    let unqueued = bin(root, &["queue", "claim", "1"]);
+    assert_eq!(unqueued.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&unqueued.stderr).contains("queue send"),
+        "{}",
+        String::from_utf8_lossy(&unqueued.stderr)
+    );
+    let unclaimed = bin(
+        root,
+        &[
+            "queue",
+            "release",
+            "1",
+            "--outcome",
+            "failed",
+            "--note",
+            "x",
+        ],
+    );
+    assert_eq!(unclaimed.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&unclaimed.stderr).contains("nothing to release"),
+        "{}",
+        String::from_utf8_lossy(&unclaimed.stderr)
+    );
+    let no_pr = bin(root, &["queue", "send", "1"]);
+    assert!(no_pr.status.success());
+    assert_eq!(ok_stdout(root, &["queue", "claim", "1"]), "To Do\n");
+    let no_pr = bin(root, &["queue", "release", "1", "--outcome", "dispatched"]);
+    assert_eq!(no_pr.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&no_pr.stderr).contains("--pr"),
+        "{}",
+        String::from_utf8_lossy(&no_pr.stderr)
+    );
+
+    let prompt = ok_stdout(root, &["queue", "prompt", "1"]);
+    assert!(prompt.contains("Prompted"), "{prompt}");
+    assert!(prompt.contains("Proof"), "{prompt}");
+    assert!(prompt.contains("TASK-1"), "{prompt}");
+}

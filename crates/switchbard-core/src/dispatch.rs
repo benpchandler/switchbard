@@ -940,7 +940,12 @@ fn set_dispatch_status(repo_root: &Path, task_id: &str, status: &str) {
 /// back. Restoring rather than picking a fixed "failed" status keeps this a
 /// true inverse — a task that was in `Icebox` when someone flagged it returns
 /// to `Icebox`, not to whatever this module considers a sensible default.
-fn release_as_failed(repo_root: &Path, task_id: &str, reason: &str, prior_status: &str) {
+///
+/// Public since TASK-88: the `switchbard-task queue release` verb is the
+/// orchestrator's way to hand a claim back, and it must walk the exact same
+/// ladder this pipeline walks — two release implementations would be two
+/// claim vocabularies.
+pub fn release_as_failed(repo_root: &Path, task_id: &str, reason: &str, prior_status: &str) {
     // Best-effort: if the label swap itself fails there is nothing more we
     // can do here beyond leaving the task on `dispatching` for a human to
     // notice. Never panic a background worker over a bookkeeping write.
@@ -949,7 +954,8 @@ fn release_as_failed(repo_root: &Path, task_id: &str, reason: &str, prior_status
     let _ = append_backlog_notes(repo_root, task_id, &format!("Dispatch failed: {reason}"));
 }
 
-fn release_as_dispatched(repo_root: &Path, task_id: &str, pr_url: &str) -> Result<()> {
+/// Public since TASK-88 — see [`release_as_failed`]'s note.
+pub fn release_as_dispatched(repo_root: &Path, task_id: &str, pr_url: &str) -> Result<()> {
     swap_backlog_label(repo_root, task_id, DISPATCHING_LABEL, DISPATCHED_LABEL)?;
     set_dispatch_status(repo_root, task_id, DISPATCH_REVIEW_STATUS);
     append_backlog_notes(repo_root, task_id, &format!("Dispatch PR: {pr_url}"))?;
