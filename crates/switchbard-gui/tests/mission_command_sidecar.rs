@@ -391,6 +391,46 @@ fn mission_controls_cover_state_scale_layout_and_keyboard_matrix() {
 }
 
 #[test]
+fn mission_render_path_has_no_process_or_disk_io() {
+    let root = tempfile::tempdir().expect("render-only state root");
+    let helper = root.path().join("render-must-not-launch");
+    let launched = root.path().join("launched");
+    executable(
+        &helper,
+        &format!(
+            "#!/bin/sh\n/usr/bin/touch '{}'\nexit 91\n",
+            launched.display()
+        ),
+    );
+    let supervisor = MissionSupervisor::from_test_fixture(&helper, root.path())
+        .expect("render-only supervisor fixture");
+    let model = MissionControlModel::with_supervisor(supervisor, root.path().to_path_buf());
+    let mut before = fs::read_dir(root.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    before.sort();
+
+    let mut view = harness(app_with(model));
+    for _ in 0..4 {
+        view.run();
+    }
+
+    let mut after = fs::read_dir(root.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    after.sort();
+    assert_eq!(after, before, "rendering wrote mission state");
+    assert!(!launched.exists(), "rendering spawned the mission helper");
+    assert_eq!(
+        view.state().mission_control.lock().unwrap().refresh_count(),
+        0,
+        "rendering triggered a projection refresh"
+    );
+}
+
+#[test]
 fn mission_controls_50_row_p95_is_within_33ms() {
     let mut model = ready_model();
     model.populate_scale_fixture(50, MissionStatus::Running);

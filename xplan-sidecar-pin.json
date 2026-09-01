@@ -23,7 +23,7 @@
       "target_os": "linux",
       "arch": "x86_64",
       "archive_name": "xplan-mission-sidecar-0.14.3-8d1a7b4918677a6a1341897533987d6354227454-linux-x86_64.tar.gz",
-      "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      "manifest_sha256": "eba8cd9d93d7ebd600d16993db19dd8c0c6425c917a326a8e311ac634483d860"
     }
   }
 }
