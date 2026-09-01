@@ -69,7 +69,20 @@ struct DigestRow<'a> {
 /// function already needed).
 pub(crate) fn render_goal_cards_for_digest_place(app: &mut HiveApp, ui: &mut egui::Ui) {
     let snap = Snapshot::collect(app);
-    let scoped = scoped_repos(app, &snap);
+    // Sidebar scope ONLY — deliberately not `scoped_repos`, which also
+    // applies `backlog_view.selected_repo`, the Tasks place's own single-repo
+    // picker. That picker is invisible on Digest, and a places surface
+    // aggregates over the sidebar's multi-select scope by IA ruling
+    // (TASK-76 round 1); the place's other sections (`ui::places::digest::
+    // collect_task_rows`) already filter by exactly this rule. Owner-reported
+    // bug: with the Tasks picker parked on a repo with no goals, Digest
+    // rendered the zero-goal state while another scoped repo had three
+    // current-week goals.
+    let scoped: Vec<&RepoRow> = snap
+        .repos
+        .iter()
+        .filter(|row| crate::runtime::path_in_scope(&row.key, &app.repo_scope))
+        .collect();
     let mut pending = Pending::default();
     let today = chrono::Local::now().date_naive();
     let week = switchbard_core::week_monday_of(today)
@@ -137,9 +150,12 @@ fn render_goal_modal_for_digest_place(
             project_names: row.repo.project_names(),
         })
         .collect();
-    let fixed_target = app.backlog_view.selected_repo.is_some();
+    // Never a fixed target here: `selected_repo` is the Tasks place's own
+    // picker, invisible from Digest — locking the modal's repo dropdown to
+    // it would pin a choice the user cannot see (same family as the
+    // goal-card scoping fix above).
     if let Some((project_root, goal)) =
-        super::goal_create::render_goal_modal(app, ctx, &repo_options, fixed_target)
+        super::goal_create::render_goal_modal(app, ctx, &repo_options, false)
     {
         pending.goal_create = Some((project_root, goal));
     }
@@ -170,18 +186,28 @@ fn render_zero_goal_state(
             ui.label(egui::RichText::new("No goals this week").strong());
             // `week` itself stays the ISO `%Y-%m-%d` key `roll_goals`/
             // `spawn_goal_roll` need — only the label gets the friendlier
-            // "Aug 31" the page header (mock §1's chip) already uses.
+            // "Aug 31" the page header (mock §1's chip) already uses. The
+            // day count mirrors the header chip's own formula (`ui::places::
+            // digest::render_header`) rather than the mock's literal "ends
+            // today." copy, which was only true on the day the mock was
+            // drawn — owner-reported as wrong on a Tuesday.
             let friendly = chrono::NaiveDate::parse_from_str(week, "%Y-%m-%d")
                 .map(|d| d.format("%b %-d").to_string())
                 .unwrap_or_else(|_| week.to_string());
+            let today = chrono::Local::now().date_naive();
+            let days_elapsed =
+                ((today - switchbard_core::week_monday_of(today)).num_days() + 1).clamp(1, 7);
             ui.label(
-                egui::RichText::new(format!("Week of {friendly} ends today."))
+                egui::RichText::new(format!("Week of {friendly} · day {days_elapsed} of 7."))
                     .color(theme::muted_text()),
             );
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 if ui.button("+ New goal").clicked() {
-                    super::goal_create::open_new_goal(app, app.backlog_view.selected_repo.clone());
+                    // No preselected repo: `selected_repo` is the Tasks
+                    // place's invisible-from-here picker (see the scoping
+                    // note in `render_goal_cards_for_digest_place`).
+                    super::goal_create::open_new_goal(app, None);
                 }
                 if ui
                     .button("Roll last week")

@@ -1645,6 +1645,38 @@ impl HiveApp {
         });
     }
 
+    /// The Dispatches row's Dismiss action: clear a stuck run record's
+    /// `dispatching`/`dispatch-failed` labels through
+    /// `switchbard_core::dismiss_run` (the one write path for that decision —
+    /// see its doc for why only a human can make it). Same fire-and-forget
+    /// shape as [`Self::spawn_backlog_dispatch_toggle`]; kicks both workers so
+    /// the row disappears on the next dispatch refresh rather than the next
+    /// periodic tick.
+    pub fn spawn_dispatch_dismiss(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        ctx: &egui::Context,
+    ) {
+        let status = self.backlog_status.clone();
+        let repos = self.backlog_repos.clone();
+        let backlog_kick = self.backlog_kick.clone();
+        let dispatch_kick = self.dispatch_kick.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            match switchbard_core::dismiss_run(&project_root, &task_id) {
+                Ok(message) => {
+                    let reload = refresh_backlog_repo_cache(&repos, &project_root);
+                    status.set(with_stale_warning(reload, message));
+                    backlog_kick.notify();
+                    dispatch_kick.notify();
+                }
+                Err(e) => status.set(format!("dismiss for {task_id} failed: {e}")),
+            }
+            ctx.request_repaint();
+        });
+    }
+
     /// TASK-44 grooming pass: hand one task's current content to a headless,
     /// read-only `claude -p` run and apply what comes back additively
     /// (`switchbard_core::refine_task` owns the whole contract — prompt,

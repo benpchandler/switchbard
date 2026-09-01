@@ -193,6 +193,14 @@ pub fn set_backlog_label(
     Ok(outcome_message(task_id, outcome))
 }
 
+/// [`set_backlog_label`] with `enabled = false`, reporting whether the label
+/// was actually present — `dispatch::dismiss_run` branches on the fact (which
+/// run-state labels a task really carried), not on a display message.
+pub fn remove_backlog_label(project_root: &Path, task_id: &str, label: &str) -> Result<bool> {
+    let path = resolve_task_file(project_root, task_id)?;
+    Ok(set_task_label(&path, label, false)?.changed())
+}
+
 pub fn append_backlog_notes(project_root: &Path, task_id: &str, note: &str) -> Result<String> {
     let path = resolve_task_file(project_root, task_id)?;
     let outcome = append_task_notes(&path, note)?;

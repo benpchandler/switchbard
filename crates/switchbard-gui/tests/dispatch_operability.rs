@@ -321,6 +321,64 @@ fn dispatches_tab_badge_counts_runs_not_queue_depth() {
     assert!(chip.contains("needs attention"), "{chip:?}");
 }
 
+// ─── The Dismiss control ────────────────────────────────────────────────────
+
+/// Owner-reported (TASK-307): a task stranded on `dispatching` by a
+/// supervisor that died — log since cleaned out of $TMPDIR, no sidecar —
+/// renders "unsupervised - no record of a live process" under the Active
+/// facet forever, with no way to remove it. The row must offer Dismiss
+/// (`dispatch::dismiss_run`'s human verb), and must not offer Kill: there is
+/// no verified process to signal.
+#[test]
+fn a_stuck_run_with_no_live_process_offers_dismiss_not_kill() {
+    let mut app = app_with(
+        vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
+        vec![run("TASK-1", 300)],
+    );
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::Dispatches;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(harness.query_by_label("Dismiss").is_some());
+    assert!(harness.query_by_label("Kill").is_none());
+}
+
+/// The other half of the mutual exclusion: while a process group is
+/// verifiably alive, discarding the run record would strand a live agent's
+/// claim — the only honest offer is Kill.
+#[test]
+fn a_verifiably_live_run_offers_kill_and_never_dismiss() {
+    let mut app = app_with(
+        vec![task("TASK-1", &[DISPATCHING_LABEL], "")],
+        vec![live_run("TASK-1", 300, 4242)],
+    );
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::Dispatches;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(harness.query_by_label("Kill").is_some());
+    assert!(harness.query_by_label("Dismiss").is_none());
+}
+
+/// A failed run keeps Retry as its lead action but gains Dismiss — not every
+/// failed dispatch is worth re-running, and before this the only way to
+/// clear one was to retry it or hand-edit labels (which the format fork
+/// forbids).
+#[test]
+fn a_failed_run_offers_dismiss_alongside_retry() {
+    let mut app = app_with(vec![task("TASK-1", &[DISPATCH_FAILED_LABEL], "")], vec![]);
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::Dispatches;
+    app.dispatches_view.facet = DispatchesFacet::Failed;
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(harness.query_by_label("Retry").is_some());
+    assert!(harness.query_by_label("Dismiss").is_some());
+}
+
 // ─── The Kill control ───────────────────────────────────────────────────────
 
 /// TASK-46: no code path promises a hard-kill deadline any more — an
