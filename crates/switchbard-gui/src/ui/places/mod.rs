@@ -20,11 +20,14 @@
 //!   console: dispatch runs + interactive sessions, plus the pre-existing
 //!   Context/Hooks sections it inherited from the old top-level Agents
 //!   view).
+//! - [`ops`] — TASK-100, landed: the Ops place (merged Servers/Workspace,
+//!   one row per worktree).
 //!
-//! Ops/Tasks place bodies are other fireteams' slices; nothing here
-//! licenses adding modules for them ahead of that work.
+//! Tasks place body is another fireteam's slice; nothing here licenses
+//! adding modules for it ahead of that work.
 
 pub mod command;
 pub mod digest;
 pub mod dispatches;
 pub(crate) mod goals;
+pub mod ops;

@@ -250,8 +250,9 @@ fn each_place_routes_to_its_own_body() {
     harness.state_mut().place = Place::Ops;
     harness.run();
     assert!(
-        harness.query_by_label("Tracked repos").is_some(),
-        "Ops should render the existing Servers/Workspace view (with its repo panel)"
+        harness.query_by_label(REPO_NAME).is_some(),
+        "Ops should render the merged Servers/Workspace table (TASK-100), \
+         one row per worktree — the primary row's repo name is the anchor"
     );
 }
 

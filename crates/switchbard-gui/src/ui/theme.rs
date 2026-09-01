@@ -530,16 +530,16 @@ pub(crate) fn scale_alpha(c: Color32, factor: f32) -> Color32 {
 /// `🗑` or `✕` renders as a tofu square.
 ///
 /// Reads `resp.hovered()` before painting so the icon picks up `danger()`
-/// on hover and `weak_text()` at rest — enough visual signal that this is a
-/// destructive action without screaming for attention on every row.
-pub fn painted_trash_button(ui: &mut egui::Ui) -> egui::Response {
+/// on hover; at rest it takes `base` — `weak_text()` for the common case,
+/// `amber()` when the caller already knows removal is blocked (TASK-100's
+/// Ops table: the icon always renders for a non-primary worktree exactly as
+/// before, but now carries the `removal_safety` verdict's color at rest too,
+/// since the row no longer has a separate always-visible status pill to say
+/// it — the confirm dialog is still what enumerates *why*).
+pub fn painted_trash_button(ui: &mut egui::Ui, base: Color32) -> egui::Response {
     let (rect, resp) =
         ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
-    let color = if resp.hovered() {
-        danger()
-    } else {
-        weak_text()
-    };
+    let color = if resp.hovered() { danger() } else { base };
     let stroke = egui::Stroke::new(1.4, color);
     let painter = ui.painter();
     let c = rect.center();
@@ -684,6 +684,186 @@ pub fn painted_check_button(ui: &mut egui::Ui) -> egui::Response {
 pub fn icon_button_label(resp: egui::Response, label: &str) -> egui::Response {
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     resp.on_hover_text(label)
+}
+
+/// same font-coverage reason [`painted_trash_button`]'s doc gives (▶ ■ ↗ ≡
+/// from the frozen mock are unproven glyphs on the embedded Barlow/JetBrains
+/// fonts). Each follows the established shape: an `ICON_SIZE` hit target, a
+/// hover-reactive stroke/fill color the caller picks, and the verb's
+/// accessible name carried entirely by the caller's `.on_hover_text(...)` —
+/// this file paints pixels, not semantics.
+///
+/// Right-pointing filled triangle — Start a detected service.
+pub fn painted_play_button(ui: &mut egui::Ui, color: Color32) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
+    let c = rect.center();
+    let pts = [
+        egui::pos2(c.x - 3.0, c.y - 4.5),
+        egui::pos2(c.x - 3.0, c.y + 4.5),
+        egui::pos2(c.x + 4.0, c.y),
+    ];
+    ui.painter().add(egui::Shape::convex_polygon(
+        pts.to_vec(),
+        color,
+        egui::Stroke::NONE,
+    ));
+    resp
+}
+
+/// Filled square — Stop a running service.
+pub fn painted_stop_button(ui: &mut egui::Ui, color: Color32) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
+    let c = rect.center();
+    let r = egui::Rect::from_center_size(c, egui::vec2(7.0, 7.0));
+    ui.painter().rect_filled(r, 1.0, color);
+    resp
+}
+
+/// Diagonal arrow out of a box — Open a listening port in the browser.
+pub fn painted_open_button(ui: &mut egui::Ui, color: Color32) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
+    let c = rect.center();
+    let stroke = egui::Stroke::new(1.3, color);
+    let painter = ui.painter();
+    // Box (bottom-left square bracket shape).
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 4.5, c.y - 1.0),
+            egui::pos2(c.x - 4.5, c.y + 4.5),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 4.5, c.y + 4.5),
+            egui::pos2(c.x + 1.0, c.y + 4.5),
+        ],
+        stroke,
+    );
+    // Arrow shaft, up and to the right.
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 2.5, c.y + 1.5),
+            egui::pos2(c.x + 4.5, c.y - 5.5),
+        ],
+        stroke,
+    );
+    // Arrowhead.
+    painter.line_segment(
+        [
+            egui::pos2(c.x + 0.5, c.y - 5.5),
+            egui::pos2(c.x + 4.5, c.y - 5.5),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(c.x + 4.5, c.y - 5.5),
+            egui::pos2(c.x + 4.5, c.y - 1.5),
+        ],
+        stroke,
+    );
+    resp
+}
+
+/// Three horizontal lines — view a running service's log file.
+pub fn painted_logs_button(ui: &mut egui::Ui, color: Color32) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
+    let c = rect.center();
+    let stroke = egui::Stroke::new(1.3, color);
+    let painter = ui.painter();
+    for dy in [-3.5, 0.0, 3.5] {
+        painter.line_segment(
+            [
+                egui::pos2(c.x - 4.5, c.y + dy),
+                egui::pos2(c.x + 4.5, c.y + dy),
+            ],
+            stroke,
+        );
+    }
+    resp
+}
+
+/// An "×" — Kill an external process. Same hover-reacts-to-danger pattern as
+/// [`painted_trash_button`], kept as a distinct glyph (not reused for Remove)
+/// because the two verbs act on different objects — a process vs. a worktree
+/// — and the mock keeps them visually distinct (⌫ vs ✕).
+pub fn painted_kill_button(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::click());
+    let color = if resp.hovered() {
+        danger()
+    } else {
+        weak_text()
+    };
+    let stroke = egui::Stroke::new(1.4, color);
+    let c = rect.center();
+    let painter = ui.painter();
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 3.5, c.y - 3.5),
+            egui::pos2(c.x + 3.5, c.y + 3.5),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 3.5, c.y + 3.5),
+            egui::pos2(c.x + 3.5, c.y - 3.5),
+        ],
+        stroke,
+    );
+    resp
+}
+
+/// Non-interactive "↳" — a linked worktree's row in the Ops table indenting
+/// beneath its repo's primary row (TASK-100, mock §6's "hook-arrow branch"
+/// style). Painted for the same font-coverage reason as every other glyph in
+/// this file: a literal U+21B3 rendered as an empty tofu square in the
+/// 2026-09-01 screenshot review that caught it — this repo's embedded
+/// Barlow/JetBrains fonts cover it no better than the `●▸▾↑↓✕•○` set this
+/// module's header doc already names. An L-shaped stroke (down, then right)
+/// reads unambiguously as "nested under the row above" without needing the
+/// real glyph's curve.
+pub fn painted_hook_arrow(ui: &mut egui::Ui, color: Color32) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::hover());
+    let stroke = egui::Stroke::new(1.3, color);
+    let c = rect.center();
+    let painter = ui.painter();
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 2.0, c.y - 5.0),
+            egui::pos2(c.x - 2.0, c.y + 2.0),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(c.x - 2.0, c.y + 2.0),
+            egui::pos2(c.x + 3.5, c.y + 2.0),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(c.x + 1.0, c.y - 0.5),
+            egui::pos2(c.x + 3.5, c.y + 2.0),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(c.x + 1.0, c.y + 4.5),
+            egui::pos2(c.x + 3.5, c.y + 2.0),
+        ],
+        stroke,
+    );
+    resp
 }
 
 /// The star affordance for favoriting an object (TASK-96) — a task, goal,

@@ -899,7 +899,7 @@ fn render_project_input_row(
         ))
         .color(theme::weak_text()),
     );
-    if theme::icon_button_label(theme::painted_trash_button(ui), "Detach input").clicked() {
+    if theme::icon_button_label(theme::painted_trash_button(ui, theme::weak_text()), "Detach input").clicked() {
         app.spawn_goal_detach_input(
             row.key.clone(),
             goal_def.name.clone(),
@@ -938,7 +938,7 @@ fn render_task_input_row(
             ui.label("");
         }
     }
-    if theme::icon_button_label(theme::painted_trash_button(ui), "Detach input").clicked() {
+    if theme::icon_button_label(theme::painted_trash_button(ui, theme::weak_text()), "Detach input").clicked() {
         app.spawn_goal_detach_input(
             row.key.clone(),
             goal_def.name.clone(),

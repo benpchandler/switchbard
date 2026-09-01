@@ -731,6 +731,262 @@ fn shots_for_theme(theme: ThemeChoice) {
         h.run();
         snapshot(&mut h, &format!("nav_rail_narrow{suffix}"));
     }
+
+    // TASK-100: the merged Ops table — two repos (one primary + one linked
+    // worktree each), a detected-but-idle service, a switchbard-started
+    // running service, a dispatch run's Agent-cell attribution, and an
+    // external squatter listener row at the bottom, matching mock §6.
+    {
+        let app = ops_screenshot_app(theme);
+        let mut h = harness(app);
+        h.run();
+        snapshot(&mut h, &format!("ops_table_populated{suffix}"));
+    }
+
+    // TASK-100: the bulk-select stroke-ring convention, on the same
+    // populated fixture — a dedicated shot because `paint_selection_ring`'s
+    // `debug_painter` overlay approach (see its doc in `ops::row`) is worth
+    // eyeballing for z-order glitches a unit test can't catch.
+    {
+        let mut app = ops_screenshot_app(theme);
+        app.bulk_selected_worktrees
+            .insert(PathBuf::from(format!("{REPO_PATH}/../switchbard-feature")));
+        let mut h = harness(app);
+        h.run();
+        snapshot(&mut h, &format!("ops_table_selected_row{suffix}"));
+    }
+
+    // TASK-100 design-state matrix: narrow width. The nav collapses to its
+    // icon rail below 720px (mock §7d, already covered by `nav_rail_narrow`
+    // above); this shot proves the Ops table itself stays usable alongside
+    // it rather than overflowing or clipping silently.
+    {
+        let app = ops_screenshot_app(theme);
+        let mut h = harness(app);
+        h.set_size(egui::vec2(600.0, 700.0));
+        h.run_steps(3);
+        snapshot(&mut h, &format!("ops_table_narrow{suffix}"));
+    }
+}
+
+/// Two repos, each with a primary + one linked worktree; the primary of the
+/// first repo has a detected (idle) service and a switchbard-started running
+/// one, the linked worktree of the first repo holds a live dispatch run
+/// (Agent cell attribution), and one listener is left unattributed (the
+/// bottom squatter row). Deliberately not `common::seeded_app()` — this
+/// needs two repos and richer per-worktree state than that fixture carries.
+fn ops_screenshot_app(theme: ThemeChoice) -> HiveApp {
+    use std::path::PathBuf;
+    use std::time::Instant;
+    use switchbard_core::config::Config;
+    use switchbard_core::dispatch_inspect::{DispatchRun, DispatchRunLiveness, RunProgress};
+    use switchbard_core::types::LocalListener;
+    use switchbard_core::{
+        AttributedListener, DetectedService, Repo, ServerLikelihood, ServiceSource, WorktreeRef,
+    };
+    use switchbard_gui::runtime::{ActiveRun, Place, WorktreeMeta};
+
+    const REPO_B_NAME: &str = "lucella";
+    const REPO_B_PATH: &str = "/tmp/switchbard-ui-test/lucella";
+    let linked_path = PathBuf::from(format!("{REPO_PATH}/../switchbard-feature"));
+
+    let repos = vec![
+        Repo {
+            name: REPO_NAME.to_string(),
+            path: PathBuf::from(REPO_PATH),
+        },
+        Repo {
+            name: REPO_B_NAME.to_string(),
+            path: PathBuf::from(REPO_B_PATH),
+        },
+    ];
+    let worktrees = vec![
+        WorktreeRef {
+            repo_name: REPO_NAME.to_string(),
+            path: PathBuf::from(REPO_PATH),
+            branch: Some("main".to_string()),
+            head: "abc1234".to_string(),
+        },
+        WorktreeRef {
+            repo_name: REPO_NAME.to_string(),
+            path: linked_path.clone(),
+            branch: Some("feature/stack-ranking-core".to_string()),
+            head: "def5678".to_string(),
+        },
+        WorktreeRef {
+            repo_name: REPO_B_NAME.to_string(),
+            path: PathBuf::from(REPO_B_PATH),
+            branch: Some("main".to_string()),
+            head: "aaaa9999".to_string(),
+        },
+    ];
+
+    let mut cfg = Config::default();
+    cfg.ui.onboarding_dismissed = true;
+    cfg.repos = repos.clone();
+    let mut app = HiveApp::new_headless(cfg, repos, worktrees);
+    app.config_save_path = Some(common::isolated_config_save_path());
+    app.config.ui.theme = theme;
+    app.place = Place::Ops;
+
+    app.meta.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        WorktreeMeta {
+            dirty_files: Some(vec![" M src/lib.rs".to_string()]),
+            trunk: Some(switchbard_core::TrunkDivergence {
+                base: "origin/main".to_string(),
+                unlanded: 1,
+                ancestry_ahead: 1,
+                behind: 0,
+            }),
+            ..Default::default()
+        },
+    );
+
+    app.services.lock().unwrap().insert(
+        PathBuf::from(REPO_PATH),
+        vec![
+            DetectedService {
+                name: "gui".to_string(),
+                command: "cargo run -p switchbard-gui".to_string(),
+                cwd_rel: PathBuf::from("."),
+                source: ServiceSource::Makefile,
+                source_file: PathBuf::from("Makefile"),
+                likelihood: ServerLikelihood::Server,
+                expected_port: None,
+            },
+            DetectedService {
+                name: "task-cli".to_string(),
+                command: "cargo run -p switchbard-task".to_string(),
+                cwd_rel: PathBuf::from("."),
+                source: ServiceSource::Makefile,
+                source_file: PathBuf::from("Makefile"),
+                likelihood: ServerLikelihood::Server,
+                expected_port: None,
+            },
+        ],
+    );
+
+    app.services.lock().unwrap().insert(
+        PathBuf::from(REPO_B_PATH),
+        vec![
+            DetectedService {
+                name: "vite".to_string(),
+                command: "npm run dev".to_string(),
+                cwd_rel: PathBuf::from("."),
+                source: ServiceSource::NodeScript,
+                source_file: PathBuf::from("package.json"),
+                likelihood: ServerLikelihood::Server,
+                expected_port: Some(5173),
+            },
+            DetectedService {
+                name: "api".to_string(),
+                command: "npm run api".to_string(),
+                cwd_rel: PathBuf::from("."),
+                source: ServiceSource::NodeScript,
+                source_file: PathBuf::from("package.json"),
+                likelihood: ServerLikelihood::Server,
+                expected_port: Some(8787),
+            },
+        ],
+    );
+
+    app.active_runs.lock().unwrap().insert(
+        5173,
+        ActiveRun {
+            worktree_path: PathBuf::from(REPO_B_PATH),
+            service_name: "vite".to_string(),
+            command: "npm run dev".to_string(),
+            pid: 5173,
+            pgid: 5173,
+            started_at: Instant::now(),
+            log_path: PathBuf::from("/tmp/switchbard-logs/lucella-vite.log"),
+        },
+    );
+    app.state
+        .lock()
+        .unwrap()
+        .listeners
+        .push(AttributedListener {
+            listener: LocalListener {
+                pid: 5173,
+                pgid: 5173,
+                port: 5173,
+                command_name: "vite".to_string(),
+                cwd: Some(PathBuf::from(REPO_B_PATH)),
+            },
+            repo_name: Some(REPO_B_NAME.to_string()),
+            worktree_path: Some(PathBuf::from(REPO_B_PATH)),
+            worktree_branch: Some("main".to_string()),
+        });
+    app.state
+        .lock()
+        .unwrap()
+        .listeners
+        .push(AttributedListener {
+            listener: LocalListener {
+                pid: 8787,
+                pgid: 8787,
+                port: 8787,
+                command_name: "api".to_string(),
+                cwd: Some(PathBuf::from(REPO_B_PATH)),
+            },
+            repo_name: Some(REPO_B_NAME.to_string()),
+            worktree_path: Some(PathBuf::from(REPO_B_PATH)),
+            worktree_branch: Some("main".to_string()),
+        });
+
+    // The linked worktree's live dispatch run — the Agent cell's "claude ·
+    // active …" attribution (TASK-100; see `ui::places::ops::agent`).
+    app.dispatch_runs.lock().unwrap().insert(
+        (PathBuf::from(REPO_PATH), "TASK-1".to_string()),
+        DispatchRun {
+            task_id: "TASK-1".to_string(),
+            branch: "feature/stack-ranking-core".to_string(),
+            worktree_path: linked_path,
+            worktree_exists: true,
+            log_path: None,
+            prompt_path: None,
+            // An hour ago, not the Unix epoch — `humanize_age` renders this
+            // as "active 1h" (matching the mock's own example) rather than
+            // "56y ago", which is what a literal `Some(0)` produced here
+            // before the 2026-09-01 screenshot review caught it.
+            started_at_unix: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    .saturating_sub(3600),
+            ),
+            log_bytes: 0,
+            log_modified_unix: None,
+            liveness: DispatchRunLiveness::Alive {
+                pgid: 9001,
+                supervised: true,
+            },
+            progress: RunProgress::default(),
+        },
+    );
+
+    // External squatter — attributed to no worktree (mock §6's bottom row).
+    app.state
+        .lock()
+        .unwrap()
+        .listeners
+        .push(AttributedListener {
+            listener: LocalListener {
+                pid: 4821,
+                pgid: 4821,
+                port: 3000,
+                command_name: "node".to_string(),
+                cwd: None,
+            },
+            repo_name: None,
+            worktree_path: None,
+            worktree_branch: None,
+        });
+
+    app
 }
 
 #[test]

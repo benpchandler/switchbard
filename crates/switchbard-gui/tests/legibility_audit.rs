@@ -680,11 +680,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     seed_live_listener(&servers_app);
     let servers = harness(servers_app);
 
-    // TASK-27 (owner-requested UX): the collapsed sidebar rail's own text
-    // ("◀", the expand toggle) only ever paints in this state — every other
-    // harness here has the default expanded sidebar, which already covers
-    // the "▶" collapse toggle.
-    // The bulk-selection tint + outline paint only on a selected linked
+    // The bulk-selection stroke-ring paints only on a selected linked
     // worktree, so it gets its own harness rather than riding on one of the
     // others — see `seed_selected_linked_worktree`.
     let mut selected_app = seeded_app();
@@ -693,12 +689,9 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     seed_selected_linked_worktree(&mut selected_app);
     let selected_row = harness(selected_app);
 
-    let mut sidebar_collapsed_app = seeded_app();
-    sidebar_collapsed_app.config.ui.theme = theme;
-    sidebar_collapsed_app.place = Place::Ops;
-    sidebar_collapsed_app.config.ui.sidebar_collapsed = true;
-    let sidebar_collapsed = harness(sidebar_collapsed_app);
-
+    // TASK-100: the "Tracked repos" panel (and its TASK-27 collapse toggle)
+    // is retired — Ops is nav + the merged table only now, so there is no
+    // more collapsed-sidebar-rail state left to audit here.
     let mut agent_app = seeded_app();
     agent_app.config.ui.theme = theme;
     agent_app.place = Place::Command;
@@ -909,14 +902,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     let settings = harness(settings_app);
 
     vec![
-        (
-            format!("Servers view (top bar + sidebar + workspace){suffix}"),
-            servers,
-        ),
-        (
-            format!("Servers view (sidebar collapsed){suffix}"),
-            sidebar_collapsed,
-        ),
+        (format!("Ops view (top bar + nav + table){suffix}"), servers),
         (
             format!("Onboarding · no repos found{suffix}"),
             onboarding_empty,
@@ -926,7 +912,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
             onboarding_picker,
         ),
         (
-            format!("Workspace · bulk-selected worktree row{suffix}"),
+            format!("Ops · bulk-selected worktree row{suffix}"),
             selected_row,
         ),
         (format!("Agents · Context{suffix}"), agent),

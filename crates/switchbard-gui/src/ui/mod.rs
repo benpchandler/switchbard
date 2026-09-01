@@ -1,7 +1,7 @@
 //! Everything that talks to egui. `theme` is the single source for all
-//! semantic colors and glyph constants the views consume. `workspace` is
-//! the central panel — per-repo swimlane cards with smart progressive
-//! disclosure (worktree rows auto-expand when noteworthy).
+//! semantic colors and glyph constants the views consume. `places` holds
+//! each IA V2 place's own body module — `places::ops` (TASK-100) is the
+//! merged Servers/Workspace central panel, one row per worktree.
 
 pub mod agent_context;
 pub mod agent_hooks;
@@ -19,4 +19,3 @@ pub mod settings;
 pub mod sidebar;
 pub mod theme;
 pub mod top_bar;
-pub mod workspace;

@@ -660,7 +660,7 @@ fn render_worktree_row(app: &mut HiveApp, ui: &mut egui::Ui, row: &WorktreeFeedR
                 // worktree row action uses, not `danger_button` with a literal
                 // `⌫` (tofu on a stock font install) — one Remove treatment
                 // everywhere it appears.
-                if theme::icon_button_label(theme::painted_trash_button(ui), "Remove worktree")
+                if theme::icon_button_label(theme::painted_trash_button(ui, theme::weak_text()), "Remove worktree")
                     .clicked()
                 {
                     app.open_remove_worktree_confirm(

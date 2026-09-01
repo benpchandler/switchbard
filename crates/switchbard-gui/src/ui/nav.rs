@@ -34,10 +34,12 @@
 //! `Place::Goals` to `ui::places::goals::render_goals_place` (TASK-101's own
 //! Goals place — index with inline check-in, goal page with an Inputs card;
 //! superseded the interim `ui::backlog::digest::render_goals_place` this doc
-//! used to point at); `Place::Ops` to `ui::workspace::render`. Nothing here
-//! licenses deleting any of those
+//! used to point at); `Place::Ops` to `ui::places::ops::render` (TASK-100's
+//! own Ops place — merged Servers/Workspace, one row per worktree;
+//! superseded the interim `ui::workspace::render` this doc used to point
+//! at). Nothing here licenses deleting any of those
 //! surfaces or their internal lens code — other fireteams build the real
-//! place bodies for Command/Goals-index/etc. on top of this shell.
+//! place bodies for Tasks/etc. on top of this shell.
 
 use crate::app::HiveApp;
 use crate::runtime::{Place, TasksView};

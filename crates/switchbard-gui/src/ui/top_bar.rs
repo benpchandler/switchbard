@@ -1,15 +1,15 @@
 //! The two-row top panel: title + workspace-wide controls (Refresh, Kill-all,
 //! Browser picker) and a single filter input that drives the central
-//! `workspace` panel below.
+//! `ui::places::ops` panel below.
 
 use crate::app::{self, HiveApp};
 use crate::runtime::{Place, TasksView};
 use crate::ui::components::action_status_label;
 use crate::ui::dispatch::DispatchSummary;
 use crate::ui::filter_bar;
+use crate::ui::places::ops;
 use crate::ui::theme;
 use crate::ui::theme::ThemeChoice;
-use crate::ui::workspace;
 use eframe::egui;
 use switchbard_core::BROWSER_APP_NAMES;
 
@@ -86,12 +86,12 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
             let active = !app.filter().is_empty()
                 || app.show_only_managed
                 || app.show_non_servers
-                || app.staleness_filter != workspace::staleness::StalenessFilter::All;
+                || app.staleness_filter != ops::staleness::StalenessFilter::All;
             if filter_bar::clear(ui, active) {
                 app.filter_mut().clear();
                 app.show_only_managed = false;
                 app.show_non_servers = false;
-                app.staleness_filter = workspace::staleness::StalenessFilter::All;
+                app.staleness_filter = ops::staleness::StalenessFilter::All;
             }
         }
         Place::Tasks => {
@@ -110,7 +110,7 @@ fn render_filter_controls(app: &mut HiveApp, ui: &mut egui::Ui) {
 /// nothing to say" bias (see this module's header doc on the removed
 /// last-scan label).
 fn render_retired_worktrees_nudge(app: &HiveApp, ui: &mut egui::Ui) {
-    let n = workspace::staleness::retired_worktree_count(app);
+    let n = ops::staleness::retired_worktree_count(app);
     if n == 0 {
         return;
     }
@@ -202,7 +202,7 @@ fn render_actions(app: &mut HiveApp, ui: &mut egui::Ui) {
     }
 
     ui.separator();
-    let pgids = workspace::unique_pgids_in_filter(app);
+    let pgids = ops::unique_pgids_in_filter(app);
     let label = format!("Kill all in filter ({})", pgids.len());
     let enabled = !pgids.is_empty();
     if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {

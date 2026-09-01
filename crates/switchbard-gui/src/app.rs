@@ -38,7 +38,7 @@ use crate::sync::{Kick, Progress, Status};
 use crate::ui;
 use crate::ui::backlog::status_migration::StatusMigrationPrompt;
 use crate::ui::onboarding::DiscoveryState;
-use crate::ui::workspace::staleness::StalenessFilter;
+use crate::ui::places::ops::staleness::StalenessFilter;
 use crate::workers::{self, Channels};
 use crate::worktree_actions::RemovedWorktree;
 use eframe::egui;
@@ -1408,6 +1408,21 @@ impl HiveApp {
         }
     }
 
+    /// TASK-100: the Ops table's Actions-cell Logs icon — `ActiveRun::
+    /// log_path`'s doc comment named this "a forthcoming Open log action";
+    /// this is it. Reuses `open_url` (the exact primitive `open_in_browser`
+    /// above calls) against a file path instead of an HTTP URL — `open`/
+    /// `xdg-open` both hand a local path to its OS-registered default
+    /// handler exactly as they would a URL, and passing `None` for the
+    /// browser argument (never a forced browser app) is what keeps a log
+    /// file from being shoved into Safari.
+    pub fn open_log_file(&self, path: &std::path::Path) {
+        match open_url(&path.display().to_string(), None) {
+            Ok(()) => self.server_status.set(format!("opened {}", path.display())),
+            Err(e) => self.server_status.set(format!("open log failed: {e}")),
+        }
+    }
+
     /// Save one task's edit through the real `backlog` CLI, on a background
     /// thread. Shares `save_one_task` (edit → reload → stale-aware status)
     /// with `spawn_board_move_save`'s single-task save (N1/N2, post-review
@@ -2498,32 +2513,28 @@ impl HiveApp {
             perf.record_nav(nav_start.elapsed());
         }
 
-        // Owner UX pass (2026-08-05): "Tracked repos" is Ops-local (a
-        // left-side panel nested inside the Ops place's own body, not the
-        // global right-side one it used to be) — repo add/remove for every
-        // other place goes through the Settings window instead
-        // (`ui::settings`). Still rendered before the central panel for the
-        // same docking-order reason as `nav` above. The Backlog view's own
-        // detail rail (also a right-side panel) follows the identical
-        // ordering rule, inside `ui::backlog::render` itself (it needs the
-        // same `Snapshot`/`Pending` the lens content does).
-        let sidebar_start = Instant::now();
-        if self.place == Place::Ops {
-            ui::sidebar::render(self, ui);
-        }
-        if let Some(perf) = &mut self.perf {
-            perf.record_sidebar(sidebar_start.elapsed());
-        }
-
+        // TASK-100: the "Tracked repos" panel no longer renders as a
+        // separate panel inside Ops — the merged Ops table (`ui::places::
+        // ops`) is nav + central panel only, matching the frozen mock's §6
+        // layout. Repo add/remove is reachable from the Settings window only
+        // now (`ui::settings`), which already offered it (verified: the
+        // `settings_button_opens_a_window_with_the_repo_list` /
+        // `settings_remove_button_opens_the_shared_confirmation_modal`
+        // tests). `ui::sidebar::render` (the panel body) and the perf-timed
+        // `sidebar_start` slot it used to occupy are retired with it —
+        // `record_sidebar` still exists on `PerfSession` for the historical
+        // CSV column, just never called from here again.
         let central_start = Instant::now();
         // IA V2 (TASK-96) transition routing: places route to the EXISTING
         // surfaces (this slice replaces navigation, not the surfaces) — see
         // `ui::nav`'s module doc for the full routing rationale. Digest
-        // (TASK-99), Goals (TASK-101), and Command (TASK-98, including the
-        // Tasks place's Dispatches built-in view) each have their own place
-        // module now (`ui::places::digest`/`ui::places::goals`/
-        // `ui::places::command`/`ui::places::dispatches`); Ops still routes
-        // to its pre-IA-V2 surface until its own place lands.
+        // (TASK-99), Goals (TASK-101), Command (TASK-98, including the
+        // Tasks place's Dispatches built-in view), and Ops (TASK-100) each
+        // have their own place module now (`ui::places::digest`/
+        // `ui::places::goals`/`ui::places::command`/
+        // `ui::places::dispatches`/`ui::places::ops`); only the Tasks
+        // place's `TasksView::All` body still routes to its pre-IA-V2
+        // surface until its own place lands.
         match self.place {
             Place::Digest => ui::places::digest::render(self, ui),
             Place::Tasks => match self.tasks_view {
@@ -2532,7 +2543,7 @@ impl HiveApp {
             },
             Place::Command => ui::places::command::render(self, ui),
             Place::Goals => ui::places::goals::render_goals_place(self, ui),
-            Place::Ops => ui::workspace::render(self, ui),
+            Place::Ops => ui::places::ops::render(self, ui),
         }
         let central_elapsed = central_start.elapsed();
         if let Some(perf) = &mut self.perf {

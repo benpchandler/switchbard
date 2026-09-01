@@ -1355,7 +1355,7 @@ pub fn repo_in_scope(repo: &Repo, scope: &BTreeSet<PathBuf>) -> bool {
 ///
 /// Shared by the git-probe worker's retired-worktree-count cache
 /// (`workers::spawn_probe`) and the Workspace staleness view
-/// (`ui::workspace::staleness`) so "is this worktree primary" has exactly
+/// (`ui::places::ops::staleness`) so "is this worktree primary" has exactly
 /// one answer instead of two copies that could drift apart.
 pub fn worktree_is_primary(w: &WorktreeRef, repos: &[Repo]) -> bool {
     repos
@@ -1627,8 +1627,8 @@ pub struct ActiveRun {
     pub pid: u32,
     pub pgid: i32,
     pub started_at: Instant,
-    // Used by a forthcoming "Open log" action.
-    #[allow(dead_code)]
+    /// Opened by the Ops table's Actions-cell Logs icon (TASK-100,
+    /// `HiveApp::open_log_file`).
     pub log_path: PathBuf,
 }
 
