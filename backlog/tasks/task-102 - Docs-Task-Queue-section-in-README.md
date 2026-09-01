@@ -4,7 +4,7 @@ title: 'Docs: Task Queue section in README'
 status: To Do
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 02:25'
+updated_date: '2026-09-01 02:28'
 labels:
   - docs
   - dogfood
@@ -22,5 +22,5 @@ Add a '## Task Queue' section to README.md (after the existing feature overview)
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 README.md contains a Task Queue section covering queue verbs, rank-ordered pickup, the orchestrator, and live progress
+- [x] #1 README.md contains a Task Queue section covering queue verbs, rank-ordered pickup, the orchestrator, and live progress
 <!-- AC:END -->
