@@ -160,7 +160,11 @@ impl Column {
     pub const DEFAULT_SHOWN: [Column; 4] =
         [Column::Id, Column::Status, Column::Priority, Column::Title];
 
+    /// The `· hidden` tag picker lists add to a column that is not showing.
+    pub const HIDDEN_TAG: &str = " · hidden";
+
     pub fn parse(text: &str) -> Option<Column> {
+        let text = text.trim_end_matches(Column::HIDDEN_TAG);
         Some(match text {
             "id" => Column::Id,
             "status" => Column::Status,
