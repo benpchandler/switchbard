@@ -428,7 +428,15 @@ fn f_then_a_letter_explains_the_column_numbers() {
     h.press(KeyCode::Char('f'));
     let screen = h.press(KeyCode::Char('f'));
     assert!(
-        screen.contains("'f' is not a column; press 1-4"),
+        screen.contains(
+            "no column starts with 'f'; columns: id,status,priority,title,labels,project"
+        ),
+        "{screen}"
+    );
+    h.press(KeyCode::Char('f'));
+    let screen = h.press(KeyCode::Char('9'));
+    assert!(
+        screen.contains("'9' is not a shown column; 1-4 as numbered, or type a name"),
         "{screen}"
     );
 }
@@ -516,7 +524,9 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
     );
     let repo_file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
     assert!(
-        repo_file.contains("[1] = { filter = \"status:!done\", sort = \"priority:semantic\" }"),
+        repo_file.contains(
+            "[1] = { filter = \"status:!done\", sort = \"priority:semantic\", columns = \"id,status,priority,title\" }"
+        ),
         "{repo_file}"
     );
     assert!(
@@ -610,4 +620,114 @@ fn vs_with_the_next_free_slot_appends_without_asking_and_escape_abandons() {
         screen.contains("v2 · status:todo"),
         "slot 2 untouched: {screen}"
     );
+}
+
+fn header_line(screen: &str) -> String {
+    screen
+        .lines()
+        .find(|line| line.contains("1 "))
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+fn c_toggles_columns_by_position_and_numbers_follow_what_is_shown() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('c'));
+    let screen = h.render();
+    assert!(screen.contains("1 ✓id"), "{screen}");
+    assert!(
+        screen.contains("5  labels"),
+        "hidden columns listed after shown: {screen}"
+    );
+    let screen = h.press(KeyCode::Char('5'));
+    assert!(
+        !screen.contains("space keeps open"),
+        "digit toggles and closes: {screen}"
+    );
+    assert!(header_line(&screen).contains("5 labels"), "{screen}");
+    assert!(screen.contains("auth,bug"), "{screen}");
+    h.press(KeyCode::Char('c'));
+    let screen = h.press(KeyCode::Char('3'));
+    let header = header_line(&screen);
+    assert!(!header.contains("pri"), "{header}");
+    assert!(
+        header.contains("3 title") && header.contains("4 labels"),
+        "renumbered: {header}"
+    );
+    assert!(screen.contains("cols:id,status,title,labels"), "{screen}");
+}
+
+#[test]
+fn hidden_columns_still_filter_and_sort_by_typed_name() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('c'));
+    h.press(KeyCode::Char('3'));
+    assert!(!header_line(&h.render()).contains("pri"));
+    h.press(KeyCode::Char('f'));
+    let screen = h.press(KeyCode::Char('p'));
+    assert!(
+        screen.contains("1  priority") && screen.contains("2  project"),
+        "an ambiguous prefix lists both: {screen}"
+    );
+    let screen = h.type_text("ri");
+    assert!(
+        screen.contains("pri · type/number picks one"),
+        "typed name reaches a hidden column: {screen}"
+    );
+    let screen = h.type_text("h");
+    assert!(
+        screen.contains("pri:high · cols:id,status,title · 1/3"),
+        "{screen}"
+    );
+    h.press(KeyCode::Char('s'));
+    h.type_text("pri");
+    let screen = h.type_text("d");
+    assert!(screen.contains("↓pri"), "{screen}");
+    h.press(KeyCode::Char('f'));
+    let screen = h.press(KeyCode::Char('9'));
+    assert!(screen.contains("'9' is not a shown column; 1-3 as numbered, or type a name: id,status,priority,title,labels,project"), "{screen}");
+}
+
+#[test]
+fn shift_k_moves_a_column_up_and_the_order_saves_with_the_view() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('c'));
+    h.press(KeyCode::Char('j'));
+    h.app
+        .handle_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT));
+    let screen = h.press(KeyCode::Esc);
+    let header = header_line(&screen);
+    assert!(
+        header.starts_with("│1 status") || header.contains("1 status    2 id"),
+        "{header}"
+    );
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('d'));
+    let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
+    assert!(
+        file.contains("columns = \"status,id,priority,title\""),
+        "{file}"
+    );
+    let fresh = open_app(&h.root, &h.config_path);
+    assert_eq!(fresh.columns[0].name(), "status");
+    assert_eq!(fresh.view_label(), "v1");
+    assert_eq!(
+        fresh.views.get(0).unwrap().name(),
+        "cols:status,id,priority,title"
+    );
+}
+
+#[test]
+fn the_last_column_cannot_be_hidden() {
+    let mut h = Harness::new();
+    for _ in 0..3 {
+        h.press(KeyCode::Char('c'));
+        h.press(KeyCode::Char('1'));
+    }
+    h.press(KeyCode::Char('c'));
+    let screen = h.press(KeyCode::Char('1'));
+    assert!(screen.contains("at least one column must stay"), "{screen}");
+    assert_eq!(h.app.columns.len(), 1);
 }

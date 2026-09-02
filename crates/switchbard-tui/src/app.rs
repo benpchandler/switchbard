@@ -11,7 +11,7 @@ use crate::report::{self, ReportContext, ReportKind};
 use crate::sort::{self, Sort};
 use crate::tasks::{self, Filter, FilterField};
 use crate::telemetry::Telemetry;
-use crate::views::{self, SavedView, ViewStore};
+use crate::views::{self, columns_text, parse_columns, SavedView, ViewStore};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -39,6 +39,10 @@ pub enum ColumnPurpose {
 pub enum PickerPurpose {
     Filter(FilterField),
     Sort(Column),
+    /// Typing a column name after `f`/`s`, so hidden columns stay reachable.
+    ChooseColumn(ColumnPurpose),
+    /// The `c` picker: which columns show, in what order.
+    Columns,
 }
 
 /// The `f`/`s <column>` picker: its options, the typed narrowing text, and the cursor.
@@ -91,6 +95,8 @@ pub struct App {
     tasks: Vec<BacklogTask>,
     pub visible: Vec<usize>,
     pub selected: usize,
+    /// Shown columns in display order; header numbers are positions in this list.
+    pub columns: Vec<Column>,
     pub views: ViewStore,
     /// Zero-based slot the current filter/sort came from.
     pub view: usize,
@@ -126,6 +132,7 @@ impl App {
             tasks: Vec::new(),
             visible: Vec::new(),
             selected: 0,
+            columns: Column::DEFAULT_SHOWN.to_vec(),
             views,
             view: 0,
             filter_text: String::new(),
@@ -169,7 +176,11 @@ impl App {
     /// The attributes follow in the title, so they are the name.
     pub fn view_label(&self) -> String {
         match self.views.get(self.view) {
-            Some(saved) if saved.filter == self.filter_text && saved.sort == self.sort => {
+            Some(saved)
+                if saved.filter == self.filter_text
+                    && saved.sort == self.sort
+                    && saved.columns == self.columns =>
+            {
                 format!("v{}", self.view + 1)
             }
             _ => "custom".to_string(),
@@ -193,11 +204,12 @@ impl App {
     /// `slot\tfilter\tsort\tselected`, enough to land where the user was after a self-restart.
     pub fn resume_state(&self) -> String {
         format!(
-            "{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}",
             self.view,
             self.filter_text,
             self.sort.map(|sort| sort.to_text()).unwrap_or_default(),
-            self.selected
+            self.selected,
+            columns_text(&self.columns)
         )
     }
 
@@ -214,6 +226,9 @@ impl App {
         self.set_filter(filter);
         if let Some(selected) = parts.next().and_then(|n| n.parse().ok()) {
             self.select(selected);
+        }
+        if let Some(columns) = parts.next() {
+            self.columns = parse_columns(columns);
         }
         self.status = "updated to the new build".to_string();
     }
@@ -352,6 +367,7 @@ impl App {
         let saved = SavedView {
             filter: self.filter_text.clone(),
             sort: self.sort,
+            columns: self.columns.clone(),
         };
         match self.views.save_repo(slot, saved) {
             Ok(()) => {
@@ -370,24 +386,108 @@ impl App {
 
     fn handle_pick_column_key(&mut self, event: KeyEvent) {
         self.mode = Mode::Browse;
-        let KeyCode::Char(digit) = event.code else {
+        let KeyCode::Char(key) = event.code else {
             return;
         };
-        let Some(column) = digit
-            .to_digit(10)
-            .and_then(|n| self.config.columns.get(n.checked_sub(1)? as usize))
-            .copied()
-        else {
-            self.status = format!(
-                "'{digit}' is not a column; press 1-{} as numbered in the header",
-                self.config.columns.len()
-            );
+        if let Some(position) = key.to_digit(10) {
+            match position
+                .checked_sub(1)
+                .and_then(|index| self.columns.get(index as usize))
+                .copied()
+            {
+                Some(column) => self.open_column_purpose(column),
+                None => {
+                    self.status = format!(
+                        "'{key}' is not a shown column; 1-{} as numbered, or type a name: {}",
+                        self.columns.len(),
+                        columns_text(&Column::ALL)
+                    )
+                }
+            }
             return;
+        }
+        let picker = ValuePicker {
+            purpose: PickerPurpose::ChooseColumn(self.column_purpose),
+            options: Column::ALL
+                .iter()
+                .map(|column| (column.name().to_string(), 0))
+                .collect(),
+            typed: key.to_string(),
+            selected: 0,
         };
+        match picker.matching().as_slice() {
+            [] => {
+                self.status = format!(
+                    "no column starts with '{key}'; columns: {}",
+                    columns_text(&Column::ALL)
+                )
+            }
+            [(name, _)] => {
+                if let Some(column) = Column::parse(name) {
+                    self.open_column_purpose(column);
+                }
+            }
+            _ => {
+                self.picker = Some(picker);
+                self.mode = Mode::PickValue;
+            }
+        }
+    }
+
+    fn open_column_purpose(&mut self, column: Column) {
         match self.column_purpose {
             ColumnPurpose::Filter => self.open_filter_picker(column),
             ColumnPurpose::Sort => self.open_sort_picker(column),
         }
+    }
+
+    fn open_columns_picker(&mut self) {
+        self.picker = Some(ValuePicker {
+            purpose: PickerPurpose::Columns,
+            options: self.column_picker_options(),
+            typed: String::new(),
+            selected: 0,
+        });
+        self.mode = Mode::PickValue;
+        self.telemetry.record("action", "columns");
+    }
+
+    /// Shown columns first in display order, then the hidden ones.
+    fn column_picker_options(&self) -> Vec<(String, usize)> {
+        self.columns
+            .iter()
+            .chain(
+                Column::ALL
+                    .iter()
+                    .filter(|column| !self.columns.contains(column)),
+            )
+            .map(|column| (column.name().to_string(), 0))
+            .collect()
+    }
+
+    fn toggle_column(&mut self, column: Column) {
+        match self.columns.iter().position(|shown| *shown == column) {
+            Some(index) if self.columns.len() > 1 => {
+                self.columns.remove(index);
+            }
+            Some(_) => self.status = "at least one column must stay".to_string(),
+            None => self.columns.push(column),
+        }
+        self.telemetry
+            .record("action", format!("column_toggle {}", column.name()));
+    }
+
+    fn move_column(&mut self, column: Column, delta: isize) {
+        let Some(index) = self.columns.iter().position(|shown| *shown == column) else {
+            return;
+        };
+        let target = index as isize + delta;
+        if target < 0 || target >= self.columns.len() as isize {
+            return;
+        }
+        self.columns.swap(index, target as usize);
+        self.telemetry
+            .record("action", format!("column_move {} {delta}", column.name()));
     }
 
     fn open_filter_picker(&mut self, column: Column) {
@@ -460,6 +560,29 @@ impl App {
             }
             KeyCode::Enter => self.apply_picked_value(),
             KeyCode::Char(' ') => self.toggle_picked_value(),
+            KeyCode::Char(direction @ ('J' | 'K')) if picker.purpose == PickerPurpose::Columns => {
+                if let Some((name, _)) = picker.highlighted() {
+                    let delta = if direction == 'J' { 1 } else { -1 };
+                    let moved_to = picker.selected as isize + delta;
+                    if let Some(column) = Column::parse(&name) {
+                        self.move_column(column, delta);
+                    }
+                    if let Some(picker) = self.picker.as_mut() {
+                        picker.options = self
+                            .columns
+                            .iter()
+                            .chain(
+                                Column::ALL
+                                    .iter()
+                                    .filter(|column| !self.columns.contains(column)),
+                            )
+                            .map(|column| (column.name().to_string(), 0))
+                            .collect();
+                        picker.selected =
+                            moved_to.clamp(0, picker.options.len() as isize - 1) as usize;
+                    }
+                }
+            }
             KeyCode::Backspace => {
                 picker.typed.pop();
                 picker.selected = 0;
@@ -482,7 +605,23 @@ impl App {
         let Some((value, _)) = picker.highlighted() else {
             return;
         };
-        let PickerPurpose::Filter(field) = picker.purpose else {
+        match picker.purpose {
+            PickerPurpose::Filter(field) => self.toggle_filter_value(field, &value),
+            PickerPurpose::Columns => {
+                if let Some(column) = Column::parse(&value) {
+                    self.toggle_column(column);
+                }
+                let options = self.column_picker_options();
+                if let Some(picker) = self.picker.as_mut() {
+                    picker.options = options;
+                }
+            }
+            PickerPurpose::Sort(_) | PickerPurpose::ChooseColumn(_) => {}
+        }
+    }
+
+    fn toggle_filter_value(&mut self, field: FilterField, value: &str) {
+        let Some(picker) = self.picker.as_ref() else {
             return;
         };
         let all: Vec<String> = picker.options.iter().map(|(v, _)| v.clone()).collect();
@@ -491,11 +630,11 @@ impl App {
             .filter(|candidate| Filter::field_allows(&self.filter_text, field, candidate))
             .cloned()
             .collect();
-        match shown.iter().position(|candidate| *candidate == value) {
+        match shown.iter().position(|candidate| candidate == value) {
             Some(index) => {
                 shown.remove(index);
             }
-            None => shown.push(value.clone()),
+            None => shown.push(value.to_string()),
         }
         let text = Filter::with_shown(&self.filter_text, field, &all, &shown);
         self.set_filter(text);
@@ -529,6 +668,16 @@ impl App {
                 self.refilter();
                 self.telemetry
                     .record("action", format!("sort_pick {}:{value}", column.header()));
+            }
+            PickerPurpose::ChooseColumn(_) => {
+                if let Some(column) = Column::parse(&value) {
+                    self.open_column_purpose(column);
+                }
+            }
+            PickerPurpose::Columns => {
+                if let Some(column) = Column::parse(&value) {
+                    self.toggle_column(column);
+                }
             }
         }
     }
@@ -651,13 +800,14 @@ impl App {
             Action::FilterColumn => {
                 self.mode = Mode::PickColumn;
                 self.column_purpose = ColumnPurpose::Filter;
-                self.status = "filter by column: press its number".to_string();
+                self.status = "filter by column: press its number, or type a name".to_string();
             }
             Action::SortColumn => {
                 self.mode = Mode::PickColumn;
                 self.column_purpose = ColumnPurpose::Sort;
-                self.status = "sort by column: press its number".to_string();
+                self.status = "sort by column: press its number, or type a name".to_string();
             }
+            Action::Columns => self.open_columns_picker(),
             Action::Command => {
                 self.mode = Mode::Command;
                 self.input.clear();
@@ -737,6 +887,7 @@ impl App {
         };
         self.view = slot;
         self.sort = saved.sort;
+        self.columns = saved.columns;
         self.set_filter(saved.filter);
     }
 
