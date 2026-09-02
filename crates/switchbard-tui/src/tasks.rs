@@ -28,6 +28,16 @@ pub enum FilterField {
 }
 
 impl FilterField {
+    fn parse(keyword: &str) -> Option<FilterField> {
+        Some(match keyword {
+            "status" => FilterField::Status,
+            "pri" | "priority" => FilterField::Priority,
+            "label" => FilterField::Label,
+            "project" => FilterField::Project,
+            _ => return None,
+        })
+    }
+
     pub fn keyword(self) -> &'static str {
         match self {
             FilterField::Status => "status",
@@ -51,6 +61,7 @@ impl FilterField {
 enum Term {
     Text(String),
     Field(FilterField, String),
+    Excluded(FilterField, String),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -64,14 +75,15 @@ impl Filter {
             .split_whitespace()
             .map(|word| {
                 let lower = word.to_lowercase();
-                match lower.split_once(':') {
-                    Some(("status", value)) => Term::Field(FilterField::Status, loose(value)),
-                    Some(("pri", value)) | Some(("priority", value)) => {
-                        Term::Field(FilterField::Priority, loose(value))
-                    }
-                    Some(("label", value)) => Term::Field(FilterField::Label, loose(value)),
-                    Some(("project", value)) => Term::Field(FilterField::Project, loose(value)),
-                    _ => Term::Text(lower),
+                let Some((keyword, value)) = lower.split_once(':') else {
+                    return Term::Text(lower);
+                };
+                let Some(field) = FilterField::parse(keyword) else {
+                    return Term::Text(lower);
+                };
+                match value.strip_prefix('!') {
+                    Some(excluded) => Term::Excluded(field, loose(excluded)),
+                    None => Term::Field(field, loose(value)),
                 }
             })
             .collect();
@@ -88,15 +100,45 @@ impl Filter {
                 .values_of(task)
                 .iter()
                 .any(|value| loose(value).contains(needle)),
+            Term::Excluded(field, needle) => !field
+                .values_of(task)
+                .iter()
+                .any(|value| loose(value) == *needle),
         })
     }
 
-    /// Replaces any `field:` term already present with `field:value`, keeping the rest.
+    /// Adds `field:!value` if absent, removes it if present. Exclusions stack.
+    pub fn toggle_exclusion(text: &str, field: FilterField, value: &str) -> String {
+        let word = format!("{}:!{}", field.keyword(), loose(value));
+        let mut words: Vec<String> = text.split_whitespace().map(str::to_string).collect();
+        match words
+            .iter()
+            .position(|existing| existing.to_lowercase() == word)
+        {
+            Some(index) => {
+                words.remove(index);
+            }
+            None => words.push(word),
+        }
+        words.join(" ")
+    }
+
+    pub fn is_excluded(text: &str, field: FilterField, value: &str) -> bool {
+        let word = format!("{}:!{}", field.keyword(), loose(value));
+        text.split_whitespace()
+            .any(|existing| existing.to_lowercase() == word)
+    }
+
+    /// Replaces any positive `field:` term with `field:value`; exclusions and other terms stay.
     pub fn with_field(text: &str, field: FilterField, value: &str) -> String {
         let prefix = format!("{}:", field.keyword());
+        let exclusion_prefix = format!("{prefix}!");
         let mut words: Vec<String> = text
             .split_whitespace()
-            .filter(|word| !word.to_lowercase().starts_with(&prefix))
+            .filter(|word| {
+                let lower = word.to_lowercase();
+                !lower.starts_with(&prefix) || lower.starts_with(&exclusion_prefix)
+            })
             .map(str::to_string)
             .collect();
         words.push(format!("{prefix}{}", loose(value)));

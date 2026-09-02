@@ -256,8 +256,8 @@ fn f_then_column_number_picks_a_value_from_the_data() {
     let mut h = Harness::new();
     h.press(KeyCode::Char('f'));
     let screen = h.press(KeyCode::Char('2'));
-    assert!(screen.contains("1 To Do"), "{screen}");
-    assert!(screen.contains("2 In Progress"), "{screen}");
+    assert!(screen.contains("1  To Do"), "{screen}");
+    assert!(screen.contains("2  In Progress"), "{screen}");
     let screen = h.press(KeyCode::Char('j'));
     let screen_after_enter = h.press(KeyCode::Enter);
     assert!(
@@ -319,4 +319,41 @@ fn zero_size_terminal_does_not_crash() {
     h.terminal = Terminal::new(TestBackend::new(0, 0)).unwrap();
     let screen = h.press(KeyCode::Char('?'));
     assert_eq!(screen, "");
+}
+
+#[test]
+fn space_in_picker_hides_a_value_and_stacks() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('f'));
+    h.press(KeyCode::Char('2'));
+    let screen = h.press(KeyCode::Char(' '));
+    assert!(screen.contains("✗To Do"), "{screen}");
+    assert!(screen.contains("status:!todo · 1/3"), "{screen}");
+    h.press(KeyCode::Char('j'));
+    let screen = h.press(KeyCode::Char(' '));
+    assert!(
+        screen.contains("status:!todo status:!inprogress · 0/3"),
+        "{screen}"
+    );
+    let screen = h.press(KeyCode::Char(' '));
+    assert!(screen.contains("status:!todo · 1/3"), "unstack: {screen}");
+    let screen = h.press(KeyCode::Esc);
+    assert!(!screen.contains("enter picks"), "{screen}");
+    assert!(screen.contains("Fix login"), "{screen}");
+    assert!(!screen.contains("Add dark theme"), "{screen}");
+}
+
+#[test]
+fn picking_a_value_keeps_exclusions_on_the_same_field() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('/'));
+    h.type_text("status:!todo");
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Char('f'));
+    h.press(KeyCode::Char('2'));
+    let screen = h.press(KeyCode::Char('2'));
+    assert!(
+        screen.contains("status:!todo status:inprogress · 1/3"),
+        "{screen}"
+    );
 }

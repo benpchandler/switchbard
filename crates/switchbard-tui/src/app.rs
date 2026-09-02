@@ -225,8 +225,23 @@ impl App {
                 }
             }
             KeyCode::Enter => self.apply_picked_value(),
+            KeyCode::Char(' ') => self.toggle_picked_exclusion(),
             _ => {}
         }
+    }
+
+    fn toggle_picked_exclusion(&mut self) {
+        let Some(picker) = self.picker.as_ref() else {
+            return;
+        };
+        let (value, _) = picker.options[picker.selected].clone();
+        let field = picker.field;
+        let text = Filter::toggle_exclusion(&self.filter_text, field, &value);
+        self.set_filter(text);
+        self.telemetry.record(
+            "action",
+            format!("filter_exclude {}:{value}", field.keyword()),
+        );
     }
 
     fn apply_picked_value(&mut self) {

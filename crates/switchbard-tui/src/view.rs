@@ -10,6 +10,7 @@ use switchbard_core::BacklogTask;
 
 use crate::app::{App, Mode, Pane, ValuePicker};
 use crate::config::{Action, Column};
+use crate::tasks::Filter;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let [body, footer] =
@@ -204,7 +205,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
             ":view <name>  :reload  :q",
             Style::default().fg(theme.accent),
         ),
-        Span::raw("    filter words: status: pri: label: project:"),
+        Span::raw("    f <col#> picks a value, space hides one; terms: status:x status:!x pri: label: project:"),
     ]));
     lines.push(Line::from(Span::styled(
         "config: ~/.switchbard/tui.lua (hot reload)    events: ~/.switchbard/tui-events.jsonl",
@@ -262,10 +263,10 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
     let width = picker
         .options
         .iter()
-        .map(|(value, _)| value.len() + 10)
+        .map(|(value, _)| value.len() + 11)
         .max()
         .unwrap_or(20)
-        .max(24)
+        .max(34)
         .min(body.width.saturating_sub(4) as usize) as u16;
     let height = (picker.options.len() as u16 + 2).min(body.height.saturating_sub(2));
     let area = Rect {
@@ -279,17 +280,22 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         .iter()
         .enumerate()
         .map(|(index, (value, count))| {
-            let style = if index == picker.selected {
+            let excluded = Filter::is_excluded(&app.filter_text, picker.field, value);
+            let mut style = if index == picker.selected {
                 Style::default()
                     .bg(theme.selected)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             };
+            if excluded {
+                style = style.fg(theme.dim).add_modifier(Modifier::CROSSED_OUT);
+            }
+            let mark = if excluded { "✗" } else { " " };
             Line::from(vec![
                 Span::styled(format!("{} ", index + 1), Style::default().fg(theme.accent)),
                 Span::styled(
-                    format!("{value:<width$}", width = width as usize - 8),
+                    format!("{mark}{value:<width$}", width = width as usize - 9),
                     style,
                 ),
                 Span::styled(format!("{count:>3}"), Style::default().fg(theme.dim)),
@@ -299,7 +305,10 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent))
-        .title(format!(" {} ", picker.field.keyword()));
+        .title(format!(
+            " {} · enter picks · space hides ",
+            picker.field.keyword()
+        ));
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
