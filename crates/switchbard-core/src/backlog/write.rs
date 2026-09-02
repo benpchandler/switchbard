@@ -642,23 +642,37 @@ fn fence_flags(rest: &str) -> Vec<bool> {
     scan_fences(rest).inside
 }
 
-fn top_heading<'l>(lines: &'l [String], inside: &[bool], i: usize) -> Option<&'l str> {
+fn top_level_heading<'l>(
+    lines: &'l [String],
+    inside: &[bool],
+    i: usize,
+    marker_depth: &mut usize,
+) -> Option<&'l str> {
     if inside.get(i).copied().unwrap_or(false) {
         return None;
     }
-    heading_title(&lines[i])
+    match section_marker_terminator(lines[i].trim()) {
+        Some("BEGIN") => *marker_depth = marker_depth.saturating_add(1),
+        Some("END") => *marker_depth = marker_depth.saturating_sub(1),
+        _ => return (*marker_depth == 0).then(|| heading_title(&lines[i])).flatten(),
+    }
+    None
 }
 
 /// `[start, end)` of one section: its heading line through the last content
-/// line before the next unfenced heading (or EOF), *excluding* trailing blank
+/// line before the next top-level heading (or EOF), *excluding* trailing blank
 /// lines — those separate sections and belong to no one, so edits never
 /// disturb them.
 fn section_span(lines: &[String], inside: &[bool], heading: &str) -> Option<(usize, usize)> {
+    let mut marker_depth = 0usize;
     let start = (0..lines.len()).find(|&i| {
-        top_heading(lines, inside, i).is_some_and(|t| t.eq_ignore_ascii_case(heading))
+        top_level_heading(lines, inside, i, &mut marker_depth)
+            .is_some_and(|t| t.eq_ignore_ascii_case(heading))
     })?;
     let mut end = start + 1;
-    while end < lines.len() && top_heading(lines, inside, end).is_none() {
+    while end < lines.len()
+        && top_level_heading(lines, inside, end, &mut marker_depth).is_none()
+    {
         end += 1;
     }
     while end > start + 1 && lines[end - 1].trim().is_empty() {
@@ -714,23 +728,7 @@ fn insert_pos(lines: &[String], inside: &[bool], heading: &str) -> usize {
     let rank = canonical_rank(heading);
     let mut marker_depth = 0usize;
     for i in 0..lines.len() {
-        if !inside.get(i).copied().unwrap_or(false) {
-            match section_marker_terminator(lines[i].trim()) {
-                Some("BEGIN") => {
-                    marker_depth += 1;
-                    continue;
-                }
-                Some("END") => {
-                    marker_depth = marker_depth.saturating_sub(1);
-                    continue;
-                }
-                _ => {}
-            }
-        }
-        if marker_depth > 0 {
-            continue;
-        }
-        if let Some(title) = top_heading(lines, inside, i) {
+        if let Some(title) = top_level_heading(lines, inside, i, &mut marker_depth) {
             if canonical_rank(title) > rank {
                 return i;
             }
@@ -1562,6 +1560,33 @@ mod tests {
             after.contains(description),
             "the marked description must remain byte-identical: {after}"
         );
+    }
+
+    #[test]
+    fn append_notes_lands_at_the_end_of_a_marked_section_with_h2_prose() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("task-80 - Existing notes.md");
+        let existing = "## Implementation Notes\n\n<!-- SECTION:NOTES:BEGIN -->\nExisting note.\n\n## Investigation\n\nKeep this detail before later notes.\n<!-- SECTION:NOTES:END -->\n";
+        fs::write(&path, format!("{FIXTURE}\n{existing}")).expect("fixture writes");
+
+        assert_eq!(
+            append_task_notes(&path, "Later note.").expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+
+        let after = read(&path);
+        let detail = after
+            .find("Keep this detail before later notes.")
+            .expect("existing detail survives");
+        let note = after.find("Later note.").expect("new note is appended");
+        let end = after
+            .find("<!-- SECTION:NOTES:END -->")
+            .expect("notes end marker survives");
+        assert!(
+            detail < note && note < end,
+            "the note must land immediately before the section end: {after}"
+        );
+        assert_eq!(&after[note..end], "Later note.\n");
     }
 
     #[test]
