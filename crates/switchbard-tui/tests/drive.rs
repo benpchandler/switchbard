@@ -744,8 +744,7 @@ fn the_last_column_cannot_be_hidden() {
 }
 
 #[test]
-fn p_paints_this_row_by_exact_id_and_saves_with_the_view() {
-    use ratatui::style::Color;
+fn p_lists_columns_first_then_row_filtered_column_and_hidden_fields() {
     let mut h = Harness::new();
     let selected = h.app.selected_task().unwrap().id.clone();
     let screen = h.press(KeyCode::Char('p'));
@@ -761,373 +760,236 @@ fn p_paints_this_row_by_exact_id_and_saves_with_the_view() {
         screen.contains("7  labels"),
         "hidden categorical field by name: {screen}"
     );
-    h.type_text("r");
-    let screen = h.type_text("gre");
+    let title = screen.lines().nth(2).unwrap_or_default().to_string();
     assert!(
-        screen.contains(&format!("painted rows:id:{selected}=green")),
-        "{screen}"
+        title.contains("┌ paint ─") && !title.contains("r row"),
+        "{title}"
     );
-    assert_eq!(cell_fg(&h, &selected), Some(Color::Green));
-    assert!(screen.contains("paint:1 · 3/3"), "{screen}");
-    h.press(KeyCode::Char('v'));
-    h.press(KeyCode::Char('s'));
-    h.press(KeyCode::Char('d'));
-    let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
+    let footer = screen.lines().last().unwrap_or_default();
     assert!(
-        file.contains(&format!("paint = \"rows:id:{selected}=green\"")),
-        "{file}"
+        footer.contains("column number · r row · f filtered"),
+        "{footer}"
     );
-    let fresh = open_app(&h.root, &h.config_path);
-    assert_eq!(fresh.paint.len(), 1);
-    assert_eq!(fresh.view_label(), "v1");
 }
 
 #[test]
-fn p_paints_rows_matching_the_filter_and_columns_and_none_clears() {
+fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
     use ratatui::style::Color;
     let mut h = Harness::new();
-    h.press(KeyCode::Char('/'));
-    h.type_text("status:todo");
-    h.press(KeyCode::Enter);
-    h.press(KeyCode::Esc);
     h.press(KeyCode::Char('p'));
-    let screen = h.render();
+    let screen = h.press(KeyCode::Char('2'));
+    assert!(screen.contains("┌ by status ─"), "{screen}");
+    h.press(KeyCode::Char('1'));
+    let screen = h.press(KeyCode::Esc);
     assert!(
-        !screen.contains("rows status"),
-        "cleared filter offers no rows target: {screen}"
-    );
-    h.press(KeyCode::Esc);
-    h.press(KeyCode::Char('/'));
-    h.type_text("status:todo");
-    h.press(KeyCode::Enter);
-    h.press(KeyCode::Char('p'));
-    let screen = h.render();
-    assert!(screen.contains("6  filtered rows status:todo"), "{screen}");
-    h.type_text("f");
-    h.type_text("yel");
-    h.press(KeyCode::Esc);
-    let screen = h.render();
-    assert!(
-        screen.contains("3/3"),
-        "filter cleared, paint stays: {screen}"
-    );
-    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Yellow));
-    assert_eq!(cell_fg(&h, "Fix login"), Some(Color::Reset));
-    h.press(KeyCode::Char('p'));
-    h.type_text("c");
-    h.type_text("s");
-    h.type_text("w");
-    h.type_text("cy");
-    assert_eq!(
-        cell_fg(&h, "In Progress"),
-        Some(Color::Cyan),
-        "column rule paints every row"
+        screen.contains("paint:1 ·"),
+        "one rule holds every status color: {screen}"
     );
     assert_eq!(
         cell_fg(&h, "Add dark theme"),
         Some(Color::Yellow),
-        "row rule keeps other cells"
+        "To Do rows"
     );
-    h.press(KeyCode::Char('p'));
-    h.type_text("c");
-    h.type_text("s");
-    h.type_text("w");
-    h.type_text("no");
     assert_eq!(
-        cell_fg(&h, "In Progress"),
-        Some(Color::Reset),
-        "none clears the column rule"
+        cell_fg(&h, "Fix login"),
+        Some(Color::Cyan),
+        "In Progress rows"
     );
-    assert!(h.render().contains("paint:1 ·"), "{}", h.render());
+    assert_eq!(
+        cell_fg(&h, "low"),
+        Some(Color::Yellow),
+        "base paints whole rows"
+    );
+
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('3'));
+    h.press(KeyCode::Char('1'));
+    let screen = h.press(KeyCode::Char('h'));
+    assert!(
+        screen.contains("┌ paint ─"),
+        "h goes back to the target list: {screen}"
+    );
+    let screen = h.press(KeyCode::Esc);
+    assert!(screen.contains("paint:2 ·"), "{screen}");
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Yellow),
+        "rows still by status"
+    );
+    assert_ne!(
+        cell_fg(&h, "low"),
+        Some(Color::Yellow),
+        "priority cell has its own color"
+    );
+    assert_eq!(
+        cell_fg(&h, "high"),
+        Some(Color::Yellow),
+        "auto's first color for high"
+    );
+    assert_eq!(
+        h.app.paint.iter().map(|r| r.to_text()).collect::<Vec<_>>(),
+        [
+            "by:status=todo:yellow,inprogress:cyan",
+            "by:priority=high:yellow,low:cyan,medium:green"
+        ]
+    );
 }
 
 #[test]
-fn p_accepts_a_typed_hex_color() {
+fn reordering_rules_flips_which_paint_is_the_base() {
     use ratatui::style::Color;
     let mut h = Harness::new();
     h.press(KeyCode::Char('p'));
-    h.type_text("c");
-    h.type_text("t");
-    h.type_text("#ff8800");
-    let screen = h.press(KeyCode::Enter);
-    assert!(screen.contains("painted column:title=#ff8800"), "{screen}");
-    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Rgb(255, 136, 0)));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Char('h'));
+    h.press(KeyCode::Char('3'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('p'));
+    let screen = h.type_text("o");
+    assert!(
+        screen.contains("┌ paint rules · top is the base"),
+        "{screen}"
+    );
+    assert!(screen.contains("1 ✓by status (2 values)"), "{screen}");
+    assert!(screen.contains("2  by priority (3 values)"), "{screen}");
+    h.press(KeyCode::Char('j'));
+    h.app
+        .handle_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT));
+    let screen = h.render();
+    assert!(screen.contains("1 ✓by priority (3 values)"), "{screen}");
+    h.press(KeyCode::Esc);
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Cyan),
+        "rows now by priority (low)"
+    );
+    assert_eq!(
+        cell_fg(&h, "To Do"),
+        Some(Color::Yellow),
+        "status cell keeps its own color"
+    );
+    h.press(KeyCode::Char('p'));
+    h.type_text("o");
+    let screen = h.press(KeyCode::Delete);
+    assert!(
+        screen.contains("1 ✓by status (2 values)"),
+        "deleting the base promotes the next: {screen}"
+    );
+    h.press(KeyCode::Esc);
+    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Yellow));
 }
 
 #[test]
-fn two_digit_numbers_reach_options_past_nine_and_space_clears_paint() {
+fn hand_picked_values_row_and_column_and_hex_and_clearing() {
     use ratatui::style::Color;
     let mut h = Harness::new();
     let selected = h.app.selected_task().unwrap().id.clone();
     h.press(KeyCode::Char('p'));
-    let screen = h.type_text("r");
-    assert!(screen.contains("12  lightblue"), "{screen}");
-    let screen = h.press(KeyCode::Char('1'));
-    assert!(
-        screen.contains("1▏ color "),
-        "first digit waits when 10+ exist: {screen}"
-    );
-    let screen = h.press(KeyCode::Char('2'));
-    assert!(screen.contains("=lightblue"), "{screen}");
-    assert_eq!(cell_fg(&h, &selected), Some(Color::LightBlue));
-    h.press(KeyCode::Char('p'));
-    h.type_text("r");
-    let screen = h.press(KeyCode::Char('3'));
-    assert!(
-        screen.contains("=yellow"),
-        "3 cannot extend past 17, applies at once: {screen}"
-    );
-    h.press(KeyCode::Char('p'));
-    h.type_text("r");
-    h.press(KeyCode::Char('1'));
-    let screen = h.press(KeyCode::Enter);
-    assert!(
-        screen.contains("=red"),
-        "enter completes a pending single digit as itself: {screen}"
-    );
-    h.press(KeyCode::Char('p'));
-    h.type_text("r");
-    let screen = h.press(KeyCode::Char(' '));
-    assert!(screen.contains("paint cleared"), "{screen}");
-    assert_eq!(
-        cell_fg(&h, &selected),
-        Some(Color::Reset),
-        "rules left: {:?}\n{screen}",
-        h.app.paint.iter().map(|r| r.to_text()).collect::<Vec<_>>()
-    );
-    assert!(!screen.contains("paint:"), "{screen}");
-}
-
-#[test]
-fn the_color_list_previews_each_color_and_a_typed_hex() {
-    use ratatui::style::Color;
-    let mut h = Harness::new();
-    h.press(KeyCode::Char('p'));
-    h.type_text("r");
-    assert_eq!(cell_fg(&h, "green"), Some(Color::Green));
-    assert_eq!(cell_fg(&h, "magenta"), Some(Color::Magenta));
-    let screen = h.type_text("#ff8800");
-    assert!(
-        screen.contains("#ff8800 ← this is how it looks"),
-        "{screen}"
-    );
-    assert_eq!(cell_fg(&h, "#ff8800"), Some(Color::Rgb(255, 136, 0)));
-}
-
-#[test]
-fn p_by_status_paints_each_value_and_auto_hands_out_distinct_colors() {
-    use ratatui::style::Color;
-    let mut h = Harness::new();
-    let screen = h.press(KeyCode::Char('p'));
-    assert!(screen.contains("┌ paint ─"), "{screen}");
-    let screen = h.press(KeyCode::Char('2'));
-    assert!(
-        screen.contains("┌ rows by status ─"),
-        "p2 is the status column: {screen}"
-    );
-    assert!(screen.contains("1  auto: one color per value"), "{screen}");
-    assert!(
-        screen.contains("2  To Do") && screen.contains("3  In Progress"),
-        "{screen}"
-    );
+    h.press(KeyCode::Char('2'));
     h.press(KeyCode::Char('2'));
     let screen = h.type_text("gre");
     assert!(
-        screen.contains("┌ rows by status ─"),
+        screen.contains("┌ by status ─"),
         "back on the value list: {screen}"
     );
     assert_eq!(
         cell_fg(&h, "To Do"),
         Some(Color::Green),
-        "the list previews the rule"
+        "the list previews the value's color"
     );
-    let screen = h.press(KeyCode::Esc);
-    assert!(screen.contains("paint:1 ·"), "{screen}");
+    h.press(KeyCode::Esc);
     assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Green));
-    assert_eq!(cell_fg(&h, "Fix login"), Some(Color::Reset));
-    assert_eq!(h.app.paint[0].to_text(), "rows:status:todo=green");
+    assert_eq!(
+        cell_fg(&h, "Fix login"),
+        Some(Color::Reset),
+        "In Progress unpainted"
+    );
 
+    h.press(KeyCode::Char('p'));
+    h.type_text("r");
+    let screen = h.press(KeyCode::Char('1'));
+    assert!(
+        screen.contains("1▏ color"),
+        "first digit waits when 10+ exist: {screen}"
+    );
+    h.press(KeyCode::Char('2'));
+    assert_eq!(
+        cell_fg(&h, &selected),
+        Some(Color::LightBlue),
+        "12 picks lightblue"
+    );
+    assert!(h
+        .app
+        .paint
+        .iter()
+        .any(|r| r.to_text() == format!("rows:id:{selected}=lightblue")));
+
+    h.press(KeyCode::Char('p'));
+    h.type_text("c");
+    h.type_text("t");
+    h.type_text("#ff8800");
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("painted #ff8800"), "{screen}");
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Rgb(255, 136, 0)),
+        "column rule below the base wins on its column"
+    );
+
+    h.press(KeyCode::Char('p'));
+    h.type_text("c");
+    h.type_text("t");
+    let screen = h.press(KeyCode::Char(' '));
+    assert!(screen.contains("paint cleared"), "{screen}");
+    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Green));
+
+    h.press(KeyCode::Char('p'));
+    h.type_text("r");
+    assert_eq!(
+        cell_fg(&h, "green"),
+        Some(Color::Green),
+        "color list previews colors"
+    );
+    let screen = h.type_text("#00ff00");
+    assert!(
+        screen.contains("#00ff00 ← this is how it looks"),
+        "{screen}"
+    );
+    h.press(KeyCode::Esc);
+
+    h.press(KeyCode::Char('p'));
+    let screen = h.press(KeyCode::Char('d'));
+    assert!(screen.contains("deleted 2 paint rules"), "{screen}");
+    assert!(!screen.contains("paint:"), "{screen}");
     h.press(KeyCode::Char('p'));
     h.press(KeyCode::Char('2'));
     h.press(KeyCode::Char('1'));
-    let screen = h.press(KeyCode::Esc);
-    assert!(screen.contains("paint:2 ·"), "one rule per value: {screen}");
-    assert_eq!(
-        cell_fg(&h, "Add dark theme"),
-        Some(Color::Yellow),
-        "auto reassigns To Do"
-    );
-    h.press(KeyCode::Char('p'));
-    let screen = h.type_text("p");
-    assert!(
-        screen.contains("┌ rows by pri ─"),
-        "no project values in this repo, so p resolves to priority at once: {screen}"
-    );
     h.press(KeyCode::Esc);
-    assert_eq!(cell_fg(&h, "Fix login"), Some(Color::Cyan));
+    h.press(KeyCode::Char('p'));
+    let screen = h.press(KeyCode::Delete);
+    assert!(screen.contains("deleted 1 paint rules"), "{screen}");
 }
 
 #[test]
-fn status_rows_plus_priority_cells_keep_both_colors() {
-    use ratatui::style::Color;
+fn paint_rules_round_trip_through_the_view_file() {
     let mut h = Harness::new();
     h.press(KeyCode::Char('p'));
     h.press(KeyCode::Char('2'));
     h.press(KeyCode::Char('1'));
-    h.press(KeyCode::Esc);
-    h.press(KeyCode::Char('p'));
-    h.type_text("c");
-    let screen = h.type_text("pri");
-    assert!(screen.contains("┌ priority cells by pri ─"), "{screen}");
-    assert!(
-        screen.contains("2  whole: one color for the column"),
-        "{screen}"
-    );
-    h.press(KeyCode::Char('1'));
-    let screen = h.press(KeyCode::Esc);
-    assert!(
-        screen.contains("paint:5 ·"),
-        "2 statuses + 3 priorities: {screen}"
-    );
-    assert_eq!(
-        cell_fg(&h, "Add dark theme"),
-        Some(Color::Yellow),
-        "To Do row stays status-colored"
-    );
-    assert_ne!(
-        cell_fg(&h, "low"),
-        Some(Color::Yellow),
-        "its priority cell has its own color"
-    );
-    assert_eq!(
-        cell_fg(&h, "high"),
-        Some(Color::Yellow),
-        "high is the first priority, auto's first color"
-    );
-    assert_eq!(cell_fg(&h, "Write onboarding"), Some(Color::Yellow));
-    assert!(
-        h.app
-            .paint
-            .iter()
-            .any(|r| r.to_text() == "cell:priority:pri:high=yellow"),
-        "{:?}",
-        h.app.paint
-    );
+    h.press(KeyCode::Char('h'));
+    h.type_text("r");
+    h.type_text("gre");
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('s'));
     h.press(KeyCode::Char('d'));
+    let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
+    assert!(
+        file.contains("paint = \"by:status=todo:yellow,inprogress:cyan;rows:id:"),
+        "{file}"
+    );
     let fresh = open_app(&h.root, &h.config_path);
-    assert_eq!(
-        fresh.paint.len(),
-        5,
-        "cell rules round-trip through the view file"
-    );
-}
-
-#[test]
-fn a_cell_rule_beats_a_column_rule_beats_a_row_rule_regardless_of_order() {
-    use ratatui::style::Color;
-    let mut h = Harness::new();
-    h.press(KeyCode::Char('p'));
-    h.type_text("c");
-    h.type_text("pri");
-    h.press(KeyCode::Char('3'));
-    h.type_text("re");
-    h.press(KeyCode::Esc);
-    h.press(KeyCode::Char('p'));
-    h.type_text("c");
-    h.type_text("pri");
-    h.type_text("w");
-    h.type_text("blu");
-    h.press(KeyCode::Char('p'));
-    h.type_text("r");
-    h.type_text("gre");
-    let rules: Vec<String> = h.app.paint.iter().map(|r| r.to_text()).collect();
-    assert_eq!(rules.len(), 3, "{rules:?}");
-    let selected = h.app.selected_task().unwrap().clone();
-    assert_eq!(
-        cell_fg(&h, &selected.id),
-        Some(Color::Green),
-        "row rule on the id cell"
-    );
-    assert_eq!(
-        cell_fg(&h, "high"),
-        Some(Color::Red),
-        "cell rule wins over column and row"
-    );
-    assert_eq!(
-        cell_fg(&h, "low"),
-        Some(Color::Blue),
-        "column rule wins over nothing"
-    );
-    assert_eq!(
-        cell_fg(&h, "medium"),
-        Some(Color::Blue),
-        "column rule wins over the row rule"
-    );
-}
-
-#[test]
-fn p_delete_clears_every_rule_and_delete_all_is_listed() {
-    use ratatui::style::Color;
-    let mut h = Harness::new();
-    h.press(KeyCode::Char('p'));
-    h.press(KeyCode::Char('2'));
-    h.press(KeyCode::Char('1'));
-    h.press(KeyCode::Esc);
-    let screen = h.press(KeyCode::Char('p'));
-    assert!(screen.contains("delete all paint (2 rules)"), "{screen}");
-    let screen = h.press(KeyCode::Delete);
-    assert!(screen.contains("deleted 2 paint rules"), "{screen}");
-    assert!(!screen.contains("paint:"), "{screen}");
-    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Reset));
-    let screen = h.press(KeyCode::Char('p'));
-    assert!(
-        !screen.contains("delete all paint"),
-        "nothing to delete: {screen}"
-    );
-    h.press(KeyCode::Esc);
-    h.press(KeyCode::Char('p'));
-    h.press(KeyCode::Char('2'));
-    h.press(KeyCode::Char('1'));
-    h.press(KeyCode::Esc);
-    h.press(KeyCode::Char('p'));
-    let screen = h.press(KeyCode::Backspace);
-    assert!(
-        screen.contains("deleted 2 paint rules"),
-        "mac delete key sends backspace: {screen}"
-    );
-    h.press(KeyCode::Char('p'));
-    h.press(KeyCode::Char('2'));
-    h.press(KeyCode::Char('1'));
-    h.press(KeyCode::Esc);
-    h.press(KeyCode::Char('p'));
-    let screen = h.press(KeyCode::Char('d'));
-    assert!(
-        screen.contains("deleted 2 paint rules"),
-        "pd: nothing else in the list starts with d: {screen}"
-    );
-}
-
-#[test]
-fn picker_titles_name_the_subject_and_hints_sit_in_the_footer() {
-    let mut h = Harness::new();
-    let screen = h.press(KeyCode::Char('p'));
-    let title = screen.lines().nth(2).unwrap_or_default().to_string();
-    assert!(title.contains("┌ paint ─"), "{title}");
-    assert!(
-        !title.contains("r row"),
-        "hints are not in the title: {title}"
-    );
-    let footer = screen.lines().last().unwrap_or_default();
-    assert!(
-        footer.contains("column number · r row · f filtered · c cells · d delete all · esc"),
-        "{footer}"
-    );
-    h.press(KeyCode::Esc);
-    h.press(KeyCode::Char('f'));
-    let screen = h.press(KeyCode::Char('2'));
-    assert!(screen.contains("┌ status ─"), "{screen}");
-    let footer = screen.lines().last().unwrap_or_default();
-    assert!(footer.contains("space toggles"), "{footer}");
+    assert_eq!(fresh.paint, h.app.paint);
+    assert_eq!(fresh.view_label(), "v1");
 }

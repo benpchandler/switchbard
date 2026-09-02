@@ -10,7 +10,7 @@ use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Table
 use ratatui::Frame;
 use switchbard_core::BacklogTask;
 
-use crate::app::{App, ColumnPurpose, Mode, Pane, PickerPurpose, ValuePicker};
+use crate::app::{App, ColumnPurpose, Mode, PaintPick, Pane, PickerPurpose, ValuePicker};
 use crate::config::{Action, Column};
 use crate::paint::{self, PaintRule};
 use crate::tasks::Filter;
@@ -331,16 +331,22 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                     Column::parse(value).is_some_and(|column| app.columns.contains(&column))
                 }
                 PickerPurpose::PaintTarget => false,
-                PickerPurpose::PaintColumn => {
-                    Column::parse(value).is_some_and(|column| app.columns.contains(&column))
+                PickerPurpose::PaintColumn => false,
+                PickerPurpose::PaintRules => index == 0,
+                PickerPurpose::PaintValues(column) => {
+                    paint::value_color(&app.paint, *column, value).is_some()
                 }
-                PickerPurpose::PaintByField(field, cells) => {
-                    paint::rule_for_value(&app.paint, field.keyword(), value, *cells).is_some()
-                }
-                PickerPurpose::PaintColor(target) => app
-                    .paint
-                    .iter()
-                    .any(|rule| &rule.target == target && rule.color == *value),
+                PickerPurpose::PaintColor(pick) => match pick {
+                    PaintPick::Value(column, painted) => {
+                        paint::value_color(&app.paint, *column, painted).as_deref() == Some(value)
+                    }
+                    PaintPick::Rows(filter) => app.paint.iter().any(|rule| {
+                        matches!(rule, PaintRule::Rows { filter: f, color } if f == filter && color == value)
+                    }),
+                    PaintPick::Column(column) => app.paint.iter().any(|rule| {
+                        matches!(rule, PaintRule::Column { column: c, color } if c == column && color == value)
+                    }),
+                },
             };
             let mut style = if index == picker.selected {
                 Style::default()
@@ -359,11 +365,15 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                         style = style.fg(color);
                     }
                 }
-                PickerPurpose::PaintByField(field, cells) => {
-                    if let Some(color) =
-                        paint::rule_for_value(&app.paint, field.keyword(), value, *cells)
-                            .and_then(PaintRule::parsed_color)
+                PickerPurpose::PaintValues(column) => {
+                    if let Some(color) = paint::value_color(&app.paint, *column, value)
+                        .and_then(|color| ratatui::style::Color::from_str(&color).ok())
                     {
+                        style = style.fg(color);
+                    }
+                }
+                PickerPurpose::PaintRules => {
+                    if let Some(color) = app.paint.get(index).and_then(PaintRule::swatch) {
                         style = style.fg(color);
                     }
                 }
@@ -417,13 +427,11 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::ChooseColumn(ColumnPurpose::Filter) => "filter by column".to_string(),
         PickerPurpose::ChooseColumn(ColumnPurpose::Sort) => "sort by column".to_string(),
         PickerPurpose::Columns => "columns".to_string(),
-        PickerPurpose::PaintByField(field, None) => format!("rows by {}", field.keyword()),
-        PickerPurpose::PaintByField(field, Some(column)) => {
-            format!("{} cells by {}", column.name(), field.keyword())
-        }
+        PickerPurpose::PaintValues(column) => format!("by {}", column.name()),
         PickerPurpose::PaintColumn => "paint which column".to_string(),
         PickerPurpose::PaintTarget => "paint".to_string(),
         PickerPurpose::PaintColor(_) => "color".to_string(),
+        PickerPurpose::PaintRules => "paint rules · top is the base".to_string(),
     };
     if picker.typed.is_empty() {
         format!(" {subject} ")
@@ -441,14 +449,13 @@ pub fn picker_hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::Sort(_) => "number or name picks · esc",
         PickerPurpose::ChooseColumn(_) => "number or name · hidden columns listed last · esc",
         PickerPurpose::Columns => "number or name toggles · space keeps open · K/J move · esc",
-        PickerPurpose::PaintByField(_, _) => {
-            "pick a value, then its color · repeats · esc when done"
-        }
-        PickerPurpose::PaintColumn => "number or name · esc",
+        PickerPurpose::PaintValues(_) => "value then color · repeats · h back · esc done",
+        PickerPurpose::PaintColumn => "number or name · h back · esc",
         PickerPurpose::PaintTarget => {
-            "column number · r row · f filtered · c cells · d delete all · esc"
+            "column number · r row · f filtered · c whole column · o order rules · d delete all · esc"
         }
-        PickerPurpose::PaintColor(_) => "name or #hex · space clears this target · esc",
+        PickerPurpose::PaintColor(_) => "name or #hex · space clears · h back · esc",
+        PickerPurpose::PaintRules => "K/J reorder · del removes · h back · esc",
     }
 }
 
