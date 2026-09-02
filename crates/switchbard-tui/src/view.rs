@@ -276,7 +276,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         height,
     };
     let lines: Vec<Line> = picker
-        .options
+        .matching()
         .iter()
         .enumerate()
         .map(|(index, (value, count))| {
@@ -305,10 +305,14 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent))
-        .title(format!(
-            " {} · enter picks · space hides ",
-            picker.field.keyword()
-        ));
+        .title(if picker.typed.is_empty() {
+            format!(
+                " {} · type or number picks · space hides ",
+                picker.field.keyword()
+            )
+        } else {
+            format!(" {}: {}▏", picker.field.keyword(), picker.typed)
+        });
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }

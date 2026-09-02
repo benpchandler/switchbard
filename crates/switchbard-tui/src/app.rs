@@ -25,7 +25,23 @@ pub enum Mode {
 pub struct ValuePicker {
     pub field: FilterField,
     pub options: Vec<(String, usize)>,
+    pub typed: String,
     pub selected: usize,
+}
+
+impl ValuePicker {
+    /// Options whose value contains what has been typed, ignoring case and spaces.
+    pub fn matching(&self) -> Vec<(String, usize)> {
+        self.options
+            .iter()
+            .filter(|(value, _)| Filter::loose_contains(value, &self.typed))
+            .cloned()
+            .collect()
+    }
+
+    fn highlighted(&self) -> Option<(String, usize)> {
+        self.matching().get(self.selected).cloned()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,7 +194,10 @@ impl App {
             .and_then(|n| self.config.columns.get(n.checked_sub(1)? as usize))
             .copied()
         else {
-            self.status = format!("no column {digit}; columns are numbered in the header");
+            self.status = format!(
+                "'{digit}' is not a column; press 1-{} as numbered in the header",
+                self.config.columns.len()
+            );
             return;
         };
         match column.filter_field() {
@@ -191,6 +210,7 @@ impl App {
                 self.picker = Some(ValuePicker {
                     field,
                     options,
+                    typed: String::new(),
                     selected: 0,
                 });
                 self.mode = Mode::PickValue;
@@ -209,15 +229,21 @@ impl App {
             self.mode = Mode::Browse;
             return;
         };
-        let last = picker.options.len().saturating_sub(1);
+        let last = picker.matching().len().saturating_sub(1);
         match event.code {
             KeyCode::Esc => {
                 self.picker = None;
                 self.mode = Mode::Browse;
             }
-            KeyCode::Char('j') | KeyCode::Down => picker.selected = (picker.selected + 1).min(last),
-            KeyCode::Char('k') | KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
-            KeyCode::Char(digit) if digit.is_ascii_digit() => {
+            KeyCode::Down => picker.selected = (picker.selected + 1).min(last),
+            KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
+            KeyCode::Char('j') if picker.typed.is_empty() => {
+                picker.selected = (picker.selected + 1).min(last)
+            }
+            KeyCode::Char('k') if picker.typed.is_empty() => {
+                picker.selected = picker.selected.saturating_sub(1)
+            }
+            KeyCode::Char(digit) if digit.is_ascii_digit() && picker.typed.is_empty() => {
                 let index = digit.to_digit(10).unwrap_or(0) as usize;
                 if (1..=picker.options.len()).contains(&index) {
                     picker.selected = index - 1;
@@ -226,6 +252,17 @@ impl App {
             }
             KeyCode::Enter => self.apply_picked_value(),
             KeyCode::Char(' ') => self.toggle_picked_exclusion(),
+            KeyCode::Backspace => {
+                picker.typed.pop();
+                picker.selected = 0;
+            }
+            KeyCode::Char(c) => {
+                picker.typed.push(c);
+                picker.selected = 0;
+                if picker.matching().len() == 1 {
+                    self.apply_picked_value();
+                }
+            }
             _ => {}
         }
     }
@@ -234,7 +271,9 @@ impl App {
         let Some(picker) = self.picker.as_ref() else {
             return;
         };
-        let (value, _) = picker.options[picker.selected].clone();
+        let Some((value, _)) = picker.highlighted() else {
+            return;
+        };
         let field = picker.field;
         let text = Filter::toggle_exclusion(&self.filter_text, field, &value);
         self.set_filter(text);
@@ -249,8 +288,11 @@ impl App {
             return;
         };
         self.mode = Mode::Browse;
-        let (value, _) = &picker.options[picker.selected];
-        let text = Filter::with_field(&self.filter_text, picker.field, value);
+        let Some((value, _)) = picker.highlighted() else {
+            self.status = format!("nothing matches '{}'", picker.typed);
+            return;
+        };
+        let text = Filter::with_field(&self.filter_text, picker.field, &value);
         self.set_filter(text);
         self.telemetry.record(
             "action",

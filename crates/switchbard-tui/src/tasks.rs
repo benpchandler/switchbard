@@ -123,6 +123,10 @@ impl Filter {
         words.join(" ")
     }
 
+    pub fn loose_contains(haystack: &str, needle: &str) -> bool {
+        loose(haystack).contains(&loose(needle))
+    }
+
     pub fn is_excluded(text: &str, field: FilterField, value: &str) -> bool {
         let word = format!("{}:!{}", field.keyword(), loose(value));
         text.split_whitespace()

@@ -338,7 +338,7 @@ fn space_in_picker_hides_a_value_and_stacks() {
     let screen = h.press(KeyCode::Char(' '));
     assert!(screen.contains("status:!todo · 1/3"), "unstack: {screen}");
     let screen = h.press(KeyCode::Esc);
-    assert!(!screen.contains("enter picks"), "{screen}");
+    assert!(!screen.contains("space hides"), "{screen}");
     assert!(screen.contains("Fix login"), "{screen}");
     assert!(!screen.contains("Add dark theme"), "{screen}");
 }
@@ -354,6 +354,39 @@ fn picking_a_value_keeps_exclusions_on_the_same_field() {
     let screen = h.press(KeyCode::Char('2'));
     assert!(
         screen.contains("status:!todo status:inprogress · 1/3"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn typing_in_the_picker_narrows_and_a_unique_match_applies_at_once() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('f'));
+    h.press(KeyCode::Char('2'));
+    let screen = h.type_text("o");
+    assert!(screen.contains("status: o▏"), "{screen}");
+    assert!(
+        screen.contains("To Do") && screen.contains("In Progress"),
+        "{screen}"
+    );
+    let screen = h.type_text("d");
+    assert!(screen.contains("status:todo · 2/3"), "{screen}");
+    h.press(KeyCode::Char('f'));
+    h.press(KeyCode::Char('3'));
+    let screen = h.type_text("m");
+    assert!(
+        screen.contains("status:todo pri:medium · 2/3"),
+        "stacked: {screen}"
+    );
+}
+
+#[test]
+fn f_then_a_letter_explains_the_column_numbers() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('f'));
+    let screen = h.press(KeyCode::Char('f'));
+    assert!(
+        screen.contains("'f' is not a column; press 1-4"),
         "{screen}"
     );
 }
