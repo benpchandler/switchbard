@@ -75,7 +75,7 @@ cd switchbard
 mise trust
 mise install
 mise run package
-open target/dist/Switchbard-v0.1.1-macos-arm64.dmg
+open "$(mise exec -- printenv CARGO_TARGET_DIR)/dist/Switchbard-v0.1.1-macos-arm64.dmg"
 ```
 
 Without mise:

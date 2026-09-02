@@ -3,8 +3,8 @@
 # Build an unsigned macOS DMG for alpha distribution.
 #
 # Output:
-#   target/dist/Switchbard-v<version>-macos-<arch>.dmg
-#   target/dist/Switchbard-v<version>-macos-<arch>.dmg.sha256
+#   ${CARGO_TARGET_DIR:-target}/dist/Switchbard-v<version>-macos-<arch>.dmg
+#   ${CARGO_TARGET_DIR:-target}/dist/Switchbard-v<version>-macos-<arch>.dmg.sha256
 #
 # This intentionally does not use Developer ID signing or notarize the app. The
 # bundle script still applies an ad-hoc signature so macOS can verify the bundle
@@ -15,8 +15,9 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 APP_NAME="Switchbard"
-TARGET_DIR="target/release"
-DIST_DIR="target/dist"
+TARGET_ROOT="${CARGO_TARGET_DIR:-target}"
+TARGET_DIR="$TARGET_ROOT/release"
+DIST_DIR="$TARGET_ROOT/dist"
 STAGING_DIR="$TARGET_DIR/dmg-staging"
 APP_BUNDLE="$TARGET_DIR/${APP_NAME}.app"
 

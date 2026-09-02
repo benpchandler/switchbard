@@ -159,14 +159,18 @@ Switchbard is a four-crate Cargo workspace with no webview — a single native
 ```sh
 mise install        # pins Rust 1.95.0 from mise.toml (mise is optional)
 mise run ci         # fmt + clippy (-D warnings) + the full test suite
-mise run bundle     # macOS: Switchbard.app in target/release
-mise run package    # macOS: DMG + sha256 in target/dist
+mise run bundle     # macOS: Switchbard.app in the shared Cargo target
+mise run package    # macOS: DMG + sha256 in the shared Cargo target
 ```
 
 Prefer plain Cargo? Every task above maps to the obvious `cargo fmt` /
 `cargo clippy` / `cargo test` / `cargo build --release` invocation. CI
 (`.github/workflows/ci.yml`) runs the mise tasks on macOS and Linux on every PR.
 Run `mise run ci` (or the equivalent Cargo commands) green before pushing.
+Mise shares rebuildable artifacts across linked worktrees through
+`CARGO_TARGET_DIR`; print the resolved location with
+`mise exec -- printenv CARGO_TARGET_DIR`. Set the variable explicitly to
+override it. Plain Cargo without the mise environment still uses `target/`.
 
 ## Contributing
 
