@@ -1157,8 +1157,8 @@ mod tests {
     fn card_height_covers_gpu_measured_worst_bounded_card() {
         const {
             assert!(
-            CARD_HEIGHT >= 142.0,
-            "GPU-measured worst bounded card must fit"
+                CARD_HEIGHT >= 142.0,
+                "GPU-measured worst bounded card must fit"
             );
         }
     }
