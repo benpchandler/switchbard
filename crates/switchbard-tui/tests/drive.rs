@@ -1100,4 +1100,14 @@ fn p_delete_clears_every_rule_and_delete_all_is_listed() {
         screen.contains("deleted 2 paint rules"),
         "mac delete key sends backspace: {screen}"
     );
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('p'));
+    let screen = h.press(KeyCode::Char('d'));
+    assert!(
+        screen.contains("deleted 2 paint rules"),
+        "pd: nothing else in the list starts with d: {screen}"
+    );
 }
