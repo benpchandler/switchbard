@@ -628,7 +628,13 @@ The control and projection health indicators are independent. Queue drafts and d
   `power-of-10-overrides.md` carries the file-by-file numbers. The `ui/backlog.rs` half
   of this entry was already discharged: it is `ui/backlog/`, 19 files, largest `board.rs`
   at ~883 LOC.
-- **Stale README hook reference (fixed on this branch):** `README.md` §Development
-  previously referenced a tracked pre-push hook (`mise run hooks:install`) removed in
-  commit `9ae32e2`, and described CI as macOS-only. Both corrected here: there is no
-  hook (run `mise run ci` manually before pushing), and CI runs macOS + Linux.
+- **Shift-left developer gates:** tracked hooks are restored without the linked-worktree
+  corruption that caused their earlier removal. Both hooks scrub Git's exported repository
+  variables; `mise run hooks-install` records a relative `.githooks` path so every worktree
+  executes its own checked-out hook. Pre-commit checks formatting, pre-push runs the complete
+  `mise run preflight` gate, and the trusted no-mistakes configuration runs that same gate
+  before delivery without duplicating it during the local gate handoff. Remote CI retains
+  independent macOS and Linux coverage, runs formatting once, and scopes the expensive live
+  mission-sidecar matrix to mission-sensitive changes.
+  The push-to-main trigger remains because `main` is not branch-protected, so it is the only
+  independent verification of the actual merge commit.

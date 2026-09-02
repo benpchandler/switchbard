@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# See pre-commit. This also prevents linked-worktree pushes from leaking their
+# transient Git environment into nested checks.
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE \
+  GIT_OBJECT_DIRECTORY GIT_NAMESPACE
+
+# The no-mistakes pipeline runs this exact gate in its lint step. Do not pay for
+# the complete suite twice when a push is only handing custody to that pipeline.
+if [[ "${1-}" == "no-mistakes" ]]; then
+  echo "pre-push: no-mistakes owns mise run preflight"
+  exit 0
+fi
+
+exec mise run preflight

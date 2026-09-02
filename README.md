@@ -157,16 +157,16 @@ Switchbard is a four-crate Cargo workspace with no webview — a single native
 ## Development
 
 ```sh
-mise install        # pins Rust 1.95.0 from mise.toml (mise is optional)
-mise run ci         # fmt + clippy (-D warnings) + the full test suite
-mise run bundle     # macOS: Switchbard.app in the shared Cargo target
-mise run package    # macOS: DMG + sha256 in the shared Cargo target
+mise install           # pins Rust 1.95.0 from mise.toml (mise is optional)
+mise run hooks-install # install fast pre-commit and complete pre-push gates
+mise run preflight     # fmt + clippy + tests, including developer-gate tests
+mise run bundle        # macOS: Switchbard.app in the shared Cargo target
+mise run package       # macOS: DMG + sha256 in the shared Cargo target
 ```
 
-Prefer plain Cargo? Every task above maps to the obvious `cargo fmt` /
-`cargo clippy` / `cargo test` / `cargo build --release` invocation. CI
-(`.github/workflows/ci.yml`) runs the mise tasks on macOS and Linux on every PR.
-Run `mise run ci` (or the equivalent Cargo commands) green before pushing.
+Prefer plain Cargo? Every task above maps to the obvious `cargo fmt` / `cargo clippy` / `cargo test` / `cargo build --release` invocation. The tracked pre-commit hook checks formatting, while pre-push runs the complete `mise run preflight` gate. Both hooks scrub Git's exported worktree variables before starting nested tools, and the installer uses a worktree-relative hook path. A push to the local `no-mistakes` gate does not duplicate preflight because that delivery pipeline runs the same trusted command before its upstream push. A hook can still be bypassed with `--no-verify`, so GitHub Actions remains the merge authority.
+
+CI runs formatting once on Linux and runs Clippy plus the full Rust tests on both macOS and Linux. The expensive live mission-sidecar proofs run only when mission code, its pinned helper, dependencies, or the CI routing contract changes. Because `main` is not branch-protected, CI also verifies the actual post-merge commit on every push to `main`.
 Mise shares rebuildable artifacts across linked worktrees through
 `CARGO_TARGET_DIR`; print the resolved location with
 `mise exec -- printenv CARGO_TARGET_DIR`. Set the variable explicitly to
@@ -174,9 +174,7 @@ override it. Plain Cargo without the mise environment still uses `target/`.
 
 ## Contributing
 
-PRs welcome. Keep changes scoped, run `mise run ci` before pushing, and include a
-one-line "why" in the commit body. The codebase favors small modules and explicit
-names — read the current source for ground truth.
+PRs welcome. Keep changes scoped, install the tracked hooks, run `mise run preflight` before pushing, and include a one-line "why" in the commit body. The codebase favors small modules and explicit names - read the current source for ground truth.
 
 ## License
 

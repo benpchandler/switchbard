@@ -18,14 +18,46 @@ env:
   XPLAN_SIDECAR_PYTHON: "3.12.11"
 
 jobs:
+  change-scope:
+    name: Validate developer gates and route expensive CI
+    runs-on: ubuntu-latest
+    outputs:
+      mission_sidecar: ${{ steps.scope.outputs.mission_sidecar }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Exercise hooks and workflow routing contracts
+        run: scripts/test-developer-gates.sh
+
+      - name: Determine whether mission-sidecar proofs are required
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          scripts/ci-mission-sidecar-diff.sh \
+            --github-output "$GITHUB_OUTPUT" "$BASE_SHA" "$HEAD_SHA"
+
   ci:
-    name: mise run ${{ matrix.task }}
+    name: ${{ matrix.os }} - mise run ${{ matrix.task }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
-        task: [test, clippy, fmt]
+        include:
+          - os: ubuntu-latest
+            task: fmt
+          - os: ubuntu-latest
+            task: clippy
+          - os: ubuntu-latest
+            task: test
+          - os: macos-latest
+            task: clippy
+          - os: macos-latest
+            task: test
     steps:
       - uses: actions/checkout@v4
 
@@ -51,6 +83,8 @@ jobs:
 
   mission-sidecar:
     name: mission-sidecar-${{ matrix.target }}-${{ matrix.arch }}
+    needs: change-scope
+    if: needs.change-scope.outputs.mission_sidecar == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

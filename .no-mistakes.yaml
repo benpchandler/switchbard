@@ -1,0 +1,5 @@
+# Commands are security-sensitive and are intentionally read from the trusted
+# default branch. Once this file lands on main, every later delivery pipeline
+# runs the same complete local gate as the pre-push hook before it may push.
+commands:
+  lint: "mise run preflight"
