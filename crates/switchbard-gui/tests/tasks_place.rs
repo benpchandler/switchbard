@@ -136,6 +136,18 @@ fn cold_task_model_shows_loading_instead_of_a_false_empty_result() {
     assert!(harness
         .query_by_label("Loading tasks from tracked repositories…")
         .is_some());
+    let loading_chip = harness.get_by_label("Loading task data").rect();
+    let loading_copy = harness
+        .get_by_label("Loading tasks from tracked repositories…")
+        .rect();
+    assert!(
+        loading_chip.width() < 180.0,
+        "the loading chip must stay compact instead of filling the workspace"
+    );
+    assert!(
+        (loading_chip.center().x - loading_copy.center().x).abs() < 2.0,
+        "the loading chip and its explanatory copy must share a center line"
+    );
     assert!(harness
         .query_by_label(
             "No tracked worktrees have a backlog/config.yml or backlog/tasks directory."

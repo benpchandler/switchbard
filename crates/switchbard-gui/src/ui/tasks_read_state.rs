@@ -15,21 +15,21 @@ pub fn render_empty(app: &HiveApp, ui: &mut egui::Ui, heading: &str, state: &Tas
         ui.add_space(8.0);
         match state {
             TasksReadState::InitialLoading => {
-                status_pill(ui, StatusKind::Info, "Loading task data", None);
+                centered_status_pill(ui, StatusKind::Info, "Loading task data");
                 ui.label(
                     egui::RichText::new("Loading tasks from tracked repositories…")
                         .color(theme::muted_text()),
                 );
             }
             TasksReadState::Refreshing => {
-                status_pill(ui, StatusKind::Info, "Refreshing task data", None);
+                centered_status_pill(ui, StatusKind::Info, "Refreshing task data");
                 ui.label(
                     egui::RichText::new("Refreshing tasks from tracked repositories…")
                         .color(theme::muted_text()),
                 );
             }
             TasksReadState::Stale { failed_repos } => {
-                status_pill(ui, StatusKind::Warn, "Task data unavailable", None);
+                centered_status_pill(ui, StatusKind::Warn, "Task data unavailable");
                 ui.add_space(4.0);
                 ui.label(
                     egui::RichText::new(failure_message(*failed_repos, false))
@@ -49,6 +49,24 @@ pub fn render_empty(app: &HiveApp, ui: &mut egui::Ui, heading: &str, state: &Tas
                 );
             }
         }
+    });
+}
+
+fn centered_status_pill(ui: &mut egui::Ui, kind: StatusKind, text: &str) {
+    let text_width = ui
+        .painter()
+        .layout_no_wrap(
+            text.to_string(),
+            egui::TextStyle::Small.resolve(ui.style()),
+            kind.color(),
+        )
+        .size()
+        .x;
+    let pill_width = text_width + 14.0;
+    let leading_space = ((ui.available_width() - pill_width) / 2.0).max(0.0);
+    ui.horizontal(|ui| {
+        ui.add_space(leading_space);
+        status_pill(ui, kind, text, None);
     });
 }
 
