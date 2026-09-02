@@ -146,8 +146,7 @@ fn render_toolbar_actions(
         .on_hover_text("Reload Backlog tasks from tracked worktrees")
         .clicked()
     {
-        app.backlog_kick.notify();
-        app.backlog_status.set("refreshing Backlog repos");
+        app.request_tasks_refresh();
     }
     if ui
         .button("+ Task")

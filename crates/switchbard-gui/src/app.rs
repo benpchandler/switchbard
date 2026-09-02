@@ -33,7 +33,7 @@ use crate::runtime::{
     AgentContextViewState, AgentsSection, BacklogTaskKey, BacklogViewState, BoardMoveOutcome,
     CommandViewState, ConfirmBulkRemoveWorktrees, ConfirmRemoveWorktree, DigestViewState,
     DispatchesViewState, GoalsPlaceState, LandingEntry, OrderingState, PickerState, Place,
-    TasksView, WorktreeMeta, WorktreeSizeEntry,
+    TasksReadState, TasksView, WorktreeMeta, WorktreeSizeEntry,
 };
 use crate::sync::{Kick, Progress, Status};
 use crate::ui;
@@ -109,6 +109,10 @@ pub struct HiveApp {
     pub services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>>,
     pub agent_contexts: Arc<Mutex<HashMap<PathBuf, AgentContextMap>>>,
     pub backlog_repos: Arc<Mutex<HashMap<PathBuf, BacklogRepo>>>,
+    /// Explicit lifecycle for `backlog_repos`. Keeping this separate from
+    /// the cache prevents an empty map from ambiguously meaning either
+    /// "still loading", "load failed", or "successfully loaded no rows".
+    pub tasks_read_state: Arc<Mutex<TasksReadState>>,
     /// task-42, post-review revision: one board drag-drop's completion
     /// report, keyed by the moved task and written by
     /// `spawn_board_move_save`'s background thread. `board::
@@ -498,6 +502,7 @@ impl HiveApp {
             services: Arc::new(Mutex::new(HashMap::new())),
             agent_contexts: Arc::new(Mutex::new(HashMap::new())),
             backlog_repos: Arc::new(Mutex::new(HashMap::new())),
+            tasks_read_state: Arc::new(Mutex::new(TasksReadState::default())),
             board_move_outcomes: Arc::new(Mutex::new(HashMap::new())),
             board_move_started: Arc::new(Mutex::new(HashMap::new())),
             task_write_locks: Arc::new(Mutex::new(HashMap::new())),
@@ -580,6 +585,7 @@ impl HiveApp {
                 services: self.services.clone(),
                 agent_contexts: self.agent_contexts.clone(),
                 backlog_repos: self.backlog_repos.clone(),
+                tasks_read_state: self.tasks_read_state.clone(),
                 dispatch_runs: self.dispatch_runs.clone(),
                 agent_sessions: self.agent_sessions.clone(),
                 ordering: self.ordering.clone(),
@@ -614,6 +620,19 @@ impl HiveApp {
 
     pub fn backlog_repos_snapshot(&self) -> HashMap<PathBuf, BacklogRepo> {
         self.backlog_repos.lock().unwrap().clone()
+    }
+
+    pub fn tasks_read_state_snapshot(&self) -> TasksReadState {
+        self.tasks_read_state.lock().unwrap().clone()
+    }
+
+    /// Start a user-visible refresh without clearing the current task rows.
+    /// The backlog worker will replace this transitional state with `Ready`
+    /// or `Stale` when its next scan finishes.
+    pub(crate) fn request_tasks_refresh(&self) {
+        *self.tasks_read_state.lock().unwrap() = TasksReadState::Refreshing;
+        self.backlog_kick.notify();
+        self.backlog_status.set("refreshing Backlog repos");
     }
 
     pub fn dispatch_runs_snapshot(&self) -> HashMap<BacklogTaskKey, DispatchRun> {
@@ -918,6 +937,9 @@ impl HiveApp {
     fn after_repos_mutation(&self, status: impl Into<String>) {
         self.save_config();
         self.rebuild_worktrees();
+        // The task model's input set just changed. Preserve any current rows
+        // until the backlog worker publishes the new authoritative set.
+        *self.tasks_read_state.lock().unwrap() = TasksReadState::Refreshing;
         self.kick_all();
         self.config_status.set(status);
     }

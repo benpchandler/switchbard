@@ -18,5 +18,6 @@ pub mod path_display;
 pub mod places;
 pub mod settings;
 pub mod sidebar;
+pub mod tasks_read_state;
 pub mod theme;
 pub mod top_bar;

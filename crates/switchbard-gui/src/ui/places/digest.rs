@@ -44,6 +44,7 @@ use switchbard_core::dispatch_inspect::now_unix;
 use switchbard_core::{AttributedListener, BacklogTask, DispatchOptions, Repo, WorktreeRef};
 
 pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
+    let read_state = app.tasks_read_state_snapshot();
     let frame = egui::Frame::central_panel(&ui.ctx().style_of(ui.ctx().theme()))
         .inner_margin(egui::Margin::same(12));
     egui::CentralPanel::default().frame(frame).show(ui, |ui| {
@@ -52,7 +53,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
         // which the perf smoke (`digest_perf_smoke.rs`) caught costing real
         // per-frame milliseconds even before doing anything with the result.
         if app.backlog_repos.lock().unwrap().is_empty() {
-            render_no_repos(ui);
+            crate::ui::tasks_read_state::render_empty(app, ui, "Digest", &read_state);
             return;
         }
         // One pass over the backlog cache for both task-derived sections
@@ -63,6 +64,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 render_header(ui);
+                crate::ui::tasks_read_state::render_retained_rows_notice(ui, &read_state);
                 ui.add_space(8.0);
                 crate::ui::backlog::digest::render_goal_cards_for_digest_place(app, ui);
                 ui.add_space(14.0);
@@ -70,20 +72,6 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
                 ui.add_space(14.0);
                 render_attention_feed(app, ui, run_rows);
             });
-    });
-}
-
-fn render_no_repos(ui: &mut egui::Ui) {
-    ui.vertical_centered(|ui| {
-        ui.add_space(80.0);
-        ui.heading("Digest");
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new(
-                "No tracked worktrees have a backlog/config.yml or backlog/tasks directory.",
-            )
-            .color(theme::muted_text()),
-        );
     });
 }
 

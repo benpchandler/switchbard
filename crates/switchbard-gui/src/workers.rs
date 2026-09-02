@@ -67,7 +67,7 @@ use crate::mission_control::MissionControlModel;
 use crate::runtime::worktrees::expand_worktrees;
 use crate::runtime::{
     attached_processes_for, is_retired_worktree, ActiveRun, BacklogTaskKey, FileListSummary,
-    LandingEntry, OrderingState, WorktreeMeta, WorktreeSizeEntry,
+    LandingEntry, OrderingState, TasksReadState, WorktreeMeta, WorktreeSizeEntry,
 };
 use crate::sync::Kick;
 use eframe::egui;
@@ -246,6 +246,7 @@ pub struct Channels {
     pub services: Arc<Mutex<HashMap<PathBuf, Vec<DetectedService>>>>,
     pub agent_contexts: Arc<Mutex<HashMap<PathBuf, AgentContextMap>>>,
     pub backlog_repos: Arc<Mutex<HashMap<PathBuf, BacklogRepo>>>,
+    pub tasks_read_state: Arc<Mutex<TasksReadState>>,
     pub dispatch_runs: Arc<Mutex<HashMap<BacklogTaskKey, DispatchRun>>>,
     /// TASK-98: live interactive `claude`/`codex` sessions, refreshed by
     /// `spawn_agent_sessions` — see that worker's doc.
@@ -937,19 +938,81 @@ pub(crate) fn backlog_repo_roots(repos: &[Repo]) -> Vec<PathBuf> {
         .collect()
 }
 
+/// One scan's successful snapshots plus the roots whose task source could
+/// not be read. Failed roots are intentionally absent from `repos`: the
+/// merge step treats that absence as "keep the cached snapshot", while the
+/// explicit failure list prevents the UI from calling the result fresh.
+#[derive(Debug, Default)]
+pub(crate) struct TasksReadResult {
+    repos: HashMap<PathBuf, BacklogRepo>,
+    unreadable_roots: Vec<PathBuf>,
+}
+
 /// Load every root that actually is a Backlog repo. Split from the worker
-/// loop so the root-set semantics above are testable without threads.
-pub(crate) fn collect_backlog_repos(roots: &[PathBuf]) -> HashMap<PathBuf, BacklogRepo> {
+/// loop so the root-set semantics above are testable without threads. A
+/// root that is not a Backlog repo is simply not a task source here;
+/// whether its absence means "failed" depends on the cache, which only
+/// `apply_tasks_read` can see.
+pub(crate) fn collect_backlog_repos(roots: &[PathBuf]) -> TasksReadResult {
     let mut repos = HashMap::new();
+    let mut unreadable_roots = Vec::new();
     for root in roots {
         if !is_backlog_repo(root) {
             continue;
         }
-        if let Ok(repo) = load_backlog_repo(root) {
-            repos.insert(root.clone(), repo);
+        match load_backlog_repo(root) {
+            Ok(repo) => {
+                repos.insert(root.clone(), repo);
+            }
+            Err(error) => {
+                unreadable_roots.push(root.clone());
+                eprintln!(
+                    "Switchbard: failed to refresh tasks from {}: {error}",
+                    root.display()
+                );
+            }
         }
     }
-    repos
+    TasksReadResult {
+        repos,
+        unreadable_roots,
+    }
+}
+
+/// Publish one scan atomically from the read model's point of view. A
+/// failed source contributes no fresh entry, so `merge_backlog_repos` keeps
+/// its last-known cached rows; the returned lifecycle makes that retention
+/// visible as stale rather than silently presenting it as current.
+///
+/// A source can fail two ways: its backlog read errored
+/// (`unreadable_roots`), or it stopped being a Backlog repo entirely
+/// (backlog/ deleted, a checkout without it) while last-known rows are
+/// still cached — the "vanished" count below. A tracked repo that never
+/// contributed rows is not a task source and counts toward neither.
+fn apply_tasks_read(
+    cache: &mut HashMap<PathBuf, BacklogRepo>,
+    roots: &[PathBuf],
+    result: TasksReadResult,
+) -> TasksReadState {
+    let TasksReadResult {
+        repos,
+        unreadable_roots,
+    } = result;
+    let vanished_sources = roots
+        .iter()
+        .filter(|root| {
+            cache.contains_key(*root)
+                && !repos.contains_key(*root)
+                && !unreadable_roots.contains(root)
+        })
+        .count();
+    merge_backlog_repos(cache, roots, repos);
+    let failed_repos = unreadable_roots.len() + vanished_sources;
+    if failed_repos == 0 {
+        TasksReadState::Ready
+    } else {
+        TasksReadState::Stale { failed_repos }
+    }
 }
 
 /// TASK-29 fix wave (owner-reported: a task created via the Create modal
@@ -1104,8 +1167,12 @@ fn spawn_backlog(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
         loop {
             let repos = ch.repos.lock().unwrap().clone();
             let roots = backlog_repo_roots(&repos);
-            let backlog_repos = collect_backlog_repos(&roots);
-            merge_backlog_repos(&mut ch.backlog_repos.lock().unwrap(), &roots, backlog_repos);
+            let result = collect_backlog_repos(&roots);
+            let read_state = {
+                let mut cache = ch.backlog_repos.lock().unwrap();
+                apply_tasks_read(&mut cache, &roots, result)
+            };
+            *ch.tasks_read_state.lock().unwrap() = read_state;
             refresh_dispatch_runs(&ch);
 
             // The unified triage overlay lives in whichever tracked repo hosts
@@ -1379,10 +1446,15 @@ mod tests {
             vec![primary.clone()],
             "one root per repo, primary only"
         );
-        let repos = collect_backlog_repos(&roots);
-        assert_eq!(repos.len(), 1, "one repo despite the linked worktree");
-        assert!(repos.contains_key(&primary));
-        assert_eq!(repos[&primary].tasks.len(), 1);
+        let result = collect_backlog_repos(&roots);
+        assert_eq!(
+            result.repos.len(),
+            1,
+            "one repo despite the linked worktree"
+        );
+        assert!(result.repos.contains_key(&primary));
+        assert_eq!(result.repos[&primary].tasks.len(), 1);
+        assert!(result.unreadable_roots.is_empty());
     }
 
     /// `task_titles` stands in for "what this snapshot of the repo
@@ -1513,6 +1585,69 @@ mod tests {
             !cache.contains_key(&removed),
             "an untracked repo's stale entry should be dropped, not linger"
         );
+    }
+
+    #[test]
+    fn failed_task_read_keeps_last_known_rows_and_marks_model_stale() {
+        let root = PathBuf::from("/fixture/repo");
+        let mut cache = HashMap::new();
+        cache.insert(
+            root.clone(),
+            fixture_project(&root, 100, &["Last-known task"]),
+        );
+
+        let state = apply_tasks_read(
+            &mut cache,
+            std::slice::from_ref(&root),
+            TasksReadResult {
+                repos: HashMap::new(),
+                unreadable_roots: vec![root.clone()],
+            },
+        );
+
+        assert_eq!(state, TasksReadState::Stale { failed_repos: 1 });
+        assert_eq!(cache[&root].tasks[0].title, "Last-known task");
+    }
+
+    /// A tracked repo that stops satisfying `is_backlog_repo` (backlog/
+    /// deleted, a checkout without it) contributes no fresh entry and no
+    /// read error. Its last-known rows must stay usable but the scan must
+    /// publish `Stale`, not `Ready` — before this fix the vanished source
+    /// was skipped silently and its phantom rows rendered as fresh forever.
+    #[test]
+    fn vanished_task_source_keeps_last_known_rows_and_marks_model_stale() {
+        let root = PathBuf::from("/fixture/repo");
+        let mut cache = HashMap::new();
+        cache.insert(
+            root.clone(),
+            fixture_project(&root, 100, &["Last-known task"]),
+        );
+
+        let state = apply_tasks_read(
+            &mut cache,
+            std::slice::from_ref(&root),
+            TasksReadResult::default(),
+        );
+
+        assert_eq!(state, TasksReadState::Stale { failed_repos: 1 });
+        assert_eq!(cache[&root].tasks[0].title, "Last-known task");
+    }
+
+    /// A tracked repo that never contributed rows (no backlog/ at all) is
+    /// not a task source — it must not hold the whole model at `Stale`.
+    #[test]
+    fn never_backlog_tracked_repo_does_not_count_as_a_failed_source() {
+        let root = PathBuf::from("/fixture/plain-repo");
+        let mut cache = HashMap::new();
+
+        let state = apply_tasks_read(
+            &mut cache,
+            std::slice::from_ref(&root),
+            TasksReadResult::default(),
+        );
+
+        assert_eq!(state, TasksReadState::Ready);
+        assert!(cache.is_empty());
     }
 
     // ── landing-stage worker (feat/landing-stage) ───────────────────────

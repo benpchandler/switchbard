@@ -229,6 +229,18 @@ fn shots_for_theme(theme: ThemeChoice) {
         snapshot(&mut h, &format!("tasks_place_board{suffix}"));
     }
 
+    // Board at the same narrow breakpoint: the icon rail, wrapped facets,
+    // horizontal columns, fixed card slots, and detail-rail collapse must
+    // coexist without obscuring the first usable column.
+    {
+        let mut app = app_with(theme);
+        app.tasks_place.view_mode = switchbard_gui::ui::places::tasks::state::TasksViewMode::Board;
+        let mut h = harness(app);
+        h.set_size(egui::vec2(700.0, 800.0));
+        h.run();
+        snapshot(&mut h, &format!("tasks_place_board_narrow{suffix}"));
+    }
+
     // Narrow width: the sidebar collapses to the icon rail (mock §7d) and
     // the facets row wraps.
     {

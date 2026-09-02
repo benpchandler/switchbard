@@ -18,7 +18,7 @@ use switchbard_core::{
     WorktreeRef,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{BacklogTaskSortKey, Place, TasksView};
+use switchbard_gui::runtime::{BacklogTaskSortKey, Place, TasksReadState, TasksView};
 use switchbard_gui::ui::places::tasks::fields::TaskField;
 use switchbard_gui::ui::places::tasks::state::{FilterPredicate, TasksViewMode};
 
@@ -125,6 +125,63 @@ fn two_repo_tasks_app(mut config: Config) -> HiveApp {
 // ---------------------------------------------------------------------
 // Generic group-by, with computed roll-up counts
 // ---------------------------------------------------------------------
+
+#[test]
+fn cold_task_model_shows_loading_instead_of_a_false_empty_result() {
+    let mut app = seeded_app();
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::All;
+    let harness = harness(app);
+
+    assert!(harness
+        .query_by_label("Loading tasks from tracked repositories…")
+        .is_some());
+    let loading_chip = harness.get_by_label("Loading task data").rect();
+    let loading_copy = harness
+        .get_by_label("Loading tasks from tracked repositories…")
+        .rect();
+    assert!(
+        loading_chip.width() < 180.0,
+        "the loading chip must stay compact instead of filling the workspace"
+    );
+    assert!(
+        (loading_chip.center().x - loading_copy.center().x).abs() < 2.0,
+        "the loading chip and its explanatory copy must share a center line"
+    );
+    assert!(harness
+        .query_by_label(
+            "No tracked worktrees have a backlog/config.yml or backlog/tasks directory."
+        )
+        .is_none());
+}
+
+#[test]
+fn stale_task_model_keeps_last_known_rows_visible() {
+    let app = tasks_app(vec![task("TASK-1", "Last-known task", "To Do")]);
+    *app.tasks_read_state.lock().unwrap() = TasksReadState::Stale { failed_repos: 1 };
+    let harness = harness(app);
+
+    assert!(harness.query_by_label("Last-known task").is_some());
+    assert!(harness.query_by_label("Task data stale").is_some());
+    assert!(harness
+        .query_by_label("1 task source could not be refreshed. Showing last-known rows.")
+        .is_some());
+}
+
+#[test]
+fn ready_task_model_can_report_a_real_empty_result() {
+    let mut app = seeded_app();
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::All;
+    *app.tasks_read_state.lock().unwrap() = TasksReadState::Ready;
+    let harness = harness(app);
+
+    assert!(harness
+        .query_by_label(
+            "No tracked worktrees have a backlog/config.yml or backlog/tasks directory."
+        )
+        .is_some());
+}
 
 #[test]
 fn group_by_status_shows_computed_header_roll_ups() {
@@ -376,6 +433,31 @@ fn adding_a_filter_predicate_narrows_the_visible_tasks() {
         harness.query_by_label("Status: In Progress ✕").is_some(),
         "the active predicate should render as a removable chip"
     );
+}
+
+#[test]
+fn a_positive_scope_with_no_filter_matches_renders_an_honest_empty_state() {
+    let mut app = tasks_app(vec![task("TASK-1", "Only scoped task", "To Do")]);
+    app.tasks_place.group_by = None;
+    app.tasks_place.filters = vec![FilterPredicate {
+        field: TaskField::Status,
+        value: "In Review".to_string(),
+    }];
+
+    let mut harness = harness(app);
+    harness.run();
+
+    assert!(
+        harness
+            .query_by_label("No tasks match the current filters")
+            .is_some(),
+        "a loaded positive scope narrowed to zero must explain the empty body"
+    );
+    assert!(
+        harness.query_by_label("0 of 1 · 1 open").is_some(),
+        "the summary must distinguish zero filter matches from one open scoped task"
+    );
+    assert!(harness.query_by_label("TASK-1  Only scoped task").is_none());
 }
 
 #[test]
