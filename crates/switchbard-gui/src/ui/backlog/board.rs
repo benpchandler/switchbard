@@ -1147,18 +1147,17 @@ fn card_age(task: &BacklogTask) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CARD_HEIGHT, CARD_ROW_HEIGHT, EMPTY_COLUMN_ADD_HEIGHT};
+    use super::CARD_HEIGHT;
 
+    /// Pins `CARD_HEIGHT` above the GPU-measured worst bounded card
+    /// (142px, see the constant's doc). Behavior — cards actually fitting
+    /// their virtual-row slot and the empty-column affordance — is guarded
+    /// by the `debug_assert` in `paint_card` and the kittest journeys.
     #[test]
-    fn virtual_board_geometry_has_headroom_and_preserves_empty_affordance() {
-        let card_height = CARD_HEIGHT;
-        let row_height = CARD_ROW_HEIGHT;
-        let empty_add_height = EMPTY_COLUMN_ADD_HEIGHT;
-        assert_eq!(row_height - card_height, 4.0);
+    fn card_height_covers_gpu_measured_worst_bounded_card() {
         assert!(
-            card_height >= 142.0,
+            CARD_HEIGHT >= 142.0,
             "GPU-measured worst bounded card must fit"
         );
-        assert_eq!(empty_add_height, 112.0);
     }
 }
