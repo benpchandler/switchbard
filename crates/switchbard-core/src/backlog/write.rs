@@ -654,7 +654,11 @@ fn top_level_heading<'l>(
     match section_marker_terminator(lines[i].trim()) {
         Some("BEGIN") => *marker_depth = marker_depth.saturating_add(1),
         Some("END") => *marker_depth = marker_depth.saturating_sub(1),
-        _ => return (*marker_depth == 0).then(|| heading_title(&lines[i])).flatten(),
+        _ => {
+            return (*marker_depth == 0)
+                .then(|| heading_title(&lines[i]))
+                .flatten()
+        }
     }
     None
 }
@@ -670,9 +674,7 @@ fn section_span(lines: &[String], inside: &[bool], heading: &str) -> Option<(usi
             .is_some_and(|t| t.eq_ignore_ascii_case(heading))
     })?;
     let mut end = start + 1;
-    while end < lines.len()
-        && top_level_heading(lines, inside, end, &mut marker_depth).is_none()
-    {
+    while end < lines.len() && top_level_heading(lines, inside, end, &mut marker_depth).is_none() {
         end += 1;
     }
     while end > start + 1 && lines[end - 1].trim().is_empty() {
