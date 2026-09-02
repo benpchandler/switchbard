@@ -139,6 +139,11 @@ impl Filter {
             .all(|term| term.allows(&values))
     }
 
+    /// The normalized spelling terms use on disk: `To Do` becomes `todo`.
+    pub fn loose_key(text: &str) -> String {
+        loose(text)
+    }
+
     pub fn loose_contains(haystack: &str, needle: &str) -> bool {
         loose(haystack).contains(&loose(needle))
     }

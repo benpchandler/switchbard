@@ -12,7 +12,7 @@ use switchbard_core::BacklogTask;
 
 use crate::app::{App, ColumnPurpose, Mode, Pane, PickerPurpose, ValuePicker};
 use crate::config::{Action, Column};
-use crate::paint;
+use crate::paint::{self, PaintRule};
 use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
@@ -327,6 +327,9 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                     Column::parse(value).is_some_and(|column| app.columns.contains(&column))
                 }
                 PickerPurpose::PaintTarget => false,
+                PickerPurpose::PaintByField(field) => {
+                    paint::rule_for_value(&app.paint, field.keyword(), value).is_some()
+                }
                 PickerPurpose::PaintColor(target) => app
                     .paint
                     .iter()
@@ -342,11 +345,21 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             if !shown {
                 style = style.fg(theme.dim);
             }
-            if matches!(picker.purpose, PickerPurpose::PaintColor(_)) {
+            match &picker.purpose {
                 // Show the color itself: this is what the painted text will look like.
-                if let Ok(color) = ratatui::style::Color::from_str(value) {
-                    style = style.fg(color);
+                PickerPurpose::PaintColor(_) => {
+                    if let Ok(color) = ratatui::style::Color::from_str(value) {
+                        style = style.fg(color);
+                    }
                 }
+                PickerPurpose::PaintByField(field) => {
+                    if let Some(color) = paint::rule_for_value(&app.paint, field.keyword(), value)
+                        .and_then(PaintRule::parsed_color)
+                    {
+                        style = style.fg(color);
+                    }
+                }
+                _ => {}
             }
             let mark = if shown { "✓" } else { " " };
             Line::from(vec![
@@ -414,6 +427,13 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                         " columns · digit/name toggles · space keeps open · K/J move ".to_string()
                     }
                     (PickerPurpose::Columns, false) => format!(" columns: {}▏", picker.typed),
+                    (PickerPurpose::PaintByField(field), true) => format!(
+                        " by {} · pick a value, then its color · esc when done ",
+                        field.keyword()
+                    ),
+                    (PickerPurpose::PaintByField(field), false) => {
+                        format!(" by {}: {}▏", field.keyword(), picker.typed)
+                    }
                     (PickerPurpose::PaintTarget, true) => " paint what? ".to_string(),
                     (PickerPurpose::PaintTarget, false) => {
                         format!(" paint what? {}▏", picker.typed)
