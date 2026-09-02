@@ -31,4 +31,6 @@ Slice => commit on `feat/tui` => `cargo install` => the running sbt re-execs its
 `label:tui` tasks (press `4`) at the start of the next slice.
 
 ## Gates
-`cargo test -p switchbard-tui`, `cargo clippy -p switchbard-tui --all-targets -- -D warnings`, `cargo fmt`.
+Per slice: `mise run tui-install` (fmt, clippy, tests for this crate only, then install).
+Never run `mise run ci` mid-loop: its RUSTFLAGS differ from cargo install, so the
+whole workspace including the GUI rebuilds. Run it once before merge.
