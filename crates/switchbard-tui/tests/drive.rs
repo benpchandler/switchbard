@@ -137,10 +137,15 @@ fn field_filters_and_number_keys_switch_views() {
     let screen = h.type_text("label:auth");
     assert!(screen.contains("1/3"), "{screen}");
     h.press(KeyCode::Enter);
-    let screen = h.press(KeyCode::Char('1'));
-    assert!(screen.contains("active · 1/3"), "{screen}");
+    let screen = h.press(KeyCode::Char('3'));
+    assert!(
+        screen.contains("active · status:inprogress · 1/3"),
+        "{screen}"
+    );
     assert!(screen.contains("Fix login"), "{screen}");
     let screen = h.press(KeyCode::Char('2'));
+    assert!(screen.contains("todo · status:todo · 2/3"), "{screen}");
+    let screen = h.press(KeyCode::Char('1'));
     assert!(screen.contains("all · 3/3"), "{screen}");
 }
 
@@ -235,4 +240,62 @@ fn external_task_edits_show_up_on_tick() {
     let screen = h.render();
     assert!(screen.contains("Task added by sb"), "{screen}");
     assert!(screen.contains("4/4"), "{screen}");
+}
+
+#[test]
+fn column_headers_are_numbered() {
+    let mut h = Harness::new();
+    let screen = h.render();
+    assert!(screen.contains("1 id"), "{screen}");
+    assert!(screen.contains("2 status"), "{screen}");
+    assert!(screen.contains("4 title"), "{screen}");
+}
+
+#[test]
+fn f_then_column_number_picks_a_value_from_the_data() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('f'));
+    let screen = h.press(KeyCode::Char('2'));
+    assert!(screen.contains("1 To Do"), "{screen}");
+    assert!(screen.contains("2 In Progress"), "{screen}");
+    let screen = h.press(KeyCode::Char('j'));
+    let screen_after_enter = h.press(KeyCode::Enter);
+    assert!(
+        !screen_after_enter.contains("1 To Do"),
+        "picker still open: {screen_after_enter}"
+    );
+    assert!(
+        screen_after_enter.contains("status:inprogress · 1/3"),
+        "{screen} {screen_after_enter}"
+    );
+    h.press(KeyCode::Char('f'));
+    h.press(KeyCode::Char('2'));
+    let screen = h.press(KeyCode::Char('1'));
+    assert!(
+        screen.contains("status:todo · 2/3"),
+        "replacing the status term: {screen}"
+    );
+}
+
+#[test]
+fn f_on_a_free_text_column_drops_into_search() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('f'));
+    h.press(KeyCode::Char('4'));
+    let screen = h.type_text("guide");
+    assert!(screen.contains("/guide"), "{screen}");
+    assert!(screen.contains("1/3"), "{screen}");
+}
+
+#[test]
+fn colon_shows_completions_and_tab_accepts() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char(':'));
+    let screen = h.type_text("b");
+    assert!(screen.contains(":b▏   bug"), "{screen}");
+    let screen = h.press(KeyCode::Tab);
+    assert!(screen.contains(":bug▏"), "{screen}");
+    h.type_text(" tab test");
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("filed TASK-4"), "{screen}");
 }

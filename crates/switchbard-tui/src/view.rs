@@ -4,11 +4,11 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState, Wrap};
+use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
 use ratatui::Frame;
 use switchbard_core::BacklogTask;
 
-use crate::app::{App, Mode, Pane};
+use crate::app::{App, Mode, Pane, ValuePicker};
 use crate::config::{Action, Column};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -27,6 +27,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
     draw_footer(frame, app, footer);
+    if let Some(picker) = &app.picker {
+        draw_picker(frame, app, picker, body);
+    }
     app.last_screen = buffer_text(frame.buffer_mut());
 }
 
@@ -37,8 +40,13 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_default();
+    let filter = if app.filter_text.is_empty() {
+        String::new()
+    } else {
+        format!("{} · ", app.filter_text)
+    };
     let title = format!(
-        " {repo} · {} · {}/{} ",
+        " {repo} · {} · {filter}{}/{} ",
         app.view,
         app.visible.len(),
         app.total_tasks()
@@ -47,9 +55,10 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
         app.config
             .columns
             .iter()
-            .map(|column| Cell::from(column.header())),
+            .enumerate()
+            .map(|(index, column)| Cell::from(format!("{} {}", index + 1, column.header()))),
     )
-    .style(Style::default().fg(theme.dim));
+    .style(Style::default().fg(theme.header));
     let rows = (0..app.visible.len()).filter_map(|index| {
         let task = app.task(index)?;
         Some(Row::new(
@@ -220,7 +229,15 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(":", Style::default().fg(theme.accent)),
             Span::raw(app.input.clone()),
             Span::styled("▏", Style::default().fg(theme.accent)),
+            Span::styled(
+                format!("   {}", app.command_completions().join("  ")),
+                Style::default().fg(theme.dim),
+            ),
         ]),
+        Mode::PickColumn | Mode::PickValue => Line::from(Span::styled(
+            app.status.clone(),
+            Style::default().fg(theme.accent),
+        )),
         Mode::Browse if !app.status.is_empty() => Line::from(Span::styled(
             app.status.clone(),
             Style::default().fg(theme.accent),
@@ -238,6 +255,53 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         )),
     };
     frame.render_widget(Paragraph::new(line), area);
+}
+
+fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
+    let theme = &app.config.theme;
+    let width = picker
+        .options
+        .iter()
+        .map(|(value, _)| value.len() + 10)
+        .max()
+        .unwrap_or(20)
+        .max(24)
+        .min(body.width.saturating_sub(4) as usize) as u16;
+    let height = (picker.options.len() as u16 + 2).min(body.height.saturating_sub(2));
+    let area = Rect {
+        x: body.x + 2,
+        y: body.y + 2,
+        width,
+        height,
+    };
+    let lines: Vec<Line> = picker
+        .options
+        .iter()
+        .enumerate()
+        .map(|(index, (value, count))| {
+            let style = if index == picker.selected {
+                Style::default()
+                    .bg(theme.selected)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            Line::from(vec![
+                Span::styled(format!("{} ", index + 1), Style::default().fg(theme.accent)),
+                Span::styled(
+                    format!("{value:<width$}", width = width as usize - 8),
+                    style,
+                ),
+                Span::styled(format!("{count:>3}"), Style::default().fg(theme.dim)),
+            ])
+        })
+        .collect();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent))
+        .title(format!(" {} ", picker.field.keyword()));
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 pub fn buffer_text(buffer: &Buffer) -> String {

@@ -8,7 +8,7 @@ use switchbard_core::BacklogTask;
 
 use crate::config::{self, Action, Config, KeyChord};
 use crate::report::{self, ReportContext, ReportKind};
-use crate::tasks::{self, Filter};
+use crate::tasks::{self, Filter, FilterField};
 use crate::telemetry::Telemetry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +16,16 @@ pub enum Mode {
     Browse,
     Filter,
     Command,
+    PickColumn,
+    PickValue,
+}
+
+/// The `f <column>` picker: which field, its live values, and the cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValuePicker {
+    pub field: FilterField,
+    pub options: Vec<(String, usize)>,
+    pub selected: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +49,7 @@ pub struct App {
     pub mode: Mode,
     pub input: String,
     pub pane: Pane,
+    pub picker: Option<ValuePicker>,
     pub status: String,
     pub last_screen: String,
     pub page_size: usize,
@@ -67,6 +78,7 @@ impl App {
             mode: Mode::Browse,
             input: String::new(),
             pane: Pane::None,
+            picker: None,
             status: String::new(),
             last_screen: String::new(),
             page_size: 20,
@@ -126,7 +138,101 @@ impl App {
             Mode::Browse => self.handle_browse_key(event),
             Mode::Filter => self.handle_filter_key(event),
             Mode::Command => self.handle_command_key(event),
+            Mode::PickColumn => self.handle_pick_column_key(event),
+            Mode::PickValue => self.handle_pick_value_key(event),
         }
+    }
+
+    fn handle_pick_column_key(&mut self, event: KeyEvent) {
+        self.mode = Mode::Browse;
+        let KeyCode::Char(digit) = event.code else {
+            return;
+        };
+        let Some(column) = digit
+            .to_digit(10)
+            .and_then(|n| self.config.columns.get(n.checked_sub(1)? as usize))
+            .copied()
+        else {
+            self.status = format!("no column {digit}; columns are numbered in the header");
+            return;
+        };
+        match column.filter_field() {
+            Some(field) => {
+                let options = tasks::field_values(&self.tasks, field);
+                if options.is_empty() {
+                    self.status = format!("no {} values to pick from", field.keyword());
+                    return;
+                }
+                self.picker = Some(ValuePicker {
+                    field,
+                    options,
+                    selected: 0,
+                });
+                self.mode = Mode::PickValue;
+            }
+            None => {
+                self.mode = Mode::Filter;
+                self.status = format!("{} is free text: type to search", column.header());
+            }
+        }
+        self.telemetry
+            .record("action", format!("filter_column {}", column.header()));
+    }
+
+    fn handle_pick_value_key(&mut self, event: KeyEvent) {
+        let Some(picker) = self.picker.as_mut() else {
+            self.mode = Mode::Browse;
+            return;
+        };
+        let last = picker.options.len().saturating_sub(1);
+        match event.code {
+            KeyCode::Esc => {
+                self.picker = None;
+                self.mode = Mode::Browse;
+            }
+            KeyCode::Char('j') | KeyCode::Down => picker.selected = (picker.selected + 1).min(last),
+            KeyCode::Char('k') | KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
+            KeyCode::Char(digit) if digit.is_ascii_digit() => {
+                let index = digit.to_digit(10).unwrap_or(0) as usize;
+                if (1..=picker.options.len()).contains(&index) {
+                    picker.selected = index - 1;
+                    self.apply_picked_value();
+                }
+            }
+            KeyCode::Enter => self.apply_picked_value(),
+            _ => {}
+        }
+    }
+
+    fn apply_picked_value(&mut self) {
+        let Some(picker) = self.picker.take() else {
+            return;
+        };
+        self.mode = Mode::Browse;
+        let (value, _) = &picker.options[picker.selected];
+        let text = Filter::with_field(&self.filter_text, picker.field, value);
+        self.set_filter(text);
+        self.telemetry.record(
+            "action",
+            format!("filter_pick {}:{value}", picker.field.keyword()),
+        );
+    }
+
+    /// Commands that start with what has been typed so far, for the footer hint.
+    pub fn command_completions(&self) -> Vec<String> {
+        let typed = self.input.split_whitespace().next().unwrap_or("");
+        if self.input.contains(' ') {
+            return Vec::new();
+        }
+        let mut names: Vec<String> = ["bug", "idea", "view", "reload", "q"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        if typed == "view" {
+            return self.config.views.keys().cloned().collect();
+        }
+        names.retain(|name| name.starts_with(typed) && name != typed);
+        names
     }
 
     fn handle_browse_key(&mut self, event: KeyEvent) {
@@ -173,6 +279,15 @@ impl App {
             KeyCode::Esc => {
                 self.mode = Mode::Browse;
                 self.input.clear();
+            }
+            KeyCode::Tab => {
+                if let Some(first) = self.command_completions().first() {
+                    self.input = if self.input.starts_with("view") {
+                        format!("view {first}")
+                    } else {
+                        first.clone()
+                    };
+                }
             }
             KeyCode::Enter => {
                 self.mode = Mode::Browse;
@@ -221,6 +336,10 @@ impl App {
             Action::Filter => {
                 self.mode = Mode::Filter;
                 self.status.clear();
+            }
+            Action::FilterColumn => {
+                self.mode = Mode::PickColumn;
+                self.status = "filter by column: press its number".to_string();
             }
             Action::Command => {
                 self.mode = Mode::Command;

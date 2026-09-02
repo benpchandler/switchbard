@@ -4,20 +4,21 @@
 return {
   -- key -> action. Keys: single chars, "enter", "esc", "tab", "up", "down",
   -- "ctrl-<char>". Actions: down, up, top, bottom, page_down, page_up, open,
-  -- back, filter, command, reload, help, quit, view:<name>.
+  -- back, filter, filter_column, command, reload, help, quit, view:<name>.
   keys = {
     j = "down", k = "up", down = "down", up = "up",
     g = "top", G = "bottom",
     ["ctrl-d"] = "page_down", ["ctrl-u"] = "page_up",
     enter = "open", esc = "back",
-    ["/"] = "filter", [":"] = "command",
+    ["/"] = "filter", f = "filter_column", [":"] = "command",
     r = "reload", ["?"] = "help", q = "quit",
-    ["1"] = "view:active", ["2"] = "view:all", ["3"] = "view:tui",
+    ["1"] = "view:all", ["2"] = "view:todo", ["3"] = "view:active", ["4"] = "view:tui",
   },
 
   -- Colors: names (cyan, darkgray, ...) or hex ("#303030").
   theme = {
     accent = "cyan",
+    header = "yellow",
     dim = "darkgray",
     selected = "#303030",
     border = "darkgray",
@@ -27,10 +28,12 @@ return {
   columns = { "id", "status", "priority", "title" },
 
   -- Named filters. Filter language: free words match id or title;
-  -- status:x, pri:x, label:x, project:x match that field (substring, any case).
+  -- status:x, pri:x, label:x, project:x match that field, ignoring case and
+  -- spaces (status:todo matches "To Do").
   views = {
     all = "",
-    active = "status:progress",
+    todo = "status:todo",
+    active = "status:inprogress",
     tui = "label:tui",
   },
   default_view = "all",

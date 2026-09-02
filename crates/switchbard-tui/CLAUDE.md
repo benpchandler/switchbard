@@ -20,7 +20,8 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 - `app.rs` - state + the one key-handling path (`handle_key`, `apply`, `run_command`).
 - `view.rs` - rendering only; also snapshots the screen text for reports.
 - `config.rs` - `default.lua` baked in, user file layered over; keys/theme/columns/views.
-- `tasks.rs` - task load + filter language (`status: pri: label: project:` + words).
+- `tasks.rs` - task load + filter language (`status: pri: label: project:` + words,
+  loose match: `status:todo` == "To Do"); `field_values` feeds the `f <n>` picker.
 - `report.rs` - `:bug`/`:idea` => task via `switchbard-core` write layer.
 - `telemetry.rs` - JSONL event log, in-memory trail, `stats`.
 

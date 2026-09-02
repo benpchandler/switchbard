@@ -22,6 +22,7 @@ pub enum Action {
     Open,
     Back,
     Filter,
+    FilterColumn,
     Command,
     Reload,
     Help,
@@ -44,6 +45,7 @@ impl Action {
             "open" => Action::Open,
             "back" => Action::Back,
             "filter" => Action::Filter,
+            "filter_column" => Action::FilterColumn,
             "command" => Action::Command,
             "reload" => Action::Reload,
             "help" => Action::Help,
@@ -63,6 +65,7 @@ impl Action {
             Action::Open => "open".to_string(),
             Action::Back => "back".to_string(),
             Action::Filter => "filter".to_string(),
+            Action::FilterColumn => "filter_column".to_string(),
             Action::Command => "command".to_string(),
             Action::Reload => "reload".to_string(),
             Action::Help => "help".to_string(),
@@ -144,6 +147,16 @@ impl Column {
         })
     }
 
+    pub fn filter_field(self) -> Option<crate::tasks::FilterField> {
+        match self {
+            Column::Status => Some(crate::tasks::FilterField::Status),
+            Column::Priority => Some(crate::tasks::FilterField::Priority),
+            Column::Labels => Some(crate::tasks::FilterField::Label),
+            Column::Project => Some(crate::tasks::FilterField::Project),
+            Column::Id | Column::Title => None,
+        }
+    }
+
     pub fn header(self) -> &'static str {
         match self {
             Column::Id => "id",
@@ -159,6 +172,7 @@ impl Column {
 #[derive(Debug, Clone)]
 pub struct Theme {
     pub accent: Color,
+    pub header: Color,
     pub dim: Color,
     pub selected: Color,
     pub border: Color,
@@ -268,6 +282,7 @@ impl RawConfig {
         };
         let theme = Theme {
             accent: color("accent", Color::Cyan),
+            header: color("header", Color::Yellow),
             dim: color("dim", Color::DarkGray),
             selected: color("selected", Color::Indexed(236)),
             border: color("border", Color::DarkGray),
