@@ -299,3 +299,24 @@ fn colon_shows_completions_and_tab_accepts() {
     let screen = h.press(KeyCode::Enter);
     assert!(screen.contains("filed TASK-4"), "{screen}");
 }
+
+#[test]
+fn resume_state_survives_a_self_restart() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('j'));
+    let state = h.app.resume_state();
+    let mut fresh = App::open(&h.root, Some(h.config_path.clone()), Telemetry::in_memory());
+    fresh.resume_from(Some(&state));
+    assert_eq!(fresh.view, "todo");
+    assert_eq!(fresh.filter_text, "status:todo");
+    assert_eq!(fresh.selected, 1);
+}
+
+#[test]
+fn zero_size_terminal_does_not_crash() {
+    let mut h = Harness::new();
+    h.terminal = Terminal::new(TestBackend::new(0, 0)).unwrap();
+    let screen = h.press(KeyCode::Char('?'));
+    assert_eq!(screen, "");
+}

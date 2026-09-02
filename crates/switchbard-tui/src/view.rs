@@ -306,6 +306,9 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
 
 pub fn buffer_text(buffer: &Buffer) -> String {
     let width = buffer.area.width as usize;
+    if width == 0 {
+        return String::new();
+    }
     let mut out = String::new();
     for row in buffer.content.chunks(width) {
         let line: String = row.iter().map(|cell| cell.symbol()).collect();

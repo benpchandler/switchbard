@@ -115,6 +115,31 @@ impl App {
         )
     }
 
+    /// `view\tfilter\tselected`, enough to land where the user was after a self-restart.
+    pub fn resume_state(&self) -> String {
+        format!("{}\t{}\t{}", self.view, self.filter_text, self.selected)
+    }
+
+    pub fn resume_from(&mut self, state: Option<&str>) {
+        let Some(state) = state else {
+            return;
+        };
+        let mut parts = state.split('\t');
+        if let Some(view) = parts
+            .next()
+            .filter(|view| self.config.views.contains_key(*view))
+        {
+            self.view = view.to_string();
+        }
+        if let Some(filter) = parts.next() {
+            self.set_filter(filter.to_string());
+        }
+        if let Some(selected) = parts.next().and_then(|n| n.parse().ok()) {
+            self.select(selected);
+        }
+        self.status = "updated to the new build".to_string();
+    }
+
     /// Cheap per-tick work: pick up edits to the config file or the task files.
     pub fn tick(&mut self) {
         if let Some(path) = self.config_path.as_deref() {

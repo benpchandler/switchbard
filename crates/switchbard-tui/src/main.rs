@@ -1,5 +1,6 @@
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
@@ -60,14 +61,24 @@ fn run(repo_root: PathBuf) -> Result<()> {
         None => Telemetry::in_memory(),
     };
     let mut app = App::open(&repo_root, config::user_config_path(), telemetry);
+    app.resume_from(std::env::var(RESUME_ENV).ok().as_deref());
     let mut terminal = ratatui::init();
     let outcome = drive(&mut terminal, &mut app);
     ratatui::restore();
     app.telemetry.finish();
-    outcome
+    match outcome? {
+        Exit::Quit => Ok(()),
+        Exit::Restart => restart_into_new_binary(&app),
+    }
 }
 
-fn drive(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
+enum Exit {
+    Quit,
+    Restart,
+}
+
+fn drive(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Exit> {
+    let binary = InstalledBinary::current();
     while !app.should_quit {
         let started = Instant::now();
         terminal.draw(|frame| view::draw(frame, app))?;
@@ -78,7 +89,43 @@ fn drive(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
             }
         } else {
             app.tick();
+            if binary.was_replaced() {
+                app.telemetry
+                    .record("self_restart", binary.path.display().to_string());
+                return Ok(Exit::Restart);
+            }
         }
     }
-    Ok(())
+    Ok(Exit::Quit)
+}
+
+const RESUME_ENV: &str = "SBT_RESUME";
+
+/// A fresh `cargo install` swaps the file under us; re-exec so the running
+/// tab is always the newest build without the user restarting anything.
+struct InstalledBinary {
+    path: PathBuf,
+    seen: Option<SystemTime>,
+}
+
+impl InstalledBinary {
+    fn current() -> InstalledBinary {
+        let path = std::env::current_exe().unwrap_or_default();
+        let seen = config::modified_at(&path);
+        InstalledBinary { path, seen }
+    }
+
+    fn was_replaced(&self) -> bool {
+        let now = config::modified_at(&self.path);
+        now.is_some() && now != self.seen
+    }
+}
+
+fn restart_into_new_binary(app: &App) -> Result<()> {
+    let exe = std::env::current_exe()?;
+    let error = std::process::Command::new(exe)
+        .args(std::env::args_os().skip(1))
+        .env(RESUME_ENV, app.resume_state())
+        .exec();
+    Err(error.into())
 }

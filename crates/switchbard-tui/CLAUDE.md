@@ -26,7 +26,8 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 - `telemetry.rs` - JSONL event log, in-memory trail, `stats`.
 
 ## Loop
-Slice => commit on `feat/tui` => `cargo install` => user drives it => drain
+Slice => commit on `feat/tui` => `cargo install` => the running sbt re-execs itself
+(`main.rs::InstalledBinary`, resumes view/filter/row) => user drives it => drain
 `label:tui` tasks (press `4`) at the start of the next slice.
 
 ## Gates
