@@ -106,15 +106,21 @@ pub fn repo_path(repo_root: &Path) -> Option<PathBuf> {
 }
 
 pub fn starter_views() -> Vec<SavedView> {
-    ["", "status:todo", "status:inprogress", "label:tui"]
-        .into_iter()
-        .map(|filter| SavedView {
-            filter: filter.to_string(),
-            sort: None,
-            columns: Column::DEFAULT_SHOWN.to_vec(),
-            paint: Vec::new(),
-        })
-        .collect()
+    [
+        "",
+        "status:todo",
+        "status:inprogress",
+        "label:tui",
+        "ball:me",
+    ]
+    .into_iter()
+    .map(|filter| SavedView {
+        filter: filter.to_string(),
+        sort: None,
+        columns: Column::DEFAULT_SHOWN.to_vec(),
+        paint: Vec::new(),
+    })
+    .collect()
 }
 
 pub struct ViewStore {

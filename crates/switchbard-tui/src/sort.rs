@@ -101,6 +101,10 @@ fn plain_key(task: &BacklogTask, column: Column) -> (u64, String) {
         Column::Title => (0, task.title.to_lowercase()),
         Column::Labels => (0, task.labels.join(",").to_lowercase()),
         Column::Project => (0, task.project.clone().unwrap_or_default().to_lowercase()),
+        Column::Ball => (
+            0,
+            crate::ball::Ball::text(crate::ball::Ball::of(task)).to_string(),
+        ),
     }
 }
 

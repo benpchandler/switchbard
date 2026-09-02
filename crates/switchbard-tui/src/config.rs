@@ -26,6 +26,7 @@ pub enum Action {
     SortColumn,
     Columns,
     Paint,
+    Ball,
     Command,
     Reload,
     Help,
@@ -49,6 +50,7 @@ impl Action {
             "sort_column" => Action::SortColumn,
             "columns" => Action::Columns,
             "paint" => Action::Paint,
+            "ball" => Action::Ball,
             "command" => Action::Command,
             "reload" => Action::Reload,
             "help" => Action::Help,
@@ -73,6 +75,7 @@ impl Action {
             Action::SortColumn => "sort_column".to_string(),
             Action::Columns => "columns".to_string(),
             Action::Paint => "paint".to_string(),
+            Action::Ball => "ball".to_string(),
             Action::Command => "command".to_string(),
             Action::Reload => "reload".to_string(),
             Action::Help => "help".to_string(),
@@ -139,17 +142,19 @@ pub enum Column {
     Title,
     Labels,
     Project,
+    Ball,
 }
 
 impl Column {
     /// Every column sbt knows, in catalog order. Shown columns are a user-ordered subset.
-    pub const ALL: [Column; 6] = [
+    pub const ALL: [Column; 7] = [
         Column::Id,
         Column::Status,
         Column::Priority,
         Column::Title,
         Column::Labels,
         Column::Project,
+        Column::Ball,
     ];
 
     pub const DEFAULT_SHOWN: [Column; 4] =
@@ -163,6 +168,7 @@ impl Column {
             "title" => Column::Title,
             "labels" => Column::Labels,
             "project" => Column::Project,
+            "ball" => Column::Ball,
             _ => return None,
         })
     }
@@ -173,6 +179,7 @@ impl Column {
             Column::Priority => Some(crate::tasks::FilterField::Priority),
             Column::Labels => Some(crate::tasks::FilterField::Label),
             Column::Project => Some(crate::tasks::FilterField::Project),
+            Column::Ball => Some(crate::tasks::FilterField::Ball),
             Column::Id | Column::Title => None,
         }
     }
@@ -186,6 +193,7 @@ impl Column {
             Column::Title => "title",
             Column::Labels => "labels",
             Column::Project => "project",
+            Column::Ball => "ball",
         }
     }
 
@@ -197,6 +205,7 @@ impl Column {
             Column::Title => "title",
             Column::Labels => "labels",
             Column::Project => "project",
+            Column::Ball => "ball",
         }
     }
 }

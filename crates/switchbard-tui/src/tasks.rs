@@ -26,6 +26,7 @@ pub enum FilterField {
     Priority,
     Label,
     Project,
+    Ball,
 }
 
 impl FilterField {
@@ -36,6 +37,7 @@ impl FilterField {
             "pri" | "priority" => FilterField::Priority,
             "label" => FilterField::Label,
             "project" => FilterField::Project,
+            "ball" => FilterField::Ball,
             _ => return None,
         })
     }
@@ -47,6 +49,7 @@ impl FilterField {
             FilterField::Priority => "pri",
             FilterField::Label => "label",
             FilterField::Project => "project",
+            FilterField::Ball => "ball",
         }
     }
 
@@ -57,6 +60,14 @@ impl FilterField {
             FilterField::Priority => vec![task.priority.clone()],
             FilterField::Label => task.labels.clone(),
             FilterField::Project => task.project.clone().into_iter().collect(),
+            FilterField::Ball => {
+                let ball = crate::ball::Ball::text(crate::ball::Ball::of(task));
+                if ball.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![ball.to_string()]
+                }
+            }
         }
     }
 }

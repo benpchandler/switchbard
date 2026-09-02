@@ -169,6 +169,10 @@ fn field_value(task: &BacklogTask, field: FilterField) -> Option<String> {
         FilterField::Priority => Some(task.priority.clone()),
         FilterField::Label => task.labels.first().cloned(),
         FilterField::Project => task.project.clone(),
+        FilterField::Ball => {
+            let ball = crate::ball::Ball::text(crate::ball::Ball::of(task));
+            (!ball.is_empty()).then(|| ball.to_string())
+        }
     }
 }
 
