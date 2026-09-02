@@ -11,6 +11,7 @@ use crate::report::{self, ReportContext, ReportKind};
 use crate::sort::{self, Sort};
 use crate::tasks::{self, Filter, FilterField};
 use crate::telemetry::Telemetry;
+use crate::views::{self, SavedView};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -19,6 +20,12 @@ pub enum Mode {
     Command,
     PickColumn,
     PickValue,
+    /// After `v`: a digit opens that slot, `s` starts a save.
+    ViewChord,
+    /// After `v s`: a digit or `d` (slot 1) picks the slot to save into.
+    ViewSaveSlot,
+    /// Naming the view being saved; Enter writes it, Esc abandons it.
+    ViewName,
 }
 
 /// What a column was picked for: `f` filters by its values, `s` sorts by it.
@@ -84,7 +91,11 @@ pub struct App {
     tasks: Vec<BacklogTask>,
     pub visible: Vec<usize>,
     pub selected: usize,
-    pub view: String,
+    views_path: Option<PathBuf>,
+    pub views: Vec<SavedView>,
+    /// Zero-based slot the current filter/sort came from.
+    pub view: usize,
+    saving_into: usize,
     pub filter_text: String,
     pub mode: Mode,
     pub input: String,
@@ -100,8 +111,14 @@ pub struct App {
 }
 
 impl App {
-    pub fn open(repo_root: &Path, config_path: Option<PathBuf>, telemetry: Telemetry) -> App {
+    pub fn open(
+        repo_root: &Path,
+        config_path: Option<PathBuf>,
+        views_path: Option<PathBuf>,
+        telemetry: Telemetry,
+    ) -> App {
         let config = config::load(config_path.as_deref());
+        let (views, views_warning) = views::load(views_path.as_deref());
         let mut app = App {
             repo_root: repo_root.to_path_buf(),
             config_seen: config_path.as_deref().and_then(config::modified_at),
@@ -110,12 +127,11 @@ impl App {
             tasks: Vec::new(),
             visible: Vec::new(),
             selected: 0,
-            view: config.default_view.clone(),
-            filter_text: config
-                .views
-                .get(&config.default_view)
-                .cloned()
-                .unwrap_or_default(),
+            views_path,
+            views,
+            view: 0,
+            saving_into: 0,
+            filter_text: String::new(),
             config,
             mode: Mode::Browse,
             input: String::new(),
@@ -130,7 +146,11 @@ impl App {
             should_quit: false,
         };
         app.reload_tasks();
+        app.switch_view(0);
         app.report_config_warnings();
+        if let Some(warning) = views_warning {
+            app.fail(format!("views: {warning}"));
+        }
         app
     }
 
@@ -148,11 +168,13 @@ impl App {
         self.tasks.len()
     }
 
-    /// The view's name while the filter still matches it; `custom` once it has been edited.
-    pub fn view_label(&self) -> &str {
-        match self.config.views.get(&self.view) {
-            Some(filter) if *filter == self.filter_text => &self.view,
-            _ => "custom",
+    /// The slot's name while filter and sort still match it; `custom` once edited.
+    pub fn view_label(&self) -> String {
+        match self.views.get(self.view) {
+            Some(saved) if saved.filter == self.filter_text && saved.sort == self.sort => {
+                format!("{} {}", self.view + 1, saved.name)
+            }
+            _ => "custom".to_string(),
         }
     }
 
@@ -162,14 +184,23 @@ impl App {
             .map(|task| task.id.clone())
             .unwrap_or_else(|| "nothing".to_string());
         format!(
-            "view={} filter=\"{}\" selected={selected} pane={:?}",
-            self.view, self.filter_text, self.pane
+            "view={} filter=\"{}\" sort={} selected={selected} pane={:?}",
+            self.view_label(),
+            self.filter_text,
+            self.sort.map(|sort| sort.to_text()).unwrap_or_default(),
+            self.pane
         )
     }
 
-    /// `view\tfilter\tselected`, enough to land where the user was after a self-restart.
+    /// `slot\tfilter\tsort\tselected`, enough to land where the user was after a self-restart.
     pub fn resume_state(&self) -> String {
-        format!("{}\t{}\t{}", self.view, self.filter_text, self.selected)
+        format!(
+            "{}\t{}\t{}\t{}",
+            self.view,
+            self.filter_text,
+            self.sort.map(|sort| sort.to_text()).unwrap_or_default(),
+            self.selected
+        )
     }
 
     pub fn resume_from(&mut self, state: Option<&str>) {
@@ -177,15 +208,12 @@ impl App {
             return;
         };
         let mut parts = state.split('\t');
-        if let Some(view) = parts
-            .next()
-            .filter(|view| self.config.views.contains_key(*view))
-        {
-            self.view = view.to_string();
+        if let Some(slot) = parts.next().and_then(|n| n.parse().ok()) {
+            self.view = slot;
         }
-        if let Some(filter) = parts.next() {
-            self.set_filter(filter.to_string());
-        }
+        let filter = parts.next().unwrap_or_default().to_string();
+        self.sort = parts.next().and_then(Sort::parse);
+        self.set_filter(filter);
         if let Some(selected) = parts.next().and_then(|n| n.parse().ok()) {
             self.select(selected);
         }
@@ -217,7 +245,138 @@ impl App {
             Mode::Command => self.handle_command_key(event),
             Mode::PickColumn => self.handle_pick_column_key(event),
             Mode::PickValue => self.handle_pick_value_key(event),
+            Mode::ViewChord => self.handle_view_chord_key(event),
+            Mode::ViewSaveSlot => self.handle_view_save_slot_key(event),
+            Mode::ViewName => self.handle_view_name_key(event),
         }
+    }
+
+    fn handle_view_chord_key(&mut self, event: KeyEvent) {
+        self.mode = Mode::Browse;
+        match event.code {
+            KeyCode::Char('s') => {
+                self.mode = Mode::ViewSaveSlot;
+                self.status = format!(
+                    "save view into: d (default, slot 1) or 1-{}",
+                    (self.views.len() + 1).min(views::MAX_SLOTS)
+                );
+            }
+            KeyCode::Char(digit) if digit.is_ascii_digit() => {
+                let slot = digit.to_digit(10).unwrap_or(0) as usize;
+                if (1..=self.views.len()).contains(&slot) {
+                    self.switch_view(slot - 1);
+                    self.telemetry.record("action", format!("view_open {slot}"));
+                } else {
+                    self.fail(format!(
+                        "no view in slot {digit}; saved: 1-{}",
+                        self.views.len()
+                    ));
+                }
+            }
+            KeyCode::Esc => self.status.clear(),
+            other => self.status = format!("v then a slot number or s to save, not {other:?}"),
+        }
+    }
+
+    fn handle_view_save_slot_key(&mut self, event: KeyEvent) {
+        self.mode = Mode::Browse;
+        let slot = match event.code {
+            KeyCode::Char('d') => 1,
+            KeyCode::Char(digit) if digit.is_ascii_digit() => {
+                digit.to_digit(10).unwrap_or(0) as usize
+            }
+            KeyCode::Esc => {
+                self.status.clear();
+                return;
+            }
+            other => {
+                self.status = format!("save needs d or a slot number, not {other:?}");
+                return;
+            }
+        };
+        let next_free = self.views.len() + 1;
+        if slot == 0 || slot > next_free.min(views::MAX_SLOTS) {
+            self.fail(format!(
+                "slot {slot} is out of reach; use 1-{}",
+                next_free.min(views::MAX_SLOTS)
+            ));
+            return;
+        }
+        self.saving_into = slot - 1;
+        self.input = self
+            .views
+            .get(self.saving_into)
+            .map(|saved| saved.name.clone())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| self.suggested_view_name());
+        self.mode = Mode::ViewName;
+        self.status = format!("name for slot {slot} (enter saves, esc abandons)");
+    }
+
+    fn suggested_view_name(&self) -> String {
+        if self.filter_text.is_empty() {
+            "all".to_string()
+        } else {
+            self.filter_text
+                .split_whitespace()
+                .map(|word| {
+                    word.rsplit(':')
+                        .next()
+                        .unwrap_or(word)
+                        .trim_start_matches('!')
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+    }
+
+    fn handle_view_name_key(&mut self, event: KeyEvent) {
+        match event.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Browse;
+                self.input.clear();
+                self.status = "view not saved".to_string();
+            }
+            KeyCode::Enter => {
+                self.mode = Mode::Browse;
+                let name = std::mem::take(&mut self.input).trim().to_string();
+                self.save_view(name);
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Char(c) => self.input.push(c),
+            _ => {}
+        }
+    }
+
+    fn save_view(&mut self, name: String) {
+        let saved = SavedView {
+            name: if name.is_empty() {
+                self.suggested_view_name()
+            } else {
+                name
+            },
+            filter: self.filter_text.trim().to_string(),
+            sort: self.sort,
+        };
+        let slot = self.saving_into;
+        if slot < self.views.len() {
+            self.views[slot] = saved;
+        } else {
+            self.views.push(saved);
+        }
+        self.view = slot;
+        self.filter_text = self.filter_text.trim().to_string();
+        if let Some(path) = self.views_path.as_deref() {
+            if let Err(error) = views::save(path, &self.views) {
+                self.fail(format!("could not write {}: {error}", path.display()));
+                return;
+            }
+        }
+        self.status = format!("saved slot {} · v{} opens it", slot + 1, slot + 1);
+        self.telemetry
+            .record("action", format!("view_save {}", slot + 1));
     }
 
     fn handle_pick_column_key(&mut self, event: KeyEvent) {
@@ -391,13 +550,10 @@ impl App {
         if self.input.contains(' ') {
             return Vec::new();
         }
-        let mut names: Vec<String> = ["bug", "idea", "view", "reload", "q"]
+        let mut names: Vec<String> = ["bug", "idea", "reload", "q"]
             .iter()
             .map(|name| name.to_string())
             .collect();
-        if typed == "view" {
-            return self.config.views.keys().cloned().collect();
-        }
         names.retain(|name| name.starts_with(typed) && name != typed);
         names
     }
@@ -449,11 +605,7 @@ impl App {
             }
             KeyCode::Tab => {
                 if let Some(first) = self.command_completions().first() {
-                    self.input = if self.input.starts_with("view") {
-                        format!("view {first}")
-                    } else {
-                        first.clone()
-                    };
+                    self.input = first.clone();
                 }
             }
             KeyCode::Enter => {
@@ -534,7 +686,13 @@ impl App {
                 }
             }
             Action::Quit => self.should_quit = true,
-            Action::View(name) => self.switch_view(name.clone()),
+            Action::View => {
+                self.mode = Mode::ViewChord;
+                self.status = format!(
+                    "view: 1-{} opens a slot · s saves the current one",
+                    self.views.len()
+                );
+            }
         }
     }
 
@@ -543,7 +701,6 @@ impl App {
         match verb {
             "q" | "quit" => self.should_quit = true,
             "reload" => self.apply(&Action::Reload),
-            "view" => self.switch_view(rest.trim().to_string()),
             "bug" => self.file_report(ReportKind::Bug, rest),
             "idea" => self.file_report(ReportKind::Idea, rest),
             "" => {}
@@ -585,14 +742,13 @@ impl App {
         }
     }
 
-    fn switch_view(&mut self, name: String) {
-        match self.config.views.get(&name).cloned() {
-            Some(filter) => {
-                self.view = name;
-                self.set_filter(filter);
-            }
-            None => self.fail(format!("no view named '{name}'")),
-        }
+    fn switch_view(&mut self, slot: usize) {
+        let Some(saved) = self.views.get(slot).cloned() else {
+            return;
+        };
+        self.view = slot;
+        self.sort = saved.sort;
+        self.set_filter(saved.filter);
     }
 
     fn set_filter(&mut self, text: String) {

@@ -22,6 +22,7 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 - `config.rs` - `default.lua` baked in, user file layered over; keys/theme/columns/views.
 - `tasks.rs` - task load + filter language (`status: pri: label: project:` + words,
   loose match: `status:todo` == "To Do"); `field_values` feeds the `f <n>` picker.
+- `views.rs` - numbered slots of filter+sort in `~/.switchbard/views.lua`; slot 1 opens.
 - `sort.rs` - `s <n>` orders: ascending/descending/semantic (vocabulary rank), ties by id.
 - `report.rs` - `:bug`/`:idea` => task via `switchbard-core` write layer.
 - `telemetry.rs` - JSONL event log, in-memory trail, `stats`.
@@ -29,7 +30,7 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 ## Loop
 Slice => commit on `feat/tui` => `cargo install` => the running sbt re-execs itself
 (`main.rs::InstalledBinary`, resumes view/filter/row) => user drives it => drain
-`label:tui` tasks (press `4`) at the start of the next slice.
+`label:tui` tasks (`v4` in starter views) at the start of the next slice.
 
 ## Gates
 Per slice: `mise run tui-install` (fmt, clippy, tests for this crate only, then install).

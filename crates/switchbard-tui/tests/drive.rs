@@ -39,7 +39,13 @@ impl Harness {
         seed_with_priority(&root, "Add dark theme", "To Do", &["ui"], "low");
         seed_with_priority(&root, "Write onboarding guide", "To Do", &["docs"], "high");
         let config_path = root.join("tui.lua");
-        let app = App::open(&root, Some(config_path.clone()), Telemetry::in_memory());
+        let views_path = root.join("views.lua");
+        let app = App::open(
+            &root,
+            Some(config_path.clone()),
+            Some(views_path),
+            Telemetry::in_memory(),
+        );
         let terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
         let mut harness = Harness {
             _dir: dir,
@@ -102,7 +108,7 @@ fn lists_every_task_with_repo_name_and_count() {
     let screen = h.render();
     assert!(screen.contains("Fix login redirect loop"), "{screen}");
     assert!(screen.contains("Add dark theme"), "{screen}");
-    assert!(screen.contains("all · 3/3"), "{screen}");
+    assert!(screen.contains("1 all · 3/3"), "{screen}");
 }
 
 #[test]
@@ -137,22 +143,28 @@ fn slash_filters_live_and_esc_clears() {
 }
 
 #[test]
-fn field_filters_and_number_keys_switch_views() {
+fn field_filters_and_v_digit_switch_views() {
     let mut h = Harness::new();
     h.press(KeyCode::Char('/'));
     let screen = h.type_text("label:auth");
     assert!(screen.contains("1/3"), "{screen}");
     h.press(KeyCode::Enter);
+    h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('3'));
     assert!(
-        screen.contains("active · status:inprogress · 1/3"),
+        screen.contains("3 active · status:inprogress · 1/3"),
         "{screen}"
     );
     assert!(screen.contains("Fix login"), "{screen}");
+    h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('2'));
-    assert!(screen.contains("todo · status:todo · 2/3"), "{screen}");
+    assert!(screen.contains("2 todo · status:todo · 2/3"), "{screen}");
+    h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('1'));
-    assert!(screen.contains("all · 3/3"), "{screen}");
+    assert!(screen.contains("1 all · 3/3"), "{screen}");
+    h.press(KeyCode::Char('v'));
+    let screen = h.press(KeyCode::Char('9'));
+    assert!(screen.contains("no view in slot 9"), "{screen}");
 }
 
 #[test]
@@ -313,12 +325,18 @@ fn colon_shows_completions_and_tab_accepts() {
 #[test]
 fn resume_state_survives_a_self_restart() {
     let mut h = Harness::new();
+    h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('2'));
     h.press(KeyCode::Char('j'));
     let state = h.app.resume_state();
-    let mut fresh = App::open(&h.root, Some(h.config_path.clone()), Telemetry::in_memory());
+    let mut fresh = App::open(
+        &h.root,
+        Some(h.config_path.clone()),
+        Some(h.root.join("views.lua")),
+        Telemetry::in_memory(),
+    );
     fresh.resume_from(Some(&state));
-    assert_eq!(fresh.view, "todo");
+    assert_eq!(fresh.view, 1);
     assert_eq!(fresh.filter_text, "status:todo");
     assert_eq!(fresh.selected, 1);
 }
@@ -354,7 +372,7 @@ fn space_in_picker_toggles_values_and_writes_the_shortest_filter() {
     assert!(screen.contains("status:!todo · 1/3"), "re-shown: {screen}");
     h.press(KeyCode::Char('k'));
     let screen = h.press(KeyCode::Char(' '));
-    assert!(screen.contains("all · 3/3"), "all shown again: {screen}");
+    assert!(screen.contains("1 all · 3/3"), "all shown again: {screen}");
     let screen = h.press(KeyCode::Esc);
     assert!(!screen.contains("space toggles"), "{screen}");
 }
@@ -376,6 +394,7 @@ fn space_widens_a_single_value_filter_instead_of_fighting_it() {
 #[test]
 fn editing_the_filter_relabels_the_view_as_custom() {
     let mut h = Harness::new();
+    h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('3'));
     h.press(KeyCode::Char('/'));
     let screen = h.type_text("pri:medium");
@@ -465,14 +484,97 @@ fn sort_survives_filtering_and_title_sorts_alphabetically() {
     h.press(KeyCode::Char('4'));
     h.press(KeyCode::Char('1'));
     assert_eq!(visible_titles(&h)[0], "Add dark theme");
-    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('/'));
+    h.type_text("status:todo");
+    h.press(KeyCode::Enter);
     let screen = h.render();
     assert!(
-        screen.contains("todo · status:todo · ↑title · 2/3"),
+        screen.contains("custom · status:todo · ↑title · 2/3"),
         "{screen}"
     );
     assert_eq!(
         visible_titles(&h),
         ["Add dark theme", "Write onboarding guide"]
+    );
+}
+
+#[test]
+fn vsd_saves_the_current_filter_and_sort_as_the_default_and_persists() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('/'));
+    h.type_text("status:!done");
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('3'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    let screen = h.press(KeyCode::Char('d'));
+    assert!(
+        screen.contains("name: all▏"),
+        "prefilled with slot 1's name: {screen}"
+    );
+    for _ in 0..3 {
+        h.press(KeyCode::Backspace);
+    }
+    h.type_text("open");
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("saved slot 1 · v1 opens it"), "{screen}");
+    assert!(
+        screen.contains("1 open · status:!done · ≈pri · 3/3"),
+        "{screen}"
+    );
+    let file = std::fs::read_to_string(h.root.join("views.lua")).unwrap();
+    assert!(
+        file.contains(
+            "{ name = \"open\", filter = \"status:!done\", sort = \"priority:semantic\" }"
+        ),
+        "{file}"
+    );
+    let mut fresh = App::open(
+        &h.root,
+        Some(h.config_path.clone()),
+        Some(h.root.join("views.lua")),
+        Telemetry::in_memory(),
+    );
+    assert_eq!(fresh.filter_text, "status:!done");
+    assert_eq!(fresh.view_label(), "1 open");
+    fresh.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+    fresh.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+    assert_eq!(fresh.view_label(), "2 todo", "other slots untouched");
+}
+
+#[test]
+fn vs_with_the_next_free_slot_appends_and_escape_abandons() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('/'));
+    h.type_text("label:ui");
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    let screen = h.press(KeyCode::Char('5'));
+    assert!(
+        screen.contains("name: ui▏"),
+        "suggested from the filter: {screen}"
+    );
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("5 ui · label:ui · 1/3"), "{screen}");
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    let screen = h.press(KeyCode::Char('9'));
+    assert!(
+        screen.contains("slot 9 is out of reach; use 1-6"),
+        "{screen}"
+    );
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('2'));
+    let screen = h.press(KeyCode::Esc);
+    assert!(screen.contains("view not saved"), "{screen}");
+    h.press(KeyCode::Char('v'));
+    let screen = h.press(KeyCode::Char('2'));
+    assert!(
+        screen.contains("2 todo · status:todo"),
+        "slot 2 untouched: {screen}"
     );
 }

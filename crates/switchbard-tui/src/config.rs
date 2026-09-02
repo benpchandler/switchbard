@@ -1,6 +1,6 @@
 //! User configuration: `default.lua` baked in, `~/.switchbard/tui.lua` layered over it.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::SystemTime;
@@ -28,14 +28,11 @@ pub enum Action {
     Reload,
     Help,
     Quit,
-    View(String),
+    View,
 }
 
 impl Action {
     fn parse(text: &str) -> Option<Action> {
-        if let Some(name) = text.strip_prefix("view:") {
-            return Some(Action::View(name.to_string()));
-        }
         Some(match text {
             "down" => Action::Down,
             "up" => Action::Up,
@@ -52,6 +49,7 @@ impl Action {
             "reload" => Action::Reload,
             "help" => Action::Help,
             "quit" => Action::Quit,
+            "view" => Action::View,
             _ => return None,
         })
     }
@@ -73,7 +71,7 @@ impl Action {
             Action::Reload => "reload".to_string(),
             Action::Help => "help".to_string(),
             Action::Quit => "quit".to_string(),
-            Action::View(name) => format!("view:{name}"),
+            Action::View => "view".to_string(),
         }
     }
 }
@@ -138,7 +136,7 @@ pub enum Column {
 }
 
 impl Column {
-    fn parse(text: &str) -> Option<Column> {
+    pub fn parse(text: &str) -> Option<Column> {
         Some(match text {
             "id" => Column::Id,
             "status" => Column::Status,
@@ -157,6 +155,18 @@ impl Column {
             Column::Labels => Some(crate::tasks::FilterField::Label),
             Column::Project => Some(crate::tasks::FilterField::Project),
             Column::Id | Column::Title => None,
+        }
+    }
+
+    /// The config/save-file spelling (`priority`, not the `pri` header).
+    pub fn name(self) -> &'static str {
+        match self {
+            Column::Id => "id",
+            Column::Status => "status",
+            Column::Priority => "priority",
+            Column::Title => "title",
+            Column::Labels => "labels",
+            Column::Project => "project",
         }
     }
 
@@ -186,8 +196,6 @@ pub struct Config {
     pub keys: HashMap<KeyChord, Action>,
     pub theme: Theme,
     pub columns: Vec<Column>,
-    pub views: BTreeMap<String, String>,
-    pub default_view: String,
     pub warnings: Vec<String>,
 }
 
@@ -236,8 +244,6 @@ struct RawConfig {
     keys: HashMap<String, String>,
     theme: HashMap<String, String>,
     columns: Option<Vec<String>>,
-    views: HashMap<String, String>,
-    default_view: Option<String>,
 }
 
 impl RawConfig {
@@ -248,20 +254,14 @@ impl RawConfig {
             keys: string_map(&table, "keys")?,
             theme: string_map(&table, "theme")?,
             columns: string_list(&table, "columns")?,
-            views: string_map(&table, "views")?,
-            default_view: table.get("default_view")?,
         })
     }
 
     fn merge(&mut self, over: RawConfig) {
         self.keys.extend(over.keys);
         self.theme.extend(over.theme);
-        self.views.extend(over.views);
         if over.columns.is_some() {
             self.columns = over.columns;
-        }
-        if over.default_view.is_some() {
-            self.default_view = over.default_view;
         }
     }
 
@@ -307,17 +307,10 @@ impl RawConfig {
         } else {
             columns
         };
-        let views: BTreeMap<String, String> = self.views.into_iter().collect();
-        let default_view = self.default_view.unwrap_or_else(|| "all".to_string());
-        if !views.contains_key(&default_view) {
-            warnings.push(format!("default_view '{default_view}' is not a view"));
-        }
         Config {
             keys,
             theme,
             columns,
-            views,
-            default_view,
             warnings,
         }
     }

@@ -46,6 +46,28 @@ impl Sort {
     pub fn label(&self) -> String {
         format!("{}{}", self.order.glyph(), self.column.header())
     }
+
+    /// `pri:semantic`, the form saved views carry.
+    pub fn to_text(&self) -> String {
+        let order = match self.order {
+            Order::Ascending => "ascending",
+            Order::Descending => "descending",
+            Order::Semantic => "semantic",
+        };
+        format!("{}:{order}", self.column.name())
+    }
+
+    pub fn parse(text: &str) -> Option<Sort> {
+        let (column, order) = text.trim().split_once(':')?;
+        let column = Column::parse(column)?;
+        let order = match order {
+            "ascending" => Order::Ascending,
+            "descending" => Order::Descending,
+            "semantic" => Order::Semantic,
+            _ => return None,
+        };
+        Some(Sort { column, order })
+    }
 }
 
 /// Orders offered for a column; semantic only where the vocabulary has one.

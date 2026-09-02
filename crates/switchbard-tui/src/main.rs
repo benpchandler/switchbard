@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use crossterm::event::{self, Event};
 use switchbard_tui::app::App;
 use switchbard_tui::telemetry::{self, Telemetry};
-use switchbard_tui::{config, view};
+use switchbard_tui::{config, view, views};
 
 #[derive(Parser)]
 #[command(name = "sbt", about = "Terminal UI for switchbard")]
@@ -43,6 +43,10 @@ fn main() -> Result<()> {
                 config::user_config_path().unwrap_or_default().display()
             );
             println!(
+                "views: {}",
+                views::default_path().unwrap_or_default().display()
+            );
+            println!(
                 "events: {}",
                 telemetry::default_log_path().unwrap_or_default().display()
             );
@@ -60,7 +64,12 @@ fn run(repo_root: PathBuf) -> Result<()> {
         Some(path) => Telemetry::to_file(&path),
         None => Telemetry::in_memory(),
     };
-    let mut app = App::open(&repo_root, config::user_config_path(), telemetry);
+    let mut app = App::open(
+        &repo_root,
+        config::user_config_path(),
+        views::default_path(),
+        telemetry,
+    );
     app.resume_from(std::env::var(RESUME_ENV).ok().as_deref());
     let mut terminal = ratatui::init();
     let outcome = drive(&mut terminal, &mut app);

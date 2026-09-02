@@ -173,17 +173,21 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Action::Command,
         Action::Reload,
         Action::Help,
+        Action::View,
         Action::Quit,
     ];
     let entries: Vec<(String, String)> = actions
         .iter()
         .map(|action| (app.config.bindings_for(action).join(" "), action.name()))
-        .chain(app.config.views.iter().map(|(name, filter)| {
-            let keys = app
-                .config
-                .bindings_for(&Action::View(name.clone()))
-                .join(" ");
-            (keys, format!("view:{name} ({filter})"))
+        .chain(app.views.iter().enumerate().map(|(index, saved)| {
+            let sort = saved
+                .sort
+                .map(|sort| format!(" {}", sort.label()))
+                .unwrap_or_default();
+            (
+                format!("v{}", index + 1),
+                format!("{} ({}{sort})", saved.name, saved.filter),
+            )
         }))
         .collect();
     let per_line = (area.width as usize / 32).max(1);
@@ -211,10 +215,12 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
             ":view <name>  :reload  :q",
             Style::default().fg(theme.accent),
         ),
-        Span::raw("    f/s <col#>: type or number picks; space toggles a filter value; status:a,b status:!x"),
+        Span::raw(
+            "    f/s <col#> filter/sort by column; v<n> open view, vs<n> save it (vsd = default)",
+        ),
     ]));
     lines.push(Line::from(Span::styled(
-        "config: ~/.switchbard/tui.lua (hot reload)    events: ~/.switchbard/tui-events.jsonl",
+        "config ~/.switchbard/tui.lua (hot reload) · views ~/.switchbard/views.lua · events ~/.switchbard/tui-events.jsonl",
         Style::default().fg(theme.dim),
     )));
     let block = Block::default()
@@ -241,17 +247,21 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(theme.dim),
             ),
         ]),
-        Mode::PickColumn | Mode::PickValue => Line::from(Span::styled(
-            app.status.clone(),
-            Style::default().fg(theme.accent),
-        )),
+        Mode::ViewName => Line::from(vec![
+            Span::styled("name: ", Style::default().fg(theme.accent)),
+            Span::raw(app.input.clone()),
+            Span::styled("▏", Style::default().fg(theme.accent)),
+        ]),
+        Mode::PickColumn | Mode::PickValue | Mode::ViewChord | Mode::ViewSaveSlot => Line::from(
+            Span::styled(app.status.clone(), Style::default().fg(theme.accent)),
+        ),
         Mode::Browse if !app.status.is_empty() => Line::from(Span::styled(
             app.status.clone(),
             Style::default().fg(theme.accent),
         )),
         Mode::Browse => Line::from(Span::styled(
             format!(
-                " {}  / filter  : command  ? keys  q quit",
+                " {}  / filter  f filter-by  s sort  v views  : command  ? keys  q quit",
                 if app.filter_text.is_empty() {
                     String::new()
                 } else {
