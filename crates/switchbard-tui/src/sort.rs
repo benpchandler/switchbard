@@ -101,14 +101,29 @@ fn plain_key(task: &BacklogTask, column: Column) -> (u64, String) {
         Column::Title => (0, task.title.to_lowercase()),
         Column::Labels => (0, task.labels.join(",").to_lowercase()),
         Column::Project => (0, task.project.clone().unwrap_or_default().to_lowercase()),
+        Column::Ball => (
+            0,
+            crate::ball::Ball::text(crate::ball::Ball::of(task)).to_string(),
+        ),
     }
 }
 
 fn semantic_rank(task: &BacklogTask, column: Column) -> usize {
-    let (vocabulary, value): (&[&str], &str) = match column {
-        Column::Priority => (BACKLOG_PRIORITIES, &task.priority),
-        Column::Status => (CANONICAL_STATUS_ORDER, &task.status),
+    let value = match column {
+        Column::Priority => &task.priority,
+        Column::Status => &task.status,
         _ => return 0,
+    };
+    vocabulary_rank(column, value)
+}
+
+/// Where `value` sits in the column's vocabulary (high before low, To Do before
+/// Done); unknown values and columns without a vocabulary rank last.
+pub fn vocabulary_rank(column: Column, value: &str) -> usize {
+    let vocabulary: &[&str] = match column {
+        Column::Priority => BACKLOG_PRIORITIES,
+        Column::Status => CANONICAL_STATUS_ORDER,
+        _ => return usize::MAX,
     };
     vocabulary
         .iter()

@@ -370,7 +370,7 @@ fn space_in_picker_toggles_values_and_writes_the_shortest_filter() {
     let screen = h.press(KeyCode::Char(' '));
     assert!(screen.contains("v1 · 3/3"), "all shown again: {screen}");
     let screen = h.press(KeyCode::Esc);
-    assert!(!screen.contains("space toggles"), "{screen}");
+    assert!(!screen.contains("┌ status"), "{screen}");
 }
 
 #[test]
@@ -423,16 +423,26 @@ fn typing_in_the_picker_narrows_and_a_unique_match_applies_at_once() {
 }
 
 #[test]
-fn f_then_a_letter_explains_the_column_numbers() {
+fn f_opens_the_column_list_with_shown_columns_numbered_as_in_the_header() {
     let mut h = Harness::new();
-    h.press(KeyCode::Char('f'));
     let screen = h.press(KeyCode::Char('f'));
-    assert!(
-        screen.contains("'f' is not a column; press 1-4"),
-        "{screen}"
-    );
+    assert!(screen.contains("┌ filter by column ─"), "{screen}");
+    for entry in [
+        "1 ✓id",
+        "2 ✓status",
+        "3 ✓priority",
+        "4 ✓title",
+        "5  labels · hidden",
+        "6  project · hidden",
+        "7  ball · hidden",
+    ] {
+        assert!(screen.contains(entry), "{entry} missing: {screen}");
+    }
+    let screen = h.type_text("f");
+    assert!(screen.contains("filter by column: f▏"), "{screen}");
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("nothing matches 'f'"), "{screen}");
 }
-
 fn visible_titles(h: &Harness) -> Vec<String> {
     (0..h.app.visible.len())
         .map(|index| h.app.task(index).unwrap().title.clone())
@@ -516,7 +526,9 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
     );
     let repo_file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
     assert!(
-        repo_file.contains("[1] = { filter = \"status:!done\", sort = \"priority:semantic\" }"),
+        repo_file.contains(
+            "[1] = { filter = \"status:!done\", sort = \"priority:semantic\", columns = \"id,status,priority,title\" }"
+        ),
         "{repo_file}"
     );
     assert!(
@@ -584,8 +596,8 @@ fn vs_with_the_next_free_slot_appends_without_asking_and_escape_abandons() {
     h.press(KeyCode::Enter);
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('s'));
-    let screen = h.press(KeyCode::Char('5'));
-    assert!(screen.contains("v5 · label:ui · 1/3"), "{screen}");
+    let screen = h.press(KeyCode::Char('6'));
+    assert!(screen.contains("v6 · label:ui · 1/3"), "{screen}");
     h.press(KeyCode::Char('?'));
     let screen = h.render();
     assert!(
@@ -597,7 +609,7 @@ fn vs_with_the_next_free_slot_appends_without_asking_and_escape_abandons() {
     h.press(KeyCode::Char('s'));
     let screen = h.press(KeyCode::Char('9'));
     assert!(
-        screen.contains("slot 9 is out of reach; use 1-6"),
+        screen.contains("slot 9 is out of reach; use 1-7"),
         "{screen}"
     );
     h.press(KeyCode::Char('v'));
@@ -610,4 +622,556 @@ fn vs_with_the_next_free_slot_appends_without_asking_and_escape_abandons() {
         screen.contains("v2 · status:todo"),
         "slot 2 untouched: {screen}"
     );
+}
+
+fn cell_fg(h: &Harness, needle: &str) -> Option<ratatui::style::Color> {
+    let buffer = h.terminal.backend().buffer();
+    let width = buffer.area.width as usize;
+    for (row, cells) in buffer.content.chunks(width).enumerate() {
+        let line: String = cells.iter().map(|cell| cell.symbol()).collect();
+        if let Some(col) = line.find(needle) {
+            let col = line[..col].chars().count();
+            return Some(buffer.content[row * width + col].fg);
+        }
+    }
+    None
+}
+
+fn header_line(screen: &str) -> String {
+    screen
+        .lines()
+        .find(|line| line.contains("1 "))
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+fn c_toggles_columns_by_position_and_numbers_follow_what_is_shown() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('c'));
+    let screen = h.render();
+    assert!(screen.contains("1 ✓id"), "{screen}");
+    assert!(
+        screen.contains("5  labels · hidden"),
+        "hidden columns listed after shown: {screen}"
+    );
+    let screen = h.press(KeyCode::Char('5'));
+    assert!(
+        screen.contains("┌ columns ─"),
+        "adding keeps the picker open so the column can be placed: {screen}"
+    );
+    assert_eq!(
+        h.app.status,
+        "labels added as column 5 · m then numbers to reorder · esc"
+    );
+    h.press(KeyCode::Char('m'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Char('2'));
+    let screen = h.press(KeyCode::Char('5'));
+    assert!(screen.contains("┌ move columns: 125"), "{screen}");
+    h.press(KeyCode::Enter);
+    let screen = h.press(KeyCode::Esc);
+    let header = header_line(&screen);
+    assert!(
+        header.contains("1 id")
+            && header.contains("2 status")
+            && header.contains("3 labels")
+            && header.contains("4 pri")
+            && header.contains("5 title"),
+        "cm125 put labels third and the rest kept their order: {header}"
+    );
+    assert!(screen.contains("auth,bug"), "{screen}");
+    h.press(KeyCode::Char('c'));
+    let screen = h.press(KeyCode::Char('4'));
+    let header = header_line(&screen);
+    assert!(!header.contains("pri"), "{header}");
+    assert!(
+        header.contains("3 labels") && header.contains("4 title"),
+        "renumbered: {header}"
+    );
+    assert!(screen.contains("cols:id,status,labels,title"), "{screen}");
+}
+
+#[test]
+fn hidden_columns_are_listed_after_shown_ones_and_stay_filterable_and_sortable() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('c'));
+    h.press(KeyCode::Char('3'));
+    assert!(!header_line(&h.render()).contains("pri"));
+    let screen = h.press(KeyCode::Char('f'));
+    assert!(
+        screen.contains("3 ✓title") && screen.contains("4  priority · hidden"),
+        "hidden priority listed after the shown columns: {screen}"
+    );
+    let screen = h.press(KeyCode::Char('4'));
+    assert!(screen.contains("┌ pri ─"), "{screen}");
+    let screen = h.type_text("h");
+    assert!(
+        screen.contains("pri:high · cols:id,status,title · 1/3"),
+        "{screen}"
+    );
+    h.press(KeyCode::Char('s'));
+    let screen = h.type_text("p");
+    assert!(
+        screen.contains("1  priority · hidden") && screen.contains("2  project · hidden"),
+        "an ambiguous name narrows to both: {screen}"
+    );
+    h.type_text("ri");
+    let screen = h.type_text("d");
+    assert!(screen.contains("↓pri"), "{screen}");
+}
+#[test]
+fn shift_k_moves_a_column_up_and_the_order_saves_with_the_view() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('c'));
+    h.press(KeyCode::Char('j'));
+    h.app
+        .handle_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT));
+    let screen = h.press(KeyCode::Esc);
+    let header = header_line(&screen);
+    assert!(
+        header.starts_with("│1 status") || header.contains("1 status    2 id"),
+        "{header}"
+    );
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('d'));
+    let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
+    assert!(
+        file.contains("columns = \"status,id,priority,title\""),
+        "{file}"
+    );
+    let fresh = open_app(&h.root, &h.config_path);
+    assert_eq!(fresh.columns[0].name(), "status");
+    assert_eq!(fresh.view_label(), "v1");
+    assert_eq!(
+        fresh.views.get(0).unwrap().name(),
+        "cols:status,id,priority,title"
+    );
+}
+
+#[test]
+fn the_last_column_cannot_be_hidden() {
+    let mut h = Harness::new();
+    for _ in 0..3 {
+        h.press(KeyCode::Char('c'));
+        h.press(KeyCode::Char('1'));
+    }
+    h.press(KeyCode::Char('c'));
+    let screen = h.press(KeyCode::Char('1'));
+    assert!(screen.contains("at least one column must stay"), "{screen}");
+    assert_eq!(h.app.columns.len(), 1);
+}
+
+#[test]
+fn p_lists_columns_first_then_row_filtered_column_and_hidden_fields() {
+    let mut h = Harness::new();
+    let selected = h.app.selected_task().unwrap().id.clone();
+    let screen = h.press(KeyCode::Char('p'));
+    for entry in ["1  id", "2  status", "3  priority", "4  title"] {
+        assert!(
+            screen.contains(entry),
+            "mirrors the header: {entry} in {screen}"
+        );
+    }
+    assert!(screen.contains(&format!("5  row {selected}")), "{screen}");
+    assert!(screen.contains("6  column (whole)"), "{screen}");
+    assert!(
+        screen.contains("7  labels · hidden"),
+        "hidden categorical field by name: {screen}"
+    );
+    let title = screen.lines().nth(2).unwrap_or_default().to_string();
+    assert!(
+        title.contains("┌ paint ─") && !title.contains("r row"),
+        "{title}"
+    );
+    let footer = screen.lines().last().unwrap_or_default();
+    assert!(
+        footer.contains("column number · r row · f filtered"),
+        "{footer}"
+    );
+}
+
+#[test]
+fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('p'));
+    let screen = h.press(KeyCode::Char('2'));
+    assert!(screen.contains("┌ by status ─"), "{screen}");
+    h.press(KeyCode::Char('1'));
+    let screen = h.press(KeyCode::Esc);
+    assert!(
+        screen.contains("paint:1 ·"),
+        "one rule holds every status color: {screen}"
+    );
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Yellow),
+        "To Do rows"
+    );
+    assert_eq!(
+        cell_fg(&h, "Fix login"),
+        Some(Color::Cyan),
+        "In Progress rows"
+    );
+    assert_eq!(
+        cell_fg(&h, "low"),
+        Some(Color::Yellow),
+        "base paints whole rows"
+    );
+
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('3'));
+    h.press(KeyCode::Char('1'));
+    let screen = h.press(KeyCode::Char('h'));
+    assert!(
+        screen.contains("┌ paint ─"),
+        "h goes back to the target list: {screen}"
+    );
+    let screen = h.press(KeyCode::Esc);
+    assert!(screen.contains("paint:2 ·"), "{screen}");
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Yellow),
+        "rows still by status"
+    );
+    assert_ne!(
+        cell_fg(&h, "low"),
+        Some(Color::Yellow),
+        "priority cell has its own color"
+    );
+    assert_eq!(
+        cell_fg(&h, "high"),
+        Some(Color::Yellow),
+        "auto's first color for high"
+    );
+    assert_eq!(
+        h.app.paint.iter().map(|r| r.to_text()).collect::<Vec<_>>(),
+        [
+            "by:status=todo:yellow,inprogress:cyan",
+            "by:priority=high:yellow,low:cyan,medium:green"
+        ]
+    );
+}
+
+#[test]
+fn reordering_rules_flips_which_paint_is_the_base() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Char('h'));
+    h.press(KeyCode::Char('3'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('p'));
+    let screen = h.type_text("o");
+    assert!(
+        screen.contains("┌ paint rules · top is the base"),
+        "{screen}"
+    );
+    assert!(screen.contains("1 ✓by status (2 values)"), "{screen}");
+    assert!(screen.contains("2  by priority (3 values)"), "{screen}");
+    h.press(KeyCode::Char('j'));
+    h.app
+        .handle_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT));
+    let screen = h.render();
+    assert!(screen.contains("1 ✓by priority (3 values)"), "{screen}");
+    h.press(KeyCode::Esc);
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Cyan),
+        "rows now by priority (low)"
+    );
+    assert_eq!(
+        cell_fg(&h, "To Do"),
+        Some(Color::Yellow),
+        "status cell keeps its own color"
+    );
+    h.press(KeyCode::Char('p'));
+    h.type_text("o");
+    let screen = h.press(KeyCode::Delete);
+    assert!(
+        screen.contains("1 ✓by status (2 values)"),
+        "deleting the base promotes the next: {screen}"
+    );
+    h.press(KeyCode::Esc);
+    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Yellow));
+}
+
+#[test]
+fn hand_picked_values_row_and_column_and_hex_and_clearing() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    let selected = h.app.selected_task().unwrap().id.clone();
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('2'));
+    let screen = h.type_text("gre");
+    assert!(
+        screen.contains("┌ by status ─"),
+        "back on the value list: {screen}"
+    );
+    assert_eq!(
+        cell_fg(&h, "To Do"),
+        Some(Color::Green),
+        "the list previews the value's color"
+    );
+    h.press(KeyCode::Esc);
+    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Green));
+    assert_eq!(
+        cell_fg(&h, "Fix login"),
+        Some(Color::Reset),
+        "In Progress unpainted"
+    );
+
+    h.press(KeyCode::Char('p'));
+    h.type_text("r");
+    let screen = h.press(KeyCode::Char('1'));
+    assert!(
+        screen.contains("1▏ color"),
+        "first digit waits when 10+ exist: {screen}"
+    );
+    h.press(KeyCode::Char('2'));
+    assert_eq!(
+        cell_fg(&h, &selected),
+        Some(Color::LightBlue),
+        "12 picks lightblue"
+    );
+    assert!(h
+        .app
+        .paint
+        .iter()
+        .any(|r| r.to_text() == format!("rows:id:{selected}=lightblue")));
+
+    h.press(KeyCode::Char('p'));
+    h.type_text("c");
+    h.type_text("t");
+    h.type_text("#ff8800");
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("painted #ff8800"), "{screen}");
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Rgb(255, 136, 0)),
+        "column rule below the base wins on its column"
+    );
+
+    h.press(KeyCode::Char('p'));
+    h.type_text("c");
+    h.type_text("t");
+    let screen = h.press(KeyCode::Char(' '));
+    assert!(screen.contains("paint cleared"), "{screen}");
+    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Green));
+
+    h.press(KeyCode::Char('p'));
+    h.type_text("r");
+    assert_eq!(
+        cell_fg(&h, "green"),
+        Some(Color::Green),
+        "color list previews colors"
+    );
+    let screen = h.type_text("#00ff00");
+    assert!(
+        screen.contains("#00ff00 ← this is how it looks"),
+        "{screen}"
+    );
+    h.press(KeyCode::Esc);
+
+    h.press(KeyCode::Char('p'));
+    let screen = h.press(KeyCode::Char('d'));
+    assert!(screen.contains("deleted 2 paint rules"), "{screen}");
+    assert!(!screen.contains("paint:"), "{screen}");
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('p'));
+    let screen = h.press(KeyCode::Delete);
+    assert!(screen.contains("deleted 1 paint rules"), "{screen}");
+}
+
+#[test]
+fn paint_rules_round_trip_through_the_view_file() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Char('h'));
+    h.type_text("r");
+    h.type_text("gre");
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('d'));
+    let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
+    assert!(
+        file.contains("paint = \"by:status=todo:yellow,inprogress:cyan;rows:id:"),
+        "{file}"
+    );
+    let fresh = open_app(&h.root, &h.config_path);
+    assert_eq!(fresh.paint, h.app.paint);
+    assert_eq!(fresh.view_label(), "v1");
+}
+
+#[test]
+fn b_passes_the_ball_me_agent_nobody_and_writes_the_label() {
+    let mut h = Harness::new();
+    let id = h.app.selected_task().unwrap().id.clone();
+    h.press(KeyCode::Char('c'));
+    h.type_text("b");
+    h.press(KeyCode::Esc);
+    assert!(header_line(&h.render()).contains("5 ball"));
+    let screen = h.press(KeyCode::Char('b'));
+    assert!(screen.contains(&format!("{id}: ball → me")), "{screen}");
+    let file = std::fs::read_dir(h.root.join("backlog/tasks"))
+        .unwrap()
+        .flatten()
+        .map(|e| std::fs::read_to_string(e.path()).unwrap())
+        .find(|t| t.contains(&format!("id: {id}")))
+        .unwrap();
+    assert!(file.contains("- ball:me\n"), "{file}");
+    let screen = h.press(KeyCode::Char('b'));
+    assert!(screen.contains("ball → agent"), "{screen}");
+    assert_eq!(
+        h.app
+            .selected_task()
+            .unwrap()
+            .labels
+            .iter()
+            .filter(|l| l.starts_with("ball:"))
+            .count(),
+        1
+    );
+    let screen = h.press(KeyCode::Char('b'));
+    assert!(screen.contains("ball dropped"), "{screen}");
+    assert!(!h
+        .app
+        .selected_task()
+        .unwrap()
+        .labels
+        .iter()
+        .any(|l| l.starts_with("ball:")));
+}
+
+#[test]
+fn ball_filters_sorts_and_the_starter_view_is_my_inbox() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('b'));
+    let mine = h.app.selected_task().unwrap().title.clone();
+    h.press(KeyCode::Char('v'));
+    let screen = h.press(KeyCode::Char('5'));
+    assert!(screen.contains("v5 · ball:me · 1/3"), "{screen}");
+    assert!(screen.contains(&mine), "{screen}");
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Char('s'));
+    h.type_text("b");
+    h.type_text("d");
+    assert_eq!(visible_titles(&h)[0], mine, "descending puts me first");
+    assert!(h.render().contains("↓ball"));
+}
+
+#[test]
+fn a_dispatching_task_reads_as_agent_without_a_ball_label() {
+    let mut h = Harness::new();
+    let id = h.app.selected_task().unwrap().id.clone();
+    switchbard_core::set_backlog_label(&h.root, &id, "dispatching", true).unwrap();
+    h.app.tick();
+    h.press(KeyCode::Char('/'));
+    let screen = h.type_text("ball:agent");
+    assert!(screen.contains("1/3") && screen.contains(&id), "{screen}");
+}
+
+#[test]
+fn g_in_the_columns_picker_shows_priority_as_glyphs_and_saves_with_the_view() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('c'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('g'));
+    assert_eq!(h.app.status, "priority shows glyphs");
+    let screen = h.press(KeyCode::Esc);
+    let header = header_line(&screen);
+    assert!(
+        header.contains("2 status") && header.contains("3 ↑·↓") && !header.contains("3 pri"),
+        "glyph header carries the legend in vocabulary order: {header}"
+    );
+    assert!(screen.contains("↑"), "high: {screen}");
+    assert!(screen.contains("↓"), "low: {screen}");
+    let row = screen
+        .lines()
+        .find(|l| l.contains("Fix login"))
+        .unwrap_or_default();
+    assert!(row.contains(" · "), "medium: {row}");
+    assert!(screen.contains("glyphs:priority ·"), "{screen}");
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('d'));
+    let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
+    assert!(file.contains("glyphs = \"priority\""), "{file}");
+    let fresh = open_app(&h.root, &h.config_path);
+    assert_eq!(
+        fresh.glyph_columns,
+        vec![switchbard_tui::config::Column::Priority]
+    );
+    assert_eq!(fresh.view_label(), "v1");
+}
+
+#[test]
+fn glyphs_come_from_lua_and_fall_back_to_the_first_letter() {
+    let mut h = Harness::new();
+    std::fs::write(
+        &h.config_path,
+        "return { glyphs = { priority = { high = \"H\" }, status = { todo = \"T\" } } }",
+    )
+    .unwrap();
+    h.app.tick();
+    h.press(KeyCode::Char('c'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('g'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('g'));
+    let screen = h.press(KeyCode::Esc);
+    let row = |needle: &str| {
+        screen
+            .lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or_default()
+            .to_string()
+    };
+    assert!(
+        row("Write onboarding").contains(" T ") && row("Write onboarding").contains(" H "),
+        "user glyphs for To Do + high: {screen}"
+    );
+    assert!(
+        row("Add dark theme").contains(" ↓ "),
+        "default low glyph survives the merge: {screen}"
+    );
+    assert!(
+        row("Fix login").contains(" ◐ ") && row("Fix login").contains(" · "),
+        "In Progress keeps its default glyph: {screen}"
+    );
+    std::fs::write(
+        &h.config_path,
+        "return { glyphs = { status = { inprogress = \"\" } } }",
+    )
+    .unwrap();
+    h.app.tick();
+    let screen = h.render();
+    let fix = screen
+        .lines()
+        .find(|l| l.contains("Fix login"))
+        .unwrap_or_default();
+    assert!(
+        fix.contains(" I "),
+        "an empty glyph falls back to the first letter: {fix}"
+    );
+    h.press(KeyCode::Char('c'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('g'));
+    assert_eq!(h.app.status, "title has no glyphs: it is free text");
 }

@@ -391,7 +391,8 @@ pub fn revise_task_checklist(
     apply_edit(path, move |_, rest| {
         let mut lines = split_lines(rest);
         let inside = fence_flags(rest);
-        let span = section_span(&lines, &inside, list.heading())
+        let marked = marker_flags(rest);
+        let span = section_span(&lines, &inside, &marked, list.heading())
             .with_context(|| format!("task has no {} section", list.heading()))?;
         revise_checklist_span(&mut lines, span, list, &edits, removals)?;
         *rest = lines.join("\n");

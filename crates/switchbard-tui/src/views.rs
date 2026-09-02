@@ -8,24 +8,73 @@ use std::path::{Path, PathBuf};
 
 use mlua::{Lua, Table};
 
+use crate::config::Column;
+use crate::paint::{parse_rules, rules_text, PaintRule};
 use crate::sort::Sort;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedView {
     pub filter: String,
     pub sort: Option<Sort>,
+    /// Shown columns in display order.
+    pub columns: Vec<Column>,
+    /// Columns shown as glyphs instead of text.
+    pub glyph_columns: Vec<Column>,
+    pub paint: Vec<PaintRule>,
 }
 
 impl SavedView {
     /// A view is named by what it does, so it reads the same in every repo.
     pub fn name(&self) -> String {
-        let sort = self.sort.map(|sort| sort.label());
-        match (self.filter.is_empty(), sort) {
-            (true, None) => "all".to_string(),
-            (true, Some(sort)) => sort,
-            (false, None) => self.filter.clone(),
-            (false, Some(sort)) => format!("{} {sort}", self.filter),
+        let mut parts: Vec<String> = Vec::new();
+        if !self.filter.is_empty() {
+            parts.push(self.filter.clone());
         }
+        if let Some(sort) = self.sort {
+            parts.push(sort.label());
+        }
+        if let Some(columns) = self.columns_label() {
+            parts.push(columns);
+        }
+        if !self.glyph_columns.is_empty() {
+            parts.push(format!("glyphs:{}", columns_text(&self.glyph_columns)));
+        }
+        if !self.paint.is_empty() {
+            parts.push(format!("paint:{}", self.paint.len()));
+        }
+        if parts.is_empty() {
+            "all".to_string()
+        } else {
+            parts.join(" ")
+        }
+    }
+
+    /// `cols:id,title` when the columns differ from the default set, else nothing.
+    pub fn columns_label(&self) -> Option<String> {
+        if self.columns == Column::DEFAULT_SHOWN {
+            return None;
+        }
+        Some(format!("cols:{}", columns_text(&self.columns)))
+    }
+}
+
+pub fn columns_text(columns: &[Column]) -> String {
+    columns
+        .iter()
+        .map(|column| column.name())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+pub fn parse_columns(text: &str) -> Vec<Column> {
+    let columns: Vec<Column> = text
+        .split(',')
+        .filter_map(|name| Column::parse(name.trim()))
+        .collect();
+    if columns.is_empty() {
+        Column::DEFAULT_SHOWN.to_vec()
+    } else {
+        columns
     }
 }
 
@@ -62,13 +111,22 @@ pub fn repo_path(repo_root: &Path) -> Option<PathBuf> {
 }
 
 pub fn starter_views() -> Vec<SavedView> {
-    ["", "status:todo", "status:inprogress", "label:tui"]
-        .into_iter()
-        .map(|filter| SavedView {
-            filter: filter.to_string(),
-            sort: None,
-        })
-        .collect()
+    [
+        "",
+        "status:todo",
+        "status:inprogress",
+        "label:tui",
+        "ball:me",
+    ]
+    .into_iter()
+    .map(|filter| SavedView {
+        filter: filter.to_string(),
+        sort: None,
+        columns: Column::DEFAULT_SHOWN.to_vec(),
+        glyph_columns: Vec::new(),
+        paint: Vec::new(),
+    })
+    .collect()
 }
 
 pub struct ViewStore {
@@ -249,14 +307,34 @@ fn parse_view(entry: &Table) -> Result<SavedView, String> {
     Ok(SavedView {
         filter: field("filter")?,
         sort: Sort::parse(&field("sort")?),
+        columns: parse_columns(&field("columns")?),
+        glyph_columns: field("glyphs")?
+            .split(',')
+            .filter_map(|name| Column::parse(name.trim()))
+            .collect(),
+        paint: parse_rules(&field("paint")?),
     })
 }
 
 fn lua_view(view: &SavedView) -> String {
+    let glyphs = if view.glyph_columns.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ", glyphs = {}",
+            lua_string(&columns_text(&view.glyph_columns))
+        )
+    };
+    let paint = if view.paint.is_empty() {
+        String::new()
+    } else {
+        format!(", paint = {}", lua_string(&rules_text(&view.paint)))
+    };
     format!(
-        "{{ filter = {}, sort = {} }}",
+        "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint} }}",
         lua_string(&view.filter),
         lua_string(&view.sort.map(|sort| sort.to_text()).unwrap_or_default()),
+        lua_string(&columns_text(&view.columns)),
     )
 }
 

@@ -24,6 +24,9 @@ pub enum Action {
     Filter,
     FilterColumn,
     SortColumn,
+    Columns,
+    Paint,
+    Ball,
     Command,
     Reload,
     Help,
@@ -45,6 +48,9 @@ impl Action {
             "filter" => Action::Filter,
             "filter_column" => Action::FilterColumn,
             "sort_column" => Action::SortColumn,
+            "columns" => Action::Columns,
+            "paint" => Action::Paint,
+            "ball" => Action::Ball,
             "command" => Action::Command,
             "reload" => Action::Reload,
             "help" => Action::Help,
@@ -67,6 +73,9 @@ impl Action {
             Action::Filter => "filter".to_string(),
             Action::FilterColumn => "filter_column".to_string(),
             Action::SortColumn => "sort_column".to_string(),
+            Action::Columns => "columns".to_string(),
+            Action::Paint => "paint".to_string(),
+            Action::Ball => "ball".to_string(),
             Action::Command => "command".to_string(),
             Action::Reload => "reload".to_string(),
             Action::Help => "help".to_string(),
@@ -125,7 +134,7 @@ impl KeyChord {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Column {
     Id,
     Status,
@@ -133,17 +142,37 @@ pub enum Column {
     Title,
     Labels,
     Project,
+    Ball,
 }
 
 impl Column {
+    /// Every column sbt knows, in catalog order. Shown columns are a user-ordered subset.
+    pub const ALL: [Column; 7] = [
+        Column::Id,
+        Column::Status,
+        Column::Priority,
+        Column::Title,
+        Column::Labels,
+        Column::Project,
+        Column::Ball,
+    ];
+
+    pub const DEFAULT_SHOWN: [Column; 4] =
+        [Column::Id, Column::Status, Column::Priority, Column::Title];
+
+    /// The `· hidden` tag picker lists add to a column that is not showing.
+    pub const HIDDEN_TAG: &str = " · hidden";
+
     pub fn parse(text: &str) -> Option<Column> {
+        let text = text.trim_end_matches(Column::HIDDEN_TAG);
         Some(match text {
             "id" => Column::Id,
             "status" => Column::Status,
-            "priority" => Column::Priority,
+            "priority" | "pri" => Column::Priority,
             "title" => Column::Title,
             "labels" => Column::Labels,
             "project" => Column::Project,
+            "ball" => Column::Ball,
             _ => return None,
         })
     }
@@ -154,6 +183,7 @@ impl Column {
             Column::Priority => Some(crate::tasks::FilterField::Priority),
             Column::Labels => Some(crate::tasks::FilterField::Label),
             Column::Project => Some(crate::tasks::FilterField::Project),
+            Column::Ball => Some(crate::tasks::FilterField::Ball),
             Column::Id | Column::Title => None,
         }
     }
@@ -167,6 +197,7 @@ impl Column {
             Column::Title => "title",
             Column::Labels => "labels",
             Column::Project => "project",
+            Column::Ball => "ball",
         }
     }
 
@@ -178,6 +209,7 @@ impl Column {
             Column::Title => "title",
             Column::Labels => "labels",
             Column::Project => "project",
+            Column::Ball => "ball",
         }
     }
 }
@@ -195,11 +227,29 @@ pub struct Theme {
 pub struct Config {
     pub keys: HashMap<KeyChord, Action>,
     pub theme: Theme,
-    pub columns: Vec<Column>,
+    /// Column -> loose value -> glyph, for columns shown in glyph mode.
+    pub glyphs: HashMap<Column, HashMap<String, String>>,
     pub warnings: Vec<String>,
 }
 
 impl Config {
+    /// The glyph for `value` in `column`: configured, else its first letter.
+    pub fn glyph(&self, column: Column, value: &str) -> String {
+        let key = crate::tasks::Filter::loose_key(value);
+        self.glyphs
+            .get(&column)
+            .and_then(|map| map.get(&key))
+            .filter(|glyph| !glyph.is_empty())
+            .cloned()
+            .unwrap_or_else(|| {
+                value
+                    .chars()
+                    .next()
+                    .map(|c| c.to_uppercase().to_string())
+                    .unwrap_or_default()
+            })
+    }
+
     pub fn bindings_for(&self, action: &Action) -> Vec<String> {
         let mut keys: Vec<String> = self
             .keys
@@ -243,7 +293,7 @@ pub fn load(user_path: Option<&Path>) -> Config {
 struct RawConfig {
     keys: HashMap<String, String>,
     theme: HashMap<String, String>,
-    columns: Option<Vec<String>>,
+    glyphs: HashMap<String, HashMap<String, String>>,
 }
 
 impl RawConfig {
@@ -253,15 +303,15 @@ impl RawConfig {
         Ok(RawConfig {
             keys: string_map(&table, "keys")?,
             theme: string_map(&table, "theme")?,
-            columns: string_list(&table, "columns")?,
+            glyphs: nested_string_map(&table, "glyphs")?,
         })
     }
 
     fn merge(&mut self, over: RawConfig) {
         self.keys.extend(over.keys);
         self.theme.extend(over.theme);
-        if over.columns.is_some() {
-            self.columns = over.columns;
+        for (column, map) in over.glyphs {
+            self.glyphs.entry(column).or_default().extend(map);
         }
     }
 
@@ -286,34 +336,49 @@ impl RawConfig {
         let theme = Theme {
             accent: color("accent", Color::Cyan),
             header: color("header", Color::Yellow),
-            dim: color("dim", Color::DarkGray),
+            dim: color("dim", Color::Gray),
             selected: color("selected", Color::Indexed(236)),
             border: color("border", Color::DarkGray),
         };
-        let columns = self
-            .columns
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|name| {
-                let column = Column::parse(name);
-                if column.is_none() {
-                    warnings.push(format!("unknown column '{name}'"));
+        let mut glyphs: HashMap<Column, HashMap<String, String>> = HashMap::new();
+        for (column_name, map) in self.glyphs {
+            match Column::parse(&column_name) {
+                Some(column) => {
+                    let entry = glyphs.entry(column).or_default();
+                    for (value, glyph) in map {
+                        entry.insert(crate::tasks::Filter::loose_key(&value), glyph);
+                    }
                 }
-                column
-            })
-            .collect::<Vec<_>>();
-        let columns = if columns.is_empty() {
-            vec![Column::Id, Column::Status, Column::Priority, Column::Title]
-        } else {
-            columns
-        };
+                None => warnings.push(format!("unknown column '{column_name}' in glyphs")),
+            }
+        }
         Config {
             keys,
             theme,
-            columns,
+            glyphs,
             warnings,
         }
     }
+}
+
+fn nested_string_map(
+    table: &Table,
+    key: &str,
+) -> mlua::Result<HashMap<String, HashMap<String, String>>> {
+    let mut out = HashMap::new();
+    let Value::Table(inner) = table.get::<Value>(key)? else {
+        return Ok(out);
+    };
+    for pair in inner.pairs::<String, Table>() {
+        let (name, values) = pair?;
+        let mut map = HashMap::new();
+        for entry in values.pairs::<String, String>() {
+            let (value, glyph) = entry?;
+            map.insert(value, glyph);
+        }
+        out.insert(name, map);
+    }
+    Ok(out)
 }
 
 fn string_map(table: &Table, key: &str) -> mlua::Result<HashMap<String, String>> {
@@ -326,15 +391,4 @@ fn string_map(table: &Table, key: &str) -> mlua::Result<HashMap<String, String>>
         out.insert(name, value);
     }
     Ok(out)
-}
-
-fn string_list(table: &Table, key: &str) -> mlua::Result<Option<Vec<String>>> {
-    let Value::Table(inner) = table.get::<Value>(key)? else {
-        return Ok(None);
-    };
-    let mut out = Vec::new();
-    for value in inner.sequence_values::<String>() {
-        out.push(value?);
-    }
-    Ok(Some(out))
 }

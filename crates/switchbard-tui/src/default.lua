@@ -4,28 +4,36 @@
 return {
   -- key -> action. Keys: single chars, "enter", "esc", "tab", "up", "down",
   -- "ctrl-<char>". Actions: down, up, top, bottom, page_down, page_up, open,
-  -- back, filter, filter_column, sort_column, view, command, reload, help, quit.
+  -- back, filter, filter_column, sort_column, columns, paint, ball, view, command, reload, help, quit.
   keys = {
     j = "down", k = "up", down = "down", up = "up",
     g = "top", G = "bottom",
     ["ctrl-d"] = "page_down", ["ctrl-u"] = "page_up",
     enter = "open", esc = "back",
     ["/"] = "filter", f = "filter_column", s = "sort_column", [":"] = "command",
-    v = "view", r = "reload", ["?"] = "help", q = "quit",
+    c = "columns", p = "paint", b = "ball", v = "view", r = "reload", ["?"] = "help", q = "quit",
   },
 
-  -- Colors: names (cyan, darkgray, ...) or hex ("#303030").
+  -- Colors: ANSI names (cyan, gray, darkgray, ...) follow your terminal palette;
+  -- hex ("#303030") is exact. dim is secondary text (detail meta line, hints,
+  -- counts); keep it readable on your background.
   theme = {
     accent = "cyan",
     header = "yellow",
-    dim = "darkgray",
+    dim = "gray",
     selected = "#303030",
     border = "darkgray",
   },
 
-  -- Columns in the task table: id, status, priority, title, labels, project.
-  columns = { "id", "status", "priority", "title" },
+  -- Glyphs shown when a column is in glyph mode (`c`, then `g` on the column).
+  -- Keys are the column's values; a value without a glyph shows its first letter.
+  glyphs = {
+    priority = { high = "↑", medium = "·", low = "↓" },
+    status = { icebox = "❄", todo = "○", inprogress = "◐", inreview = "◑", done = "●" },
+    ball = { me = "●", agent = "◌" },
+  },
 
-  -- Saved views (filter + sort in numbered slots) live in ~/.switchbard/views.lua,
-  -- written by `v s <n>` inside sbt. Slot 1 opens by default.
+  -- Columns are picked and ordered inside sbt (`c`) and saved with each view,
+  -- together with the filter and sort, in ~/.switchbard/views.lua (global) and
+  -- ~/.switchbard/views/<repo>.lua (per repo). Slot 1 opens by default.
 }

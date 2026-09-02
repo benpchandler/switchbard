@@ -1,5 +1,7 @@
 //! Rendering. Reads `App`, writes a frame, and leaves a text copy of the screen behind.
 
+use std::str::FromStr;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -8,10 +10,12 @@ use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Table
 use ratatui::Frame;
 use switchbard_core::BacklogTask;
 
-use crate::app::{App, Mode, Pane, PickerPurpose, ValuePicker};
+use crate::app::{App, ColumnPurpose, Mode, PaintPick, Pane, PickerPurpose, ValuePicker};
+use crate::ball::Ball;
 use crate::config::{Action, Column};
+use crate::paint::{self, PaintRule};
 use crate::tasks::Filter;
-use crate::views::Scope;
+use crate::views::{columns_text, Scope};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let [body, footer] =
@@ -51,36 +55,62 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
         .sort
         .map(|sort| format!("{} · ", sort.label()))
         .unwrap_or_default();
+    let columns = if app.columns == Column::DEFAULT_SHOWN {
+        String::new()
+    } else {
+        format!("cols:{} · ", columns_text(&app.columns))
+    };
+    let glyphs = if app.glyph_columns.is_empty() {
+        String::new()
+    } else {
+        format!("glyphs:{} · ", columns_text(&app.glyph_columns))
+    };
+    let painted = if app.paint.is_empty() {
+        String::new()
+    } else {
+        format!("paint:{} · ", app.paint.len())
+    };
     let title = format!(
-        " {repo} · {} · {filter}{sort}{}/{} ",
+        " {repo} · {} · {filter}{sort}{columns}{glyphs}{painted}{}/{} ",
         app.view_label(),
         app.visible.len(),
         app.total_tasks()
     );
-    let header = Row::new(
-        app.config
-            .columns
-            .iter()
-            .enumerate()
-            .map(|(index, column)| Cell::from(format!("{} {}", index + 1, column.header()))),
-    )
+    let header = Row::new(app.columns.iter().enumerate().map(|(index, column)| {
+        if app.glyph_columns.contains(column) {
+            Cell::from(format!("{} {}", index + 1, app.glyph_legend(*column)))
+        } else {
+            Cell::from(format!("{} {}", index + 1, column.header()))
+        }
+    }))
     .style(Style::default().fg(theme.header));
     let rows = (0..app.visible.len()).filter_map(|index| {
         let task = app.task(index)?;
-        Some(Row::new(
-            app.config
-                .columns
-                .iter()
-                .map(|column| Cell::from(cell_text(*column, task))),
-        ))
+        Some(Row::new(app.columns.iter().map(|column| {
+            let text = cell_text(*column, task);
+            let text = if app.glyph_columns.contains(column) && !text.is_empty() {
+                app.config.glyph(*column, &text)
+            } else {
+                text
+            };
+            let cell = Cell::from(text);
+            match paint::cell_color(&app.paint, task, *column) {
+                Some(color) => cell.style(Style::default().fg(color)),
+                None => cell,
+            }
+        })))
     });
-    let widths = app.config.columns.iter().map(|column| match column {
+    let widths = app.columns.iter().map(|column| match column {
+        _ if app.glyph_columns.contains(column) => {
+            Constraint::Length((2 + app.glyph_legend(*column).chars().count()).max(3) as u16)
+        }
         Column::Id => Constraint::Length(9),
         Column::Status => Constraint::Length(12),
         Column::Priority => Constraint::Length(7),
         Column::Title => Constraint::Min(20),
         Column::Labels => Constraint::Length(20),
         Column::Project => Constraint::Length(18),
+        Column::Ball => Constraint::Length(6),
     });
     let table = Table::new(rows, widths)
         .header(header)
@@ -107,6 +137,7 @@ fn cell_text(column: Column, task: &BacklogTask) -> String {
         Column::Title => task.title.clone(),
         Column::Labels => task.labels.join(","),
         Column::Project => task.project.clone().unwrap_or_default(),
+        Column::Ball => Ball::text(Ball::of(task)).to_string(),
     }
 }
 
@@ -171,6 +202,9 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Action::Filter,
         Action::FilterColumn,
         Action::SortColumn,
+        Action::Columns,
+        Action::Paint,
+        Action::Ball,
         Action::Command,
         Action::Reload,
         Action::Help,
@@ -254,21 +288,23 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(theme.dim),
             ),
         ]),
-        Mode::PickColumn
-        | Mode::PickValue
-        | Mode::ViewChord
-        | Mode::ViewSaveSlot
-        | Mode::ViewGlobalSlot => Line::from(Span::styled(
-            app.status.clone(),
-            Style::default().fg(theme.accent),
+        Mode::PickValue if app.picker.is_some() => Line::from(Span::styled(
+            format!(" {}", picker_hint(app.picker.as_ref().expect("checked"))),
+            Style::default().fg(theme.dim),
         )),
+        Mode::PickValue | Mode::ViewChord | Mode::ViewSaveSlot | Mode::ViewGlobalSlot => {
+            Line::from(Span::styled(
+                app.status.clone(),
+                Style::default().fg(theme.accent),
+            ))
+        }
         Mode::Browse if !app.status.is_empty() => Line::from(Span::styled(
             app.status.clone(),
             Style::default().fg(theme.accent),
         )),
         Mode::Browse => Line::from(Span::styled(
             format!(
-                " {}  / filter  f filter-by  s sort  v views  : command  ? keys  q quit",
+                " {}  / filter  f filter-by  s sort  c columns  p paint  b ball  v views  : command  ? keys  q quit",
                 if app.filter_text.is_empty() {
                     String::new()
                 } else {
@@ -289,7 +325,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         .map(|(value, _)| value.len() + 11)
         .max()
         .unwrap_or(20)
-        .max(34)
+        .max(60)
         .min(body.width.saturating_sub(4) as usize) as u16;
     let height = (picker.options.len() as u16 + 2).min(body.height.saturating_sub(2));
     let area = Rect {
@@ -303,13 +339,34 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         .iter()
         .enumerate()
         .map(|(index, (value, count))| {
-            let shown = match picker.purpose {
+            let shown = match &picker.purpose {
                 PickerPurpose::Filter(field) => {
-                    Filter::field_allows(&app.filter_text, field, value)
+                    Filter::field_allows(&app.filter_text, *field, value)
                 }
                 PickerPurpose::Sort(column) => app
                     .sort
-                    .is_some_and(|sort| sort.order.label(column) == *value),
+                    .is_some_and(|sort| sort.order.label(*column) == *value),
+                PickerPurpose::ChooseColumn(_) | PickerPurpose::Columns => {
+                    Column::parse(value).is_some_and(|column| app.columns.contains(&column))
+                }
+                PickerPurpose::PaintTarget => false,
+                PickerPurpose::PaintColumn => false,
+                PickerPurpose::MoveColumns(placed) => placed.contains(&(index + 1)),
+                PickerPurpose::PaintRules => index == 0,
+                PickerPurpose::PaintValues(column) => {
+                    paint::value_color(&app.paint, *column, value).is_some()
+                }
+                PickerPurpose::PaintColor(pick) => match pick {
+                    PaintPick::Value(column, painted) => {
+                        paint::value_color(&app.paint, *column, painted).as_deref() == Some(value)
+                    }
+                    PaintPick::Rows(filter) => app.paint.iter().any(|rule| {
+                        matches!(rule, PaintRule::Rows { filter: f, color } if f == filter && color == value)
+                    }),
+                    PaintPick::Column(column) => app.paint.iter().any(|rule| {
+                        matches!(rule, PaintRule::Column { column: c, color } if c == column && color == value)
+                    }),
+                },
             };
             let mut style = if index == picker.selected {
                 Style::default()
@@ -320,6 +377,27 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             };
             if !shown {
                 style = style.fg(theme.dim);
+            }
+            match &picker.purpose {
+                // Show the color itself: this is what the painted text will look like.
+                PickerPurpose::PaintColor(_) => {
+                    if let Ok(color) = ratatui::style::Color::from_str(value) {
+                        style = style.fg(color);
+                    }
+                }
+                PickerPurpose::PaintValues(column) => {
+                    if let Some(color) = paint::value_color(&app.paint, *column, value)
+                        .and_then(|color| ratatui::style::Color::from_str(&color).ok())
+                    {
+                        style = style.fg(color);
+                    }
+                }
+                PickerPurpose::PaintRules => {
+                    if let Some(color) = app.paint.get(index).and_then(PaintRule::swatch) {
+                        style = style.fg(color);
+                    }
+                }
+                _ => {}
             }
             let mark = if shown { "✓" } else { " " };
             Line::from(vec![
@@ -339,24 +417,75 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             ])
         })
         .collect();
+    let pending = if picker.number.is_empty() {
+        String::new()
+    } else {
+        format!("{}▏", picker.number)
+    };
+    let preview = match picker.purpose {
+        PickerPurpose::PaintColor(_) => ratatui::style::Color::from_str(picker.typed.trim()).ok(),
+        _ => None,
+    };
+    let title_style = match preview {
+        Some(color) => Style::default().fg(color).add_modifier(Modifier::BOLD),
+        None => Style::default(),
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent))
-        .title(match (&picker.purpose, picker.typed.is_empty()) {
-            (PickerPurpose::Filter(field), true) => format!(
-                " {} · type/number picks one · space toggles ",
-                field.keyword()
-            ),
-            (PickerPurpose::Filter(field), false) => {
-                format!(" {}: {}▏", field.keyword(), picker.typed)
-            }
-            (PickerPurpose::Sort(column), true) => format!(" sort by {} ", column.header()),
-            (PickerPurpose::Sort(column), false) => {
-                format!(" sort by {}: {}▏", column.header(), picker.typed)
-            }
-        });
+        .title_style(title_style)
+        .title(pending + &picker_title(picker, preview.is_some()));
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// What is being picked, plus any typed text. Key hints live in the footer.
+fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
+    let subject = match &picker.purpose {
+        PickerPurpose::Filter(field) => field.keyword().to_string(),
+        PickerPurpose::Sort(column) => format!("sort by {}", column.header()),
+        PickerPurpose::ChooseColumn(ColumnPurpose::Filter) => "filter by column".to_string(),
+        PickerPurpose::ChooseColumn(ColumnPurpose::Sort) => "sort by column".to_string(),
+        PickerPurpose::Columns => "columns".to_string(),
+        PickerPurpose::MoveColumns(placed) => format!(
+            "move columns: {}",
+            placed
+                .iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join("")
+        ),
+        PickerPurpose::PaintValues(column) => format!("by {}", column.name()),
+        PickerPurpose::PaintColumn => "paint which column".to_string(),
+        PickerPurpose::PaintTarget => "paint".to_string(),
+        PickerPurpose::PaintColor(_) => "color".to_string(),
+        PickerPurpose::PaintRules => "paint rules · top is the base".to_string(),
+    };
+    if picker.typed.is_empty() {
+        format!(" {subject} ")
+    } else if typed_is_color {
+        format!(" {} ← this is how it looks · enter applies ", picker.typed)
+    } else {
+        format!(" {subject}: {}▏", picker.typed)
+    }
+}
+
+/// The keys that work in this picker, shown dim in the footer.
+pub fn picker_hint(picker: &ValuePicker) -> &'static str {
+    match &picker.purpose {
+        PickerPurpose::Filter(_) => "number or name picks one · space toggles · esc",
+        PickerPurpose::Sort(_) => "number or name picks · esc",
+        PickerPurpose::ChooseColumn(_) => "number or name · hidden columns listed last · esc",
+        PickerPurpose::Columns => "number or name toggles · m reorder · g glyphs · esc",
+        PickerPurpose::MoveColumns(_) => "type column numbers in the order you want · enter done",
+        PickerPurpose::PaintValues(_) => "value then color · repeats · h back · esc done",
+        PickerPurpose::PaintColumn => "number or name · h back · esc",
+        PickerPurpose::PaintTarget => {
+            "column number · r row · f filtered · c whole column · o order rules · d delete all · esc"
+        }
+        PickerPurpose::PaintColor(_) => "name or #hex · space clears · h back · esc",
+        PickerPurpose::PaintRules => "K/J reorder · del removes · h back · esc",
+    }
 }
 
 pub fn buffer_text(buffer: &Buffer) -> String {

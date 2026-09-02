@@ -19,11 +19,15 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 ## Module map
 - `app.rs` - state + the one key-handling path (`handle_key`, `apply`, `run_command`).
 - `view.rs` - rendering only; also snapshots the screen text for reports.
-- `config.rs` - `default.lua` baked in, user file layered over; keys/theme/columns/views.
+- `config.rs` - `default.lua` baked in, user file layered over; keys, theme, glyphs.
+  Columns (shown set, order, glyph mode via `g`) are view state; numbers are positions.
 - `tasks.rs` - task load + filter language (`status: pri: label: project:` + words,
   loose match: `status:todo` == "To Do"); `field_values` feeds the `f <n>` picker.
-- `views.rs` - slots of filter+sort: global `~/.switchbard/views.lua`, per-repo overrides in
+- `views.rs` - slots of filter+sort+columns+paint: global `~/.switchbard/views.lua`, per-repo overrides in
   `views/<repo path>.lua`; `vs<n>` saves to repo, `vg<n>` promotes to global; slot 1 opens.
+- `paint.rs` - `p` rules in a hierarchy: `by:<col>=v:c,...`, `rows:<filter>=c`, `column:<col>=c`.
+  Top rule is the base (whole rows); lower rules paint only their scope. `po` reorders.
+- `ball.rs` - who holds the ball: `ball:me`/`ball:agent` labels (`dispatching` = agent); `b` cycles.
 - `sort.rs` - `s <n>` orders: ascending/descending/semantic (vocabulary rank), ties by id.
 - `report.rs` - `:bug`/`:idea` => task via `switchbard-core` write layer.
 - `telemetry.rs` - JSONL event log, in-memory trail, `stats`.
