@@ -258,14 +258,12 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(theme.dim),
             ),
         ]),
-        Mode::PickColumn
-        | Mode::PickValue
-        | Mode::ViewChord
-        | Mode::ViewSaveSlot
-        | Mode::ViewGlobalSlot => Line::from(Span::styled(
-            app.status.clone(),
-            Style::default().fg(theme.accent),
-        )),
+        Mode::PickValue | Mode::ViewChord | Mode::ViewSaveSlot | Mode::ViewGlobalSlot => {
+            Line::from(Span::styled(
+                app.status.clone(),
+                Style::default().fg(theme.accent),
+            ))
+        }
         Mode::Browse if !app.status.is_empty() => Line::from(Span::styled(
             app.status.clone(),
             Style::default().fg(theme.accent),
@@ -293,7 +291,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         .map(|(value, _)| value.len() + 11)
         .max()
         .unwrap_or(20)
-        .max(56)
+        .max(60)
         .min(body.width.saturating_sub(4) as usize) as u16;
     let height = (picker.options.len() as u16 + 2).min(body.height.saturating_sub(2));
     let area = Rect {
@@ -361,10 +359,16 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             (PickerPurpose::Sort(column), false) => {
                 format!(" sort by {}: {}▏", column.header(), picker.typed)
             }
-            (PickerPurpose::ChooseColumn(ColumnPurpose::Filter), _) => {
+            (PickerPurpose::ChooseColumn(ColumnPurpose::Filter), true) => {
+                " filter by column · number or name · hidden columns listed last ".to_string()
+            }
+            (PickerPurpose::ChooseColumn(ColumnPurpose::Sort), true) => {
+                " sort by column · number or name · hidden columns listed last ".to_string()
+            }
+            (PickerPurpose::ChooseColumn(ColumnPurpose::Filter), false) => {
                 format!(" filter by column: {}▏", picker.typed)
             }
-            (PickerPurpose::ChooseColumn(ColumnPurpose::Sort), _) => {
+            (PickerPurpose::ChooseColumn(ColumnPurpose::Sort), false) => {
                 format!(" sort by column: {}▏", picker.typed)
             }
             (PickerPurpose::Columns, true) => {
