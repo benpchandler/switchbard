@@ -22,6 +22,7 @@ assert_scope true crates/switchbard-core/src/mission_supervisor.rs
 assert_scope true crates/switchbard-gui/src/main.rs
 assert_scope true xplan-sidecar-pin.json
 assert_scope true vendor/xplan/xplan.bundle
+assert_scope true scripts/bundle-mac.sh
 assert_scope true Cargo.lock
 assert_scope true .github/workflows/ci.yml
 assert_scope true README.md crates/switchbard-gui/tests/mission_command_view.rs

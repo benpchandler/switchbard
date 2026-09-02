@@ -18,6 +18,7 @@ while IFS= read -r -d '' path; do
       crates/*/Cargo.toml | \
       xplan-sidecar-pin.json | vendor/xplan/* | \
       scripts/acquire-xplan-mission-sidecar.sh | \
+      scripts/bundle-mac.sh | \
       scripts/checkout-pinned-xplan.sh | \
       scripts/ci-mission-sidecar-diff.sh | \
       scripts/ci-mission-sidecar-scope.sh | \
