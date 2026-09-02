@@ -487,7 +487,11 @@ fn cleanup_confirm_sets_the_synchronous_status_before_the_spawned_archive_calls(
     harness.get_by_label("Clean Up Old Tasks").click();
     harness.run();
     harness.get_by_label("Confirm cleanup").click();
-    harness.run();
+    // One step, not `run()`: the spawned archive thread keeps requesting
+    // repaints while it works, and under a loaded parallel test run that
+    // outlasts `run()`'s step budget. The status under test is set
+    // synchronously on the click, so a single frame is all this needs.
+    harness.step();
 
     assert_action_status(
         &harness,

@@ -1,0 +1,28 @@
+[package]
+name = "switchbard-tui"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Terminal UI for switchbard: drive the backlog from a terminal tab"
+
+[dependencies]
+switchbard-core = { path = "../switchbard-core" }
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+dirs.workspace = true
+ratatui = "0.29"
+crossterm = "0.28"
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "sbt"
+path = "src/main.rs"

@@ -53,3 +53,16 @@ run = "bash scripts/bundle-mac.sh"
 description = "Build an alpha macOS DMG and checksum"
 depends = ["ci"]
 run = "bash scripts/package-dmg.sh"
+
+[tasks.tui]
+description = "Check only the TUI crate (no RUSTFLAGS so the workspace build cache stays warm)"
+run = [
+  "cargo fmt --all -- --check",
+  "cargo clippy -p switchbard-tui --all-targets -- -D warnings",
+  "cargo test -p switchbard-tui",
+]
+
+[tasks.tui-install]
+description = "Check the TUI crate, then install sbt; a running sbt re-execs itself"
+depends = ["tui"]
+run = "cargo install --path crates/switchbard-tui"
