@@ -45,6 +45,8 @@ pub enum PickerPurpose {
     ChooseColumn(ColumnPurpose),
     /// The `c` picker: which columns show, in what order.
     Columns,
+    /// After `c m`: typed column numbers become the new order, live.
+    MoveColumns(Vec<usize>),
     /// After `p`: what to paint.
     PaintTarget,
     /// A column's values, one color each.
@@ -121,6 +123,8 @@ pub struct App {
     pub columns: Vec<Column>,
     /// Shown as glyphs rather than text (`c` then `g`).
     pub glyph_columns: Vec<Column>,
+    /// Column order when `c m` began, so typed numbers keep meaning what the header showed.
+    move_origin: Option<Vec<Column>>,
     pub paint: Vec<PaintRule>,
     /// Which values list to return to after a color is picked.
     paint_return: Option<Column>,
@@ -161,6 +165,7 @@ impl App {
             selected: 0,
             columns: Column::DEFAULT_SHOWN.to_vec(),
             glyph_columns: Vec::new(),
+            move_origin: None,
             paint: Vec::new(),
             paint_return: None,
             views,
@@ -689,6 +694,50 @@ impl App {
             .record("action", format!("column_toggle {}", column.name()));
     }
 
+    fn shown_column_options(&self) -> Vec<(String, usize)> {
+        self.columns
+            .iter()
+            .map(|column| (column.name().to_string(), 0))
+            .collect()
+    }
+
+    /// `c m 3 1 2`: the columns numbered by `placed` (as the header showed them
+    /// when `m` was pressed) come first in that order; the rest keep theirs.
+    fn reorder_columns(&mut self, placed: &[usize]) {
+        let original = self
+            .move_origin
+            .clone()
+            .unwrap_or_else(|| self.columns.clone());
+        let mut next: Vec<Column> = placed
+            .iter()
+            .filter_map(|&n| original.get(n - 1).copied())
+            .collect();
+        let rest: Vec<Column> = original
+            .iter()
+            .copied()
+            .filter(|c| !next.contains(c))
+            .collect();
+        next.extend(rest);
+        self.columns = next;
+        self.telemetry.record("action", "column_move");
+    }
+
+    /// The glyphs a column's values take, in vocabulary order, for its header.
+    pub fn glyph_legend(&self, column: Column) -> String {
+        let Some(field) = column.filter_field() else {
+            return String::new();
+        };
+        let mut values: Vec<String> = tasks::field_values(&self.tasks, field)
+            .into_iter()
+            .map(|(value, _)| value)
+            .collect();
+        values.sort_by_key(|value| (sort::vocabulary_rank(column, value), value.clone()));
+        values
+            .iter()
+            .map(|value| self.config.glyph(column, value))
+            .collect()
+    }
+
     /// `g` in the columns picker: glyphs instead of text, for categorical columns.
     fn toggle_glyph_column(&mut self, column: Column) {
         if column.filter_field().is_none() || column == Column::Id {
@@ -777,6 +826,7 @@ impl App {
                 self.picker = None;
                 self.mode = Mode::Browse;
                 self.paint_return = None;
+                self.move_origin = None;
             }
             KeyCode::Down => picker.selected = (picker.selected + 1).min(last),
             KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
@@ -785,6 +835,26 @@ impl App {
             }
             KeyCode::Char('k') if picker.typed.is_empty() => {
                 picker.selected = picker.selected.saturating_sub(1)
+            }
+            KeyCode::Char(digit)
+                if digit.is_ascii_digit()
+                    && matches!(picker.purpose, PickerPurpose::MoveColumns(_)) =>
+            {
+                let PickerPurpose::MoveColumns(mut placed) = picker.purpose.clone() else {
+                    return;
+                };
+                let index = digit.to_digit(10).unwrap_or(0) as usize;
+                if index == 0 || index > self.columns.len() || placed.contains(&index) {
+                    return;
+                }
+                placed.push(index);
+                self.reorder_columns(&placed);
+                let options = self.shown_column_options();
+                let done = placed.len();
+                self.open_picker(PickerPurpose::MoveColumns(placed), options);
+                if let Some(picker) = self.picker.as_mut() {
+                    picker.selected = done.saturating_sub(1);
+                }
             }
             KeyCode::Char(digit) if digit.is_ascii_digit() && picker.typed.is_empty() => {
                 picker.number.push(digit);
@@ -862,8 +932,20 @@ impl App {
                 self.mode = Mode::Browse;
                 self.apply_paint(pick, "none");
             }
+            KeyCode::Enter if matches!(picker.purpose, PickerPurpose::MoveColumns(_)) => {
+                self.move_origin = None;
+                let options = self.column_picker_options();
+                self.open_picker(PickerPurpose::Columns, options);
+            }
             KeyCode::Enter => self.apply_picked_value(),
             KeyCode::Char(' ') => self.toggle_picked_value(),
+            KeyCode::Char('m')
+                if picker.purpose == PickerPurpose::Columns && picker.typed.is_empty() =>
+            {
+                self.move_origin = Some(self.columns.clone());
+                let options = self.shown_column_options();
+                self.open_picker(PickerPurpose::MoveColumns(Vec::new()), options);
+            }
             KeyCode::Char('g')
                 if picker.purpose == PickerPurpose::Columns && picker.typed.is_empty() =>
             {
@@ -927,7 +1009,8 @@ impl App {
             | PickerPurpose::PaintColor(_)
             | PickerPurpose::PaintValues(_)
             | PickerPurpose::PaintColumn
-            | PickerPurpose::PaintRules => {}
+            | PickerPurpose::PaintRules
+            | PickerPurpose::MoveColumns(_) => {}
         }
     }
 
@@ -995,7 +1078,22 @@ impl App {
             }
             PickerPurpose::Columns => {
                 if let Some(column) = Column::parse(&value) {
+                    let adding = !self.columns.contains(&column);
                     self.toggle_column(column);
+                    if adding {
+                        // Stay open with the new column highlighted so K/J can place it.
+                        let options = self.column_picker_options();
+                        let highlight = self.columns.len().saturating_sub(1);
+                        self.open_picker(PickerPurpose::Columns, options);
+                        if let Some(picker) = self.picker.as_mut() {
+                            picker.selected = highlight;
+                        }
+                        self.status = format!(
+                            "{} added as column {} · m then numbers to reorder · esc",
+                            column.name(),
+                            self.columns.len()
+                        );
+                    }
                 }
             }
             PickerPurpose::PaintTarget => {
@@ -1032,6 +1130,7 @@ impl App {
                     picker.selected = 0;
                 }
             }
+            PickerPurpose::MoveColumns(_) => {}
         }
     }
 

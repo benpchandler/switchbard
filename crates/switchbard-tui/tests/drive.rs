@@ -657,20 +657,39 @@ fn c_toggles_columns_by_position_and_numbers_follow_what_is_shown() {
     );
     let screen = h.press(KeyCode::Char('5'));
     assert!(
-        !screen.contains("┌ columns"),
-        "digit toggles and closes: {screen}"
+        screen.contains("┌ columns ─"),
+        "adding keeps the picker open so the column can be placed: {screen}"
     );
-    assert!(header_line(&screen).contains("5 labels"), "{screen}");
+    assert_eq!(
+        h.app.status,
+        "labels added as column 5 · m then numbers to reorder · esc"
+    );
+    h.press(KeyCode::Char('m'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Char('2'));
+    let screen = h.press(KeyCode::Char('5'));
+    assert!(screen.contains("┌ move columns: 125"), "{screen}");
+    h.press(KeyCode::Enter);
+    let screen = h.press(KeyCode::Esc);
+    let header = header_line(&screen);
+    assert!(
+        header.contains("1 id")
+            && header.contains("2 status")
+            && header.contains("3 labels")
+            && header.contains("4 pri")
+            && header.contains("5 title"),
+        "cm125 put labels third and the rest kept their order: {header}"
+    );
     assert!(screen.contains("auth,bug"), "{screen}");
     h.press(KeyCode::Char('c'));
-    let screen = h.press(KeyCode::Char('3'));
+    let screen = h.press(KeyCode::Char('4'));
     let header = header_line(&screen);
     assert!(!header.contains("pri"), "{header}");
     assert!(
-        header.contains("3 title") && header.contains("4 labels"),
+        header.contains("3 labels") && header.contains("4 title"),
         "renumbered: {header}"
     );
-    assert!(screen.contains("cols:id,status,title,labels"), "{screen}");
+    assert!(screen.contains("cols:id,status,labels,title"), "{screen}");
 }
 
 #[test]
@@ -1001,6 +1020,7 @@ fn b_passes_the_ball_me_agent_nobody_and_writes_the_label() {
     let id = h.app.selected_task().unwrap().id.clone();
     h.press(KeyCode::Char('c'));
     h.type_text("b");
+    h.press(KeyCode::Esc);
     assert!(header_line(&h.render()).contains("5 ball"));
     let screen = h.press(KeyCode::Char('b'));
     assert!(screen.contains(&format!("{id}: ball → me")), "{screen}");
@@ -1075,15 +1095,16 @@ fn g_in_the_columns_picker_shows_priority_as_glyphs_and_saves_with_the_view() {
     let screen = h.press(KeyCode::Esc);
     let header = header_line(&screen);
     assert!(
-        header.contains("2 status") && header.contains(" 3 ") && !header.contains("3 pri"),
-        "glyph header is the number only: {header}"
+        header.contains("2 status") && header.contains("3 ↑·↓") && !header.contains("3 pri"),
+        "glyph header carries the legend in vocabulary order: {header}"
     );
     assert!(screen.contains("↑"), "high: {screen}");
     assert!(screen.contains("↓"), "low: {screen}");
-    assert!(
-        screen.contains("·  Fix login") || screen.contains("· Fix login"),
-        "medium: {screen}"
-    );
+    let row = screen
+        .lines()
+        .find(|l| l.contains("Fix login"))
+        .unwrap_or_default();
+    assert!(row.contains(" · "), "medium: {row}");
     assert!(screen.contains("glyphs:priority ·"), "{screen}");
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('s'));
@@ -1113,17 +1134,24 @@ fn glyphs_come_from_lua_and_fall_back_to_the_first_letter() {
     h.press(KeyCode::Char('j'));
     h.press(KeyCode::Char('g'));
     let screen = h.press(KeyCode::Esc);
+    let row = |needle: &str| {
+        screen
+            .lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or_default()
+            .to_string()
+    };
     assert!(
-        screen.contains("T  H"),
+        row("Write onboarding").contains(" T ") && row("Write onboarding").contains(" H "),
         "user glyphs for To Do + high: {screen}"
     );
     assert!(
-        screen.contains("T  ↓"),
+        row("Add dark theme").contains(" ↓ "),
         "default low glyph survives the merge: {screen}"
     );
     assert!(
-        screen.contains("◐  ·"),
-        "user glyphs merge over defaults, In Progress keeps its default: {screen}"
+        row("Fix login").contains(" ◐ ") && row("Fix login").contains(" · "),
+        "In Progress keeps its default glyph: {screen}"
     );
     std::fs::write(
         &h.config_path,
@@ -1132,9 +1160,13 @@ fn glyphs_come_from_lua_and_fall_back_to_the_first_letter() {
     .unwrap();
     h.app.tick();
     let screen = h.render();
+    let fix = screen
+        .lines()
+        .find(|l| l.contains("Fix login"))
+        .unwrap_or_default();
     assert!(
-        screen.contains("I  ·"),
-        "an empty glyph falls back to the first letter: {screen}"
+        fix.contains(" I "),
+        "an empty glyph falls back to the first letter: {fix}"
     );
     h.press(KeyCode::Char('c'));
     h.press(KeyCode::Char('j'));

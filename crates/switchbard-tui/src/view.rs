@@ -78,7 +78,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
     );
     let header = Row::new(app.columns.iter().enumerate().map(|(index, column)| {
         if app.glyph_columns.contains(column) {
-            Cell::from(format!("{}", index + 1))
+            Cell::from(format!("{} {}", index + 1, app.glyph_legend(*column)))
         } else {
             Cell::from(format!("{} {}", index + 1, column.header()))
         }
@@ -101,7 +101,9 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
         })))
     });
     let widths = app.columns.iter().map(|column| match column {
-        _ if app.glyph_columns.contains(column) => Constraint::Length(2),
+        _ if app.glyph_columns.contains(column) => {
+            Constraint::Length((2 + app.glyph_legend(*column).chars().count()).max(3) as u16)
+        }
         Column::Id => Constraint::Length(9),
         Column::Status => Constraint::Length(12),
         Column::Priority => Constraint::Length(7),
@@ -349,6 +351,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                 }
                 PickerPurpose::PaintTarget => false,
                 PickerPurpose::PaintColumn => false,
+                PickerPurpose::MoveColumns(placed) => placed.contains(&(index + 1)),
                 PickerPurpose::PaintRules => index == 0,
                 PickerPurpose::PaintValues(column) => {
                     paint::value_color(&app.paint, *column, value).is_some()
@@ -444,6 +447,14 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::ChooseColumn(ColumnPurpose::Filter) => "filter by column".to_string(),
         PickerPurpose::ChooseColumn(ColumnPurpose::Sort) => "sort by column".to_string(),
         PickerPurpose::Columns => "columns".to_string(),
+        PickerPurpose::MoveColumns(placed) => format!(
+            "move columns: {}",
+            placed
+                .iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join("")
+        ),
         PickerPurpose::PaintValues(column) => format!("by {}", column.name()),
         PickerPurpose::PaintColumn => "paint which column".to_string(),
         PickerPurpose::PaintTarget => "paint".to_string(),
@@ -465,7 +476,8 @@ pub fn picker_hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::Filter(_) => "number or name picks one · space toggles · esc",
         PickerPurpose::Sort(_) => "number or name picks · esc",
         PickerPurpose::ChooseColumn(_) => "number or name · hidden columns listed last · esc",
-        PickerPurpose::Columns => "number or name toggles · space keeps open · K/J move · g glyphs · esc",
+        PickerPurpose::Columns => "number or name toggles · m reorder · g glyphs · esc",
+        PickerPurpose::MoveColumns(_) => "type column numbers in the order you want · enter done",
         PickerPurpose::PaintValues(_) => "value then color · repeats · h back · esc done",
         PickerPurpose::PaintColumn => "number or name · h back · esc",
         PickerPurpose::PaintTarget => {
