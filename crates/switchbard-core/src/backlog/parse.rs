@@ -538,7 +538,7 @@ fn is_section_marker_comment(trimmed: &str) -> bool {
 ///    write layer is surgical, so a section this format has no field for —
 ///    `## Resolution`, `## Root Cause Hypothesis` on 51 of 345 real task
 ///    files measured during TASK-44 — is an opaque block no edit ever
-///    enters, and conservation (rule 4) covers its content like any other
+///    enters, and conservation (rule 5) covers its content like any other
 ///    section's. Refusing them protected nothing while freezing ~15% of
 ///    real tasks; prose misread as a heading now costs at worst a *split*
 ///    (the text survives byte-for-byte under its own opaque heading), never
