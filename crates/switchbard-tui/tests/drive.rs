@@ -1063,3 +1063,83 @@ fn a_dispatching_task_reads_as_agent_without_a_ball_label() {
     let screen = h.type_text("ball:agent");
     assert!(screen.contains("1/3") && screen.contains(&id), "{screen}");
 }
+
+#[test]
+fn g_in_the_columns_picker_shows_priority_as_glyphs_and_saves_with_the_view() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('c'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('g'));
+    assert_eq!(h.app.status, "priority shows glyphs");
+    let screen = h.press(KeyCode::Esc);
+    let header = header_line(&screen);
+    assert!(
+        header.contains("2 status") && header.contains(" 3 ") && !header.contains("3 pri"),
+        "glyph header is the number only: {header}"
+    );
+    assert!(screen.contains("↑"), "high: {screen}");
+    assert!(screen.contains("↓"), "low: {screen}");
+    assert!(
+        screen.contains("·  Fix login") || screen.contains("· Fix login"),
+        "medium: {screen}"
+    );
+    assert!(screen.contains("glyphs:priority ·"), "{screen}");
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('d'));
+    let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
+    assert!(file.contains("glyphs = \"priority\""), "{file}");
+    let fresh = open_app(&h.root, &h.config_path);
+    assert_eq!(
+        fresh.glyph_columns,
+        vec![switchbard_tui::config::Column::Priority]
+    );
+    assert_eq!(fresh.view_label(), "v1");
+}
+
+#[test]
+fn glyphs_come_from_lua_and_fall_back_to_the_first_letter() {
+    let mut h = Harness::new();
+    std::fs::write(
+        &h.config_path,
+        "return { glyphs = { priority = { high = \"H\" }, status = { todo = \"T\" } } }",
+    )
+    .unwrap();
+    h.app.tick();
+    h.press(KeyCode::Char('c'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('g'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('g'));
+    let screen = h.press(KeyCode::Esc);
+    assert!(
+        screen.contains("T  H"),
+        "user glyphs for To Do + high: {screen}"
+    );
+    assert!(
+        screen.contains("T  ↓"),
+        "default low glyph survives the merge: {screen}"
+    );
+    assert!(
+        screen.contains("◐  ·"),
+        "user glyphs merge over defaults, In Progress keeps its default: {screen}"
+    );
+    std::fs::write(
+        &h.config_path,
+        "return { glyphs = { status = { inprogress = \"\" } } }",
+    )
+    .unwrap();
+    h.app.tick();
+    let screen = h.render();
+    assert!(
+        screen.contains("I  ·"),
+        "an empty glyph falls back to the first letter: {screen}"
+    );
+    h.press(KeyCode::Char('c'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('g'));
+    assert_eq!(h.app.status, "title has no glyphs: it is free text");
+}

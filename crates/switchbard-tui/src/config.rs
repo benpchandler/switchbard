@@ -134,7 +134,7 @@ impl KeyChord {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Column {
     Id,
     Status,
@@ -227,10 +227,29 @@ pub struct Theme {
 pub struct Config {
     pub keys: HashMap<KeyChord, Action>,
     pub theme: Theme,
+    /// Column -> loose value -> glyph, for columns shown in glyph mode.
+    pub glyphs: HashMap<Column, HashMap<String, String>>,
     pub warnings: Vec<String>,
 }
 
 impl Config {
+    /// The glyph for `value` in `column`: configured, else its first letter.
+    pub fn glyph(&self, column: Column, value: &str) -> String {
+        let key = crate::tasks::Filter::loose_key(value);
+        self.glyphs
+            .get(&column)
+            .and_then(|map| map.get(&key))
+            .filter(|glyph| !glyph.is_empty())
+            .cloned()
+            .unwrap_or_else(|| {
+                value
+                    .chars()
+                    .next()
+                    .map(|c| c.to_uppercase().to_string())
+                    .unwrap_or_default()
+            })
+    }
+
     pub fn bindings_for(&self, action: &Action) -> Vec<String> {
         let mut keys: Vec<String> = self
             .keys
@@ -274,6 +293,7 @@ pub fn load(user_path: Option<&Path>) -> Config {
 struct RawConfig {
     keys: HashMap<String, String>,
     theme: HashMap<String, String>,
+    glyphs: HashMap<String, HashMap<String, String>>,
 }
 
 impl RawConfig {
@@ -283,12 +303,16 @@ impl RawConfig {
         Ok(RawConfig {
             keys: string_map(&table, "keys")?,
             theme: string_map(&table, "theme")?,
+            glyphs: nested_string_map(&table, "glyphs")?,
         })
     }
 
     fn merge(&mut self, over: RawConfig) {
         self.keys.extend(over.keys);
         self.theme.extend(over.theme);
+        for (column, map) in over.glyphs {
+            self.glyphs.entry(column).or_default().extend(map);
+        }
     }
 
     fn into_config(self, mut warnings: Vec<String>) -> Config {
@@ -316,12 +340,45 @@ impl RawConfig {
             selected: color("selected", Color::Indexed(236)),
             border: color("border", Color::DarkGray),
         };
+        let mut glyphs: HashMap<Column, HashMap<String, String>> = HashMap::new();
+        for (column_name, map) in self.glyphs {
+            match Column::parse(&column_name) {
+                Some(column) => {
+                    let entry = glyphs.entry(column).or_default();
+                    for (value, glyph) in map {
+                        entry.insert(crate::tasks::Filter::loose_key(&value), glyph);
+                    }
+                }
+                None => warnings.push(format!("unknown column '{column_name}' in glyphs")),
+            }
+        }
         Config {
             keys,
             theme,
+            glyphs,
             warnings,
         }
     }
+}
+
+fn nested_string_map(
+    table: &Table,
+    key: &str,
+) -> mlua::Result<HashMap<String, HashMap<String, String>>> {
+    let mut out = HashMap::new();
+    let Value::Table(inner) = table.get::<Value>(key)? else {
+        return Ok(out);
+    };
+    for pair in inner.pairs::<String, Table>() {
+        let (name, values) = pair?;
+        let mut map = HashMap::new();
+        for entry in values.pairs::<String, String>() {
+            let (value, glyph) = entry?;
+            map.insert(value, glyph);
+        }
+        out.insert(name, map);
+    }
+    Ok(out)
 }
 
 fn string_map(table: &Table, key: &str) -> mlua::Result<HashMap<String, String>> {

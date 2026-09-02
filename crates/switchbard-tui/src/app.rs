@@ -119,6 +119,8 @@ pub struct App {
     pub selected: usize,
     /// Shown columns in display order; header numbers are positions in this list.
     pub columns: Vec<Column>,
+    /// Shown as glyphs rather than text (`c` then `g`).
+    pub glyph_columns: Vec<Column>,
     pub paint: Vec<PaintRule>,
     /// Which values list to return to after a color is picked.
     paint_return: Option<Column>,
@@ -158,6 +160,7 @@ impl App {
             visible: Vec::new(),
             selected: 0,
             columns: Column::DEFAULT_SHOWN.to_vec(),
+            glyph_columns: Vec::new(),
             paint: Vec::new(),
             paint_return: None,
             views,
@@ -207,6 +210,7 @@ impl App {
                 if saved.filter == self.filter_text
                     && saved.sort == self.sort
                     && saved.columns == self.columns
+                    && saved.glyph_columns == self.glyph_columns
                     && saved.paint == self.paint =>
             {
                 format!("v{}", self.view + 1)
@@ -232,13 +236,14 @@ impl App {
     /// `slot\tfilter\tsort\tselected`, enough to land where the user was after a self-restart.
     pub fn resume_state(&self) -> String {
         format!(
-            "{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
             self.view,
             self.filter_text,
             self.sort.map(|sort| sort.to_text()).unwrap_or_default(),
             self.selected,
             columns_text(&self.columns),
-            rules_text(&self.paint)
+            rules_text(&self.paint),
+            columns_text(&self.glyph_columns)
         )
     }
 
@@ -261,6 +266,12 @@ impl App {
         }
         if let Some(rules) = parts.next() {
             self.paint = parse_rules(rules);
+        }
+        if let Some(glyphs) = parts.next() {
+            self.glyph_columns = glyphs
+                .split(',')
+                .filter_map(|name| Column::parse(name.trim()))
+                .collect();
         }
         self.status = "updated to the new build".to_string();
     }
@@ -399,6 +410,7 @@ impl App {
             filter: self.filter_text.clone(),
             sort: self.sort,
             columns: self.columns.clone(),
+            glyph_columns: self.glyph_columns.clone(),
             paint: self.paint.clone(),
         };
         match self.views.save_repo(slot, saved) {
@@ -677,6 +689,26 @@ impl App {
             .record("action", format!("column_toggle {}", column.name()));
     }
 
+    /// `g` in the columns picker: glyphs instead of text, for categorical columns.
+    fn toggle_glyph_column(&mut self, column: Column) {
+        if column.filter_field().is_none() || column == Column::Id {
+            self.status = format!("{} has no glyphs: it is free text", column.name());
+            return;
+        }
+        match self.glyph_columns.iter().position(|c| *c == column) {
+            Some(index) => {
+                self.glyph_columns.remove(index);
+                self.status = format!("{} shows text", column.name());
+            }
+            None => {
+                self.glyph_columns.push(column);
+                self.status = format!("{} shows glyphs", column.name());
+            }
+        }
+        self.telemetry
+            .record("action", format!("glyph_toggle {}", column.name()));
+    }
+
     fn move_column(&mut self, column: Column, delta: isize) {
         let Some(index) = self.columns.iter().position(|shown| *shown == column) else {
             return;
@@ -832,6 +864,15 @@ impl App {
             }
             KeyCode::Enter => self.apply_picked_value(),
             KeyCode::Char(' ') => self.toggle_picked_value(),
+            KeyCode::Char('g')
+                if picker.purpose == PickerPurpose::Columns && picker.typed.is_empty() =>
+            {
+                if let Some((name, _)) = picker.highlighted() {
+                    if let Some(column) = Column::parse(&name) {
+                        self.toggle_glyph_column(column);
+                    }
+                }
+            }
             KeyCode::Char(direction @ ('J' | 'K')) if picker.purpose == PickerPurpose::Columns => {
                 if let Some((name, _)) = picker.highlighted() {
                     let delta = if direction == 'J' { 1 } else { -1 };
@@ -1194,6 +1235,7 @@ impl App {
         self.view = slot;
         self.sort = saved.sort;
         self.columns = saved.columns;
+        self.glyph_columns = saved.glyph_columns;
         self.paint = saved.paint;
         self.set_filter(saved.filter);
     }

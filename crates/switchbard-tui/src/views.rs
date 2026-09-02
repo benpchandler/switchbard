@@ -18,6 +18,8 @@ pub struct SavedView {
     pub sort: Option<Sort>,
     /// Shown columns in display order.
     pub columns: Vec<Column>,
+    /// Columns shown as glyphs instead of text.
+    pub glyph_columns: Vec<Column>,
     pub paint: Vec<PaintRule>,
 }
 
@@ -33,6 +35,9 @@ impl SavedView {
         }
         if let Some(columns) = self.columns_label() {
             parts.push(columns);
+        }
+        if !self.glyph_columns.is_empty() {
+            parts.push(format!("glyphs:{}", columns_text(&self.glyph_columns)));
         }
         if !self.paint.is_empty() {
             parts.push(format!("paint:{}", self.paint.len()));
@@ -118,6 +123,7 @@ pub fn starter_views() -> Vec<SavedView> {
         filter: filter.to_string(),
         sort: None,
         columns: Column::DEFAULT_SHOWN.to_vec(),
+        glyph_columns: Vec::new(),
         paint: Vec::new(),
     })
     .collect()
@@ -302,18 +308,30 @@ fn parse_view(entry: &Table) -> Result<SavedView, String> {
         filter: field("filter")?,
         sort: Sort::parse(&field("sort")?),
         columns: parse_columns(&field("columns")?),
+        glyph_columns: field("glyphs")?
+            .split(',')
+            .filter_map(|name| Column::parse(name.trim()))
+            .collect(),
         paint: parse_rules(&field("paint")?),
     })
 }
 
 fn lua_view(view: &SavedView) -> String {
+    let glyphs = if view.glyph_columns.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ", glyphs = {}",
+            lua_string(&columns_text(&view.glyph_columns))
+        )
+    };
     let paint = if view.paint.is_empty() {
         String::new()
     } else {
         format!(", paint = {}", lua_string(&rules_text(&view.paint)))
     };
     format!(
-        "{{ filter = {}, sort = {}, columns = {}{paint} }}",
+        "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint} }}",
         lua_string(&view.filter),
         lua_string(&view.sort.map(|sort| sort.to_text()).unwrap_or_default()),
         lua_string(&columns_text(&view.columns)),

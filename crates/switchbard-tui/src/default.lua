@@ -25,6 +25,14 @@ return {
     border = "darkgray",
   },
 
+  -- Glyphs shown when a column is in glyph mode (`c`, then `g` on the column).
+  -- Keys are the column's values; a value without a glyph shows its first letter.
+  glyphs = {
+    priority = { high = "↑", medium = "·", low = "↓" },
+    status = { icebox = "❄", todo = "○", inprogress = "◐", inreview = "◑", done = "●" },
+    ball = { me = "●", agent = "◌" },
+  },
+
   -- Columns are picked and ordered inside sbt (`c`) and saved with each view,
   -- together with the filter and sort, in ~/.switchbard/views.lua (global) and
   -- ~/.switchbard/views/<repo>.lua (per repo). Slot 1 opens by default.

@@ -60,28 +60,40 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         format!("cols:{} · ", columns_text(&app.columns))
     };
+    let glyphs = if app.glyph_columns.is_empty() {
+        String::new()
+    } else {
+        format!("glyphs:{} · ", columns_text(&app.glyph_columns))
+    };
     let painted = if app.paint.is_empty() {
         String::new()
     } else {
         format!("paint:{} · ", app.paint.len())
     };
     let title = format!(
-        " {repo} · {} · {filter}{sort}{columns}{painted}{}/{} ",
+        " {repo} · {} · {filter}{sort}{columns}{glyphs}{painted}{}/{} ",
         app.view_label(),
         app.visible.len(),
         app.total_tasks()
     );
-    let header = Row::new(
-        app.columns
-            .iter()
-            .enumerate()
-            .map(|(index, column)| Cell::from(format!("{} {}", index + 1, column.header()))),
-    )
+    let header = Row::new(app.columns.iter().enumerate().map(|(index, column)| {
+        if app.glyph_columns.contains(column) {
+            Cell::from(format!("{}", index + 1))
+        } else {
+            Cell::from(format!("{} {}", index + 1, column.header()))
+        }
+    }))
     .style(Style::default().fg(theme.header));
     let rows = (0..app.visible.len()).filter_map(|index| {
         let task = app.task(index)?;
         Some(Row::new(app.columns.iter().map(|column| {
-            let cell = Cell::from(cell_text(*column, task));
+            let text = cell_text(*column, task);
+            let text = if app.glyph_columns.contains(column) && !text.is_empty() {
+                app.config.glyph(*column, &text)
+            } else {
+                text
+            };
+            let cell = Cell::from(text);
             match paint::cell_color(&app.paint, task, *column) {
                 Some(color) => cell.style(Style::default().fg(color)),
                 None => cell,
@@ -89,6 +101,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
         })))
     });
     let widths = app.columns.iter().map(|column| match column {
+        _ if app.glyph_columns.contains(column) => Constraint::Length(2),
         Column::Id => Constraint::Length(9),
         Column::Status => Constraint::Length(12),
         Column::Priority => Constraint::Length(7),
@@ -452,7 +465,7 @@ pub fn picker_hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::Filter(_) => "number or name picks one · space toggles · esc",
         PickerPurpose::Sort(_) => "number or name picks · esc",
         PickerPurpose::ChooseColumn(_) => "number or name · hidden columns listed last · esc",
-        PickerPurpose::Columns => "number or name toggles · space keeps open · K/J move · esc",
+        PickerPurpose::Columns => "number or name toggles · space keeps open · K/J move · g glyphs · esc",
         PickerPurpose::PaintValues(_) => "value then color · repeats · h back · esc done",
         PickerPurpose::PaintColumn => "number or name · h back · esc",
         PickerPurpose::PaintTarget => {
