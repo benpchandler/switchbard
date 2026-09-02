@@ -22,7 +22,8 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 - `config.rs` - `default.lua` baked in, user file layered over; keys/theme/columns/views.
 - `tasks.rs` - task load + filter language (`status: pri: label: project:` + words,
   loose match: `status:todo` == "To Do"); `field_values` feeds the `f <n>` picker.
-- `views.rs` - numbered slots of filter+sort in `~/.switchbard/views.lua`; slot 1 opens.
+- `views.rs` - slots of filter+sort: global `~/.switchbard/views.lua`, per-repo overrides in
+  `views/<repo path>.lua`; `vs<n>` saves to repo, `vg<n>` promotes to global; slot 1 opens.
 - `sort.rs` - `s <n>` orders: ascending/descending/semantic (vocabulary rank), ties by id.
 - `report.rs` - `:bug`/`:idea` => task via `switchbard-core` write layer.
 - `telemetry.rs` - JSONL event log, in-memory trail, `stats`.

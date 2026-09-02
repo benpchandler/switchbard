@@ -11,7 +11,7 @@ use crate::report::{self, ReportContext, ReportKind};
 use crate::sort::{self, Sort};
 use crate::tasks::{self, Filter, FilterField};
 use crate::telemetry::Telemetry;
-use crate::views::{self, SavedView};
+use crate::views::{self, SavedView, ViewStore};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -24,6 +24,8 @@ pub enum Mode {
     ViewChord,
     /// After `v s`: a digit or `d` (slot 1) picks the slot to save into.
     ViewSaveSlot,
+    /// After `v g`: a digit or `d` picks the slot to promote to the global file.
+    ViewGlobalSlot,
     /// Naming the view being saved; Enter writes it, Esc abandons it.
     ViewName,
 }
@@ -91,8 +93,7 @@ pub struct App {
     tasks: Vec<BacklogTask>,
     pub visible: Vec<usize>,
     pub selected: usize,
-    views_path: Option<PathBuf>,
-    pub views: Vec<SavedView>,
+    pub views: ViewStore,
     /// Zero-based slot the current filter/sort came from.
     pub view: usize,
     saving_into: usize,
@@ -114,11 +115,12 @@ impl App {
     pub fn open(
         repo_root: &Path,
         config_path: Option<PathBuf>,
-        views_path: Option<PathBuf>,
+        global_views_path: Option<PathBuf>,
+        repo_views_path: Option<PathBuf>,
         telemetry: Telemetry,
     ) -> App {
         let config = config::load(config_path.as_deref());
-        let (views, views_warning) = views::load(views_path.as_deref());
+        let (views, view_warnings) = ViewStore::load(global_views_path, repo_views_path);
         let mut app = App {
             repo_root: repo_root.to_path_buf(),
             config_seen: config_path.as_deref().and_then(config::modified_at),
@@ -127,7 +129,6 @@ impl App {
             tasks: Vec::new(),
             visible: Vec::new(),
             selected: 0,
-            views_path,
             views,
             view: 0,
             saving_into: 0,
@@ -148,7 +149,7 @@ impl App {
         app.reload_tasks();
         app.switch_view(0);
         app.report_config_warnings();
-        if let Some(warning) = views_warning {
+        if let Some(warning) = view_warnings.first() {
             app.fail(format!("views: {warning}"));
         }
         app
@@ -247,6 +248,7 @@ impl App {
             Mode::PickValue => self.handle_pick_value_key(event),
             Mode::ViewChord => self.handle_view_chord_key(event),
             Mode::ViewSaveSlot => self.handle_view_save_slot_key(event),
+            Mode::ViewGlobalSlot => self.handle_view_global_slot_key(event),
             Mode::ViewName => self.handle_view_name_key(event),
         }
     }
@@ -259,6 +261,13 @@ impl App {
                 self.status = format!(
                     "save view into: d (default, slot 1) or 1-{}",
                     (self.views.len() + 1).min(views::MAX_SLOTS)
+                );
+            }
+            KeyCode::Char('g') => {
+                self.mode = Mode::ViewGlobalSlot;
+                self.status = format!(
+                    "make global: d (slot 1) or 1-{} copies that slot to every repo",
+                    self.views.len()
                 );
             }
             KeyCode::Char(digit) if digit.is_ascii_digit() => {
@@ -274,7 +283,10 @@ impl App {
                 }
             }
             KeyCode::Esc => self.status.clear(),
-            other => self.status = format!("v then a slot number or s to save, not {other:?}"),
+            other => {
+                self.status =
+                    format!("v then a slot number, s to save, or g for global, not {other:?}")
+            }
         }
     }
 
@@ -311,6 +323,40 @@ impl App {
             .unwrap_or_else(|| self.suggested_view_name());
         self.mode = Mode::ViewName;
         self.status = format!("name for slot {slot} (enter saves, esc abandons)");
+    }
+
+    fn handle_view_global_slot_key(&mut self, event: KeyEvent) {
+        self.mode = Mode::Browse;
+        let slot = match event.code {
+            KeyCode::Char('d') => 1,
+            KeyCode::Char(digit) if digit.is_ascii_digit() => {
+                digit.to_digit(10).unwrap_or(0) as usize
+            }
+            KeyCode::Esc => {
+                self.status.clear();
+                return;
+            }
+            other => {
+                self.status = format!("global needs d or a slot number, not {other:?}");
+                return;
+            }
+        };
+        if slot == 0 || slot > self.views.len() {
+            self.fail(format!(
+                "no view in slot {slot}; saved: 1-{}",
+                self.views.len()
+            ));
+            return;
+        }
+        match self.views.promote(slot - 1) {
+            Ok(()) => {
+                self.status =
+                    format!("slot {slot} is now global: every repo opens it with v{slot}");
+                self.telemetry
+                    .record("action", format!("view_global {slot}"));
+            }
+            Err(error) => self.fail(error),
+        }
     }
 
     fn suggested_view_name(&self) -> String {
@@ -361,22 +407,21 @@ impl App {
             sort: self.sort,
         };
         let slot = self.saving_into;
-        if slot < self.views.len() {
-            self.views[slot] = saved;
-        } else {
-            self.views.push(saved);
-        }
-        self.view = slot;
         self.filter_text = self.filter_text.trim().to_string();
-        if let Some(path) = self.views_path.as_deref() {
-            if let Err(error) = views::save(path, &self.views) {
-                self.fail(format!("could not write {}: {error}", path.display()));
-                return;
+        match self.views.save_repo(slot, saved) {
+            Ok(()) => {
+                self.view = slot;
+                self.status = format!(
+                    "saved slot {} for this repo · v{} opens it · vg{} makes it global",
+                    slot + 1,
+                    slot + 1,
+                    slot + 1
+                );
+                self.telemetry
+                    .record("action", format!("view_save {}", slot + 1));
             }
+            Err(error) => self.fail(error),
         }
-        self.status = format!("saved slot {} · v{} opens it", slot + 1, slot + 1);
-        self.telemetry
-            .record("action", format!("view_save {}", slot + 1));
     }
 
     fn handle_pick_column_key(&mut self, event: KeyEvent) {
@@ -689,7 +734,7 @@ impl App {
             Action::View => {
                 self.mode = Mode::ViewChord;
                 self.status = format!(
-                    "view: 1-{} opens a slot · s saves the current one",
+                    "view: 1-{} opens a slot · s saves · g makes global",
                     self.views.len()
                 );
             }
@@ -743,7 +788,7 @@ impl App {
     }
 
     fn switch_view(&mut self, slot: usize) {
-        let Some(saved) = self.views.get(slot).cloned() else {
+        let Some(saved) = self.views.get(slot) else {
             return;
         };
         self.view = slot;

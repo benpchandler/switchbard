@@ -39,13 +39,7 @@ impl Harness {
         seed_with_priority(&root, "Add dark theme", "To Do", &["ui"], "low");
         seed_with_priority(&root, "Write onboarding guide", "To Do", &["docs"], "high");
         let config_path = root.join("tui.lua");
-        let views_path = root.join("views.lua");
-        let app = App::open(
-            &root,
-            Some(config_path.clone()),
-            Some(views_path),
-            Telemetry::in_memory(),
-        );
+        let app = open_app(&root, &config_path);
         let terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
         let mut harness = Harness {
             _dir: dir,
@@ -80,6 +74,16 @@ impl Harness {
     fn selected_title(&self) -> String {
         self.app.selected_task().unwrap().title.clone()
     }
+}
+
+fn open_app(root: &Path, config_path: &Path) -> App {
+    App::open(
+        root,
+        Some(config_path.to_path_buf()),
+        Some(root.join("views.lua")),
+        Some(root.join("views-repo.lua")),
+        Telemetry::in_memory(),
+    )
 }
 
 fn seed(root: &Path, title: &str, status: &str, labels: &[&str]) {
@@ -329,12 +333,7 @@ fn resume_state_survives_a_self_restart() {
     h.press(KeyCode::Char('2'));
     h.press(KeyCode::Char('j'));
     let state = h.app.resume_state();
-    let mut fresh = App::open(
-        &h.root,
-        Some(h.config_path.clone()),
-        Some(h.root.join("views.lua")),
-        Telemetry::in_memory(),
-    );
+    let mut fresh = open_app(&h.root, &h.config_path);
     fresh.resume_from(Some(&state));
     assert_eq!(fresh.view, 1);
     assert_eq!(fresh.filter_text, "status:todo");
@@ -499,7 +498,7 @@ fn sort_survives_filtering_and_title_sorts_alphabetically() {
 }
 
 #[test]
-fn vsd_saves_the_current_filter_and_sort_as_the_default_and_persists() {
+fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
     let mut h = Harness::new();
     h.press(KeyCode::Char('/'));
     h.type_text("status:!done");
@@ -519,29 +518,69 @@ fn vsd_saves_the_current_filter_and_sort_as_the_default_and_persists() {
     }
     h.type_text("open");
     let screen = h.press(KeyCode::Enter);
-    assert!(screen.contains("saved slot 1 · v1 opens it"), "{screen}");
+    assert!(
+        screen.contains("saved slot 1 for this repo · v1 opens it · vg1 makes it global"),
+        "{screen}"
+    );
     assert!(
         screen.contains("1 open · status:!done · ≈pri · 3/3"),
         "{screen}"
     );
-    let file = std::fs::read_to_string(h.root.join("views.lua")).unwrap();
+    let repo_file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
     assert!(
-        file.contains(
-            "{ name = \"open\", filter = \"status:!done\", sort = \"priority:semantic\" }"
+        repo_file.contains(
+            "[1] = { name = \"open\", filter = \"status:!done\", sort = \"priority:semantic\" }"
         ),
-        "{file}"
+        "{repo_file}"
     );
-    let mut fresh = App::open(
-        &h.root,
-        Some(h.config_path.clone()),
-        Some(h.root.join("views.lua")),
-        Telemetry::in_memory(),
+    assert!(
+        !h.root.join("views.lua").exists(),
+        "a repo save must not touch the global file"
     );
+
+    let fresh = open_app(&h.root, &h.config_path);
     assert_eq!(fresh.filter_text, "status:!done");
     assert_eq!(fresh.view_label(), "1 open");
-    fresh.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
-    fresh.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
-    assert_eq!(fresh.view_label(), "2 todo", "other slots untouched");
+
+    let other_repo = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(other_repo.path().join("backlog/tasks")).unwrap();
+    let global_file_path = h.root.join("views.lua");
+    let other_global = move |root: &Path| {
+        App::open(
+            root,
+            None,
+            Some(global_file_path.clone()),
+            Some(root.join("views-repo.lua")),
+            Telemetry::in_memory(),
+        )
+    };
+    assert_eq!(
+        other_global(other_repo.path()).view_label(),
+        "1 all",
+        "other repos still open the global default"
+    );
+
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('g'));
+    let screen = h.press(KeyCode::Char('d'));
+    assert!(
+        screen.contains("slot 1 is now global: every repo opens it with v1"),
+        "{screen}"
+    );
+    let global_file = std::fs::read_to_string(h.root.join("views.lua")).unwrap();
+    assert!(global_file.contains("name = \"open\""), "{global_file}");
+    assert!(
+        global_file.contains("name = \"todo\""),
+        "starter slots kept: {global_file}"
+    );
+    let repo_file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
+    assert!(!repo_file.contains("open"), "override dropped: {repo_file}");
+    assert_eq!(other_global(other_repo.path()).view_label(), "1 open");
+    assert_eq!(
+        h.app.view_label(),
+        "1 open",
+        "still on the slot after promotion"
+    );
 }
 
 #[test]
@@ -559,6 +598,13 @@ fn vs_with_the_next_free_slot_appends_and_escape_abandons() {
     );
     let screen = h.press(KeyCode::Enter);
     assert!(screen.contains("5 ui · label:ui · 1/3"), "{screen}");
+    h.press(KeyCode::Char('?'));
+    let screen = h.render();
+    assert!(
+        screen.contains("ui (label:ui) [repo]"),
+        "help marks repo slots: {screen}"
+    );
+    h.press(KeyCode::Char('?'));
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('s'));
     let screen = h.press(KeyCode::Char('9'));

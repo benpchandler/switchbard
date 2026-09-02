@@ -11,6 +11,7 @@ use switchbard_core::BacklogTask;
 use crate::app::{App, Mode, Pane, PickerPurpose, ValuePicker};
 use crate::config::{Action, Column};
 use crate::tasks::Filter;
+use crate::views::Scope;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let [body, footer] =
@@ -179,16 +180,26 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let entries: Vec<(String, String)> = actions
         .iter()
         .map(|action| (app.config.bindings_for(action).join(" "), action.name()))
-        .chain(app.views.iter().enumerate().map(|(index, saved)| {
-            let sort = saved
-                .sort
-                .map(|sort| format!(" {}", sort.label()))
-                .unwrap_or_default();
-            (
-                format!("v{}", index + 1),
-                format!("{} ({}{sort})", saved.name, saved.filter),
-            )
-        }))
+        .chain(
+            app.views
+                .slots()
+                .into_iter()
+                .enumerate()
+                .map(|(index, (saved, scope))| {
+                    let sort = saved
+                        .sort
+                        .map(|sort| format!(" {}", sort.label()))
+                        .unwrap_or_default();
+                    let scope = match scope {
+                        Scope::Global => "",
+                        Scope::Repo => " [repo]",
+                    };
+                    (
+                        format!("v{}", index + 1),
+                        format!("{} ({}{sort}){scope}", saved.name, saved.filter),
+                    )
+                }),
+        )
         .collect();
     let per_line = (area.width as usize / 32).max(1);
     let mut lines: Vec<Line> = entries
@@ -220,7 +231,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         ),
     ]));
     lines.push(Line::from(Span::styled(
-        "config ~/.switchbard/tui.lua (hot reload) · views ~/.switchbard/views.lua · events ~/.switchbard/tui-events.jsonl",
+        "config ~/.switchbard/tui.lua (hot reload) · views ~/.switchbard/views.lua + views/<repo>.lua · events ~/.switchbard/tui-events.jsonl",
         Style::default().fg(theme.dim),
     )));
     let block = Block::default()
@@ -252,9 +263,14 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw(app.input.clone()),
             Span::styled("▏", Style::default().fg(theme.accent)),
         ]),
-        Mode::PickColumn | Mode::PickValue | Mode::ViewChord | Mode::ViewSaveSlot => Line::from(
-            Span::styled(app.status.clone(), Style::default().fg(theme.accent)),
-        ),
+        Mode::PickColumn
+        | Mode::PickValue
+        | Mode::ViewChord
+        | Mode::ViewSaveSlot
+        | Mode::ViewGlobalSlot => Line::from(Span::styled(
+            app.status.clone(),
+            Style::default().fg(theme.accent),
+        )),
         Mode::Browse if !app.status.is_empty() => Line::from(Span::styled(
             app.status.clone(),
             Style::default().fg(theme.accent),

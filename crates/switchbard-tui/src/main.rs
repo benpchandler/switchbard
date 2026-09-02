@@ -44,8 +44,16 @@ fn main() -> Result<()> {
             );
             println!(
                 "views: {}",
-                views::default_path().unwrap_or_default().display()
+                views::global_path().unwrap_or_default().display()
             );
+            if let Ok(cwd) = std::env::current_dir() {
+                println!(
+                    "repo views: {}",
+                    views::repo_path(&cli.repo.clone().unwrap_or(cwd))
+                        .unwrap_or_default()
+                        .display()
+                );
+            }
             println!(
                 "events: {}",
                 telemetry::default_log_path().unwrap_or_default().display()
@@ -67,7 +75,8 @@ fn run(repo_root: PathBuf) -> Result<()> {
     let mut app = App::open(
         &repo_root,
         config::user_config_path(),
-        views::default_path(),
+        views::global_path(),
+        views::repo_path(&repo_root),
         telemetry,
     );
     app.resume_from(std::env::var(RESUME_ENV).ok().as_deref());
