@@ -31,8 +31,9 @@ pub use hierarchy::{
 
 pub use mutations::{
     append_backlog_notes, archive_backlog_task, complete_backlog_task, create_backlog_task,
-    edit_backlog_task, remove_backlog_label, set_backlog_acceptance_checked,
-    set_backlog_dod_checked, set_backlog_final_summary, set_backlog_label, swap_backlog_label,
+    edit_backlog_task, remove_backlog_label, revise_backlog_acceptance_criteria,
+    set_backlog_acceptance_checked, set_backlog_dod_checked, set_backlog_final_summary,
+    set_backlog_label, swap_backlog_label,
 };
 pub use parse::{
     body_round_trips, is_backlog_repo, load_backlog_repo, parse_backlog_day, task_file_round_trips,
@@ -49,7 +50,8 @@ pub use types::{
 };
 pub use write::{
     append_task_acceptance_criteria, append_task_notes, replace_task_section,
-    set_task_checklist_item, set_task_label, set_task_list_field, set_task_priority,
-    set_task_project, set_task_status, set_task_title, swap_task_label, write_new_task_file,
-    TaskChecklist, TaskListField, TaskSection, WriteOutcome,
+    revise_task_checklist, set_task_checklist_item, set_task_label, set_task_list_field,
+    set_task_priority, set_task_project, set_task_status, set_task_title, swap_task_label,
+    write_new_task_file, ChecklistTextEdit, TaskChecklist, TaskListField, TaskSection,
+    WriteOutcome,
 };

@@ -233,6 +233,173 @@ fn errors_are_one_stderr_line_with_a_next_step_and_exit_code_one() {
     assert!(String::from_utf8_lossy(&done_refuses.stderr).contains("archive it instead"));
 }
 
+fn only_task_file(root: &Path) -> std::path::PathBuf {
+    let mut files: Vec<_> = std::fs::read_dir(root.join("backlog/tasks"))
+        .expect("tasks dir")
+        .map(|entry| entry.expect("entry").path())
+        .collect();
+    assert_eq!(files.len(), 1, "fixture holds exactly one task: {files:?}");
+    files.remove(0)
+}
+
+fn criteria_lines(view: &str) -> Vec<&str> {
+    view.lines()
+        .filter(|line| line.starts_with("- ["))
+        .collect()
+}
+
+#[test]
+fn acceptance_criteria_can_be_reworded_and_removed_by_pre_command_number() {
+    let dir = fixture_project();
+    let root = dir.path();
+    let four = ["First", "Second", "Third", "Fourth"];
+    let mut create = vec!["create", "Repairable"];
+    for text in four {
+        create.extend(["--ac", text]);
+    }
+    assert_eq!(ok_stdout(root, &create), "TASK-1\n");
+    assert_eq!(
+        ok_stdout(
+            root,
+            &["edit", "TASK-1", "--check-ac", "2", "--check-ac", "4"]
+        ),
+        "Edited TASK-1\n"
+    );
+
+    // --edit-ac keeps each criterion's [x] / [ ] state and number.
+    let reword = [
+        "edit",
+        "TASK-1",
+        "--edit-ac",
+        "2",
+        "Second, reworded",
+        "--edit-ac",
+        "1",
+        "First, reworded",
+    ];
+    assert_eq!(ok_stdout(root, &reword), "Edited TASK-1\n");
+    let view = ok_stdout(root, &["view", "TASK-1"]);
+    assert!(view.contains("- [ ] #1 First, reworded\n"), "{view}");
+    assert!(view.contains("- [x] #2 Second, reworded\n"), "{view}");
+    assert_eq!(
+        ok_stdout(
+            root,
+            &["edit", "TASK-1", "--edit-ac", "2", "Second, reworded"]
+        ),
+        "no changes\n",
+        "rewording to the same text is a no-op"
+    );
+
+    // --remove-ac drops the pre-command #1 and #3 and closes the gaps.
+    assert_eq!(
+        ok_stdout(
+            root,
+            &["edit", "TASK-1", "--remove-ac", "1", "--remove-ac", "3"]
+        ),
+        "Edited TASK-1\n"
+    );
+    let view = ok_stdout(root, &["view", "TASK-1"]);
+    assert_eq!(
+        criteria_lines(&view),
+        ["- [x] #1 Second, reworded", "- [x] #2 Fourth"],
+        "{view}"
+    );
+
+    // One call: the edit and the removal name pre-command numbers; the
+    // append lands last, after renumbering.
+    let combined = [
+        "edit",
+        "TASK-1",
+        "--edit-ac",
+        "2",
+        "Fourth, reworded",
+        "--remove-ac",
+        "1",
+        "--ac",
+        "Fifth",
+    ];
+    assert_eq!(ok_stdout(root, &combined), "Edited TASK-1\n");
+    let view = ok_stdout(root, &["view", "TASK-1"]);
+    assert_eq!(
+        criteria_lines(&view),
+        ["- [x] #1 Fourth, reworded", "- [ ] #2 Fifth"],
+        "{view}"
+    );
+}
+
+#[test]
+fn acceptance_criteria_repairs_refuse_bad_numbers_and_leave_the_file_alone() {
+    let dir = fixture_project();
+    let root = dir.path();
+    assert_eq!(
+        ok_stdout(
+            root,
+            &["create", "Guarded", "--ac", "First", "--ac", "Second"]
+        ),
+        "TASK-1\n"
+    );
+    let file = only_task_file(root);
+    let before = std::fs::read_to_string(&file).expect("task file reads");
+
+    let out_of_range: [&[&str]; 4] = [
+        &["edit", "TASK-1", "--remove-ac", "0"],
+        &["edit", "TASK-1", "--remove-ac", "3"],
+        &["edit", "TASK-1", "--edit-ac", "0", "text"],
+        &[
+            "edit",
+            "TASK-1",
+            "--edit-ac",
+            "1",
+            "fine",
+            "--remove-ac",
+            "9",
+        ],
+    ];
+    for args in out_of_range {
+        let out = bin(root, args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(out.stdout.is_empty(), "errors never touch stdout");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(err.lines().count(), 1, "one stderr line, got: {err}");
+        assert!(
+            err.starts_with("sb: error: no acceptance criterion #"),
+            "{err}"
+        );
+        assert!(err.contains("valid range is #1-#2"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&file).expect("task file reads"),
+            before,
+            "file untouched after {args:?}"
+        );
+    }
+
+    let not_a_number = bin(root, &["edit", "TASK-1", "--edit-ac", "two", "text"]);
+    assert_eq!(not_a_number.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&not_a_number.stderr);
+    assert!(
+        err.starts_with("sb: error: --edit-ac needs a criterion number"),
+        "{err}"
+    );
+    assert!(
+        err.contains("--edit-ac <N> <TEXT>"),
+        "errors carry the usage"
+    );
+
+    let ambiguous = bin(
+        root,
+        &["edit", "TASK-1", "--remove-ac", "1", "--check-ac", "2"],
+    );
+    assert!(
+        !ambiguous.status.success(),
+        "removing and checking in one call is refused"
+    );
+    assert!(String::from_utf8_lossy(&ambiguous.stderr).contains("cannot be used with"));
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("task file reads"),
+        before
+    );
+}
+
 #[test]
 fn outside_a_project_the_error_names_the_escape_hatch() {
     let dir = tempfile::tempdir().expect("tempdir");

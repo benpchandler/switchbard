@@ -135,6 +135,21 @@ impl TaskChecklist {
             Self::DefinitionOfDone => "DOD",
         }
     }
+
+    /// What one item is called in an error a person reads.
+    fn item_noun(self) -> &'static str {
+        match self {
+            Self::AcceptanceCriteria => "acceptance criterion",
+            Self::DefinitionOfDone => "Definition of Done item",
+        }
+    }
+}
+
+/// One `--edit-ac N TEXT`: replace item `#index`'s text, keeping its mark.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChecklistTextEdit {
+    pub index: usize,
+    pub text: String,
 }
 
 // ---- public operations: frontmatter ----
@@ -350,6 +365,70 @@ pub fn set_task_checklist_item(
         }
         Ok(())
     })
+}
+
+/// Reword and/or remove checklist items in one atomic write: every `#N` in
+/// `edits` and `removals` names an item by the numbering the file shows
+/// *before* this call, edits are applied first, then removals, then the
+/// survivors are renumbered `#1..#n` with no gap. A reworded item keeps its
+/// checked mark and its `- [x] #N ` prefix byte-for-byte. Any unknown index
+/// fails the whole call before anything is written, naming the valid range,
+/// so a mangled `--remove-ac` can never half-apply.
+pub fn revise_task_checklist(
+    path: &Path,
+    list: TaskChecklist,
+    edits: &[ChecklistTextEdit],
+    removals: &[usize],
+) -> Result<WriteOutcome> {
+    if edits.is_empty() && removals.is_empty() {
+        return Ok(WriteOutcome::Unchanged);
+    }
+    let edits = edits
+        .iter()
+        .map(|edit| cleaned_text_edit(list, edit))
+        .collect::<Result<Vec<ChecklistTextEdit>>>()?;
+    ensure_body_rewrite_safe(path)?;
+    apply_edit(path, move |_, rest| {
+        let mut lines = split_lines(rest);
+        let inside = fence_flags(rest);
+        let span = section_span(&lines, &inside, list.heading())
+            .with_context(|| format!("task has no {} section", list.heading()))?;
+        revise_checklist_span(&mut lines, span, list, &edits, removals)?;
+        *rest = lines.join("\n");
+        Ok(())
+    })
+}
+
+/// The revise order, resolved entirely against `span`'s numbering before a
+/// single line moves: every index is looked up first (so an unknown one
+/// fails with nothing touched), then edits land, then removals run from the
+/// highest line down so the lower line indices stay valid, then the
+/// survivors are renumbered.
+fn revise_checklist_span(
+    lines: &mut Vec<String>,
+    span: (usize, usize),
+    list: TaskChecklist,
+    edits: &[ChecklistTextEdit],
+    removals: &[usize],
+) -> Result<()> {
+    let items = checklist_items(lines, span);
+    let edit_lines = edits
+        .iter()
+        .map(|edit| find_checklist_line(&items, list, edit.index).map(|at| (at, edit)))
+        .collect::<Result<Vec<_>>>()?;
+    let mut doomed = removals
+        .iter()
+        .map(|&index| find_checklist_line(&items, list, index))
+        .collect::<Result<Vec<usize>>>()?;
+    for (at, edit) in edit_lines {
+        lines[at] = replace_checklist_text(&lines[at], &edit.text)?;
+    }
+    doomed.sort_unstable_by(|a, b| b.cmp(a));
+    doomed.dedup();
+    for &at in &doomed {
+        lines.remove(at);
+    }
+    renumber_checklist(lines, (span.0, span.1 - doomed.len()))
 }
 
 // ---- public operations: create ----
@@ -891,15 +970,135 @@ fn append_criteria(rest: &mut String, items: &[String]) {
 }
 
 fn max_checklist_index(lines: &[String], span: (usize, usize)) -> usize {
-    let mut count = 0usize;
-    let mut max = 0usize;
-    for line in lines.iter().take(span.1).skip(span.0) {
-        if let Some(item) = parse_checklist_line(line, count + 1) {
-            count += 1;
-            max = max.max(item.index);
+    checklist_items(lines, span)
+        .iter()
+        .map(|(_, item)| item.index)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Every checklist item inside `span` with its line index, in file order -
+/// the same items, carrying the same `#N`-or-ordinal indices, that
+/// `super::parse` shows the user.
+fn checklist_items(lines: &[String], span: (usize, usize)) -> Vec<(usize, ChecklistLine)> {
+    debug_assert!(
+        span.0 <= span.1 && span.1 <= lines.len(),
+        "span is in range"
+    );
+    let mut items = Vec::new();
+    for (at, line) in lines.iter().enumerate().take(span.1).skip(span.0) {
+        if let Some(item) = parse_checklist_line(line, items.len() + 1) {
+            items.push((at, item));
         }
     }
-    max
+    items
+}
+
+/// The line carrying item `#index`, or an error naming the range a person
+/// can actually pick from (`#0` and anything past the last item both land
+/// here).
+fn find_checklist_line(
+    items: &[(usize, ChecklistLine)],
+    list: TaskChecklist,
+    index: usize,
+) -> Result<usize> {
+    if let Some((at, _)) = items.iter().find(|(_, item)| item.index == index) {
+        return Ok(*at);
+    }
+    let noun = list.item_noun();
+    match items.iter().map(|(_, item)| item.index).max() {
+        Some(last) => bail!("no {noun} #{index}: valid range is #1-#{last}"),
+        None => bail!("no {noun} #{index}: the task has none"),
+    }
+}
+
+/// The same single-line shape [`append_task_acceptance_criteria`] enforces,
+/// applied to a rewording.
+fn cleaned_text_edit(list: TaskChecklist, edit: &ChecklistTextEdit) -> Result<ChecklistTextEdit> {
+    let text = edit.text.trim().to_string();
+    if text.is_empty() {
+        bail!("{} #{} text is empty", list.item_noun(), edit.index);
+    }
+    if text.contains('\n') {
+        bail!("{} text must be single-line", list.item_noun());
+    }
+    Ok(ChecklistTextEdit {
+        index: edit.index,
+        text,
+    })
+}
+
+/// Where a checklist line's optional `#N` tag and its text begin, as byte
+/// offsets: `- [x] #7 text` → tag at 6, text at 8; `- [ ] text` → no tag,
+/// text at 6.
+struct ChecklistShape {
+    tag_start: Option<usize>,
+    text_start: usize,
+}
+
+/// Mirror of [`parse_checklist_line`] that keeps the offsets instead of the
+/// values, so a rewrite can keep every byte before the text untouched.
+fn checklist_shape(line: &str) -> Result<ChecklistShape> {
+    let open = line.find("- [").context("checklist line lost its `- [`")?;
+    let close = line[open..]
+        .find(']')
+        .map(|off| open + off)
+        .context("checklist line lost its `]`")?;
+    let after = &line[close + 1..];
+    let tag_start = close + 1 + (after.len() - after.trim_start().len());
+    let digits = line[tag_start..]
+        .strip_prefix('#')
+        .map(|rest| rest.chars().take_while(char::is_ascii_digit).count())
+        .unwrap_or(0);
+    if digits == 0 {
+        return Ok(ChecklistShape {
+            tag_start: None,
+            text_start: tag_start,
+        });
+    }
+    Ok(ChecklistShape {
+        tag_start: Some(tag_start),
+        text_start: tag_start + 1 + digits,
+    })
+}
+
+/// `- [x] #2 old words` → `- [x] #2 new words`: only the text changes.
+fn replace_checklist_text(line: &str, text: &str) -> Result<String> {
+    let shape = checklist_shape(line)?;
+    debug_assert!(!text.is_empty(), "callers validate the text first");
+    Ok(format!("{} {}", line[..shape.text_start].trim_end(), text))
+}
+
+/// `- [x] #7 text` → `- [x] #3 text`; a line with no `#N` tag numbers by
+/// position already and comes back unchanged.
+fn set_checklist_tag(line: &str, index: usize) -> Result<String> {
+    let shape = checklist_shape(line)?;
+    let Some(tag_start) = shape.tag_start else {
+        return Ok(line.to_string());
+    };
+    Ok(format!(
+        "{}#{index}{}",
+        &line[..tag_start],
+        &line[shape.text_start..]
+    ))
+}
+
+/// Rewrite every explicit `#N` tag inside `span` to the item's position, so
+/// the section reads `#1..#n` with no gap.
+fn renumber_checklist(lines: &mut [String], span: (usize, usize)) -> Result<()> {
+    debug_assert!(
+        span.0 <= span.1 && span.1 <= lines.len(),
+        "span is in range"
+    );
+    let mut count = 0usize;
+    for line in lines.iter_mut().take(span.1).skip(span.0) {
+        if parse_checklist_line(line, count + 1).is_none() {
+            continue;
+        }
+        count += 1;
+        *line = set_checklist_tag(line, count)?;
+    }
+    Ok(())
 }
 
 // ---- create primitives ----
@@ -1648,6 +1847,156 @@ mod tests {
             err.to_string().contains("Definition of Done"),
             "unexpected error: {err}"
         );
+    }
+
+    fn criteria(path: &Path) -> Vec<(usize, bool, String)> {
+        parse_task_file(path, BacklogTaskSource::Active)
+            .expect("reparses")
+            .0
+            .acceptance_criteria
+            .iter()
+            .map(|item| (item.index, item.checked, item.text.clone()))
+            .collect()
+    }
+
+    fn revise_acceptance(
+        path: &Path,
+        edits: &[ChecklistTextEdit],
+        removals: &[usize],
+    ) -> Result<WriteOutcome> {
+        revise_task_checklist(path, TaskChecklist::AcceptanceCriteria, edits, removals)
+    }
+
+    fn assert_changed(outcome: Result<WriteOutcome>) {
+        assert_eq!(outcome.expect("edit succeeds"), WriteOutcome::Changed);
+    }
+
+    fn text_edit(index: usize, text: &str) -> ChecklistTextEdit {
+        ChecklistTextEdit {
+            index,
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn revise_checklist_removes_and_renumbers_without_a_gap() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = fixture_file(&dir);
+        assert_changed(append_task_acceptance_criteria(
+            &path,
+            &["Third".to_string(), "Fourth".to_string()],
+        ));
+        assert_changed(set_task_checklist_item(
+            &path,
+            TaskChecklist::AcceptanceCriteria,
+            4,
+            true,
+        ));
+        let before = read(&path);
+
+        assert_changed(revise_acceptance(&path, &[], &[3, 1, 3]));
+
+        assert_eq!(
+            criteria(&path),
+            vec![
+                (1, true, "Second criterion".to_string()),
+                (2, true, "Fourth".to_string()),
+            ],
+            "original #2 and #4 survive as #1 and #2, marks intact"
+        );
+        let after = read(&path);
+        assert!(after.contains("- [x] #1 Second criterion\n- [x] #2 Fourth\n<!-- AC:END -->"));
+        assert_only_lines_touched(&before, &after, &["- [", "updated_date:"]);
+    }
+
+    #[test]
+    fn revise_checklist_rewords_in_place_and_keeps_the_mark() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = fixture_file(&dir);
+        let edits = [
+            text_edit(1, "  First, reworded "),
+            text_edit(2, "Second, reworded"),
+        ];
+
+        assert_changed(revise_acceptance(&path, &edits, &[]));
+        let after = read(&path);
+        assert!(after.contains("- [ ] #1 First, reworded\n"), "{after}");
+        assert!(after.contains("- [x] #2 Second, reworded\n"), "{after}");
+        assert_only_lines_touched(FIXTURE, &after, &["- [", "updated_date:"]);
+
+        let again = revise_acceptance(&path, &edits, &[]).expect("edit succeeds");
+        assert_eq!(again, WriteOutcome::Unchanged, "same text is a no-op");
+    }
+
+    #[test]
+    fn revise_checklist_edits_then_removes_by_pre_call_numbering() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = fixture_file(&dir);
+        assert_changed(append_task_acceptance_criteria(
+            &path,
+            &["Third".to_string()],
+        ));
+
+        assert_changed(revise_acceptance(
+            &path,
+            &[text_edit(3, "Third, reworded")],
+            &[1],
+        ));
+
+        assert_eq!(
+            criteria(&path),
+            vec![
+                (1, true, "Second criterion".to_string()),
+                (2, false, "Third, reworded".to_string()),
+            ],
+            "the edit landed on the pre-call #3, which the removal renumbered to #2"
+        );
+    }
+
+    #[test]
+    fn revise_checklist_refuses_unknown_indices_and_touches_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = fixture_file(&dir);
+        let cases: [(Vec<ChecklistTextEdit>, Vec<usize>, &str); 5] = [
+            (
+                vec![],
+                vec![0],
+                "no acceptance criterion #0: valid range is #1-#2",
+            ),
+            (
+                vec![],
+                vec![7],
+                "no acceptance criterion #7: valid range is #1-#2",
+            ),
+            (
+                vec![text_edit(3, "x")],
+                vec![],
+                "no acceptance criterion #3: valid range is #1-#2",
+            ),
+            (
+                vec![text_edit(1, "x")],
+                vec![9],
+                "no acceptance criterion #9",
+            ),
+            (
+                vec![text_edit(1, "  ")],
+                vec![],
+                "acceptance criterion #1 text is empty",
+            ),
+        ];
+        for (edits, removals, expected) in &cases {
+            let err = revise_acceptance(&path, edits, removals).expect_err("refused");
+            assert!(
+                err.to_string().contains(expected),
+                "unexpected error: {err}"
+            );
+            assert_eq!(read(&path), FIXTURE, "file untouched after {expected}");
+        }
+
+        let err = revise_task_checklist(&path, TaskChecklist::DefinitionOfDone, &[], &[1])
+            .expect_err("fixture has no DoD section");
+        assert!(err.to_string().contains("Definition of Done"), "{err}");
+        assert_eq!(read(&path), FIXTURE);
     }
 
     #[test]

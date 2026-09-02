@@ -38,9 +38,9 @@ use super::parse::{
 use super::types::{BacklogTaskPatch, BacklogTaskSource, NewBacklogTask};
 use super::write::{
     append_task_acceptance_criteria, append_task_notes, replace_task_section,
-    set_task_checklist_item, set_task_label, set_task_list_field, set_task_priority,
-    set_task_project, set_task_status, set_task_title, swap_task_label, TaskChecklist,
-    TaskListField, TaskSection, WriteOutcome,
+    revise_task_checklist, set_task_checklist_item, set_task_label, set_task_list_field,
+    set_task_priority, set_task_project, set_task_status, set_task_title, swap_task_label,
+    ChecklistTextEdit, TaskChecklist, TaskListField, TaskSection, WriteOutcome,
 };
 use anyhow::{bail, Context, Result};
 use std::ffi::OsStr;
@@ -130,6 +130,23 @@ pub fn set_backlog_acceptance_checked(
     let path = resolve_task_file(project_root, task_id)?;
     let outcome =
         set_task_checklist_item(&path, TaskChecklist::AcceptanceCriteria, index, checked)?;
+    Ok(outcome_message(task_id, outcome))
+}
+
+/// Reword and/or remove acceptance criteria in one atomic write - the
+/// `sb edit --edit-ac N TEXT` / `--remove-ac N` repair path. Every index is
+/// the numbering the task showed before this call (edits land before
+/// removals), the survivors are renumbered `#1..#n`, and an unknown index
+/// fails the whole call with the file untouched. See
+/// [`super::write::revise_task_checklist`].
+pub fn revise_backlog_acceptance_criteria(
+    project_root: &Path,
+    task_id: &str,
+    edits: &[ChecklistTextEdit],
+    removals: &[usize],
+) -> Result<String> {
+    let path = resolve_task_file(project_root, task_id)?;
+    let outcome = revise_task_checklist(&path, TaskChecklist::AcceptanceCriteria, edits, removals)?;
     Ok(outcome_message(task_id, outcome))
 }
 
