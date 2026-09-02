@@ -4,12 +4,12 @@ title: Render Tasks and Dispatch immediately from last-known read models
 status: To Do
 assignee: []
 created_date: '2026-09-01 17:44'
-updated_date: '2026-09-01 17:45'
+updated_date: '2026-09-01 17:51'
 labels:
   - cold-start
   - tasks
-  - dispatch
   - cache
+  - dispatch-failed
 dependencies:
   - TASK-124
 priority: high
@@ -33,3 +33,9 @@ Evidence: app.rs initializes backlog_repos, ordering, and dispatch_runs empty; w
 - [ ] #5 Document local retention and privacy behavior for cached task content, enforce the approved bounds and permissions, and exclude logs and prompts.
 - [ ] #6 Cover empty, one, many, long-content, high-volume, partial-failure, and rapid-refresh transitions without losing selections or pending in-session mutations.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Dispatch failed: claude exited with 127
+<!-- SECTION:NOTES:END -->

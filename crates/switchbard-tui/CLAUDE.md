@@ -27,7 +27,7 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 
 ## Loop
 Slice => commit on `feat/tui` => `cargo install` => user drives it => drain
-`label:tui` tasks (press `3`) at the start of the next slice.
+`label:tui` tasks (press `4`) at the start of the next slice.
 
 ## Gates
 `cargo test -p switchbard-tui`, `cargo clippy -p switchbard-tui --all-targets -- -D warnings`, `cargo fmt`.
