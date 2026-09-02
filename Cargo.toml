@@ -5,6 +5,7 @@ members = [
     "crates/switchbard-gui",
     "crates/switchbard-dispatch",
     "crates/switchbard-task",
+    "crates/switchbard-tui",
 ]
 
 [workspace.package]
