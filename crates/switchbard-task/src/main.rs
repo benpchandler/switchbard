@@ -28,7 +28,7 @@ mod render;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use std::path::{Path, PathBuf};
-use switchbard_core::{BacklogTask, BacklogTaskPatch, NewBacklogTask};
+use switchbard_core::{BacklogTask, BacklogTaskPatch, ChecklistTextEdit, NewBacklogTask};
 
 /// How many directory levels [`find_repo_root`] will climb before giving
 /// up — bounded so a weird mount layout can't turn root discovery into an
@@ -230,9 +230,22 @@ struct EditArgs {
     #[arg(long)]
     plan: Option<String>,
     /// Append an acceptance criterion (repeatable; never disturbs existing
-    /// criteria or their checked state)
+    /// criteria or their checked state; applied after --edit-ac and
+    /// --remove-ac)
     #[arg(long = "ac", value_name = "TEXT")]
     acceptance_criteria: Vec<String>,
+    /// Replace the text of acceptance criterion #N, keeping its [x]/[ ]
+    /// state and number (repeatable; N is the number `sb view` shows before
+    /// this command runs)
+    #[arg(long, num_args = 2, value_names = ["N", "TEXT"])]
+    edit_ac: Vec<String>,
+    /// Remove acceptance criterion #N and renumber the rest #1..#n with no
+    /// gap (repeatable; every N is the pre-command number, so
+    /// `--remove-ac 2 --remove-ac 4` drops the original #2 and #4; applied
+    /// after --edit-ac, before --ac; cannot be combined with --check-ac /
+    /// --uncheck-ac - run those as a separate command)
+    #[arg(long, value_name = "N", conflicts_with_all = ["check_ac", "uncheck_ac"])]
+    remove_ac: Vec<usize>,
     /// Assign the task to a project (rewrites a legacy `milestone:` key as
     /// `project:`; `--milestone` is a deprecated alias)
     #[arg(
@@ -421,8 +434,8 @@ fn create(root: &Path, args: &CreateArgs) -> Result<()> {
 /// dispatch use. Prints `Edited <ID>` if anything changed, else
 /// `no changes`.
 fn edit(root: &Path, args: &EditArgs) -> Result<()> {
+    let mut changed = revise_acceptance_criteria(root, args)?;
     let patch = patch_from(args);
-    let mut changed = false;
     if !patch.is_empty() {
         changed |= switchbard_core::edit_backlog_task(root, &args.id, &patch)? != "no changes";
     }
@@ -447,6 +460,43 @@ fn edit(root: &Path, args: &EditArgs) -> Result<()> {
         println!("no changes");
     }
     Ok(())
+}
+
+/// `--edit-ac` then `--remove-ac`, in one write, ahead of the patch's `--ac`
+/// appends - so every N names the criterion `sb view` showed before this
+/// command ran, and an unknown N leaves the file exactly as it was.
+fn revise_acceptance_criteria(root: &Path, args: &EditArgs) -> Result<bool> {
+    let edits = acceptance_edits(&args.edit_ac)?;
+    if edits.is_empty() && args.remove_ac.is_empty() {
+        return Ok(false);
+    }
+    let message = switchbard_core::revise_backlog_acceptance_criteria(
+        root,
+        &args.id,
+        &edits,
+        &args.remove_ac,
+    )?;
+    Ok(message != "no changes")
+}
+
+/// clap hands `--edit-ac N TEXT` over as flat `[N, TEXT, N, TEXT, …]` pairs;
+/// this is where N becomes a number.
+fn acceptance_edits(raw: &[String]) -> Result<Vec<ChecklistTextEdit>> {
+    debug_assert!(raw.len().is_multiple_of(2), "clap enforces num_args = 2");
+    raw.chunks_exact(2)
+        .map(|pair| {
+            let index = pair[0].parse::<usize>().map_err(|_| {
+                anyhow!(
+                    "--edit-ac needs a criterion number, got `{}` (usage: --edit-ac <N> <TEXT>)",
+                    pair[0]
+                )
+            })?;
+            Ok(ChecklistTextEdit {
+                index,
+                text: pair[1].clone(),
+            })
+        })
+        .collect()
 }
 
 fn toggle_checklists(root: &Path, args: &EditArgs) -> Result<bool> {
