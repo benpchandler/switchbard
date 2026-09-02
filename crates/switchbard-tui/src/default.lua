@@ -14,11 +14,13 @@ return {
     c = "columns", v = "view", r = "reload", ["?"] = "help", q = "quit",
   },
 
-  -- Colors: names (cyan, darkgray, ...) or hex ("#303030").
+  -- Colors: ANSI names (cyan, gray, darkgray, ...) follow your terminal palette;
+  -- hex ("#303030") is exact. dim is secondary text (detail meta line, hints,
+  -- counts); keep it readable on your background.
   theme = {
     accent = "cyan",
     header = "yellow",
-    dim = "darkgray",
+    dim = "gray",
     selected = "#303030",
     border = "darkgray",
   },

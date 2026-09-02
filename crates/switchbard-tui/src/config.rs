@@ -296,7 +296,7 @@ impl RawConfig {
         let theme = Theme {
             accent: color("accent", Color::Cyan),
             header: color("header", Color::Yellow),
-            dim: color("dim", Color::DarkGray),
+            dim: color("dim", Color::Gray),
             selected: color("selected", Color::Indexed(236)),
             border: color("border", Color::DarkGray),
         };
