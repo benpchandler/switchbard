@@ -358,44 +358,55 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             ])
         })
         .collect();
+    let pending = if picker.number.is_empty() {
+        String::new()
+    } else {
+        format!("{}▏", picker.number)
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent))
-        .title(match (&picker.purpose, picker.typed.is_empty()) {
-            (PickerPurpose::Filter(field), true) => format!(
-                " {} · type/number picks one · space toggles ",
-                field.keyword()
-            ),
-            (PickerPurpose::Filter(field), false) => {
-                format!(" {}: {}▏", field.keyword(), picker.typed)
-            }
-            (PickerPurpose::Sort(column), true) => format!(" sort by {} ", column.header()),
-            (PickerPurpose::Sort(column), false) => {
-                format!(" sort by {}: {}▏", column.header(), picker.typed)
-            }
-            (PickerPurpose::ChooseColumn(ColumnPurpose::Filter), true) => {
-                " filter by column · number or name · hidden columns listed last ".to_string()
-            }
-            (PickerPurpose::ChooseColumn(ColumnPurpose::Sort), true) => {
-                " sort by column · number or name · hidden columns listed last ".to_string()
-            }
-            (PickerPurpose::ChooseColumn(ColumnPurpose::Filter), false) => {
-                format!(" filter by column: {}▏", picker.typed)
-            }
-            (PickerPurpose::ChooseColumn(ColumnPurpose::Sort), false) => {
-                format!(" sort by column: {}▏", picker.typed)
-            }
-            (PickerPurpose::Columns, true) => {
-                " columns · digit/name toggles · space keeps open · K/J move ".to_string()
-            }
-            (PickerPurpose::Columns, false) => format!(" columns: {}▏", picker.typed),
-            (PickerPurpose::PaintTarget, true) => " paint what? ".to_string(),
-            (PickerPurpose::PaintTarget, false) => format!(" paint what? {}▏", picker.typed),
-            (PickerPurpose::PaintColor(_), true) => {
-                " color · name, or type #hex then enter · none clears ".to_string()
-            }
-            (PickerPurpose::PaintColor(_), false) => format!(" color: {}▏", picker.typed),
-        });
+        .title(
+            pending
+                + &match (&picker.purpose, picker.typed.is_empty()) {
+                    (PickerPurpose::Filter(field), true) => format!(
+                        " {} · type/number picks one · space toggles ",
+                        field.keyword()
+                    ),
+                    (PickerPurpose::Filter(field), false) => {
+                        format!(" {}: {}▏", field.keyword(), picker.typed)
+                    }
+                    (PickerPurpose::Sort(column), true) => format!(" sort by {} ", column.header()),
+                    (PickerPurpose::Sort(column), false) => {
+                        format!(" sort by {}: {}▏", column.header(), picker.typed)
+                    }
+                    (PickerPurpose::ChooseColumn(ColumnPurpose::Filter), true) => {
+                        " filter by column · number or name · hidden columns listed last "
+                            .to_string()
+                    }
+                    (PickerPurpose::ChooseColumn(ColumnPurpose::Sort), true) => {
+                        " sort by column · number or name · hidden columns listed last ".to_string()
+                    }
+                    (PickerPurpose::ChooseColumn(ColumnPurpose::Filter), false) => {
+                        format!(" filter by column: {}▏", picker.typed)
+                    }
+                    (PickerPurpose::ChooseColumn(ColumnPurpose::Sort), false) => {
+                        format!(" sort by column: {}▏", picker.typed)
+                    }
+                    (PickerPurpose::Columns, true) => {
+                        " columns · digit/name toggles · space keeps open · K/J move ".to_string()
+                    }
+                    (PickerPurpose::Columns, false) => format!(" columns: {}▏", picker.typed),
+                    (PickerPurpose::PaintTarget, true) => " paint what? ".to_string(),
+                    (PickerPurpose::PaintTarget, false) => {
+                        format!(" paint what? {}▏", picker.typed)
+                    }
+                    (PickerPurpose::PaintColor(_), true) => {
+                        " color · name or #hex · space clears ".to_string()
+                    }
+                    (PickerPurpose::PaintColor(_), false) => format!(" color: {}▏", picker.typed),
+                },
+        );
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }

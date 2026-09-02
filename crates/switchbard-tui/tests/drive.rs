@@ -844,3 +844,42 @@ fn p_accepts_a_typed_hex_color() {
     assert!(screen.contains("painted column:title=#ff8800"), "{screen}");
     assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Rgb(255, 136, 0)));
 }
+
+#[test]
+fn two_digit_numbers_reach_options_past_nine_and_space_clears_paint() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    let selected = h.app.selected_task().unwrap().id.clone();
+    h.press(KeyCode::Char('p'));
+    let screen = h.press(KeyCode::Char('1'));
+    assert!(screen.contains("12  lightblue"), "{screen}");
+    let screen = h.press(KeyCode::Char('1'));
+    assert!(
+        screen.contains("1▏ color"),
+        "first digit waits when 10+ exist: {screen}"
+    );
+    let screen = h.press(KeyCode::Char('2'));
+    assert!(screen.contains("=lightblue"), "{screen}");
+    assert_eq!(cell_fg(&h, &selected), Some(Color::LightBlue));
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('1'));
+    let screen = h.press(KeyCode::Char('3'));
+    assert!(
+        screen.contains("=yellow"),
+        "3 cannot extend past 17, applies at once: {screen}"
+    );
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Char('1'));
+    let screen = h.press(KeyCode::Enter);
+    assert!(
+        screen.contains("=red"),
+        "enter completes a pending single digit as itself: {screen}"
+    );
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('1'));
+    let screen = h.press(KeyCode::Char(' '));
+    assert!(screen.contains("paint cleared"), "{screen}");
+    assert_eq!(cell_fg(&h, &selected), Some(Color::Reset));
+    assert!(!screen.contains("paint:"), "{screen}");
+}

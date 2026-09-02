@@ -56,6 +56,8 @@ pub struct ValuePicker {
     pub purpose: PickerPurpose,
     pub options: Vec<(String, usize)>,
     pub typed: String,
+    /// A first digit waiting for a second when the list runs past nine.
+    pub number: String,
     pub selected: usize,
 }
 
@@ -403,6 +405,7 @@ impl App {
             purpose: PickerPurpose::ChooseColumn(purpose),
             options: self.column_picker_options(),
             typed: String::new(),
+            number: String::new(),
             selected: 0,
         });
         self.mode = Mode::PickValue;
@@ -431,6 +434,7 @@ impl App {
             purpose: PickerPurpose::PaintTarget,
             options,
             typed: String::new(),
+            number: String::new(),
             selected: 0,
         });
         self.mode = Mode::PickValue;
@@ -447,6 +451,7 @@ impl App {
             purpose: PickerPurpose::PaintColor(target),
             options,
             typed: String::new(),
+            number: String::new(),
             selected: 0,
         });
         self.mode = Mode::PickValue;
@@ -484,6 +489,7 @@ impl App {
             purpose: PickerPurpose::Columns,
             options: self.column_picker_options(),
             typed: String::new(),
+            number: String::new(),
             selected: 0,
         });
         self.mode = Mode::PickValue;
@@ -540,6 +546,7 @@ impl App {
                     purpose: PickerPurpose::Filter(field),
                     options,
                     typed: String::new(),
+                    number: String::new(),
                     selected: 0,
                 });
                 self.mode = Mode::PickValue;
@@ -563,6 +570,7 @@ impl App {
             purpose: PickerPurpose::Sort(column),
             options,
             typed: String::new(),
+            number: String::new(),
             selected: 0,
         });
         self.mode = Mode::PickValue;
@@ -590,11 +598,35 @@ impl App {
                 picker.selected = picker.selected.saturating_sub(1)
             }
             KeyCode::Char(digit) if digit.is_ascii_digit() && picker.typed.is_empty() => {
-                let index = digit.to_digit(10).unwrap_or(0) as usize;
+                picker.number.push(digit);
+                let index: usize = picker.number.parse().unwrap_or(0);
+                let count = picker.options.len();
+                let could_extend = index * 10 <= count;
+                if index == 0 || index > count {
+                    picker.number.clear();
+                } else if could_extend {
+                    // Wait: a second digit may still follow (1 when there are 10+).
+                } else {
+                    picker.number.clear();
+                    picker.selected = index - 1;
+                    self.apply_picked_value();
+                }
+            }
+            KeyCode::Enter if !picker.number.is_empty() => {
+                let index: usize = picker.number.parse().unwrap_or(0);
+                picker.number.clear();
                 if (1..=picker.options.len()).contains(&index) {
                     picker.selected = index - 1;
                     self.apply_picked_value();
                 }
+            }
+            KeyCode::Char(' ') if matches!(picker.purpose, PickerPurpose::PaintColor(_)) => {
+                let PickerPurpose::PaintColor(target) = picker.purpose.clone() else {
+                    return;
+                };
+                self.picker = None;
+                self.mode = Mode::Browse;
+                self.apply_paint(target, "none");
             }
             KeyCode::Enter => self.apply_picked_value(),
             KeyCode::Char(' ') => self.toggle_picked_value(),
