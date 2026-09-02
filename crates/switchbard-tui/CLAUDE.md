@@ -18,6 +18,8 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 
 ## Module map
 - `app.rs` - state + the one key-handling path (`handle_key`, `apply`, `run_command`).
+- `picker.rs` - the one list every menu uses: typed `PickOption` payloads, numbered and
+  lettered rows, type-ahead; `app.rs` dispatches on payloads, never label text.
 - `view.rs` - rendering only; also snapshots the screen text for reports.
 - `config.rs` - `default.lua` baked in, user file layered over; keys, theme, glyphs.
   Columns (shown set, order, glyph mode via `g`) are view state; numbers are positions.

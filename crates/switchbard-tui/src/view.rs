@@ -10,10 +10,11 @@ use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Table
 use ratatui::Frame;
 use switchbard_core::BacklogTask;
 
-use crate::app::{App, ColumnPurpose, Mode, PaintPick, Pane, PickerPurpose, ValuePicker};
+use crate::app::{App, Mode, Pane};
 use crate::ball::Ball;
 use crate::config::{Action, Column};
 use crate::paint::{self, PaintRule};
+use crate::picker::{self, ColumnPurpose, PaintPick, Payload, PickerPurpose, ValuePicker};
 use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
@@ -289,7 +290,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             ),
         ]),
         Mode::PickValue if app.picker.is_some() => Line::from(Span::styled(
-            format!(" {}", picker_hint(app.picker.as_ref().expect("checked"))),
+            format!(" {}", picker::hint(app.picker.as_ref().expect("checked"))),
             Style::default().fg(theme.dim),
         )),
         Mode::PickValue | Mode::ViewChord | Mode::ViewSaveSlot | Mode::ViewGlobalSlot => {
@@ -319,54 +320,62 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
     let theme = &app.config.theme;
+    let hint = picker::hint(picker);
     let width = picker
         .options
         .iter()
-        .map(|(value, _)| value.len() + 11)
+        .map(|option| option.label.chars().count() + 11)
+        .chain(std::iter::once(hint.chars().count() + 4))
         .max()
         .unwrap_or(20)
         .max(60)
         .min(body.width.saturating_sub(4) as usize) as u16;
-    let height = (picker.options.len() as u16 + 2).min(body.height.saturating_sub(2));
+    let rows = picker.matching();
+    let height = (rows.len() as u16 + 4).min(body.height.saturating_sub(2));
     let area = Rect {
         x: body.x + 2,
         y: body.y + 2,
         width,
         height,
     };
-    let lines: Vec<Line> = picker
-        .matching()
+    let keys = picker.row_keys();
+    let mut lines: Vec<Line> = rows
         .iter()
         .enumerate()
-        .map(|(index, (value, count))| {
-            let shown = match &picker.purpose {
-                PickerPurpose::Filter(field) => {
+        .map(|(index, option)| {
+            let value = &option.label;
+            let shown = match (&picker.purpose, &option.payload) {
+                (PickerPurpose::Filter(field), Payload::Text(value)) => {
                     Filter::field_allows(&app.filter_text, *field, value)
                 }
-                PickerPurpose::Sort(column) => app
-                    .sort
-                    .is_some_and(|sort| sort.order.label(*column) == *value),
-                PickerPurpose::ChooseColumn(_) | PickerPurpose::Columns => {
-                    Column::parse(value).is_some_and(|column| app.columns.contains(&column))
+                (PickerPurpose::Sort(_), Payload::Order(order)) => {
+                    app.sort.is_some_and(|sort| sort.order == *order)
                 }
-                PickerPurpose::PaintTarget => false,
-                PickerPurpose::PaintColumn => false,
-                PickerPurpose::MoveColumns(placed) => placed.contains(&(index + 1)),
-                PickerPurpose::PaintRules => index == 0,
-                PickerPurpose::PaintValues(column) => {
+                (PickerPurpose::Sort(_), Payload::NoSort) => app.sort.is_none(),
+                (
+                    PickerPurpose::ChooseColumn(_)
+                    | PickerPurpose::Columns
+                    | PickerPurpose::PaintColumn
+                    | PickerPurpose::PaintTarget,
+                    Payload::Column(column),
+                ) => app.columns.contains(column),
+                (PickerPurpose::MoveColumns(placed), _) => placed.contains(&(index + 1)),
+                (PickerPurpose::PaintRules, Payload::Rule(rule)) => *rule == 0,
+                (PickerPurpose::PaintValues(column), Payload::Text(value)) => {
                     paint::value_color(&app.paint, *column, value).is_some()
                 }
-                PickerPurpose::PaintColor(pick) => match pick {
+                (PickerPurpose::PaintColor(pick), Payload::Text(color)) => match pick {
                     PaintPick::Value(column, painted) => {
-                        paint::value_color(&app.paint, *column, painted).as_deref() == Some(value)
+                        paint::value_color(&app.paint, *column, painted).as_deref() == Some(color)
                     }
                     PaintPick::Rows(filter) => app.paint.iter().any(|rule| {
-                        matches!(rule, PaintRule::Rows { filter: f, color } if f == filter && color == value)
+                        matches!(rule, PaintRule::Rows { filter: f, color: c } if f == filter && c == color)
                     }),
                     PaintPick::Column(column) => app.paint.iter().any(|rule| {
-                        matches!(rule, PaintRule::Column { column: c, color } if c == column && color == value)
+                        matches!(rule, PaintRule::Column { column: col, color: c } if col == column && c == color)
                     }),
                 },
+                _ => false,
             };
             let mut style = if index == picker.selected {
                 Style::default()
@@ -378,22 +387,22 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             if !shown {
                 style = style.fg(theme.dim);
             }
-            match &picker.purpose {
+            match (&picker.purpose, &option.payload) {
                 // Show the color itself: this is what the painted text will look like.
-                PickerPurpose::PaintColor(_) => {
-                    if let Ok(color) = ratatui::style::Color::from_str(value) {
+                (PickerPurpose::PaintColor(_), Payload::Text(color)) => {
+                    if let Ok(color) = ratatui::style::Color::from_str(color) {
                         style = style.fg(color);
                     }
                 }
-                PickerPurpose::PaintValues(column) => {
+                (PickerPurpose::PaintValues(column), Payload::Text(value)) => {
                     if let Some(color) = paint::value_color(&app.paint, *column, value)
                         .and_then(|color| ratatui::style::Color::from_str(&color).ok())
                     {
                         style = style.fg(color);
                     }
                 }
-                PickerPurpose::PaintRules => {
-                    if let Some(color) = app.paint.get(index).and_then(PaintRule::swatch) {
+                (PickerPurpose::PaintRules, Payload::Rule(rule)) => {
+                    if let Some(color) = app.paint.get(*rule).and_then(PaintRule::swatch) {
                         style = style.fg(color);
                     }
                 }
@@ -401,14 +410,17 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             }
             let mark = if shown { "✓" } else { " " };
             Line::from(vec![
-                Span::styled(format!("{} ", index + 1), Style::default().fg(theme.accent)),
+                Span::styled(
+                    format!("{:<2}", keys.get(index).cloned().unwrap_or_default()),
+                    Style::default().fg(theme.accent),
+                ),
                 Span::styled(
                     format!("{mark}{value:<width$}", width = width as usize - 9),
                     style,
                 ),
                 Span::styled(
-                    if *count > 0 {
-                        format!("{count:>3}")
+                    if option.count > 0 {
+                        format!("{:>3}", option.count)
                     } else {
                         "   ".to_string()
                     },
@@ -417,6 +429,11 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             ])
         })
         .collect();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!(" {hint}"),
+        Style::default().fg(theme.dim),
+    )));
     let pending = if picker.number.is_empty() {
         String::new()
     } else {
@@ -467,24 +484,6 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         format!(" {} ← this is how it looks · enter applies ", picker.typed)
     } else {
         format!(" {subject}: {}▏", picker.typed)
-    }
-}
-
-/// The keys that work in this picker, shown dim in the footer.
-pub fn picker_hint(picker: &ValuePicker) -> &'static str {
-    match &picker.purpose {
-        PickerPurpose::Filter(_) => "number or name picks one · space toggles · esc",
-        PickerPurpose::Sort(_) => "number or name picks · esc",
-        PickerPurpose::ChooseColumn(_) => "number or name · hidden columns listed last · esc",
-        PickerPurpose::Columns => "number or name toggles · m reorder · g glyphs · esc",
-        PickerPurpose::MoveColumns(_) => "type column numbers in the order you want · enter done",
-        PickerPurpose::PaintValues(_) => "value then color · repeats · h back · esc done",
-        PickerPurpose::PaintColumn => "number or name · h back · esc",
-        PickerPurpose::PaintTarget => {
-            "column number · r row · f filtered · c whole column · o order rules · d delete all · esc"
-        }
-        PickerPurpose::PaintColor(_) => "name or #hex · space clears · h back · esc",
-        PickerPurpose::PaintRules => "K/J reorder · del removes · h back · esc",
     }
 }
 
