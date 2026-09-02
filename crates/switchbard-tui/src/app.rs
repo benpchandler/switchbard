@@ -10,6 +10,7 @@ use switchbard_core::BacklogTask;
 use crate::ball::Ball;
 use crate::config::{self, Action, Column, Config, KeyChord};
 use crate::paint::{self, parse_rules, rules_text, PaintRule, NAMED_COLORS};
+use crate::picker::{ColumnPurpose, PaintPick, Payload, PickOption, PickerPurpose, ValuePicker};
 use crate::report::{self, ReportContext, ReportKind};
 use crate::sort::{self, Sort};
 use crate::tasks::{self, Filter, FilterField};
@@ -28,79 +29,6 @@ pub enum Mode {
     ViewSaveSlot,
     /// After `v g`: a digit or `d` picks the slot to promote to the global file.
     ViewGlobalSlot,
-}
-
-/// What a column was picked for: `f` filters by its values, `s` sorts by it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ColumnPurpose {
-    Filter,
-    Sort,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PickerPurpose {
-    Filter(FilterField),
-    Sort(Column),
-    /// Typing a column name after `f`/`s`, so hidden columns stay reachable.
-    ChooseColumn(ColumnPurpose),
-    /// The `c` picker: which columns show, in what order.
-    Columns,
-    /// After `c m`: typed column numbers become the new order, live.
-    MoveColumns(Vec<usize>),
-    /// After `p`: what to paint.
-    PaintTarget,
-    /// A column's values, one color each.
-    PaintValues(Column),
-    /// After a target: which color.
-    PaintColor(PaintPick),
-    /// After `p c`: which column to paint whole.
-    PaintColumn,
-    /// `p l`: the rule hierarchy, top is the base.
-    PaintRules,
-}
-
-/// What a picked color lands on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PaintPick {
-    Value(Column, String),
-    Rows(String),
-    Column(Column),
-}
-
-/// The `f`/`s <column>` picker: its options, the typed narrowing text, and the cursor.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ValuePicker {
-    pub purpose: PickerPurpose,
-    pub options: Vec<(String, usize)>,
-    pub typed: String,
-    /// A first digit waiting for a second when the list runs past nine.
-    pub number: String,
-    pub selected: usize,
-}
-
-impl ValuePicker {
-    /// Options starting with what has been typed; failing any, options containing it.
-    /// Case and spaces are ignored either way.
-    pub fn matching(&self) -> Vec<(String, usize)> {
-        let prefixed: Vec<(String, usize)> = self
-            .options
-            .iter()
-            .filter(|(value, _)| Filter::loose_starts_with(value, &self.typed))
-            .cloned()
-            .collect();
-        if !prefixed.is_empty() {
-            return prefixed;
-        }
-        self.options
-            .iter()
-            .filter(|(value, _)| Filter::loose_contains(value, &self.typed))
-            .cloned()
-            .collect()
-    }
-
-    fn highlighted(&self) -> Option<(String, usize)> {
-        self.matching().get(self.selected).cloned()
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -436,14 +364,8 @@ impl App {
     /// After `f`/`s`: shown columns first, numbered as in the header, then hidden ones.
     fn open_column_chooser(&mut self, purpose: ColumnPurpose) {
         self.column_purpose = purpose;
-        self.picker = Some(ValuePicker {
-            purpose: PickerPurpose::ChooseColumn(purpose),
-            options: self.column_picker_options(),
-            typed: String::new(),
-            number: String::new(),
-            selected: 0,
-        });
-        self.mode = Mode::PickValue;
+        let options = self.column_picker_options();
+        self.open_picker(PickerPurpose::ChooseColumn(purpose), options);
         self.status.clear();
     }
 
@@ -454,30 +376,49 @@ impl App {
         }
     }
 
-    /// Mirrors the header: shown columns first (so `p2` is column 2), then
-    /// row / filtered rows / column, then hidden categorical fields by name.
-    /// Mirrors the header: shown columns first (so `p2` is column 2), then
-    /// row / filtered rows / whole column / rules, then hidden categorical fields.
+    /// Mirrors the header: shown columns first (so `p2` is column 2), then the
+    /// lettered targets, then hidden categorical columns by name.
     fn open_paint_target_picker(&mut self) {
-        let mut options: Vec<(String, usize)> = self
+        let mut options: Vec<PickOption> = self
             .columns
             .iter()
-            .map(|column| (column.name().to_string(), 0))
+            .map(|column| PickOption::column(*column, false))
             .collect();
         if let Some(task) = self.selected_task() {
-            options.push((format!("row {}", task.id), 0));
+            options.push(PickOption::keyed(
+                'r',
+                format!("row {}", task.id),
+                Payload::ThisRow(task.id.clone()),
+            ));
         }
-        if !self.filter_text.trim().is_empty() {
-            options.push((format!("filtered rows {}", self.filter_text.trim()), 0));
+        let filter = self.filter_text.trim().to_string();
+        if !filter.is_empty() {
+            options.push(PickOption::keyed(
+                'f',
+                format!("filtered rows {filter}"),
+                Payload::FilteredRows(filter),
+            ));
         }
-        options.push(("column (whole)".to_string(), 0));
+        options.push(PickOption::keyed(
+            'c',
+            "column (whole)",
+            Payload::WholeColumn,
+        ));
         if !self.paint.is_empty() {
-            options.push((format!("order rules ({})", self.paint.len()), 0));
-            options.push((format!("delete all paint ({} rules)", self.paint.len()), 0));
+            options.push(PickOption::keyed(
+                'o',
+                format!("order rules ({})", self.paint.len()),
+                Payload::OrderRules,
+            ));
+            options.push(PickOption::keyed(
+                'd',
+                format!("delete all paint ({} rules)", self.paint.len()),
+                Payload::DeleteAllPaint,
+            ));
         }
         for column in Column::ALL {
             if !self.columns.contains(&column) && column.filter_field().is_some() {
-                options.push((format!("{}{}", column.name(), Column::HIDDEN_TAG), 0));
+                options.push(PickOption::column(column, true));
             }
         }
         self.paint_return = None;
@@ -491,14 +432,8 @@ impl App {
             .is_some_and(|field| !tasks::field_values(&self.tasks, field).is_empty())
     }
 
-    fn open_picker(&mut self, purpose: PickerPurpose, options: Vec<(String, usize)>) {
-        self.picker = Some(ValuePicker {
-            purpose,
-            options,
-            typed: String::new(),
-            number: String::new(),
-            selected: 0,
-        });
+    fn open_picker(&mut self, purpose: PickerPurpose, options: Vec<PickOption>) {
+        self.picker = Some(ValuePicker::new(purpose, options));
         self.mode = Mode::PickValue;
     }
 
@@ -515,18 +450,25 @@ impl App {
         let Some(field) = column.filter_field() else {
             return;
         };
-        let mut options = vec![("auto: one color per value".to_string(), 0)];
-        options.extend(tasks::field_values(&self.tasks, field));
+        let mut options = vec![PickOption::numbered(
+            "auto: one color per value",
+            Payload::Auto,
+        )];
+        options.extend(
+            tasks::field_values(&self.tasks, field)
+                .into_iter()
+                .map(|(value, count)| PickOption::text(value, count)),
+        );
         self.paint_return = Some(column);
         self.open_picker(PickerPurpose::PaintValues(column), options);
     }
 
     fn open_paint_color_picker(&mut self, pick: PaintPick) {
-        let mut options: Vec<(String, usize)> = NAMED_COLORS
+        let mut options: Vec<PickOption> = NAMED_COLORS
             .iter()
-            .map(|name| (name.to_string(), 0))
+            .map(|name| PickOption::text(*name, 0))
             .collect();
-        options.push(("none".to_string(), 0));
+        options.push(PickOption::numbered("none", Payload::NoColor));
         self.open_picker(PickerPurpose::PaintColor(pick), options);
     }
 
@@ -536,8 +478,12 @@ impl App {
     }
 
     fn open_paint_rules_picker(&mut self) {
-        let options: Vec<(String, usize)> =
-            self.paint.iter().map(|rule| (rule.label(), 0)).collect();
+        let options: Vec<PickOption> = self
+            .paint
+            .iter()
+            .enumerate()
+            .map(|(index, rule)| PickOption::numbered(rule.label(), Payload::Rule(index)))
+            .collect();
         if options.is_empty() {
             self.status = "no paint rules".to_string();
             return;
@@ -556,17 +502,6 @@ impl App {
         self.status = format!("painted every {} value", column.name());
         self.telemetry
             .record("action", format!("paint_auto {}", column.name()));
-    }
-
-    fn paint_pick_from(&self, option: &str) -> Option<PaintPick> {
-        let (kind, rest) = option.split_once(' ')?;
-        match kind {
-            "row" => Some(PaintPick::Rows(format!("id:{rest}"))),
-            "filtered" => Some(PaintPick::Rows(
-                rest.strip_prefix("rows ").unwrap_or(rest).to_string(),
-            )),
-            _ => None,
-        }
     }
 
     /// `b`: nobody → me → agent → nobody on the selected task, written as a label.
@@ -657,27 +592,21 @@ impl App {
     }
 
     fn open_columns_picker(&mut self) {
-        self.picker = Some(ValuePicker {
-            purpose: PickerPurpose::Columns,
-            options: self.column_picker_options(),
-            typed: String::new(),
-            number: String::new(),
-            selected: 0,
-        });
-        self.mode = Mode::PickValue;
+        let options = self.column_picker_options();
+        self.open_picker(PickerPurpose::Columns, options);
         self.telemetry.record("action", "columns");
     }
 
     /// Shown columns first in display order, then the hidden ones.
-    fn column_picker_options(&self) -> Vec<(String, usize)> {
+    fn column_picker_options(&self) -> Vec<PickOption> {
         self.columns
             .iter()
-            .map(|column| (column.name().to_string(), 0))
+            .map(|column| PickOption::column(*column, false))
             .chain(
                 Column::ALL
                     .iter()
                     .filter(|column| !self.columns.contains(column))
-                    .map(|column| (format!("{}{}", column.name(), Column::HIDDEN_TAG), 0)),
+                    .map(|column| PickOption::column(*column, true)),
             )
             .collect()
     }
@@ -694,10 +623,10 @@ impl App {
             .record("action", format!("column_toggle {}", column.name()));
     }
 
-    fn shown_column_options(&self) -> Vec<(String, usize)> {
+    fn shown_column_options(&self) -> Vec<PickOption> {
         self.columns
             .iter()
-            .map(|column| (column.name().to_string(), 0))
+            .map(|column| PickOption::column(*column, false))
             .collect()
     }
 
@@ -774,19 +703,16 @@ impl App {
     fn open_filter_picker(&mut self, column: Column) {
         match column.filter_field() {
             Some(field) => {
-                let options = tasks::field_values(&self.tasks, field);
-                if options.is_empty() {
+                let values = tasks::field_values(&self.tasks, field);
+                if values.is_empty() {
                     self.status = format!("no {} values to pick from", field.keyword());
                     return;
                 }
-                self.picker = Some(ValuePicker {
-                    purpose: PickerPurpose::Filter(field),
-                    options,
-                    typed: String::new(),
-                    number: String::new(),
-                    selected: 0,
-                });
-                self.mode = Mode::PickValue;
+                let options = values
+                    .into_iter()
+                    .map(|(value, count)| PickOption::text(value, count))
+                    .collect();
+                self.open_picker(PickerPurpose::Filter(field), options);
             }
             None => {
                 self.mode = Mode::Filter;
@@ -798,19 +724,12 @@ impl App {
     }
 
     fn open_sort_picker(&mut self, column: Column) {
-        let mut options: Vec<(String, usize)> = sort::orders_for(column)
+        let mut options: Vec<PickOption> = sort::orders_for(column)
             .into_iter()
-            .map(|order| (order.label(column), 0))
+            .map(|order| PickOption::numbered(order.label(column), Payload::Order(order)))
             .collect();
-        options.push(("none".to_string(), 0));
-        self.picker = Some(ValuePicker {
-            purpose: PickerPurpose::Sort(column),
-            options,
-            typed: String::new(),
-            number: String::new(),
-            selected: 0,
-        });
-        self.mode = Mode::PickValue;
+        options.push(PickOption::numbered("none", Payload::NoSort));
+        self.open_picker(PickerPurpose::Sort(column), options);
         self.telemetry
             .record("action", format!("sort_column {}", column.header()));
     }
@@ -821,6 +740,8 @@ impl App {
             return;
         };
         let last = picker.matching().len().saturating_sub(1);
+        let purpose = picker.purpose.clone();
+        let typed_empty = picker.typed.is_empty();
         match event.code {
             KeyCode::Esc => {
                 self.picker = None;
@@ -830,17 +751,14 @@ impl App {
             }
             KeyCode::Down => picker.selected = (picker.selected + 1).min(last),
             KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
-            KeyCode::Char('j') if picker.typed.is_empty() => {
-                picker.selected = (picker.selected + 1).min(last)
-            }
-            KeyCode::Char('k') if picker.typed.is_empty() => {
+            KeyCode::Char('j') if typed_empty => picker.selected = (picker.selected + 1).min(last),
+            KeyCode::Char('k') if typed_empty => {
                 picker.selected = picker.selected.saturating_sub(1)
             }
             KeyCode::Char(digit)
-                if digit.is_ascii_digit()
-                    && matches!(picker.purpose, PickerPurpose::MoveColumns(_)) =>
+                if digit.is_ascii_digit() && matches!(purpose, PickerPurpose::MoveColumns(_)) =>
             {
-                let PickerPurpose::MoveColumns(mut placed) = picker.purpose.clone() else {
+                let PickerPurpose::MoveColumns(mut placed) = purpose else {
                     return;
                 };
                 let index = digit.to_digit(10).unwrap_or(0) as usize;
@@ -856,10 +774,10 @@ impl App {
                     picker.selected = done.saturating_sub(1);
                 }
             }
-            KeyCode::Char(digit) if digit.is_ascii_digit() && picker.typed.is_empty() => {
+            KeyCode::Char(digit) if digit.is_ascii_digit() && typed_empty => {
                 picker.number.push(digit);
                 let index: usize = picker.number.parse().unwrap_or(0);
-                let count = picker.options.len();
+                let count = picker.numbered_count();
                 let could_extend = index * 10 <= count;
                 if index == 0 || index > count {
                     picker.number.clear();
@@ -867,27 +785,35 @@ impl App {
                     // Wait: a second digit may still follow (1 when there are 10+).
                 } else {
                     picker.number.clear();
-                    picker.selected = index - 1;
-                    self.apply_picked_value();
+                    if let Some(position) = picker.position_of_number(index) {
+                        picker.selected = position;
+                        self.apply_picked_value();
+                    }
                 }
             }
             KeyCode::Enter if !picker.number.is_empty() => {
                 let index: usize = picker.number.parse().unwrap_or(0);
                 picker.number.clear();
-                if (1..=picker.options.len()).contains(&index) {
-                    picker.selected = index - 1;
+                if let Some(position) = picker.position_of_number(index) {
+                    picker.selected = position;
                     self.apply_picked_value();
                 }
             }
+            KeyCode::Enter if matches!(purpose, PickerPurpose::MoveColumns(_)) => {
+                self.move_origin = None;
+                let options = self.column_picker_options();
+                self.open_picker(PickerPurpose::Columns, options);
+            }
+            KeyCode::Enter => self.apply_picked_value(),
             KeyCode::Delete | KeyCode::Backspace
-                if picker.purpose == PickerPurpose::PaintTarget && picker.typed.is_empty() =>
+                if purpose == PickerPurpose::PaintTarget && typed_empty =>
             {
                 self.picker = None;
                 self.mode = Mode::Browse;
                 self.clear_all_paint();
             }
             KeyCode::Delete | KeyCode::Backspace
-                if picker.purpose == PickerPurpose::PaintRules && picker.typed.is_empty() =>
+                if purpose == PickerPurpose::PaintRules && typed_empty =>
             {
                 let index = picker.selected;
                 if index < self.paint.len() {
@@ -901,9 +827,7 @@ impl App {
                     self.mode = Mode::Browse;
                 }
             }
-            KeyCode::Char(direction @ ('J' | 'K'))
-                if picker.purpose == PickerPurpose::PaintRules =>
-            {
+            KeyCode::Char(direction @ ('J' | 'K')) if purpose == PickerPurpose::PaintRules => {
                 let delta = if direction == 'J' { 1 } else { -1 };
                 let selected = picker.selected;
                 let moved_to = self.move_paint_rule(selected, delta);
@@ -913,9 +837,9 @@ impl App {
                 }
             }
             KeyCode::Left | KeyCode::Char('h')
-                if picker.typed.is_empty()
+                if typed_empty
                     && matches!(
-                        picker.purpose,
+                        purpose,
                         PickerPurpose::PaintValues(_)
                             | PickerPurpose::PaintColor(_)
                             | PickerPurpose::PaintColumn
@@ -924,44 +848,30 @@ impl App {
             {
                 self.paint_back();
             }
-            KeyCode::Char(' ') if matches!(picker.purpose, PickerPurpose::PaintColor(_)) => {
-                let PickerPurpose::PaintColor(pick) = picker.purpose.clone() else {
+            KeyCode::Char(' ') if matches!(purpose, PickerPurpose::PaintColor(_)) => {
+                let PickerPurpose::PaintColor(pick) = purpose else {
                     return;
                 };
                 self.picker = None;
                 self.mode = Mode::Browse;
                 self.apply_paint(pick, "none");
             }
-            KeyCode::Enter if matches!(picker.purpose, PickerPurpose::MoveColumns(_)) => {
-                self.move_origin = None;
-                let options = self.column_picker_options();
-                self.open_picker(PickerPurpose::Columns, options);
-            }
-            KeyCode::Enter => self.apply_picked_value(),
             KeyCode::Char(' ') => self.toggle_picked_value(),
-            KeyCode::Char('m')
-                if picker.purpose == PickerPurpose::Columns && picker.typed.is_empty() =>
-            {
+            KeyCode::Char('m') if purpose == PickerPurpose::Columns && typed_empty => {
                 self.move_origin = Some(self.columns.clone());
                 let options = self.shown_column_options();
                 self.open_picker(PickerPurpose::MoveColumns(Vec::new()), options);
             }
-            KeyCode::Char('g')
-                if picker.purpose == PickerPurpose::Columns && picker.typed.is_empty() =>
-            {
-                if let Some((name, _)) = picker.highlighted() {
-                    if let Some(column) = Column::parse(&name) {
-                        self.toggle_glyph_column(column);
-                    }
+            KeyCode::Char('g') if purpose == PickerPurpose::Columns && typed_empty => {
+                if let Some(Payload::Column(column)) = picker.highlighted().map(|o| o.payload) {
+                    self.toggle_glyph_column(column);
                 }
             }
-            KeyCode::Char(direction @ ('J' | 'K')) if picker.purpose == PickerPurpose::Columns => {
-                if let Some((name, _)) = picker.highlighted() {
+            KeyCode::Char(direction @ ('J' | 'K')) if purpose == PickerPurpose::Columns => {
+                if let Some(Payload::Column(column)) = picker.highlighted().map(|o| o.payload) {
                     let delta = if direction == 'J' { 1 } else { -1 };
                     let moved_to = picker.selected as isize + delta;
-                    if let Some(column) = Column::parse(&name) {
-                        self.move_column(column, delta);
-                    }
+                    self.move_column(column, delta);
                     let options = self.column_picker_options();
                     if let Some(picker) = self.picker.as_mut() {
                         picker.options = options;
@@ -969,6 +879,10 @@ impl App {
                             moved_to.clamp(0, picker.options.len() as isize - 1) as usize;
                     }
                 }
+            }
+            KeyCode::Char(letter) if typed_empty && picker.position_of_key(letter).is_some() => {
+                picker.selected = picker.position_of_key(letter).unwrap_or(0);
+                self.apply_picked_value();
             }
             KeyCode::Backspace => {
                 picker.typed.pop();
@@ -989,28 +903,21 @@ impl App {
         let Some(picker) = self.picker.as_ref() else {
             return;
         };
-        let Some((value, _)) = picker.highlighted() else {
+        let Some(option) = picker.highlighted() else {
             return;
         };
-        match picker.purpose {
-            PickerPurpose::Filter(field) => self.toggle_filter_value(field, &value),
-            PickerPurpose::Columns => {
-                if let Some(column) = Column::parse(&value) {
-                    self.toggle_column(column);
-                }
+        match (&picker.purpose, option.payload) {
+            (PickerPurpose::Filter(field), Payload::Text(value)) => {
+                self.toggle_filter_value(*field, &value)
+            }
+            (PickerPurpose::Columns, Payload::Column(column)) => {
+                self.toggle_column(column);
                 let options = self.column_picker_options();
                 if let Some(picker) = self.picker.as_mut() {
                     picker.options = options;
                 }
             }
-            PickerPurpose::Sort(_)
-            | PickerPurpose::ChooseColumn(_)
-            | PickerPurpose::PaintTarget
-            | PickerPurpose::PaintColor(_)
-            | PickerPurpose::PaintValues(_)
-            | PickerPurpose::PaintColumn
-            | PickerPurpose::PaintRules
-            | PickerPurpose::MoveColumns(_) => {}
+            _ => {}
         }
     }
 
@@ -1018,7 +925,11 @@ impl App {
         let Some(picker) = self.picker.as_ref() else {
             return;
         };
-        let all: Vec<String> = picker.options.iter().map(|(v, _)| v.clone()).collect();
+        let all: Vec<String> = picker
+            .options
+            .iter()
+            .map(|option| option.label.clone())
+            .collect();
         let mut shown: Vec<String> = all
             .iter()
             .filter(|candidate| Filter::field_allows(&self.filter_text, field, candidate))
@@ -1043,94 +954,94 @@ impl App {
             return;
         };
         self.mode = Mode::Browse;
-        let Some((value, _)) = picker.highlighted().or_else(|| {
-            let typed = picker.typed.trim().to_string();
-            match picker.purpose {
-                PickerPurpose::PaintColor(_) if ratatui::style::Color::from_str(&typed).is_ok() => {
-                    Some((typed, 0))
-                }
-                _ => None,
+        let typed = picker.typed.trim().to_string();
+        let picked = picker.highlighted().or_else(|| match picker.purpose {
+            PickerPurpose::PaintColor(_) if ratatui::style::Color::from_str(&typed).is_ok() => {
+                Some(PickOption::text(typed.clone(), 0))
             }
-        }) else {
-            self.status = format!("nothing matches '{}'", picker.typed);
+            _ => None,
+        });
+        let Some(picked) = picked else {
+            self.status = format!("nothing matches '{typed}'");
             return;
         };
-        match picker.purpose {
-            PickerPurpose::Filter(field) => {
+        match (picker.purpose, picked.payload) {
+            (PickerPurpose::Filter(field), Payload::Text(value)) => {
                 let text = Filter::with_only(&self.filter_text, field, &value);
                 self.set_filter(text);
                 self.telemetry
                     .record("action", format!("filter_pick {}:{value}", field.keyword()));
             }
-            PickerPurpose::Sort(column) => {
-                self.sort = sort::orders_for(column)
-                    .into_iter()
-                    .find(|order| order.label(column) == value)
-                    .map(|order| Sort { column, order });
+            (PickerPurpose::Sort(column), Payload::Order(order)) => {
+                self.sort = Some(Sort { column, order });
                 self.refilter();
-                self.telemetry
-                    .record("action", format!("sort_pick {}:{value}", column.header()));
+                self.telemetry.record(
+                    "action",
+                    format!("sort_pick {}:{:?}", column.header(), order),
+                );
             }
-            PickerPurpose::ChooseColumn(_) => {
-                if let Some(column) = Column::parse(&value) {
-                    self.open_column_purpose(column);
-                }
+            (PickerPurpose::Sort(_), Payload::NoSort) => {
+                self.sort = None;
+                self.refilter();
+                self.telemetry.record("action", "sort_pick none");
             }
-            PickerPurpose::Columns => {
-                if let Some(column) = Column::parse(&value) {
-                    let adding = !self.columns.contains(&column);
-                    self.toggle_column(column);
-                    if adding {
-                        // Stay open with the new column highlighted so K/J can place it.
-                        let options = self.column_picker_options();
-                        let highlight = self.columns.len().saturating_sub(1);
-                        self.open_picker(PickerPurpose::Columns, options);
-                        if let Some(picker) = self.picker.as_mut() {
-                            picker.selected = highlight;
-                        }
-                        self.status = format!(
-                            "{} added as column {} · m then numbers to reorder · esc",
-                            column.name(),
-                            self.columns.len()
-                        );
+            (PickerPurpose::ChooseColumn(_), Payload::Column(column)) => {
+                self.open_column_purpose(column)
+            }
+            (PickerPurpose::Columns, Payload::Column(column)) => {
+                let adding = !self.columns.contains(&column);
+                self.toggle_column(column);
+                if adding {
+                    // Stay open with the new column highlighted so it can be placed.
+                    let options = self.column_picker_options();
+                    let highlight = self.columns.len().saturating_sub(1);
+                    self.open_picker(PickerPurpose::Columns, options);
+                    if let Some(picker) = self.picker.as_mut() {
+                        picker.selected = highlight;
                     }
+                    self.status = format!(
+                        "{} added as column {} · m then numbers to reorder · esc",
+                        column.name(),
+                        self.columns.len()
+                    );
                 }
             }
-            PickerPurpose::PaintTarget => {
-                if value.starts_with("delete all") {
-                    self.clear_all_paint();
-                } else if value.starts_with("order rules") {
-                    self.open_paint_rules_picker();
-                } else if value == "column (whole)" {
-                    self.open_paint_column_picker();
-                } else if let Some(column) = Column::parse(&value) {
-                    self.paint_column_entry(column);
-                } else if let Some(pick) = self.paint_pick_from(&value) {
-                    self.open_paint_color_picker(pick);
-                }
+            (PickerPurpose::PaintTarget, Payload::DeleteAllPaint) => self.clear_all_paint(),
+            (PickerPurpose::PaintTarget, Payload::OrderRules) => self.open_paint_rules_picker(),
+            (PickerPurpose::PaintTarget, Payload::WholeColumn) => self.open_paint_column_picker(),
+            (PickerPurpose::PaintTarget, Payload::Column(column)) => {
+                self.paint_column_entry(column)
             }
-            PickerPurpose::PaintColumn => {
-                if let Some(column) = Column::parse(&value) {
-                    self.paint_return = None;
-                    self.open_paint_color_picker(PaintPick::Column(column));
-                }
+            (PickerPurpose::PaintTarget, Payload::ThisRow(id)) => {
+                self.open_paint_color_picker(PaintPick::Rows(format!("id:{id}")))
             }
-            PickerPurpose::PaintValues(column) => {
-                if value.starts_with("auto") {
-                    self.paint_auto(column);
-                    self.open_paint_values_picker(column);
-                } else {
-                    self.open_paint_color_picker(PaintPick::Value(column, value));
-                }
+            (PickerPurpose::PaintTarget, Payload::FilteredRows(filter)) => {
+                self.open_paint_color_picker(PaintPick::Rows(filter))
             }
-            PickerPurpose::PaintColor(pick) => self.apply_paint(pick, &value),
-            PickerPurpose::PaintRules => {
+            (PickerPurpose::PaintColumn, Payload::Column(column)) => {
+                self.paint_return = None;
+                self.open_paint_color_picker(PaintPick::Column(column));
+            }
+            (PickerPurpose::PaintValues(column), Payload::Auto) => {
+                self.paint_auto(column);
+                self.open_paint_values_picker(column);
+            }
+            (PickerPurpose::PaintValues(column), Payload::Text(value)) => {
+                self.open_paint_color_picker(PaintPick::Value(column, value))
+            }
+            (PickerPurpose::PaintColor(pick), Payload::Text(color)) => {
+                self.apply_paint(pick, &color)
+            }
+            (PickerPurpose::PaintColor(pick), Payload::NoColor) => self.apply_paint(pick, "none"),
+            (PickerPurpose::PaintRules, Payload::Rule(index)) => {
                 self.open_paint_rules_picker();
                 if let Some(picker) = self.picker.as_mut() {
-                    picker.selected = 0;
+                    picker.selected = index;
                 }
             }
-            PickerPurpose::MoveColumns(_) => {}
+            (purpose, payload) => {
+                self.fail(format!("{purpose:?} cannot take {payload:?}"));
+            }
         }
     }
 

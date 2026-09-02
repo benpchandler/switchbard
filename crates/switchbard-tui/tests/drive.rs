@@ -460,7 +460,7 @@ fn s_then_column_offers_semantic_and_plain_orders() {
         "{screen}"
     );
     assert!(screen.contains("2  ascending"), "{screen}");
-    assert!(screen.contains("4  none"), "{screen}");
+    assert!(screen.contains("4 ✓none"), "{screen}");
     let screen = h.press(KeyCode::Char('1'));
     assert!(screen.contains("≈pri · 3/3"), "{screen}");
     assert_eq!(
@@ -768,16 +768,16 @@ fn p_lists_columns_first_then_row_filtered_column_and_hidden_fields() {
     let mut h = Harness::new();
     let selected = h.app.selected_task().unwrap().id.clone();
     let screen = h.press(KeyCode::Char('p'));
-    for entry in ["1  id", "2  status", "3  priority", "4  title"] {
+    for entry in ["1 ✓id", "2 ✓status", "3 ✓priority", "4 ✓title"] {
         assert!(
             screen.contains(entry),
             "mirrors the header: {entry} in {screen}"
         );
     }
-    assert!(screen.contains(&format!("5  row {selected}")), "{screen}");
-    assert!(screen.contains("6  column (whole)"), "{screen}");
+    assert!(screen.contains(&format!("r  row {selected}")), "{screen}");
+    assert!(screen.contains("c  column (whole)"), "{screen}");
     assert!(
-        screen.contains("7  labels · hidden"),
+        screen.contains("5  labels · hidden"),
         "hidden categorical field by name: {screen}"
     );
     let title = screen.lines().nth(2).unwrap_or_default().to_string();
@@ -786,10 +786,7 @@ fn p_lists_columns_first_then_row_filtered_column_and_hidden_fields() {
         "{title}"
     );
     let footer = screen.lines().last().unwrap_or_default();
-    assert!(
-        footer.contains("column number · r row · f filtered"),
-        "{footer}"
-    );
+    assert!(footer.contains("number or letter picks · esc"), "{footer}");
 }
 
 #[test]
