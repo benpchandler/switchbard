@@ -25,7 +25,8 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
   Columns (shown set, order, glyph mode via `g`) are view state; numbers are positions.
 - `tasks.rs` - task load + filter language (`status: pri: label: project:` + words,
   loose match: `status:todo` == "To Do"); `field_values` feeds the `f <n>` picker.
-- `views.rs` - slots of filter+sort+columns+paint: global `~/.switchbard/views.lua`, per-repo overrides in
+- `views.rs` - `ViewState` (filter, sort, columns, glyphs, paint) is what a slot saves and a
+  restart resumes, one Lua record for both; slots of it: global `~/.switchbard/views.lua`, per-repo overrides in
   `views/<repo path>.lua`; `vs<n>` saves to repo, `vg<n>` promotes to global; slot 1 opens.
 - `paint.rs` - `p` rules in a hierarchy: `by:<col>=v:c,...`, `rows:<filter>=c`, `column:<col>=c`.
   Top rule is the base (whole rows); lower rules paint only their scope. `po` reorders.

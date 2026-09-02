@@ -47,29 +47,30 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_default();
-    let filter = if app.filter_text.is_empty() {
+    let filter = if app.state.filter.is_empty() {
         String::new()
     } else {
-        format!("{} · ", app.filter_text)
+        format!("{} · ", app.state.filter)
     };
     let sort = app
+        .state
         .sort
         .map(|sort| format!("{} · ", sort.label()))
         .unwrap_or_default();
-    let columns = if app.columns == Column::DEFAULT_SHOWN {
+    let columns = if app.state.columns == Column::DEFAULT_SHOWN {
         String::new()
     } else {
-        format!("cols:{} · ", columns_text(&app.columns))
+        format!("cols:{} · ", columns_text(&app.state.columns))
     };
-    let glyphs = if app.glyph_columns.is_empty() {
+    let glyphs = if app.state.glyph_columns.is_empty() {
         String::new()
     } else {
-        format!("glyphs:{} · ", columns_text(&app.glyph_columns))
+        format!("glyphs:{} · ", columns_text(&app.state.glyph_columns))
     };
-    let painted = if app.paint.is_empty() {
+    let painted = if app.state.paint.is_empty() {
         String::new()
     } else {
-        format!("paint:{} · ", app.paint.len())
+        format!("paint:{} · ", app.state.paint.len())
     };
     let title = format!(
         " {repo} · {} · {filter}{sort}{columns}{glyphs}{painted}{}/{} ",
@@ -77,8 +78,8 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
         app.visible.len(),
         app.total_tasks()
     );
-    let header = Row::new(app.columns.iter().enumerate().map(|(index, column)| {
-        if app.glyph_columns.contains(column) {
+    let header = Row::new(app.state.columns.iter().enumerate().map(|(index, column)| {
+        if app.state.glyph_columns.contains(column) {
             Cell::from(format!("{} {}", index + 1, app.glyph_legend(*column)))
         } else {
             Cell::from(format!("{} {}", index + 1, column.header()))
@@ -87,22 +88,22 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
     .style(Style::default().fg(theme.header));
     let rows = (0..app.visible.len()).filter_map(|index| {
         let task = app.task(index)?;
-        Some(Row::new(app.columns.iter().map(|column| {
+        Some(Row::new(app.state.columns.iter().map(|column| {
             let text = cell_text(*column, task);
-            let text = if app.glyph_columns.contains(column) && !text.is_empty() {
+            let text = if app.state.glyph_columns.contains(column) && !text.is_empty() {
                 app.config.glyph(*column, &text)
             } else {
                 text
             };
             let cell = Cell::from(text);
-            match paint::cell_color(&app.paint, task, *column) {
+            match paint::cell_color(&app.state.paint, task, *column) {
                 Some(color) => cell.style(Style::default().fg(color)),
                 None => cell,
             }
         })))
     });
-    let widths = app.columns.iter().map(|column| match column {
-        _ if app.glyph_columns.contains(column) => {
+    let widths = app.state.columns.iter().map(|column| match column {
+        _ if app.state.glyph_columns.contains(column) => {
             Constraint::Length((2 + app.glyph_legend(*column).chars().count()).max(3) as u16)
         }
         Column::Id => Constraint::Length(9),
@@ -277,7 +278,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let line = match app.mode {
         Mode::Filter => Line::from(vec![
             Span::styled("/", Style::default().fg(theme.accent)),
-            Span::raw(app.filter_text.clone()),
+            Span::raw(app.state.filter.clone()),
             Span::styled("▏", Style::default().fg(theme.accent)),
         ]),
         Mode::Command => Line::from(vec![
@@ -306,10 +307,10 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Mode::Browse => Line::from(Span::styled(
             format!(
                 " {}  / filter  f filter-by  s sort  c columns  p paint  b ball  v views  : command  ? keys  q quit",
-                if app.filter_text.is_empty() {
+                if app.state.filter.is_empty() {
                     String::new()
                 } else {
-                    format!("[{}]", app.filter_text)
+                    format!("[{}]", app.state.filter)
                 }
             ),
             Style::default().fg(theme.dim),
@@ -346,32 +347,32 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             let value = &option.label;
             let shown = match (&picker.purpose, &option.payload) {
                 (PickerPurpose::Filter(field), Payload::Text(value)) => {
-                    Filter::field_allows(&app.filter_text, *field, value)
+                    Filter::field_allows(&app.state.filter, *field, value)
                 }
                 (PickerPurpose::Sort(_), Payload::Order(order)) => {
-                    app.sort.is_some_and(|sort| sort.order == *order)
+                    app.state.sort.is_some_and(|sort| sort.order == *order)
                 }
-                (PickerPurpose::Sort(_), Payload::NoSort) => app.sort.is_none(),
+                (PickerPurpose::Sort(_), Payload::NoSort) => app.state.sort.is_none(),
                 (
                     PickerPurpose::ChooseColumn(_)
                     | PickerPurpose::Columns
                     | PickerPurpose::PaintColumn
                     | PickerPurpose::PaintTarget,
                     Payload::Column(column),
-                ) => app.columns.contains(column),
+                ) => app.state.columns.contains(column),
                 (PickerPurpose::MoveColumns(placed), _) => placed.contains(&(index + 1)),
                 (PickerPurpose::PaintRules, Payload::Rule(rule)) => *rule == 0,
                 (PickerPurpose::PaintValues(column), Payload::Text(value)) => {
-                    paint::value_color(&app.paint, *column, value).is_some()
+                    paint::value_color(&app.state.paint, *column, value).is_some()
                 }
                 (PickerPurpose::PaintColor(pick), Payload::Text(color)) => match pick {
                     PaintPick::Value(column, painted) => {
-                        paint::value_color(&app.paint, *column, painted).as_deref() == Some(color)
+                        paint::value_color(&app.state.paint, *column, painted).as_deref() == Some(color)
                     }
-                    PaintPick::Rows(filter) => app.paint.iter().any(|rule| {
+                    PaintPick::Rows(filter) => app.state.paint.iter().any(|rule| {
                         matches!(rule, PaintRule::Rows { filter: f, color: c } if f == filter && c == color)
                     }),
-                    PaintPick::Column(column) => app.paint.iter().any(|rule| {
+                    PaintPick::Column(column) => app.state.paint.iter().any(|rule| {
                         matches!(rule, PaintRule::Column { column: col, color: c } if col == column && c == color)
                     }),
                 },
@@ -395,14 +396,14 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                     }
                 }
                 (PickerPurpose::PaintValues(column), Payload::Text(value)) => {
-                    if let Some(color) = paint::value_color(&app.paint, *column, value)
+                    if let Some(color) = paint::value_color(&app.state.paint, *column, value)
                         .and_then(|color| ratatui::style::Color::from_str(&color).ok())
                     {
                         style = style.fg(color);
                     }
                 }
                 (PickerPurpose::PaintRules, Payload::Rule(rule)) => {
-                    if let Some(color) = app.paint.get(*rule).and_then(PaintRule::swatch) {
+                    if let Some(color) = app.state.paint.get(*rule).and_then(PaintRule::swatch) {
                         style = style.fg(color);
                     }
                 }
