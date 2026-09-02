@@ -1,4 +1,6 @@
-//! Saved views: numbered slots of filter + sort. Slot 1 is what `sbt` opens on.
+//! Saved views: numbered slots of `ViewState` (filter, sort, columns, glyphs, paint).
+//! Slot 1 is what `sbt` opens on. The same Lua record serializes a slot on disk and
+//! the live state across a self-restart, so one place enumerates the fields.
 //! Global slots live in `~/.switchbard/views.lua`; each repo can override slots in
 //! `~/.switchbard/views/<repo path>.lua`. `v s <n>` writes the repo file, `v g <n>`
 //! promotes a repo slot to the global file so every repo sees it.
@@ -13,7 +15,7 @@ use crate::paint::{parse_rules, rules_text, PaintRule};
 use crate::sort::Sort;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SavedView {
+pub struct ViewState {
     pub filter: String,
     pub sort: Option<Sort>,
     /// Shown columns in display order.
@@ -23,7 +25,7 @@ pub struct SavedView {
     pub paint: Vec<PaintRule>,
 }
 
-impl SavedView {
+impl ViewState {
     /// A view is named by what it does, so it reads the same in every repo.
     pub fn name(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
@@ -110,7 +112,7 @@ pub fn repo_path(repo_root: &Path) -> Option<PathBuf> {
     })
 }
 
-pub fn starter_views() -> Vec<SavedView> {
+pub fn starter_views() -> Vec<ViewState> {
     [
         "",
         "status:todo",
@@ -119,7 +121,7 @@ pub fn starter_views() -> Vec<SavedView> {
         "ball:me",
     ]
     .into_iter()
-    .map(|filter| SavedView {
+    .map(|filter| ViewState {
         filter: filter.to_string(),
         sort: None,
         columns: Column::DEFAULT_SHOWN.to_vec(),
@@ -132,9 +134,9 @@ pub fn starter_views() -> Vec<SavedView> {
 pub struct ViewStore {
     global_path: Option<PathBuf>,
     repo_path: Option<PathBuf>,
-    global: Vec<SavedView>,
+    global: Vec<ViewState>,
     /// Zero-based slot -> this repo's override.
-    repo: BTreeMap<usize, SavedView>,
+    repo: BTreeMap<usize, ViewState>,
 }
 
 impl ViewStore {
@@ -176,7 +178,7 @@ impl ViewStore {
     }
 
     /// The slots as the user sees them: repo overrides win, global fills the rest.
-    pub fn slots(&self) -> Vec<(SavedView, Scope)> {
+    pub fn slots(&self) -> Vec<(ViewState, Scope)> {
         let count = self
             .global
             .len()
@@ -190,7 +192,7 @@ impl ViewStore {
             .collect()
     }
 
-    pub fn get(&self, slot: usize) -> Option<SavedView> {
+    pub fn get(&self, slot: usize) -> Option<ViewState> {
         self.slots().get(slot).map(|(view, _)| view.clone())
     }
 
@@ -203,7 +205,7 @@ impl ViewStore {
     }
 
     /// Saves into this repo's overrides and writes the repo file.
-    pub fn save_repo(&mut self, slot: usize, view: SavedView) -> Result<(), String> {
+    pub fn save_repo(&mut self, slot: usize, view: ViewState) -> Result<(), String> {
         self.repo.insert(slot, view);
         self.write_repo()
     }
@@ -278,7 +280,7 @@ fn read_lua<T>(
         .map_err(|error| format!("{}: {error}", path.display()))
 }
 
-fn parse_sequence(table: &Table) -> Result<Vec<SavedView>, String> {
+fn parse_sequence(table: &Table) -> Result<Vec<ViewState>, String> {
     let mut views = Vec::new();
     for entry in table.sequence_values::<Table>() {
         views.push(parse_view(&entry.map_err(|e| e.to_string())?)?);
@@ -286,7 +288,7 @@ fn parse_sequence(table: &Table) -> Result<Vec<SavedView>, String> {
     Ok(views.into_iter().take(MAX_SLOTS).collect())
 }
 
-fn parse_overrides(table: &Table) -> Result<BTreeMap<usize, SavedView>, String> {
+fn parse_overrides(table: &Table) -> Result<BTreeMap<usize, ViewState>, String> {
     let mut views = BTreeMap::new();
     for pair in table.pairs::<usize, Table>() {
         let (slot, entry) = pair.map_err(|e| e.to_string())?;
@@ -297,14 +299,43 @@ fn parse_overrides(table: &Table) -> Result<BTreeMap<usize, SavedView>, String> 
     Ok(views)
 }
 
-fn parse_view(entry: &Table) -> Result<SavedView, String> {
+impl ViewState {
+    /// The Lua record form, `{ filter = "...", sort = "...", ... }`.
+    pub fn to_lua(&self) -> String {
+        lua_view(self)
+    }
+
+    /// Parses the record form; anything unreadable yields the default state.
+    pub fn from_lua(text: &str) -> ViewState {
+        let lua = Lua::new();
+        lua.load(format!("return {text}"))
+            .eval::<Table>()
+            .ok()
+            .and_then(|table| parse_view(&table).ok())
+            .unwrap_or_default()
+    }
+}
+
+impl Default for ViewState {
+    fn default() -> ViewState {
+        ViewState {
+            filter: String::new(),
+            sort: None,
+            columns: Column::DEFAULT_SHOWN.to_vec(),
+            glyph_columns: Vec::new(),
+            paint: Vec::new(),
+        }
+    }
+}
+
+fn parse_view(entry: &Table) -> Result<ViewState, String> {
     let field = |key: &str| -> Result<String, String> {
         entry
             .get::<Option<String>>(key)
             .map(Option::unwrap_or_default)
             .map_err(|e| e.to_string())
     };
-    Ok(SavedView {
+    Ok(ViewState {
         filter: field("filter")?,
         sort: Sort::parse(&field("sort")?),
         columns: parse_columns(&field("columns")?),
@@ -316,7 +347,7 @@ fn parse_view(entry: &Table) -> Result<SavedView, String> {
     })
 }
 
-fn lua_view(view: &SavedView) -> String {
+fn lua_view(view: &ViewState) -> String {
     let glyphs = if view.glyph_columns.is_empty() {
         String::new()
     } else {

@@ -1,9 +1,10 @@
 ---
 id: TASK-130
 title: 'sbt: one ViewState struct shared by App, SavedView, and resume'
-status: To Do
+status: In Review
 assignee: []
 created_date: '2026-09-02 19:26'
+updated_date: '2026-09-02 19:36'
 labels:
   - tui
   - refactor
@@ -19,7 +20,7 @@ Impact: the same five fields are enumerated by hand in view_label, resume_state/
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 filter, sort, columns, glyph_columns, and paint live in one ViewState used by App, SavedView, view_label, resume_state, and save_view
-- [ ] #2 Adding a field to ViewState is the only change needed for it to save, resume, and affect the custom label
-- [ ] #3 resume across self-restart uses the same serialization as views.lua, not a tab-separated string
+- [x] #1 filter, sort, columns, glyph_columns, and paint live in one ViewState used by App, SavedView, view_label, resume_state, and save_view
+- [x] #2 Adding a field to ViewState is the only change needed for it to save, resume, and affect the custom label
+- [x] #3 resume across self-restart uses the same serialization as views.lua, not a tab-separated string
 <!-- AC:END -->

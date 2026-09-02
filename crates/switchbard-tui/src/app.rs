@@ -9,13 +9,13 @@ use switchbard_core::BacklogTask;
 
 use crate::ball::Ball;
 use crate::config::{self, Action, Column, Config, KeyChord};
-use crate::paint::{self, parse_rules, rules_text, PaintRule, NAMED_COLORS};
+use crate::paint::{self, PaintRule, NAMED_COLORS};
 use crate::picker::{ColumnPurpose, PaintPick, Payload, PickOption, PickerPurpose, ValuePicker};
 use crate::report::{self, ReportContext, ReportKind};
 use crate::sort::{self, Sort};
 use crate::tasks::{self, Filter, FilterField};
 use crate::telemetry::Telemetry;
-use crate::views::{self, columns_text, parse_columns, SavedView, ViewStore};
+use crate::views::{self, ViewState, ViewStore};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -47,25 +47,20 @@ pub struct App {
     tasks: Vec<BacklogTask>,
     pub visible: Vec<usize>,
     pub selected: usize,
-    /// Shown columns in display order; header numbers are positions in this list.
-    pub columns: Vec<Column>,
-    /// Shown as glyphs rather than text (`c` then `g`).
-    pub glyph_columns: Vec<Column>,
     /// Column order when `c m` began, so typed numbers keep meaning what the header showed.
     move_origin: Option<Vec<Column>>,
-    pub paint: Vec<PaintRule>,
     /// Which values list to return to after a color is picked.
     paint_return: Option<Column>,
     pub views: ViewStore,
-    /// Zero-based slot the current filter/sort came from.
+    /// Zero-based slot the current state came from.
     pub view: usize,
-    pub filter_text: String,
+    /// Filter, sort, columns, glyphs, paint: what a slot saves and a restart resumes.
+    pub state: ViewState,
     pub mode: Mode,
     pub input: String,
     pub pane: Pane,
     pub picker: Option<ValuePicker>,
     pub column_purpose: ColumnPurpose,
-    pub sort: Option<Sort>,
     pub status: String,
     pub last_screen: String,
     pub page_size: usize,
@@ -91,21 +86,17 @@ impl App {
             tasks: Vec::new(),
             visible: Vec::new(),
             selected: 0,
-            columns: Column::DEFAULT_SHOWN.to_vec(),
-            glyph_columns: Vec::new(),
             move_origin: None,
-            paint: Vec::new(),
             paint_return: None,
             views,
             view: 0,
-            filter_text: String::new(),
+            state: ViewState::default(),
             config,
             mode: Mode::Browse,
             input: String::new(),
             pane: Pane::None,
             picker: None,
             column_purpose: ColumnPurpose::Filter,
-            sort: None,
             status: String::new(),
             last_screen: String::new(),
             page_size: 20,
@@ -139,15 +130,7 @@ impl App {
     /// The attributes follow in the title, so they are the name.
     pub fn view_label(&self) -> String {
         match self.views.get(self.view) {
-            Some(saved)
-                if saved.filter == self.filter_text
-                    && saved.sort == self.sort
-                    && saved.columns == self.columns
-                    && saved.glyph_columns == self.glyph_columns
-                    && saved.paint == self.paint =>
-            {
-                format!("v{}", self.view + 1)
-            }
+            Some(saved) if saved == self.state => format!("v{}", self.view + 1),
             _ => "custom".to_string(),
         }
     }
@@ -160,51 +143,35 @@ impl App {
         format!(
             "view={} filter=\"{}\" sort={} selected={selected} pane={:?}",
             self.view_label(),
-            self.filter_text,
-            self.sort.map(|sort| sort.to_text()).unwrap_or_default(),
+            self.state.filter,
+            self.state
+                .sort
+                .map(|sort| sort.to_text())
+                .unwrap_or_default(),
             self.pane
         )
     }
 
     /// `slot\tfilter\tsort\tselected`, enough to land where the user was after a self-restart.
     pub fn resume_state(&self) -> String {
-        format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            self.view,
-            self.filter_text,
-            self.sort.map(|sort| sort.to_text()).unwrap_or_default(),
-            self.selected,
-            columns_text(&self.columns),
-            rules_text(&self.paint),
-            columns_text(&self.glyph_columns)
-        )
+        format!("{}\t{}\t{}", self.view, self.selected, self.state.to_lua())
     }
 
     pub fn resume_from(&mut self, state: Option<&str>) {
         let Some(state) = state else {
             return;
         };
-        let mut parts = state.split('\t');
+        let mut parts = state.splitn(3, '\t');
         if let Some(slot) = parts.next().and_then(|n| n.parse().ok()) {
             self.view = slot;
         }
-        let filter = parts.next().unwrap_or_default().to_string();
-        self.sort = parts.next().and_then(Sort::parse);
-        self.set_filter(filter);
-        if let Some(selected) = parts.next().and_then(|n| n.parse().ok()) {
+        let selected = parts.next().and_then(|n| n.parse().ok());
+        if let Some(record) = parts.next() {
+            self.state = ViewState::from_lua(record);
+        }
+        self.refilter();
+        if let Some(selected) = selected {
             self.select(selected);
-        }
-        if let Some(columns) = parts.next() {
-            self.columns = parse_columns(columns);
-        }
-        if let Some(rules) = parts.next() {
-            self.paint = parse_rules(rules);
-        }
-        if let Some(glyphs) = parts.next() {
-            self.glyph_columns = glyphs
-                .split(',')
-                .filter_map(|name| Column::parse(name.trim()))
-                .collect();
         }
         self.status = "updated to the new build".to_string();
     }
@@ -338,14 +305,8 @@ impl App {
     }
 
     fn save_view(&mut self, slot: usize) {
-        self.filter_text = self.filter_text.trim().to_string();
-        let saved = SavedView {
-            filter: self.filter_text.clone(),
-            sort: self.sort,
-            columns: self.columns.clone(),
-            glyph_columns: self.glyph_columns.clone(),
-            paint: self.paint.clone(),
-        };
+        self.state.filter = self.state.filter.trim().to_string();
+        let saved = self.state.clone();
         match self.views.save_repo(slot, saved) {
             Ok(()) => {
                 self.view = slot;
@@ -380,6 +341,7 @@ impl App {
     /// lettered targets, then hidden categorical columns by name.
     fn open_paint_target_picker(&mut self) {
         let mut options: Vec<PickOption> = self
+            .state
             .columns
             .iter()
             .map(|column| PickOption::column(*column, false))
@@ -391,7 +353,7 @@ impl App {
                 Payload::ThisRow(task.id.clone()),
             ));
         }
-        let filter = self.filter_text.trim().to_string();
+        let filter = self.state.filter.trim().to_string();
         if !filter.is_empty() {
             options.push(PickOption::keyed(
                 'f',
@@ -404,20 +366,20 @@ impl App {
             "column (whole)",
             Payload::WholeColumn,
         ));
-        if !self.paint.is_empty() {
+        if !self.state.paint.is_empty() {
             options.push(PickOption::keyed(
                 'o',
-                format!("order rules ({})", self.paint.len()),
+                format!("order rules ({})", self.state.paint.len()),
                 Payload::OrderRules,
             ));
             options.push(PickOption::keyed(
                 'd',
-                format!("delete all paint ({} rules)", self.paint.len()),
+                format!("delete all paint ({} rules)", self.state.paint.len()),
                 Payload::DeleteAllPaint,
             ));
         }
         for column in Column::ALL {
-            if !self.columns.contains(&column) && column.filter_field().is_some() {
+            if !self.state.columns.contains(&column) && column.filter_field().is_some() {
                 options.push(PickOption::column(column, true));
             }
         }
@@ -479,6 +441,7 @@ impl App {
 
     fn open_paint_rules_picker(&mut self) {
         let options: Vec<PickOption> = self
+            .state
             .paint
             .iter()
             .enumerate()
@@ -497,7 +460,7 @@ impl App {
         };
         for (index, (value, _)) in tasks::field_values(&self.tasks, field).iter().enumerate() {
             let color = paint::AUTO_PALETTE[index % paint::AUTO_PALETTE.len()];
-            paint::set_value_color(&mut self.paint, column, value, Some(color));
+            paint::set_value_color(&mut self.state.paint, column, value, Some(color));
         }
         self.status = format!("painted every {} value", column.name());
         self.telemetry
@@ -536,8 +499,8 @@ impl App {
     }
 
     fn clear_all_paint(&mut self) {
-        let count = self.paint.len();
-        self.paint.clear();
+        let count = self.state.paint.len();
+        self.state.paint.clear();
         self.status = format!("deleted {count} paint rules");
         self.telemetry.record("action", "paint_clear_all");
     }
@@ -545,18 +508,21 @@ impl App {
     fn apply_paint(&mut self, pick: PaintPick, color: &str) {
         let cleared = color == "none";
         match &pick {
-            PaintPick::Value(column, value) => {
-                paint::set_value_color(&mut self.paint, *column, value, (!cleared).then_some(color))
-            }
+            PaintPick::Value(column, value) => paint::set_value_color(
+                &mut self.state.paint,
+                *column,
+                value,
+                (!cleared).then_some(color),
+            ),
             PaintPick::Rows(filter) => paint::set_rule(
-                &mut self.paint,
+                &mut self.state.paint,
                 PaintRule::Rows {
                     filter: filter.clone(),
                     color: color.to_string(),
                 },
             ),
             PaintPick::Column(column) => paint::set_rule(
-                &mut self.paint,
+                &mut self.state.paint,
                 PaintRule::Column {
                     column: *column,
                     color: color.to_string(),
@@ -583,8 +549,11 @@ impl App {
 
     fn move_paint_rule(&mut self, index: usize, delta: isize) -> usize {
         let target = index as isize + delta;
-        if index < self.paint.len() && target >= 0 && (target as usize) < self.paint.len() {
-            self.paint.swap(index, target as usize);
+        if index < self.state.paint.len()
+            && target >= 0
+            && (target as usize) < self.state.paint.len()
+        {
+            self.state.paint.swap(index, target as usize);
             self.telemetry.record("action", "paint_reorder");
             return target as usize;
         }
@@ -599,32 +568,34 @@ impl App {
 
     /// Shown columns first in display order, then the hidden ones.
     fn column_picker_options(&self) -> Vec<PickOption> {
-        self.columns
+        self.state
+            .columns
             .iter()
             .map(|column| PickOption::column(*column, false))
             .chain(
                 Column::ALL
                     .iter()
-                    .filter(|column| !self.columns.contains(column))
+                    .filter(|column| !self.state.columns.contains(column))
                     .map(|column| PickOption::column(*column, true)),
             )
             .collect()
     }
 
     fn toggle_column(&mut self, column: Column) {
-        match self.columns.iter().position(|shown| *shown == column) {
-            Some(index) if self.columns.len() > 1 => {
-                self.columns.remove(index);
+        match self.state.columns.iter().position(|shown| *shown == column) {
+            Some(index) if self.state.columns.len() > 1 => {
+                self.state.columns.remove(index);
             }
             Some(_) => self.status = "at least one column must stay".to_string(),
-            None => self.columns.push(column),
+            None => self.state.columns.push(column),
         }
         self.telemetry
             .record("action", format!("column_toggle {}", column.name()));
     }
 
     fn shown_column_options(&self) -> Vec<PickOption> {
-        self.columns
+        self.state
+            .columns
             .iter()
             .map(|column| PickOption::column(*column, false))
             .collect()
@@ -636,7 +607,7 @@ impl App {
         let original = self
             .move_origin
             .clone()
-            .unwrap_or_else(|| self.columns.clone());
+            .unwrap_or_else(|| self.state.columns.clone());
         let mut next: Vec<Column> = placed
             .iter()
             .filter_map(|&n| original.get(n - 1).copied())
@@ -647,7 +618,7 @@ impl App {
             .filter(|c| !next.contains(c))
             .collect();
         next.extend(rest);
-        self.columns = next;
+        self.state.columns = next;
         self.telemetry.record("action", "column_move");
     }
 
@@ -673,13 +644,13 @@ impl App {
             self.status = format!("{} has no glyphs: it is free text", column.name());
             return;
         }
-        match self.glyph_columns.iter().position(|c| *c == column) {
+        match self.state.glyph_columns.iter().position(|c| *c == column) {
             Some(index) => {
-                self.glyph_columns.remove(index);
+                self.state.glyph_columns.remove(index);
                 self.status = format!("{} shows text", column.name());
             }
             None => {
-                self.glyph_columns.push(column);
+                self.state.glyph_columns.push(column);
                 self.status = format!("{} shows glyphs", column.name());
             }
         }
@@ -688,14 +659,14 @@ impl App {
     }
 
     fn move_column(&mut self, column: Column, delta: isize) {
-        let Some(index) = self.columns.iter().position(|shown| *shown == column) else {
+        let Some(index) = self.state.columns.iter().position(|shown| *shown == column) else {
             return;
         };
         let target = index as isize + delta;
-        if target < 0 || target >= self.columns.len() as isize {
+        if target < 0 || target >= self.state.columns.len() as isize {
             return;
         }
-        self.columns.swap(index, target as usize);
+        self.state.columns.swap(index, target as usize);
         self.telemetry
             .record("action", format!("column_move {} {delta}", column.name()));
     }
@@ -762,7 +733,7 @@ impl App {
                     return;
                 };
                 let index = digit.to_digit(10).unwrap_or(0) as usize;
-                if index == 0 || index > self.columns.len() || placed.contains(&index) {
+                if index == 0 || index > self.state.columns.len() || placed.contains(&index) {
                     return;
                 }
                 placed.push(index);
@@ -816,12 +787,12 @@ impl App {
                 if purpose == PickerPurpose::PaintRules && typed_empty =>
             {
                 let index = picker.selected;
-                if index < self.paint.len() {
-                    self.paint.remove(index);
+                if index < self.state.paint.len() {
+                    self.state.paint.remove(index);
                     self.telemetry.record("action", "paint_rule_delete");
                 }
                 self.open_paint_rules_picker();
-                if self.paint.is_empty() {
+                if self.state.paint.is_empty() {
                     self.status = "no paint rules left".to_string();
                     self.picker = None;
                     self.mode = Mode::Browse;
@@ -858,7 +829,7 @@ impl App {
             }
             KeyCode::Char(' ') => self.toggle_picked_value(),
             KeyCode::Char('m') if purpose == PickerPurpose::Columns && typed_empty => {
-                self.move_origin = Some(self.columns.clone());
+                self.move_origin = Some(self.state.columns.clone());
                 let options = self.shown_column_options();
                 self.open_picker(PickerPurpose::MoveColumns(Vec::new()), options);
             }
@@ -932,7 +903,7 @@ impl App {
             .collect();
         let mut shown: Vec<String> = all
             .iter()
-            .filter(|candidate| Filter::field_allows(&self.filter_text, field, candidate))
+            .filter(|candidate| Filter::field_allows(&self.state.filter, field, candidate))
             .cloned()
             .collect();
         match shown.iter().position(|candidate| candidate == value) {
@@ -941,7 +912,7 @@ impl App {
             }
             None => shown.push(value.to_string()),
         }
-        let text = Filter::with_shown(&self.filter_text, field, &all, &shown);
+        let text = Filter::with_shown(&self.state.filter, field, &all, &shown);
         self.set_filter(text);
         self.telemetry.record(
             "action",
@@ -967,13 +938,13 @@ impl App {
         };
         match (picker.purpose, picked.payload) {
             (PickerPurpose::Filter(field), Payload::Text(value)) => {
-                let text = Filter::with_only(&self.filter_text, field, &value);
+                let text = Filter::with_only(&self.state.filter, field, &value);
                 self.set_filter(text);
                 self.telemetry
                     .record("action", format!("filter_pick {}:{value}", field.keyword()));
             }
             (PickerPurpose::Sort(column), Payload::Order(order)) => {
-                self.sort = Some(Sort { column, order });
+                self.state.sort = Some(Sort { column, order });
                 self.refilter();
                 self.telemetry.record(
                     "action",
@@ -981,7 +952,7 @@ impl App {
                 );
             }
             (PickerPurpose::Sort(_), Payload::NoSort) => {
-                self.sort = None;
+                self.state.sort = None;
                 self.refilter();
                 self.telemetry.record("action", "sort_pick none");
             }
@@ -989,12 +960,12 @@ impl App {
                 self.open_column_purpose(column)
             }
             (PickerPurpose::Columns, Payload::Column(column)) => {
-                let adding = !self.columns.contains(&column);
+                let adding = !self.state.columns.contains(&column);
                 self.toggle_column(column);
                 if adding {
                     // Stay open with the new column highlighted so it can be placed.
                     let options = self.column_picker_options();
-                    let highlight = self.columns.len().saturating_sub(1);
+                    let highlight = self.state.columns.len().saturating_sub(1);
                     self.open_picker(PickerPurpose::Columns, options);
                     if let Some(picker) = self.picker.as_mut() {
                         picker.selected = highlight;
@@ -1002,7 +973,7 @@ impl App {
                     self.status = format!(
                         "{} added as column {} · m then numbers to reorder · esc",
                         column.name(),
-                        self.columns.len()
+                        self.state.columns.len()
                     );
                 }
             }
@@ -1084,14 +1055,14 @@ impl App {
             KeyCode::Enter => {
                 self.mode = Mode::Browse;
                 self.telemetry
-                    .record("action", format!("filter_apply {}", self.filter_text));
+                    .record("action", format!("filter_apply {}", self.state.filter));
             }
             KeyCode::Backspace => {
-                self.filter_text.pop();
+                self.state.filter.pop();
                 self.refilter();
             }
             KeyCode::Char(c) => {
-                self.filter_text.push(c);
+                self.state.filter.push(c);
                 self.refilter();
             }
             _ => {}
@@ -1148,7 +1119,7 @@ impl App {
             Action::Back => {
                 if self.pane != Pane::None {
                     self.pane = Pane::None;
-                } else if !self.filter_text.is_empty() {
+                } else if !self.state.filter.is_empty() {
                     self.set_filter(String::new());
                 }
                 self.status.clear();
@@ -1156,8 +1127,8 @@ impl App {
             Action::Filter => {
                 self.mode = Mode::Filter;
                 self.status.clear();
-                if !self.filter_text.is_empty() && !self.filter_text.ends_with(' ') {
-                    self.filter_text.push(' ');
+                if !self.state.filter.is_empty() && !self.state.filter.ends_with(' ') {
+                    self.state.filter.push(' ');
                 }
             }
             Action::FilterColumn => self.open_column_chooser(ColumnPurpose::Filter),
@@ -1243,24 +1214,21 @@ impl App {
             return;
         };
         self.view = slot;
-        self.sort = saved.sort;
-        self.columns = saved.columns;
-        self.glyph_columns = saved.glyph_columns;
-        self.paint = saved.paint;
-        self.set_filter(saved.filter);
+        self.state = saved;
+        self.refilter();
     }
 
     fn set_filter(&mut self, text: String) {
-        self.filter_text = text;
+        self.state.filter = text;
         self.refilter();
     }
 
     fn refilter(&mut self) {
-        let filter = Filter::parse(&self.filter_text);
+        let filter = Filter::parse(&self.state.filter);
         self.visible = (0..self.tasks.len())
             .filter(|&index| filter.matches(&self.tasks[index]))
             .collect();
-        if let Some(sort) = self.sort {
+        if let Some(sort) = self.state.sort {
             sort::apply(&self.tasks, &mut self.visible, sort);
         }
         self.select(self.selected);

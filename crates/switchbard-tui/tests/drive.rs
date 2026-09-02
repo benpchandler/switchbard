@@ -333,7 +333,7 @@ fn resume_state_survives_a_self_restart() {
     let mut fresh = open_app(&h.root, &h.config_path);
     fresh.resume_from(Some(&state));
     assert_eq!(fresh.view, 1);
-    assert_eq!(fresh.filter_text, "status:todo");
+    assert_eq!(fresh.state.filter, "status:todo");
     assert_eq!(fresh.selected, 1);
 }
 
@@ -537,7 +537,7 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
     );
 
     let fresh = open_app(&h.root, &h.config_path);
-    assert_eq!(fresh.filter_text, "status:!done");
+    assert_eq!(fresh.state.filter, "status:!done");
     assert_eq!(fresh.view_label(), "v1");
     assert_eq!(fresh.views.get(0).unwrap().name(), "status:!done ≈pri");
 
@@ -640,7 +640,7 @@ fn cell_fg(h: &Harness, needle: &str) -> Option<ratatui::style::Color> {
 fn header_line(screen: &str) -> String {
     screen
         .lines()
-        .find(|line| line.contains("1 "))
+        .find(|line| line.starts_with("│1 "))
         .unwrap_or_default()
         .to_string()
 }
@@ -742,7 +742,7 @@ fn shift_k_moves_a_column_up_and_the_order_saves_with_the_view() {
         "{file}"
     );
     let fresh = open_app(&h.root, &h.config_path);
-    assert_eq!(fresh.columns[0].name(), "status");
+    assert_eq!(fresh.state.columns[0].name(), "status");
     assert_eq!(fresh.view_label(), "v1");
     assert_eq!(
         fresh.views.get(0).unwrap().name(),
@@ -760,7 +760,7 @@ fn the_last_column_cannot_be_hidden() {
     h.press(KeyCode::Char('c'));
     let screen = h.press(KeyCode::Char('1'));
     assert!(screen.contains("at least one column must stay"), "{screen}");
-    assert_eq!(h.app.columns.len(), 1);
+    assert_eq!(h.app.state.columns.len(), 1);
 }
 
 #[test]
@@ -844,7 +844,12 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
         "auto's first color for high"
     );
     assert_eq!(
-        h.app.paint.iter().map(|r| r.to_text()).collect::<Vec<_>>(),
+        h.app
+            .state
+            .paint
+            .iter()
+            .map(|r| r.to_text())
+            .collect::<Vec<_>>(),
         [
             "by:status=todo:yellow,inprogress:cyan",
             "by:priority=high:yellow,low:cyan,medium:green"
@@ -939,6 +944,7 @@ fn hand_picked_values_row_and_column_and_hex_and_clearing() {
     );
     assert!(h
         .app
+        .state
         .paint
         .iter()
         .any(|r| r.to_text() == format!("rows:id:{selected}=lightblue")));
@@ -1007,7 +1013,7 @@ fn paint_rules_round_trip_through_the_view_file() {
         "{file}"
     );
     let fresh = open_app(&h.root, &h.config_path);
-    assert_eq!(fresh.paint, h.app.paint);
+    assert_eq!(fresh.state.paint, h.app.state.paint);
     assert_eq!(fresh.view_label(), "v1");
 }
 
@@ -1110,7 +1116,7 @@ fn g_in_the_columns_picker_shows_priority_as_glyphs_and_saves_with_the_view() {
     assert!(file.contains("glyphs = \"priority\""), "{file}");
     let fresh = open_app(&h.root, &h.config_path);
     assert_eq!(
-        fresh.glyph_columns,
+        fresh.state.glyph_columns,
         vec![switchbard_tui::config::Column::Priority]
     );
     assert_eq!(fresh.view_label(), "v1");
