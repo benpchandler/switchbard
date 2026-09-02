@@ -32,8 +32,8 @@
 //! fork sequence, so this layer lands with its gate and no callers to break.
 
 use super::parse::{
-    heading_title, parse_checklist_index, scan_fences, task_file_round_trips,
-    KNOWN_SECTION_HEADINGS,
+    heading_title, parse_checklist_index, scan_fences, section_marker_terminator,
+    task_file_round_trips, KNOWN_SECTION_HEADINGS,
 };
 use super::types::NewBacklogTask;
 use anyhow::{bail, Context, Result};
@@ -712,7 +712,24 @@ fn canonical_rank(heading: &str) -> usize {
 /// end (past which only blank lines / the trailing newline sit).
 fn insert_pos(lines: &[String], inside: &[bool], heading: &str) -> usize {
     let rank = canonical_rank(heading);
+    let mut marker_depth = 0usize;
     for i in 0..lines.len() {
+        if !inside.get(i).copied().unwrap_or(false) {
+            match section_marker_terminator(lines[i].trim()) {
+                Some("BEGIN") => {
+                    marker_depth += 1;
+                    continue;
+                }
+                Some("END") => {
+                    marker_depth = marker_depth.saturating_sub(1);
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        if marker_depth > 0 {
+            continue;
+        }
         if let Some(title) = top_heading(lines, inside, i) {
             if canonical_rank(title) > rank {
                 return i;
@@ -1508,6 +1525,42 @@ mod tests {
         assert_eq!(
             task.description, "Do the thing.",
             "other sections untouched"
+        );
+    }
+
+    #[test]
+    fn append_notes_stays_outside_a_marked_description_with_h2_prose() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("task-80 - Marked description.md");
+        let description = "<!-- SECTION:DESCRIPTION:BEGIN -->\n## Outcome\n\nKeep this prose inside the description.\n<!-- SECTION:DESCRIPTION:END -->";
+        fs::write(
+            &path,
+            FIXTURE.replace(
+                "<!-- SECTION:DESCRIPTION:BEGIN -->\nDo the thing.\n<!-- SECTION:DESCRIPTION:END -->",
+                description,
+            ),
+        )
+        .expect("fixture writes");
+
+        assert_eq!(
+            append_task_notes(&path, "Lineage note.").expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+
+        let after = read(&path);
+        let description_end = after
+            .find("<!-- SECTION:DESCRIPTION:END -->")
+            .expect("description end marker survives");
+        let notes = after
+            .find("## Implementation Notes")
+            .expect("notes section is created");
+        assert!(
+            description_end < notes,
+            "notes must not be inserted inside the marked description: {after}"
+        );
+        assert!(
+            after.contains(description),
+            "the marked description must remain byte-identical: {after}"
         );
     }
 

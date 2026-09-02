@@ -430,24 +430,24 @@ pub(super) fn heading_title(line: &str) -> Option<&str> {
 /// shape rather than an enumerated list keeps a future
 /// `SECTION:WHATEVER:BEGIN` working; matching *only* this shape keeps an
 /// author's ordinary HTML comment out of the discard pile.
-fn is_section_marker_comment(trimmed: &str) -> bool {
-    let Some(inner) = trimmed
+pub(super) fn section_marker_terminator(trimmed: &str) -> Option<&str> {
+    let inner = trimmed
         .strip_prefix("<!--")
-        .and_then(|rest| rest.strip_suffix("-->"))
-    else {
-        return false;
-    };
+        .and_then(|rest| rest.strip_suffix("-->"))?;
     let inner = inner.trim();
-    let Some((name, terminator)) = inner.rsplit_once(':') else {
-        return false;
-    };
+    let (name, terminator) = inner.rsplit_once(':')?;
     if !matches!(terminator, "BEGIN" | "END") {
-        return false;
+        return None;
     }
-    !name.is_empty()
+    (!name.is_empty()
         && name
             .chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == ':' || c == '_')
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == ':' || c == '_'))
+    .then_some(terminator)
+}
+
+fn is_section_marker_comment(trimmed: &str) -> bool {
+    section_marker_terminator(trimmed).is_some()
 }
 
 /// Is this body's structure one a section-replacing write can safely be based
