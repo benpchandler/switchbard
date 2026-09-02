@@ -752,12 +752,19 @@ fn p_paints_this_row_by_exact_id_and_saves_with_the_view() {
     let mut h = Harness::new();
     let selected = h.app.selected_task().unwrap().id.clone();
     let screen = h.press(KeyCode::Char('p'));
-    assert!(screen.contains(&format!("1  row {selected}")), "{screen}");
+    for entry in ["1  id", "2  status", "3  priority", "4  title"] {
+        assert!(
+            screen.contains(entry),
+            "mirrors the header: {entry} in {screen}"
+        );
+    }
+    assert!(screen.contains(&format!("5  row {selected}")), "{screen}");
+    assert!(screen.contains("6  column (whole)"), "{screen}");
     assert!(
-        screen.contains("column id") && screen.contains("column title"),
-        "{screen}"
+        screen.contains("7  labels"),
+        "hidden categorical field by name: {screen}"
     );
-    h.press(KeyCode::Char('1'));
+    h.type_text("r");
     let screen = h.type_text("gre");
     assert!(
         screen.contains(&format!("painted rows:id:{selected}=green")),
@@ -798,8 +805,8 @@ fn p_paints_rows_matching_the_filter_and_columns_and_none_clears() {
     h.press(KeyCode::Enter);
     h.press(KeyCode::Char('p'));
     let screen = h.render();
-    assert!(screen.contains("2  rows status:todo"), "{screen}");
-    h.press(KeyCode::Char('2'));
+    assert!(screen.contains("6  filtered rows status:todo"), "{screen}");
+    h.type_text("f");
     h.type_text("yel");
     h.press(KeyCode::Esc);
     let screen = h.render();
@@ -810,7 +817,8 @@ fn p_paints_rows_matching_the_filter_and_columns_and_none_clears() {
     assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Yellow));
     assert_eq!(cell_fg(&h, "Fix login"), Some(Color::Reset));
     h.press(KeyCode::Char('p'));
-    h.type_text("column s");
+    h.type_text("c");
+    h.type_text("s");
     h.type_text("cy");
     assert_eq!(
         cell_fg(&h, "In Progress"),
@@ -823,7 +831,8 @@ fn p_paints_rows_matching_the_filter_and_columns_and_none_clears() {
         "row rule keeps other cells"
     );
     h.press(KeyCode::Char('p'));
-    h.type_text("column s");
+    h.type_text("c");
+    h.type_text("s");
     h.type_text("no");
     assert_eq!(
         cell_fg(&h, "In Progress"),
@@ -838,7 +847,8 @@ fn p_accepts_a_typed_hex_color() {
     use ratatui::style::Color;
     let mut h = Harness::new();
     h.press(KeyCode::Char('p'));
-    h.type_text("column t");
+    h.type_text("c");
+    h.type_text("t");
     h.type_text("#ff8800");
     let screen = h.press(KeyCode::Enter);
     assert!(screen.contains("painted column:title=#ff8800"), "{screen}");
@@ -851,7 +861,7 @@ fn two_digit_numbers_reach_options_past_nine_and_space_clears_paint() {
     let mut h = Harness::new();
     let selected = h.app.selected_task().unwrap().id.clone();
     h.press(KeyCode::Char('p'));
-    let screen = h.press(KeyCode::Char('1'));
+    let screen = h.type_text("r");
     assert!(screen.contains("12  lightblue"), "{screen}");
     let screen = h.press(KeyCode::Char('1'));
     assert!(
@@ -862,14 +872,14 @@ fn two_digit_numbers_reach_options_past_nine_and_space_clears_paint() {
     assert!(screen.contains("=lightblue"), "{screen}");
     assert_eq!(cell_fg(&h, &selected), Some(Color::LightBlue));
     h.press(KeyCode::Char('p'));
-    h.press(KeyCode::Char('1'));
+    h.type_text("r");
     let screen = h.press(KeyCode::Char('3'));
     assert!(
         screen.contains("=yellow"),
         "3 cannot extend past 17, applies at once: {screen}"
     );
     h.press(KeyCode::Char('p'));
-    h.press(KeyCode::Char('1'));
+    h.type_text("r");
     h.press(KeyCode::Char('1'));
     let screen = h.press(KeyCode::Enter);
     assert!(
@@ -877,10 +887,15 @@ fn two_digit_numbers_reach_options_past_nine_and_space_clears_paint() {
         "enter completes a pending single digit as itself: {screen}"
     );
     h.press(KeyCode::Char('p'));
-    h.press(KeyCode::Char('1'));
+    h.type_text("r");
     let screen = h.press(KeyCode::Char(' '));
     assert!(screen.contains("paint cleared"), "{screen}");
-    assert_eq!(cell_fg(&h, &selected), Some(Color::Reset));
+    assert_eq!(
+        cell_fg(&h, &selected),
+        Some(Color::Reset),
+        "rules left: {:?}\n{screen}",
+        h.app.paint.iter().map(|r| r.to_text()).collect::<Vec<_>>()
+    );
     assert!(!screen.contains("paint:"), "{screen}");
 }
 
@@ -889,7 +904,7 @@ fn the_color_list_previews_each_color_and_a_typed_hex() {
     use ratatui::style::Color;
     let mut h = Harness::new();
     h.press(KeyCode::Char('p'));
-    h.press(KeyCode::Char('1'));
+    h.type_text("r");
     assert_eq!(cell_fg(&h, "green"), Some(Color::Green));
     assert_eq!(cell_fg(&h, "magenta"), Some(Color::Magenta));
     let screen = h.type_text("#ff8800");
@@ -904,9 +919,13 @@ fn the_color_list_previews_each_color_and_a_typed_hex() {
 fn p_by_status_paints_each_value_and_auto_hands_out_distinct_colors() {
     use ratatui::style::Color;
     let mut h = Harness::new();
-    h.press(KeyCode::Char('p'));
-    let screen = h.type_text("by s");
-    assert!(screen.contains("by status · pick a value"), "{screen}");
+    let screen = h.press(KeyCode::Char('p'));
+    assert!(screen.contains("paint · a column by number"), "{screen}");
+    let screen = h.press(KeyCode::Char('2'));
+    assert!(
+        screen.contains("by status · pick a value"),
+        "p2 is the status column: {screen}"
+    );
     assert!(screen.contains("1  auto: one color per value"), "{screen}");
     assert!(
         screen.contains("2  To Do") && screen.contains("3  In Progress"),
@@ -930,7 +949,7 @@ fn p_by_status_paints_each_value_and_auto_hands_out_distinct_colors() {
     assert_eq!(h.app.paint[0].to_text(), "rows:status:todo=green");
 
     h.press(KeyCode::Char('p'));
-    h.type_text("by s");
+    h.press(KeyCode::Char('2'));
     h.press(KeyCode::Char('1'));
     let screen = h.press(KeyCode::Esc);
     assert!(screen.contains("paint:2 ·"), "one rule per value: {screen}");
@@ -939,5 +958,12 @@ fn p_by_status_paints_each_value_and_auto_hands_out_distinct_colors() {
         Some(Color::Yellow),
         "auto reassigns To Do"
     );
+    h.press(KeyCode::Char('p'));
+    let screen = h.type_text("p");
+    assert!(
+        screen.contains("by pri · pick a value"),
+        "no project values in this repo, so p resolves to priority at once: {screen}"
+    );
+    h.press(KeyCode::Esc);
     assert_eq!(cell_fg(&h, "Fix login"), Some(Color::Cyan));
 }

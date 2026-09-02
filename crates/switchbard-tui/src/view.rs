@@ -327,6 +327,9 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                     Column::parse(value).is_some_and(|column| app.columns.contains(&column))
                 }
                 PickerPurpose::PaintTarget => false,
+                PickerPurpose::PaintColumn => {
+                    Column::parse(value).is_some_and(|column| app.columns.contains(&column))
+                }
                 PickerPurpose::PaintByField(field) => {
                     paint::rule_for_value(&app.paint, field.keyword(), value).is_some()
                 }
@@ -434,7 +437,14 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                     (PickerPurpose::PaintByField(field), false) => {
                         format!(" by {}: {}▏", field.keyword(), picker.typed)
                     }
-                    (PickerPurpose::PaintTarget, true) => " paint what? ".to_string(),
+                    (PickerPurpose::PaintColumn, true) => " paint which column whole? ".to_string(),
+                    (PickerPurpose::PaintColumn, false) => {
+                        format!(" paint which column whole? {}▏", picker.typed)
+                    }
+                    (PickerPurpose::PaintTarget, true) => {
+                        " paint · a column by number, r row, f filtered, c whole column "
+                            .to_string()
+                    }
                     (PickerPurpose::PaintTarget, false) => {
                         format!(" paint what? {}▏", picker.typed)
                     }
