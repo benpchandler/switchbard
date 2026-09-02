@@ -450,6 +450,9 @@ impl App {
                 options.push((column.name().to_string(), 0));
             }
         }
+        if !self.paint.is_empty() {
+            options.push((format!("delete all paint ({} rules)", self.paint.len()), 0));
+        }
         self.paint_return = None;
         self.picker = Some(ValuePicker {
             purpose: PickerPurpose::PaintTarget,
@@ -554,6 +557,13 @@ impl App {
             )),
             _ => None,
         }
+    }
+
+    fn clear_all_paint(&mut self) {
+        let count = self.paint.len();
+        self.paint.clear();
+        self.status = format!("deleted {count} paint rules");
+        self.telemetry.record("action", "paint_clear_all");
     }
 
     fn apply_paint(&mut self, target: PaintTarget, color: &str) {
@@ -710,6 +720,13 @@ impl App {
                     self.apply_picked_value();
                 }
             }
+            KeyCode::Delete | KeyCode::Backspace
+                if picker.purpose == PickerPurpose::PaintTarget && picker.typed.is_empty() =>
+            {
+                self.picker = None;
+                self.mode = Mode::Browse;
+                self.clear_all_paint();
+            }
             KeyCode::Char(' ') if matches!(picker.purpose, PickerPurpose::PaintColor(_)) => {
                 let PickerPurpose::PaintColor(target) = picker.purpose.clone() else {
                     return;
@@ -856,7 +873,9 @@ impl App {
                 }
             }
             PickerPurpose::PaintTarget => {
-                if value == "column (whole)" {
+                if value.starts_with("delete all") {
+                    self.clear_all_paint();
+                } else if value == "column (whole)" {
                     self.open_paint_column_picker();
                 } else if let Some(column) = Column::parse(&value) {
                     self.paint_column_entry(column);
