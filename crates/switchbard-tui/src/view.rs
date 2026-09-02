@@ -48,7 +48,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
     };
     let title = format!(
         " {repo} · {} · {filter}{}/{} ",
-        app.view,
+        app.view_label(),
         app.visible.len(),
         app.total_tasks()
     );
@@ -205,7 +205,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
             ":view <name>  :reload  :q",
             Style::default().fg(theme.accent),
         ),
-        Span::raw("    f <col#> picks a value, space hides one; terms: status:x status:!x pri: label: project:"),
+        Span::raw("    f <col#>: type picks one, space toggles; terms: status:a,b status:!x pri: label: project:"),
     ]));
     lines.push(Line::from(Span::styled(
         "config: ~/.switchbard/tui.lua (hot reload)    events: ~/.switchbard/tui-events.jsonl",
@@ -280,7 +280,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         .iter()
         .enumerate()
         .map(|(index, (value, count))| {
-            let excluded = Filter::is_excluded(&app.filter_text, picker.field, value);
+            let shown = Filter::field_allows(&app.filter_text, picker.field, value);
             let mut style = if index == picker.selected {
                 Style::default()
                     .bg(theme.selected)
@@ -288,10 +288,10 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             } else {
                 Style::default()
             };
-            if excluded {
-                style = style.fg(theme.dim).add_modifier(Modifier::CROSSED_OUT);
+            if !shown {
+                style = style.fg(theme.dim);
             }
-            let mark = if excluded { "✗" } else { " " };
+            let mark = if shown { "✓" } else { " " };
             Line::from(vec![
                 Span::styled(format!("{} ", index + 1), Style::default().fg(theme.accent)),
                 Span::styled(
@@ -307,7 +307,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         .border_style(Style::default().fg(theme.accent))
         .title(if picker.typed.is_empty() {
             format!(
-                " {} · type or number picks · space hides ",
+                " {} · type/number picks one · space toggles ",
                 picker.field.keyword()
             )
         } else {

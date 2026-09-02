@@ -120,6 +120,14 @@ impl App {
         self.tasks.len()
     }
 
+    /// The view's name while the filter still matches it; `custom` once it has been edited.
+    pub fn view_label(&self) -> &str {
+        match self.config.views.get(&self.view) {
+            Some(filter) if *filter == self.filter_text => &self.view,
+            _ => "custom",
+        }
+    }
+
     pub fn location(&self) -> String {
         let selected = self
             .selected_task()
@@ -251,7 +259,7 @@ impl App {
                 }
             }
             KeyCode::Enter => self.apply_picked_value(),
-            KeyCode::Char(' ') => self.toggle_picked_exclusion(),
+            KeyCode::Char(' ') => self.toggle_picked_value(),
             KeyCode::Backspace => {
                 picker.typed.pop();
                 picker.selected = 0;
@@ -267,7 +275,7 @@ impl App {
         }
     }
 
-    fn toggle_picked_exclusion(&mut self) {
+    fn toggle_picked_value(&mut self) {
         let Some(picker) = self.picker.as_ref() else {
             return;
         };
@@ -275,11 +283,23 @@ impl App {
             return;
         };
         let field = picker.field;
-        let text = Filter::toggle_exclusion(&self.filter_text, field, &value);
+        let all: Vec<String> = picker.options.iter().map(|(v, _)| v.clone()).collect();
+        let mut shown: Vec<String> = all
+            .iter()
+            .filter(|candidate| Filter::field_allows(&self.filter_text, field, candidate))
+            .cloned()
+            .collect();
+        match shown.iter().position(|candidate| *candidate == value) {
+            Some(index) => {
+                shown.remove(index);
+            }
+            None => shown.push(value.clone()),
+        }
+        let text = Filter::with_shown(&self.filter_text, field, &all, &shown);
         self.set_filter(text);
         self.telemetry.record(
             "action",
-            format!("filter_exclude {}:{value}", field.keyword()),
+            format!("filter_toggle {}:{value}", field.keyword()),
         );
     }
 
@@ -292,7 +312,7 @@ impl App {
             self.status = format!("nothing matches '{}'", picker.typed);
             return;
         };
-        let text = Filter::with_field(&self.filter_text, picker.field, &value);
+        let text = Filter::with_only(&self.filter_text, picker.field, &value);
         self.set_filter(text);
         self.telemetry.record(
             "action",
@@ -418,6 +438,9 @@ impl App {
             Action::Filter => {
                 self.mode = Mode::Filter;
                 self.status.clear();
+                if !self.filter_text.is_empty() && !self.filter_text.ends_with(' ') {
+                    self.filter_text.push(' ');
+                }
             }
             Action::FilterColumn => {
                 self.mode = Mode::PickColumn;

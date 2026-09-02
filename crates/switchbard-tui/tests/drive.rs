@@ -256,8 +256,8 @@ fn f_then_column_number_picks_a_value_from_the_data() {
     let mut h = Harness::new();
     h.press(KeyCode::Char('f'));
     let screen = h.press(KeyCode::Char('2'));
-    assert!(screen.contains("1  To Do"), "{screen}");
-    assert!(screen.contains("2  In Progress"), "{screen}");
+    assert!(screen.contains("1 ✓To Do"), "{screen}");
+    assert!(screen.contains("2 ✓In Progress"), "{screen}");
     let screen = h.press(KeyCode::Char('j'));
     let screen_after_enter = h.press(KeyCode::Enter);
     assert!(
@@ -322,12 +322,17 @@ fn zero_size_terminal_does_not_crash() {
 }
 
 #[test]
-fn space_in_picker_hides_a_value_and_stacks() {
+fn space_in_picker_toggles_values_and_writes_the_shortest_filter() {
     let mut h = Harness::new();
     h.press(KeyCode::Char('f'));
     h.press(KeyCode::Char('2'));
+    let screen = h.render();
+    assert!(
+        screen.contains("✓To Do") && screen.contains("✓In Progress"),
+        "{screen}"
+    );
     let screen = h.press(KeyCode::Char(' '));
-    assert!(screen.contains("✗To Do"), "{screen}");
+    assert!(screen.contains(" To Do"), "unchecked: {screen}");
     assert!(screen.contains("status:!todo · 1/3"), "{screen}");
     h.press(KeyCode::Char('j'));
     let screen = h.press(KeyCode::Char(' '));
@@ -336,24 +341,36 @@ fn space_in_picker_hides_a_value_and_stacks() {
         "{screen}"
     );
     let screen = h.press(KeyCode::Char(' '));
-    assert!(screen.contains("status:!todo · 1/3"), "unstack: {screen}");
+    assert!(screen.contains("status:!todo · 1/3"), "re-shown: {screen}");
+    h.press(KeyCode::Char('k'));
+    let screen = h.press(KeyCode::Char(' '));
+    assert!(screen.contains("all · 3/3"), "all shown again: {screen}");
     let screen = h.press(KeyCode::Esc);
-    assert!(!screen.contains("space hides"), "{screen}");
-    assert!(screen.contains("Fix login"), "{screen}");
-    assert!(!screen.contains("Add dark theme"), "{screen}");
+    assert!(!screen.contains("space toggles"), "{screen}");
 }
 
 #[test]
-fn picking_a_value_keeps_exclusions_on_the_same_field() {
+fn space_widens_a_single_value_filter_instead_of_fighting_it() {
     let mut h = Harness::new();
     h.press(KeyCode::Char('/'));
-    h.type_text("status:!todo");
+    h.type_text("status:todo");
     h.press(KeyCode::Enter);
     h.press(KeyCode::Char('f'));
     h.press(KeyCode::Char('2'));
-    let screen = h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('j'));
+    let screen = h.press(KeyCode::Char(' '));
+    assert!(screen.contains("· 3/3"), "{screen}");
+    assert!(screen.contains("✓In Progress"), "{screen}");
+}
+
+#[test]
+fn editing_the_filter_relabels_the_view_as_custom() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('3'));
+    h.press(KeyCode::Char('/'));
+    let screen = h.type_text("pri:medium");
     assert!(
-        screen.contains("status:!todo status:inprogress · 1/3"),
+        screen.contains("custom · status:inprogress pri:medium · 1/3"),
         "{screen}"
     );
 }
