@@ -1,5 +1,7 @@
 //! Rendering. Reads `App`, writes a frame, and leaves a text copy of the screen behind.
 
+use std::str::FromStr;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -340,6 +342,12 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             if !shown {
                 style = style.fg(theme.dim);
             }
+            if matches!(picker.purpose, PickerPurpose::PaintColor(_)) {
+                // Show the color itself: this is what the painted text will look like.
+                if let Ok(color) = ratatui::style::Color::from_str(value) {
+                    style = style.fg(color);
+                }
+            }
             let mark = if shown { "✓" } else { " " };
             Line::from(vec![
                 Span::styled(format!("{} ", index + 1), Style::default().fg(theme.accent)),
@@ -363,9 +371,18 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
     } else {
         format!("{}▏", picker.number)
     };
+    let preview = match picker.purpose {
+        PickerPurpose::PaintColor(_) => ratatui::style::Color::from_str(picker.typed.trim()).ok(),
+        _ => None,
+    };
+    let title_style = match preview {
+        Some(color) => Style::default().fg(color).add_modifier(Modifier::BOLD),
+        None => Style::default(),
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent))
+        .title_style(title_style)
         .title(
             pending
                 + &match (&picker.purpose, picker.typed.is_empty()) {
@@ -404,7 +421,12 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                     (PickerPurpose::PaintColor(_), true) => {
                         " color · name or #hex · space clears ".to_string()
                     }
-                    (PickerPurpose::PaintColor(_), false) => format!(" color: {}▏", picker.typed),
+                    (PickerPurpose::PaintColor(_), false) => match preview {
+                        Some(_) => {
+                            format!(" {} ← this is how it looks · enter applies ", picker.typed)
+                        }
+                        None => format!(" color: {}▏", picker.typed),
+                    },
                 },
         );
     frame.render_widget(Clear, area);
