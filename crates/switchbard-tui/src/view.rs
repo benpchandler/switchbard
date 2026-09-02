@@ -10,6 +10,7 @@ use switchbard_core::BacklogTask;
 
 use crate::app::{App, ColumnPurpose, Mode, Pane, PickerPurpose, ValuePicker};
 use crate::config::{Action, Column};
+use crate::paint;
 use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
@@ -56,8 +57,13 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         format!("cols:{} · ", columns_text(&app.columns))
     };
+    let painted = if app.paint.is_empty() {
+        String::new()
+    } else {
+        format!("paint:{} · ", app.paint.len())
+    };
     let title = format!(
-        " {repo} · {} · {filter}{sort}{columns}{}/{} ",
+        " {repo} · {} · {filter}{sort}{columns}{painted}{}/{} ",
         app.view_label(),
         app.visible.len(),
         app.total_tasks()
@@ -71,11 +77,13 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
     .style(Style::default().fg(theme.header));
     let rows = (0..app.visible.len()).filter_map(|index| {
         let task = app.task(index)?;
-        Some(Row::new(
-            app.columns
-                .iter()
-                .map(|column| Cell::from(cell_text(*column, task))),
-        ))
+        Some(Row::new(app.columns.iter().map(|column| {
+            let cell = Cell::from(cell_text(*column, task));
+            match paint::cell_color(&app.paint, task, *column) {
+                Some(color) => cell.style(Style::default().fg(color)),
+                None => cell,
+            }
+        })))
     });
     let widths = app.columns.iter().map(|column| match column {
         Column::Id => Constraint::Length(9),
@@ -175,6 +183,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Action::FilterColumn,
         Action::SortColumn,
         Action::Columns,
+        Action::Paint,
         Action::Command,
         Action::Reload,
         Action::Help,
@@ -270,7 +279,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         )),
         Mode::Browse => Line::from(Span::styled(
             format!(
-                " {}  / filter  f filter-by  s sort  c columns  v views  : command  ? keys  q quit",
+                " {}  / filter  f filter-by  s sort  c columns  p paint  v views  : command  ? keys  q quit",
                 if app.filter_text.is_empty() {
                     String::new()
                 } else {
@@ -305,16 +314,21 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         .iter()
         .enumerate()
         .map(|(index, (value, count))| {
-            let shown = match picker.purpose {
+            let shown = match &picker.purpose {
                 PickerPurpose::Filter(field) => {
-                    Filter::field_allows(&app.filter_text, field, value)
+                    Filter::field_allows(&app.filter_text, *field, value)
                 }
                 PickerPurpose::Sort(column) => app
                     .sort
-                    .is_some_and(|sort| sort.order.label(column) == *value),
+                    .is_some_and(|sort| sort.order.label(*column) == *value),
                 PickerPurpose::ChooseColumn(_) | PickerPurpose::Columns => {
                     Column::parse(value).is_some_and(|column| app.columns.contains(&column))
                 }
+                PickerPurpose::PaintTarget => false,
+                PickerPurpose::PaintColor(target) => app
+                    .paint
+                    .iter()
+                    .any(|rule| &rule.target == target && rule.color == *value),
             };
             let mut style = if index == picker.selected {
                 Style::default()
@@ -375,6 +389,12 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                 " columns · digit/name toggles · space keeps open · K/J move ".to_string()
             }
             (PickerPurpose::Columns, false) => format!(" columns: {}▏", picker.typed),
+            (PickerPurpose::PaintTarget, true) => " paint what? ".to_string(),
+            (PickerPurpose::PaintTarget, false) => format!(" paint what? {}▏", picker.typed),
+            (PickerPurpose::PaintColor(_), true) => {
+                " color · name, or type #hex then enter · none clears ".to_string()
+            }
+            (PickerPurpose::PaintColor(_), false) => format!(" color: {}▏", picker.typed),
         });
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);

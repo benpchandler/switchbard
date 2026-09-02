@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use mlua::{Lua, Table};
 
 use crate::config::Column;
+use crate::paint::{parse_rules, rules_text, PaintRule};
 use crate::sort::Sort;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +18,7 @@ pub struct SavedView {
     pub sort: Option<Sort>,
     /// Shown columns in display order.
     pub columns: Vec<Column>,
+    pub paint: Vec<PaintRule>,
 }
 
 impl SavedView {
@@ -31,6 +33,9 @@ impl SavedView {
         }
         if let Some(columns) = self.columns_label() {
             parts.push(columns);
+        }
+        if !self.paint.is_empty() {
+            parts.push(format!("paint:{}", self.paint.len()));
         }
         if parts.is_empty() {
             "all".to_string()
@@ -107,6 +112,7 @@ pub fn starter_views() -> Vec<SavedView> {
             filter: filter.to_string(),
             sort: None,
             columns: Column::DEFAULT_SHOWN.to_vec(),
+            paint: Vec::new(),
         })
         .collect()
 }
@@ -290,12 +296,18 @@ fn parse_view(entry: &Table) -> Result<SavedView, String> {
         filter: field("filter")?,
         sort: Sort::parse(&field("sort")?),
         columns: parse_columns(&field("columns")?),
+        paint: parse_rules(&field("paint")?),
     })
 }
 
 fn lua_view(view: &SavedView) -> String {
+    let paint = if view.paint.is_empty() {
+        String::new()
+    } else {
+        format!(", paint = {}", lua_string(&rules_text(&view.paint)))
+    };
     format!(
-        "{{ filter = {}, sort = {}, columns = {} }}",
+        "{{ filter = {}, sort = {}, columns = {}{paint} }}",
         lua_string(&view.filter),
         lua_string(&view.sort.map(|sort| sort.to_text()).unwrap_or_default()),
         lua_string(&columns_text(&view.columns)),

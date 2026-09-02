@@ -626,6 +626,19 @@ fn vs_with_the_next_free_slot_appends_without_asking_and_escape_abandons() {
     );
 }
 
+fn cell_fg(h: &Harness, needle: &str) -> Option<ratatui::style::Color> {
+    let buffer = h.terminal.backend().buffer();
+    let width = buffer.area.width as usize;
+    for (row, cells) in buffer.content.chunks(width).enumerate() {
+        let line: String = cells.iter().map(|cell| cell.symbol()).collect();
+        if let Some(col) = line.find(needle) {
+            let col = line[..col].chars().count();
+            return Some(buffer.content[row * width + col].fg);
+        }
+    }
+    None
+}
+
 fn header_line(screen: &str) -> String {
     screen
         .lines()
@@ -731,4 +744,103 @@ fn the_last_column_cannot_be_hidden() {
     let screen = h.press(KeyCode::Char('1'));
     assert!(screen.contains("at least one column must stay"), "{screen}");
     assert_eq!(h.app.columns.len(), 1);
+}
+
+#[test]
+fn p_paints_this_row_by_exact_id_and_saves_with_the_view() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    let selected = h.app.selected_task().unwrap().id.clone();
+    let screen = h.press(KeyCode::Char('p'));
+    assert!(screen.contains(&format!("1  row {selected}")), "{screen}");
+    assert!(
+        screen.contains("column id") && screen.contains("column title"),
+        "{screen}"
+    );
+    h.press(KeyCode::Char('1'));
+    let screen = h.type_text("gre");
+    assert!(
+        screen.contains(&format!("painted rows:id:{selected}=green")),
+        "{screen}"
+    );
+    assert_eq!(cell_fg(&h, &selected), Some(Color::Green));
+    assert!(screen.contains("paint:1 · 3/3"), "{screen}");
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('d'));
+    let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
+    assert!(
+        file.contains(&format!("paint = \"rows:id:{selected}=green\"")),
+        "{file}"
+    );
+    let fresh = open_app(&h.root, &h.config_path);
+    assert_eq!(fresh.paint.len(), 1);
+    assert_eq!(fresh.view_label(), "v1");
+}
+
+#[test]
+fn p_paints_rows_matching_the_filter_and_columns_and_none_clears() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('/'));
+    h.type_text("status:todo");
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('p'));
+    let screen = h.render();
+    assert!(
+        !screen.contains("rows status"),
+        "cleared filter offers no rows target: {screen}"
+    );
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('/'));
+    h.type_text("status:todo");
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Char('p'));
+    let screen = h.render();
+    assert!(screen.contains("2  rows status:todo"), "{screen}");
+    h.press(KeyCode::Char('2'));
+    h.type_text("yel");
+    h.press(KeyCode::Esc);
+    let screen = h.render();
+    assert!(
+        screen.contains("3/3"),
+        "filter cleared, paint stays: {screen}"
+    );
+    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Yellow));
+    assert_eq!(cell_fg(&h, "Fix login"), Some(Color::Reset));
+    h.press(KeyCode::Char('p'));
+    h.type_text("column s");
+    h.type_text("cy");
+    assert_eq!(
+        cell_fg(&h, "In Progress"),
+        Some(Color::Cyan),
+        "column rule paints every row"
+    );
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Yellow),
+        "row rule keeps other cells"
+    );
+    h.press(KeyCode::Char('p'));
+    h.type_text("column s");
+    h.type_text("no");
+    assert_eq!(
+        cell_fg(&h, "In Progress"),
+        Some(Color::Reset),
+        "none clears the column rule"
+    );
+    assert!(h.render().contains("paint:1 ·"), "{}", h.render());
+}
+
+#[test]
+fn p_accepts_a_typed_hex_color() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('p'));
+    h.type_text("column t");
+    h.type_text("#ff8800");
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("painted column:title=#ff8800"), "{screen}");
+    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Rgb(255, 136, 0)));
 }
