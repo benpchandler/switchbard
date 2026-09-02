@@ -12,9 +12,21 @@ use crate::sort::Sort;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedView {
-    pub name: String,
     pub filter: String,
     pub sort: Option<Sort>,
+}
+
+impl SavedView {
+    /// A view is named by what it does, so it reads the same in every repo.
+    pub fn name(&self) -> String {
+        let sort = self.sort.map(|sort| sort.label());
+        match (self.filter.is_empty(), sort) {
+            (true, None) => "all".to_string(),
+            (true, Some(sort)) => sort,
+            (false, None) => self.filter.clone(),
+            (false, Some(sort)) => format!("{} {sort}", self.filter),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,19 +62,13 @@ pub fn repo_path(repo_root: &Path) -> Option<PathBuf> {
 }
 
 pub fn starter_views() -> Vec<SavedView> {
-    [
-        ("all", ""),
-        ("todo", "status:todo"),
-        ("active", "status:inprogress"),
-        ("tui", "label:tui"),
-    ]
-    .into_iter()
-    .map(|(name, filter)| SavedView {
-        name: name.to_string(),
-        filter: filter.to_string(),
-        sort: None,
-    })
-    .collect()
+    ["", "status:todo", "status:inprogress", "label:tui"]
+        .into_iter()
+        .map(|filter| SavedView {
+            filter: filter.to_string(),
+            sort: None,
+        })
+        .collect()
 }
 
 pub struct ViewStore {
@@ -241,7 +247,6 @@ fn parse_view(entry: &Table) -> Result<SavedView, String> {
             .map_err(|e| e.to_string())
     };
     Ok(SavedView {
-        name: field("name")?,
         filter: field("filter")?,
         sort: Sort::parse(&field("sort")?),
     })
@@ -249,8 +254,7 @@ fn parse_view(entry: &Table) -> Result<SavedView, String> {
 
 fn lua_view(view: &SavedView) -> String {
     format!(
-        "{{ name = {}, filter = {}, sort = {} }}",
-        lua_string(&view.name),
+        "{{ filter = {}, sort = {} }}",
         lua_string(&view.filter),
         lua_string(&view.sort.map(|sort| sort.to_text()).unwrap_or_default()),
     )

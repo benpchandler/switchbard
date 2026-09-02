@@ -26,8 +26,6 @@ pub enum Mode {
     ViewSaveSlot,
     /// After `v g`: a digit or `d` picks the slot to promote to the global file.
     ViewGlobalSlot,
-    /// Naming the view being saved; Enter writes it, Esc abandons it.
-    ViewName,
 }
 
 /// What a column was picked for: `f` filters by its values, `s` sorts by it.
@@ -96,7 +94,6 @@ pub struct App {
     pub views: ViewStore,
     /// Zero-based slot the current filter/sort came from.
     pub view: usize,
-    saving_into: usize,
     pub filter_text: String,
     pub mode: Mode,
     pub input: String,
@@ -131,7 +128,6 @@ impl App {
             selected: 0,
             views,
             view: 0,
-            saving_into: 0,
             filter_text: String::new(),
             config,
             mode: Mode::Browse,
@@ -169,11 +165,12 @@ impl App {
         self.tasks.len()
     }
 
-    /// The slot's name while filter and sort still match it; `custom` once edited.
+    /// The slot number while filter and sort still match it; `custom` once edited.
+    /// The attributes follow in the title, so they are the name.
     pub fn view_label(&self) -> String {
         match self.views.get(self.view) {
             Some(saved) if saved.filter == self.filter_text && saved.sort == self.sort => {
-                format!("{} {}", self.view + 1, saved.name)
+                format!("v{}", self.view + 1)
             }
             _ => "custom".to_string(),
         }
@@ -249,7 +246,6 @@ impl App {
             Mode::ViewChord => self.handle_view_chord_key(event),
             Mode::ViewSaveSlot => self.handle_view_save_slot_key(event),
             Mode::ViewGlobalSlot => self.handle_view_global_slot_key(event),
-            Mode::ViewName => self.handle_view_name_key(event),
         }
     }
 
@@ -314,15 +310,7 @@ impl App {
             ));
             return;
         }
-        self.saving_into = slot - 1;
-        self.input = self
-            .views
-            .get(self.saving_into)
-            .map(|saved| saved.name.clone())
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| self.suggested_view_name());
-        self.mode = Mode::ViewName;
-        self.status = format!("name for slot {slot} (enter saves, esc abandons)");
+        self.save_view(slot - 1);
     }
 
     fn handle_view_global_slot_key(&mut self, event: KeyEvent) {
@@ -359,61 +347,17 @@ impl App {
         }
     }
 
-    fn suggested_view_name(&self) -> String {
-        if self.filter_text.is_empty() {
-            "all".to_string()
-        } else {
-            self.filter_text
-                .split_whitespace()
-                .map(|word| {
-                    word.rsplit(':')
-                        .next()
-                        .unwrap_or(word)
-                        .trim_start_matches('!')
-                })
-                .collect::<Vec<_>>()
-                .join(" ")
-        }
-    }
-
-    fn handle_view_name_key(&mut self, event: KeyEvent) {
-        match event.code {
-            KeyCode::Esc => {
-                self.mode = Mode::Browse;
-                self.input.clear();
-                self.status = "view not saved".to_string();
-            }
-            KeyCode::Enter => {
-                self.mode = Mode::Browse;
-                let name = std::mem::take(&mut self.input).trim().to_string();
-                self.save_view(name);
-            }
-            KeyCode::Backspace => {
-                self.input.pop();
-            }
-            KeyCode::Char(c) => self.input.push(c),
-            _ => {}
-        }
-    }
-
-    fn save_view(&mut self, name: String) {
+    fn save_view(&mut self, slot: usize) {
+        self.filter_text = self.filter_text.trim().to_string();
         let saved = SavedView {
-            name: if name.is_empty() {
-                self.suggested_view_name()
-            } else {
-                name
-            },
-            filter: self.filter_text.trim().to_string(),
+            filter: self.filter_text.clone(),
             sort: self.sort,
         };
-        let slot = self.saving_into;
-        self.filter_text = self.filter_text.trim().to_string();
         match self.views.save_repo(slot, saved) {
             Ok(()) => {
                 self.view = slot;
                 self.status = format!(
-                    "saved slot {} for this repo · v{} opens it · vg{} makes it global",
-                    slot + 1,
+                    "saved v{} for this repo · vg{} makes it global",
                     slot + 1,
                     slot + 1
                 );

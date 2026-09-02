@@ -112,7 +112,7 @@ fn lists_every_task_with_repo_name_and_count() {
     let screen = h.render();
     assert!(screen.contains("Fix login redirect loop"), "{screen}");
     assert!(screen.contains("Add dark theme"), "{screen}");
-    assert!(screen.contains("1 all · 3/3"), "{screen}");
+    assert!(screen.contains("v1 · 3/3"), "{screen}");
 }
 
 #[test]
@@ -155,17 +155,14 @@ fn field_filters_and_v_digit_switch_views() {
     h.press(KeyCode::Enter);
     h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('3'));
-    assert!(
-        screen.contains("3 active · status:inprogress · 1/3"),
-        "{screen}"
-    );
+    assert!(screen.contains("v3 · status:inprogress · 1/3"), "{screen}");
     assert!(screen.contains("Fix login"), "{screen}");
     h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('2'));
-    assert!(screen.contains("2 todo · status:todo · 2/3"), "{screen}");
+    assert!(screen.contains("v2 · status:todo · 2/3"), "{screen}");
     h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('1'));
-    assert!(screen.contains("1 all · 3/3"), "{screen}");
+    assert!(screen.contains("v1 · 3/3"), "{screen}");
     h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('9'));
     assert!(screen.contains("no view in slot 9"), "{screen}");
@@ -371,7 +368,7 @@ fn space_in_picker_toggles_values_and_writes_the_shortest_filter() {
     assert!(screen.contains("status:!todo · 1/3"), "re-shown: {screen}");
     h.press(KeyCode::Char('k'));
     let screen = h.press(KeyCode::Char(' '));
-    assert!(screen.contains("1 all · 3/3"), "all shown again: {screen}");
+    assert!(screen.contains("v1 · 3/3"), "all shown again: {screen}");
     let screen = h.press(KeyCode::Esc);
     assert!(!screen.contains("space toggles"), "{screen}");
 }
@@ -510,27 +507,16 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
     h.press(KeyCode::Char('s'));
     let screen = h.press(KeyCode::Char('d'));
     assert!(
-        screen.contains("name: all▏"),
-        "prefilled with slot 1's name: {screen}"
-    );
-    for _ in 0..3 {
-        h.press(KeyCode::Backspace);
-    }
-    h.type_text("open");
-    let screen = h.press(KeyCode::Enter);
-    assert!(
-        screen.contains("saved slot 1 for this repo · v1 opens it · vg1 makes it global"),
+        screen.contains("saved v1 for this repo · vg1 makes it global"),
         "{screen}"
     );
     assert!(
-        screen.contains("1 open · status:!done · ≈pri · 3/3"),
+        screen.contains("v1 · status:!done · ≈pri · 3/3"),
         "{screen}"
     );
     let repo_file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
     assert!(
-        repo_file.contains(
-            "[1] = { name = \"open\", filter = \"status:!done\", sort = \"priority:semantic\" }"
-        ),
+        repo_file.contains("[1] = { filter = \"status:!done\", sort = \"priority:semantic\" }"),
         "{repo_file}"
     );
     assert!(
@@ -540,7 +526,8 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
 
     let fresh = open_app(&h.root, &h.config_path);
     assert_eq!(fresh.filter_text, "status:!done");
-    assert_eq!(fresh.view_label(), "1 open");
+    assert_eq!(fresh.view_label(), "v1");
+    assert_eq!(fresh.views.get(0).unwrap().name(), "status:!done ≈pri");
 
     let other_repo = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(other_repo.path().join("backlog/tasks")).unwrap();
@@ -555,8 +542,8 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
         )
     };
     assert_eq!(
-        other_global(other_repo.path()).view_label(),
-        "1 all",
+        other_global(other_repo.path()).views.get(0).unwrap().name(),
+        "all",
         "other repos still open the global default"
     );
 
@@ -568,23 +555,29 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
         "{screen}"
     );
     let global_file = std::fs::read_to_string(h.root.join("views.lua")).unwrap();
-    assert!(global_file.contains("name = \"open\""), "{global_file}");
     assert!(
-        global_file.contains("name = \"todo\""),
+        global_file.contains("filter = \"status:!done\""),
+        "{global_file}"
+    );
+    assert!(
+        global_file.contains("filter = \"status:todo\""),
         "starter slots kept: {global_file}"
     );
     let repo_file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
-    assert!(!repo_file.contains("open"), "override dropped: {repo_file}");
-    assert_eq!(other_global(other_repo.path()).view_label(), "1 open");
+    assert!(!repo_file.contains("done"), "override dropped: {repo_file}");
+    assert_eq!(
+        other_global(other_repo.path()).views.get(0).unwrap().name(),
+        "status:!done ≈pri"
+    );
     assert_eq!(
         h.app.view_label(),
-        "1 open",
+        "v1",
         "still on the slot after promotion"
     );
 }
 
 #[test]
-fn vs_with_the_next_free_slot_appends_and_escape_abandons() {
+fn vs_with_the_next_free_slot_appends_without_asking_and_escape_abandons() {
     let mut h = Harness::new();
     h.press(KeyCode::Char('/'));
     h.type_text("label:ui");
@@ -592,16 +585,11 @@ fn vs_with_the_next_free_slot_appends_and_escape_abandons() {
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('s'));
     let screen = h.press(KeyCode::Char('5'));
-    assert!(
-        screen.contains("name: ui▏"),
-        "suggested from the filter: {screen}"
-    );
-    let screen = h.press(KeyCode::Enter);
-    assert!(screen.contains("5 ui · label:ui · 1/3"), "{screen}");
+    assert!(screen.contains("v5 · label:ui · 1/3"), "{screen}");
     h.press(KeyCode::Char('?'));
     let screen = h.render();
     assert!(
-        screen.contains("ui (label:ui) [repo]"),
+        screen.contains("label:ui [repo]"),
         "help marks repo slots: {screen}"
     );
     h.press(KeyCode::Char('?'));
@@ -614,13 +602,12 @@ fn vs_with_the_next_free_slot_appends_and_escape_abandons() {
     );
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('s'));
-    h.press(KeyCode::Char('2'));
     let screen = h.press(KeyCode::Esc);
-    assert!(screen.contains("view not saved"), "{screen}");
+    assert!(!screen.contains("saved"), "esc abandons: {screen}");
     h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('2'));
     assert!(
-        screen.contains("2 todo · status:todo"),
+        screen.contains("v2 · status:todo"),
         "slot 2 untouched: {screen}"
     );
 }

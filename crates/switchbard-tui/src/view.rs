@@ -186,17 +186,13 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
                 .into_iter()
                 .enumerate()
                 .map(|(index, (saved, scope))| {
-                    let sort = saved
-                        .sort
-                        .map(|sort| format!(" {}", sort.label()))
-                        .unwrap_or_default();
                     let scope = match scope {
                         Scope::Global => "",
                         Scope::Repo => " [repo]",
                     };
                     (
                         format!("v{}", index + 1),
-                        format!("{} ({}{sort}){scope}", saved.name, saved.filter),
+                        format!("{}{scope}", saved.name()),
                     )
                 }),
         )
@@ -257,11 +253,6 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 format!("   {}", app.command_completions().join("  ")),
                 Style::default().fg(theme.dim),
             ),
-        ]),
-        Mode::ViewName => Line::from(vec![
-            Span::styled("name: ", Style::default().fg(theme.accent)),
-            Span::raw(app.input.clone()),
-            Span::styled("▏", Style::default().fg(theme.accent)),
         ]),
         Mode::PickColumn
         | Mode::PickValue
