@@ -62,6 +62,7 @@ use state::TasksViewMode;
 pub fn render_tasks_place(app: &mut HiveApp, ui: &mut egui::Ui) {
     let ctx = &ui.ctx().clone();
     neutralize_legacy_filters(app);
+    let read_state = app.tasks_read_state_snapshot();
     let snap = backlog::Snapshot::collect(app);
     backlog::reconcile_selected_repo(app, &snap);
     backlog::search::handle_shortcut(app, ctx);
@@ -100,7 +101,7 @@ pub fn render_tasks_place(app: &mut HiveApp, ui: &mut egui::Ui) {
         .frame(workspace_frame)
         .show(ui, |ui| {
             if snap.repos.is_empty() {
-                render_empty(ui);
+                crate::ui::tasks_read_state::render_empty(app, ui, "Tasks", &read_state);
                 return;
             }
             // Reused wholesale: heading + count, "Refresh Backlog", "+
@@ -115,6 +116,7 @@ pub fn render_tasks_place(app: &mut HiveApp, ui: &mut egui::Ui) {
                 Some(filtered.len()),
                 "Tasks",
             );
+            crate::ui::tasks_read_state::render_retained_rows_notice(ui, &read_state);
             ui.add_space(6.0);
 
             // Same offer-above-the-controls placement the legacy toolbar
@@ -180,20 +182,6 @@ fn neutralize_legacy_filters(app: &mut HiveApp) {
     app.backlog_view.project_filter = "all".to_string();
     app.backlog_view.label_filter = "all".to_string();
     app.backlog_view.stale_only = false;
-}
-
-fn render_empty(ui: &mut egui::Ui) {
-    ui.vertical_centered(|ui| {
-        ui.add_space(80.0);
-        ui.heading("Tasks");
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new(
-                "No tracked worktrees have a backlog/config.yml or backlog/tasks directory.",
-            )
-            .color(theme::muted_text()),
-        );
-    });
 }
 
 /// Row 1: free-text search and base visibility.

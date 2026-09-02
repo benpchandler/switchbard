@@ -18,7 +18,7 @@ use switchbard_core::{
     WorktreeRef,
 };
 use switchbard_gui::app::HiveApp;
-use switchbard_gui::runtime::{BacklogTaskSortKey, Place, TasksView};
+use switchbard_gui::runtime::{BacklogTaskSortKey, Place, TasksReadState, TasksView};
 use switchbard_gui::ui::places::tasks::fields::TaskField;
 use switchbard_gui::ui::places::tasks::state::{FilterPredicate, TasksViewMode};
 
@@ -125,6 +125,51 @@ fn two_repo_tasks_app(mut config: Config) -> HiveApp {
 // ---------------------------------------------------------------------
 // Generic group-by, with computed roll-up counts
 // ---------------------------------------------------------------------
+
+#[test]
+fn cold_task_model_shows_loading_instead_of_a_false_empty_result() {
+    let mut app = seeded_app();
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::All;
+    let harness = harness(app);
+
+    assert!(harness
+        .query_by_label("Loading tasks from tracked repositories…")
+        .is_some());
+    assert!(harness
+        .query_by_label(
+            "No tracked worktrees have a backlog/config.yml or backlog/tasks directory."
+        )
+        .is_none());
+}
+
+#[test]
+fn stale_task_model_keeps_last_known_rows_visible() {
+    let app = tasks_app(vec![task("TASK-1", "Last-known task", "To Do")]);
+    *app.tasks_read_state.lock().unwrap() = TasksReadState::Stale { failed_repos: 1 };
+    let harness = harness(app);
+
+    assert!(harness.query_by_label("Last-known task").is_some());
+    assert!(harness.query_by_label("Task data stale").is_some());
+    assert!(harness
+        .query_by_label("1 task source could not be refreshed. Showing last-known rows.")
+        .is_some());
+}
+
+#[test]
+fn ready_task_model_can_report_a_real_empty_result() {
+    let mut app = seeded_app();
+    app.place = Place::Tasks;
+    app.tasks_view = TasksView::All;
+    *app.tasks_read_state.lock().unwrap() = TasksReadState::Ready;
+    let harness = harness(app);
+
+    assert!(harness
+        .query_by_label(
+            "No tracked worktrees have a backlog/config.yml or backlog/tasks directory."
+        )
+        .is_some());
+}
 
 #[test]
 fn group_by_status_shows_computed_header_roll_ups() {

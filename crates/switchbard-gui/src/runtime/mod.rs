@@ -376,6 +376,25 @@ mod filter_migration_tests {
 /// different repos, so selection/bulk-selection must key on the pair.
 pub type BacklogTaskKey = (PathBuf, String);
 
+/// Lifecycle of the shared task read model. This deliberately does not fold
+/// row cardinality into the state: `Ready` plus an empty `backlog_repos` cache
+/// is the only authoritative empty result, while `InitialLoading`,
+/// `Refreshing`, and `Stale` can all coexist with retained rows.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum TasksReadState {
+    /// No complete disk scan has published a result in this process yet.
+    #[default]
+    InitialLoading,
+    /// The last complete scan succeeded, including a legitimate zero-row
+    /// result.
+    Ready,
+    /// A user-requested refresh is running. Existing rows remain readable.
+    Refreshing,
+    /// At least one task source failed to load during the last scan. Any
+    /// previously cached rows for failed sources remain readable.
+    Stale { failed_repos: usize },
+}
+
 /// One in-flight board drag-drop, keyed by the moved task (task-42: "Board
 /// drag: optimistic move + drop feedback"). Lives on `BacklogViewState`
 /// rather than folded into `HiveApp::backlog_repos` — that cache is

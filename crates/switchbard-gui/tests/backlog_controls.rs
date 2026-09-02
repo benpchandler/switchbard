@@ -526,6 +526,10 @@ fn refresh_backlog_button_kicks_a_reload_and_sets_status() {
         harness.state().backlog_status.snapshot().as_deref(),
         Some("refreshing Backlog repos")
     );
+    assert_eq!(
+        harness.state().tasks_read_state_snapshot(),
+        switchbard_gui::runtime::TasksReadState::Refreshing
+    );
 }
 
 #[test]
