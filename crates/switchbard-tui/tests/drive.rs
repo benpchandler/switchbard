@@ -899,3 +899,45 @@ fn the_color_list_previews_each_color_and_a_typed_hex() {
     );
     assert_eq!(cell_fg(&h, "#ff8800"), Some(Color::Rgb(255, 136, 0)));
 }
+
+#[test]
+fn p_by_status_paints_each_value_and_auto_hands_out_distinct_colors() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('p'));
+    let screen = h.type_text("by s");
+    assert!(screen.contains("by status · pick a value"), "{screen}");
+    assert!(screen.contains("1  auto: one color per value"), "{screen}");
+    assert!(
+        screen.contains("2  To Do") && screen.contains("3  In Progress"),
+        "{screen}"
+    );
+    h.press(KeyCode::Char('2'));
+    let screen = h.type_text("gre");
+    assert!(
+        screen.contains("by status · pick a value"),
+        "back on the value list: {screen}"
+    );
+    assert_eq!(
+        cell_fg(&h, "To Do"),
+        Some(Color::Green),
+        "the list previews the rule"
+    );
+    let screen = h.press(KeyCode::Esc);
+    assert!(screen.contains("paint:1 ·"), "{screen}");
+    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Green));
+    assert_eq!(cell_fg(&h, "Fix login"), Some(Color::Reset));
+    assert_eq!(h.app.paint[0].to_text(), "rows:status:todo=green");
+
+    h.press(KeyCode::Char('p'));
+    h.type_text("by s");
+    h.press(KeyCode::Char('1'));
+    let screen = h.press(KeyCode::Esc);
+    assert!(screen.contains("paint:2 ·"), "one rule per value: {screen}");
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Yellow),
+        "auto reassigns To Do"
+    );
+    assert_eq!(cell_fg(&h, "Fix login"), Some(Color::Cyan));
+}

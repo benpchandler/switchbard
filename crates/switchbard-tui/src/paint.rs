@@ -70,6 +70,28 @@ pub const NAMED_COLORS: [&str; 16] = [
     "black",
 ];
 
+/// Distinct colors handed out by `auto`, most common value first.
+pub const AUTO_PALETTE: [&str; 8] = [
+    "yellow",
+    "cyan",
+    "green",
+    "magenta",
+    "blue",
+    "red",
+    "lightyellow",
+    "lightcyan",
+];
+
+/// The rule painting rows where `field:value`, if any.
+pub fn rule_for_value<'a>(
+    rules: &'a [PaintRule],
+    field: &str,
+    value: &str,
+) -> Option<&'a PaintRule> {
+    let target = PaintTarget::Rows(format!("{field}:{}", Filter::loose_key(value)));
+    rules.iter().rev().find(|rule| rule.target == target)
+}
+
 /// The color for one cell: the last matching rule wins, column rules after row rules.
 pub fn cell_color(rules: &[PaintRule], task: &BacklogTask, column: Column) -> Option<Color> {
     let mut color = None;

@@ -46,8 +46,10 @@ pub enum PickerPurpose {
     Columns,
     /// After `p`: what to paint.
     PaintTarget,
-    /// After a target: which color.
+    /// After a target: which color. `back_to` reopens a by-field list afterwards.
     PaintColor(PaintTarget),
+    /// `by status` etc.: one color per value of a field.
+    PaintByField(FilterField),
 }
 
 /// The `f`/`s <column>` picker: its options, the typed narrowing text, and the cursor.
@@ -105,6 +107,8 @@ pub struct App {
     /// Shown columns in display order; header numbers are positions in this list.
     pub columns: Vec<Column>,
     pub paint: Vec<PaintRule>,
+    /// Which by-field list to return to after a color is picked.
+    paint_return: Option<FilterField>,
     pub views: ViewStore,
     /// Zero-based slot the current filter/sort came from.
     pub view: usize,
@@ -142,6 +146,7 @@ impl App {
             selected: 0,
             columns: Column::DEFAULT_SHOWN.to_vec(),
             paint: Vec::new(),
+            paint_return: None,
             views,
             view: 0,
             filter_text: String::new(),
@@ -427,9 +432,20 @@ impl App {
         if !self.filter_text.trim().is_empty() {
             options.push((format!("rows {}", self.filter_text.trim()), 0));
         }
+        for field in [
+            FilterField::Status,
+            FilterField::Priority,
+            FilterField::Label,
+            FilterField::Project,
+        ] {
+            if !tasks::field_values(&self.tasks, field).is_empty() {
+                options.push((format!("by {}", field.keyword()), 0));
+            }
+        }
         for column in &self.columns {
             options.push((format!("column {}", column.name()), 0));
         }
+        self.paint_return = None;
         self.picker = Some(ValuePicker {
             purpose: PickerPurpose::PaintTarget,
             options,
@@ -457,9 +473,36 @@ impl App {
         self.mode = Mode::PickValue;
     }
 
+    fn open_paint_by_field_picker(&mut self, field: FilterField) {
+        let mut options = vec![("auto: one color per value".to_string(), 0)];
+        options.extend(tasks::field_values(&self.tasks, field));
+        self.paint_return = Some(field);
+        self.picker = Some(ValuePicker {
+            purpose: PickerPurpose::PaintByField(field),
+            options,
+            typed: String::new(),
+            number: String::new(),
+            selected: 0,
+        });
+        self.mode = Mode::PickValue;
+    }
+
+    fn paint_auto(&mut self, field: FilterField) {
+        for (index, (value, _)) in tasks::field_values(&self.tasks, field).iter().enumerate() {
+            let target =
+                PaintTarget::Rows(format!("{}:{}", field.keyword(), Filter::loose_key(value)));
+            let color = paint::AUTO_PALETTE[index % paint::AUTO_PALETTE.len()];
+            self.paint = paint::with_rule(&self.paint, target, color);
+        }
+        self.status = format!("painted every {} value", field.keyword());
+        self.telemetry
+            .record("action", format!("paint_auto {}", field.keyword()));
+    }
+
     fn paint_target_from(&self, option: &str) -> Option<PaintTarget> {
         let (kind, rest) = option.split_once(' ')?;
         match kind {
+            "by" => None,
             "row" => Some(PaintTarget::Rows(format!("id:{rest}"))),
             "rows" => Some(PaintTarget::Rows(rest.to_string())),
             "column" => Column::parse(rest).map(PaintTarget::Column),
@@ -588,6 +631,7 @@ impl App {
             KeyCode::Esc => {
                 self.picker = None;
                 self.mode = Mode::Browse;
+                self.paint_return = None;
             }
             KeyCode::Down => picker.selected = (picker.selected + 1).min(last),
             KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
@@ -627,6 +671,9 @@ impl App {
                 self.picker = None;
                 self.mode = Mode::Browse;
                 self.apply_paint(target, "none");
+                if let Some(field) = self.paint_return {
+                    self.open_paint_by_field_picker(field);
+                }
             }
             KeyCode::Enter => self.apply_picked_value(),
             KeyCode::Char(' ') => self.toggle_picked_value(),
@@ -689,7 +736,8 @@ impl App {
             PickerPurpose::Sort(_)
             | PickerPurpose::ChooseColumn(_)
             | PickerPurpose::PaintTarget
-            | PickerPurpose::PaintColor(_) => {}
+            | PickerPurpose::PaintColor(_)
+            | PickerPurpose::PaintByField(_) => {}
         }
     }
 
@@ -761,11 +809,41 @@ impl App {
                 }
             }
             PickerPurpose::PaintTarget => {
-                if let Some(target) = self.paint_target_from(&value) {
+                if let Some(keyword) = value.strip_prefix("by ") {
+                    if let Some(field) = [
+                        FilterField::Status,
+                        FilterField::Priority,
+                        FilterField::Label,
+                        FilterField::Project,
+                    ]
+                    .into_iter()
+                    .find(|field| field.keyword() == keyword)
+                    {
+                        self.open_paint_by_field_picker(field);
+                    }
+                } else if let Some(target) = self.paint_target_from(&value) {
                     self.open_paint_color_picker(target);
                 }
             }
-            PickerPurpose::PaintColor(target) => self.apply_paint(target, &value),
+            PickerPurpose::PaintByField(field) => {
+                if value.starts_with("auto") {
+                    self.paint_auto(field);
+                    self.open_paint_by_field_picker(field);
+                } else {
+                    let target = PaintTarget::Rows(format!(
+                        "{}:{}",
+                        field.keyword(),
+                        Filter::loose_key(&value)
+                    ));
+                    self.open_paint_color_picker(target);
+                }
+            }
+            PickerPurpose::PaintColor(target) => {
+                self.apply_paint(target, &value);
+                if let Some(field) = self.paint_return {
+                    self.open_paint_by_field_picker(field);
+                }
+            }
         }
     }
 
