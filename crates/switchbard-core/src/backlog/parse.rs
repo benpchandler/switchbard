@@ -331,6 +331,13 @@ pub(super) struct FenceScan {
     balanced: bool,
 }
 
+pub(super) struct SectionMarkerScan {
+    /// Per line: is it inside (or itself) a completely balanced marker pair?
+    pub(super) inside: Vec<bool>,
+    /// Did every BEGIN marker close with the same marker name in stack order?
+    balanced: bool,
+}
+
 /// Locate every properly closed code fence in `body`.
 ///
 /// An opener with no closer is deliberately *not* treated as a fence, so
@@ -373,6 +380,50 @@ pub(super) fn scan_fences(body: &str) -> FenceScan {
     }
 }
 
+/// Locate balanced Backlog section-marker pairs outside code fences.
+///
+/// As with [`scan_fences`], an incomplete or mismatched pair is not treated as
+/// containment. The write safety gate rejects that malformed body, while
+/// read-only and single-line operations still see later real headings instead
+/// of letting an unmatched marker swallow the rest of the task.
+pub(super) fn scan_section_markers(body: &str) -> SectionMarkerScan {
+    let fenced = scan_fences(body).inside;
+    let lines: Vec<&str> = body.split('\n').collect();
+    let mut inside = vec![false; lines.len()];
+    let mut open: Vec<(&str, usize)> = Vec::new();
+    let mut balanced = true;
+
+    for (i, line) in lines.iter().enumerate() {
+        if fenced.get(i).copied().unwrap_or(false) {
+            continue;
+        }
+        let Some((name, terminator)) = section_marker_parts(line.trim()) else {
+            continue;
+        };
+        match terminator {
+            "BEGIN" => open.push((name, i)),
+            "END" => match open.pop() {
+                Some((opened_name, start)) if opened_name == name => {
+                    if open.is_empty() {
+                        for flag in inside.iter_mut().take(i + 1).skip(start) {
+                            *flag = true;
+                        }
+                    }
+                }
+                Some(_) | None => {
+                    balanced = false;
+                    open.clear();
+                }
+            },
+            _ => unreachable!("section_marker_parts validates terminators"),
+        }
+    }
+    if !open.is_empty() {
+        balanced = false;
+    }
+    SectionMarkerScan { inside, balanced }
+}
+
 /// The fence character and run length a line opens with, if it is a fence
 /// delimiter at all (3+ backticks or tildes).
 fn fence_run(line: &str) -> Option<(char, usize)> {
@@ -396,7 +447,7 @@ fn closes_fence(line: &str, marker: char, run: usize) -> bool {
 }
 
 /// The `## ` headings the Backlog format defines: exactly the six sections
-/// `parse_task_file` extracts. Used by [`body_round_trips`] rule 3 (a
+/// `parse_task_file` extracts. Used by [`body_round_trips`] rule 4 (a
 /// *known* heading swallowed by a fence means the structure was misread)
 /// and by the write layer's canonical section ordering. Deliberately *not*
 /// an allowlist: a heading outside this set is an opaque human section the
@@ -430,7 +481,7 @@ pub(super) fn heading_title(line: &str) -> Option<&str> {
 /// shape rather than an enumerated list keeps a future
 /// `SECTION:WHATEVER:BEGIN` working; matching *only* this shape keeps an
 /// author's ordinary HTML comment out of the discard pile.
-pub(super) fn section_marker_terminator(trimmed: &str) -> Option<&str> {
+fn section_marker_parts(trimmed: &str) -> Option<(&str, &str)> {
     let inner = trimmed
         .strip_prefix("<!--")
         .and_then(|rest| rest.strip_suffix("-->"))?;
@@ -439,15 +490,15 @@ pub(super) fn section_marker_terminator(trimmed: &str) -> Option<&str> {
     if !matches!(terminator, "BEGIN" | "END") {
         return None;
     }
-    (!name.is_empty()
+    let valid_name = !name.is_empty()
         && name
             .chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == ':' || c == '_'))
-    .then_some(terminator)
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == ':' || c == '_');
+    valid_name.then_some((name, terminator))
 }
 
 fn is_section_marker_comment(trimmed: &str) -> bool {
-    section_marker_terminator(trimmed).is_some()
+    section_marker_parts(trimmed).is_some()
 }
 
 /// Is this body's structure one a section-replacing write can safely be based
@@ -460,7 +511,7 @@ fn is_section_marker_comment(trimmed: &str) -> bool {
 /// callers about to overwrite a whole section ask this first and skip the
 /// write when it is `false`.
 ///
-/// ## Four rules, and why conservation alone was not enough
+/// ## Five rules, and why conservation alone was not enough
 ///
 /// The first version of this function checked conservation only: every
 /// non-blank line must reappear, in order, across the extracted sections.
@@ -476,7 +527,10 @@ fn is_section_marker_comment(trimmed: &str) -> bool {
 /// 1. **Fences must balance.** An unmatched opener is exactly the state that
 ///    makes a truncated read look self-consistent (R1), and the state a
 ///    mismatched closer length produces (R2).
-/// 2. **No unfenced `## ` heading may repeat** (case-insensitive, known or
+/// 2. **Section markers must balance by name and nesting order.** A malformed
+///    marker pair cannot safely establish which headings are prose and which
+///    are real task-section boundaries.
+/// 3. **No unfenced `## ` heading may repeat** (case-insensitive, known or
 ///    unknown). `extract_section` returns only a heading's *first* span, so a
 ///    repeat is exactly the state where "the section" is ambiguous — a file
 ///    already carrying one fails closed rather than trapping the caller in a
@@ -489,10 +543,10 @@ fn is_section_marker_comment(trimmed: &str) -> bool {
 ///    real tasks; prose misread as a heading now costs at worst a *split*
 ///    (the text survives byte-for-byte under its own opaque heading), never
 ///    a deletion.
-/// 3. **No known section heading may sit inside a fence.** That means fence
+/// 4. **No known section heading may sit inside a fence.** That means fence
 ///    pairing swallowed a real section boundary, which is how a plan heading
 ///    ends up embedded in a description (R3).
-/// 4. **Conservation**, as before: every non-blank line reappears exactly
+/// 5. **Conservation**, as before: every non-blank line reappears exactly
 ///    once, in order, across the extracted sections — ignoring headings and
 ///    the CLI's own markers, which the writer regenerates. Lines are compared
 ///    trimmed; interior indentation is provably preserved by
@@ -500,8 +554,8 @@ fn is_section_marker_comment(trimmed: &str) -> bool {
 ///    absorbs whitespace its final `.trim()` touches and cannot mask a
 ///    dropped or reordered line.
 ///
-/// This bounds a class; it is not a proof of losslessness. Rules 1–3 make the
-/// structure recognizable before rule 4 compares content, which is what stops
+/// This bounds a class; it is not a proof of losslessness. Rules 1–4 make the
+/// structure recognizable before rule 5 compares content, which is what stops
 /// the reader from being its own witness — but a future reader bug that
 /// preserves balanced fences, unique headings, and line conservation would
 /// still slip through. It is a strong check, not a theorem.
@@ -509,6 +563,10 @@ pub fn body_round_trips(body: &str) -> bool {
     let scan = scan_fences(body);
     // Rule 1.
     if !scan.balanced {
+        return false;
+    }
+    // Rule 2.
+    if !scan_section_markers(body).balanced {
         return false;
     }
 
@@ -520,10 +578,10 @@ pub fn body_round_trips(body: &str) -> bool {
             continue;
         }
         match heading_title(line) {
-            // Rule 3.
+            // Rule 4.
             Some(title) if scan.inside[i] && is_known_section_heading(title) => return false,
             Some(_) if scan.inside[i] => {}
-            // Rule 2.
+            // Rule 3.
             Some(title) => {
                 if headings.iter().any(|seen| seen.eq_ignore_ascii_case(title)) {
                     return false;
@@ -869,6 +927,17 @@ mod tests {
                     Body.\n";
 
         assert!(!body_round_trips(body));
+    }
+
+    #[test]
+    fn body_round_trips_rejects_unmatched_and_mismatched_section_markers() {
+        let unmatched = "## Description\n\n<!-- SECTION:DESCRIPTION:BEGIN -->\nBody.\n";
+        let mismatched = "## Description\n\n<!-- SECTION:DESCRIPTION:BEGIN -->\nBody.\n<!-- SECTION:NOTES:END -->\n";
+        let orphan_end = "## Description\n\nBody.\n<!-- SECTION:DESCRIPTION:END -->\n";
+
+        assert!(!body_round_trips(unmatched));
+        assert!(!body_round_trips(mismatched));
+        assert!(!body_round_trips(orphan_end));
     }
 
     // ---- audit round 2: the guard must not be its own witness ----
