@@ -459,8 +459,8 @@ impl App {
             options.push((format!("delete all paint ({} rules)", self.paint.len()), 0));
         }
         for column in Column::ALL {
-            if !self.columns.contains(&column) && self.is_categorical(column) {
-                options.push((column.name().to_string(), 0));
+            if !self.columns.contains(&column) && column.filter_field().is_some() {
+                options.push((format!("{}{}", column.name(), Column::HIDDEN_TAG), 0));
             }
         }
         self.paint_return = None;
@@ -655,12 +655,13 @@ impl App {
     fn column_picker_options(&self) -> Vec<(String, usize)> {
         self.columns
             .iter()
+            .map(|column| (column.name().to_string(), 0))
             .chain(
                 Column::ALL
                     .iter()
-                    .filter(|column| !self.columns.contains(column)),
+                    .filter(|column| !self.columns.contains(column))
+                    .map(|column| (format!("{}{}", column.name(), Column::HIDDEN_TAG), 0)),
             )
-            .map(|column| (column.name().to_string(), 0))
             .collect()
     }
 
@@ -838,17 +839,9 @@ impl App {
                     if let Some(column) = Column::parse(&name) {
                         self.move_column(column, delta);
                     }
+                    let options = self.column_picker_options();
                     if let Some(picker) = self.picker.as_mut() {
-                        picker.options = self
-                            .columns
-                            .iter()
-                            .chain(
-                                Column::ALL
-                                    .iter()
-                                    .filter(|column| !self.columns.contains(column)),
-                            )
-                            .map(|column| (column.name().to_string(), 0))
-                            .collect();
+                        picker.options = options;
                         picker.selected =
                             moved_to.clamp(0, picker.options.len() as isize - 1) as usize;
                     }

@@ -432,8 +432,9 @@ fn f_opens_the_column_list_with_shown_columns_numbered_as_in_the_header() {
         "2 ✓status",
         "3 ✓priority",
         "4 ✓title",
-        "5  labels",
-        "6  project",
+        "5  labels · hidden",
+        "6  project · hidden",
+        "7  ball · hidden",
     ] {
         assert!(screen.contains(entry), "{entry} missing: {screen}");
     }
@@ -651,7 +652,7 @@ fn c_toggles_columns_by_position_and_numbers_follow_what_is_shown() {
     let screen = h.render();
     assert!(screen.contains("1 ✓id"), "{screen}");
     assert!(
-        screen.contains("5  labels"),
+        screen.contains("5  labels · hidden"),
         "hidden columns listed after shown: {screen}"
     );
     let screen = h.press(KeyCode::Char('5'));
@@ -680,7 +681,7 @@ fn hidden_columns_are_listed_after_shown_ones_and_stay_filterable_and_sortable()
     assert!(!header_line(&h.render()).contains("pri"));
     let screen = h.press(KeyCode::Char('f'));
     assert!(
-        screen.contains("3 ✓title") && screen.contains("4  priority"),
+        screen.contains("3 ✓title") && screen.contains("4  priority · hidden"),
         "hidden priority listed after the shown columns: {screen}"
     );
     let screen = h.press(KeyCode::Char('4'));
@@ -693,7 +694,7 @@ fn hidden_columns_are_listed_after_shown_ones_and_stay_filterable_and_sortable()
     h.press(KeyCode::Char('s'));
     let screen = h.type_text("p");
     assert!(
-        screen.contains("1  priority") && screen.contains("2  project"),
+        screen.contains("1  priority · hidden") && screen.contains("2  project · hidden"),
         "an ambiguous name narrows to both: {screen}"
     );
     h.type_text("ri");
@@ -757,7 +758,7 @@ fn p_lists_columns_first_then_row_filtered_column_and_hidden_fields() {
     assert!(screen.contains(&format!("5  row {selected}")), "{screen}");
     assert!(screen.contains("6  column (whole)"), "{screen}");
     assert!(
-        screen.contains("7  labels"),
+        screen.contains("7  labels · hidden"),
         "hidden categorical field by name: {screen}"
     );
     let title = screen.lines().nth(2).unwrap_or_default().to_string();
