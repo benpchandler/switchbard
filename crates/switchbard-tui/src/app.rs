@@ -48,8 +48,10 @@ pub enum PickerPurpose {
     PaintTarget,
     /// After a target: which color. `back_to` reopens a by-field list afterwards.
     PaintColor(PaintTarget),
-    /// `by status` etc.: one color per value of a field.
+    /// A column's values, one color each.
     PaintByField(FilterField),
+    /// After `p c`: which column to paint whole.
+    PaintColumn,
 }
 
 /// The `f`/`s <column>` picker: its options, the typed narrowing text, and the cursor.
@@ -424,26 +426,29 @@ impl App {
         }
     }
 
+    /// Mirrors the header: shown columns first (so `p2` is column 2), then
+    /// row / filtered rows / column, then hidden categorical fields by name.
     fn open_paint_target_picker(&mut self) {
-        let mut options: Vec<(String, usize)> = Vec::new();
+        let mut options: Vec<(String, usize)> = self
+            .columns
+            .iter()
+            .map(|column| (column.name().to_string(), 0))
+            .collect();
         if let Some(task) = self.selected_task() {
             options.push((format!("row {}", task.id), 0));
         }
         if !self.filter_text.trim().is_empty() {
-            options.push((format!("rows {}", self.filter_text.trim()), 0));
+            options.push((format!("filtered rows {}", self.filter_text.trim()), 0));
         }
-        for field in [
-            FilterField::Status,
-            FilterField::Priority,
-            FilterField::Label,
-            FilterField::Project,
-        ] {
-            if !tasks::field_values(&self.tasks, field).is_empty() {
-                options.push((format!("by {}", field.keyword()), 0));
+        options.push(("column (whole)".to_string(), 0));
+        for column in Column::ALL {
+            let hidden = !self.columns.contains(&column);
+            let categorical = column
+                .filter_field()
+                .is_some_and(|field| !tasks::field_values(&self.tasks, field).is_empty());
+            if hidden && categorical {
+                options.push((column.name().to_string(), 0));
             }
-        }
-        for column in &self.columns {
-            options.push((format!("column {}", column.name()), 0));
         }
         self.paint_return = None;
         self.picker = Some(ValuePicker {
@@ -455,6 +460,27 @@ impl App {
         });
         self.mode = Mode::PickValue;
         self.telemetry.record("action", "paint");
+    }
+
+    fn open_paint_column_picker(&mut self) {
+        self.picker = Some(ValuePicker {
+            purpose: PickerPurpose::PaintColumn,
+            options: self.column_picker_options(),
+            typed: String::new(),
+            number: String::new(),
+            selected: 0,
+        });
+        self.mode = Mode::PickValue;
+    }
+
+    /// A column entry paints by its values when it has categories, else the whole column.
+    fn paint_column_entry(&mut self, column: Column) {
+        match column.filter_field() {
+            Some(field) if !tasks::field_values(&self.tasks, field).is_empty() => {
+                self.open_paint_by_field_picker(field)
+            }
+            _ => self.open_paint_color_picker(PaintTarget::Column(column)),
+        }
     }
 
     fn open_paint_color_picker(&mut self, target: PaintTarget) {
@@ -502,10 +528,10 @@ impl App {
     fn paint_target_from(&self, option: &str) -> Option<PaintTarget> {
         let (kind, rest) = option.split_once(' ')?;
         match kind {
-            "by" => None,
             "row" => Some(PaintTarget::Rows(format!("id:{rest}"))),
-            "rows" => Some(PaintTarget::Rows(rest.to_string())),
-            "column" => Column::parse(rest).map(PaintTarget::Column),
+            "filtered" => Some(PaintTarget::Rows(
+                rest.strip_prefix("rows ").unwrap_or(rest).to_string(),
+            )),
             _ => None,
         }
     }
@@ -737,7 +763,8 @@ impl App {
             | PickerPurpose::ChooseColumn(_)
             | PickerPurpose::PaintTarget
             | PickerPurpose::PaintColor(_)
-            | PickerPurpose::PaintByField(_) => {}
+            | PickerPurpose::PaintByField(_)
+            | PickerPurpose::PaintColumn => {}
         }
     }
 
@@ -809,20 +836,17 @@ impl App {
                 }
             }
             PickerPurpose::PaintTarget => {
-                if let Some(keyword) = value.strip_prefix("by ") {
-                    if let Some(field) = [
-                        FilterField::Status,
-                        FilterField::Priority,
-                        FilterField::Label,
-                        FilterField::Project,
-                    ]
-                    .into_iter()
-                    .find(|field| field.keyword() == keyword)
-                    {
-                        self.open_paint_by_field_picker(field);
-                    }
+                if value == "column (whole)" {
+                    self.open_paint_column_picker();
+                } else if let Some(column) = Column::parse(&value) {
+                    self.paint_column_entry(column);
                 } else if let Some(target) = self.paint_target_from(&value) {
                     self.open_paint_color_picker(target);
+                }
+            }
+            PickerPurpose::PaintColumn => {
+                if let Some(column) = Column::parse(&value) {
+                    self.open_paint_color_picker(PaintTarget::Column(column));
                 }
             }
             PickerPurpose::PaintByField(field) => {
