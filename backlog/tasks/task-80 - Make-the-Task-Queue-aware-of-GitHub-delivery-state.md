@@ -4,6 +4,7 @@ title: Make the Task Queue aware of GitHub delivery state
 status: To Do
 assignee: []
 created_date: '2026-08-31 21:44'
+updated_date: '2026-09-01 21:42'
 labels:
   - github
   - task-queue
@@ -43,3 +44,9 @@ The Lucella Domain Migration GitHub project should appear in Switchbard with its
 - [ ] #6 Existing repo-local task records remain readable and writable through Switchbard with no storage migration.
 - [ ] #7 Core tests, UI state-and-stress coverage, and a rendered review prove empty, loading, partial, stale, error, mixed-source, and high-volume Task Queue states.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Memory-hygiene lineage note (verified 2026-09-01): feature/task-queue-contract is a noncanonical legacy implementation currently at ee6e7e3, 3 commits ahead of and 139 commits behind origin/main. Its current history contains ee4a592b as an ancestor; d58430d is a still-resolvable earlier rewritten `docs: record Task Queue verification evidence` commit that is not an ancestor of the current branch. Do not resume, merge, or cherry-pick that branch as product authority. Reconcile or retire it through this tracked Task Queue project against the completed TASK-80.2 canonical contract at docs/decisions/task-queue-authority-model/, current main, TASK-80.3 and TASK-80.4, these acceptance criteria, and current tests.
+<!-- SECTION:NOTES:END -->

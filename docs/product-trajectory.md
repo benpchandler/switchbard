@@ -496,13 +496,14 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
     structure isn't one a section-replace can be based on, the description and plan
     are skipped (the criteria append still runs — `--ac` adds to a list rather than
     replacing a section) and the status line says why.
-    - *What the guard is and isn't.* It requires balanced fences, no `## ` heading
-      to repeat, and no known section heading inside a fence, before it compares
-      content line by line. Those structural rules exist because the first version
-      checked conservation alone and was **circular** — it derived "which lines are
-      headings" with the same predicate the reader used, so a lossy read that
-      surfaced as a spurious heading was self-consistent and passed. It now bounds
-      that class; it is a strong check, not a proof of losslessness.
+    - *What the guard is and isn't.* It requires balanced fences and named,
+      properly nested section markers, no `## ` heading to repeat, and no known
+      section heading inside a fence, before it compares content line by line.
+      Those structural rules exist because the first version checked conservation
+      alone and was **circular** — it derived "which lines are headings" with the
+      same predicate the reader used, so a lossy read that surfaced as a spurious
+      heading was self-consistent and passed. It now bounds that class; it is a
+      strong check, not a proof of losslessness.
     - *Custom sections are preserved, not refused (TASK-45, decided 2026-08-31).*
       Across 345 real task files in three repos, 51 carry a human-written section
       the format has no field for (`## Resolution`, `## Root Cause Hypothesis`,
@@ -515,8 +516,8 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
       have frozen saves on ~15% of real tasks to defend against nothing; the
       residual cost of the preserve stance is that prose misread as a heading
       splits into its own opaque section instead of refusing — a survivable
-      outcome, where the alternatives were refusal or deletion. Only duplicated
-      headings and unbalanced fences still refuse.
+      outcome, where the alternatives were refusal or deletion. Duplicated headings,
+      unbalanced fences, and unmatched or mismatched section markers still refuse.
     - *The old residual is closed.* The detail rail's Save has written through the
       same guarded write layer since the TASK-65 swap, so Refine and Save now share
       one preservation contract; the 51-file class blocks neither.

@@ -32,7 +32,7 @@
 //! fork sequence, so this layer lands with its gate and no callers to break.
 
 use super::parse::{
-    heading_title, parse_checklist_index, scan_fences, task_file_round_trips,
+    heading_title, parse_checklist_index, scan_fences, scan_section_markers, task_file_round_trips,
     KNOWN_SECTION_HEADINGS,
 };
 use super::types::NewBacklogTask;
@@ -342,7 +342,8 @@ pub fn set_task_checklist_item(
     apply_edit(path, move |_, rest| {
         let mut lines = split_lines(rest);
         let inside = fence_flags(rest);
-        let span = section_span(&lines, &inside, list.heading())
+        let marked = marker_flags(rest);
+        let span = section_span(&lines, &inside, &marked, list.heading())
             .with_context(|| format!("task has no {} section", list.heading()))?;
         if set_checked_in_span(&mut lines, span, index, checked)? {
             *rest = lines.join("\n");
@@ -491,7 +492,7 @@ fn ensure_body_rewrite_safe(path: &Path) -> Result<()> {
     }
     bail!(
         "refusing to rewrite {}: the task body does not round-trip losslessly \
-         (unbalanced code fences, a duplicated section heading, or content \
+         (unbalanced code fences or section markers, a duplicated section heading, or content \
          before the first heading) — fix the file by hand first",
         path.display()
     )
@@ -642,23 +643,37 @@ fn fence_flags(rest: &str) -> Vec<bool> {
     scan_fences(rest).inside
 }
 
-fn top_heading<'l>(lines: &'l [String], inside: &[bool], i: usize) -> Option<&'l str> {
-    if inside.get(i).copied().unwrap_or(false) {
+fn marker_flags(rest: &str) -> Vec<bool> {
+    scan_section_markers(rest).inside
+}
+
+fn top_level_heading<'l>(
+    lines: &'l [String],
+    inside: &[bool],
+    marked: &[bool],
+    i: usize,
+) -> Option<&'l str> {
+    if inside.get(i).copied().unwrap_or(false) || marked.get(i).copied().unwrap_or(false) {
         return None;
     }
     heading_title(&lines[i])
 }
 
 /// `[start, end)` of one section: its heading line through the last content
-/// line before the next unfenced heading (or EOF), *excluding* trailing blank
+/// line before the next top-level heading (or EOF), *excluding* trailing blank
 /// lines — those separate sections and belong to no one, so edits never
 /// disturb them.
-fn section_span(lines: &[String], inside: &[bool], heading: &str) -> Option<(usize, usize)> {
+fn section_span(
+    lines: &[String],
+    inside: &[bool],
+    marked: &[bool],
+    heading: &str,
+) -> Option<(usize, usize)> {
     let start = (0..lines.len()).find(|&i| {
-        top_heading(lines, inside, i).is_some_and(|t| t.eq_ignore_ascii_case(heading))
+        top_level_heading(lines, inside, marked, i).is_some_and(|t| t.eq_ignore_ascii_case(heading))
     })?;
     let mut end = start + 1;
-    while end < lines.len() && top_heading(lines, inside, end).is_none() {
+    while end < lines.len() && top_level_heading(lines, inside, marked, end).is_none() {
         end += 1;
     }
     while end > start + 1 && lines[end - 1].trim().is_empty() {
@@ -710,10 +725,10 @@ fn canonical_rank(heading: &str) -> usize {
 /// Where a not-yet-present section belongs: before the first existing
 /// section that follows it in canonical order, else at the body's logical
 /// end (past which only blank lines / the trailing newline sit).
-fn insert_pos(lines: &[String], inside: &[bool], heading: &str) -> usize {
+fn insert_pos(lines: &[String], inside: &[bool], marked: &[bool], heading: &str) -> usize {
     let rank = canonical_rank(heading);
     for i in 0..lines.len() {
-        if let Some(title) = top_heading(lines, inside, i) {
+        if let Some(title) = top_level_heading(lines, inside, marked, i) {
             if canonical_rank(title) > rank {
                 return i;
             }
@@ -746,10 +761,11 @@ fn insert_block_at(lines: &mut Vec<String>, pos: usize, block: Vec<String>) {
 fn upsert_section(rest: &mut String, heading: &str, block: Vec<String>) {
     let mut lines = split_lines(rest);
     let inside = fence_flags(rest);
-    if let Some((start, end)) = section_span(&lines, &inside, heading) {
+    let marked = marker_flags(rest);
+    if let Some((start, end)) = section_span(&lines, &inside, &marked, heading) {
         lines.splice(start..end, block);
     } else {
-        let pos = insert_pos(&lines, &inside, heading);
+        let pos = insert_pos(&lines, &inside, &marked, heading);
         insert_block_at(&mut lines, pos, block);
     }
     *rest = lines.join("\n");
@@ -760,7 +776,8 @@ fn upsert_section(rest: &mut String, heading: &str, block: Vec<String>) {
 fn append_to_marked_section(rest: &mut String, section: TaskSection, content: &str) {
     let mut lines = split_lines(rest);
     let inside = fence_flags(rest);
-    let Some((start, end)) = section_span(&lines, &inside, section.heading()) else {
+    let marked = marker_flags(rest);
+    let Some((start, end)) = section_span(&lines, &inside, &marked, section.heading()) else {
         let block = marked_section_block(section.heading(), section.marker(), content);
         upsert_section(rest, section.heading(), block);
         return;
@@ -850,10 +867,11 @@ fn flip_checklist_mark(line: &str, checked: bool) -> Result<String> {
 fn append_criteria(rest: &mut String, items: &[String]) {
     let mut lines = split_lines(rest);
     let inside = fence_flags(rest);
+    let marked = marker_flags(rest);
     let list = TaskChecklist::AcceptanceCriteria;
-    let Some(span) = section_span(&lines, &inside, list.heading()) else {
+    let Some(span) = section_span(&lines, &inside, &marked, list.heading()) else {
         let block = checklist_block(list.heading(), list.marker(), items, 1);
-        let pos = insert_pos(&lines, &inside, list.heading());
+        let pos = insert_pos(&lines, &inside, &marked, list.heading());
         insert_block_at(&mut lines, pos, block);
         *rest = lines.join("\n");
         return;
@@ -1509,6 +1527,69 @@ mod tests {
             task.description, "Do the thing.",
             "other sections untouched"
         );
+    }
+
+    #[test]
+    fn append_notes_stays_outside_a_marked_description_with_h2_prose() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("task-80 - Marked description.md");
+        let description = "<!-- SECTION:DESCRIPTION:BEGIN -->\n## Outcome\n\nKeep this prose inside the description.\n<!-- SECTION:DESCRIPTION:END -->";
+        fs::write(
+            &path,
+            FIXTURE.replace(
+                "<!-- SECTION:DESCRIPTION:BEGIN -->\nDo the thing.\n<!-- SECTION:DESCRIPTION:END -->",
+                description,
+            ),
+        )
+        .expect("fixture writes");
+
+        assert_eq!(
+            append_task_notes(&path, "Lineage note.").expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+
+        let after = read(&path);
+        let description_end = after
+            .find("<!-- SECTION:DESCRIPTION:END -->")
+            .expect("description end marker survives");
+        let notes = after
+            .find("## Implementation Notes")
+            .expect("notes section is created");
+        assert!(
+            description_end < notes,
+            "notes must not be inserted inside the marked description: {after}"
+        );
+        assert!(
+            after.contains(description),
+            "the marked description must remain byte-identical: {after}"
+        );
+    }
+
+    #[test]
+    fn append_notes_lands_at_the_end_of_a_marked_section_with_h2_prose() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("task-80 - Existing notes.md");
+        let existing = "## Implementation Notes\n\n<!-- SECTION:NOTES:BEGIN -->\nExisting note.\n\n## Investigation\n\nKeep this detail before later notes.\n<!-- SECTION:NOTES:END -->\n";
+        fs::write(&path, format!("{FIXTURE}\n{existing}")).expect("fixture writes");
+
+        assert_eq!(
+            append_task_notes(&path, "Later note.").expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+
+        let after = read(&path);
+        let detail = after
+            .find("Keep this detail before later notes.")
+            .expect("existing detail survives");
+        let note = after.find("Later note.").expect("new note is appended");
+        let end = after
+            .find("<!-- SECTION:NOTES:END -->")
+            .expect("notes end marker survives");
+        assert!(
+            detail < note && note < end,
+            "the note must land immediately before the section end: {after}"
+        );
+        assert_eq!(&after[note..end], "Later note.\n");
     }
 
     #[test]

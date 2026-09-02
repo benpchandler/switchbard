@@ -113,6 +113,57 @@ fn create_prints_only_the_id_and_the_lifecycle_round_trips() {
 }
 
 #[test]
+fn description_edit_fails_closed_on_unmatched_or_mismatched_section_markers() {
+    for (case, injected) in [
+        ("unmatched", "<!-- FOO:BEGIN -->"),
+        ("mismatched", "<!-- FOO:BEGIN -->\n<!-- BAR:END -->"),
+    ] {
+        let dir = fixture_project();
+        let root = dir.path();
+        assert_eq!(
+            ok_stdout(
+                root,
+                &[
+                    "create",
+                    "Marker mismatch regression",
+                    "-d",
+                    "Original description.",
+                    "--ac",
+                    "Later criterion must survive.",
+                ],
+            ),
+            "TASK-1\n"
+        );
+        let path = root.join("backlog/tasks/task-1 - Marker-mismatch-regression.md");
+        let valid = std::fs::read_to_string(&path).expect("task reads");
+        let malformed = valid.replace(
+            "Original description.",
+            &format!("Original description.\n{injected}"),
+        );
+        std::fs::write(&path, &malformed).expect("malformed fixture writes");
+
+        let out = bin(root, &["edit", "TASK-1", "-d", "Replacement description."]);
+
+        assert_eq!(out.status.code(), Some(1), "{case}: edit must fail");
+        assert!(out.stdout.is_empty(), "{case}: errors never touch stdout");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("does not round-trip losslessly"),
+            "{case}: {err}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("task reads back"),
+            malformed,
+            "{case}: a refused edit must be byte-identical"
+        );
+        assert!(
+            malformed.contains("Later criterion must survive."),
+            "{case}: the protected later section is present in the fixture"
+        );
+    }
+}
+
+#[test]
 fn list_rows_are_tab_separated_and_status_filterable() {
     let dir = fixture_project();
     let root = dir.path();
