@@ -18,7 +18,6 @@ pub enum Mode {
     Browse,
     Filter,
     Command,
-    PickColumn,
     PickValue,
     /// After `v`: a digit opens that slot, `s` starts a save.
     ViewChord,
@@ -256,7 +255,6 @@ impl App {
             Mode::Browse => self.handle_browse_key(event),
             Mode::Filter => self.handle_filter_key(event),
             Mode::Command => self.handle_command_key(event),
-            Mode::PickColumn => self.handle_pick_column_key(event),
             Mode::PickValue => self.handle_pick_value_key(event),
             Mode::ViewChord => self.handle_view_chord_key(event),
             Mode::ViewSaveSlot => self.handle_view_save_slot_key(event),
@@ -384,54 +382,17 @@ impl App {
         }
     }
 
-    fn handle_pick_column_key(&mut self, event: KeyEvent) {
-        self.mode = Mode::Browse;
-        let KeyCode::Char(key) = event.code else {
-            return;
-        };
-        if let Some(position) = key.to_digit(10) {
-            match position
-                .checked_sub(1)
-                .and_then(|index| self.columns.get(index as usize))
-                .copied()
-            {
-                Some(column) => self.open_column_purpose(column),
-                None => {
-                    self.status = format!(
-                        "'{key}' is not a shown column; 1-{} as numbered, or type a name: {}",
-                        self.columns.len(),
-                        columns_text(&Column::ALL)
-                    )
-                }
-            }
-            return;
-        }
-        let picker = ValuePicker {
-            purpose: PickerPurpose::ChooseColumn(self.column_purpose),
-            options: Column::ALL
-                .iter()
-                .map(|column| (column.name().to_string(), 0))
-                .collect(),
-            typed: key.to_string(),
+    /// After `f`/`s`: shown columns first, numbered as in the header, then hidden ones.
+    fn open_column_chooser(&mut self, purpose: ColumnPurpose) {
+        self.column_purpose = purpose;
+        self.picker = Some(ValuePicker {
+            purpose: PickerPurpose::ChooseColumn(purpose),
+            options: self.column_picker_options(),
+            typed: String::new(),
             selected: 0,
-        };
-        match picker.matching().as_slice() {
-            [] => {
-                self.status = format!(
-                    "no column starts with '{key}'; columns: {}",
-                    columns_text(&Column::ALL)
-                )
-            }
-            [(name, _)] => {
-                if let Some(column) = Column::parse(name) {
-                    self.open_column_purpose(column);
-                }
-            }
-            _ => {
-                self.picker = Some(picker);
-                self.mode = Mode::PickValue;
-            }
-        }
+        });
+        self.mode = Mode::PickValue;
+        self.status.clear();
     }
 
     fn open_column_purpose(&mut self, column: Column) {
@@ -797,16 +758,8 @@ impl App {
                     self.filter_text.push(' ');
                 }
             }
-            Action::FilterColumn => {
-                self.mode = Mode::PickColumn;
-                self.column_purpose = ColumnPurpose::Filter;
-                self.status = "filter by column: press its number, or type a name".to_string();
-            }
-            Action::SortColumn => {
-                self.mode = Mode::PickColumn;
-                self.column_purpose = ColumnPurpose::Sort;
-                self.status = "sort by column: press its number, or type a name".to_string();
-            }
+            Action::FilterColumn => self.open_column_chooser(ColumnPurpose::Filter),
+            Action::SortColumn => self.open_column_chooser(ColumnPurpose::Sort),
             Action::Columns => self.open_columns_picker(),
             Action::Command => {
                 self.mode = Mode::Command;

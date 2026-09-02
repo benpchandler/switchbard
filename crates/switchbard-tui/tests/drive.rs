@@ -423,24 +423,28 @@ fn typing_in_the_picker_narrows_and_a_unique_match_applies_at_once() {
 }
 
 #[test]
-fn f_then_a_letter_explains_the_column_numbers() {
+fn f_opens_the_column_list_with_shown_columns_numbered_as_in_the_header() {
     let mut h = Harness::new();
-    h.press(KeyCode::Char('f'));
     let screen = h.press(KeyCode::Char('f'));
     assert!(
-        screen.contains(
-            "no column starts with 'f'; columns: id,status,priority,title,labels,project"
-        ),
+        screen.contains("filter by column · number or name"),
         "{screen}"
     );
-    h.press(KeyCode::Char('f'));
-    let screen = h.press(KeyCode::Char('9'));
-    assert!(
-        screen.contains("'9' is not a shown column; 1-4 as numbered, or type a name"),
-        "{screen}"
-    );
+    for entry in [
+        "1 ✓id",
+        "2 ✓status",
+        "3 ✓priority",
+        "4 ✓title",
+        "5  labels",
+        "6  project",
+    ] {
+        assert!(screen.contains(entry), "{entry} missing: {screen}");
+    }
+    let screen = h.type_text("f");
+    assert!(screen.contains("filter by column: f▏"), "{screen}");
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("nothing matches 'f'"), "{screen}");
 }
-
 fn visible_titles(h: &Harness) -> Vec<String> {
     (0..h.app.visible.len())
         .map(|index| h.app.task(index).unwrap().title.clone())
@@ -659,36 +663,33 @@ fn c_toggles_columns_by_position_and_numbers_follow_what_is_shown() {
 }
 
 #[test]
-fn hidden_columns_still_filter_and_sort_by_typed_name() {
+fn hidden_columns_are_listed_after_shown_ones_and_stay_filterable_and_sortable() {
     let mut h = Harness::new();
     h.press(KeyCode::Char('c'));
     h.press(KeyCode::Char('3'));
     assert!(!header_line(&h.render()).contains("pri"));
-    h.press(KeyCode::Char('f'));
-    let screen = h.press(KeyCode::Char('p'));
+    let screen = h.press(KeyCode::Char('f'));
     assert!(
-        screen.contains("1  priority") && screen.contains("2  project"),
-        "an ambiguous prefix lists both: {screen}"
+        screen.contains("3 ✓title") && screen.contains("4  priority"),
+        "hidden priority listed after the shown columns: {screen}"
     );
-    let screen = h.type_text("ri");
-    assert!(
-        screen.contains("pri · type/number picks one"),
-        "typed name reaches a hidden column: {screen}"
-    );
+    let screen = h.press(KeyCode::Char('4'));
+    assert!(screen.contains("pri · type/number picks one"), "{screen}");
     let screen = h.type_text("h");
     assert!(
         screen.contains("pri:high · cols:id,status,title · 1/3"),
         "{screen}"
     );
     h.press(KeyCode::Char('s'));
-    h.type_text("pri");
+    let screen = h.type_text("p");
+    assert!(
+        screen.contains("1  priority") && screen.contains("2  project"),
+        "an ambiguous name narrows to both: {screen}"
+    );
+    h.type_text("ri");
     let screen = h.type_text("d");
     assert!(screen.contains("↓pri"), "{screen}");
-    h.press(KeyCode::Char('f'));
-    let screen = h.press(KeyCode::Char('9'));
-    assert!(screen.contains("'9' is not a shown column; 1-3 as numbered, or type a name: id,status,priority,title,labels,project"), "{screen}");
 }
-
 #[test]
 fn shift_k_moves_a_column_up_and_the_order_saves_with_the_view() {
     let mut h = Harness::new();
