@@ -20,7 +20,9 @@ Config is persisted at `~/.switchbard/config.toml`. Service logs land in `$TMPDI
 
 ```sh
 mise install                          # install pinned Rust (1.95.0) from mise.toml
-mise run ci                           # fmt + clippy(-D warnings) + test, same as CI
+mise run hooks-install                # install tracked local Git gates
+mise run preflight                    # complete local gate before push
+mise run ci                           # same complete local gate
 mise run bundle                       # macOS: Switchbard.app in the shared Cargo target
 mise run package                      # macOS: DMG + sha256 in the shared Cargo target
 mise run test                         # full test suite (~0.1s)
@@ -45,9 +47,9 @@ observation and the restart or observation has been coordinated. Prefer
 deterministic tests, targeted probes, performance logs, and process or bundle
 verification when they can establish the same fact without disturbing the app.
 
-## Gates (firm — CI fails on any)
+## Gates (firm - CI fails on any)
 
-CI (`.github/workflows/ci.yml`) runs the `fmt`, `clippy`, and `test` mise tasks on both **macos-latest and ubuntu-latest** on every PR. The `clippy` and `test` tasks set `RUSTFLAGS=-D warnings`, so **any compiler warning fails the build — fix it, don't `#[allow]` it.** Run `mise run ci` green before pushing.
+Run `mise run hooks-install` once per clone. The tracked pre-commit hook runs the fast formatting check and the pre-push hook runs `mise run preflight`; both scrub Git's exported worktree variables before invoking nested tools. A push to the local `no-mistakes` remote skips the hook's duplicate preflight because that trusted delivery pipeline runs the same command before its upstream push. CI (`.github/workflows/ci.yml`) runs `fmt` once on Ubuntu and runs `clippy` plus `test` on both **macos-latest and ubuntu-latest** on every PR. The live mission-sidecar matrix runs only for mission-sensitive paths. The `clippy` and `test` tasks set `RUSTFLAGS=-D warnings`, so **any compiler warning fails the build - fix it, don't `#[allow]` it.** Hooks are a fast local feedback layer, not merge authority: CI remains required and also runs on pushes to unprotected `main` to verify the actual merge commit.
 
 ## Render-path perf
 

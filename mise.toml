@@ -21,12 +21,25 @@ env = { RUSTFLAGS = "-D warnings" }
 run = "cargo test --workspace --all-targets"
 
 [tasks.ci]
-description = "Run the same checks as GitHub Actions"
+description = "Run the complete local quality gate"
 run = [
   { task = "fmt" },
   { task = "clippy" },
   { task = "test" },
+  { task = "test-dev-gates" },
 ]
+
+[tasks.test-dev-gates]
+description = "Exercise Git hooks and CI routing contracts"
+run = "bash scripts/test-developer-gates.sh"
+
+[tasks.preflight]
+description = "Run the complete local gate before a push"
+run = { task = "ci" }
+
+[tasks.hooks-install]
+description = "Install the tracked pre-commit and pre-push hooks"
+run = "bash scripts/install-git-hooks.sh"
 
 [tasks.build]
 description = "Build the release binary"

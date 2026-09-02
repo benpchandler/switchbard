@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Git exports repository-local variables to hooks. Nested Git or task runners
+# must resolve the worktree they actually run in, not inherit Git's hook state.
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE \
+  GIT_OBJECT_DIRECTORY GIT_NAMESPACE
+
+exec mise run fmt
