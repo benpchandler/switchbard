@@ -595,8 +595,8 @@ fn vs_with_the_next_free_slot_appends_without_asking_and_escape_abandons() {
     h.press(KeyCode::Enter);
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('s'));
-    let screen = h.press(KeyCode::Char('5'));
-    assert!(screen.contains("v5 · label:ui · 1/3"), "{screen}");
+    let screen = h.press(KeyCode::Char('6'));
+    assert!(screen.contains("v6 · label:ui · 1/3"), "{screen}");
     h.press(KeyCode::Char('?'));
     let screen = h.render();
     assert!(
@@ -608,7 +608,7 @@ fn vs_with_the_next_free_slot_appends_without_asking_and_escape_abandons() {
     h.press(KeyCode::Char('s'));
     let screen = h.press(KeyCode::Char('9'));
     assert!(
-        screen.contains("slot 9 is out of reach; use 1-6"),
+        screen.contains("slot 9 is out of reach; use 1-7"),
         "{screen}"
     );
     h.press(KeyCode::Char('v'));
@@ -992,4 +992,73 @@ fn paint_rules_round_trip_through_the_view_file() {
     let fresh = open_app(&h.root, &h.config_path);
     assert_eq!(fresh.paint, h.app.paint);
     assert_eq!(fresh.view_label(), "v1");
+}
+
+#[test]
+fn b_passes_the_ball_me_agent_nobody_and_writes_the_label() {
+    let mut h = Harness::new();
+    let id = h.app.selected_task().unwrap().id.clone();
+    h.press(KeyCode::Char('c'));
+    h.type_text("b");
+    assert!(header_line(&h.render()).contains("5 ball"));
+    let screen = h.press(KeyCode::Char('b'));
+    assert!(screen.contains(&format!("{id}: ball → me")), "{screen}");
+    let file = std::fs::read_dir(h.root.join("backlog/tasks"))
+        .unwrap()
+        .flatten()
+        .map(|e| std::fs::read_to_string(e.path()).unwrap())
+        .find(|t| t.contains(&format!("id: {id}")))
+        .unwrap();
+    assert!(file.contains("- ball:me\n"), "{file}");
+    let screen = h.press(KeyCode::Char('b'));
+    assert!(screen.contains("ball → agent"), "{screen}");
+    assert_eq!(
+        h.app
+            .selected_task()
+            .unwrap()
+            .labels
+            .iter()
+            .filter(|l| l.starts_with("ball:"))
+            .count(),
+        1
+    );
+    let screen = h.press(KeyCode::Char('b'));
+    assert!(screen.contains("ball dropped"), "{screen}");
+    assert!(!h
+        .app
+        .selected_task()
+        .unwrap()
+        .labels
+        .iter()
+        .any(|l| l.starts_with("ball:")));
+}
+
+#[test]
+fn ball_filters_sorts_and_the_starter_view_is_my_inbox() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('b'));
+    let mine = h.app.selected_task().unwrap().title.clone();
+    h.press(KeyCode::Char('v'));
+    let screen = h.press(KeyCode::Char('5'));
+    assert!(screen.contains("v5 · ball:me · 1/3"), "{screen}");
+    assert!(screen.contains(&mine), "{screen}");
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Char('s'));
+    h.type_text("b");
+    h.type_text("d");
+    assert_eq!(visible_titles(&h)[0], mine, "descending puts me first");
+    assert!(h.render().contains("↓ball"));
+}
+
+#[test]
+fn a_dispatching_task_reads_as_agent_without_a_ball_label() {
+    let mut h = Harness::new();
+    let id = h.app.selected_task().unwrap().id.clone();
+    switchbard_core::set_backlog_label(&h.root, &id, "dispatching", true).unwrap();
+    h.app.tick();
+    h.press(KeyCode::Char('/'));
+    let screen = h.type_text("ball:agent");
+    assert!(screen.contains("1/3") && screen.contains(&id), "{screen}");
 }

@@ -11,6 +11,7 @@ use ratatui::Frame;
 use switchbard_core::BacklogTask;
 
 use crate::app::{App, ColumnPurpose, Mode, PaintPick, Pane, PickerPurpose, ValuePicker};
+use crate::ball::Ball;
 use crate::config::{Action, Column};
 use crate::paint::{self, PaintRule};
 use crate::tasks::Filter;
@@ -94,6 +95,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
         Column::Title => Constraint::Min(20),
         Column::Labels => Constraint::Length(20),
         Column::Project => Constraint::Length(18),
+        Column::Ball => Constraint::Length(6),
     });
     let table = Table::new(rows, widths)
         .header(header)
@@ -120,6 +122,7 @@ fn cell_text(column: Column, task: &BacklogTask) -> String {
         Column::Title => task.title.clone(),
         Column::Labels => task.labels.join(","),
         Column::Project => task.project.clone().unwrap_or_default(),
+        Column::Ball => Ball::text(Ball::of(task)).to_string(),
     }
 }
 
@@ -186,6 +189,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Action::SortColumn,
         Action::Columns,
         Action::Paint,
+        Action::Ball,
         Action::Command,
         Action::Reload,
         Action::Help,
@@ -285,7 +289,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         )),
         Mode::Browse => Line::from(Span::styled(
             format!(
-                " {}  / filter  f filter-by  s sort  c columns  p paint  v views  : command  ? keys  q quit",
+                " {}  / filter  f filter-by  s sort  c columns  p paint  b ball  v views  : command  ? keys  q quit",
                 if app.filter_text.is_empty() {
                     String::new()
                 } else {

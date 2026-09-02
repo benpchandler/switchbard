@@ -7,6 +7,7 @@ use std::time::{Instant, SystemTime};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use switchbard_core::BacklogTask;
 
+use crate::ball::Ball;
 use crate::config::{self, Action, Column, Config, KeyChord};
 use crate::paint::{self, parse_rules, rules_text, PaintRule, NAMED_COLORS};
 use crate::report::{self, ReportContext, ReportKind};
@@ -551,6 +552,37 @@ impl App {
         }
     }
 
+    /// `b`: nobody → me → agent → nobody on the selected task, written as a label.
+    fn pass_ball(&mut self) {
+        let Some(task) = self.selected_task() else {
+            self.status = "no task selected".to_string();
+            return;
+        };
+        let (id, current) = (task.id.clone(), Ball::of(task));
+        let next = Ball::next(current);
+        let mut outcome = Ok(String::new());
+        if let Some(old) = current {
+            outcome =
+                switchbard_core::set_backlog_label(&self.repo_root, &id, Ball::label(old), false);
+        }
+        if let (Ok(_), Some(new)) = (&outcome, next) {
+            outcome =
+                switchbard_core::set_backlog_label(&self.repo_root, &id, Ball::label(new), true);
+        }
+        match outcome {
+            Ok(_) => {
+                self.status = match next {
+                    Some(ball) => format!("{id}: ball → {}", Ball::text(Some(ball))),
+                    None => format!("{id}: ball dropped"),
+                };
+                self.telemetry
+                    .record("action", format!("ball {}", Ball::text(next)));
+                self.reload_tasks();
+            }
+            Err(error) => self.fail(format!("{id}: {error}")),
+        }
+    }
+
     fn clear_all_paint(&mut self) {
         let count = self.paint.len();
         self.paint.clear();
@@ -1088,6 +1120,7 @@ impl App {
             Action::SortColumn => self.open_column_chooser(ColumnPurpose::Sort),
             Action::Columns => self.open_columns_picker(),
             Action::Paint => self.open_paint_target_picker(),
+            Action::Ball => self.pass_ball(),
             Action::Command => {
                 self.mode = Mode::Command;
                 self.input.clear();
