@@ -1,12 +1,14 @@
 //! Application state and the single place key events turn into state changes.
 
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::{Instant, SystemTime};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use switchbard_core::BacklogTask;
 
 use crate::config::{self, Action, Column, Config, KeyChord};
+use crate::paint::{self, parse_rules, rules_text, PaintRule, PaintTarget, NAMED_COLORS};
 use crate::report::{self, ReportContext, ReportKind};
 use crate::sort::{self, Sort};
 use crate::tasks::{self, Filter, FilterField};
@@ -42,6 +44,10 @@ pub enum PickerPurpose {
     ChooseColumn(ColumnPurpose),
     /// The `c` picker: which columns show, in what order.
     Columns,
+    /// After `p`: what to paint.
+    PaintTarget,
+    /// After a target: which color.
+    PaintColor(PaintTarget),
 }
 
 /// The `f`/`s <column>` picker: its options, the typed narrowing text, and the cursor.
@@ -96,6 +102,7 @@ pub struct App {
     pub selected: usize,
     /// Shown columns in display order; header numbers are positions in this list.
     pub columns: Vec<Column>,
+    pub paint: Vec<PaintRule>,
     pub views: ViewStore,
     /// Zero-based slot the current filter/sort came from.
     pub view: usize,
@@ -132,6 +139,7 @@ impl App {
             visible: Vec::new(),
             selected: 0,
             columns: Column::DEFAULT_SHOWN.to_vec(),
+            paint: Vec::new(),
             views,
             view: 0,
             filter_text: String::new(),
@@ -178,7 +186,8 @@ impl App {
             Some(saved)
                 if saved.filter == self.filter_text
                     && saved.sort == self.sort
-                    && saved.columns == self.columns =>
+                    && saved.columns == self.columns
+                    && saved.paint == self.paint =>
             {
                 format!("v{}", self.view + 1)
             }
@@ -203,12 +212,13 @@ impl App {
     /// `slot\tfilter\tsort\tselected`, enough to land where the user was after a self-restart.
     pub fn resume_state(&self) -> String {
         format!(
-            "{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}",
             self.view,
             self.filter_text,
             self.sort.map(|sort| sort.to_text()).unwrap_or_default(),
             self.selected,
-            columns_text(&self.columns)
+            columns_text(&self.columns),
+            rules_text(&self.paint)
         )
     }
 
@@ -228,6 +238,9 @@ impl App {
         }
         if let Some(columns) = parts.next() {
             self.columns = parse_columns(columns);
+        }
+        if let Some(rules) = parts.next() {
+            self.paint = parse_rules(rules);
         }
         self.status = "updated to the new build".to_string();
     }
@@ -366,6 +379,7 @@ impl App {
             filter: self.filter_text.clone(),
             sort: self.sort,
             columns: self.columns.clone(),
+            paint: self.paint.clone(),
         };
         match self.views.save_repo(slot, saved) {
             Ok(()) => {
@@ -400,6 +414,69 @@ impl App {
             ColumnPurpose::Filter => self.open_filter_picker(column),
             ColumnPurpose::Sort => self.open_sort_picker(column),
         }
+    }
+
+    fn open_paint_target_picker(&mut self) {
+        let mut options: Vec<(String, usize)> = Vec::new();
+        if let Some(task) = self.selected_task() {
+            options.push((format!("row {}", task.id), 0));
+        }
+        if !self.filter_text.trim().is_empty() {
+            options.push((format!("rows {}", self.filter_text.trim()), 0));
+        }
+        for column in &self.columns {
+            options.push((format!("column {}", column.name()), 0));
+        }
+        self.picker = Some(ValuePicker {
+            purpose: PickerPurpose::PaintTarget,
+            options,
+            typed: String::new(),
+            selected: 0,
+        });
+        self.mode = Mode::PickValue;
+        self.telemetry.record("action", "paint");
+    }
+
+    fn open_paint_color_picker(&mut self, target: PaintTarget) {
+        let mut options: Vec<(String, usize)> = NAMED_COLORS
+            .iter()
+            .map(|name| (name.to_string(), 0))
+            .collect();
+        options.push(("none".to_string(), 0));
+        self.picker = Some(ValuePicker {
+            purpose: PickerPurpose::PaintColor(target),
+            options,
+            typed: String::new(),
+            selected: 0,
+        });
+        self.mode = Mode::PickValue;
+    }
+
+    fn paint_target_from(&self, option: &str) -> Option<PaintTarget> {
+        let (kind, rest) = option.split_once(' ')?;
+        match kind {
+            "row" => Some(PaintTarget::Rows(format!("id:{rest}"))),
+            "rows" => Some(PaintTarget::Rows(rest.to_string())),
+            "column" => Column::parse(rest).map(PaintTarget::Column),
+            _ => None,
+        }
+    }
+
+    fn apply_paint(&mut self, target: PaintTarget, color: &str) {
+        self.paint = paint::with_rule(&self.paint, target.clone(), color);
+        self.status = match color {
+            "none" => "paint cleared".to_string(),
+            _ => format!(
+                "painted {}",
+                PaintRule {
+                    target,
+                    color: color.to_string()
+                }
+                .to_text()
+            ),
+        };
+        self.telemetry
+            .record("action", format!("paint_apply {color}"));
     }
 
     fn open_columns_picker(&mut self) {
@@ -577,7 +654,10 @@ impl App {
                     picker.options = options;
                 }
             }
-            PickerPurpose::Sort(_) | PickerPurpose::ChooseColumn(_) => {}
+            PickerPurpose::Sort(_)
+            | PickerPurpose::ChooseColumn(_)
+            | PickerPurpose::PaintTarget
+            | PickerPurpose::PaintColor(_) => {}
         }
     }
 
@@ -610,7 +690,15 @@ impl App {
             return;
         };
         self.mode = Mode::Browse;
-        let Some((value, _)) = picker.highlighted() else {
+        let Some((value, _)) = picker.highlighted().or_else(|| {
+            let typed = picker.typed.trim().to_string();
+            match picker.purpose {
+                PickerPurpose::PaintColor(_) if ratatui::style::Color::from_str(&typed).is_ok() => {
+                    Some((typed, 0))
+                }
+                _ => None,
+            }
+        }) else {
             self.status = format!("nothing matches '{}'", picker.typed);
             return;
         };
@@ -640,6 +728,12 @@ impl App {
                     self.toggle_column(column);
                 }
             }
+            PickerPurpose::PaintTarget => {
+                if let Some(target) = self.paint_target_from(&value) {
+                    self.open_paint_color_picker(target);
+                }
+            }
+            PickerPurpose::PaintColor(target) => self.apply_paint(target, &value),
         }
     }
 
@@ -761,6 +855,7 @@ impl App {
             Action::FilterColumn => self.open_column_chooser(ColumnPurpose::Filter),
             Action::SortColumn => self.open_column_chooser(ColumnPurpose::Sort),
             Action::Columns => self.open_columns_picker(),
+            Action::Paint => self.open_paint_target_picker(),
             Action::Command => {
                 self.mode = Mode::Command;
                 self.input.clear();
@@ -841,6 +936,7 @@ impl App {
         self.view = slot;
         self.sort = saved.sort;
         self.columns = saved.columns;
+        self.paint = saved.paint;
         self.set_filter(saved.filter);
     }
 

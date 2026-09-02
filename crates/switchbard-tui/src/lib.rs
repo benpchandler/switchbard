@@ -1,5 +1,6 @@
 pub mod app;
 pub mod config;
+pub mod paint;
 pub mod report;
 pub mod sort;
 pub mod tasks;

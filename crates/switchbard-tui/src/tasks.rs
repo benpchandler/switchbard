@@ -21,6 +21,7 @@ pub fn load(root: &Path) -> Result<Vec<BacklogTask>> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterField {
+    Id,
     Status,
     Priority,
     Label,
@@ -30,6 +31,7 @@ pub enum FilterField {
 impl FilterField {
     fn parse(keyword: &str) -> Option<FilterField> {
         Some(match keyword {
+            "id" => FilterField::Id,
             "status" => FilterField::Status,
             "pri" | "priority" => FilterField::Priority,
             "label" => FilterField::Label,
@@ -40,6 +42,7 @@ impl FilterField {
 
     pub fn keyword(self) -> &'static str {
         match self {
+            FilterField::Id => "id",
             FilterField::Status => "status",
             FilterField::Priority => "pri",
             FilterField::Label => "label",
@@ -49,6 +52,7 @@ impl FilterField {
 
     fn values_of(self, task: &BacklogTask) -> Vec<String> {
         match self {
+            FilterField::Id => vec![task.id.clone()],
             FilterField::Status => vec![task.status.clone()],
             FilterField::Priority => vec![task.priority.clone()],
             FilterField::Label => task.labels.clone(),
@@ -91,6 +95,10 @@ impl Term {
     fn allows(&self, values: &[String]) -> bool {
         match self {
             Term::Text(_) => true,
+            // `id:` is exact so a painted TASK-13 never also paints TASK-130.
+            Term::AnyOf(FilterField::Id, wanted) => values
+                .iter()
+                .any(|value| wanted.iter().any(|want| loose(value) == *want)),
             Term::AnyOf(_, wanted) => values
                 .iter()
                 .any(|value| wanted.iter().any(|want| loose(value).contains(want))),
