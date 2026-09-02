@@ -448,8 +448,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                         format!(" paint which column? {}▏", picker.typed)
                     }
                     (PickerPurpose::PaintTarget, true) => {
-                        " paint · a column by number, r row, f filtered, c whole column "
-                            .to_string()
+                        " paint · column#, r row, f filtered, c cells · del clears all ".to_string()
                     }
                     (PickerPurpose::PaintTarget, false) => {
                         format!(" paint what? {}▏", picker.typed)

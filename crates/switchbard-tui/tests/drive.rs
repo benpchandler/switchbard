@@ -922,7 +922,7 @@ fn p_by_status_paints_each_value_and_auto_hands_out_distinct_colors() {
     use ratatui::style::Color;
     let mut h = Harness::new();
     let screen = h.press(KeyCode::Char('p'));
-    assert!(screen.contains("paint · a column by number"), "{screen}");
+    assert!(screen.contains("paint · column#"), "{screen}");
     let screen = h.press(KeyCode::Char('2'));
     assert!(
         screen.contains("by status · pick a value"),
@@ -1067,5 +1067,37 @@ fn a_cell_rule_beats_a_column_rule_beats_a_row_rule_regardless_of_order() {
         cell_fg(&h, "medium"),
         Some(Color::Blue),
         "column rule wins over the row rule"
+    );
+}
+
+#[test]
+fn p_delete_clears_every_rule_and_delete_all_is_listed() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Esc);
+    let screen = h.press(KeyCode::Char('p'));
+    assert!(screen.contains("delete all paint (2 rules)"), "{screen}");
+    let screen = h.press(KeyCode::Delete);
+    assert!(screen.contains("deleted 2 paint rules"), "{screen}");
+    assert!(!screen.contains("paint:"), "{screen}");
+    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Reset));
+    let screen = h.press(KeyCode::Char('p'));
+    assert!(
+        !screen.contains("delete all"),
+        "nothing to delete: {screen}"
+    );
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('p'));
+    let screen = h.press(KeyCode::Backspace);
+    assert!(
+        screen.contains("deleted 2 paint rules"),
+        "mac delete key sends backspace: {screen}"
     );
 }
