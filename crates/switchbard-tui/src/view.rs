@@ -330,8 +330,8 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                 PickerPurpose::PaintColumn => {
                     Column::parse(value).is_some_and(|column| app.columns.contains(&column))
                 }
-                PickerPurpose::PaintByField(field) => {
-                    paint::rule_for_value(&app.paint, field.keyword(), value).is_some()
+                PickerPurpose::PaintByField(field, cells) => {
+                    paint::rule_for_value(&app.paint, field.keyword(), value, *cells).is_some()
                 }
                 PickerPurpose::PaintColor(target) => app
                     .paint
@@ -355,9 +355,10 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                         style = style.fg(color);
                     }
                 }
-                PickerPurpose::PaintByField(field) => {
-                    if let Some(color) = paint::rule_for_value(&app.paint, field.keyword(), value)
-                        .and_then(PaintRule::parsed_color)
+                PickerPurpose::PaintByField(field, cells) => {
+                    if let Some(color) =
+                        paint::rule_for_value(&app.paint, field.keyword(), value, *cells)
+                            .and_then(PaintRule::parsed_color)
                     {
                         style = style.fg(color);
                     }
@@ -430,16 +431,21 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                         " columns · digit/name toggles · space keeps open · K/J move ".to_string()
                     }
                     (PickerPurpose::Columns, false) => format!(" columns: {}▏", picker.typed),
-                    (PickerPurpose::PaintByField(field), true) => format!(
-                        " by {} · pick a value, then its color · esc when done ",
+                    (PickerPurpose::PaintByField(field, None), true) => format!(
+                        " rows by {} · pick a value, then its color · esc when done ",
                         field.keyword()
                     ),
-                    (PickerPurpose::PaintByField(field), false) => {
+                    (PickerPurpose::PaintByField(field, Some(column)), true) => format!(
+                        " {} cells by {} · pick a value, then its color · esc when done ",
+                        column.name(),
+                        field.keyword()
+                    ),
+                    (PickerPurpose::PaintByField(field, _), false) => {
                         format!(" by {}: {}▏", field.keyword(), picker.typed)
                     }
-                    (PickerPurpose::PaintColumn, true) => " paint which column whole? ".to_string(),
+                    (PickerPurpose::PaintColumn, true) => " paint which column? ".to_string(),
                     (PickerPurpose::PaintColumn, false) => {
-                        format!(" paint which column whole? {}▏", picker.typed)
+                        format!(" paint which column? {}▏", picker.typed)
                     }
                     (PickerPurpose::PaintTarget, true) => {
                         " paint · a column by number, r row, f filtered, c whole column "

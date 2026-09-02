@@ -48,8 +48,8 @@ pub enum PickerPurpose {
     PaintTarget,
     /// After a target: which color. `back_to` reopens a by-field list afterwards.
     PaintColor(PaintTarget),
-    /// A column's values, one color each.
-    PaintByField(FilterField),
+    /// A column's values, one color each: on rows, or on `cells` of one column only.
+    PaintByField(FilterField, Option<Column>),
     /// After `p c`: which column to paint whole.
     PaintColumn,
 }
@@ -110,7 +110,7 @@ pub struct App {
     pub columns: Vec<Column>,
     pub paint: Vec<PaintRule>,
     /// Which by-field list to return to after a color is picked.
-    paint_return: Option<FilterField>,
+    paint_return: Option<(FilterField, Option<Column>)>,
     pub views: ViewStore,
     /// Zero-based slot the current filter/sort came from.
     pub view: usize,
@@ -473,11 +473,21 @@ impl App {
         self.mode = Mode::PickValue;
     }
 
-    /// A column entry paints by its values when it has categories, else the whole column.
+    /// A column entry paints rows by its values when it has categories, else the whole column.
     fn paint_column_entry(&mut self, column: Column) {
         match column.filter_field() {
             Some(field) if !tasks::field_values(&self.tasks, field).is_empty() => {
-                self.open_paint_by_field_picker(field)
+                self.open_paint_by_field_picker(field, None)
+            }
+            _ => self.open_paint_color_picker(PaintTarget::Column(column)),
+        }
+    }
+
+    /// `p c <column>`: a categorical column offers its values for that column's cells only.
+    fn paint_column_cells(&mut self, column: Column) {
+        match column.filter_field() {
+            Some(field) if !tasks::field_values(&self.tasks, field).is_empty() => {
+                self.open_paint_by_field_picker(field, Some(column))
             }
             _ => self.open_paint_color_picker(PaintTarget::Column(column)),
         }
@@ -499,12 +509,15 @@ impl App {
         self.mode = Mode::PickValue;
     }
 
-    fn open_paint_by_field_picker(&mut self, field: FilterField) {
+    fn open_paint_by_field_picker(&mut self, field: FilterField, cells: Option<Column>) {
         let mut options = vec![("auto: one color per value".to_string(), 0)];
+        if cells.is_some() {
+            options.push(("whole: one color for the column".to_string(), 0));
+        }
         options.extend(tasks::field_values(&self.tasks, field));
-        self.paint_return = Some(field);
+        self.paint_return = Some((field, cells));
         self.picker = Some(ValuePicker {
-            purpose: PickerPurpose::PaintByField(field),
+            purpose: PickerPurpose::PaintByField(field, cells),
             options,
             typed: String::new(),
             number: String::new(),
@@ -513,10 +526,17 @@ impl App {
         self.mode = Mode::PickValue;
     }
 
-    fn paint_auto(&mut self, field: FilterField) {
+    fn value_target(field: FilterField, value: &str, cells: Option<Column>) -> PaintTarget {
+        let filter = format!("{}:{}", field.keyword(), Filter::loose_key(value));
+        match cells {
+            Some(column) => PaintTarget::Cell(column, filter),
+            None => PaintTarget::Rows(filter),
+        }
+    }
+
+    fn paint_auto(&mut self, field: FilterField, cells: Option<Column>) {
         for (index, (value, _)) in tasks::field_values(&self.tasks, field).iter().enumerate() {
-            let target =
-                PaintTarget::Rows(format!("{}:{}", field.keyword(), Filter::loose_key(value)));
+            let target = Self::value_target(field, value, cells);
             let color = paint::AUTO_PALETTE[index % paint::AUTO_PALETTE.len()];
             self.paint = paint::with_rule(&self.paint, target, color);
         }
@@ -697,8 +717,8 @@ impl App {
                 self.picker = None;
                 self.mode = Mode::Browse;
                 self.apply_paint(target, "none");
-                if let Some(field) = self.paint_return {
-                    self.open_paint_by_field_picker(field);
+                if let Some((field, cells)) = self.paint_return {
+                    self.open_paint_by_field_picker(field, cells);
                 }
             }
             KeyCode::Enter => self.apply_picked_value(),
@@ -763,7 +783,7 @@ impl App {
             | PickerPurpose::ChooseColumn(_)
             | PickerPurpose::PaintTarget
             | PickerPurpose::PaintColor(_)
-            | PickerPurpose::PaintByField(_)
+            | PickerPurpose::PaintByField(_, _)
             | PickerPurpose::PaintColumn => {}
         }
     }
@@ -846,26 +866,26 @@ impl App {
             }
             PickerPurpose::PaintColumn => {
                 if let Some(column) = Column::parse(&value) {
-                    self.open_paint_color_picker(PaintTarget::Column(column));
+                    self.paint_column_cells(column);
                 }
             }
-            PickerPurpose::PaintByField(field) => {
+            PickerPurpose::PaintByField(field, cells) => {
                 if value.starts_with("auto") {
-                    self.paint_auto(field);
-                    self.open_paint_by_field_picker(field);
+                    self.paint_auto(field, cells);
+                    self.open_paint_by_field_picker(field, cells);
+                } else if value.starts_with("whole") {
+                    if let Some(column) = cells {
+                        self.paint_return = None;
+                        self.open_paint_color_picker(PaintTarget::Column(column));
+                    }
                 } else {
-                    let target = PaintTarget::Rows(format!(
-                        "{}:{}",
-                        field.keyword(),
-                        Filter::loose_key(&value)
-                    ));
-                    self.open_paint_color_picker(target);
+                    self.open_paint_color_picker(Self::value_target(field, &value, cells));
                 }
             }
             PickerPurpose::PaintColor(target) => {
                 self.apply_paint(target, &value);
-                if let Some(field) = self.paint_return {
-                    self.open_paint_by_field_picker(field);
+                if let Some((field, cells)) = self.paint_return {
+                    self.open_paint_by_field_picker(field, cells);
                 }
             }
         }

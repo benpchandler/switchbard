@@ -25,8 +25,8 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
   loose match: `status:todo` == "To Do"); `field_values` feeds the `f <n>` picker.
 - `views.rs` - slots of filter+sort+columns+paint: global `~/.switchbard/views.lua`, per-repo overrides in
   `views/<repo path>.lua`; `vs<n>` saves to repo, `vg<n>` promotes to global; slot 1 opens.
-- `paint.rs` - `p` rules: rows matching a filter (`rows:id:TASK-13=green`) or a column
-  (`column:priority=yellow`); last rule wins; saved with the view.
+- `paint.rs` - `p` rules: `rows:<filter>=c`, `column:<col>=c`, `cell:<col>:<filter>=c`;
+  specificity wins (cell > column > row), then last rule; saved with the view.
 - `sort.rs` - `s <n>` orders: ascending/descending/semantic (vocabulary rank), ties by id.
 - `report.rs` - `:bug`/`:idea` => task via `switchbard-core` write layer.
 - `telemetry.rs` - JSONL event log, in-memory trail, `stats`.
