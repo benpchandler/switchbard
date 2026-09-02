@@ -269,6 +269,10 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(theme.dim),
             ),
         ]),
+        Mode::PickValue if app.picker.is_some() => Line::from(Span::styled(
+            format!(" {}", picker_hint(app.picker.as_ref().expect("checked"))),
+            Style::default().fg(theme.dim),
+        )),
         Mode::PickValue | Mode::ViewChord | Mode::ViewSaveSlot | Mode::ViewGlobalSlot => {
             Line::from(Span::styled(
                 app.status.clone(),
@@ -400,72 +404,52 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent))
         .title_style(title_style)
-        .title(
-            pending
-                + &match (&picker.purpose, picker.typed.is_empty()) {
-                    (PickerPurpose::Filter(field), true) => format!(
-                        " {} · type/number picks one · space toggles ",
-                        field.keyword()
-                    ),
-                    (PickerPurpose::Filter(field), false) => {
-                        format!(" {}: {}▏", field.keyword(), picker.typed)
-                    }
-                    (PickerPurpose::Sort(column), true) => format!(" sort by {} ", column.header()),
-                    (PickerPurpose::Sort(column), false) => {
-                        format!(" sort by {}: {}▏", column.header(), picker.typed)
-                    }
-                    (PickerPurpose::ChooseColumn(ColumnPurpose::Filter), true) => {
-                        " filter by column · number or name · hidden columns listed last "
-                            .to_string()
-                    }
-                    (PickerPurpose::ChooseColumn(ColumnPurpose::Sort), true) => {
-                        " sort by column · number or name · hidden columns listed last ".to_string()
-                    }
-                    (PickerPurpose::ChooseColumn(ColumnPurpose::Filter), false) => {
-                        format!(" filter by column: {}▏", picker.typed)
-                    }
-                    (PickerPurpose::ChooseColumn(ColumnPurpose::Sort), false) => {
-                        format!(" sort by column: {}▏", picker.typed)
-                    }
-                    (PickerPurpose::Columns, true) => {
-                        " columns · digit/name toggles · space keeps open · K/J move ".to_string()
-                    }
-                    (PickerPurpose::Columns, false) => format!(" columns: {}▏", picker.typed),
-                    (PickerPurpose::PaintByField(field, None), true) => format!(
-                        " rows by {} · pick a value, then its color · esc when done ",
-                        field.keyword()
-                    ),
-                    (PickerPurpose::PaintByField(field, Some(column)), true) => format!(
-                        " {} cells by {} · pick a value, then its color · esc when done ",
-                        column.name(),
-                        field.keyword()
-                    ),
-                    (PickerPurpose::PaintByField(field, _), false) => {
-                        format!(" by {}: {}▏", field.keyword(), picker.typed)
-                    }
-                    (PickerPurpose::PaintColumn, true) => " paint which column? ".to_string(),
-                    (PickerPurpose::PaintColumn, false) => {
-                        format!(" paint which column? {}▏", picker.typed)
-                    }
-                    (PickerPurpose::PaintTarget, true) => {
-                        " paint · column#, r row, f filtered, c cells · del clears all ".to_string()
-                    }
-                    (PickerPurpose::PaintTarget, false) => {
-                        format!(" paint what? {}▏", picker.typed)
-                    }
-                    (PickerPurpose::PaintColor(_), true) => {
-                        " color · name or #hex · space clears ".to_string()
-                    }
-                    (PickerPurpose::PaintColor(_), false) => match preview {
-                        Some(_) => {
-                            format!(" {} ← this is how it looks · enter applies ", picker.typed)
-                        }
-                        None => format!(" color: {}▏", picker.typed),
-                    },
-                },
-        );
+        .title(pending + &picker_title(picker, preview.is_some()));
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// What is being picked, plus any typed text. Key hints live in the footer.
+fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
+    let subject = match &picker.purpose {
+        PickerPurpose::Filter(field) => field.keyword().to_string(),
+        PickerPurpose::Sort(column) => format!("sort by {}", column.header()),
+        PickerPurpose::ChooseColumn(ColumnPurpose::Filter) => "filter by column".to_string(),
+        PickerPurpose::ChooseColumn(ColumnPurpose::Sort) => "sort by column".to_string(),
+        PickerPurpose::Columns => "columns".to_string(),
+        PickerPurpose::PaintByField(field, None) => format!("rows by {}", field.keyword()),
+        PickerPurpose::PaintByField(field, Some(column)) => {
+            format!("{} cells by {}", column.name(), field.keyword())
+        }
+        PickerPurpose::PaintColumn => "paint which column".to_string(),
+        PickerPurpose::PaintTarget => "paint".to_string(),
+        PickerPurpose::PaintColor(_) => "color".to_string(),
+    };
+    if picker.typed.is_empty() {
+        format!(" {subject} ")
+    } else if typed_is_color {
+        format!(" {} ← this is how it looks · enter applies ", picker.typed)
+    } else {
+        format!(" {subject}: {}▏", picker.typed)
+    }
+}
+
+/// The keys that work in this picker, shown dim in the footer.
+pub fn picker_hint(picker: &ValuePicker) -> &'static str {
+    match &picker.purpose {
+        PickerPurpose::Filter(_) => "number or name picks one · space toggles · esc",
+        PickerPurpose::Sort(_) => "number or name picks · esc",
+        PickerPurpose::ChooseColumn(_) => "number or name · hidden columns listed last · esc",
+        PickerPurpose::Columns => "number or name toggles · space keeps open · K/J move · esc",
+        PickerPurpose::PaintByField(_, _) => {
+            "pick a value, then its color · repeats · esc when done"
+        }
+        PickerPurpose::PaintColumn => "number or name · esc",
+        PickerPurpose::PaintTarget => {
+            "column number · r row · f filtered · c cells · d delete all · esc"
+        }
+        PickerPurpose::PaintColor(_) => "name or #hex · space clears this target · esc",
+    }
 }
 
 pub fn buffer_text(buffer: &Buffer) -> String {

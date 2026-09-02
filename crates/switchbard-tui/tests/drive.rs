@@ -370,7 +370,7 @@ fn space_in_picker_toggles_values_and_writes_the_shortest_filter() {
     let screen = h.press(KeyCode::Char(' '));
     assert!(screen.contains("v1 · 3/3"), "all shown again: {screen}");
     let screen = h.press(KeyCode::Esc);
-    assert!(!screen.contains("space toggles"), "{screen}");
+    assert!(!screen.contains("┌ status"), "{screen}");
 }
 
 #[test]
@@ -426,10 +426,7 @@ fn typing_in_the_picker_narrows_and_a_unique_match_applies_at_once() {
 fn f_opens_the_column_list_with_shown_columns_numbered_as_in_the_header() {
     let mut h = Harness::new();
     let screen = h.press(KeyCode::Char('f'));
-    assert!(
-        screen.contains("filter by column · number or name"),
-        "{screen}"
-    );
+    assert!(screen.contains("┌ filter by column ─"), "{screen}");
     for entry in [
         "1 ✓id",
         "2 ✓status",
@@ -659,7 +656,7 @@ fn c_toggles_columns_by_position_and_numbers_follow_what_is_shown() {
     );
     let screen = h.press(KeyCode::Char('5'));
     assert!(
-        !screen.contains("space keeps open"),
+        !screen.contains("┌ columns"),
         "digit toggles and closes: {screen}"
     );
     assert!(header_line(&screen).contains("5 labels"), "{screen}");
@@ -687,7 +684,7 @@ fn hidden_columns_are_listed_after_shown_ones_and_stay_filterable_and_sortable()
         "hidden priority listed after the shown columns: {screen}"
     );
     let screen = h.press(KeyCode::Char('4'));
-    assert!(screen.contains("pri · type/number picks one"), "{screen}");
+    assert!(screen.contains("┌ pri ─"), "{screen}");
     let screen = h.type_text("h");
     assert!(
         screen.contains("pri:high · cols:id,status,title · 1/3"),
@@ -867,7 +864,7 @@ fn two_digit_numbers_reach_options_past_nine_and_space_clears_paint() {
     assert!(screen.contains("12  lightblue"), "{screen}");
     let screen = h.press(KeyCode::Char('1'));
     assert!(
-        screen.contains("1▏ color"),
+        screen.contains("1▏ color "),
         "first digit waits when 10+ exist: {screen}"
     );
     let screen = h.press(KeyCode::Char('2'));
@@ -922,10 +919,10 @@ fn p_by_status_paints_each_value_and_auto_hands_out_distinct_colors() {
     use ratatui::style::Color;
     let mut h = Harness::new();
     let screen = h.press(KeyCode::Char('p'));
-    assert!(screen.contains("paint · column#"), "{screen}");
+    assert!(screen.contains("┌ paint ─"), "{screen}");
     let screen = h.press(KeyCode::Char('2'));
     assert!(
-        screen.contains("by status · pick a value"),
+        screen.contains("┌ rows by status ─"),
         "p2 is the status column: {screen}"
     );
     assert!(screen.contains("1  auto: one color per value"), "{screen}");
@@ -936,7 +933,7 @@ fn p_by_status_paints_each_value_and_auto_hands_out_distinct_colors() {
     h.press(KeyCode::Char('2'));
     let screen = h.type_text("gre");
     assert!(
-        screen.contains("by status · pick a value"),
+        screen.contains("┌ rows by status ─"),
         "back on the value list: {screen}"
     );
     assert_eq!(
@@ -963,7 +960,7 @@ fn p_by_status_paints_each_value_and_auto_hands_out_distinct_colors() {
     h.press(KeyCode::Char('p'));
     let screen = h.type_text("p");
     assert!(
-        screen.contains("rows by pri · pick a value"),
+        screen.contains("┌ rows by pri ─"),
         "no project values in this repo, so p resolves to priority at once: {screen}"
     );
     h.press(KeyCode::Esc);
@@ -981,7 +978,7 @@ fn status_rows_plus_priority_cells_keep_both_colors() {
     h.press(KeyCode::Char('p'));
     h.type_text("c");
     let screen = h.type_text("pri");
-    assert!(screen.contains("priority cells by pri"), "{screen}");
+    assert!(screen.contains("┌ priority cells by pri ─"), "{screen}");
     assert!(
         screen.contains("2  whole: one color for the column"),
         "{screen}"
@@ -1086,7 +1083,7 @@ fn p_delete_clears_every_rule_and_delete_all_is_listed() {
     assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Reset));
     let screen = h.press(KeyCode::Char('p'));
     assert!(
-        !screen.contains("delete all"),
+        !screen.contains("delete all paint"),
         "nothing to delete: {screen}"
     );
     h.press(KeyCode::Esc);
@@ -1110,4 +1107,27 @@ fn p_delete_clears_every_rule_and_delete_all_is_listed() {
         screen.contains("deleted 2 paint rules"),
         "pd: nothing else in the list starts with d: {screen}"
     );
+}
+
+#[test]
+fn picker_titles_name_the_subject_and_hints_sit_in_the_footer() {
+    let mut h = Harness::new();
+    let screen = h.press(KeyCode::Char('p'));
+    let title = screen.lines().nth(2).unwrap_or_default().to_string();
+    assert!(title.contains("┌ paint ─"), "{title}");
+    assert!(
+        !title.contains("r row"),
+        "hints are not in the title: {title}"
+    );
+    let footer = screen.lines().last().unwrap_or_default();
+    assert!(
+        footer.contains("column number · r row · f filtered · c cells · d delete all · esc"),
+        "{footer}"
+    );
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('f'));
+    let screen = h.press(KeyCode::Char('2'));
+    assert!(screen.contains("┌ status ─"), "{screen}");
+    let footer = screen.lines().last().unwrap_or_default();
+    assert!(footer.contains("space toggles"), "{footer}");
 }
