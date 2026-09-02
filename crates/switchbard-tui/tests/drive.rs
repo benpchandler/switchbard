@@ -883,3 +883,19 @@ fn two_digit_numbers_reach_options_past_nine_and_space_clears_paint() {
     assert_eq!(cell_fg(&h, &selected), Some(Color::Reset));
     assert!(!screen.contains("paint:"), "{screen}");
 }
+
+#[test]
+fn the_color_list_previews_each_color_and_a_typed_hex() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('1'));
+    assert_eq!(cell_fg(&h, "green"), Some(Color::Green));
+    assert_eq!(cell_fg(&h, "magenta"), Some(Color::Magenta));
+    let screen = h.type_text("#ff8800");
+    assert!(
+        screen.contains("#ff8800 ← this is how it looks"),
+        "{screen}"
+    );
+    assert_eq!(cell_fg(&h, "#ff8800"), Some(Color::Rgb(255, 136, 0)));
+}
