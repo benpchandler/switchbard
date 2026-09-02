@@ -29,14 +29,15 @@ impl Harness {
             "project_name: fixture\nstatuses: [\"To Do\", \"In Progress\", \"Done\"]\ntask_prefix: task\n",
         )
         .unwrap();
-        seed(
+        seed_with_priority(
             &root,
             "Fix login redirect loop",
             "In Progress",
             &["auth", "bug"],
+            "medium",
         );
-        seed(&root, "Add dark theme", "To Do", &["ui"]);
-        seed(&root, "Write onboarding guide", "To Do", &["docs"]);
+        seed_with_priority(&root, "Add dark theme", "To Do", &["ui"], "low");
+        seed_with_priority(&root, "Write onboarding guide", "To Do", &["docs"], "high");
         let config_path = root.join("tui.lua");
         let app = App::open(&root, Some(config_path.clone()), Telemetry::in_memory());
         let terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
@@ -76,11 +77,15 @@ impl Harness {
 }
 
 fn seed(root: &Path, title: &str, status: &str, labels: &[&str]) {
+    seed_with_priority(root, title, status, labels, "medium");
+}
+
+fn seed_with_priority(root: &Path, title: &str, status: &str, labels: &[&str], priority: &str) {
     let task = NewBacklogTask {
         title: title.to_string(),
         description: format!("Description of {title}."),
         status: status.to_string(),
-        priority: "medium".to_string(),
+        priority: priority.to_string(),
         acceptance_criteria: vec!["It works".to_string()],
         parent: None,
         labels: labels.iter().map(|s| s.to_string()).collect(),
@@ -103,13 +108,14 @@ fn lists_every_task_with_repo_name_and_count() {
 #[test]
 fn j_and_k_move_selection_and_enter_opens_detail() {
     let mut h = Harness::new();
+    let rows = visible_titles(&h);
     h.press(KeyCode::Char('j'));
-    assert_eq!(h.selected_title(), "Add dark theme");
+    assert_eq!(h.selected_title(), rows[1]);
     h.press(KeyCode::Char('k'));
-    assert_eq!(h.selected_title(), "Fix login redirect loop");
+    assert_eq!(h.selected_title(), rows[0]);
     let screen = h.press(KeyCode::Enter);
     assert!(
-        screen.contains("Description of Fix login redirect loop."),
+        screen.contains(&format!("Description of {}.", rows[0])),
         "{screen}"
     );
     assert!(screen.contains("[ ] It works"), "{screen}");
@@ -153,6 +159,7 @@ fn field_filters_and_number_keys_switch_views() {
 fn colon_bug_files_a_task_carrying_screen_and_trail() {
     let mut h = Harness::new();
     h.press(KeyCode::Char('j'));
+    let selected_id = h.app.selected_task().unwrap().id.clone();
     h.press(KeyCode::Char(':'));
     h.type_text("bug wanted to sort by priority");
     let screen = h.press(KeyCode::Enter);
@@ -170,7 +177,10 @@ fn colon_bug_files_a_task_carrying_screen_and_trail() {
         .unwrap();
     assert!(filed.contains("- tui\n"), "{filed}");
     assert!(filed.contains("- bug\n"), "{filed}");
-    assert!(filed.contains("selected=TASK-2"), "{filed}");
+    assert!(
+        filed.contains(&format!("selected={selected_id}")),
+        "{filed}"
+    );
     assert!(
         filed.contains("Add dark theme"),
         "screen dump missing: {filed}"
@@ -390,9 +400,9 @@ fn typing_in_the_picker_narrows_and_a_unique_match_applies_at_once() {
     assert!(screen.contains("status:todo · 2/3"), "{screen}");
     h.press(KeyCode::Char('f'));
     h.press(KeyCode::Char('3'));
-    let screen = h.type_text("m");
+    let screen = h.type_text("h");
     assert!(
-        screen.contains("status:todo pri:medium · 2/3"),
+        screen.contains("status:todo pri:high · 1/3"),
         "stacked: {screen}"
     );
 }
@@ -405,5 +415,64 @@ fn f_then_a_letter_explains_the_column_numbers() {
     assert!(
         screen.contains("'f' is not a column; press 1-4"),
         "{screen}"
+    );
+}
+
+fn visible_titles(h: &Harness) -> Vec<String> {
+    (0..h.app.visible.len())
+        .map(|index| h.app.task(index).unwrap().title.clone())
+        .collect()
+}
+
+#[test]
+fn s_then_column_offers_semantic_and_plain_orders() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('s'));
+    let screen = h.press(KeyCode::Char('3'));
+    assert!(screen.contains("sort by pri"), "{screen}");
+    assert!(
+        screen.contains("1  semantic (high, medium, low)"),
+        "{screen}"
+    );
+    assert!(screen.contains("2  ascending"), "{screen}");
+    assert!(screen.contains("4  none"), "{screen}");
+    let screen = h.press(KeyCode::Char('1'));
+    assert!(screen.contains("≈pri · 3/3"), "{screen}");
+    assert_eq!(
+        visible_titles(&h),
+        [
+            "Write onboarding guide",
+            "Fix login redirect loop",
+            "Add dark theme"
+        ]
+    );
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('3'));
+    h.type_text("d");
+    assert!(h.render().contains("↓pri"), "{}", h.render());
+    assert_eq!(visible_titles(&h)[0], "Fix login redirect loop");
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('3'));
+    let screen = h.type_text("n");
+    assert!(!screen.contains("pri ·"), "sort cleared: {screen}");
+    assert_eq!(visible_titles(&h)[0], "Fix login redirect loop");
+}
+
+#[test]
+fn sort_survives_filtering_and_title_sorts_alphabetically() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('4'));
+    h.press(KeyCode::Char('1'));
+    assert_eq!(visible_titles(&h)[0], "Add dark theme");
+    h.press(KeyCode::Char('2'));
+    let screen = h.render();
+    assert!(
+        screen.contains("todo · status:todo · ↑title · 2/3"),
+        "{screen}"
+    );
+    assert_eq!(
+        visible_titles(&h),
+        ["Add dark theme", "Write onboarding guide"]
     );
 }

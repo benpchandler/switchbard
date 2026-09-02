@@ -6,8 +6,9 @@ use std::time::{Instant, SystemTime};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use switchbard_core::BacklogTask;
 
-use crate::config::{self, Action, Config, KeyChord};
+use crate::config::{self, Action, Column, Config, KeyChord};
 use crate::report::{self, ReportContext, ReportKind};
+use crate::sort::{self, Sort};
 use crate::tasks::{self, Filter, FilterField};
 use crate::telemetry::Telemetry;
 
@@ -20,18 +21,41 @@ pub enum Mode {
     PickValue,
 }
 
-/// The `f <column>` picker: which field, its live values, and the cursor.
+/// What a column was picked for: `f` filters by its values, `s` sorts by it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnPurpose {
+    Filter,
+    Sort,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PickerPurpose {
+    Filter(FilterField),
+    Sort(Column),
+}
+
+/// The `f`/`s <column>` picker: its options, the typed narrowing text, and the cursor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValuePicker {
-    pub field: FilterField,
+    pub purpose: PickerPurpose,
     pub options: Vec<(String, usize)>,
     pub typed: String,
     pub selected: usize,
 }
 
 impl ValuePicker {
-    /// Options whose value contains what has been typed, ignoring case and spaces.
+    /// Options starting with what has been typed; failing any, options containing it.
+    /// Case and spaces are ignored either way.
     pub fn matching(&self) -> Vec<(String, usize)> {
+        let prefixed: Vec<(String, usize)> = self
+            .options
+            .iter()
+            .filter(|(value, _)| Filter::loose_starts_with(value, &self.typed))
+            .cloned()
+            .collect();
+        if !prefixed.is_empty() {
+            return prefixed;
+        }
         self.options
             .iter()
             .filter(|(value, _)| Filter::loose_contains(value, &self.typed))
@@ -66,6 +90,8 @@ pub struct App {
     pub input: String,
     pub pane: Pane,
     pub picker: Option<ValuePicker>,
+    pub column_purpose: ColumnPurpose,
+    pub sort: Option<Sort>,
     pub status: String,
     pub last_screen: String,
     pub page_size: usize,
@@ -95,6 +121,8 @@ impl App {
             input: String::new(),
             pane: Pane::None,
             picker: None,
+            column_purpose: ColumnPurpose::Filter,
+            sort: None,
             status: String::new(),
             last_screen: String::new(),
             page_size: 20,
@@ -208,6 +236,13 @@ impl App {
             );
             return;
         };
+        match self.column_purpose {
+            ColumnPurpose::Filter => self.open_filter_picker(column),
+            ColumnPurpose::Sort => self.open_sort_picker(column),
+        }
+    }
+
+    fn open_filter_picker(&mut self, column: Column) {
         match column.filter_field() {
             Some(field) => {
                 let options = tasks::field_values(&self.tasks, field);
@@ -216,7 +251,7 @@ impl App {
                     return;
                 }
                 self.picker = Some(ValuePicker {
-                    field,
+                    purpose: PickerPurpose::Filter(field),
                     options,
                     typed: String::new(),
                     selected: 0,
@@ -230,6 +265,23 @@ impl App {
         }
         self.telemetry
             .record("action", format!("filter_column {}", column.header()));
+    }
+
+    fn open_sort_picker(&mut self, column: Column) {
+        let mut options: Vec<(String, usize)> = sort::orders_for(column)
+            .into_iter()
+            .map(|order| (order.label(column), 0))
+            .collect();
+        options.push(("none".to_string(), 0));
+        self.picker = Some(ValuePicker {
+            purpose: PickerPurpose::Sort(column),
+            options,
+            typed: String::new(),
+            selected: 0,
+        });
+        self.mode = Mode::PickValue;
+        self.telemetry
+            .record("action", format!("sort_column {}", column.header()));
     }
 
     fn handle_pick_value_key(&mut self, event: KeyEvent) {
@@ -282,7 +334,9 @@ impl App {
         let Some((value, _)) = picker.highlighted() else {
             return;
         };
-        let field = picker.field;
+        let PickerPurpose::Filter(field) = picker.purpose else {
+            return;
+        };
         let all: Vec<String> = picker.options.iter().map(|(v, _)| v.clone()).collect();
         let mut shown: Vec<String> = all
             .iter()
@@ -312,12 +366,23 @@ impl App {
             self.status = format!("nothing matches '{}'", picker.typed);
             return;
         };
-        let text = Filter::with_only(&self.filter_text, picker.field, &value);
-        self.set_filter(text);
-        self.telemetry.record(
-            "action",
-            format!("filter_pick {}:{value}", picker.field.keyword()),
-        );
+        match picker.purpose {
+            PickerPurpose::Filter(field) => {
+                let text = Filter::with_only(&self.filter_text, field, &value);
+                self.set_filter(text);
+                self.telemetry
+                    .record("action", format!("filter_pick {}:{value}", field.keyword()));
+            }
+            PickerPurpose::Sort(column) => {
+                self.sort = sort::orders_for(column)
+                    .into_iter()
+                    .find(|order| order.label(column) == value)
+                    .map(|order| Sort { column, order });
+                self.refilter();
+                self.telemetry
+                    .record("action", format!("sort_pick {}:{value}", column.header()));
+            }
+        }
     }
 
     /// Commands that start with what has been typed so far, for the footer hint.
@@ -444,7 +509,13 @@ impl App {
             }
             Action::FilterColumn => {
                 self.mode = Mode::PickColumn;
+                self.column_purpose = ColumnPurpose::Filter;
                 self.status = "filter by column: press its number".to_string();
+            }
+            Action::SortColumn => {
+                self.mode = Mode::PickColumn;
+                self.column_purpose = ColumnPurpose::Sort;
+                self.status = "sort by column: press its number".to_string();
             }
             Action::Command => {
                 self.mode = Mode::Command;
@@ -534,6 +605,9 @@ impl App {
         self.visible = (0..self.tasks.len())
             .filter(|&index| filter.matches(&self.tasks[index]))
             .collect();
+        if let Some(sort) = self.sort {
+            sort::apply(&self.tasks, &mut self.visible, sort);
+        }
         self.select(self.selected);
     }
 

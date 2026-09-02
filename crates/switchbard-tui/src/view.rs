@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Table
 use ratatui::Frame;
 use switchbard_core::BacklogTask;
 
-use crate::app::{App, Mode, Pane, ValuePicker};
+use crate::app::{App, Mode, Pane, PickerPurpose, ValuePicker};
 use crate::config::{Action, Column};
 use crate::tasks::Filter;
 
@@ -46,8 +46,12 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         format!("{} · ", app.filter_text)
     };
+    let sort = app
+        .sort
+        .map(|sort| format!("{} · ", sort.label()))
+        .unwrap_or_default();
     let title = format!(
-        " {repo} · {} · {filter}{}/{} ",
+        " {repo} · {} · {filter}{sort}{}/{} ",
         app.view_label(),
         app.visible.len(),
         app.total_tasks()
@@ -164,6 +168,8 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Action::Open,
         Action::Back,
         Action::Filter,
+        Action::FilterColumn,
+        Action::SortColumn,
         Action::Command,
         Action::Reload,
         Action::Help,
@@ -205,7 +211,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
             ":view <name>  :reload  :q",
             Style::default().fg(theme.accent),
         ),
-        Span::raw("    f <col#>: type picks one, space toggles; terms: status:a,b status:!x pri: label: project:"),
+        Span::raw("    f/s <col#>: type or number picks; space toggles a filter value; status:a,b status:!x"),
     ]));
     lines.push(Line::from(Span::styled(
         "config: ~/.switchbard/tui.lua (hot reload)    events: ~/.switchbard/tui-events.jsonl",
@@ -280,7 +286,14 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         .iter()
         .enumerate()
         .map(|(index, (value, count))| {
-            let shown = Filter::field_allows(&app.filter_text, picker.field, value);
+            let shown = match picker.purpose {
+                PickerPurpose::Filter(field) => {
+                    Filter::field_allows(&app.filter_text, field, value)
+                }
+                PickerPurpose::Sort(column) => app
+                    .sort
+                    .is_some_and(|sort| sort.order.label(column) == *value),
+            };
             let mut style = if index == picker.selected {
                 Style::default()
                     .bg(theme.selected)
@@ -298,20 +311,32 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                     format!("{mark}{value:<width$}", width = width as usize - 9),
                     style,
                 ),
-                Span::styled(format!("{count:>3}"), Style::default().fg(theme.dim)),
+                Span::styled(
+                    if *count > 0 {
+                        format!("{count:>3}")
+                    } else {
+                        "   ".to_string()
+                    },
+                    Style::default().fg(theme.dim),
+                ),
             ])
         })
         .collect();
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent))
-        .title(if picker.typed.is_empty() {
-            format!(
+        .title(match (&picker.purpose, picker.typed.is_empty()) {
+            (PickerPurpose::Filter(field), true) => format!(
                 " {} · type/number picks one · space toggles ",
-                picker.field.keyword()
-            )
-        } else {
-            format!(" {}: {}▏", picker.field.keyword(), picker.typed)
+                field.keyword()
+            ),
+            (PickerPurpose::Filter(field), false) => {
+                format!(" {}: {}▏", field.keyword(), picker.typed)
+            }
+            (PickerPurpose::Sort(column), true) => format!(" sort by {} ", column.header()),
+            (PickerPurpose::Sort(column), false) => {
+                format!(" sort by {}: {}▏", column.header(), picker.typed)
+            }
         });
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);

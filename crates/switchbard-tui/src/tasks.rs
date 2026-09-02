@@ -135,6 +135,10 @@ impl Filter {
         loose(haystack).contains(&loose(needle))
     }
 
+    pub fn loose_starts_with(haystack: &str, needle: &str) -> bool {
+        loose(haystack).starts_with(&loose(needle))
+    }
+
     /// Replaces every term for `field` with `field:value`; other fields' terms stay.
     pub fn with_only(text: &str, field: FilterField, value: &str) -> String {
         let mut words = words_without_field(text, field);
