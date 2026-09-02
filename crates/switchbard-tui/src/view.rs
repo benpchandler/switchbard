@@ -8,10 +8,10 @@ use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Table
 use ratatui::Frame;
 use switchbard_core::BacklogTask;
 
-use crate::app::{App, Mode, Pane, PickerPurpose, ValuePicker};
+use crate::app::{App, ColumnPurpose, Mode, Pane, PickerPurpose, ValuePicker};
 use crate::config::{Action, Column};
 use crate::tasks::Filter;
-use crate::views::Scope;
+use crate::views::{columns_text, Scope};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let [body, footer] =
@@ -51,15 +51,19 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
         .sort
         .map(|sort| format!("{} · ", sort.label()))
         .unwrap_or_default();
+    let columns = if app.columns == Column::DEFAULT_SHOWN {
+        String::new()
+    } else {
+        format!("cols:{} · ", columns_text(&app.columns))
+    };
     let title = format!(
-        " {repo} · {} · {filter}{sort}{}/{} ",
+        " {repo} · {} · {filter}{sort}{columns}{}/{} ",
         app.view_label(),
         app.visible.len(),
         app.total_tasks()
     );
     let header = Row::new(
-        app.config
-            .columns
+        app.columns
             .iter()
             .enumerate()
             .map(|(index, column)| Cell::from(format!("{} {}", index + 1, column.header()))),
@@ -68,13 +72,12 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
     let rows = (0..app.visible.len()).filter_map(|index| {
         let task = app.task(index)?;
         Some(Row::new(
-            app.config
-                .columns
+            app.columns
                 .iter()
                 .map(|column| Cell::from(cell_text(*column, task))),
         ))
     });
-    let widths = app.config.columns.iter().map(|column| match column {
+    let widths = app.columns.iter().map(|column| match column {
         Column::Id => Constraint::Length(9),
         Column::Status => Constraint::Length(12),
         Column::Priority => Constraint::Length(7),
@@ -171,6 +174,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Action::Filter,
         Action::FilterColumn,
         Action::SortColumn,
+        Action::Columns,
         Action::Command,
         Action::Reload,
         Action::Help,
@@ -268,7 +272,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         )),
         Mode::Browse => Line::from(Span::styled(
             format!(
-                " {}  / filter  f filter-by  s sort  v views  : command  ? keys  q quit",
+                " {}  / filter  f filter-by  s sort  c columns  v views  : command  ? keys  q quit",
                 if app.filter_text.is_empty() {
                     String::new()
                 } else {
@@ -289,7 +293,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         .map(|(value, _)| value.len() + 11)
         .max()
         .unwrap_or(20)
-        .max(34)
+        .max(56)
         .min(body.width.saturating_sub(4) as usize) as u16;
     let height = (picker.options.len() as u16 + 2).min(body.height.saturating_sub(2));
     let area = Rect {
@@ -310,6 +314,9 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                 PickerPurpose::Sort(column) => app
                     .sort
                     .is_some_and(|sort| sort.order.label(column) == *value),
+                PickerPurpose::ChooseColumn(_) | PickerPurpose::Columns => {
+                    Column::parse(value).is_some_and(|column| app.columns.contains(&column))
+                }
             };
             let mut style = if index == picker.selected {
                 Style::default()
@@ -354,6 +361,16 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             (PickerPurpose::Sort(column), false) => {
                 format!(" sort by {}: {}▏", column.header(), picker.typed)
             }
+            (PickerPurpose::ChooseColumn(ColumnPurpose::Filter), _) => {
+                format!(" filter by column: {}▏", picker.typed)
+            }
+            (PickerPurpose::ChooseColumn(ColumnPurpose::Sort), _) => {
+                format!(" sort by column: {}▏", picker.typed)
+            }
+            (PickerPurpose::Columns, true) => {
+                " columns · digit/name toggles · space keeps open · K/J move ".to_string()
+            }
+            (PickerPurpose::Columns, false) => format!(" columns: {}▏", picker.typed),
         });
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);

@@ -24,6 +24,7 @@ pub enum Action {
     Filter,
     FilterColumn,
     SortColumn,
+    Columns,
     Command,
     Reload,
     Help,
@@ -45,6 +46,7 @@ impl Action {
             "filter" => Action::Filter,
             "filter_column" => Action::FilterColumn,
             "sort_column" => Action::SortColumn,
+            "columns" => Action::Columns,
             "command" => Action::Command,
             "reload" => Action::Reload,
             "help" => Action::Help,
@@ -67,6 +69,7 @@ impl Action {
             Action::Filter => "filter".to_string(),
             Action::FilterColumn => "filter_column".to_string(),
             Action::SortColumn => "sort_column".to_string(),
+            Action::Columns => "columns".to_string(),
             Action::Command => "command".to_string(),
             Action::Reload => "reload".to_string(),
             Action::Help => "help".to_string(),
@@ -136,11 +139,24 @@ pub enum Column {
 }
 
 impl Column {
+    /// Every column sbt knows, in catalog order. Shown columns are a user-ordered subset.
+    pub const ALL: [Column; 6] = [
+        Column::Id,
+        Column::Status,
+        Column::Priority,
+        Column::Title,
+        Column::Labels,
+        Column::Project,
+    ];
+
+    pub const DEFAULT_SHOWN: [Column; 4] =
+        [Column::Id, Column::Status, Column::Priority, Column::Title];
+
     pub fn parse(text: &str) -> Option<Column> {
         Some(match text {
             "id" => Column::Id,
             "status" => Column::Status,
-            "priority" => Column::Priority,
+            "priority" | "pri" => Column::Priority,
             "title" => Column::Title,
             "labels" => Column::Labels,
             "project" => Column::Project,
@@ -195,7 +211,6 @@ pub struct Theme {
 pub struct Config {
     pub keys: HashMap<KeyChord, Action>,
     pub theme: Theme,
-    pub columns: Vec<Column>,
     pub warnings: Vec<String>,
 }
 
@@ -243,7 +258,6 @@ pub fn load(user_path: Option<&Path>) -> Config {
 struct RawConfig {
     keys: HashMap<String, String>,
     theme: HashMap<String, String>,
-    columns: Option<Vec<String>>,
 }
 
 impl RawConfig {
@@ -253,16 +267,12 @@ impl RawConfig {
         Ok(RawConfig {
             keys: string_map(&table, "keys")?,
             theme: string_map(&table, "theme")?,
-            columns: string_list(&table, "columns")?,
         })
     }
 
     fn merge(&mut self, over: RawConfig) {
         self.keys.extend(over.keys);
         self.theme.extend(over.theme);
-        if over.columns.is_some() {
-            self.columns = over.columns;
-        }
     }
 
     fn into_config(self, mut warnings: Vec<String>) -> Config {
@@ -290,27 +300,9 @@ impl RawConfig {
             selected: color("selected", Color::Indexed(236)),
             border: color("border", Color::DarkGray),
         };
-        let columns = self
-            .columns
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|name| {
-                let column = Column::parse(name);
-                if column.is_none() {
-                    warnings.push(format!("unknown column '{name}'"));
-                }
-                column
-            })
-            .collect::<Vec<_>>();
-        let columns = if columns.is_empty() {
-            vec![Column::Id, Column::Status, Column::Priority, Column::Title]
-        } else {
-            columns
-        };
         Config {
             keys,
             theme,
-            columns,
             warnings,
         }
     }
@@ -326,15 +318,4 @@ fn string_map(table: &Table, key: &str) -> mlua::Result<HashMap<String, String>>
         out.insert(name, value);
     }
     Ok(out)
-}
-
-fn string_list(table: &Table, key: &str) -> mlua::Result<Option<Vec<String>>> {
-    let Value::Table(inner) = table.get::<Value>(key)? else {
-        return Ok(None);
-    };
-    let mut out = Vec::new();
-    for value in inner.sequence_values::<String>() {
-        out.push(value?);
-    }
-    Ok(Some(out))
 }
