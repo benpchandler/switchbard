@@ -819,6 +819,7 @@ fn p_paints_rows_matching_the_filter_and_columns_and_none_clears() {
     h.press(KeyCode::Char('p'));
     h.type_text("c");
     h.type_text("s");
+    h.type_text("w");
     h.type_text("cy");
     assert_eq!(
         cell_fg(&h, "In Progress"),
@@ -833,6 +834,7 @@ fn p_paints_rows_matching_the_filter_and_columns_and_none_clears() {
     h.press(KeyCode::Char('p'));
     h.type_text("c");
     h.type_text("s");
+    h.type_text("w");
     h.type_text("no");
     assert_eq!(
         cell_fg(&h, "In Progress"),
@@ -961,9 +963,109 @@ fn p_by_status_paints_each_value_and_auto_hands_out_distinct_colors() {
     h.press(KeyCode::Char('p'));
     let screen = h.type_text("p");
     assert!(
-        screen.contains("by pri · pick a value"),
+        screen.contains("rows by pri · pick a value"),
         "no project values in this repo, so p resolves to priority at once: {screen}"
     );
     h.press(KeyCode::Esc);
     assert_eq!(cell_fg(&h, "Fix login"), Some(Color::Cyan));
+}
+
+#[test]
+fn status_rows_plus_priority_cells_keep_both_colors() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('p'));
+    h.type_text("c");
+    let screen = h.type_text("pri");
+    assert!(screen.contains("priority cells by pri"), "{screen}");
+    assert!(
+        screen.contains("2  whole: one color for the column"),
+        "{screen}"
+    );
+    h.press(KeyCode::Char('1'));
+    let screen = h.press(KeyCode::Esc);
+    assert!(
+        screen.contains("paint:5 ·"),
+        "2 statuses + 3 priorities: {screen}"
+    );
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Yellow),
+        "To Do row stays status-colored"
+    );
+    assert_ne!(
+        cell_fg(&h, "low"),
+        Some(Color::Yellow),
+        "its priority cell has its own color"
+    );
+    assert_eq!(
+        cell_fg(&h, "high"),
+        Some(Color::Yellow),
+        "high is the first priority, auto's first color"
+    );
+    assert_eq!(cell_fg(&h, "Write onboarding"), Some(Color::Yellow));
+    assert!(
+        h.app
+            .paint
+            .iter()
+            .any(|r| r.to_text() == "cell:priority:pri:high=yellow"),
+        "{:?}",
+        h.app.paint
+    );
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('d'));
+    let fresh = open_app(&h.root, &h.config_path);
+    assert_eq!(
+        fresh.paint.len(),
+        5,
+        "cell rules round-trip through the view file"
+    );
+}
+
+#[test]
+fn a_cell_rule_beats_a_column_rule_beats_a_row_rule_regardless_of_order() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('p'));
+    h.type_text("c");
+    h.type_text("pri");
+    h.press(KeyCode::Char('3'));
+    h.type_text("re");
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('p'));
+    h.type_text("c");
+    h.type_text("pri");
+    h.type_text("w");
+    h.type_text("blu");
+    h.press(KeyCode::Char('p'));
+    h.type_text("r");
+    h.type_text("gre");
+    let rules: Vec<String> = h.app.paint.iter().map(|r| r.to_text()).collect();
+    assert_eq!(rules.len(), 3, "{rules:?}");
+    let selected = h.app.selected_task().unwrap().clone();
+    assert_eq!(
+        cell_fg(&h, &selected.id),
+        Some(Color::Green),
+        "row rule on the id cell"
+    );
+    assert_eq!(
+        cell_fg(&h, "high"),
+        Some(Color::Red),
+        "cell rule wins over column and row"
+    );
+    assert_eq!(
+        cell_fg(&h, "low"),
+        Some(Color::Blue),
+        "column rule wins over nothing"
+    );
+    assert_eq!(
+        cell_fg(&h, "medium"),
+        Some(Color::Blue),
+        "column rule wins over the row rule"
+    );
 }
