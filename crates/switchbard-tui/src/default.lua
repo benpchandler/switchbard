@@ -25,6 +25,19 @@ return {
     border = "darkgray",
   },
 
+  -- What painting a column "auto" hands out, first value first. Hex so it reads
+  -- the same on every terminal palette; picked for separation on a dark background.
+  palette = {
+    "#ffd166", -- amber
+    "#4fc3f7", -- sky
+    "#7ee787", -- green
+    "#ff7b72", -- coral
+    "#c792ea", -- violet
+    "#5ee6d8", -- teal
+    "#ffa657", -- orange
+    "#f78da7", -- pink
+  },
+
   -- Glyphs shown when a column is in glyph mode (`c`, then `g` on the column).
   -- Keys are the column's values; a value without a glyph shows its first letter.
   glyphs = {

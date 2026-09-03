@@ -156,6 +156,8 @@ pub struct Config {
     pub theme: Theme,
     /// Column -> loose value -> glyph, for columns shown in glyph mode.
     pub glyphs: HashMap<Column, HashMap<String, String>>,
+    /// What `p <col> 1` (auto) hands out, in order; a user list replaces it whole.
+    pub palette: Vec<String>,
     pub warnings: Vec<String>,
 }
 
@@ -221,6 +223,7 @@ struct RawConfig {
     keys: HashMap<String, String>,
     theme: HashMap<String, String>,
     glyphs: HashMap<String, HashMap<String, String>>,
+    palette: Vec<String>,
 }
 
 impl RawConfig {
@@ -231,6 +234,7 @@ impl RawConfig {
             keys: string_map(&table, "keys")?,
             theme: string_map(&table, "theme")?,
             glyphs: nested_string_map(&table, "glyphs")?,
+            palette: string_list(&table, "palette")?,
         })
     }
 
@@ -239,6 +243,9 @@ impl RawConfig {
         self.theme.extend(over.theme);
         for (column, map) in over.glyphs {
             self.glyphs.entry(column).or_default().extend(map);
+        }
+        if !over.palette.is_empty() {
+            self.palette = over.palette;
         }
     }
 
@@ -279,10 +286,19 @@ impl RawConfig {
                 None => warnings.push(format!("unknown column '{column_name}' in glyphs")),
             }
         }
+        let mut palette = Vec::new();
+        for text in self.palette {
+            if Color::from_str(&text).is_ok() {
+                palette.push(text);
+            } else {
+                warnings.push(format!("bad color '{text}' in palette"));
+            }
+        }
         Config {
             keys,
             theme,
             glyphs,
+            palette,
             warnings,
         }
     }
@@ -306,6 +322,13 @@ fn nested_string_map(
         out.insert(name, map);
     }
     Ok(out)
+}
+
+fn string_list(table: &Table, key: &str) -> mlua::Result<Vec<String>> {
+    let Value::Table(inner) = table.get::<Value>(key)? else {
+        return Ok(Vec::new());
+    };
+    inner.sequence_values::<String>().collect()
 }
 
 fn string_map(table: &Table, key: &str) -> mlua::Result<HashMap<String, String>> {
