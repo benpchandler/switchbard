@@ -41,6 +41,43 @@ pub enum PickerPurpose {
     PaintColumn,
     /// `p o`: the rule hierarchy, top is the base.
     PaintRules,
+    /// After a digit in browse: everything that can be done with that column.
+    ColumnActions(Column),
+}
+
+/// What a column's menu offers; each row is one of these on a letter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnAction {
+    Filter,
+    Sort,
+    Paint,
+    Glyphs,
+    Hide,
+    Move,
+}
+
+impl ColumnAction {
+    pub fn key(self) -> char {
+        match self {
+            ColumnAction::Filter => 'f',
+            ColumnAction::Sort => 's',
+            ColumnAction::Paint => 'p',
+            ColumnAction::Glyphs => 'g',
+            ColumnAction::Hide => 'x',
+            ColumnAction::Move => 'm',
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ColumnAction::Filter => "filter by its values",
+            ColumnAction::Sort => "sort by it",
+            ColumnAction::Paint => "paint by it",
+            ColumnAction::Glyphs => "glyphs on/off",
+            ColumnAction::Hide => "hide it",
+            ColumnAction::Move => "move columns",
+        }
+    }
 }
 
 /// What a row means when picked.
@@ -67,6 +104,7 @@ pub enum Payload {
     DeleteAllPaint,
     /// Paint rules list: the rule at this position.
     Rule(usize),
+    ColumnAction(ColumnAction),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,5 +257,6 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::PaintTarget => "number or letter picks · esc",
         PickerPurpose::PaintColor(_) => "name or #hex · space clears · h back · esc",
         PickerPurpose::PaintRules => "K/J reorder · del removes · h back · esc",
+        PickerPurpose::ColumnActions(_) => "letter picks · esc",
     }
 }

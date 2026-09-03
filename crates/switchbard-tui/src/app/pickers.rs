@@ -6,7 +6,9 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Mode};
 use crate::columns::Column;
-use crate::picker::{ColumnPurpose, PaintPick, Payload, PickOption, PickerPurpose, ValuePicker};
+use crate::picker::{
+    ColumnAction, ColumnPurpose, PaintPick, Payload, PickOption, PickerPurpose, ValuePicker,
+};
 use crate::sort::{self, Sort};
 use crate::tasks::{self, Filter, FilterField};
 
@@ -23,6 +25,48 @@ impl App {
         match self.column_purpose {
             ColumnPurpose::Filter => self.open_filter_picker(column),
             ColumnPurpose::Sort => self.open_sort_picker(column),
+        }
+    }
+
+    /// A digit in browse: the column at that header position and what can be done with it.
+    pub(super) fn open_column_actions(&mut self, position: usize) {
+        let Some(column) = self.state.columns.get(position - 1).copied() else {
+            self.status = format!("no column {position}: the header numbers the shown ones");
+            return;
+        };
+        let actions = [
+            ColumnAction::Filter,
+            ColumnAction::Sort,
+            ColumnAction::Paint,
+            ColumnAction::Glyphs,
+            ColumnAction::Hide,
+            ColumnAction::Move,
+        ];
+        let options = actions
+            .into_iter()
+            .filter(|action| *action != ColumnAction::Glyphs || self.is_categorical(column))
+            .map(|action| {
+                PickOption::keyed(action.key(), action.label(), Payload::ColumnAction(action))
+            })
+            .collect();
+        self.open_picker(PickerPurpose::ColumnActions(column), options);
+        self.status.clear();
+        self.telemetry
+            .record("action", format!("column_actions {}", column.name()));
+    }
+
+    pub(super) fn run_column_action(&mut self, column: Column, action: ColumnAction) {
+        match action {
+            ColumnAction::Filter => self.open_filter_picker(column),
+            ColumnAction::Sort => self.open_sort_picker(column),
+            ColumnAction::Paint => self.paint_column_entry(column),
+            ColumnAction::Glyphs => self.toggle_glyph_column(column),
+            ColumnAction::Hide => self.toggle_column(column),
+            ColumnAction::Move => {
+                self.move_origin = Some(self.state.columns.clone());
+                let options = self.shown_column_options();
+                self.open_picker(PickerPurpose::MoveColumns(Vec::new()), options);
+            }
         }
     }
 
@@ -475,6 +519,9 @@ impl App {
                 self.apply_paint(pick, &color)
             }
             (PickerPurpose::PaintColor(pick), Payload::NoColor) => self.apply_paint(pick, "none"),
+            (PickerPurpose::ColumnActions(column), Payload::ColumnAction(action)) => {
+                self.run_column_action(column, action)
+            }
             (PickerPurpose::PaintRules, Payload::Rule(index)) => {
                 self.open_paint_rules_picker();
                 if let Some(picker) = self.picker.as_mut() {

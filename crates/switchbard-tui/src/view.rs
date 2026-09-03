@@ -200,6 +200,10 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let entries: Vec<(String, String)> = actions
         .iter()
         .map(|action| (app.config.bindings_for(action).join(" "), action.name()))
+        .chain(std::iter::once((
+            "1-9".to_string(),
+            "column actions".to_string(),
+        )))
         .chain(
             app.views
                 .slots()
@@ -462,6 +466,7 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::PaintTarget => "paint".to_string(),
         PickerPurpose::PaintColor(_) => "color".to_string(),
         PickerPurpose::PaintRules => "paint rules · top is the base".to_string(),
+        PickerPurpose::ColumnActions(column) => column.name().to_string(),
     };
     if picker.typed.is_empty() {
         format!(" {subject} ")
