@@ -51,7 +51,7 @@ pub use backlog::{
     create_project_def, create_task_allocating_id, detach_goal_inputs, edit_backlog_task,
     edit_goal_target, edit_initiative_def, edit_project_def, expedite_task, is_backlog_repo,
     load_backlog_repo, missing_standard_statuses, next_task_id, ordered_status_vocabulary,
-    parse_backlog_day, rank_project, rank_project_move, rank_task, rank_task_move,
+    parse_backlog_day, rank_project, rank_project_move, rank_task, rank_task_move, rename_project,
     replace_task_section, revise_backlog_acceptance_criteria, revise_task_checklist, roll_goals,
     set_backlog_acceptance_checked, set_backlog_ball, set_backlog_dod_checked,
     set_backlog_final_summary, set_backlog_label, set_task_checklist_item, set_task_label,
@@ -60,10 +60,10 @@ pub use backlog::{
     unrank_task, write_new_task_file, BacklogChecklistItem, BacklogRepo, BacklogTask,
     BacklogTaskPatch, BacklogTaskSource, Ball, ChecklistTextEdit, GoalCheckIn, GoalDef, GoalInputs,
     GoalMeasure, GoalWeek, InitiativeDef, InitiativeDefPatch, NewBacklogTask, NewGoal,
-    NewInitiativeDef, NewProjectDef, ProjectDef, ProjectDefPatch, RankMove, RankPlacement,
-    RepoRanking, TaskChecklist, TaskListField, TaskSection, WriteOutcome, ACTIVE_BRANCH_DAYS,
-    BACKLOG_PRIORITIES, BACKLOG_STATUSES, BALL_AGENT_LABEL, BALL_ME_LABEL, CANONICAL_STATUS_ORDER,
-    DEFAULT_PROJECT_STATUS, PROJECT_STATUSES, STANDARD_STATUSES,
+    NewInitiativeDef, NewProjectDef, ProjectDef, ProjectDefPatch, ProjectRename, RankMove,
+    RankPlacement, RepoRanking, TaskChecklist, TaskListField, TaskSection, WriteOutcome,
+    ACTIVE_BRANCH_DAYS, BACKLOG_PRIORITIES, BACKLOG_STATUSES, BALL_AGENT_LABEL, BALL_ME_LABEL,
+    CANONICAL_STATUS_ORDER, DEFAULT_PROJECT_STATUS, PROJECT_STATUSES, STANDARD_STATUSES,
 };
 pub use backlog_relations::{
     ancestor_depth, blocking_dependencies, blocks, children, dependency_statuses,

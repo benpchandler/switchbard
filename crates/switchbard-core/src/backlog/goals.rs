@@ -17,7 +17,7 @@
 //! file this module cannot confidently locate its edit point in fails
 //! closed with an error naming the fix, never a rewrite.
 
-use super::write::{atomic_write, validated_single_line, yaml_scalar};
+use super::write::{atomic_write, validated_single_line, yaml_scalar, WriteOutcome};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -476,6 +476,66 @@ fn write_goal_inputs(root: &Path, name: &str, new_inputs: &GoalInputs) -> Result
         lines.splice(weeks_line..weeks_line, block);
     }
     write_lines(&path, &lines)
+}
+
+/// Follow a project rename into `goals.yml`: a goal's `scope:` equal to
+/// `old` (a scope is a project name or a label; a label spelled exactly like
+/// the project is read as the project here) and any `inputs.projects` entry.
+/// A missing file, or one that never mentions `old`, is `Unchanged`.
+pub(super) fn rename_project_in_goals(root: &Path, old: &str, new: &str) -> Result<WriteOutcome> {
+    let path = goals_path(root);
+    if !path.is_file() {
+        return Ok(WriteOutcome::Unchanged);
+    }
+    let mut warnings = Vec::new();
+    let goals = load_goals(root, &mut warnings);
+    if !warnings.is_empty() {
+        bail!(
+            "{} does not parse cleanly - fix it before renaming: {}",
+            path.display(),
+            warnings.join("; ")
+        );
+    }
+    let mut changed = false;
+    for goal in goals {
+        if goal.scope.as_deref() == Some(old) {
+            let mut lines = read_lines(&path)?;
+            let (start, end) = goal_span(&lines, &goal.name)?;
+            let needle = format!("{GOAL_FIELD_INDENT}scope: {}", yaml_scalar(old));
+            let Some(at) = (start..end).find(|&i| lines[i].trim_end() == needle) else {
+                bail!(
+                    "{}: cannot locate goal '{}'s `scope:` line - restore the emitted structure first",
+                    path.display(),
+                    goal.name
+                );
+            };
+            lines[at] = format!("{GOAL_FIELD_INDENT}scope: {}", yaml_scalar(new));
+            write_lines(&path, &lines)?;
+            changed = true;
+        }
+        if goal.inputs.projects.iter().any(|p| p == old) {
+            let mut inputs = goal.inputs.clone();
+            let mut renamed = Vec::with_capacity(inputs.projects.len());
+            for project in inputs.projects.drain(..) {
+                let project = if project == old {
+                    new.to_string()
+                } else {
+                    project
+                };
+                if !renamed.contains(&project) {
+                    renamed.push(project);
+                }
+            }
+            inputs.projects = renamed;
+            write_goal_inputs(root, &goal.name, &inputs)?;
+            changed = true;
+        }
+    }
+    Ok(if changed {
+        WriteOutcome::Changed
+    } else {
+        WriteOutcome::Unchanged
+    })
 }
 
 /// Look up a goal by name, insisting the file parses cleanly first (an

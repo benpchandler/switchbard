@@ -18,9 +18,11 @@
 //! `created_date`/`updated_date`: a def is a description of intent, not an
 //! activity log, and the roll-up derives freshness from member tasks.
 
-use super::parse::{split_frontmatter, yaml_string};
+use super::goals::rename_project_in_goals;
+use super::parse::{load_backlog_repo, split_frontmatter, task_file_round_trips, yaml_string};
+use super::ranking::rename_project_in_ranking;
 use super::write::{
-    atomic_write, filename_slug, join_raw, remove_key, set_scalar, split_raw,
+    atomic_write, filename_slug, join_raw, remove_key, set_scalar, set_task_project, split_raw,
     validated_single_line, yaml_scalar, WriteOutcome,
 };
 use anyhow::{bail, Context, Result};
@@ -435,6 +437,138 @@ pub fn edit_initiative_def(
     })
 }
 
+/// What [`rename_project`] touched, for the caller to report.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectRename {
+    /// The def file was renamed (`name:` and, when the slug changed, the
+    /// filename). `false` when the project had no definition file.
+    pub def_renamed: bool,
+    /// Task files whose `project:` (or legacy `milestone:`) was rewritten.
+    pub tasks_updated: usize,
+    pub ranking_updated: bool,
+    pub goals_updated: bool,
+}
+
+/// Rename a project everywhere its name is the key: its def file, every
+/// member task (active, completed, draft, archived), `ranking.yml`, and
+/// `goals.yml` — the bulk mutation the trajectory doc deferred until asked
+/// for (owner request 2026-09-02, TASK-134).
+///
+/// Every refusal fires before the first write: `new` must not already be
+/// defined or referenced (merging two projects is not a rename), `old` must
+/// be defined or referenced (else there is nothing to rename), the new def
+/// slug must be free, and every member task file must round-trip so the
+/// pass cannot stop halfway on a file the write layer would reject. The
+/// steps themselves are each atomic but not jointly transactional; an error
+/// mid-way names the step, and re-running the same rename is safe (files
+/// already renamed are simply no longer members of `old`).
+pub fn rename_project(root: &Path, old: &str, new: &str) -> Result<ProjectRename> {
+    let old = validated_single_line("project", old)?;
+    let new = validated_single_line("project", new)?;
+    if old == new {
+        bail!("project '{old}' already has that name");
+    }
+    let repo = load_backlog_repo(root)?;
+    let members: Vec<&super::types::BacklogTask> = repo
+        .tasks
+        .iter()
+        .filter(|task| task.project.as_deref() == Some(old))
+        .collect();
+    let old_def = find_def_file(root, PROJECTS_DIR, old)?;
+    if members.is_empty() && old_def.is_none() {
+        bail!(
+            "no project named '{old}' - nothing defines or references it (see `sb project list`)"
+        );
+    }
+    if let Some((_, path)) = find_def_file(root, PROJECTS_DIR, new)? {
+        bail!(
+            "project '{new}' is already defined at {} - merging projects is not a rename",
+            path.display()
+        );
+    }
+    if let Some(task) = repo
+        .tasks
+        .iter()
+        .find(|task| task.project.as_deref() == Some(new))
+    {
+        bail!(
+            "project '{new}' is already referenced by {} - merging projects is not a rename",
+            task.id
+        );
+    }
+    let new_def_path = match &old_def {
+        Some((_, old_path)) => Some(planned_def_path(root, old_path, new)?),
+        None => None,
+    };
+    let stuck: Vec<String> = members
+        .iter()
+        .filter(|task| !task_file_round_trips(&task.path))
+        .map(|task| task.path.display().to_string())
+        .collect();
+    if !stuck.is_empty() {
+        bail!(
+            "refusing to rename: {} member file(s) would not round-trip through the write layer: {}",
+            stuck.len(),
+            stuck.join(", ")
+        );
+    }
+
+    let mut report = ProjectRename::default();
+    for task in &members {
+        if set_task_project(&task.path, Some(new))
+            .with_context(|| format!("renaming project on {}", task.id))?
+            .changed()
+        {
+            report.tasks_updated += 1;
+        }
+    }
+    if let (Some((_, old_path)), Some(new_path)) = (old_def, new_def_path) {
+        let renamed = apply_def_edit(&old_path, |fm, _| {
+            set_scalar(fm, "name", &yaml_scalar(new), None);
+            Ok(())
+        })
+        .with_context(|| format!("renaming {}", old_path.display()))?;
+        if !renamed.changed() {
+            bail!(
+                "{} did not change when its name was rewritten - is its `name:` already '{new}'?",
+                old_path.display()
+            );
+        }
+        if new_path != old_path {
+            fs::rename(&old_path, &new_path).with_context(|| {
+                format!("moving {} to {}", old_path.display(), new_path.display())
+            })?;
+        }
+        report.def_renamed = true;
+    }
+    report.ranking_updated = rename_project_in_ranking(root, old, new)
+        .context("renaming project in backlog/ranking.yml")?
+        .changed();
+    report.goals_updated = rename_project_in_goals(root, old, new)
+        .context("renaming project in backlog/goals.yml")?
+        .changed();
+    Ok(report)
+}
+
+/// Where the renamed def file will live: the new name's slug, unless the
+/// only file already carrying that slug (case-insensitively) is the old
+/// def itself, in which case the path is kept.
+fn planned_def_path(root: &Path, old_path: &Path, new: &str) -> Result<PathBuf> {
+    let dir = root.join(PROJECTS_DIR);
+    let slug = filename_slug(new);
+    if let Some(colliding) = slug_collision(&dir, &slug) {
+        if colliding != old_path {
+            bail!(
+                "a project definition with the same filename slug already exists at {} \
+                 (names differing only in case share a slug) - pick a distinct name",
+                colliding.display()
+            );
+        }
+        return Ok(colliding);
+    }
+    Ok(dir.join(format!("{slug}.md")))
+}
+
 fn edit_optional_scalar(
     fm: &mut Vec<String>,
     key: &str,
@@ -805,5 +939,198 @@ mod tests {
             err.to_string().contains("differing only in case"),
             "the diagnostic names the real cause: {err}"
         );
+    }
+
+    // ---- rename_project ----
+
+    fn write_task_file(root: &Path, id: &str, membership_line: &str) -> PathBuf {
+        let path = root.join(format!("backlog/tasks/task-{id} - fixture.md"));
+        fs::write(
+            &path,
+            format!("---\nid: TASK-{id}\ntitle: Fixture {id}\nstatus: To Do\npriority: medium\n{membership_line}---\n"),
+        )
+        .expect("task file");
+        path
+    }
+
+    fn projects_of(root: &Path) -> Vec<(String, Option<String>)> {
+        let repo = load_backlog_repo(root).expect("load");
+        repo.tasks
+            .iter()
+            .map(|t| (t.id.clone(), t.project.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn rename_follows_the_name_into_def_tasks_ranking_and_goals() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        create_project_def(
+            &root,
+            &NewProjectDef {
+                name: "Getting Financing".to_string(),
+                initiative: Some("Acquisition".to_string()),
+                description: "Term sheets.".to_string(),
+                ..NewProjectDef::default()
+            },
+        )
+        .expect("def");
+        write_task_file(&root, "1", "project: Getting Financing\n");
+        write_task_file(&root, "2", "milestone: Getting Financing\n");
+        write_task_file(&root, "3", "project: Other\n");
+        assert!(super::super::ranking::rank_project(
+            &root,
+            "Getting Financing",
+            &super::super::ranking::RankPlacement::Top,
+        )
+        .expect("rank project")
+        .changed());
+        assert!(super::super::ranking::rank_task(
+            &root,
+            "TASK-1",
+            &super::super::ranking::RankPlacement::Top,
+        )
+        .expect("rank task")
+        .changed());
+        super::super::goals::create_goal(
+            &root,
+            &super::super::goals::NewGoal {
+                name: "Term sheets".to_string(),
+                unit: "sheets".to_string(),
+                measure: super::super::goals::GoalMeasure::Tasks,
+                scope: Some("Getting Financing".to_string()),
+                week: "2026-08-31".to_string(),
+                target: 3,
+            },
+        )
+        .expect("goal");
+        super::super::goals::attach_goal_inputs(
+            &root,
+            "Term sheets",
+            &[],
+            &["Getting Financing".to_string()],
+        )
+        .expect("attach");
+
+        let report = rename_project(&root, "Getting Financing", "Lender package").expect("rename");
+        assert_eq!(
+            report,
+            ProjectRename {
+                def_renamed: true,
+                tasks_updated: 2,
+                ranking_updated: true,
+                goals_updated: true,
+            }
+        );
+
+        let mut warnings = Vec::new();
+        let defs = load_project_defs(&root, &mut warnings);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name, "Lender package");
+        assert_eq!(defs[0].initiative.as_deref(), Some("Acquisition"));
+        assert_eq!(defs[0].description, "Term sheets.");
+        assert!(
+            defs[0].path.ends_with("Lender-package.md"),
+            "{:?}",
+            defs[0].path
+        );
+
+        let mut members = projects_of(&root);
+        members.sort();
+        assert_eq!(
+            members,
+            vec![
+                ("TASK-1".to_string(), Some("Lender package".to_string())),
+                ("TASK-2".to_string(), Some("Lender package".to_string())),
+                ("TASK-3".to_string(), Some("Other".to_string())),
+            ]
+        );
+        let legacy =
+            fs::read_to_string(root.join("backlog/tasks/task-2 - fixture.md")).expect("read");
+        assert!(legacy.contains("project: Lender package") && !legacy.contains("milestone:"));
+
+        let repo = load_backlog_repo(&root).expect("reload");
+        assert_eq!(repo.ranking.projects, vec!["Lender package".to_string()]);
+        assert_eq!(
+            repo.ranking.tasks.get("Lender package").cloned(),
+            Some(vec!["TASK-1".to_string()])
+        );
+        assert!(!repo.ranking.tasks.contains_key("Getting Financing"));
+        assert_eq!(repo.goals[0].scope.as_deref(), Some("Lender package"));
+        assert_eq!(
+            repo.goals[0].inputs.projects,
+            vec!["Lender package".to_string()]
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn rename_without_a_def_file_touches_only_tasks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        write_task_file(&root, "1", "project: Loose\n");
+        let report = rename_project(&root, "Loose", "Tight").expect("rename");
+        assert_eq!(
+            report,
+            ProjectRename {
+                def_renamed: false,
+                tasks_updated: 1,
+                ranking_updated: false,
+                goals_updated: false,
+            }
+        );
+        assert_eq!(
+            projects_of(&root),
+            vec![("TASK-1".to_string(), Some("Tight".to_string()))]
+        );
+    }
+
+    #[test]
+    fn rename_refuses_before_writing_anything() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        create_project_def(
+            &root,
+            &NewProjectDef {
+                name: "Alpha".to_string(),
+                ..NewProjectDef::default()
+            },
+        )
+        .expect("def");
+        write_task_file(&root, "1", "project: Alpha\n");
+        write_task_file(&root, "2", "project: Beta\n");
+        let before =
+            fs::read_to_string(root.join("backlog/tasks/task-1 - fixture.md")).expect("read");
+
+        let same = rename_project(&root, "Alpha", "Alpha").expect_err("same name");
+        assert!(same.to_string().contains("already has that name"), "{same}");
+        let unknown = rename_project(&root, "Gamma", "Delta").expect_err("unknown old");
+        assert!(
+            unknown.to_string().contains("no project named 'Gamma'"),
+            "{unknown}"
+        );
+        let referenced = rename_project(&root, "Alpha", "Beta").expect_err("new referenced");
+        assert!(
+            referenced
+                .to_string()
+                .contains("already referenced by TASK-2"),
+            "{referenced}"
+        );
+        create_project_def(
+            &root,
+            &NewProjectDef {
+                name: "Omega".to_string(),
+                ..NewProjectDef::default()
+            },
+        )
+        .expect("second def");
+        let defined = rename_project(&root, "Alpha", "Omega").expect_err("new defined");
+        assert!(defined.to_string().contains("already defined"), "{defined}");
+        let slug = rename_project(&root, "Alpha", "omega").expect_err("slug collision");
+        assert!(slug.to_string().contains("same filename slug"), "{slug}");
+
+        let after =
+            fs::read_to_string(root.join("backlog/tasks/task-1 - fixture.md")).expect("read");
+        assert_eq!(before, after, "a refusal must not touch member files");
     }
 }

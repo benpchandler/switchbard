@@ -856,6 +856,52 @@ pub fn unrank_project(root: &Path, name: &str) -> Result<WriteOutcome> {
     write_projects(root, &ranking.projects, &updated)
 }
 
+/// Follow a project rename into `ranking.yml`: the `projects` list entry and
+/// the `tasks` map key. A missing file, or one that never mentions `old`,
+/// is `Unchanged`. A stale list already sitting under `new` is merged
+/// (its order first, then `old`'s entries it lacked) rather than clobbered.
+pub(super) fn rename_project_in_ranking(root: &Path, old: &str, new: &str) -> Result<WriteOutcome> {
+    let path = ranking_path(root);
+    if !path.is_file() {
+        return Ok(WriteOutcome::Unchanged);
+    }
+    let mut warnings = Vec::new();
+    let ranking = load_ranking(root, &mut warnings);
+    if !warnings.is_empty() {
+        bail!(
+            "{} does not parse cleanly - fix it (or remove it to start fresh): {}",
+            path.display(),
+            warnings.join("; ")
+        );
+    }
+    let in_projects = ranking.projects.iter().any(|p| p == old);
+    let scoped = ranking.tasks.get(old).cloned();
+    if !in_projects && scoped.is_none() {
+        return Ok(WriteOutcome::Unchanged);
+    }
+    let mut lines = load_lines_for_edit(root)?;
+    if in_projects {
+        let updated: Vec<String> = ranking
+            .projects
+            .iter()
+            .map(|p| if p == old { new.to_string() } else { p.clone() })
+            .collect();
+        set_top_level_list(&mut lines, &path, "projects", &updated)?;
+    }
+    if let Some(list) = scoped {
+        let mut merged = ranking.tasks.get(new).cloned().unwrap_or_default();
+        for id in list {
+            if !merged.contains(&id) {
+                merged.push(id);
+            }
+        }
+        set_scope_list(&mut lines, &path, "tasks", old, &[])?;
+        set_scope_list(&mut lines, &path, "tasks", new, &merged)?;
+    }
+    write_lines(&path, &lines)?;
+    Ok(WriteOutcome::Changed)
+}
+
 fn write_projects(root: &Path, stored: &[String], updated: &[String]) -> Result<WriteOutcome> {
     if stored == updated {
         return Ok(WriteOutcome::Unchanged);

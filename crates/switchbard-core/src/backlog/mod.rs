@@ -28,8 +28,8 @@ pub use goals::{
 
 pub use hierarchy::{
     create_initiative_def, create_project_def, edit_initiative_def, edit_project_def,
-    InitiativeDef, InitiativeDefPatch, NewInitiativeDef, NewProjectDef, ProjectDef,
-    ProjectDefPatch, DEFAULT_PROJECT_STATUS, PROJECT_STATUSES,
+    rename_project, InitiativeDef, InitiativeDefPatch, NewInitiativeDef, NewProjectDef, ProjectDef,
+    ProjectDefPatch, ProjectRename, DEFAULT_PROJECT_STATUS, PROJECT_STATUSES,
 };
 
 pub use mutations::{

@@ -1,10 +1,10 @@
 ---
 id: TASK-135
 title: 'sb edit --parent <ID>|none: reparent or promote a task, re-minting its decimal id and fixing references'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-02 21:51'
-updated_date: '2026-09-02 21:51'
+updated_date: '2026-09-02 21:59'
 labels:
   - cli
   - tasks
