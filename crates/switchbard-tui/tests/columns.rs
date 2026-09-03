@@ -215,3 +215,31 @@ fn glyphs_come_from_lua_and_fall_back_to_the_first_letter() {
     h.press(KeyCode::Char('g'));
     assert_eq!(h.app.status, "title has no glyphs: it is free text");
 }
+
+#[test]
+fn ids_drop_the_repo_prefix_priority_is_a_letter_and_columns_fit_their_content() {
+    let mut h = Harness::new();
+    let screen = h.render();
+    let row = screen
+        .lines()
+        .find(|line| line.contains("Add dark theme"))
+        .unwrap()
+        .to_string();
+    assert!(row.starts_with("│2 "), "bare id, no TASK- prefix: {row}");
+    assert!(row.contains(" L "), "priority as a letter: {row}");
+    assert!(!row.contains("TASK-"), "{row}");
+    let header = header_line(&screen);
+    let status_start = header.find("2 status").unwrap();
+    let pri_start = header.find("3 pri").unwrap();
+    assert_eq!(
+        pri_start - status_start,
+        "In Progress".len() + 1,
+        "status column is as wide as its widest value, plus one space: {header}"
+    );
+    h.press(KeyCode::Enter);
+    let detail = h.render();
+    assert!(
+        detail.contains("TASK-1 ·"),
+        "detail keeps the full id: {detail}"
+    );
+}

@@ -68,8 +68,8 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             _ if app.state.glyph_columns.contains(column) => {
                 Constraint::Length((2 + app.glyph_legend(*column).chars().count()).max(3) as u16)
             }
-            column => match column.width() {
-                Some(width) => Constraint::Length(width),
+            column => match column.max_width() {
+                Some(max) => Constraint::Length(fitted_width(app, *column, max)),
                 None => Constraint::Min(20),
             },
         })
@@ -119,11 +119,11 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     );
                 }
                 for (column, cell) in app.state.columns.iter().zip(cells.iter()) {
-                    let text = column.cell_text(task);
-                    let text = if app.state.glyph_columns.contains(column) && !text.is_empty() {
-                        app.config.glyph(*column, &text)
+                    let value = column.cell_text(task);
+                    let text = if app.state.glyph_columns.contains(column) && !value.is_empty() {
+                        app.config.glyph(*column, &value)
                     } else {
-                        text
+                        column.display_text(task)
                     };
                     let mut style = theme.column_style(*column);
                     if let Some(color) = paint::cell_color(&app.state.paint, task, *column) {
@@ -143,6 +143,23 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             }
         }
     }
+}
+
+/// A fixed column is as wide as its header or its widest visible value, never
+/// more than the catalog allows, so a column of `Done` does not reserve room
+/// for `In Progress`.
+fn fitted_width(app: &App, column: Column, max: u16) -> u16 {
+    let header = column.header().chars().count() + 2;
+    let widest = app
+        .rows
+        .iter()
+        .filter_map(|row| match row {
+            Row::Task(index) => Some(column.display_text(&app.tasks()[*index]).chars().count()),
+            Row::Heading(_) => None,
+        })
+        .max()
+        .unwrap_or(0);
+    (header.max(widest) as u16).min(max.max(header as u16))
 }
 
 /// The first row on screen: keeps `selected` in the window, and shows the
