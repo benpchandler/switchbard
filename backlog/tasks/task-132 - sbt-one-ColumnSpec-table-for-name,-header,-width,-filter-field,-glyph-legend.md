@@ -1,12 +1,14 @@
 ---
 id: TASK-132
 title: 'sbt: one ColumnSpec table for name, header, width, filter field, glyph legend'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-02 19:26'
+updated_date: '2026-09-02 21:29'
 labels:
   - tui
   - refactor
+  - ball:agent
 dependencies: []
 priority: medium
 ---
