@@ -21,6 +21,8 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 - `picker.rs` - the one list every menu uses: typed `PickOption` payloads, numbered and
   lettered rows, type-ahead; `app.rs` dispatches on payloads, never label text.
 - `view.rs` - rendering only; also snapshots the screen text for reports.
+- `columns.rs` - the column catalog: one `ColumnSpec` row per column (name, header, width,
+  field, vocabulary) plus `values`/`cell_text`; every other module asks it.
 - `config.rs` - `default.lua` baked in, user file layered over; keys, theme, glyphs.
   Columns (shown set, order, glyph mode via `g`) are view state; numbers are positions.
 - `tasks.rs` - task load + filter language (`status: pri: label: project:` + words,

@@ -2,7 +2,7 @@
 //! A row carries a typed payload so the app dispatches on what was picked,
 //! never on the label text.
 
-use crate::config::Column;
+use crate::columns::Column;
 use crate::sort::Order;
 use crate::tasks::{Filter, FilterField};
 

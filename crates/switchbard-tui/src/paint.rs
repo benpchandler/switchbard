@@ -7,7 +7,7 @@ use std::str::FromStr;
 use ratatui::style::Color;
 use switchbard_core::BacklogTask;
 
-use crate::config::Column;
+use crate::columns::Column;
 use crate::tasks::{Filter, FilterField};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,17 +163,7 @@ impl PaintRule {
 }
 
 fn field_value(task: &BacklogTask, field: FilterField) -> Option<String> {
-    match field {
-        FilterField::Id => Some(task.id.clone()),
-        FilterField::Status => Some(task.status.clone()),
-        FilterField::Priority => Some(task.priority.clone()),
-        FilterField::Label => task.labels.first().cloned(),
-        FilterField::Project => task.project.clone(),
-        FilterField::Ball => {
-            let ball = crate::ball::Ball::text(crate::ball::Ball::of(task));
-            (!ball.is_empty()).then(|| ball.to_string())
-        }
-    }
+    field.column().values(task).into_iter().next()
 }
 
 /// The color for one cell: the lowest (most specific) rule that claims it wins;

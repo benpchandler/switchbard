@@ -1,5 +1,6 @@
 pub mod app;
 pub mod ball;
+pub mod columns;
 pub mod config;
 pub mod paint;
 pub mod picker;
