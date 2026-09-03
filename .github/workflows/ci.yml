@@ -8,9 +8,11 @@ on:
 permissions:
   contents: read
 
+# PR runs supersede each other; a push to main is the merge-commit proof and
+# must run to completion, so it is never cancelled by the next merge.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -67,16 +69,14 @@ jobs:
       - name: Install Rust components
         run: rustup component add rustfmt clippy
 
-      - name: Cache cargo registry + build
-        uses: actions/cache@v4
+      # rust-cache prunes target/ to dependency artifacts only (workspace crates
+      # always rebuild) and saves only from main, so PR branches restore a warm
+      # cache without each adding multi-GB entries against the 10 GB repo cap.
+      - name: Cache cargo registry + dependency build
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ matrix.task }}-${{ hashFiles('mise.toml', '**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ matrix.task }}-
+          shared-key: ${{ matrix.task }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run task — ${{ matrix.task }}
         run: mise run ${{ matrix.task }}
@@ -157,16 +157,11 @@ jobs:
       - name: Install mise tools
         uses: jdx/mise-action@v4
 
-      - name: Cache cargo registry + build
-        uses: actions/cache@v4
+      - name: Cache cargo registry + dependency build
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-mission-sidecar-${{ hashFiles('mise.toml', '**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-mission-sidecar-
+          shared-key: mission-sidecar
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run live mission proofs against the verified helper
         run: |
