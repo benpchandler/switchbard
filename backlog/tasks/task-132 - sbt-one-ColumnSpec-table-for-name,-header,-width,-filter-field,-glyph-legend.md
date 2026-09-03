@@ -1,10 +1,10 @@
 ---
 id: TASK-132
 title: 'sbt: one ColumnSpec table for name, header, width, filter field, glyph legend'
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-09-02 19:26'
-updated_date: '2026-09-02 21:31'
+updated_date: '2026-09-02 21:33'
 labels:
   - tui
   - refactor

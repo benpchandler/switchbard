@@ -1,12 +1,14 @@
 ---
 id: TASK-131
 title: 'sbt: split app.rs by concept (picker, paint flow, view slots) and drive.rs by feature'
-status: To Do
+status: In Review
 assignee: []
 created_date: '2026-09-02 19:26'
+updated_date: '2026-09-02 21:36'
 labels:
   - tui
   - refactor
+  - ball:me
 dependencies: []
 priority: medium
 ---
@@ -19,7 +21,7 @@ Impact: app.rs is 1389 lines and drive.rs 1177; handle_pick_value_key alone is a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 app.rs under 500 lines; picker key handling, paint flow, and view-slot chords each in their own module named for the concept
-- [ ] #2 tests/drive.rs split into per-feature files sharing one harness module; every test still end-to-end
-- [ ] #3 CLAUDE.md module map updated, still under 50 lines
+- [x] #1 app.rs under 500 lines; picker key handling, paint flow, and view-slot chords each in their own module named for the concept
+- [x] #2 tests/drive.rs split into per-feature files sharing one harness module; every test still end-to-end
+- [x] #3 CLAUDE.md module map updated, still under 50 lines
 <!-- AC:END -->
