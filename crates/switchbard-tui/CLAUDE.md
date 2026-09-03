@@ -25,8 +25,9 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 - `view.rs` - rendering only (the table is hand-drawn so headings span the row); snapshots the screen text for reports.
 - `columns.rs` - the column catalog: one `ColumnSpec` row per column (name, header, width,
   field, vocabulary) plus `values`/`cell_text`; every other module asks it.
-- `config.rs` - `default.lua` baked in, user file layered over; keys, theme, glyphs.
-  Columns (shown set, order, glyph mode via `g`) are view state; numbers are positions.
+- `config.rs` - `default.lua` baked in, user file layered over; keys, theme, glyphs, palettes.
+  Theme = named `Surface`s (title chip, header band, heading, selected, label, link, chip,
+  keys, hint...) each a Style (fg/bg/modifiers) and `theme.columns` maps columns to surfaces.
 - `tasks.rs` - task load + filter language (`status: pri: label: project:` + words,
   loose match: `status:todo` == "To Do"); `field_values` feeds the `f <n>` picker.
 - `views.rs` - `ViewState` (filter, sort, columns, glyphs, paint, group) is what a slot saves and
@@ -34,8 +35,7 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
   in `views/<repo path>.lua`; `vs<n>` saves to repo, `vg<n>` promotes to global; slot 1 opens.
 - `paint.rs` - `p` rules in a hierarchy: `by:<col>=v:c,...`, `rows:<filter>=c`, `column:<col>=c`.
   Top rule is the base (whole rows); lower rules paint only their scope. `po` reorders.
-- `group.rs` - `o`: rows = headings + tasks, a projection over the filtered, sorted order;
-  project headings carry def status and done/total from `tasks::ProjectSummary`.
+- `group.rs` - `o`: rows = headings + tasks over the filtered, sorted order; project headings carry def status, done/total.
 - `ball.rs` - who holds the ball: `ball:me`/`ball:agent` labels (`dispatching` = agent); `b` cycles.
 - `sort.rs` - `s <n>`: ascending/descending/semantic (vocabulary rank), ties by id.
 - `report.rs` - `:bug`/`:idea` => task via core write layer. `telemetry.rs` - JSONL log, trail, `stats`.

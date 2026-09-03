@@ -4,6 +4,7 @@ mod harness;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use harness::*;
+use ratatui::style::Color;
 
 #[test]
 fn p_lists_columns_first_then_row_filtered_column_and_hidden_fields() {
@@ -46,17 +47,17 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
     );
     assert_eq!(
         cell_fg(&h, "Add dark theme"),
-        Some(Color::Yellow),
+        Some(Color::Rgb(0xf4, 0x9f, 0x31)),
         "To Do rows"
     );
     assert_eq!(
         cell_fg(&h, "Fix login"),
-        Some(Color::Cyan),
+        Some(Color::Rgb(0x56, 0x9c, 0xd6)),
         "In Progress rows"
     );
     assert_eq!(
         cell_fg(&h, "low"),
-        Some(Color::Yellow),
+        Some(Color::Rgb(0xf4, 0x9f, 0x31)),
         "base paints whole rows"
     );
 
@@ -72,17 +73,17 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
     assert!(screen.contains("paint:2 ·"), "{screen}");
     assert_eq!(
         cell_fg(&h, "Add dark theme"),
-        Some(Color::Yellow),
+        Some(Color::Rgb(0xf4, 0x9f, 0x31)),
         "rows still by status"
     );
     assert_ne!(
         cell_fg(&h, "low"),
-        Some(Color::Yellow),
+        Some(Color::Rgb(0xf4, 0x9f, 0x31)),
         "priority cell has its own color"
     );
     assert_eq!(
         cell_fg(&h, "high"),
-        Some(Color::Yellow),
+        Some(Color::Rgb(0xf4, 0x9f, 0x31)),
         "auto's first color for high"
     );
     assert_eq!(
@@ -93,8 +94,8 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
             .map(|r| r.to_text())
             .collect::<Vec<_>>(),
         [
-            "by:status=todo:yellow,inprogress:cyan",
-            "by:priority=high:yellow,low:cyan,medium:green"
+            "by:status=todo:#f49f31,inprogress:#569cd6",
+            "by:priority=high:#f49f31,low:#569cd6,medium:#5dc453"
         ]
     );
 }
@@ -126,12 +127,12 @@ fn reordering_rules_flips_which_paint_is_the_base() {
     h.press(KeyCode::Esc);
     assert_eq!(
         cell_fg(&h, "Add dark theme"),
-        Some(Color::Cyan),
+        Some(Color::Rgb(0x56, 0x9c, 0xd6)),
         "rows now by priority (low)"
     );
     assert_eq!(
         cell_fg(&h, "To Do"),
-        Some(Color::Yellow),
+        Some(Color::Rgb(0xf4, 0x9f, 0x31)),
         "status cell keeps its own color"
     );
     h.press(KeyCode::Char('p'));
@@ -142,7 +143,10 @@ fn reordering_rules_flips_which_paint_is_the_base() {
         "deleting the base promotes the next: {screen}"
     );
     h.press(KeyCode::Esc);
-    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Yellow));
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Rgb(0xf4, 0x9f, 0x31))
+    );
 }
 
 #[test]
@@ -167,8 +171,8 @@ fn hand_picked_values_row_and_column_and_hex_and_clearing() {
     assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Green));
     assert_eq!(
         cell_fg(&h, "Fix login"),
-        Some(Color::Reset),
-        "In Progress unpainted"
+        Some(Color::Rgb(0xf4, 0x9f, 0x31)),
+        "In Progress unpainted: the theme's text surface"
     );
 
     h.press(KeyCode::Char('p'));
@@ -251,10 +255,69 @@ fn paint_rules_round_trip_through_the_view_file() {
     h.press(KeyCode::Char('d'));
     let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
     assert!(
-        file.contains("paint = \"by:status=todo:yellow,inprogress:cyan;rows:id:"),
+        file.contains("paint = \"by:status=todo:#f49f31,inprogress:#569cd6;rows:id:"),
         "{file}"
     );
     let fresh = open_app(&h.root, &h.config_path);
     assert_eq!(fresh.state.paint, h.app.state.paint);
     assert_eq!(fresh.view_label(), "v1");
+}
+
+#[test]
+fn a_user_palette_replaces_what_auto_hands_out() {
+    let mut h = Harness::new();
+    std::fs::write(
+        &h.config_path,
+        "return { palette = { \"magenta\", \"#123456\" } }",
+    )
+    .unwrap();
+    h.app.tick();
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Esc);
+    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Magenta));
+    assert_eq!(cell_fg(&h, "Fix login"), Some(Color::Rgb(0x12, 0x34, 0x56)));
+}
+
+#[test]
+fn palette_presets_swap_live_and_recolor_auto_painted_values() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('3'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('5'));
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char(':'));
+    h.type_text("palette vivid");
+    h.press(KeyCode::Enter);
+    assert_eq!(
+        h.app.status,
+        "palette vivid · keep it: palette = \"vivid\" in tui.lua"
+    );
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Rgb(0xff, 0xcc, 0x00)),
+        "preset color swapped for its vivid counterpart"
+    );
+    assert!(
+        h.app
+            .state
+            .paint
+            .iter()
+            .any(|rule| rule.to_text().contains("magenta")),
+        "hand-picked colors survive: {:?}",
+        h.app.state.paint
+    );
+    h.press(KeyCode::Char(':'));
+    h.type_text("palette neon");
+    h.press(KeyCode::Enter);
+    assert_eq!(
+        h.app.status,
+        "palette: one of balanced, berg, bloomberg, muted, vivid"
+    );
 }

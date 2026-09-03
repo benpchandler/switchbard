@@ -123,8 +123,13 @@ impl App {
         let Some(field) = column.filter_field() else {
             return;
         };
+        let palette = if self.config.palette.is_empty() {
+            paint::AUTO_PALETTE.map(str::to_string).to_vec()
+        } else {
+            self.config.palette.clone()
+        };
         for (index, (value, _)) in tasks::field_values(&self.tasks, field).iter().enumerate() {
-            let color = paint::AUTO_PALETTE[index % paint::AUTO_PALETTE.len()];
+            let color = &palette[index % palette.len()];
             paint::set_value_color(&mut self.state.paint, column, value, Some(color));
         }
         self.status = format!("painted every {} value", column.name());

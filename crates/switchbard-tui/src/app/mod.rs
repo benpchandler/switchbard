@@ -15,6 +15,7 @@ use crate::ball::Ball;
 use crate::columns::Column;
 use crate::config::{self, Action, Config, KeyChord};
 use crate::group::{self, Row};
+use crate::paint;
 use crate::picker::{ColumnPurpose, ValuePicker};
 use crate::report::{self, ReportContext, ReportKind};
 use crate::sort;
@@ -269,7 +270,7 @@ impl App {
         if self.input.contains(' ') {
             return Vec::new();
         }
-        let mut names: Vec<String> = ["bug", "idea", "group", "reload", "q"]
+        let mut names: Vec<String> = ["bug", "idea", "group", "palette", "reload", "q"]
             .iter()
             .map(|name| name.to_string())
             .collect();
@@ -425,6 +426,7 @@ impl App {
         match verb {
             "q" | "quit" => self.should_quit = true,
             "reload" => self.apply(&Action::Reload),
+            "palette" => self.choose_palette(rest.trim()),
             "group" => match rest.trim() {
                 "" | "off" | "none" => self.set_group(None),
                 name => match Column::parse(name).filter(|column| column.groupable()) {
@@ -444,6 +446,32 @@ impl App {
             "" => {}
             other => self.fail(format!("unknown command :{other}")),
         }
+    }
+
+    /// `:palette <name>`: use a preset for this session and re-color every auto-painted
+    /// value that still wears a preset color, so the change shows at once.
+    fn choose_palette(&mut self, name: &str) {
+        let names: Vec<String> = self
+            .config
+            .palettes
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+        let Some((_, colors)) = self.config.palettes.iter().find(|(known, _)| known == name) else {
+            self.fail(format!("palette: one of {}", names.join(", ")));
+            return;
+        };
+        let colors = colors.clone();
+        let known: Vec<Vec<String>> = self
+            .config
+            .palettes
+            .iter()
+            .map(|(_, colors)| colors.clone())
+            .collect();
+        paint::recolor_from_palettes(&mut self.state.paint, &known, &colors);
+        self.config.palette = colors;
+        self.status = format!("palette {name} · keep it: palette = \"{name}\" in tui.lua");
+        self.telemetry.record("action", format!("palette {name}"));
     }
 
     fn file_report(&mut self, kind: ReportKind, intent: &str) {

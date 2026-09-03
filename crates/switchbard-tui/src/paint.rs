@@ -192,6 +192,27 @@ pub fn value_color(rules: &[PaintRule], column: Column, value: &str) -> Option<S
 
 /// Sets (or with `None`, clears) one value's color on `column`'s by-column rule,
 /// creating the rule at the bottom when it does not exist yet.
+/// Swap preset colors for their counterparts in `next`: a value colored with the
+/// n-th color of any known palette gets the n-th of the new one; hand-picked
+/// colors are left alone.
+pub fn recolor_from_palettes(rules: &mut [PaintRule], known: &[Vec<String>], next: &[String]) {
+    for rule in rules {
+        let PaintRule::ByColumn { colors, .. } = rule else {
+            continue;
+        };
+        for (_, color) in colors.iter_mut() {
+            let position = known
+                .iter()
+                .find_map(|palette| palette.iter().position(|c| c.eq_ignore_ascii_case(color)));
+            if let Some(index) = position {
+                if let Some(replacement) = next.get(index % next.len().max(1)) {
+                    *color = replacement.clone();
+                }
+            }
+        }
+    }
+}
+
 pub fn set_value_color(
     rules: &mut Vec<PaintRule>,
     column: Column,
