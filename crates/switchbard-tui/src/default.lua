@@ -18,19 +18,20 @@ return {
   -- hex ("#303030") is exact. dim is secondary text (detail meta line, hints,
   -- counts); keep it readable on your background.
   theme = {
-    accent = "cyan",
-    header = "yellow",
-    dim = "gray",
-    selected = "#303030",
-    border = "darkgray",
+    accent = "#ffcc00",   -- Bloomberg amber
+    header = "#f0883e",
+    dim = "#8b949e",
+    selected = "#1f2428",
+    border = "#30363d",
     heading = "white",  -- group section headings (`o`); keep it off your paint colors
   },
 
   -- What painting a column "auto" hands out, first value first. Pick a preset by
   -- name (`:palette <name>` inside sbt previews them live), or give your own list:
   -- palette = { "#d4b872", "#7fb3c9", ... }. Hex reads the same on every terminal.
-  palette = "muted",
+  palette = "bloomberg",
   palettes = {
+    bloomberg = { "#ffcc00", "#f0883e", "#2ea043", "#f85149", "#d29922", "#58a6ff", "#8b949e", "#c9d1d9" },
     muted    = { "#c9b07a", "#7fa6bd", "#8db58d", "#c08a84", "#a692bd", "#7fb5ae", "#c49c7a", "#b98da0" },
     balanced = { "#ffd166", "#4fc3f7", "#7ee787", "#ff7b72", "#c792ea", "#5ee6d8", "#ffa657", "#f78da7" },
     vivid    = { "#ffcc00", "#00bfff", "#33ff66", "#ff4d4d", "#c060ff", "#00e5cc", "#ff8800", "#ff66b3" },

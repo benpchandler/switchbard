@@ -47,17 +47,17 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
     );
     assert_eq!(
         cell_fg(&h, "Add dark theme"),
-        Some(Color::Rgb(0xc9, 0xb0, 0x7a)),
+        Some(Color::Rgb(0xff, 0xcc, 0x00)),
         "To Do rows"
     );
     assert_eq!(
         cell_fg(&h, "Fix login"),
-        Some(Color::Rgb(0x7f, 0xa6, 0xbd)),
+        Some(Color::Rgb(0xf0, 0x88, 0x3e)),
         "In Progress rows"
     );
     assert_eq!(
         cell_fg(&h, "low"),
-        Some(Color::Rgb(0xc9, 0xb0, 0x7a)),
+        Some(Color::Rgb(0xff, 0xcc, 0x00)),
         "base paints whole rows"
     );
 
@@ -73,17 +73,17 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
     assert!(screen.contains("paint:2 ·"), "{screen}");
     assert_eq!(
         cell_fg(&h, "Add dark theme"),
-        Some(Color::Rgb(0xc9, 0xb0, 0x7a)),
+        Some(Color::Rgb(0xff, 0xcc, 0x00)),
         "rows still by status"
     );
     assert_ne!(
         cell_fg(&h, "low"),
-        Some(Color::Rgb(0xc9, 0xb0, 0x7a)),
+        Some(Color::Rgb(0xff, 0xcc, 0x00)),
         "priority cell has its own color"
     );
     assert_eq!(
         cell_fg(&h, "high"),
-        Some(Color::Rgb(0xc9, 0xb0, 0x7a)),
+        Some(Color::Rgb(0xff, 0xcc, 0x00)),
         "auto's first color for high"
     );
     assert_eq!(
@@ -94,8 +94,8 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
             .map(|r| r.to_text())
             .collect::<Vec<_>>(),
         [
-            "by:status=todo:#c9b07a,inprogress:#7fa6bd",
-            "by:priority=high:#c9b07a,low:#7fa6bd,medium:#8db58d"
+            "by:status=todo:#ffcc00,inprogress:#f0883e",
+            "by:priority=high:#ffcc00,low:#f0883e,medium:#2ea043"
         ]
     );
 }
@@ -127,12 +127,12 @@ fn reordering_rules_flips_which_paint_is_the_base() {
     h.press(KeyCode::Esc);
     assert_eq!(
         cell_fg(&h, "Add dark theme"),
-        Some(Color::Rgb(0x7f, 0xa6, 0xbd)),
+        Some(Color::Rgb(0xf0, 0x88, 0x3e)),
         "rows now by priority (low)"
     );
     assert_eq!(
         cell_fg(&h, "To Do"),
-        Some(Color::Rgb(0xc9, 0xb0, 0x7a)),
+        Some(Color::Rgb(0xff, 0xcc, 0x00)),
         "status cell keeps its own color"
     );
     h.press(KeyCode::Char('p'));
@@ -145,7 +145,7 @@ fn reordering_rules_flips_which_paint_is_the_base() {
     h.press(KeyCode::Esc);
     assert_eq!(
         cell_fg(&h, "Add dark theme"),
-        Some(Color::Rgb(0xc9, 0xb0, 0x7a))
+        Some(Color::Rgb(0xff, 0xcc, 0x00))
     );
 }
 
@@ -255,7 +255,7 @@ fn paint_rules_round_trip_through_the_view_file() {
     h.press(KeyCode::Char('d'));
     let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
     assert!(
-        file.contains("paint = \"by:status=todo:#c9b07a,inprogress:#7fa6bd;rows:id:"),
+        file.contains("paint = \"by:status=todo:#ffcc00,inprogress:#f0883e;rows:id:"),
         "{file}"
     );
     let fresh = open_app(&h.root, &h.config_path);
@@ -316,5 +316,8 @@ fn palette_presets_swap_live_and_recolor_auto_painted_values() {
     h.press(KeyCode::Char(':'));
     h.type_text("palette neon");
     h.press(KeyCode::Enter);
-    assert_eq!(h.app.status, "palette: one of balanced, muted, vivid");
+    assert_eq!(
+        h.app.status,
+        "palette: one of balanced, bloomberg, muted, vivid"
+    );
 }

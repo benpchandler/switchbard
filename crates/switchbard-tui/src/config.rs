@@ -284,11 +284,11 @@ impl RawConfig {
             None => fallback,
         };
         let theme = Theme {
-            accent: color("accent", Color::Cyan),
-            header: color("header", Color::Yellow),
-            dim: color("dim", Color::Gray),
-            selected: color("selected", Color::Indexed(236)),
-            border: color("border", Color::DarkGray),
+            accent: color("accent", Color::Rgb(0xff, 0xcc, 0x00)),
+            header: color("header", Color::Rgb(0xf0, 0x88, 0x3e)),
+            dim: color("dim", Color::Rgb(0x8b, 0x94, 0x9e)),
+            selected: color("selected", Color::Rgb(0x1f, 0x24, 0x28)),
+            border: color("border", Color::Rgb(0x30, 0x36, 0x3d)),
             heading: color("heading", Color::White),
         };
         let mut glyphs: HashMap<Column, HashMap<String, String>> = HashMap::new();
