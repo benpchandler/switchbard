@@ -28,8 +28,10 @@ return {
     title_repo = { fg = "black", bg = "#ffcc00", bold = true },
     title      = { fg = "#8b949e" },
     border     = { fg = "#30363d" },
-    header     = { fg = "#8b949e", bg = "#161b22" },
-    heading    = { fg = "#e6edf3", bg = "#1f2428", bold = true },
+    -- No background bands by default: terminals are not all black, and a band
+    -- on a gray background reads as a stripe. Only the cursor and chips fill.
+    header     = { fg = "#8b949e" },
+    heading    = { fg = "#e6edf3", bold = true, underline = true },
     selected   = { bg = "#163a63", bold = true },  -- no fg: paint stays readable on the cursor row
     label      = { fg = "#ffcc00" },
     text       = {},
@@ -43,12 +45,13 @@ return {
     columns = { id = "label", project = "link" },
   },
 
-  -- What painting a column "auto" hands out, first value first. Pick a preset by
+  -- What painting a column "auto" hands out, most common value first: keep the
+  -- first color quiet so the common case stays calm and the rest stand out. Pick a preset by
   -- name (`:palette <name>` inside sbt previews them live), or give your own list:
   -- palette = { "#d4b872", "#7fb3c9", ... }. Hex reads the same on every terminal.
   palette = "bloomberg",
   palettes = {
-    bloomberg = { "#ffcc00", "#f0883e", "#2ea043", "#f85149", "#d29922", "#58a6ff", "#8b949e", "#c9d1d9" },
+    bloomberg = { "#c9d1d9", "#ffcc00", "#2ea043", "#58a6ff", "#f0883e", "#f85149", "#d29922", "#8b949e" },
     muted    = { "#c9b07a", "#7fa6bd", "#8db58d", "#c08a84", "#a692bd", "#7fb5ae", "#c49c7a", "#b98da0" },
     balanced = { "#ffd166", "#4fc3f7", "#7ee787", "#ff7b72", "#c792ea", "#5ee6d8", "#ffa657", "#f78da7" },
     vivid    = { "#ffcc00", "#00bfff", "#33ff66", "#ff4d4d", "#c060ff", "#00e5cc", "#ff8800", "#ff66b3" },
