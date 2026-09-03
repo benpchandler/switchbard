@@ -4,11 +4,10 @@ title: 'sbt: split app.rs by concept (picker, paint flow, view slots) and drive.
 status: Done
 assignee: []
 created_date: '2026-09-02 19:26'
-updated_date: '2026-09-02 21:37'
+updated_date: '2026-09-02 21:38'
 labels:
   - tui
   - refactor
-  - ball:me
 dependencies: []
 priority: medium
 ---
