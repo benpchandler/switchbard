@@ -186,3 +186,26 @@ fn group_by_another_column_and_the_command_form_and_saved_views() {
     assert!(screen.contains("group:project"), "{screen}");
     assert_eq!(screen_rows(&h2)[0], "# Chase · In Progress · 1/3");
 }
+
+#[test]
+fn headings_use_their_own_theme_color_not_the_rows_paint() {
+    let mut h = grouped_harness();
+    h.press(KeyCode::Char('o'));
+    h.press(KeyCode::Char('/'));
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char(':'));
+    h.type_text("group project");
+    h.press(KeyCode::Enter);
+    let screen = h.render();
+    assert!(screen.contains("▸ Chase · In Progress · 1/3"), "{screen}");
+    let heading = cell_fg(&h, "▸ Chase").unwrap();
+    assert_eq!(heading, ratatui::style::Color::White);
+    std::fs::write(
+        &h.config_path,
+        "return { theme = { heading = \"magenta\" } }",
+    )
+    .unwrap();
+    h.app.tick();
+    h.render();
+    assert_eq!(cell_fg(&h, "▸ Chase"), Some(ratatui::style::Color::Magenta));
+}

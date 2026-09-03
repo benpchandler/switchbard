@@ -103,10 +103,10 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         match row {
             Row::Heading(text) => frame.render_widget(
-                Paragraph::new(text.clone()).style(
+                Paragraph::new(format!("▸ {text}")).style(
                     Style::default()
-                        .fg(theme.accent)
-                        .add_modifier(Modifier::BOLD),
+                        .fg(theme.heading)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
                 ),
                 row_area,
             ),
