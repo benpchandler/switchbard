@@ -23,6 +23,7 @@ return {
     dim = "gray",
     selected = "#303030",
     border = "darkgray",
+    heading = "white",  -- group section headings (`o`); keep it off your paint colors
   },
 
   -- What painting a column "auto" hands out, first value first. Hex so it reads

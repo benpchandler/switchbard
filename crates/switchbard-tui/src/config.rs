@@ -148,6 +148,8 @@ pub struct Theme {
     pub dim: Color,
     pub selected: Color,
     pub border: Color,
+    /// Section headings when grouped; must not share a color with painted rows.
+    pub heading: Color,
 }
 
 #[derive(Debug, Clone)]
@@ -273,6 +275,7 @@ impl RawConfig {
             dim: color("dim", Color::Gray),
             selected: color("selected", Color::Indexed(236)),
             border: color("border", Color::DarkGray),
+            heading: color("heading", Color::White),
         };
         let mut glyphs: HashMap<Column, HashMap<String, String>> = HashMap::new();
         for (column_name, map) in self.glyphs {
