@@ -26,17 +26,14 @@ return {
     heading = "white",  -- group section headings (`o`); keep it off your paint colors
   },
 
-  -- What painting a column "auto" hands out, first value first. Hex so it reads
-  -- the same on every terminal palette; picked for separation on a dark background.
-  palette = {
-    "#ffd166", -- amber
-    "#4fc3f7", -- sky
-    "#7ee787", -- green
-    "#ff7b72", -- coral
-    "#c792ea", -- violet
-    "#5ee6d8", -- teal
-    "#ffa657", -- orange
-    "#f78da7", -- pink
+  -- What painting a column "auto" hands out, first value first. Pick a preset by
+  -- name (`:palette <name>` inside sbt previews them live), or give your own list:
+  -- palette = { "#d4b872", "#7fb3c9", ... }. Hex reads the same on every terminal.
+  palette = "muted",
+  palettes = {
+    muted    = { "#c9b07a", "#7fa6bd", "#8db58d", "#c08a84", "#a692bd", "#7fb5ae", "#c49c7a", "#b98da0" },
+    balanced = { "#ffd166", "#4fc3f7", "#7ee787", "#ff7b72", "#c792ea", "#5ee6d8", "#ffa657", "#f78da7" },
+    vivid    = { "#ffcc00", "#00bfff", "#33ff66", "#ff4d4d", "#c060ff", "#00e5cc", "#ff8800", "#ff66b3" },
   },
 
   -- Glyphs shown when a column is in glyph mode (`c`, then `g` on the column).

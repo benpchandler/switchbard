@@ -158,8 +158,10 @@ pub struct Config {
     pub theme: Theme,
     /// Column -> loose value -> glyph, for columns shown in glyph mode.
     pub glyphs: HashMap<Column, HashMap<String, String>>,
-    /// What `p <col> 1` (auto) hands out, in order; a user list replaces it whole.
+    /// What `p <col> 1` (auto) hands out, in order: the chosen preset or a user list.
     pub palette: Vec<String>,
+    /// The presets `:palette <name>` and `palette = "<name>"` choose from.
+    pub palettes: Vec<(String, Vec<String>)>,
     pub warnings: Vec<String>,
 }
 
@@ -226,6 +228,8 @@ struct RawConfig {
     theme: HashMap<String, String>,
     glyphs: HashMap<String, HashMap<String, String>>,
     palette: Vec<String>,
+    palette_name: Option<String>,
+    palettes: Vec<(String, Vec<String>)>,
 }
 
 impl RawConfig {
@@ -237,6 +241,8 @@ impl RawConfig {
             theme: string_map(&table, "theme")?,
             glyphs: nested_string_map(&table, "glyphs")?,
             palette: string_list(&table, "palette")?,
+            palette_name: table.get::<Option<String>>("palette").ok().flatten(),
+            palettes: named_string_lists(&table, "palettes")?,
         })
     }
 
@@ -248,6 +254,14 @@ impl RawConfig {
         }
         if !over.palette.is_empty() {
             self.palette = over.palette;
+            self.palette_name = None;
+        } else if over.palette_name.is_some() {
+            self.palette_name = over.palette_name;
+            self.palette = Vec::new();
+        }
+        for (name, colors) in over.palettes {
+            self.palettes.retain(|(known, _)| *known != name);
+            self.palettes.push((name, colors));
         }
     }
 
@@ -289,6 +303,18 @@ impl RawConfig {
                 None => warnings.push(format!("unknown column '{column_name}' in glyphs")),
             }
         }
+        let mut palettes: Vec<(String, Vec<String>)> = Vec::new();
+        for (name, colors) in self.palettes {
+            let mut kept = Vec::new();
+            for text in colors {
+                if Color::from_str(&text).is_ok() {
+                    kept.push(text);
+                } else {
+                    warnings.push(format!("bad color '{text}' in palettes.{name}"));
+                }
+            }
+            palettes.push((name, kept));
+        }
         let mut palette = Vec::new();
         for text in self.palette {
             if Color::from_str(&text).is_ok() {
@@ -297,11 +323,26 @@ impl RawConfig {
                 warnings.push(format!("bad color '{text}' in palette"));
             }
         }
+        if palette.is_empty() {
+            let name = self.palette_name.unwrap_or_default();
+            match palettes.iter().find(|(known, _)| *known == name) {
+                Some((_, colors)) => palette = colors.clone(),
+                None => {
+                    if !name.is_empty() {
+                        warnings.push(format!("unknown palette '{name}'"));
+                    }
+                    if let Some((_, colors)) = palettes.first() {
+                        palette = colors.clone();
+                    }
+                }
+            }
+        }
         Config {
             keys,
             theme,
             glyphs,
             palette,
+            palettes,
             warnings,
         }
     }
@@ -324,6 +365,25 @@ fn nested_string_map(
         }
         out.insert(name, map);
     }
+    Ok(out)
+}
+
+/// `key = { name = { "..." }, ... }`, in the order the file names them.
+fn named_string_lists(table: &Table, key: &str) -> mlua::Result<Vec<(String, Vec<String>)>> {
+    let Value::Table(inner) = table.get::<Value>(key)? else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for pair in inner.pairs::<String, Table>() {
+        let (name, colors) = pair?;
+        out.push((
+            name,
+            colors
+                .sequence_values::<String>()
+                .collect::<mlua::Result<_>>()?,
+        ));
+    }
+    out.sort();
     Ok(out)
 }
 

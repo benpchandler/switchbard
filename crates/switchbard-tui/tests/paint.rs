@@ -47,17 +47,17 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
     );
     assert_eq!(
         cell_fg(&h, "Add dark theme"),
-        Some(Color::Rgb(0xff, 0xd1, 0x66)),
+        Some(Color::Rgb(0xc9, 0xb0, 0x7a)),
         "To Do rows"
     );
     assert_eq!(
         cell_fg(&h, "Fix login"),
-        Some(Color::Rgb(0x4f, 0xc3, 0xf7)),
+        Some(Color::Rgb(0x7f, 0xa6, 0xbd)),
         "In Progress rows"
     );
     assert_eq!(
         cell_fg(&h, "low"),
-        Some(Color::Rgb(0xff, 0xd1, 0x66)),
+        Some(Color::Rgb(0xc9, 0xb0, 0x7a)),
         "base paints whole rows"
     );
 
@@ -73,17 +73,17 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
     assert!(screen.contains("paint:2 ·"), "{screen}");
     assert_eq!(
         cell_fg(&h, "Add dark theme"),
-        Some(Color::Rgb(0xff, 0xd1, 0x66)),
+        Some(Color::Rgb(0xc9, 0xb0, 0x7a)),
         "rows still by status"
     );
     assert_ne!(
         cell_fg(&h, "low"),
-        Some(Color::Rgb(0xff, 0xd1, 0x66)),
+        Some(Color::Rgb(0xc9, 0xb0, 0x7a)),
         "priority cell has its own color"
     );
     assert_eq!(
         cell_fg(&h, "high"),
-        Some(Color::Rgb(0xff, 0xd1, 0x66)),
+        Some(Color::Rgb(0xc9, 0xb0, 0x7a)),
         "auto's first color for high"
     );
     assert_eq!(
@@ -94,8 +94,8 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
             .map(|r| r.to_text())
             .collect::<Vec<_>>(),
         [
-            "by:status=todo:#ffd166,inprogress:#4fc3f7",
-            "by:priority=high:#ffd166,low:#4fc3f7,medium:#7ee787"
+            "by:status=todo:#c9b07a,inprogress:#7fa6bd",
+            "by:priority=high:#c9b07a,low:#7fa6bd,medium:#8db58d"
         ]
     );
 }
@@ -127,12 +127,12 @@ fn reordering_rules_flips_which_paint_is_the_base() {
     h.press(KeyCode::Esc);
     assert_eq!(
         cell_fg(&h, "Add dark theme"),
-        Some(Color::Rgb(0x4f, 0xc3, 0xf7)),
+        Some(Color::Rgb(0x7f, 0xa6, 0xbd)),
         "rows now by priority (low)"
     );
     assert_eq!(
         cell_fg(&h, "To Do"),
-        Some(Color::Rgb(0xff, 0xd1, 0x66)),
+        Some(Color::Rgb(0xc9, 0xb0, 0x7a)),
         "status cell keeps its own color"
     );
     h.press(KeyCode::Char('p'));
@@ -145,7 +145,7 @@ fn reordering_rules_flips_which_paint_is_the_base() {
     h.press(KeyCode::Esc);
     assert_eq!(
         cell_fg(&h, "Add dark theme"),
-        Some(Color::Rgb(0xff, 0xd1, 0x66))
+        Some(Color::Rgb(0xc9, 0xb0, 0x7a))
     );
 }
 
@@ -255,7 +255,7 @@ fn paint_rules_round_trip_through_the_view_file() {
     h.press(KeyCode::Char('d'));
     let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
     assert!(
-        file.contains("paint = \"by:status=todo:#ffd166,inprogress:#4fc3f7;rows:id:"),
+        file.contains("paint = \"by:status=todo:#c9b07a,inprogress:#7fa6bd;rows:id:"),
         "{file}"
     );
     let fresh = open_app(&h.root, &h.config_path);
@@ -278,4 +278,43 @@ fn a_user_palette_replaces_what_auto_hands_out() {
     h.press(KeyCode::Esc);
     assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Magenta));
     assert_eq!(cell_fg(&h, "Fix login"), Some(Color::Rgb(0x12, 0x34, 0x56)));
+}
+
+#[test]
+fn palette_presets_swap_live_and_recolor_auto_painted_values() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('3'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('5'));
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char(':'));
+    h.type_text("palette vivid");
+    h.press(KeyCode::Enter);
+    assert_eq!(
+        h.app.status,
+        "palette vivid · keep it: palette = \"vivid\" in tui.lua"
+    );
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Rgb(0xff, 0xcc, 0x00)),
+        "preset color swapped for its vivid counterpart"
+    );
+    assert!(
+        h.app
+            .state
+            .paint
+            .iter()
+            .any(|rule| rule.to_text().contains("magenta")),
+        "hand-picked colors survive: {:?}",
+        h.app.state.paint
+    );
+    h.press(KeyCode::Char(':'));
+    h.type_text("palette neon");
+    h.press(KeyCode::Enter);
+    assert_eq!(h.app.status, "palette: one of balanced, muted, vivid");
 }
