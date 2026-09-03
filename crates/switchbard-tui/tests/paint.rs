@@ -52,7 +52,7 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
     );
     assert_eq!(
         cell_fg(&h, "Fix login"),
-        Some(Color::Rgb(0x56, 0x9c, 0xd6)),
+        Some(Color::Rgb(0xc6, 0xc5, 0xfe)),
         "In Progress rows"
     );
     assert_eq!(
@@ -94,8 +94,8 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
             .map(|r| r.to_text())
             .collect::<Vec<_>>(),
         [
-            "by:status=todo:#f49f31,inprogress:#569cd6",
-            "by:priority=high:#f49f31,low:#569cd6,medium:#5dc453"
+            "by:status=todo:#f49f31,inprogress:#c6c5fe",
+            "by:priority=high:#f49f31,low:#c6c5fe,medium:#4af6c3"
         ]
     );
 }
@@ -127,7 +127,7 @@ fn reordering_rules_flips_which_paint_is_the_base() {
     h.press(KeyCode::Esc);
     assert_eq!(
         cell_fg(&h, "Add dark theme"),
-        Some(Color::Rgb(0x56, 0x9c, 0xd6)),
+        Some(Color::Rgb(0xc6, 0xc5, 0xfe)),
         "rows now by priority (low)"
     );
     assert_eq!(
@@ -255,7 +255,7 @@ fn paint_rules_round_trip_through_the_view_file() {
     h.press(KeyCode::Char('d'));
     let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
     assert!(
-        file.contains("paint = \"by:status=todo:#f49f31,inprogress:#569cd6;rows:id:"),
+        file.contains("paint = \"by:status=todo:#f49f31,inprogress:#c6c5fe;rows:id:"),
         "{file}"
     );
     let fresh = open_app(&h.root, &h.config_path);
