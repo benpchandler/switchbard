@@ -218,16 +218,7 @@ impl App {
         };
         let (id, current) = (task.id.clone(), Ball::of(task));
         let next = Ball::next(current);
-        let mut outcome = Ok(String::new());
-        if let Some(old) = current {
-            outcome =
-                switchbard_core::set_backlog_label(&self.repo_root, &id, Ball::label(old), false);
-        }
-        if let (Ok(_), Some(new)) = (&outcome, next) {
-            outcome =
-                switchbard_core::set_backlog_label(&self.repo_root, &id, Ball::label(new), true);
-        }
-        match outcome {
+        match switchbard_core::set_backlog_ball(&self.repo_root, &id, next) {
             Ok(_) => {
                 self.status = match next {
                     Some(ball) => format!("{id}: ball → {}", Ball::text(Some(ball))),

@@ -32,6 +32,7 @@
 //!   TASK-28's scar).
 
 use super::allocate::{create_task_allocating_id, strip_id_prefix};
+use super::ball::Ball;
 use super::parse::{
     configured_task_prefix, parse_config_statuses, parse_task_file, DEFAULT_TASK_PREFIX,
 };
@@ -210,6 +211,25 @@ pub fn set_backlog_label(
     Ok(outcome_message(task_id, outcome))
 }
 
+/// Hand the ball to `me`, `agent`, or nobody (`None`) — see [`super::ball`].
+/// Two surgical label writes at most, each reading the file at write time
+/// like [`set_backlog_label`]; a task already in the requested state is a
+/// byte no-op that reports `no changes`.
+pub fn set_backlog_ball(project_root: &Path, task_id: &str, ball: Option<Ball>) -> Result<String> {
+    let path = resolve_task_file(project_root, task_id)?;
+    let mut changed = false;
+    for holder in [Ball::Me, Ball::Agent] {
+        let enabled = ball == Some(holder);
+        changed |= set_task_label(&path, Ball::label(holder), enabled)?.changed();
+    }
+    let outcome = if changed {
+        WriteOutcome::Changed
+    } else {
+        WriteOutcome::Unchanged
+    };
+    Ok(outcome_message(task_id, outcome))
+}
+
 /// [`set_backlog_label`] with `enabled = false`, reporting whether the label
 /// was actually present — `dispatch::dismiss_run` branches on the fact (which
 /// run-state labels a task really carried), not on a display message.
@@ -379,6 +399,40 @@ mod tests {
             project: None,
             dependencies: vec![],
         }
+    }
+
+    fn labels_of(dir: &tempfile::TempDir) -> Vec<String> {
+        let repo = super::super::parse::load_backlog_repo(dir.path()).expect("load");
+        repo.tasks[0].labels.clone()
+    }
+
+    #[test]
+    fn set_backlog_ball_sets_switches_and_drops_the_holder() {
+        let dir = project_with_task("task-7 - Fixture.md");
+        let root = dir.path();
+        assert_eq!(
+            set_backlog_ball(root, "TASK-7", Some(Ball::Me)).expect("me"),
+            "Edited TASK-7"
+        );
+        assert_eq!(labels_of(&dir), vec!["ball:me"]);
+        assert_eq!(
+            set_backlog_ball(root, "TASK-7", Some(Ball::Me)).expect("again"),
+            "no changes"
+        );
+        assert_eq!(
+            set_backlog_ball(root, "TASK-7", Some(Ball::Agent)).expect("agent"),
+            "Edited TASK-7"
+        );
+        assert_eq!(labels_of(&dir), vec!["ball:agent"]);
+        assert_eq!(
+            set_backlog_ball(root, "TASK-7", None).expect("drop"),
+            "Edited TASK-7"
+        );
+        assert!(labels_of(&dir).is_empty());
+        assert_eq!(
+            set_backlog_ball(root, "TASK-7", None).expect("drop again"),
+            "no changes"
+        );
     }
 
     /// The facade-level slice of the reproduction: `create_backlog_task`'s

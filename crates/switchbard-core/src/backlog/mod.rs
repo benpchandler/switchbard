@@ -7,6 +7,7 @@
 //! the files stay Backlog.md-compatible on disk.
 
 mod allocate;
+mod ball;
 mod goals;
 mod hierarchy;
 mod mutations;
@@ -17,6 +18,8 @@ mod types;
 mod write;
 
 pub use allocate::{create_task_allocating_id, next_task_id, ACTIVE_BRANCH_DAYS};
+
+pub use ball::{Ball, BALL_AGENT_LABEL, BALL_ME_LABEL};
 
 pub use goals::{
     attach_goal_inputs, check_in_goal, create_goal, detach_goal_inputs, edit_goal_target,
@@ -32,8 +35,8 @@ pub use hierarchy::{
 pub use mutations::{
     append_backlog_notes, archive_backlog_task, complete_backlog_task, create_backlog_task,
     edit_backlog_task, remove_backlog_label, revise_backlog_acceptance_criteria,
-    set_backlog_acceptance_checked, set_backlog_dod_checked, set_backlog_final_summary,
-    set_backlog_label, swap_backlog_label,
+    set_backlog_acceptance_checked, set_backlog_ball, set_backlog_dod_checked,
+    set_backlog_final_summary, set_backlog_label, swap_backlog_label,
 };
 pub use parse::{
     body_round_trips, is_backlog_repo, load_backlog_repo, parse_backlog_day, task_file_round_trips,
