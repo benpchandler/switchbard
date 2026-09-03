@@ -34,6 +34,11 @@ pub enum ProjectCmd {
     /// Set the definition's status to Canceled (no file moves — tasks may
     /// still reference the name); prints `Canceled <NAME>`
     Archive { name: String },
+    /// Rename a project everywhere its name is the key: the definition
+    /// file, every member task (active, completed, draft, archived),
+    /// ranking.yml, and goals.yml. Refuses when NEW already exists; prints
+    /// `Renamed <OLD> -> <NEW>` and what was touched
+    Rename { old: String, new: String },
 }
 
 #[derive(Args)]
@@ -194,7 +199,28 @@ pub fn run_project(root: &Path, cmd: &ProjectCmd) -> Result<()> {
         }
         ProjectCmd::Complete { name } => project_lifecycle(root, name, "Completed"),
         ProjectCmd::Archive { name } => project_lifecycle(root, name, "Canceled"),
+        ProjectCmd::Rename { old, new } => {
+            let report = switchbard_core::rename_project(root, old, new)?;
+            println!("Renamed {old} -> {new} ({})", rename_summary(&report));
+            Ok(())
+        }
     }
+}
+
+/// `2 tasks, def, ranking` — only the parts a rename actually touched.
+fn rename_summary(report: &switchbard_core::ProjectRename) -> String {
+    let plural = if report.tasks_updated == 1 { "" } else { "s" };
+    let mut parts = vec![format!("{} task{plural}", report.tasks_updated)];
+    if report.def_renamed {
+        parts.push("def".to_string());
+    }
+    if report.ranking_updated {
+        parts.push("ranking".to_string());
+    }
+    if report.goals_updated {
+        parts.push("goals".to_string());
+    }
+    parts.join(", ")
 }
 
 /// `complete`/`archive` for projects: set the def's status and confirm with

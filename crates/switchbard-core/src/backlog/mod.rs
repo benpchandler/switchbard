@@ -7,6 +7,7 @@
 //! the files stay Backlog.md-compatible on disk.
 
 mod allocate;
+mod ball;
 mod goals;
 mod hierarchy;
 mod mutations;
@@ -18,6 +19,8 @@ mod write;
 
 pub use allocate::{create_task_allocating_id, next_task_id, ACTIVE_BRANCH_DAYS};
 
+pub use ball::{Ball, BALL_AGENT_LABEL, BALL_ME_LABEL};
+
 pub use goals::{
     attach_goal_inputs, check_in_goal, create_goal, detach_goal_inputs, edit_goal_target,
     roll_goals, GoalCheckIn, GoalDef, GoalInputs, GoalMeasure, GoalWeek, NewGoal,
@@ -25,15 +28,15 @@ pub use goals::{
 
 pub use hierarchy::{
     create_initiative_def, create_project_def, edit_initiative_def, edit_project_def,
-    InitiativeDef, InitiativeDefPatch, NewInitiativeDef, NewProjectDef, ProjectDef,
-    ProjectDefPatch, DEFAULT_PROJECT_STATUS, PROJECT_STATUSES,
+    rename_project, InitiativeDef, InitiativeDefPatch, NewInitiativeDef, NewProjectDef, ProjectDef,
+    ProjectDefPatch, ProjectRename, DEFAULT_PROJECT_STATUS, PROJECT_STATUSES,
 };
 
 pub use mutations::{
     append_backlog_notes, archive_backlog_task, complete_backlog_task, create_backlog_task,
-    edit_backlog_task, remove_backlog_label, revise_backlog_acceptance_criteria,
-    set_backlog_acceptance_checked, set_backlog_dod_checked, set_backlog_final_summary,
-    set_backlog_label, swap_backlog_label,
+    edit_backlog_task, move_backlog_task, remove_backlog_label, revise_backlog_acceptance_criteria,
+    set_backlog_acceptance_checked, set_backlog_ball, set_backlog_dod_checked,
+    set_backlog_final_summary, set_backlog_label, swap_backlog_label,
 };
 pub use parse::{
     body_round_trips, is_backlog_repo, load_backlog_repo, parse_backlog_day, task_file_round_trips,
@@ -49,7 +52,7 @@ pub use types::{
     STANDARD_STATUSES,
 };
 pub use write::{
-    append_task_acceptance_criteria, append_task_notes, replace_task_section,
+    append_task_acceptance_criteria, append_task_notes, rehome_task_file, replace_task_section,
     revise_task_checklist, set_task_checklist_item, set_task_label, set_task_list_field,
     set_task_priority, set_task_project, set_task_status, set_task_title, swap_task_label,
     write_new_task_file, ChecklistTextEdit, TaskChecklist, TaskListField, TaskSection,

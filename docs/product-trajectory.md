@@ -273,9 +273,21 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   4. *Roll-up is computed, never stored* (`compute_hierarchy_rollup`): per-project
      and per-initiative done/total, cross-repo by exact name match; def-name
      conflicts resolve to the alphabetically-first repo, deterministically.
-  Deliberately deferred, ask before building: `project rename` (a bulk task-file
-  mutation), GUI def-file authoring (def lifecycle is CLI-first in v1),
-  case-insensitive name merging.
+  Deliberately deferred, ask before building: GUI def-file authoring (def
+  lifecycle is CLI-first in v1), case-insensitive name merging.
+  - *`project rename` (owner-approved 2026-09-02; TASK-134).* Built once the
+    owner asked for it while restructuring a financing backlog (a project had
+    to become an initiative's member under a new name). `rename_project`
+    follows the name everywhere it is the key - def file (`name:` and slug),
+    every member task in all four task dirs (rewriting legacy `milestone:` in
+    place), `ranking.yml` (projects list, tasks map key), `goals.yml` (scope,
+    inputs.projects) - and refuses before the first write when the new name is
+    already defined or referenced (merging is not renaming), when the old name
+    is neither, on a def-slug collision, or when a member file would not
+    round-trip. Steps are each atomic, not jointly transactional; re-running
+    is safe. `sb edit --parent` (TASK-135) is the sibling bulk mutation for
+    moving a task between parents, and `sb edit --ball` (TASK-133) moved the
+    TUI's ball vocabulary into core so every writer spells the labels once.
 
 - **Weekly goals (owner-approved 2026-08-31; TASK-70..74).** Weekly numeric
   goals tracked relative to target ("onboard 5 users this week" vs 4 actually

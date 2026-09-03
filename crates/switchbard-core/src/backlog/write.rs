@@ -38,6 +38,7 @@ use super::parse::{
 use super::types::NewBacklogTask;
 use anyhow::{bail, Context, Result};
 use serde_yaml::Value;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -476,6 +477,81 @@ pub fn write_new_task_file(
     file.write_all(text.as_bytes())
         .with_context(|| format!("writing {}", path.display()))?;
     Ok(path)
+}
+
+/// Re-home a task file under a new id: rewrite `id:` and the parent key,
+/// bump `updated_date`, and move the file to the name the new id implies
+/// (same directory; everything after the id in the old filename — the
+/// ` - Title.md` tail — is kept, so a hand-tidied filename survives). The
+/// new file is created with `create_new` before the old one is removed, so
+/// a crash between the two leaves a duplicate to resolve, never a lost task.
+///
+/// `new_parent` is the parent's bare id; `None` promotes to top level. The
+/// parent is stored as `parent_task_id:` (the key the `backlog` CLI writes);
+/// a legacy `parent:` line is rewritten in place, the same courtesy
+/// [`set_task_project`] extends to `milestone:`.
+pub fn rehome_task_file(
+    path: &Path,
+    prefix: &str,
+    new_id: &str,
+    new_parent: Option<&str>,
+) -> Result<PathBuf> {
+    validate_task_id(new_id)?;
+    let prefix = prefix.trim();
+    if prefix.is_empty() {
+        bail!("task prefix is empty");
+    }
+    let original =
+        fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let RawTask { mut fm, rest } = split_raw(&original)?;
+    set_scalar(&mut fm, "id", &format!("{prefix}-{new_id}"), None);
+    match new_parent {
+        Some(parent) => {
+            validate_task_id(parent)?;
+            let rendered = yaml_scalar(&format!("{prefix}-{parent}"));
+            if key_span(&fm, "parent_task_id").is_some() {
+                set_scalar(&mut fm, "parent_task_id", &rendered, None);
+                remove_key(&mut fm, "parent");
+            } else if let Some((start, end)) = key_span(&fm, "parent") {
+                fm.splice(start..end, [format!("parent_task_id: {rendered}")]);
+            } else {
+                set_scalar(&mut fm, "parent_task_id", &rendered, Some("project"));
+            }
+        }
+        None => {
+            remove_key(&mut fm, "parent_task_id");
+            remove_key(&mut fm, "parent");
+        }
+    }
+    bump_updated_date(&mut fm, &local_stamp());
+
+    let file_name = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .with_context(|| format!("{} has no usable filename", path.display()))?;
+    let tail = file_name
+        .find(' ')
+        .map_or_else(|| ".md".to_string(), |at| file_name[at..].to_string());
+    let new_path = path.with_file_name(format!("{}-{new_id}{tail}", prefix.to_ascii_lowercase()));
+    if new_path == path {
+        bail!("{} already carries id {new_id}", path.display());
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&new_path)
+        .with_context(|| format!("creating {} (id already taken?)", new_path.display()))?;
+    file.write_all(join_raw(&fm, &rest).as_bytes())
+        .with_context(|| format!("writing {}", new_path.display()))?;
+    drop(file);
+    fs::remove_file(path).with_context(|| {
+        format!(
+            "removing {} after writing {} - delete it by hand",
+            path.display(),
+            new_path.display()
+        )
+    })?;
+    Ok(new_path)
 }
 
 /// A bare task id is digit groups joined by single dots — `42`, `42.1`,
