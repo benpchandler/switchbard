@@ -9,6 +9,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use mlua::{Lua, Table, Value};
 use ratatui::style::Color;
 
+use crate::columns::Column;
+
 const DEFAULT_LUA: &str = include_str!("default.lua");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,86 +132,6 @@ impl KeyChord {
             format!("ctrl-{key}")
         } else {
             key
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Column {
-    Id,
-    Status,
-    Priority,
-    Title,
-    Labels,
-    Project,
-    Ball,
-}
-
-impl Column {
-    /// Every column sbt knows, in catalog order. Shown columns are a user-ordered subset.
-    pub const ALL: [Column; 7] = [
-        Column::Id,
-        Column::Status,
-        Column::Priority,
-        Column::Title,
-        Column::Labels,
-        Column::Project,
-        Column::Ball,
-    ];
-
-    pub const DEFAULT_SHOWN: [Column; 4] =
-        [Column::Id, Column::Status, Column::Priority, Column::Title];
-
-    /// The `· hidden` tag picker lists add to a column that is not showing.
-    pub const HIDDEN_TAG: &str = " · hidden";
-
-    pub fn parse(text: &str) -> Option<Column> {
-        let text = text.trim_end_matches(Column::HIDDEN_TAG);
-        Some(match text {
-            "id" => Column::Id,
-            "status" => Column::Status,
-            "priority" | "pri" => Column::Priority,
-            "title" => Column::Title,
-            "labels" => Column::Labels,
-            "project" => Column::Project,
-            "ball" => Column::Ball,
-            _ => return None,
-        })
-    }
-
-    pub fn filter_field(self) -> Option<crate::tasks::FilterField> {
-        match self {
-            Column::Status => Some(crate::tasks::FilterField::Status),
-            Column::Priority => Some(crate::tasks::FilterField::Priority),
-            Column::Labels => Some(crate::tasks::FilterField::Label),
-            Column::Project => Some(crate::tasks::FilterField::Project),
-            Column::Ball => Some(crate::tasks::FilterField::Ball),
-            Column::Id | Column::Title => None,
-        }
-    }
-
-    /// The config/save-file spelling (`priority`, not the `pri` header).
-    pub fn name(self) -> &'static str {
-        match self {
-            Column::Id => "id",
-            Column::Status => "status",
-            Column::Priority => "priority",
-            Column::Title => "title",
-            Column::Labels => "labels",
-            Column::Project => "project",
-            Column::Ball => "ball",
-        }
-    }
-
-    pub fn header(self) -> &'static str {
-        match self {
-            Column::Id => "id",
-            Column::Status => "status",
-            Column::Priority => "pri",
-            Column::Title => "title",
-            Column::Labels => "labels",
-            Column::Project => "project",
-            Column::Ball => "ball",
         }
     }
 }

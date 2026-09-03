@@ -5,6 +5,8 @@ use std::path::Path;
 use anyhow::Result;
 use switchbard_core::{load_backlog_repo, BacklogTask, BacklogTaskSource};
 
+use crate::columns::Column;
+
 pub fn load(root: &Path) -> Result<Vec<BacklogTask>> {
     let repo = load_backlog_repo(root)?;
     Ok(repo
@@ -53,22 +55,20 @@ impl FilterField {
         }
     }
 
-    fn values_of(self, task: &BacklogTask) -> Vec<String> {
+    /// The column this field reads from.
+    pub fn column(self) -> Column {
         match self {
-            FilterField::Id => vec![task.id.clone()],
-            FilterField::Status => vec![task.status.clone()],
-            FilterField::Priority => vec![task.priority.clone()],
-            FilterField::Label => task.labels.clone(),
-            FilterField::Project => task.project.clone().into_iter().collect(),
-            FilterField::Ball => {
-                let ball = crate::ball::Ball::text(crate::ball::Ball::of(task));
-                if ball.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![ball.to_string()]
-                }
-            }
+            FilterField::Id => Column::Id,
+            FilterField::Status => Column::Status,
+            FilterField::Priority => Column::Priority,
+            FilterField::Label => Column::Labels,
+            FilterField::Project => Column::Project,
+            FilterField::Ball => Column::Ball,
         }
+    }
+
+    fn values_of(self, task: &BacklogTask) -> Vec<String> {
+        self.column().values(task)
     }
 }
 

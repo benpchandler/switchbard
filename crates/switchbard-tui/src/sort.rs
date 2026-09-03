@@ -3,9 +3,9 @@
 
 use std::cmp::Ordering;
 
-use switchbard_core::{BacklogTask, BACKLOG_PRIORITIES, CANONICAL_STATUS_ORDER};
+use switchbard_core::BacklogTask;
 
-use crate::config::Column;
+use crate::columns::Column;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Order {
@@ -96,39 +96,15 @@ fn compare(a: &BacklogTask, b: &BacklogTask, sort: Sort) -> Ordering {
 fn plain_key(task: &BacklogTask, column: Column) -> (u64, String) {
     match column {
         Column::Id => (id_number(&task.id), String::new()),
-        Column::Status => (0, task.status.to_lowercase()),
-        Column::Priority => (0, task.priority.to_lowercase()),
-        Column::Title => (0, task.title.to_lowercase()),
-        Column::Labels => (0, task.labels.join(",").to_lowercase()),
-        Column::Project => (0, task.project.clone().unwrap_or_default().to_lowercase()),
-        Column::Ball => (
-            0,
-            crate::ball::Ball::text(crate::ball::Ball::of(task)).to_string(),
-        ),
+        other => (0, other.cell_text(task).to_lowercase()),
     }
 }
 
 fn semantic_rank(task: &BacklogTask, column: Column) -> usize {
-    let value = match column {
-        Column::Priority => &task.priority,
-        Column::Status => &task.status,
-        _ => return 0,
-    };
-    vocabulary_rank(column, value)
-}
-
-/// Where `value` sits in the column's vocabulary (high before low, To Do before
-/// Done); unknown values and columns without a vocabulary rank last.
-pub fn vocabulary_rank(column: Column, value: &str) -> usize {
-    let vocabulary: &[&str] = match column {
-        Column::Priority => BACKLOG_PRIORITIES,
-        Column::Status => CANONICAL_STATUS_ORDER,
-        _ => return usize::MAX,
-    };
-    vocabulary
-        .iter()
-        .position(|known| known.eq_ignore_ascii_case(value))
-        .unwrap_or(vocabulary.len())
+    match column.values(task).first() {
+        Some(value) => column.vocabulary_rank(value),
+        None => usize::MAX,
+    }
 }
 
 /// `TASK-12.3` sorts by 12 then 3; unparseable ids sort last.

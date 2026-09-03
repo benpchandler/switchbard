@@ -8,7 +8,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use switchbard_core::BacklogTask;
 
 use crate::ball::Ball;
-use crate::config::{self, Action, Column, Config, KeyChord};
+use crate::columns::Column;
+use crate::config::{self, Action, Config, KeyChord};
 use crate::paint::{self, PaintRule, NAMED_COLORS};
 use crate::picker::{ColumnPurpose, PaintPick, Payload, PickOption, PickerPurpose, ValuePicker};
 use crate::report::{self, ReportContext, ReportKind};
@@ -631,7 +632,7 @@ impl App {
             .into_iter()
             .map(|(value, _)| value)
             .collect();
-        values.sort_by_key(|value| (sort::vocabulary_rank(column, value), value.clone()));
+        values.sort_by_key(|value| (column.vocabulary_rank(value), value.clone()));
         values
             .iter()
             .map(|value| self.config.glyph(column, value))

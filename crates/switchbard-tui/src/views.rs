@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use mlua::{Lua, Table};
 
-use crate::config::Column;
+use crate::columns::Column;
 use crate::paint::{parse_rules, rules_text, PaintRule};
 use crate::sort::Sort;
 

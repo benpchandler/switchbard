@@ -8,11 +8,10 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
 use ratatui::Frame;
-use switchbard_core::BacklogTask;
 
 use crate::app::{App, Mode, Pane};
-use crate::ball::Ball;
-use crate::config::{Action, Column};
+use crate::columns::Column;
+use crate::config::Action;
 use crate::paint::{self, PaintRule};
 use crate::picker::{self, ColumnPurpose, PaintPick, Payload, PickerPurpose, ValuePicker};
 use crate::tasks::Filter;
@@ -89,7 +88,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
     let rows = (0..app.visible.len()).filter_map(|index| {
         let task = app.task(index)?;
         Some(Row::new(app.state.columns.iter().map(|column| {
-            let text = cell_text(*column, task);
+            let text = column.cell_text(task);
             let text = if app.state.glyph_columns.contains(column) && !text.is_empty() {
                 app.config.glyph(*column, &text)
             } else {
@@ -106,13 +105,10 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
         _ if app.state.glyph_columns.contains(column) => {
             Constraint::Length((2 + app.glyph_legend(*column).chars().count()).max(3) as u16)
         }
-        Column::Id => Constraint::Length(9),
-        Column::Status => Constraint::Length(12),
-        Column::Priority => Constraint::Length(7),
-        Column::Title => Constraint::Min(20),
-        Column::Labels => Constraint::Length(20),
-        Column::Project => Constraint::Length(18),
-        Column::Ball => Constraint::Length(6),
+        column => match column.width() {
+            Some(width) => Constraint::Length(width),
+            None => Constraint::Min(20),
+        },
     });
     let table = Table::new(rows, widths)
         .header(header)
@@ -129,18 +125,6 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
         );
     let mut state = TableState::default().with_selected(Some(app.selected));
     frame.render_stateful_widget(table, area, &mut state);
-}
-
-fn cell_text(column: Column, task: &BacklogTask) -> String {
-    match column {
-        Column::Id => task.id.clone(),
-        Column::Status => task.status.clone(),
-        Column::Priority => task.priority.clone(),
-        Column::Title => task.title.clone(),
-        Column::Labels => task.labels.join(","),
-        Column::Project => task.project.clone().unwrap_or_default(),
-        Column::Ball => Ball::text(Ball::of(task)).to_string(),
-    }
 }
 
 fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {

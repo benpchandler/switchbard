@@ -1117,7 +1117,7 @@ fn g_in_the_columns_picker_shows_priority_as_glyphs_and_saves_with_the_view() {
     let fresh = open_app(&h.root, &h.config_path);
     assert_eq!(
         fresh.state.glyph_columns,
-        vec![switchbard_tui::config::Column::Priority]
+        vec![switchbard_tui::columns::Column::Priority]
     );
     assert_eq!(fresh.view_label(), "v1");
 }
