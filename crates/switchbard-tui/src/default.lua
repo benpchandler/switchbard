@@ -23,6 +23,7 @@ return {
     dim = "gray",
     selected = "#303030",
     border = "darkgray",
+    heading = "white",  -- group section headings (`o`); keep it off your paint colors
   },
 
   -- Glyphs shown when a column is in glyph mode (`c`, then `g` on the column).
