@@ -41,7 +41,7 @@ pub const COLUMNS: [ColumnSpec; 7] = [
         name: "id",
         alias: None,
         header: "id",
-        width: Some(9),
+        width: Some(12),
         field: Some(FilterField::Id),
         vocabulary: &[],
         groupable: false,
@@ -149,10 +149,6 @@ impl Column {
         self.spec().header
     }
 
-    pub fn width(self) -> Option<u16> {
-        self.spec().width
-    }
-
     pub fn groupable(self) -> bool {
         self.spec().groupable
     }
@@ -204,8 +200,37 @@ impl Column {
         }
     }
 
-    /// The cell as text: the values joined.
+    /// The cell as text: the values joined. Filter and sort read this.
     pub fn cell_text(self, task: &BacklogTask) -> String {
         self.values(task).join(",")
+    }
+
+    /// What the table shows: the id without its repo prefix (the title bar
+    /// names the repo; `80.3` is the part that varies) and priority as H/M/L.
+    /// The detail pane, reports, and filters keep the full values.
+    pub fn display_text(self, task: &BacklogTask) -> String {
+        match self {
+            Column::Id => bare_id(&task.id).to_string(),
+            Column::Priority => task
+                .priority
+                .chars()
+                .next()
+                .map(|c| c.to_ascii_uppercase().to_string())
+                .unwrap_or_default(),
+            _ => self.cell_text(task),
+        }
+    }
+
+    /// The widest the column may grow; the renderer fits it to content below that.
+    pub fn max_width(self) -> Option<u16> {
+        self.spec().width
+    }
+}
+
+/// `TASK-80.3` -> `80.3`, `LED-648.11` -> `648.11`; an id with no prefix is itself.
+pub fn bare_id(id: &str) -> &str {
+    match id.rsplit_once('-') {
+        Some((_, rest)) if rest.chars().next().is_some_and(|c| c.is_ascii_digit()) => rest,
+        _ => id,
     }
 }

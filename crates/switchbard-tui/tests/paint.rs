@@ -56,7 +56,7 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
         "In Progress rows"
     );
     assert_eq!(
-        cell_fg(&h, "low"),
+        cell_fg(&h, "L   "),
         Some(Color::Rgb(0xf4, 0x9f, 0x31)),
         "base paints whole rows"
     );
@@ -77,12 +77,12 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
         "rows still by status"
     );
     assert_ne!(
-        cell_fg(&h, "low"),
+        cell_fg(&h, "L   "),
         Some(Color::Rgb(0xf4, 0x9f, 0x31)),
         "priority cell has its own color"
     );
     assert_eq!(
-        cell_fg(&h, "high"),
+        cell_fg(&h, "H   "),
         Some(Color::Rgb(0xf4, 0x9f, 0x31)),
         "auto's first color for high"
     );
@@ -183,8 +183,9 @@ fn hand_picked_values_row_and_column_and_hex_and_clearing() {
         "first digit waits when 10+ exist: {screen}"
     );
     h.press(KeyCode::Char('2'));
+    let selected_title = h.selected_title();
     assert_eq!(
-        cell_fg(&h, &selected),
+        cell_fg(&h, &selected_title),
         Some(Color::LightBlue),
         "12 picks lightblue"
     );

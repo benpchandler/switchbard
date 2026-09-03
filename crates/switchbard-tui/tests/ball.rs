@@ -72,5 +72,9 @@ fn a_dispatching_task_reads_as_agent_without_a_ball_label() {
     h.app.tick();
     h.press(KeyCode::Char('/'));
     let screen = h.type_text("ball:agent");
-    assert!(screen.contains("1/3") && screen.contains(&id), "{screen}");
+    assert!(
+        screen.contains("1/3") && screen.contains("Fix login redirect loop"),
+        "{screen}"
+    );
+    assert_eq!(h.app.selected_task().unwrap().id, id);
 }
