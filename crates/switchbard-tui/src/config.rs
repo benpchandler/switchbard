@@ -215,6 +215,9 @@ impl Theme {
     }
 }
 
+/// A preset's surfaces and its column-to-surface map, before validation.
+type RawTheme = (HashMap<String, RawStyle>, HashMap<String, String>);
+
 /// One surface as the Lua file spells it, before validation.
 #[derive(Debug, Clone, Default)]
 struct RawStyle {
@@ -356,8 +359,12 @@ pub fn load(user_path: Option<&Path>) -> Config {
 #[derive(Default)]
 struct RawConfig {
     keys: HashMap<String, String>,
+    /// Surface overrides from a `theme = { ... }` table.
     theme: HashMap<String, RawStyle>,
     theme_columns: HashMap<String, String>,
+    /// `theme = "<name>"`: which entry of `themes` to start from.
+    theme_name: Option<String>,
+    themes: HashMap<String, RawTheme>,
     glyphs: HashMap<String, HashMap<String, String>>,
     palette: Vec<String>,
     palette_name: Option<String>,
@@ -372,6 +379,8 @@ impl RawConfig {
             keys: string_map(&table, "keys")?,
             theme: theme_map(&table)?,
             theme_columns: theme_columns(&table)?,
+            theme_name: table.get::<Option<String>>("theme").ok().flatten(),
+            themes: theme_presets(&table)?,
             glyphs: nested_string_map(&table, "glyphs")?,
             palette: string_list(&table, "palette")?,
             palette_name: table.get::<Option<String>>("palette").ok().flatten(),
@@ -381,8 +390,14 @@ impl RawConfig {
 
     fn merge(&mut self, over: RawConfig) {
         self.keys.extend(over.keys);
+        if over.theme_name.is_some() {
+            self.theme_name = over.theme_name;
+            self.theme.clear();
+            self.theme_columns.clear();
+        }
         self.theme.extend(over.theme);
         self.theme_columns.extend(over.theme_columns);
+        self.themes.extend(over.themes);
         for (column, map) in over.glyphs {
             self.glyphs.entry(column).or_default().extend(map);
         }
@@ -410,8 +425,28 @@ impl RawConfig {
                 (_, None) => warnings.push(format!("unknown action '{action}' for key '{key}'")),
             }
         }
+        let (mut raw_styles, mut raw_columns) = match self.theme_name.as_deref() {
+            Some(name) => match self.themes.get(name) {
+                Some((styles, columns)) => (styles.clone(), columns.clone()),
+                None => {
+                    warnings.push(format!("unknown theme '{name}': one of {}", {
+                        let mut names: Vec<&String> = self.themes.keys().collect();
+                        names.sort();
+                        names
+                            .iter()
+                            .map(|n| n.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }));
+                    (HashMap::new(), HashMap::new())
+                }
+            },
+            None => (HashMap::new(), HashMap::new()),
+        };
+        raw_styles.extend(self.theme);
+        raw_columns.extend(self.theme_columns);
         let mut styles = HashMap::new();
-        for (name, raw) in self.theme {
+        for (name, raw) in raw_styles {
             match Surface::parse(&name) {
                 Some(surface) => {
                     styles.insert(surface, raw.into_style(&name, &mut warnings));
@@ -420,7 +455,7 @@ impl RawConfig {
             }
         }
         let mut theme_columns = HashMap::new();
-        for (column_name, surface_name) in self.theme_columns {
+        for (column_name, surface_name) in raw_columns {
             match (Column::parse(&column_name), Surface::parse(&surface_name)) {
                 (Some(column), Some(surface)) => {
                     theme_columns.insert(column, surface);
@@ -531,12 +566,17 @@ fn named_string_lists(table: &Table, key: &str) -> mlua::Result<Vec<(String, Vec
 }
 
 /// `theme = { surface = "color" | { fg=, bg=, bold= ... }, columns = { id = "label" } }`.
+/// A `theme = "<name>"` string is read elsewhere and yields no overrides here.
 fn theme_map(table: &Table) -> mlua::Result<HashMap<String, RawStyle>> {
+    match table.get::<Value>("theme")? {
+        Value::Table(inner) => surface_map(&inner),
+        _ => Ok(HashMap::new()),
+    }
+}
+
+fn surface_map(theme: &Table) -> mlua::Result<HashMap<String, RawStyle>> {
     let mut out = HashMap::new();
-    let Value::Table(inner) = table.get::<Value>("theme")? else {
-        return Ok(out);
-    };
-    for pair in inner.pairs::<String, Value>() {
+    for pair in theme.pairs::<String, Value>() {
         let (name, value) = pair?;
         if name == "columns" {
             continue;
@@ -547,10 +587,23 @@ fn theme_map(table: &Table) -> mlua::Result<HashMap<String, RawStyle>> {
 }
 
 fn theme_columns(table: &Table) -> mlua::Result<HashMap<String, String>> {
-    let Value::Table(theme) = table.get::<Value>("theme")? else {
-        return Ok(HashMap::new());
+    match table.get::<Value>("theme")? {
+        Value::Table(theme) => string_map(&theme, "columns"),
+        _ => Ok(HashMap::new()),
+    }
+}
+
+/// `themes = { name = { <surfaces>, columns = {...} }, ... }`.
+fn theme_presets(table: &Table) -> mlua::Result<HashMap<String, RawTheme>> {
+    let mut out = HashMap::new();
+    let Value::Table(inner) = table.get::<Value>("themes")? else {
+        return Ok(out);
     };
-    string_map(&theme, "columns")
+    for pair in inner.pairs::<String, Table>() {
+        let (name, theme) = pair?;
+        out.insert(name, (surface_map(&theme)?, string_map(&theme, "columns")?));
+    }
+    Ok(out)
 }
 
 fn string_list(table: &Table, key: &str) -> mlua::Result<Vec<String>> {

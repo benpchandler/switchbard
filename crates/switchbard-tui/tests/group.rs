@@ -199,7 +199,7 @@ fn headings_use_their_own_theme_color_not_the_rows_paint() {
     let screen = h.render();
     assert!(screen.contains("▸ Chase · In Progress · 1/3"), "{screen}");
     let heading = cell_fg(&h, "▸ Chase").unwrap();
-    assert_eq!(heading, ratatui::style::Color::Rgb(0xe6, 0xed, 0xf3));
+    assert_eq!(heading, ratatui::style::Color::Rgb(0x56, 0x9c, 0xd6));
     std::fs::write(
         &h.config_path,
         "return { theme = { heading = \"magenta\" } }",
@@ -240,7 +240,30 @@ fn a_surface_can_be_reshaded_as_a_table_with_bg_and_modifiers() {
     assert!(cell.modifier.contains(ratatui::style::Modifier::BOLD));
     assert_eq!(
         cell_fg(&h, "Chase portal login"),
-        Some(ratatui::style::Color::Rgb(0x58, 0xa6, 0xff)),
+        Some(ratatui::style::Color::Rgb(0x75, 0xbe, 0xff)),
         "title column reassigned to the link surface"
+    );
+}
+
+#[test]
+fn a_theme_preset_is_one_line_and_overrides_layer_on_it() {
+    let mut h = grouped_harness();
+    std::fs::write(&h.config_path, "return { theme = \"bloomberg\" }").unwrap();
+    h.app.tick();
+    h.press(KeyCode::Char('o'));
+    h.render();
+    assert_eq!(
+        cell_fg(&h, "▸ Chase"),
+        Some(ratatui::style::Color::Rgb(0xe6, 0xed, 0xf3))
+    );
+    std::fs::write(&h.config_path, "return { theme = \"bloomberg\" }\n").unwrap();
+    std::fs::write(&h.config_path, "local c = { theme = \"nope\" }\nreturn c").unwrap();
+    h.app.tick();
+    assert!(
+        h.app
+            .status
+            .contains("unknown theme 'nope': one of berg, bloomberg, plain"),
+        "{}",
+        h.app.status
     );
 }
