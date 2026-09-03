@@ -257,6 +257,12 @@ impl App {
 
     fn handle_browse_key(&mut self, event: KeyEvent) {
         let chord = KeyChord::from_event(&event);
+        if let (KeyCode::Char(digit), false) = (event.code, chord.ctrl) {
+            if let Some(position) = digit.to_digit(10).filter(|n| *n > 0) {
+                self.open_column_actions(position as usize);
+                return;
+            }
+        }
         match self.config.keys.get(&chord).cloned() {
             Some(action) => {
                 let started = Instant::now();

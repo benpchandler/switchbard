@@ -20,7 +20,8 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 - `app/` - `mod.rs` state, loop, browse keys, commands; `pickers.rs` column/filter/sort
   pickers + the shared picker key handler; `paint_flow.rs` the `p` flow; `slots.rs` the `v` chords.
 - `picker.rs` - the one list every menu uses: typed `PickOption` payloads, numbered and
-  lettered rows, type-ahead; `app.rs` dispatches on payloads, never label text.
+  lettered rows, type-ahead; `app/` dispatches on payloads, never label text. A digit in
+  browse opens `ColumnActions` for that header position: filter/sort/paint/glyphs/hide/move.
 - `view.rs` - rendering only; also snapshots the screen text for reports.
 - `columns.rs` - the column catalog: one `ColumnSpec` row per column (name, header, width,
   field, vocabulary) plus `values`/`cell_text`; every other module asks it.
