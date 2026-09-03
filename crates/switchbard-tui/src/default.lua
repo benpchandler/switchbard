@@ -38,7 +38,7 @@ return {
       label      = { fg = "#acacae" },
       text       = { fg = "#f49f31" },
       link       = { fg = "#75beff" },
-      chip       = { fg = "black", bg = "#acacae" },
+      chip       = { fg = "black", bg = "#f49f31" },  -- amber fill = "you can change this" on the Terminal
       keys       = { fg = "#4dc7f9" },
       hint       = { fg = "#9e9e9e" },
       status     = { fg = "#d7d7d7" },
@@ -81,7 +81,11 @@ return {
   -- palette = { "#d4b872", "#7fb3c9", ... }. Hex reads the same on every terminal.
   palette = "berg",
   palettes = {
-    berg      = { "#f49f31", "#569cd6", "#5dc453", "#75beff", "#d54135", "#cca700", "#ce9178", "#acacae" },
+    -- Berg: Bloomberg's categorical hues (the Terminal's chart legend and
+    -- vim-bloomberg), not price colors. Orange first because it is the body
+    -- text, so the common value stays calm; lavender, mint, magenta, gold,
+    -- blue, sky next; green and red last because they read as up/down.
+    berg      = { "#f49f31", "#c6c5fe", "#4af6c3", "#ff73fd", "#e0c010", "#0b85df", "#96cbfe", "#a8ff60", "#ff6c60", "#acacae" },
     bloomberg = { "#c9d1d9", "#ffcc00", "#2ea043", "#58a6ff", "#f0883e", "#f85149", "#d29922", "#8b949e" },
     muted    = { "#c9b07a", "#7fa6bd", "#8db58d", "#c08a84", "#a692bd", "#7fb5ae", "#c49c7a", "#b98da0" },
     balanced = { "#ffd166", "#4fc3f7", "#7ee787", "#ff7b72", "#c792ea", "#5ee6d8", "#ffa657", "#f78da7" },
