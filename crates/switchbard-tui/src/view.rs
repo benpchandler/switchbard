@@ -11,7 +11,7 @@ use ratatui::Frame;
 
 use crate::app::{App, Mode, Pane};
 use crate::columns::Column;
-use crate::config::Action;
+use crate::config::{Action, Surface};
 use crate::group::Row;
 use crate::paint::{self, PaintRule};
 use crate::picker::{self, ColumnPurpose, PaintPick, Payload, PickerPurpose, ValuePicker};
@@ -42,13 +42,19 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = app.config.theme.clone();
+    let repo = app
+        .repo_root
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let title = Line::from(vec![
+        Span::styled(format!(" {repo} "), theme.style(Surface::TitleRepo)),
+        Span::styled(table_title(app), theme.style(Surface::Title)),
+    ]);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border))
-        .title(Span::styled(
-            table_title(app),
-            Style::default().fg(theme.accent),
-        ));
+        .border_style(theme.style(Surface::Border))
+        .title(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.height == 0 || inner.width == 0 {
@@ -70,6 +76,10 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         .collect();
     let header_area = Rect { height: 1, ..inner };
     let cells = Layout::horizontal(widths).spacing(1).split(header_area);
+    frame.render_widget(
+        Paragraph::new("").style(theme.style(Surface::Header)),
+        header_area,
+    );
     for (index, (column, cell)) in app.state.columns.iter().zip(cells.iter()).enumerate() {
         let text = if app.state.glyph_columns.contains(column) {
             format!("{} {}", index + 1, app.glyph_legend(*column))
@@ -77,7 +87,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             format!("{} {}", index + 1, column.header())
         };
         frame.render_widget(
-            Paragraph::new(text).style(Style::default().fg(theme.header)),
+            Paragraph::new(text).style(theme.style(Surface::Header)),
             *cell,
         );
     }
@@ -95,23 +105,19 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             ..body
         };
         let selected = app.scroll + line == app.selected;
-        if selected {
-            frame.render_widget(
-                Paragraph::new("").style(Style::default().bg(theme.selected)),
-                row_area,
-            );
-        }
         match row {
             Row::Heading(text) => frame.render_widget(
-                Paragraph::new(format!("▸ {text}")).style(
-                    Style::default()
-                        .fg(theme.heading)
-                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-                ),
+                Paragraph::new(format!("▸ {text}")).style(theme.style(Surface::Heading)),
                 row_area,
             ),
             Row::Task(index) => {
                 let task = &app.tasks()[*index];
+                if selected {
+                    frame.render_widget(
+                        Paragraph::new("").style(theme.style(Surface::Selected)),
+                        row_area,
+                    );
+                }
                 for (column, cell) in app.state.columns.iter().zip(cells.iter()) {
                     let text = column.cell_text(task);
                     let text = if app.state.glyph_columns.contains(column) && !text.is_empty() {
@@ -119,12 +125,12 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     } else {
                         text
                     };
-                    let mut style = Style::default();
+                    let mut style = theme.column_style(*column);
                     if let Some(color) = paint::cell_color(&app.state.paint, task, *column) {
                         style = style.fg(color);
                     }
                     if selected {
-                        style = style.bg(theme.selected).add_modifier(Modifier::BOLD);
+                        style = style.patch(theme.style(Surface::Selected));
                     }
                     frame.render_widget(
                         Paragraph::new(text).style(style),
@@ -157,12 +163,7 @@ fn scroll_to_show(scroll: usize, selected: usize, window: usize, rows: &[Row]) -
 }
 
 fn table_title(app: &App) -> String {
-    let repo = app
-        .repo_root
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let mut parts: Vec<String> = vec![repo, app.view_label()];
+    let mut parts: Vec<String> = vec![app.view_label()];
     if !app.state.filter.is_empty() {
         parts.push(app.state.filter.clone());
     }
@@ -204,7 +205,7 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                 task.priority,
                 task.labels.join(",")
             ),
-            Style::default().fg(theme.dim),
+            theme.style(Surface::Hint),
         )));
         lines.push(Line::from(""));
         for paragraph in task.description.lines() {
@@ -214,7 +215,7 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "acceptance",
-                Style::default().fg(theme.accent),
+                theme.style(Surface::Accent),
             )));
             for item in &task.acceptance_criteria {
                 let mark = if item.checked { "x" } else { " " };
@@ -226,7 +227,7 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
     }
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border));
+        .border_style(theme.style(Surface::Border));
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -289,7 +290,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         .map(|chunk| {
             let spans = chunk.iter().flat_map(|(keys, name)| {
                 [
-                    Span::styled(format!("{keys:<8}"), Style::default().fg(theme.accent)),
+                    Span::styled(format!("{keys:<8}"), theme.style(Surface::Accent)),
                     Span::raw(format!("{name:<24}")),
                 ]
             });
@@ -298,27 +299,24 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         .collect();
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled(":bug <doing>  ", Style::default().fg(theme.accent)),
+        Span::styled(":bug <doing>  ", theme.style(Surface::Accent)),
         Span::raw("file a bug with this screen    "),
-        Span::styled(":idea <want>  ", Style::default().fg(theme.accent)),
+        Span::styled(":idea <want>  ", theme.style(Surface::Accent)),
         Span::raw("file an idea with this screen"),
     ]));
     lines.push(Line::from(vec![
-        Span::styled(
-            ":view <name>  :reload  :q",
-            Style::default().fg(theme.accent),
-        ),
+        Span::styled(":view <name>  :reload  :q", theme.style(Surface::Accent)),
         Span::raw(
             "    f/s <col#> filter/sort by column; v<n> open view, vs<n> save it (vsd = default)",
         ),
     ]));
     lines.push(Line::from(Span::styled(
         "config ~/.switchbard/tui.lua (hot reload) · views ~/.switchbard/views.lua + views/<repo>.lua · events ~/.switchbard/tui-events.jsonl",
-        Style::default().fg(theme.dim),
+        theme.style(Surface::Hint),
     )));
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border))
+        .border_style(theme.style(Surface::Border))
         .title(" keys ");
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
@@ -327,70 +325,81 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.config.theme;
     let line = match app.mode {
         Mode::Filter => Line::from(vec![
-            Span::styled("/", Style::default().fg(theme.accent)),
+            Span::styled("/", theme.style(Surface::Accent)),
             Span::raw(app.state.filter.clone()),
-            Span::styled("▏", Style::default().fg(theme.accent)),
+            Span::styled("▏", theme.style(Surface::Accent)),
         ]),
         Mode::Command => Line::from(vec![
-            Span::styled(":", Style::default().fg(theme.accent)),
+            Span::styled(":", theme.style(Surface::Accent)),
             Span::raw(app.input.clone()),
-            Span::styled("▏", Style::default().fg(theme.accent)),
+            Span::styled("▏", theme.style(Surface::Accent)),
             Span::styled(
                 format!("   {}", app.command_completions().join("  ")),
-                Style::default().fg(theme.dim),
+                theme.style(Surface::Hint),
             ),
         ]),
         Mode::PickValue if app.picker.is_some() => Line::from(Span::styled(
             format!(" {}", picker::hint(app.picker.as_ref().expect("checked"))),
-            Style::default().fg(theme.dim),
+            theme.style(Surface::Hint),
         )),
         Mode::PickValue | Mode::ViewChord | Mode::ViewSaveSlot | Mode::ViewGlobalSlot => {
             Line::from(Span::styled(
                 app.status.clone(),
-                Style::default().fg(theme.accent),
+                theme.style(Surface::Status),
             ))
         }
         Mode::Browse if !app.status.is_empty() => Line::from(Span::styled(
             app.status.clone(),
-            Style::default().fg(theme.accent),
+            theme.style(Surface::Status),
         )),
-        Mode::Browse => Line::from(Span::styled(
-            format!(" {}", browse_hints(app).join("  ")),
-            Style::default().fg(theme.dim),
-        )),
+        Mode::Browse => browse_footer(app),
     };
     frame.render_widget(Paragraph::new(line), area);
 }
 
-/// The footer while browsing: situation first, then the keys.
-fn browse_hints(app: &App) -> Vec<String> {
-    let mut hints = Vec::new();
+/// The footer while browsing: what is in effect as a chip, the situation, then
+/// the keys with their letters on the `keys` surface.
+fn browse_footer(app: &App) -> Line<'static> {
+    let theme = &app.config.theme;
+    let mut spans: Vec<Span> = vec![Span::raw(" ")];
     if !app.state.filter.is_empty() {
-        hints.push(format!("[{}]", app.state.filter));
+        spans.push(Span::styled(
+            format!(" {} ", app.state.filter),
+            theme.style(Surface::Chip),
+        ));
+        spans.push(Span::raw("  "));
     }
     if app.state.group.is_none() && app.grouping_is_useful() {
-        hints.push(format!(
-            "{} projects · o groups by project",
-            app.projects.len()
+        spans.push(Span::styled(
+            format!("{} projects · ", app.projects.len()),
+            theme.style(Surface::Hint),
+        ));
+        spans.push(Span::styled("o", theme.style(Surface::Keys)));
+        spans.push(Span::styled(
+            " groups by project  ",
+            theme.style(Surface::Hint),
         ));
     }
-    hints.extend(
-        [
-            "/ filter",
-            "f filter-by",
-            "s sort",
-            "o group",
-            "c columns",
-            "p paint",
-            "b ball",
-            "v views",
-            ": command",
-            "? keys",
-            "q quit",
-        ]
-        .map(str::to_string),
-    );
-    hints
+    for (key, name) in [
+        ("/", "filter"),
+        ("f", "filter-by"),
+        ("s", "sort"),
+        ("o", "group"),
+        ("c", "columns"),
+        ("p", "paint"),
+        ("b", "ball"),
+        ("v", "views"),
+        (":", "command"),
+        ("?", "keys"),
+        ("q", "quit"),
+    ] {
+        spans.push(Span::styled(key.to_string(), theme.style(Surface::Keys)));
+        spans.push(Span::styled(
+            format!(" {name}  "),
+            theme.style(Surface::Hint),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
@@ -453,14 +462,12 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                 _ => false,
             };
             let mut style = if index == picker.selected {
-                Style::default()
-                    .bg(theme.selected)
-                    .add_modifier(Modifier::BOLD)
+                theme.style(Surface::Selected)
             } else {
                 Style::default()
             };
             if !shown {
-                style = style.fg(theme.dim);
+                style = style.patch(theme.style(Surface::Hint));
             }
             match (&picker.purpose, &option.payload) {
                 // Show the color itself: this is what the painted text will look like.
@@ -487,7 +494,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             Line::from(vec![
                 Span::styled(
                     format!("{:<2}", keys.get(index).cloned().unwrap_or_default()),
-                    Style::default().fg(theme.accent),
+                    theme.style(Surface::Accent),
                 ),
                 Span::styled(
                     format!("{mark}{value:<width$}", width = width as usize - 9),
@@ -499,7 +506,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                     } else {
                         "   ".to_string()
                     },
-                    Style::default().fg(theme.dim),
+                    theme.style(Surface::Hint),
                 ),
             ])
         })
@@ -507,7 +514,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         format!(" {hint}"),
-        Style::default().fg(theme.dim),
+        theme.style(Surface::Hint),
     )));
     let pending = if picker.number.is_empty() {
         String::new()
@@ -524,7 +531,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
     };
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent))
+        .border_style(theme.style(Surface::Accent))
         .title_style(title_style)
         .title(pending + &picker_title(picker, preview.is_some()));
     frame.render_widget(Clear, area);

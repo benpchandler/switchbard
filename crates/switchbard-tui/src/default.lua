@@ -17,13 +17,30 @@ return {
   -- Colors: ANSI names (cyan, gray, darkgray, ...) follow your terminal palette;
   -- hex ("#303030") is exact. dim is secondary text (detail meta line, hints,
   -- counts); keep it readable on your background.
+  -- Surfaces: each named area of the screen and how it is shaded. A bare string
+  -- is a foreground color; a table sets fg, bg, bold, underline, italic, dim,
+  -- reverse. Colors: ANSI names follow your terminal palette, hex is exact.
+  -- The shape borrows from a Bloomberg screen: identity and controls are filled
+  -- amber, the cursor is the only blue fill, labels are amber text on white data,
+  -- bands (not lines) separate headers and sections, and paint is reserved for
+  -- meaning.
   theme = {
-    accent = "#ffcc00",   -- Bloomberg amber
-    header = "#f0883e",
-    dim = "#8b949e",
-    selected = "#1f2428",
-    border = "#30363d",
-    heading = "white",  -- group section headings (`o`); keep it off your paint colors
+    title_repo = { fg = "black", bg = "#ffcc00", bold = true },
+    title      = { fg = "#8b949e" },
+    border     = { fg = "#30363d" },
+    header     = { fg = "#8b949e", bg = "#161b22" },
+    heading    = { fg = "#e6edf3", bg = "#1f2428", bold = true },
+    selected   = { bg = "#163a63", bold = true },  -- no fg: paint stays readable on the cursor row
+    label      = { fg = "#ffcc00" },
+    text       = {},
+    link       = { fg = "#58a6ff" },
+    chip       = { fg = "black", bg = "#ffcc00" },
+    keys       = { fg = "#ffcc00" },
+    hint       = { fg = "#8b949e" },
+    status     = { fg = "#ffcc00" },
+    accent     = { fg = "#ffcc00" },
+    -- Which surface a column's cells wear before paint (the rest are text).
+    columns = { id = "label", project = "link" },
   },
 
   -- What painting a column "auto" hands out, first value first. Pick a preset by
