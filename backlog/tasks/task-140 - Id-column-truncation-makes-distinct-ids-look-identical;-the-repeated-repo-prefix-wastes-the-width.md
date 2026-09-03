@@ -4,6 +4,7 @@ title: Id column truncation makes distinct ids look identical; the repeated repo
 status: To Do
 assignee: []
 created_date: '2026-09-03 00:35'
+updated_date: '2026-09-03 01:33'
 labels:
   - gui
   - ux
@@ -28,3 +29,9 @@ Evidence: owner screenshot 2026-09-03 of the budget board, rows LED-648.10 and L
 - [ ] #2 In a single-repo view the id column spends its width on the varying part of the id, not the shared prefix
 - [ ] #3 Whatever is elided is recoverable (full id on hover, focus, or copy)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+sbt half shipped in PR feat/tui-compact-columns (2026-09-03): bare ids via Column::display_text, content-fit widths. The egui Tasks place still truncates; GUI half remains.
+<!-- SECTION:NOTES:END -->
