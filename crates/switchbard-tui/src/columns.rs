@@ -31,6 +31,8 @@ pub struct ColumnSpec {
     pub field: Option<FilterField>,
     /// The order its values sort in semantically, if the vocabulary has one.
     pub vocabulary: &'static [&'static str],
+    /// Whether `g` can section the list by this column: one value per task, few values.
+    pub groupable: bool,
 }
 
 pub const COLUMNS: [ColumnSpec; 7] = [
@@ -42,6 +44,7 @@ pub const COLUMNS: [ColumnSpec; 7] = [
         width: Some(9),
         field: Some(FilterField::Id),
         vocabulary: &[],
+        groupable: false,
     },
     ColumnSpec {
         column: Column::Status,
@@ -51,6 +54,7 @@ pub const COLUMNS: [ColumnSpec; 7] = [
         width: Some(12),
         field: Some(FilterField::Status),
         vocabulary: CANONICAL_STATUS_ORDER,
+        groupable: true,
     },
     ColumnSpec {
         column: Column::Priority,
@@ -60,6 +64,7 @@ pub const COLUMNS: [ColumnSpec; 7] = [
         width: Some(7),
         field: Some(FilterField::Priority),
         vocabulary: BACKLOG_PRIORITIES,
+        groupable: true,
     },
     ColumnSpec {
         column: Column::Title,
@@ -69,6 +74,7 @@ pub const COLUMNS: [ColumnSpec; 7] = [
         width: None,
         field: None,
         vocabulary: &[],
+        groupable: false,
     },
     ColumnSpec {
         column: Column::Labels,
@@ -78,6 +84,7 @@ pub const COLUMNS: [ColumnSpec; 7] = [
         width: Some(20),
         field: Some(FilterField::Label),
         vocabulary: &[],
+        groupable: false,
     },
     ColumnSpec {
         column: Column::Project,
@@ -87,6 +94,7 @@ pub const COLUMNS: [ColumnSpec; 7] = [
         width: Some(18),
         field: Some(FilterField::Project),
         vocabulary: &[],
+        groupable: true,
     },
     ColumnSpec {
         column: Column::Ball,
@@ -96,6 +104,7 @@ pub const COLUMNS: [ColumnSpec; 7] = [
         width: Some(6),
         field: Some(FilterField::Ball),
         vocabulary: &["me", "agent"],
+        groupable: true,
     },
 ];
 
@@ -142,6 +151,15 @@ impl Column {
 
     pub fn width(self) -> Option<u16> {
         self.spec().width
+    }
+
+    pub fn groupable(self) -> bool {
+        self.spec().groupable
+    }
+
+    /// The columns `g` can section by, in catalog order.
+    pub fn groupable_columns() -> Vec<Column> {
+        Column::ALL.into_iter().filter(|c| c.groupable()).collect()
     }
 
     /// The field whose values are categories, for `f`, paint by value, and glyphs.

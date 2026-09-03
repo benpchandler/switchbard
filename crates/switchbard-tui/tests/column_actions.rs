@@ -12,6 +12,7 @@ fn digit_opens_the_columns_menu_and_letters_run_its_actions() {
     assert!(screen.contains("┌ status ─"), "{screen}");
     assert!(screen.contains("f  filter by its values"), "{screen}");
     assert!(screen.contains("s  sort by it"), "{screen}");
+    assert!(screen.contains("o  group by it"), "{screen}");
     assert!(screen.contains("p  paint by it"), "{screen}");
     assert!(screen.contains("g  glyphs on/off"), "{screen}");
     assert!(screen.contains("x  hide it"), "{screen}");
@@ -54,6 +55,7 @@ fn free_text_columns_offer_no_glyphs_and_out_of_range_digits_say_so() {
     let screen = h.press(KeyCode::Char('4'));
     assert!(screen.contains("┌ title ─"), "{screen}");
     assert!(!screen.contains("glyphs on/off"), "{screen}");
+    assert!(!screen.contains("group by it"), "{screen}");
     h.press(KeyCode::Esc);
     h.press(KeyCode::Char('9'));
     assert_eq!(

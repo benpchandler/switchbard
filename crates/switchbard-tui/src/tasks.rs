@@ -3,13 +3,53 @@
 use std::path::Path;
 
 use anyhow::Result;
-use switchbard_core::{load_backlog_repo, BacklogTask, BacklogTaskSource};
+use switchbard_core::{
+    compute_hierarchy_rollup, load_backlog_repo, BacklogTask, BacklogTaskSource,
+};
 
 use crate::columns::Column;
 
-pub fn load(root: &Path) -> Result<Vec<BacklogTask>> {
+/// What a project section heading needs, computed once per reload from the
+/// core roll-up: def status, done/total, initiative. Ordered by stack rank,
+/// unranked projects after by name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSummary {
+    pub name: String,
+    pub status: Option<String>,
+    pub done: usize,
+    pub total: usize,
+    pub initiative: Option<String>,
+}
+
+pub struct Backlog {
+    pub tasks: Vec<BacklogTask>,
+    pub projects: Vec<ProjectSummary>,
+}
+
+pub fn load(root: &Path) -> Result<Backlog> {
     let repo = load_backlog_repo(root)?;
-    Ok(repo
+    let rollup = compute_hierarchy_rollup(&[&repo]);
+    let mut projects: Vec<ProjectSummary> = rollup
+        .initiatives
+        .iter()
+        .flat_map(|initiative| initiative.projects.iter())
+        .map(|project| ProjectSummary {
+            name: project.name.clone(),
+            status: project.status.clone(),
+            done: project.done,
+            total: project.total,
+            initiative: project.initiative.clone(),
+        })
+        .collect();
+    projects.sort_by_key(|project| {
+        (
+            repo.ranking
+                .project_rank(&project.name)
+                .unwrap_or(usize::MAX),
+            project.name.clone(),
+        )
+    });
+    let tasks = repo
         .tasks
         .into_iter()
         .filter(|task| {
@@ -18,7 +58,8 @@ pub fn load(root: &Path) -> Result<Vec<BacklogTask>> {
                 BacklogTaskSource::Active | BacklogTaskSource::Draft
             )
         })
-        .collect())
+        .collect();
+    Ok(Backlog { tasks, projects })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -37,6 +37,7 @@ impl App {
         let actions = [
             ColumnAction::Filter,
             ColumnAction::Sort,
+            ColumnAction::Group,
             ColumnAction::Paint,
             ColumnAction::Glyphs,
             ColumnAction::Hide,
@@ -45,6 +46,7 @@ impl App {
         let options = actions
             .into_iter()
             .filter(|action| *action != ColumnAction::Glyphs || self.is_categorical(column))
+            .filter(|action| *action != ColumnAction::Group || column.groupable())
             .map(|action| {
                 PickOption::keyed(action.key(), action.label(), Payload::ColumnAction(action))
             })
@@ -59,6 +61,7 @@ impl App {
         match action {
             ColumnAction::Filter => self.open_filter_picker(column),
             ColumnAction::Sort => self.open_sort_picker(column),
+            ColumnAction::Group => self.set_group(Some(column)),
             ColumnAction::Paint => self.paint_column_entry(column),
             ColumnAction::Glyphs => self.toggle_glyph_column(column),
             ColumnAction::Hide => self.toggle_column(column),

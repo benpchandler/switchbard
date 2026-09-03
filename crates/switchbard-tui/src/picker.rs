@@ -50,6 +50,7 @@ pub enum PickerPurpose {
 pub enum ColumnAction {
     Filter,
     Sort,
+    Group,
     Paint,
     Glyphs,
     Hide,
@@ -61,6 +62,7 @@ impl ColumnAction {
         match self {
             ColumnAction::Filter => 'f',
             ColumnAction::Sort => 's',
+            ColumnAction::Group => 'o',
             ColumnAction::Paint => 'p',
             ColumnAction::Glyphs => 'g',
             ColumnAction::Hide => 'x',
@@ -72,6 +74,7 @@ impl ColumnAction {
         match self {
             ColumnAction::Filter => "filter by its values",
             ColumnAction::Sort => "sort by it",
+            ColumnAction::Group => "group by it",
             ColumnAction::Paint => "paint by it",
             ColumnAction::Glyphs => "glyphs on/off",
             ColumnAction::Hide => "hide it",

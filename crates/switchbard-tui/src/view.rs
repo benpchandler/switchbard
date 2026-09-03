@@ -6,12 +6,13 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::{App, Mode, Pane};
 use crate::columns::Column;
 use crate::config::Action;
+use crate::group::Row;
 use crate::paint::{self, PaintRule};
 use crate::picker::{self, ColumnPurpose, PaintPick, Payload, PickerPurpose, ValuePicker};
 use crate::tasks::Filter;
@@ -39,92 +40,152 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.last_screen = buffer_text(frame.buffer_mut());
 }
 
-fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
-    let theme = &app.config.theme;
+fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
+    let theme = app.config.theme.clone();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border))
+        .title(Span::styled(
+            table_title(app),
+            Style::default().fg(theme.accent),
+        ));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+    let widths: Vec<Constraint> = app
+        .state
+        .columns
+        .iter()
+        .map(|column| match column {
+            _ if app.state.glyph_columns.contains(column) => {
+                Constraint::Length((2 + app.glyph_legend(*column).chars().count()).max(3) as u16)
+            }
+            column => match column.width() {
+                Some(width) => Constraint::Length(width),
+                None => Constraint::Min(20),
+            },
+        })
+        .collect();
+    let header_area = Rect { height: 1, ..inner };
+    let cells = Layout::horizontal(widths).spacing(1).split(header_area);
+    for (index, (column, cell)) in app.state.columns.iter().zip(cells.iter()).enumerate() {
+        let text = if app.state.glyph_columns.contains(column) {
+            format!("{} {}", index + 1, app.glyph_legend(*column))
+        } else {
+            format!("{} {}", index + 1, column.header())
+        };
+        frame.render_widget(
+            Paragraph::new(text).style(Style::default().fg(theme.header)),
+            *cell,
+        );
+    }
+    let window = inner.height.saturating_sub(1) as usize;
+    app.scroll = scroll_to_show(app.scroll, app.selected, window, &app.rows);
+    let body = Rect {
+        y: inner.y + 1,
+        height: inner.height - 1,
+        ..inner
+    };
+    for (line, row) in app.rows.iter().skip(app.scroll).take(window).enumerate() {
+        let row_area = Rect {
+            y: body.y + line as u16,
+            height: 1,
+            ..body
+        };
+        let selected = app.scroll + line == app.selected;
+        if selected {
+            frame.render_widget(
+                Paragraph::new("").style(Style::default().bg(theme.selected)),
+                row_area,
+            );
+        }
+        match row {
+            Row::Heading(text) => frame.render_widget(
+                Paragraph::new(text.clone()).style(
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                row_area,
+            ),
+            Row::Task(index) => {
+                let task = &app.tasks()[*index];
+                for (column, cell) in app.state.columns.iter().zip(cells.iter()) {
+                    let text = column.cell_text(task);
+                    let text = if app.state.glyph_columns.contains(column) && !text.is_empty() {
+                        app.config.glyph(*column, &text)
+                    } else {
+                        text
+                    };
+                    let mut style = Style::default();
+                    if let Some(color) = paint::cell_color(&app.state.paint, task, *column) {
+                        style = style.fg(color);
+                    }
+                    if selected {
+                        style = style.bg(theme.selected).add_modifier(Modifier::BOLD);
+                    }
+                    frame.render_widget(
+                        Paragraph::new(text).style(style),
+                        Rect {
+                            y: row_area.y,
+                            ..*cell
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The first row on screen: keeps `selected` in the window, and shows the
+/// heading above it when the selected task opens its section.
+fn scroll_to_show(scroll: usize, selected: usize, window: usize, rows: &[Row]) -> usize {
+    if window == 0 {
+        return scroll;
+    }
+    let mut scroll = scroll.min(selected);
+    if selected >= scroll + window {
+        scroll = selected + 1 - window;
+    }
+    let heading_above = selected > 0 && matches!(rows.get(selected - 1), Some(Row::Heading(_)));
+    if heading_above && scroll == selected {
+        scroll -= 1;
+    }
+    scroll
+}
+
+fn table_title(app: &App) -> String {
     let repo = app
         .repo_root
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_default();
-    let filter = if app.state.filter.is_empty() {
-        String::new()
-    } else {
-        format!("{} · ", app.state.filter)
-    };
-    let sort = app
-        .state
-        .sort
-        .map(|sort| format!("{} · ", sort.label()))
-        .unwrap_or_default();
-    let columns = if app.state.columns == Column::DEFAULT_SHOWN {
-        String::new()
-    } else {
-        format!("cols:{} · ", columns_text(&app.state.columns))
-    };
-    let glyphs = if app.state.glyph_columns.is_empty() {
-        String::new()
-    } else {
-        format!("glyphs:{} · ", columns_text(&app.state.glyph_columns))
-    };
-    let painted = if app.state.paint.is_empty() {
-        String::new()
-    } else {
-        format!("paint:{} · ", app.state.paint.len())
-    };
-    let title = format!(
-        " {repo} · {} · {filter}{sort}{columns}{glyphs}{painted}{}/{} ",
-        app.view_label(),
-        app.visible.len(),
-        app.total_tasks()
-    );
-    let header = Row::new(app.state.columns.iter().enumerate().map(|(index, column)| {
-        if app.state.glyph_columns.contains(column) {
-            Cell::from(format!("{} {}", index + 1, app.glyph_legend(*column)))
-        } else {
-            Cell::from(format!("{} {}", index + 1, column.header()))
+    let mut parts: Vec<String> = vec![repo, app.view_label()];
+    if !app.state.filter.is_empty() {
+        parts.push(app.state.filter.clone());
+    }
+    if let Some(sort) = app.state.sort {
+        parts.push(sort.label());
+    }
+    if app.state.columns != Column::DEFAULT_SHOWN {
+        parts.push(format!("cols:{}", columns_text(&app.state.columns)));
+    }
+    if !app.state.glyph_columns.is_empty() {
+        parts.push(format!("glyphs:{}", columns_text(&app.state.glyph_columns)));
+    }
+    if !app.state.paint.is_empty() {
+        parts.push(format!("paint:{}", app.state.paint.len()));
+    }
+    if let Some(group) = app.state.group {
+        parts.push(format!("group:{}", group.name()));
+        if group == Column::Project {
+            parts.extend(app.initiatives());
         }
-    }))
-    .style(Style::default().fg(theme.header));
-    let rows = (0..app.visible.len()).filter_map(|index| {
-        let task = app.task(index)?;
-        Some(Row::new(app.state.columns.iter().map(|column| {
-            let text = column.cell_text(task);
-            let text = if app.state.glyph_columns.contains(column) && !text.is_empty() {
-                app.config.glyph(*column, &text)
-            } else {
-                text
-            };
-            let cell = Cell::from(text);
-            match paint::cell_color(&app.state.paint, task, *column) {
-                Some(color) => cell.style(Style::default().fg(color)),
-                None => cell,
-            }
-        })))
-    });
-    let widths = app.state.columns.iter().map(|column| match column {
-        _ if app.state.glyph_columns.contains(column) => {
-            Constraint::Length((2 + app.glyph_legend(*column).chars().count()).max(3) as u16)
-        }
-        column => match column.width() {
-            Some(width) => Constraint::Length(width),
-            None => Constraint::Min(20),
-        },
-    });
-    let table = Table::new(rows, widths)
-        .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.border))
-                .title(Span::styled(title, Style::default().fg(theme.accent))),
-        )
-        .row_highlight_style(
-            Style::default()
-                .bg(theme.selected)
-                .add_modifier(Modifier::BOLD),
-        );
-    let mut state = TableState::default().with_selected(Some(app.selected));
-    frame.render_stateful_widget(table, area, &mut state);
+    }
+    parts.push(format!("{}/{}", app.visible.len(), app.total_tasks()));
+    format!(" {} ", parts.join(" · "))
 }
 
 fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
@@ -191,6 +252,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Action::Columns,
         Action::Paint,
         Action::Ball,
+        Action::Group,
         Action::Command,
         Action::Reload,
         Action::Help,
@@ -293,18 +355,42 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(theme.accent),
         )),
         Mode::Browse => Line::from(Span::styled(
-            format!(
-                " {}  / filter  f filter-by  s sort  c columns  p paint  b ball  v views  : command  ? keys  q quit",
-                if app.state.filter.is_empty() {
-                    String::new()
-                } else {
-                    format!("[{}]", app.state.filter)
-                }
-            ),
+            format!(" {}", browse_hints(app).join("  ")),
             Style::default().fg(theme.dim),
         )),
     };
     frame.render_widget(Paragraph::new(line), area);
+}
+
+/// The footer while browsing: situation first, then the keys.
+fn browse_hints(app: &App) -> Vec<String> {
+    let mut hints = Vec::new();
+    if !app.state.filter.is_empty() {
+        hints.push(format!("[{}]", app.state.filter));
+    }
+    if app.state.group.is_none() && app.grouping_is_useful() {
+        hints.push(format!(
+            "{} projects · o groups by project",
+            app.projects.len()
+        ));
+    }
+    hints.extend(
+        [
+            "/ filter",
+            "f filter-by",
+            "s sort",
+            "o group",
+            "c columns",
+            "p paint",
+            "b ball",
+            "v views",
+            ": command",
+            "? keys",
+            "q quit",
+        ]
+        .map(str::to_string),
+    );
+    hints
 }
 
 fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {

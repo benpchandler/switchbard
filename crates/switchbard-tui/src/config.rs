@@ -34,6 +34,7 @@ pub enum Action {
     Help,
     Quit,
     View,
+    Group,
 }
 
 impl Action {
@@ -58,6 +59,7 @@ impl Action {
             "help" => Action::Help,
             "quit" => Action::Quit,
             "view" => Action::View,
+            "group" => Action::Group,
             _ => return None,
         })
     }
@@ -83,6 +85,7 @@ impl Action {
             Action::Help => "help".to_string(),
             Action::Quit => "quit".to_string(),
             Action::View => "view".to_string(),
+            Action::Group => "group".to_string(),
         }
     }
 }
@@ -108,6 +111,8 @@ impl KeyChord {
             "left" => KeyCode::Left,
             "right" => KeyCode::Right,
             "backspace" => KeyCode::Backspace,
+            "home" => KeyCode::Home,
+            "end" => KeyCode::End,
             "space" => KeyCode::Char(' '),
             single if single.chars().count() == 1 => KeyCode::Char(single.chars().next()?),
             _ => return None,

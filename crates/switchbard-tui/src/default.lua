@@ -11,7 +11,7 @@ return {
     ["ctrl-d"] = "page_down", ["ctrl-u"] = "page_up",
     enter = "open", esc = "back",
     ["/"] = "filter", f = "filter_column", s = "sort_column", [":"] = "command",
-    c = "columns", p = "paint", b = "ball", v = "view", r = "reload", ["?"] = "help", q = "quit",
+    c = "columns", p = "paint", b = "ball", o = "group", v = "view", r = "reload", ["?"] = "help", q = "quit",
   },
 
   -- Colors: ANSI names (cyan, gray, darkgray, ...) follow your terminal palette;

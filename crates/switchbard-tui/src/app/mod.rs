@@ -14,10 +14,11 @@ use switchbard_core::BacklogTask;
 use crate::ball::Ball;
 use crate::columns::Column;
 use crate::config::{self, Action, Config, KeyChord};
+use crate::group::{self, Row};
 use crate::picker::{ColumnPurpose, ValuePicker};
 use crate::report::{self, ReportContext, ReportKind};
 use crate::sort;
-use crate::tasks::{self, Filter};
+use crate::tasks::{self, Filter, ProjectSummary};
 use crate::telemetry::Telemetry;
 use crate::views::{ViewState, ViewStore};
 
@@ -49,8 +50,18 @@ pub struct App {
     config_seen: Option<SystemTime>,
     tasks_seen: Option<SystemTime>,
     tasks: Vec<BacklogTask>,
+    /// Project headings' facts, by stack rank; refreshed with the tasks.
+    pub projects: Vec<ProjectSummary>,
+    /// Filtered and sorted task indices, the truth grouping projects from.
     pub visible: Vec<usize>,
+    /// What the table shows: tasks, with a heading before each section when grouped.
+    pub rows: Vec<Row>,
+    /// Index into `rows`; never rests on a heading while a task row exists.
     pub selected: usize,
+    /// First row on screen; the renderer keeps `selected` inside the window.
+    pub scroll: usize,
+    /// The column `o` returns to after grouping was switched off.
+    last_group: Column,
     /// Column order when `c m` began, so typed numbers keep meaning what the header showed.
     move_origin: Option<Vec<Column>>,
     /// Which values list to return to after a color is picked.
@@ -88,8 +99,12 @@ impl App {
             config_path,
             tasks_seen: None,
             tasks: Vec::new(),
+            projects: Vec::new(),
             visible: Vec::new(),
+            rows: Vec::new(),
             selected: 0,
+            scroll: 0,
+            last_group: Column::Project,
             move_origin: None,
             paint_return: None,
             views,
@@ -116,14 +131,30 @@ impl App {
         app
     }
 
-    pub fn task(&self, visible_index: usize) -> Option<&BacklogTask> {
-        self.visible
-            .get(visible_index)
-            .map(|&index| &self.tasks[index])
+    /// The task on a row; `None` for a heading.
+    pub fn task(&self, row: usize) -> Option<&BacklogTask> {
+        match self.rows.get(row)? {
+            Row::Task(index) => Some(&self.tasks[*index]),
+            Row::Heading(_) => None,
+        }
+    }
+
+    /// Whether more than one project exists, so grouping is worth pointing at.
+    pub fn grouping_is_useful(&self) -> bool {
+        self.projects.len() > 1
+    }
+
+    /// The initiative names behind the grouped projects, for the title bar.
+    pub fn initiatives(&self) -> Vec<String> {
+        group::initiatives(&self.projects)
     }
 
     pub fn selected_task(&self) -> Option<&BacklogTask> {
         self.task(self.selected)
+    }
+
+    pub fn tasks(&self) -> &[BacklogTask] {
+        &self.tasks
     }
 
     pub fn total_tasks(&self) -> usize {
@@ -238,7 +269,7 @@ impl App {
         if self.input.contains(' ') {
             return Vec::new();
         }
-        let mut names: Vec<String> = ["bug", "idea", "reload", "q"]
+        let mut names: Vec<String> = ["bug", "idea", "group", "reload", "q"]
             .iter()
             .map(|name| name.to_string())
             .collect();
@@ -326,12 +357,12 @@ impl App {
 
     fn apply(&mut self, action: &Action) {
         match action {
-            Action::Down => self.select(self.selected.saturating_add(1)),
-            Action::Up => self.select(self.selected.saturating_sub(1)),
+            Action::Down => self.step(1),
+            Action::Up => self.step(-1),
             Action::Top => self.select(0),
             Action::Bottom => self.select(usize::MAX),
-            Action::PageDown => self.select(self.selected.saturating_add(self.page_size)),
-            Action::PageUp => self.select(self.selected.saturating_sub(self.page_size)),
+            Action::PageDown => self.step(self.page_size as isize),
+            Action::PageUp => self.step(-(self.page_size as isize)),
             Action::Open => {
                 self.pane = match self.pane {
                     Pane::Detail => Pane::None,
@@ -358,6 +389,10 @@ impl App {
             Action::Columns => self.open_columns_picker(),
             Action::Paint => self.open_paint_target_picker(),
             Action::Ball => self.pass_ball(),
+            Action::Group => match self.state.group {
+                Some(_) => self.set_group(None),
+                None => self.set_group(Some(self.last_group)),
+            },
             Action::Command => {
                 self.mode = Mode::Command;
                 self.input.clear();
@@ -390,6 +425,20 @@ impl App {
         match verb {
             "q" | "quit" => self.should_quit = true,
             "reload" => self.apply(&Action::Reload),
+            "group" => match rest.trim() {
+                "" | "off" | "none" => self.set_group(None),
+                name => match Column::parse(name).filter(|column| column.groupable()) {
+                    Some(column) => self.set_group(Some(column)),
+                    None => self.fail(format!(
+                        "group by one of {}, or off",
+                        Column::groupable_columns()
+                            .iter()
+                            .map(|column| column.name())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )),
+                },
+            },
             "bug" => self.file_report(ReportKind::Bug, rest),
             "idea" => self.file_report(ReportKind::Idea, rest),
             "" => {}
@@ -416,12 +465,10 @@ impl App {
                 let shown_id = filed
                     .map(|index| self.tasks[index].id.clone())
                     .unwrap_or(bare_id);
-                if let Some(visible_index) = filed.and_then(|index| {
-                    self.visible
-                        .iter()
-                        .position(|&candidate| candidate == index)
-                }) {
-                    self.select(visible_index);
+                if let Some(row) = filed
+                    .and_then(|index| self.rows.iter().position(|row| *row == Row::Task(index)))
+                {
+                    self.select(row);
                 }
                 self.status = format!("filed {shown_id}");
                 self.telemetry
@@ -444,17 +491,75 @@ impl App {
         if let Some(sort) = self.state.sort {
             sort::apply(&self.tasks, &mut self.visible, sort);
         }
+        self.rows = group::rows(&self.tasks, &self.visible, self.state.group, &self.projects);
         self.select(self.selected);
     }
 
-    fn select(&mut self, index: usize) {
-        self.selected = index.min(self.visible.len().saturating_sub(1));
+    /// `o`, `:group`, or a column's menu: section the list by `column`, or flatten it.
+    pub(super) fn set_group(&mut self, column: Option<Column>) {
+        let kept = self.selected_task().map(|task| task.id.clone());
+        self.state.group = column;
+        if let Some(column) = column {
+            self.last_group = column;
+        }
+        self.refilter();
+        if let Some(id) = kept {
+            if let Some(row) = self
+                .rows
+                .iter()
+                .position(|row| matches!(row, Row::Task(index) if self.tasks[*index].id == id))
+            {
+                self.select(row);
+            }
+        }
+        self.status = match column {
+            Some(column) => format!("grouped by {} · o flattens", column.name()),
+            None => "flat list".to_string(),
+        };
+        self.telemetry.record(
+            "action",
+            format!(
+                "group {}",
+                column.map(|column| column.name()).unwrap_or("off")
+            ),
+        );
+    }
+
+    /// Land on `row`, or the nearest task row after it (before it at the end).
+    fn select(&mut self, row: usize) {
+        let last = self.rows.len().saturating_sub(1);
+        let row = row.min(last);
+        let forward = (row..=last).find(|&r| self.task(r).is_some());
+        let backward = (0..row).rev().find(|&r| self.task(r).is_some());
+        self.selected = forward.or(backward).unwrap_or(0);
+    }
+
+    /// Move `delta` task rows, headings not counting.
+    fn step(&mut self, delta: isize) {
+        let mut row = self.selected;
+        let mut remaining = delta.unsigned_abs();
+        while remaining > 0 {
+            let next = if delta > 0 {
+                (row + 1..self.rows.len()).find(|&r| self.task(r).is_some())
+            } else {
+                (0..row).rev().find(|&r| self.task(r).is_some())
+            };
+            match next {
+                Some(next) => row = next,
+                None => break,
+            }
+            remaining -= 1;
+        }
+        self.selected = row;
     }
 
     fn reload_tasks(&mut self) {
         self.tasks_seen = config::modified_at(&self.repo_root.join("backlog/tasks"));
         match tasks::load(&self.repo_root) {
-            Ok(tasks) => self.tasks = tasks,
+            Ok(backlog) => {
+                self.tasks = backlog.tasks;
+                self.projects = backlog.projects;
+            }
             Err(error) => self.fail(error.to_string()),
         }
         self.refilter();

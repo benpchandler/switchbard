@@ -586,6 +586,21 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   so an agent-worked task is visible to someone reading the board rather than the
   dispatch pill.
 
+- **Terminal UI grouping (owner-directed 2026-09-02).** `sbt` sections the task
+  list by a groupable column (`o`, `:group <column>`, the header-digit menu; view
+  records carry `group = "<column>"`). Grouping is a projection over the already
+  filtered and sorted order (`switchbard-tui/src/group.rs`): sections keep the
+  sort inside them, section order is stack rank for projects and vocabulary rank
+  otherwise, empty sections are omitted, tasks without a value land last, and a
+  sub-issue sits under its parent when both are in the section (a filtered-out
+  parent is never resurrected). Only project gets the rich heading (name, def
+  status, done/total) with the initiative in the title bar; other columns use the
+  value as the heading. Headings are ordinary rows the cursor skips. Decisions:
+  `o` (outline) so `g`/`G` stay top/bottom; `o` toggles between flat and the last
+  group column rather than cycling every groupable column; `groupable` is one
+  `ColumnSpec` field, distinct from "categorical" because labels are categorical
+  but multi-valued. Collapsing a section is not built.
+
 ## Speculative (do NOT pre-build)
 
 - Windows support. (No `cfg` branches, no CI, no demand recorded.)

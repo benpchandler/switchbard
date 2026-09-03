@@ -23,6 +23,8 @@ pub struct ViewState {
     /// Columns shown as glyphs instead of text.
     pub glyph_columns: Vec<Column>,
     pub paint: Vec<PaintRule>,
+    /// The column the list is sectioned by, if any.
+    pub group: Option<Column>,
 }
 
 impl ViewState {
@@ -43,6 +45,9 @@ impl ViewState {
         }
         if !self.paint.is_empty() {
             parts.push(format!("paint:{}", self.paint.len()));
+        }
+        if let Some(group) = self.group {
+            parts.push(format!("group:{}", group.name()));
         }
         if parts.is_empty() {
             "all".to_string()
@@ -127,6 +132,7 @@ pub fn starter_views() -> Vec<ViewState> {
         columns: Column::DEFAULT_SHOWN.to_vec(),
         glyph_columns: Vec::new(),
         paint: Vec::new(),
+        group: None,
     })
     .collect()
 }
@@ -324,6 +330,7 @@ impl Default for ViewState {
             columns: Column::DEFAULT_SHOWN.to_vec(),
             glyph_columns: Vec::new(),
             paint: Vec::new(),
+            group: None,
         }
     }
 }
@@ -344,6 +351,7 @@ fn parse_view(entry: &Table) -> Result<ViewState, String> {
             .filter_map(|name| Column::parse(name.trim()))
             .collect(),
         paint: parse_rules(&field("paint")?),
+        group: Column::parse(&field("group")?).filter(|column| column.groupable()),
     })
 }
 
@@ -361,8 +369,12 @@ fn lua_view(view: &ViewState) -> String {
     } else {
         format!(", paint = {}", lua_string(&rules_text(&view.paint)))
     };
+    let group = match view.group {
+        Some(column) => format!(", group = {}", lua_string(column.name())),
+        None => String::new(),
+    };
     format!(
-        "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint} }}",
+        "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint}{group} }}",
         lua_string(&view.filter),
         lua_string(&view.sort.map(|sort| sort.to_text()).unwrap_or_default()),
         lua_string(&columns_text(&view.columns)),

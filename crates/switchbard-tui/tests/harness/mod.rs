@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
-use switchbard_core::{create_task_allocating_id, NewBacklogTask};
+use switchbard_core::{
+    create_project_def, create_task_allocating_id, rank_project, NewBacklogTask, NewProjectDef,
+    RankPlacement,
+};
 use switchbard_tui::app::App;
 use switchbard_tui::telemetry::Telemetry;
 use switchbard_tui::view;
@@ -107,9 +110,76 @@ pub fn seed_with_priority(root: &Path, title: &str, status: &str, labels: &[&str
     create_task_allocating_id(root, &task).unwrap();
 }
 
+/// A task inside a project, optionally as a sub-issue of `parent`.
+pub fn seed_in_project(
+    root: &Path,
+    title: &str,
+    status: &str,
+    project: &str,
+    parent: Option<&str>,
+) {
+    let task = NewBacklogTask {
+        title: title.to_string(),
+        description: format!("Description of {title}."),
+        status: status.to_string(),
+        priority: "medium".to_string(),
+        acceptance_criteria: vec!["It works".to_string()],
+        parent: parent.map(str::to_string),
+        labels: Vec::new(),
+        assignees: Vec::new(),
+        project: Some(project.to_string()),
+        dependencies: Vec::new(),
+    };
+    create_task_allocating_id(root, &task).unwrap();
+}
+
+/// A project def under `initiative`, ranked in the order these calls are made.
+pub fn seed_project(root: &Path, name: &str, status: &str, initiative: Option<&str>) {
+    create_project_def(
+        root,
+        &NewProjectDef {
+            name: name.to_string(),
+            status: status.to_string(),
+            target_date: None,
+            initiative: initiative.map(str::to_string),
+            lead: None,
+            description: String::new(),
+        },
+    )
+    .unwrap();
+    let placement = match last_ranked_project(root) {
+        Some(previous) => RankPlacement::After(previous),
+        None => RankPlacement::Top,
+    };
+    let _ = rank_project(root, name, &placement).unwrap();
+}
+
+fn last_ranked_project(root: &Path) -> Option<String> {
+    switchbard_core::load_backlog_repo(root)
+        .ok()?
+        .ranking
+        .projects
+        .last()
+        .cloned()
+}
+
+/// Task titles in screen order, headings excluded.
 pub fn visible_titles(h: &Harness) -> Vec<String> {
-    (0..h.app.visible.len())
-        .map(|index| h.app.task(index).unwrap().title.clone())
+    (0..h.app.rows.len())
+        .filter_map(|row| h.app.task(row).map(|task| task.title.clone()))
+        .collect()
+}
+
+/// Every table row as the screen shows it: headings and task titles alike.
+pub fn screen_rows(h: &Harness) -> Vec<String> {
+    h.app
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(row, entry)| match entry {
+            switchbard_tui::group::Row::Heading(text) => format!("# {text}"),
+            switchbard_tui::group::Row::Task(_) => h.app.task(row).unwrap().title.clone(),
+        })
         .collect()
 }
 

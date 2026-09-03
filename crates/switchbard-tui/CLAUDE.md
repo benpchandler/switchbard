@@ -22,22 +22,23 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 - `picker.rs` - the one list every menu uses: typed `PickOption` payloads, numbered and
   lettered rows, type-ahead; `app/` dispatches on payloads, never label text. A digit in
   browse opens `ColumnActions` for that header position: filter/sort/paint/glyphs/hide/move.
-- `view.rs` - rendering only; also snapshots the screen text for reports.
+- `view.rs` - rendering only (the table is hand-drawn so headings span the row); snapshots the screen text for reports.
 - `columns.rs` - the column catalog: one `ColumnSpec` row per column (name, header, width,
   field, vocabulary) plus `values`/`cell_text`; every other module asks it.
 - `config.rs` - `default.lua` baked in, user file layered over; keys, theme, glyphs.
   Columns (shown set, order, glyph mode via `g`) are view state; numbers are positions.
 - `tasks.rs` - task load + filter language (`status: pri: label: project:` + words,
   loose match: `status:todo` == "To Do"); `field_values` feeds the `f <n>` picker.
-- `views.rs` - `ViewState` (filter, sort, columns, glyphs, paint) is what a slot saves and a
-  restart resumes, one Lua record for both; slots of it: global `~/.switchbard/views.lua`, per-repo overrides in
-  `views/<repo path>.lua`; `vs<n>` saves to repo, `vg<n>` promotes to global; slot 1 opens.
+- `views.rs` - `ViewState` (filter, sort, columns, glyphs, paint, group) is what a slot saves and
+  a restart resumes, one Lua record for both; global `~/.switchbard/views.lua`, per-repo overrides
+  in `views/<repo path>.lua`; `vs<n>` saves to repo, `vg<n>` promotes to global; slot 1 opens.
 - `paint.rs` - `p` rules in a hierarchy: `by:<col>=v:c,...`, `rows:<filter>=c`, `column:<col>=c`.
   Top rule is the base (whole rows); lower rules paint only their scope. `po` reorders.
+- `group.rs` - `o`: rows = headings + tasks, a projection over the filtered, sorted order;
+  project headings carry def status and done/total from `tasks::ProjectSummary`.
 - `ball.rs` - who holds the ball: `ball:me`/`ball:agent` labels (`dispatching` = agent); `b` cycles.
-- `sort.rs` - `s <n>` orders: ascending/descending/semantic (vocabulary rank), ties by id.
-- `report.rs` - `:bug`/`:idea` => task via `switchbard-core` write layer.
-- `telemetry.rs` - JSONL event log, in-memory trail, `stats`.
+- `sort.rs` - `s <n>`: ascending/descending/semantic (vocabulary rank), ties by id.
+- `report.rs` - `:bug`/`:idea` => task via core write layer. `telemetry.rs` - JSONL log, trail, `stats`.
 
 ## Loop
 Slice => commit on `feat/tui` => `cargo install` => the running sbt re-execs itself
