@@ -7,7 +7,7 @@ use std::time::SystemTime;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use mlua::{Lua, Table, Value};
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier, Style};
 
 use crate::columns::Column;
 
@@ -141,15 +141,146 @@ impl KeyChord {
     }
 }
 
-#[derive(Debug, Clone)]
+/// A named area of the screen. The Lua `theme` table shades each one: a bare
+/// color string is its foreground, a table sets `fg`, `bg`, `bold`, `underline`,
+/// `italic`, `dim`, `reverse`. Which columns wear `label` or `link` is
+/// `theme.columns = { id = "label", project = "link" }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Surface {
+    /// The repo name at the top left: the "ticker" chip.
+    TitleRepo,
+    /// The rest of the title: view, filter, sort, counts.
+    Title,
+    Border,
+    /// The numbered column header row.
+    Header,
+    /// A section heading when grouped.
+    Heading,
+    /// The cursor row.
+    Selected,
+    /// Key columns (id by default): identifies the row.
+    Label,
+    /// Ordinary cell text.
+    Text,
+    /// Columns that name something elsewhere (project by default).
+    Link,
+    /// The active filter in the footer, and other "in effect" chips.
+    Chip,
+    /// Key letters in footer hints and in `?`.
+    Keys,
+    /// Explanatory text: hints, counts, secondary lines.
+    Hint,
+    /// The status line after an action.
+    Status,
+    /// Picker highlight, cursors, checkmarks.
+    Accent,
+}
+
+impl Surface {
+    fn parse(name: &str) -> Option<Surface> {
+        Some(match name {
+            "title_repo" => Surface::TitleRepo,
+            "title" => Surface::Title,
+            "border" => Surface::Border,
+            "header" => Surface::Header,
+            "heading" => Surface::Heading,
+            "selected" => Surface::Selected,
+            "label" => Surface::Label,
+            "text" => Surface::Text,
+            "link" => Surface::Link,
+            "chip" => Surface::Chip,
+            "keys" => Surface::Keys,
+            "hint" | "dim" => Surface::Hint,
+            "status" => Surface::Status,
+            "accent" => Surface::Accent,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct Theme {
-    pub accent: Color,
-    pub header: Color,
-    pub dim: Color,
-    pub selected: Color,
-    pub border: Color,
-    /// Section headings when grouped; must not share a color with painted rows.
-    pub heading: Color,
+    styles: HashMap<Surface, Style>,
+    columns: HashMap<Column, Surface>,
+}
+
+impl Theme {
+    pub fn style(&self, surface: Surface) -> Style {
+        self.styles.get(&surface).copied().unwrap_or_default()
+    }
+
+    /// The surface a column's cells wear before paint: label, link, or text.
+    pub fn column_style(&self, column: Column) -> Style {
+        self.style(self.columns.get(&column).copied().unwrap_or(Surface::Text))
+    }
+}
+
+/// One surface as the Lua file spells it, before validation.
+#[derive(Debug, Clone, Default)]
+struct RawStyle {
+    fg: Option<String>,
+    bg: Option<String>,
+    bold: bool,
+    underline: bool,
+    italic: bool,
+    dim: bool,
+    reverse: bool,
+}
+
+impl RawStyle {
+    fn from_value(value: Value) -> mlua::Result<RawStyle> {
+        match value {
+            Value::String(text) => Ok(RawStyle {
+                fg: Some(text.to_str()?.to_string()),
+                ..RawStyle::default()
+            }),
+            Value::Table(table) => Ok(RawStyle {
+                fg: table.get::<Option<String>>("fg")?,
+                bg: table.get::<Option<String>>("bg")?,
+                bold: table.get::<Option<bool>>("bold")?.unwrap_or(false),
+                underline: table.get::<Option<bool>>("underline")?.unwrap_or(false),
+                italic: table.get::<Option<bool>>("italic")?.unwrap_or(false),
+                dim: table.get::<Option<bool>>("dim")?.unwrap_or(false),
+                reverse: table.get::<Option<bool>>("reverse")?.unwrap_or(false),
+            }),
+            other => Err(mlua::Error::runtime(format!(
+                "a theme entry is a color string or a table, not {}",
+                other.type_name()
+            ))),
+        }
+    }
+
+    fn into_style(self, name: &str, warnings: &mut Vec<String>) -> Style {
+        let mut color = |which: &str, text: Option<String>| -> Option<Color> {
+            let text = text?;
+            match Color::from_str(&text) {
+                Ok(color) => Some(color),
+                Err(_) => {
+                    warnings.push(format!("bad color '{text}' for theme.{name}.{which}"));
+                    None
+                }
+            }
+        };
+        let mut style = Style::default();
+        if let Some(fg) = color("fg", self.fg) {
+            style = style.fg(fg);
+        }
+        if let Some(bg) = color("bg", self.bg) {
+            style = style.bg(bg);
+        }
+        for (on, modifier) in [
+            (self.bold, Modifier::BOLD),
+            (self.underline, Modifier::UNDERLINED),
+            (self.italic, Modifier::ITALIC),
+            (self.dim, Modifier::DIM),
+            (self.reverse, Modifier::REVERSED),
+        ] {
+            if on {
+                style = style.add_modifier(modifier);
+            }
+        }
+        style
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -225,7 +356,8 @@ pub fn load(user_path: Option<&Path>) -> Config {
 #[derive(Default)]
 struct RawConfig {
     keys: HashMap<String, String>,
-    theme: HashMap<String, String>,
+    theme: HashMap<String, RawStyle>,
+    theme_columns: HashMap<String, String>,
     glyphs: HashMap<String, HashMap<String, String>>,
     palette: Vec<String>,
     palette_name: Option<String>,
@@ -238,7 +370,8 @@ impl RawConfig {
         let table: Table = lua.load(source).eval()?;
         Ok(RawConfig {
             keys: string_map(&table, "keys")?,
-            theme: string_map(&table, "theme")?,
+            theme: theme_map(&table)?,
+            theme_columns: theme_columns(&table)?,
             glyphs: nested_string_map(&table, "glyphs")?,
             palette: string_list(&table, "palette")?,
             palette_name: table.get::<Option<String>>("palette").ok().flatten(),
@@ -249,6 +382,7 @@ impl RawConfig {
     fn merge(&mut self, over: RawConfig) {
         self.keys.extend(over.keys);
         self.theme.extend(over.theme);
+        self.theme_columns.extend(over.theme_columns);
         for (column, map) in over.glyphs {
             self.glyphs.entry(column).or_default().extend(map);
         }
@@ -276,20 +410,29 @@ impl RawConfig {
                 (_, None) => warnings.push(format!("unknown action '{action}' for key '{key}'")),
             }
         }
-        let mut color = |name: &str, fallback: Color| match self.theme.get(name) {
-            Some(text) => Color::from_str(text).unwrap_or_else(|_| {
-                warnings.push(format!("bad color '{text}' for theme.{name}"));
-                fallback
-            }),
-            None => fallback,
-        };
+        let mut styles = HashMap::new();
+        for (name, raw) in self.theme {
+            match Surface::parse(&name) {
+                Some(surface) => {
+                    styles.insert(surface, raw.into_style(&name, &mut warnings));
+                }
+                None => warnings.push(format!("unknown theme surface '{name}'")),
+            }
+        }
+        let mut theme_columns = HashMap::new();
+        for (column_name, surface_name) in self.theme_columns {
+            match (Column::parse(&column_name), Surface::parse(&surface_name)) {
+                (Some(column), Some(surface)) => {
+                    theme_columns.insert(column, surface);
+                }
+                _ => warnings.push(format!(
+                    "theme.columns: '{column_name} = {surface_name}' names no column or surface"
+                )),
+            }
+        }
         let theme = Theme {
-            accent: color("accent", Color::Rgb(0xff, 0xcc, 0x00)),
-            header: color("header", Color::Rgb(0xf0, 0x88, 0x3e)),
-            dim: color("dim", Color::Rgb(0x8b, 0x94, 0x9e)),
-            selected: color("selected", Color::Rgb(0x1f, 0x24, 0x28)),
-            border: color("border", Color::Rgb(0x30, 0x36, 0x3d)),
-            heading: color("heading", Color::White),
+            styles,
+            columns: theme_columns,
         };
         let mut glyphs: HashMap<Column, HashMap<String, String>> = HashMap::new();
         for (column_name, map) in self.glyphs {
@@ -385,6 +528,29 @@ fn named_string_lists(table: &Table, key: &str) -> mlua::Result<Vec<(String, Vec
     }
     out.sort();
     Ok(out)
+}
+
+/// `theme = { surface = "color" | { fg=, bg=, bold= ... }, columns = { id = "label" } }`.
+fn theme_map(table: &Table) -> mlua::Result<HashMap<String, RawStyle>> {
+    let mut out = HashMap::new();
+    let Value::Table(inner) = table.get::<Value>("theme")? else {
+        return Ok(out);
+    };
+    for pair in inner.pairs::<String, Value>() {
+        let (name, value) = pair?;
+        if name == "columns" {
+            continue;
+        }
+        out.insert(name, RawStyle::from_value(value)?);
+    }
+    Ok(out)
+}
+
+fn theme_columns(table: &Table) -> mlua::Result<HashMap<String, String>> {
+    let Value::Table(theme) = table.get::<Value>("theme")? else {
+        return Ok(HashMap::new());
+    };
+    string_map(&theme, "columns")
 }
 
 fn string_list(table: &Table, key: &str) -> mlua::Result<Vec<String>> {

@@ -25,8 +25,9 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 - `view.rs` - rendering only (the table is hand-drawn so headings span the row); snapshots the screen text for reports.
 - `columns.rs` - the column catalog: one `ColumnSpec` row per column (name, header, width,
   field, vocabulary) plus `values`/`cell_text`; every other module asks it.
-- `config.rs` - `default.lua` baked in, user file layered over; keys, theme, glyphs.
-  Columns (shown set, order, glyph mode via `g`) are view state; numbers are positions.
+- `config.rs` - `default.lua` baked in, user file layered over; keys, theme, glyphs, palettes.
+  Theme = named `Surface`s (title chip, header band, heading, selected, label, link, chip,
+  keys, hint...) each a Style (fg/bg/modifiers) and `theme.columns` maps columns to surfaces.
 - `tasks.rs` - task load + filter language (`status: pri: label: project:` + words,
   loose match: `status:todo` == "To Do"); `field_values` feeds the `f <n>` picker.
 - `views.rs` - `ViewState` (filter, sort, columns, glyphs, paint, group) is what a slot saves and
