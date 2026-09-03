@@ -1,13 +1,12 @@
 ---
 id: TASK-138
 title: 'sbt: group the task list by project (and other categorical columns) with o'
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-09-02 22:46'
-updated_date: '2026-09-02 22:48'
+updated_date: '2026-09-03 01:14'
 labels:
   - tui
-  - ball:me
 dependencies: []
 priority: high
 ---

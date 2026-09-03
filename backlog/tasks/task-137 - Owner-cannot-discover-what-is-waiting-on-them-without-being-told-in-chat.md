@@ -4,6 +4,7 @@ title: Owner cannot discover what is waiting on them without being told in chat
 status: To Do
 assignee: []
 created_date: '2026-09-02 22:43'
+updated_date: '2026-09-03 00:41'
 labels:
   - gui
   - ux
@@ -29,3 +30,9 @@ Evidence: budget repo session 2026-09-03 (LED-639.3, LED-639.2, LED-649.1 carrie
 - [ ] #3 When the owner acts or decides, the answer is recorded on the task so a later session does not re-ask, and the task visibly stops waiting on the owner
 - [ ] #4 A task waiting on the owner is distinguishable from one an agent is actively working, and from one blocked on an external party, in the default board view
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-09-03: second instance. The owner-ask was written into Implementation Notes on budget LED-639.1; the detail rail shows description and acceptance first, so the owner opened the task and did not see the ask. Interim fix was to rewrite the description with the ask on top. Any 'waiting on you' signal has to render above the fold of the task detail, not in a trailing section.
+<!-- SECTION:NOTES:END -->
