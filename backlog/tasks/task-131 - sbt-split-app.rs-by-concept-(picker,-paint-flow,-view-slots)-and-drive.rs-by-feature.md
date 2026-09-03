@@ -1,10 +1,10 @@
 ---
 id: TASK-131
 title: 'sbt: split app.rs by concept (picker, paint flow, view slots) and drive.rs by feature'
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-09-02 19:26'
-updated_date: '2026-09-02 21:36'
+updated_date: '2026-09-02 21:37'
 labels:
   - tui
   - refactor
