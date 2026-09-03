@@ -1,13 +1,13 @@
 ---
 id: TASK-138
 title: 'sbt: group the task list by project (and other categorical columns) with o'
-status: In Progress
+status: In Review
 assignee: []
 created_date: '2026-09-02 22:46'
-updated_date: '2026-09-02 22:46'
+updated_date: '2026-09-02 22:48'
 labels:
   - tui
-  - ball:agent
+  - ball:me
 dependencies: []
 priority: high
 ---
@@ -32,3 +32,9 @@ priority: high
 - [x] #6 Saved views record group and reopen grouped; :group <column> and :group off work; the header-digit menu offers o group by it for groupable columns only
 - [x] #7 groupable is one ColumnSpec field; tests cover section order, heading content, no-project bucket, sub-issue adjacency, empty result, filter composition; preflight passes; trajectory records the decision
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR feat/tui-group-by. o sections by project (rank order, def status, done/total, initiative in title, no-project bucket last); :group <column>/off and the header-digit menu cover status, priority, ball. Grouping is a projection over filtered+sorted rows in group.rs; headings are rows the cursor skips; sub-issues sit under their parent; saved views carry group. Keys: o (outline) so g/G stay top/bottom; o toggles flat vs last group column. Collapse not built. Evidence: CambridgeKitchens shows nine ranked sections; six E2E tests; preflight green.
+<!-- SECTION:FINAL_SUMMARY:END -->
