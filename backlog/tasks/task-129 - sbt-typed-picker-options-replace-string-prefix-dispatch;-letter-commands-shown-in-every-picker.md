@@ -1,10 +1,10 @@
 ---
 id: TASK-129
 title: 'sbt: typed picker options replace string-prefix dispatch; letter commands shown in every picker'
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-09-02 19:26'
-updated_date: '2026-09-02 19:32'
+updated_date: '2026-09-02 21:38'
 labels:
   - tui
   - refactor
