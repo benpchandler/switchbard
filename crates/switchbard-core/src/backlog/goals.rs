@@ -478,6 +478,57 @@ fn write_goal_inputs(root: &Path, name: &str, new_inputs: &GoalInputs) -> Result
     write_lines(&path, &lines)
 }
 
+/// Follow a task move into `goals.yml`: every `inputs.tasks` entry naming
+/// `old` (ids compare case-insensitively, as `attach_goal_inputs` does) now
+/// names `new`. A missing file, or one that never mentions `old`, is
+/// `Unchanged`.
+pub(super) fn rename_task_in_goals(root: &Path, old: &str, new: &str) -> Result<WriteOutcome> {
+    let path = goals_path(root);
+    if !path.is_file() {
+        return Ok(WriteOutcome::Unchanged);
+    }
+    let mut warnings = Vec::new();
+    let goals = load_goals(root, &mut warnings);
+    if !warnings.is_empty() {
+        bail!(
+            "{} does not parse cleanly - fix it before moving tasks: {}",
+            path.display(),
+            warnings.join("; ")
+        );
+    }
+    let mut changed = false;
+    for goal in goals {
+        if !goal
+            .inputs
+            .tasks
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case(old))
+        {
+            continue;
+        }
+        let mut inputs = goal.inputs.clone();
+        let mut renamed: Vec<String> = Vec::with_capacity(inputs.tasks.len());
+        for task in inputs.tasks.drain(..) {
+            let task = if task.eq_ignore_ascii_case(old) {
+                new.to_string()
+            } else {
+                task
+            };
+            if !renamed.iter().any(|t| t.eq_ignore_ascii_case(&task)) {
+                renamed.push(task);
+            }
+        }
+        inputs.tasks = renamed;
+        write_goal_inputs(root, &goal.name, &inputs)?;
+        changed = true;
+    }
+    Ok(if changed {
+        WriteOutcome::Changed
+    } else {
+        WriteOutcome::Unchanged
+    })
+}
+
 /// Follow a project rename into `goals.yml`: a goal's `scope:` equal to
 /// `old` (a scope is a project name or a label; a label spelled exactly like
 /// the project is read as the project here) and any `inputs.projects` entry.

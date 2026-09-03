@@ -132,20 +132,39 @@ pub fn create_task_allocating_id(
     let tasks_dir = repo_root.join("backlog/tasks");
     fs::create_dir_all(&tasks_dir).with_context(|| format!("creating {}", tasks_dir.display()))?;
     let prefix = configured_task_prefix(repo_root);
+    let claimed = claim_task_id(repo_root, task.parent.as_deref())?;
+    let path = write_new_task_file(&tasks_dir, &prefix, &claimed.id, task)?;
+    Ok((claimed.id, path))
+}
+
+/// A claimed-but-unused id: the bare id plus the reservation that keeps
+/// other allocators off it until the caller's file exists (the reservation
+/// releases on drop, so keep the value alive across the file write).
+pub(super) struct ClaimedId {
+    pub(super) id: String,
+    _claim: IdReservation,
+}
+
+/// Claim the next free id — a decimal child under `parent`, else top-level —
+/// without creating a file. The same reserve-then-check loop
+/// [`create_task_allocating_id`] runs, shared with `move_backlog_task`,
+/// which needs an id before it can rename an existing file.
+pub(super) fn claim_task_id(repo_root: &Path, parent: Option<&str>) -> Result<ClaimedId> {
+    let tasks_dir = repo_root.join("backlog/tasks");
+    let prefix = configured_task_prefix(repo_root);
     let reservations = reservation_dir(repo_root);
-    let mut candidate = first_candidate(repo_root, task.parent.as_deref(), &prefix)?;
+    let mut candidate = first_candidate(repo_root, parent, &prefix)?;
     for _attempt in 0..MAX_CREATE_ATTEMPTS {
         let id = candidate.render();
-        let Some(_claim) = try_reserve(&reservations, &id)? else {
+        let Some(claim) = try_reserve(&reservations, &id)? else {
             candidate.bump();
             continue;
         };
-        if dir_has_task_id(&tasks_dir, &prefix, &id)? {
+        if tasks_dir.is_dir() && dir_has_task_id(&tasks_dir, &prefix, &id)? {
             candidate.bump();
             continue;
         }
-        let path = write_new_task_file(&tasks_dir, &prefix, &id, task)?;
-        return Ok((id, path));
+        return Ok(ClaimedId { id, _claim: claim });
     }
     bail!("could not claim a task id after {MAX_CREATE_ATTEMPTS} attempts")
 }

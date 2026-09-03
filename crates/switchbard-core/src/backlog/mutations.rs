@@ -31,14 +31,17 @@
 //!   instead of a rendered blob to scrape (the late `parse_created_task_id`,
 //!   TASK-28's scar).
 
-use super::allocate::{create_task_allocating_id, strip_id_prefix};
+use super::allocate::{claim_task_id, create_task_allocating_id, strip_id_prefix};
 use super::ball::Ball;
+use super::goals::rename_task_in_goals;
 use super::parse::{
-    configured_task_prefix, parse_config_statuses, parse_task_file, DEFAULT_TASK_PREFIX,
+    configured_task_prefix, load_backlog_repo, parse_config_statuses, parse_task_file,
+    DEFAULT_TASK_PREFIX,
 };
-use super::types::{BacklogTaskPatch, BacklogTaskSource, NewBacklogTask};
+use super::ranking::rename_task_in_ranking;
+use super::types::{BacklogTask, BacklogTaskPatch, BacklogTaskSource, NewBacklogTask};
 use super::write::{
-    append_task_acceptance_criteria, append_task_notes, replace_task_section,
+    append_task_acceptance_criteria, append_task_notes, rehome_task_file, replace_task_section,
     revise_task_checklist, set_task_checklist_item, set_task_label, set_task_list_field,
     set_task_priority, set_task_project, set_task_status, set_task_title, swap_task_label,
     ChecklistTextEdit, TaskChecklist, TaskListField, TaskSection, WriteOutcome,
@@ -266,6 +269,132 @@ pub fn set_backlog_final_summary(
 /// `super::allocate`). Returns the new id — `"TASK-42"`, or `"LED-42"` in a
 /// project whose `backlog/config.yml` declares `task_prefix: "LED"` — as the
 /// output string; callers build their own status messages from it.
+/// Move a task under a new parent (`Some(id)`) or promote it to top level
+/// (`None`), re-minting its id from the reservation allocator and following
+/// the old id into every place that names it: other tasks' `dependencies`,
+/// `ranking.yml` (`expedite` renamed; the entry in its old sibling scope
+/// dropped), and `goals.yml` (`inputs.tasks`). Returns the new full id, or
+/// `None` when the task already has that parent and nothing was written.
+///
+/// One decimal level, the `backlog` CLI's own convention: a task that has
+/// sub-issues cannot be moved under a parent (its children would nest two
+/// deep), and a sub-issue cannot be the new parent. Only active tasks move;
+/// completed and archived ones stay where their status put them.
+pub fn move_backlog_task(
+    project_root: &Path,
+    task_id: &str,
+    new_parent: Option<&str>,
+) -> Result<Option<String>> {
+    let repo = load_backlog_repo(project_root)?;
+    let prefix = configured_task_prefix(project_root);
+    let task = task_in_repo(&repo.tasks, task_id, &prefix)?;
+    if task.source != BacklogTaskSource::Active {
+        bail!(
+            "{} is {} - only active tasks (backlog/tasks) can be moved",
+            task.id,
+            task.source.label()
+        );
+    }
+    if repo.tasks.iter().any(|other| {
+        other
+            .parent
+            .as_deref()
+            .is_some_and(|p| same_id(p, &task.id, &prefix))
+    }) {
+        bail!(
+            "{} has sub-issues - move or promote them first (sub-issues nest one level)",
+            task.id
+        );
+    }
+    let parent = match new_parent {
+        Some(wanted) => {
+            let parent = task_in_repo(&repo.tasks, wanted, &prefix)?;
+            if same_id(&parent.id, &task.id, &prefix) {
+                bail!("{} cannot be its own parent", task.id);
+            }
+            if normalized_id(&parent.id, &prefix).contains('.') {
+                bail!(
+                    "{} is itself a sub-issue - sub-issues nest one level, pick a top-level parent",
+                    parent.id
+                );
+            }
+            Some(parent)
+        }
+        None => None,
+    };
+    let current = task.parent.as_deref();
+    let unchanged = match (current, parent) {
+        (None, None) => true,
+        (Some(have), Some(want)) => same_id(have, &want.id, &prefix),
+        _ => false,
+    };
+    if unchanged {
+        return Ok(None);
+    }
+
+    let parent_bare = parent.map(|p| normalized_id(&p.id, &prefix).to_string());
+    let claimed = claim_task_id(project_root, parent_bare.as_deref())?;
+    let new_full_id = format!("{prefix}-{}", claimed.id);
+    rehome_task_file(&task.path, &prefix, &claimed.id, parent_bare.as_deref())
+        .with_context(|| format!("moving {} to {new_full_id}", task.id))?;
+
+    for other in &repo.tasks {
+        if !other
+            .dependencies
+            .iter()
+            .any(|dep| same_id(dep, &task.id, &prefix))
+        {
+            continue;
+        }
+        let deps: Vec<String> = other
+            .dependencies
+            .iter()
+            .map(|dep| {
+                if same_id(dep, &task.id, &prefix) {
+                    new_full_id.clone()
+                } else {
+                    dep.clone()
+                }
+            })
+            .collect();
+        let rewritten = set_task_list_field(&other.path, TaskListField::Dependencies, &deps)
+            .with_context(|| format!("updating {}'s dependencies", other.id))?;
+        if !rewritten.changed() {
+            bail!(
+                "{}'s dependencies still name {} after rewriting - check the file by hand",
+                other.id,
+                task.id
+            );
+        }
+    }
+    // Unchanged is the common case for both: most tasks are neither ranked
+    // nor counted by a goal.
+    let _ranking = rename_task_in_ranking(project_root, &task.id, &new_full_id)
+        .context("updating backlog/ranking.yml")?;
+    let _goals = rename_task_in_goals(project_root, &task.id, &new_full_id)
+        .context("updating backlog/goals.yml")?;
+    Ok(Some(new_full_id))
+}
+
+/// The loaded task whose id matches `wanted` (`TASK-7`, `task-7`, `7`,
+/// `7.2` - the same tolerance every `<ID>` argument gets).
+fn task_in_repo<'r>(
+    tasks: &'r [BacklogTask],
+    wanted: &str,
+    prefix: &str,
+) -> Result<&'r BacklogTask> {
+    tasks
+        .iter()
+        .find(|task| same_id(&task.id, wanted, prefix))
+        .with_context(|| format!("no task {wanted} in this repo"))
+}
+
+/// Two ids name the same task when their bare parts match, ignoring prefix
+/// case (`TASK-7`, `task-7`, and `7` are one task).
+fn same_id(a: &str, b: &str, prefix: &str) -> bool {
+    normalized_id(a, prefix).eq_ignore_ascii_case(normalized_id(b, prefix))
+}
+
 pub fn create_backlog_task(project_root: &Path, task: &NewBacklogTask) -> Result<String> {
     if task.title.trim().is_empty() {
         bail!("title is required");
@@ -432,6 +561,150 @@ mod tests {
         assert_eq!(
             set_backlog_ball(root, "TASK-7", None).expect("drop again"),
             "no changes"
+        );
+    }
+
+    // ---- move_backlog_task ----
+
+    fn task_text(id: &str, extra: &str) -> String {
+        format!(
+            "---\nid: TASK-{id}\ntitle: Fixture {id}\nstatus: To Do\npriority: medium\n{extra}---\n\n## Description\n\nBody of {id}.\n"
+        )
+    }
+
+    /// TASK-7 with sub-issue TASK-7.1, TASK-8 depending on TASK-7.1, TASK-7.1
+    /// expedited and ranked among 7's sub-issues, and a goal counting it.
+    fn move_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let tasks = root.join("backlog/tasks");
+        fs::create_dir_all(&tasks).expect("dirs");
+        fs::write(root.join("backlog/config.yml"), "statuses: []\n").expect("config");
+        fs::write(tasks.join("task-7 - Parent.md"), task_text("7", "")).expect("7");
+        fs::write(
+            tasks.join("task-7.1 - Child.md"),
+            task_text("7.1", "parent_task_id: TASK-7\n"),
+        )
+        .expect("7.1");
+        fs::write(
+            tasks.join("task-8 - Other.md"),
+            task_text("8", "dependencies:\n  - TASK-7.1\n"),
+        )
+        .expect("8");
+        assert!(super::super::ranking::expedite_task(root, "TASK-7.1")
+            .expect("expedite")
+            .changed());
+        assert!(super::super::ranking::rank_task(
+            root,
+            "TASK-7.1",
+            &super::super::ranking::RankPlacement::Top
+        )
+        .expect("rank")
+        .changed());
+        super::super::goals::create_goal(
+            root,
+            &super::super::goals::NewGoal {
+                name: "Ship".to_string(),
+                unit: "tasks".to_string(),
+                measure: super::super::goals::GoalMeasure::Tasks,
+                scope: None,
+                week: "2026-08-31".to_string(),
+                target: 1,
+            },
+        )
+        .expect("goal");
+        super::super::goals::attach_goal_inputs(root, "Ship", &["TASK-7.1".to_string()], &[])
+            .expect("attach");
+        dir
+    }
+
+    fn by_id(root: &Path, id: &str) -> BacklogTask {
+        let repo = load_backlog_repo(root).expect("load");
+        repo.tasks
+            .into_iter()
+            .find(|t| t.id == id)
+            .unwrap_or_else(|| panic!("no {id}"))
+    }
+
+    #[test]
+    fn move_reparents_and_every_reference_follows() {
+        let dir = move_fixture();
+        let root = dir.path();
+        let moved = move_backlog_task(root, "7.1", Some("TASK-8")).expect("move");
+        assert_eq!(moved.as_deref(), Some("TASK-8.1"));
+
+        assert!(!root.join("backlog/tasks/task-7.1 - Child.md").exists());
+        let text =
+            fs::read_to_string(root.join("backlog/tasks/task-8.1 - Child.md")).expect("new file");
+        assert!(text.contains("id: TASK-8.1\n"), "{text}");
+        assert!(text.contains("parent_task_id: TASK-8\n"), "{text}");
+        assert!(text.contains("Body of 7.1."), "body kept: {text}");
+        assert!(text.contains("updated_date:"), "{text}");
+        let moved_task = by_id(root, "TASK-8.1");
+        assert_eq!(moved_task.parent.as_deref(), Some("TASK-8"));
+        assert_eq!(
+            by_id(root, "TASK-8").dependencies,
+            vec!["TASK-8.1".to_string()]
+        );
+
+        let repo = load_backlog_repo(root).expect("reload");
+        assert_eq!(repo.ranking.expedite, vec!["TASK-8.1".to_string()]);
+        assert!(
+            !repo.ranking.subissues.contains_key("TASK-7"),
+            "{:?}",
+            repo.ranking
+        );
+        assert_eq!(repo.goals[0].inputs.tasks, vec!["TASK-8.1".to_string()]);
+    }
+
+    #[test]
+    fn move_promotes_to_top_level_and_drops_the_parent_key() {
+        let dir = move_fixture();
+        let root = dir.path();
+        let moved = move_backlog_task(root, "TASK-7.1", None).expect("promote");
+        assert_eq!(moved.as_deref(), Some("TASK-9"));
+        let text =
+            fs::read_to_string(root.join("backlog/tasks/task-9 - Child.md")).expect("new file");
+        assert!(!text.contains("parent"), "{text}");
+        assert_eq!(by_id(root, "TASK-9").parent, None);
+        assert_eq!(
+            by_id(root, "TASK-8").dependencies,
+            vec!["TASK-9".to_string()]
+        );
+    }
+
+    #[test]
+    fn move_refuses_the_shapes_one_decimal_level_forbids() {
+        let dir = move_fixture();
+        let root = dir.path();
+        assert_eq!(
+            move_backlog_task(root, "TASK-7.1", Some("7")).expect("same parent"),
+            None,
+            "unchanged parent is a no-op"
+        );
+        let own = move_backlog_task(root, "TASK-7.1", Some("TASK-7.1")).expect_err("own parent");
+        assert!(
+            own.to_string().contains("cannot be its own parent"),
+            "{own}"
+        );
+        let under_child =
+            move_backlog_task(root, "TASK-8", Some("TASK-7.1")).expect_err("sub-issue parent");
+        assert!(
+            under_child.to_string().contains("itself a sub-issue"),
+            "{under_child}"
+        );
+        let has_children =
+            move_backlog_task(root, "TASK-7", Some("TASK-8")).expect_err("has children");
+        assert!(
+            has_children.to_string().contains("has sub-issues"),
+            "{has_children}"
+        );
+        let unknown =
+            move_backlog_task(root, "TASK-7.1", Some("TASK-42")).expect_err("unknown parent");
+        assert!(unknown.to_string().contains("no task TASK-42"), "{unknown}");
+        assert!(
+            root.join("backlog/tasks/task-7.1 - Child.md").exists(),
+            "refusals never move the file"
         );
     }
 

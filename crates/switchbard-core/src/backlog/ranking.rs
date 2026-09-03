@@ -856,6 +856,69 @@ pub fn unrank_project(root: &Path, name: &str) -> Result<WriteOutcome> {
     write_projects(root, &ranking.projects, &updated)
 }
 
+/// Follow a task move into `ranking.yml`. The task keeps its `expedite`
+/// place under the new id; its entry in the old sibling scope (a project's
+/// list, `root_tasks`, or a parent's `subissues`) is dropped, because the
+/// scope it ranked in is no longer the one it lives in. A missing file, or
+/// one that never mentions `old`, is `Unchanged`.
+pub(super) fn rename_task_in_ranking(root: &Path, old: &str, new: &str) -> Result<WriteOutcome> {
+    let path = ranking_path(root);
+    if !path.is_file() {
+        return Ok(WriteOutcome::Unchanged);
+    }
+    let mut warnings = Vec::new();
+    let ranking = load_ranking(root, &mut warnings);
+    if !warnings.is_empty() {
+        bail!(
+            "{} does not parse cleanly - fix it (or remove it to start fresh): {}",
+            path.display(),
+            warnings.join("; ")
+        );
+    }
+    let mentions = |list: &[String]| list.iter().any(|id| id == old);
+    let mut lines = load_lines_for_edit(root)?;
+    let mut changed = false;
+    if mentions(&ranking.expedite) {
+        let updated: Vec<String> = ranking
+            .expedite
+            .iter()
+            .map(|id| {
+                if id == old {
+                    new.to_string()
+                } else {
+                    id.clone()
+                }
+            })
+            .collect();
+        set_top_level_list(&mut lines, &path, "expedite", &updated)?;
+        changed = true;
+    }
+    if mentions(&ranking.root_tasks) {
+        let updated: Vec<String> = ranking
+            .root_tasks
+            .iter()
+            .filter(|id| *id != old)
+            .cloned()
+            .collect();
+        set_top_level_list(&mut lines, &path, "root_tasks", &updated)?;
+        changed = true;
+    }
+    for (map_key, map) in [("tasks", &ranking.tasks), ("subissues", &ranking.subissues)] {
+        for (scope, list) in map {
+            if mentions(list) {
+                let updated: Vec<String> = list.iter().filter(|id| *id != old).cloned().collect();
+                set_scope_list(&mut lines, &path, map_key, scope, &updated)?;
+                changed = true;
+            }
+        }
+    }
+    if !changed {
+        return Ok(WriteOutcome::Unchanged);
+    }
+    write_lines(&path, &lines)?;
+    Ok(WriteOutcome::Changed)
+}
+
 /// Follow a project rename into `ranking.yml`: the `projects` list entry and
 /// the `tasks` map key. A missing file, or one that never mentions `old`,
 /// is `Unchanged`. A stale list already sitting under `new` is merged

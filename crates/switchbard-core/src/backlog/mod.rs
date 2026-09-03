@@ -34,7 +34,7 @@ pub use hierarchy::{
 
 pub use mutations::{
     append_backlog_notes, archive_backlog_task, complete_backlog_task, create_backlog_task,
-    edit_backlog_task, remove_backlog_label, revise_backlog_acceptance_criteria,
+    edit_backlog_task, move_backlog_task, remove_backlog_label, revise_backlog_acceptance_criteria,
     set_backlog_acceptance_checked, set_backlog_ball, set_backlog_dod_checked,
     set_backlog_final_summary, set_backlog_label, swap_backlog_label,
 };
@@ -52,7 +52,7 @@ pub use types::{
     STANDARD_STATUSES,
 };
 pub use write::{
-    append_task_acceptance_criteria, append_task_notes, replace_task_section,
+    append_task_acceptance_criteria, append_task_notes, rehome_task_file, replace_task_section,
     revise_task_checklist, set_task_checklist_item, set_task_label, set_task_list_field,
     set_task_priority, set_task_project, set_task_status, set_task_title, swap_task_label,
     write_new_task_file, ChecklistTextEdit, TaskChecklist, TaskListField, TaskSection,

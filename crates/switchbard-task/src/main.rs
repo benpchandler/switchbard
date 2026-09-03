@@ -260,6 +260,12 @@ struct EditArgs {
     /// `--clear-milestone` is a deprecated alias)
     #[arg(long, alias = "clear-milestone")]
     clear_project: bool,
+    /// Move the task under another parent (its id is re-minted as that
+    /// parent's next sub-issue, e.g. TASK-8.3) or `none` to promote it to a
+    /// top-level task; dependencies, rank, and goal inputs follow the new
+    /// id. Applied after every other edit; prints `Moved <OLD> -> <NEW>`
+    #[arg(long, value_name = "ID|none")]
+    parent: Option<String>,
     /// Pass the ball - who acts next on this task: `me`, `agent`, or `none`
     /// to drop it (stored as the ball:me / ball:agent label, the same one
     /// sbt's `b` key writes)
@@ -463,10 +469,20 @@ fn edit(root: &Path, args: &EditArgs) -> Result<()> {
         changed |=
             switchbard_core::set_backlog_final_summary(root, &args.id, summary)? != "no changes";
     }
+    let moved = match &args.parent {
+        Some(word) => {
+            let target = (!word.eq_ignore_ascii_case("none")).then_some(word.as_str());
+            switchbard_core::move_backlog_task(root, &args.id, target)?
+        }
+        None => None,
+    };
     if changed {
         println!("Edited {}", args.id);
-    } else {
-        println!("no changes");
+    }
+    match moved {
+        Some(new_id) => println!("Moved {} -> {new_id}", args.id),
+        None if !changed => println!("no changes"),
+        None => {}
     }
     Ok(())
 }
