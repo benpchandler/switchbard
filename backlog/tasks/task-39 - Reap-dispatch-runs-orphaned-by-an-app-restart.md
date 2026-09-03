@@ -4,7 +4,9 @@ title: Reap dispatch runs orphaned by an app restart
 status: To Do
 assignee: []
 created_date: '2026-08-07 01:28'
-labels: []
+updated_date: '2026-09-03 00:22'
+labels:
+  - ball:me
 dependencies: []
 ordinal: 39000
 ---
