@@ -41,9 +41,8 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 - `report.rs` - `:bug`/`:idea` => task via core write layer. `telemetry.rs` - JSONL log, trail, `stats`.
 
 ## Loop
-Slice => commit on `feat/tui` => `cargo install` => the running sbt re-execs itself
-(`main.rs::InstalledBinary`, resumes view/filter/row) => user drives it => drain
-`label:tui` tasks (`v4` in starter views) at the start of the next slice.
+Slice => commit on a `feat/tui-*` branch => `mise run tui-install` => the running sbt re-execs
+itself (`main.rs::InstalledBinary`, resumes view/filter/row) => user drives it => drain `label:tui`.
 
 ## Gates
 Per slice: `mise run tui-install` (fmt, clippy, tests for this crate only, then install).
