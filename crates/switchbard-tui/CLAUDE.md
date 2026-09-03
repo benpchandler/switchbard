@@ -8,8 +8,8 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
    New feature => new config surface only if a user would plausibly change it.
 2. Fast and findable: no action more than two keystrokes away; `?` must list it.
 3. `:bug` / `:idea` work from anywhere and carry screen + action trail automatically.
-4. Tests are E2E only (`tests/drive.rs`): real key events, real backlog on disk,
-   assert on rendered screen. No unit tests, no mocks.
+4. Tests are E2E only (`tests/*.rs` by feature over `tests/harness/`): real key events,
+   real backlog on disk, assert on rendered screen. No unit tests, no mocks.
 5. Self-documenting names over comments. One module per concept.
 6. Minimalism: cut what telemetry shows unused. Prove usefulness before adding.
 7. This file stays under 50 lines and is updated every slice.
@@ -17,7 +17,8 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
    `sbt stats` is how we learn what is used, slow, or unbound.
 
 ## Module map
-- `app.rs` - state + the one key-handling path (`handle_key`, `apply`, `run_command`).
+- `app/` - `mod.rs` state, loop, browse keys, commands; `pickers.rs` column/filter/sort
+  pickers + the shared picker key handler; `paint_flow.rs` the `p` flow; `slots.rs` the `v` chords.
 - `picker.rs` - the one list every menu uses: typed `PickOption` payloads, numbered and
   lettered rows, type-ahead; `app.rs` dispatches on payloads, never label text.
 - `view.rs` - rendering only; also snapshots the screen text for reports.
