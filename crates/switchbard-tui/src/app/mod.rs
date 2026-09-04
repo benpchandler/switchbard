@@ -494,7 +494,22 @@ impl App {
             screen: &self.last_screen,
             trail: &trail,
         };
-        match report::file_report(&self.repo_root, kind, context) {
+        let target = self
+            .config
+            .report_repo
+            .clone()
+            .unwrap_or_else(|| self.repo_root.clone());
+        let elsewhere = target != self.repo_root;
+        match report::file_report(&target, kind, context) {
+            Ok(bare_id) if elsewhere => {
+                let repo = target
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                self.status = format!("filed {bare_id} in {repo}");
+                self.telemetry
+                    .record("report", format!("{kind:?} {bare_id} in {repo}"));
+            }
             Ok(bare_id) => {
                 self.reload_tasks();
                 let filed = self
