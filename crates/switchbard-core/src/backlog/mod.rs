@@ -42,8 +42,8 @@ pub use parse::{
     body_round_trips, is_backlog_repo, load_backlog_repo, parse_backlog_day, task_file_round_trips,
 };
 pub use ranking::{
-    expedite_task, rank_project, rank_project_move, rank_task, rank_task_move, unexpedite_task,
-    unrank_project, unrank_task, RankMove, RankPlacement, RepoRanking,
+    expedite_task, expedite_task_at, rank_project, rank_project_move, rank_task, rank_task_move,
+    unexpedite_task, unrank_project, unrank_task, RankMove, RankPlacement, RepoRanking,
 };
 pub use types::{
     assignable_statuses, missing_standard_statuses, ordered_status_vocabulary,

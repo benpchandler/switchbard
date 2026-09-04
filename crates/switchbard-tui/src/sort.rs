@@ -80,22 +80,29 @@ pub fn orders_for(column: Column) -> Vec<Order> {
     }
 }
 
-pub fn apply(tasks: &[BacklogTask], visible: &mut [usize], sort: Sort) {
-    visible.sort_by(|&a, &b| compare(&tasks[a], &tasks[b], sort));
+pub fn apply(tasks: &[BacklogTask], visible: &mut [usize], sort: Sort, top: &[String]) {
+    visible.sort_by(|&a, &b| compare(&tasks[a], &tasks[b], sort, top));
 }
 
-fn compare(a: &BacklogTask, b: &BacklogTask, sort: Sort) -> Ordering {
+fn compare(a: &BacklogTask, b: &BacklogTask, sort: Sort, top: &[String]) -> Ordering {
     let ordering = match sort.order {
         Order::Semantic => semantic_rank(a, sort.column).cmp(&semantic_rank(b, sort.column)),
-        Order::Ascending => plain_key(a, sort.column).cmp(&plain_key(b, sort.column)),
-        Order::Descending => plain_key(b, sort.column).cmp(&plain_key(a, sort.column)),
+        Order::Ascending => plain_key(a, sort.column, top).cmp(&plain_key(b, sort.column, top)),
+        Order::Descending => plain_key(b, sort.column, top).cmp(&plain_key(a, sort.column, top)),
     };
     ordering.then_with(|| id_number(&a.id).cmp(&id_number(&b.id)))
 }
 
-fn plain_key(task: &BacklogTask, column: Column) -> (u64, String) {
+fn plain_key(task: &BacklogTask, column: Column, top: &[String]) -> (u64, String) {
     match column {
         Column::Id => (id_number(&task.id), String::new()),
+        Column::Rank => (
+            top.iter()
+                .position(|id| *id == task.id)
+                .map(|p| p as u64)
+                .unwrap_or(u64::MAX),
+            String::new(),
+        ),
         other => (0, other.cell_text(task).to_lowercase()),
     }
 }

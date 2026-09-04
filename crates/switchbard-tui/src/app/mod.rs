@@ -36,6 +36,8 @@ pub enum Mode {
     ViewSaveSlot,
     /// After `v g`: a digit or `d` picks the slot to promote to the global file.
     ViewGlobalSlot,
+    /// After `t`: 1-5 ranks the selected task, `d` drops it, `p` pins/unpins the Top 5.
+    RankChord,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +57,8 @@ pub struct App {
     tasks: Vec<BacklogTask>,
     /// Project headings' facts, by stack rank; refreshed with the tasks.
     pub projects: Vec<ProjectSummary>,
+    /// The Top 5 (expedite lane) ids in order; the queue.
+    pub top: Vec<String>,
     /// Filtered and sorted task indices, the truth grouping projects from.
     pub visible: Vec<usize>,
     /// What the table shows: tasks, with a heading before each section when grouped.
@@ -108,6 +112,7 @@ impl App {
             tasks_seen: None,
             tasks: Vec::new(),
             projects: Vec::new(),
+            top: Vec::new(),
             visible: Vec::new(),
             rows: Vec::new(),
             selected: 0,
@@ -153,6 +158,22 @@ impl App {
     /// Whether more than one project exists, so grouping is worth pointing at.
     pub fn grouping_is_useful(&self) -> bool {
         self.projects.len() > 1
+    }
+
+    /// 1-based place in the Top 5, if the task is in it.
+    pub fn rank_of(&self, task: &BacklogTask) -> Option<usize> {
+        self.top.iter().position(|id| *id == task.id).map(|p| p + 1)
+    }
+
+    /// A cell's text: what the column says, plus what only the app knows (rank).
+    pub fn cell(&self, column: Column, task: &BacklogTask) -> String {
+        match column {
+            Column::Rank => self
+                .rank_of(task)
+                .map(|n| n.to_string())
+                .unwrap_or_default(),
+            other => other.display_text(task, self.state.abbreviated.contains(&other)),
+        }
     }
 
     /// The initiative names behind the grouped projects, for the title bar.
@@ -249,6 +270,105 @@ impl App {
             Mode::ViewChord => self.handle_view_chord_key(event),
             Mode::ViewSaveSlot => self.handle_view_save_slot_key(event),
             Mode::ViewGlobalSlot => self.handle_view_global_slot_key(event),
+            Mode::RankChord => self.handle_rank_chord_key(event),
+        }
+    }
+
+    fn handle_rank_chord_key(&mut self, event: KeyEvent) {
+        self.mode = Mode::Browse;
+        self.status.clear();
+        match event.code {
+            KeyCode::Char(digit) if ('1'..='5').contains(&digit) => {
+                let place = digit.to_digit(10).unwrap_or(1) as usize;
+                self.set_rank(place);
+            }
+            KeyCode::Char('d') | KeyCode::Char('0') | KeyCode::Delete | KeyCode::Backspace => {
+                self.drop_rank()
+            }
+            KeyCode::Char('p') => {
+                self.state.pin_top = !self.state.pin_top;
+                self.refilter();
+                self.status = if self.state.pin_top {
+                    format!("top {} pinned first", group::TOP_SIZE)
+                } else {
+                    format!(
+                        "top {} unpinned: ranked tasks sit in their sections",
+                        group::TOP_SIZE
+                    )
+                };
+                self.telemetry
+                    .record("action", format!("pin_top {}", self.state.pin_top));
+            }
+            KeyCode::Esc => {}
+            other => self.status = format!("{other:?} is not a rank; 1-5, d, or p"),
+        }
+    }
+
+    /// `t<n>`: the selected task takes place `n` in the Top 5; whoever falls
+    /// off the end is dropped and named.
+    fn set_rank(&mut self, place: usize) {
+        let Some(task) = self.selected_task() else {
+            self.status = "no task selected".to_string();
+            return;
+        };
+        let id = task.id.clone();
+        if let Err(error) = switchbard_core::expedite_task_at(&self.repo_root, &id, place) {
+            self.fail(format!("{id}: {error}"));
+            return;
+        }
+        self.reload_tasks();
+        let mut dropped = None;
+        if self.top.len() > group::TOP_SIZE {
+            let last = self.top[group::TOP_SIZE].clone();
+            if let Err(error) = switchbard_core::unexpedite_task(&self.repo_root, &last) {
+                self.fail(format!("{last}: {error}"));
+                return;
+            }
+            dropped = Some(last);
+            self.reload_tasks();
+        }
+        if !self.state.columns.contains(&Column::Rank) {
+            self.state.columns.push(Column::Rank);
+            self.refilter();
+        }
+        self.select_task(&id);
+        self.status = match dropped {
+            Some(last) => format!(
+                "{id} is #{place} · {last} fell off the top {}",
+                group::TOP_SIZE
+            ),
+            None => format!("{id} is #{place}"),
+        };
+        self.telemetry
+            .record("action", format!("rank {place} {id}"));
+    }
+
+    fn drop_rank(&mut self) {
+        let Some(task) = self.selected_task() else {
+            self.status = "no task selected".to_string();
+            return;
+        };
+        let id = task.id.clone();
+        match switchbard_core::unexpedite_task(&self.repo_root, &id) {
+            Ok(outcome) if outcome.changed() => {
+                self.reload_tasks();
+                self.select_task(&id);
+                self.status = format!("{id} left the top {}", group::TOP_SIZE);
+                self.telemetry.record("action", format!("unrank {id}"));
+            }
+            Ok(_) => self.status = format!("{id} was not in the top {}", group::TOP_SIZE),
+            Err(error) => self.fail(format!("{id}: {error}")),
+        }
+    }
+
+    /// Put the cursor on `id` wherever the projection placed it.
+    fn select_task(&mut self, id: &str) {
+        if let Some(row) = self
+            .rows
+            .iter()
+            .position(|row| matches!(row, Row::Task(index) if self.tasks[*index].id == id))
+        {
+            self.select(row);
         }
     }
 
@@ -401,6 +521,16 @@ impl App {
             Action::Paint => self.open_paint_target_picker(),
             Action::Ball => self.pass_ball(),
             Action::Settings => self.open_settings(),
+            Action::Rank => {
+                self.mode = Mode::RankChord;
+                self.status = format!(
+                    "rank: 1-{} places this task in the top {} · d drops it · p {} the top {}",
+                    group::TOP_SIZE,
+                    group::TOP_SIZE,
+                    if self.state.pin_top { "unpins" } else { "pins" },
+                    group::TOP_SIZE
+                );
+            }
             Action::Group => match self.state.group {
                 Some(_) => self.set_group(None),
                 None => self.set_group(Some(self.last_group)),
@@ -544,9 +674,16 @@ impl App {
             .filter(|&index| filter.matches(&self.tasks[index]))
             .collect();
         if let Some(sort) = self.state.sort {
-            sort::apply(&self.tasks, &mut self.visible, sort);
+            sort::apply(&self.tasks, &mut self.visible, sort, &self.top);
         }
-        self.rows = group::rows(&self.tasks, &self.visible, self.state.group, &self.projects);
+        let pinned: &[String] = if self.state.pin_top { &self.top } else { &[] };
+        self.rows = group::rows(
+            &self.tasks,
+            &self.visible,
+            self.state.group,
+            &self.projects,
+            pinned,
+        );
         self.select(self.selected);
     }
 
@@ -683,6 +820,7 @@ impl App {
             Ok(backlog) => {
                 self.tasks = backlog.tasks;
                 self.projects = backlog.projects;
+                self.top = backlog.top;
             }
             Err(error) => self.fail(error.to_string()),
         }

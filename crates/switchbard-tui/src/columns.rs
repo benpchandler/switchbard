@@ -15,6 +15,8 @@ pub enum Column {
     Labels,
     Project,
     Ball,
+    /// Position in the repo's Top 5 (the expedite lane); empty when not in it.
+    Rank,
 }
 
 pub struct ColumnSpec {
@@ -35,7 +37,7 @@ pub struct ColumnSpec {
     pub groupable: bool,
 }
 
-pub const COLUMNS: [ColumnSpec; 7] = [
+pub const COLUMNS: [ColumnSpec; 8] = [
     ColumnSpec {
         column: Column::Id,
         name: "id",
@@ -106,11 +108,21 @@ pub const COLUMNS: [ColumnSpec; 7] = [
         vocabulary: &["me", "agent"],
         groupable: true,
     },
+    ColumnSpec {
+        column: Column::Rank,
+        name: "rank",
+        alias: Some("top"),
+        header: "#",
+        width: Some(4),
+        field: None,
+        vocabulary: &[],
+        groupable: false,
+    },
 ];
 
 impl Column {
     /// Every column sbt knows, in catalog order. Shown columns are a user-ordered subset.
-    pub const ALL: [Column; 7] = [
+    pub const ALL: [Column; 8] = [
         Column::Id,
         Column::Status,
         Column::Priority,
@@ -118,6 +130,7 @@ impl Column {
         Column::Labels,
         Column::Project,
         Column::Ball,
+        Column::Rank,
     ];
 
     pub const DEFAULT_SHOWN: [Column; 4] =
@@ -197,6 +210,8 @@ impl Column {
                     vec![ball.to_string()]
                 }
             }
+            // Rank is not on the task: `App::cell` supplies it from the lane.
+            Column::Rank => Vec::new(),
         }
     }
 

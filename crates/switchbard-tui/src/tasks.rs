@@ -24,6 +24,8 @@ pub struct ProjectSummary {
 pub struct Backlog {
     pub tasks: Vec<BacklogTask>,
     pub projects: Vec<ProjectSummary>,
+    /// The Top 5: the expedite lane, in order, pruned to tasks that are loaded.
+    pub top: Vec<String>,
 }
 
 pub fn load(root: &Path) -> Result<Backlog> {
@@ -49,7 +51,7 @@ pub fn load(root: &Path) -> Result<Backlog> {
             project.name.clone(),
         )
     });
-    let tasks = repo
+    let tasks: Vec<BacklogTask> = repo
         .tasks
         .into_iter()
         .filter(|task| {
@@ -59,7 +61,18 @@ pub fn load(root: &Path) -> Result<Backlog> {
             )
         })
         .collect();
-    Ok(Backlog { tasks, projects })
+    let top: Vec<String> = repo
+        .ranking
+        .expedite
+        .iter()
+        .filter(|id| tasks.iter().any(|task: &BacklogTask| task.id == **id))
+        .cloned()
+        .collect();
+    Ok(Backlog {
+        tasks,
+        projects,
+        top,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

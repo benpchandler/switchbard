@@ -27,6 +27,8 @@ pub struct ViewState {
     pub paint: Vec<PaintRule>,
     /// The column the list is sectioned by, if any.
     pub group: Option<Column>,
+    /// Whether the Top 5 sits as its own first section.
+    pub pin_top: bool,
 }
 
 impl ViewState {
@@ -53,6 +55,9 @@ impl ViewState {
         }
         if let Some(group) = self.group {
             parts.push(format!("group:{}", group.name()));
+        }
+        if !self.pin_top {
+            parts.push("nopin".to_string());
         }
         if parts.is_empty() {
             "all".to_string()
@@ -159,6 +164,7 @@ pub fn starter_views() -> Vec<ViewState> {
         abbreviated: Column::DEFAULT_ABBREVIATED.to_vec(),
         paint: Vec::new(),
         group: None,
+        pin_top: true,
     })
     .collect()
 }
@@ -358,6 +364,7 @@ impl Default for ViewState {
             abbreviated: Column::DEFAULT_ABBREVIATED.to_vec(),
             paint: Vec::new(),
             group: None,
+            pin_top: true,
         }
     }
 }
@@ -379,6 +386,10 @@ fn parse_view(entry: &Table) -> Result<ViewState, String> {
             .collect(),
         paint: parse_rules(&field("paint")?),
         group: Column::parse(&field("group")?).filter(|column| column.groupable()),
+        pin_top: entry
+            .get::<Option<bool>>("pin")
+            .map_err(|e| e.to_string())?
+            .unwrap_or(true),
         // Absent means the default set; an explicit "" means none.
         abbreviated: match entry
             .get::<Option<String>>("abbreviated")
@@ -408,6 +419,11 @@ fn lua_view(view: &ViewState) -> String {
     } else {
         format!(", paint = {}", lua_string(&rules_text(&view.paint)))
     };
+    let pin = if view.pin_top {
+        String::new()
+    } else {
+        ", pin = false".to_string()
+    };
     let abbreviated = if view.abbreviated_label().is_none() {
         String::new()
     } else {
@@ -421,7 +437,7 @@ fn lua_view(view: &ViewState) -> String {
         None => String::new(),
     };
     format!(
-        "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint}{group}{abbreviated} }}",
+        "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint}{group}{abbreviated}{pin} }}",
         lua_string(&view.filter),
         lua_string(&view.sort.map(|sort| sort.to_text()).unwrap_or_default()),
         lua_string(&columns_text(&view.columns)),

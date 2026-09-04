@@ -36,6 +36,7 @@ pub enum Action {
     View,
     Group,
     Settings,
+    Rank,
 }
 
 impl Action {
@@ -62,6 +63,7 @@ impl Action {
             "view" => Action::View,
             "group" => Action::Group,
             "settings" => Action::Settings,
+            "rank" => Action::Rank,
             _ => return None,
         })
     }
@@ -89,6 +91,7 @@ impl Action {
             Action::View => "view".to_string(),
             Action::Group => "group".to_string(),
             Action::Settings => "settings".to_string(),
+            Action::Rank => "rank".to_string(),
         }
     }
 }
