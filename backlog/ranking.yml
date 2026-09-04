@@ -3,6 +3,9 @@
 expedite:
   - TASK-80
   - TASK-127
+  - TASK-142
+  - TASK-141
+  - TASK-128
 projects:
   - Task Queue
   - Information Architecture V2
