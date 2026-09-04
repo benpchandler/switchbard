@@ -472,7 +472,6 @@ fn browse_footer(app: &App) -> Line<'static> {
         ("c", "columns"),
         ("p", "paint"),
         ("b", "ball"),
-        ("d", "done"),
         ("t", "rank"),
         ("v", "views"),
         (",", "settings"),

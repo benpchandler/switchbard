@@ -392,8 +392,8 @@ impl App {
     }
 
     /// After `t`: digits accumulate in `input` (two digits once the list is long
-    /// enough that a second could follow), Enter commits, `t` appends, `d` drops,
-    /// `p` pins or unpins the section, `g` opens the goal panel.
+    /// enough that a second could follow), Enter commits, `t` appends, `d` marks
+    /// Done, Delete/Backspace drop rank, `p` pins or unpins, and `g` opens goals.
     fn handle_rank_chord_key(&mut self, event: KeyEvent) {
         match event.code {
             KeyCode::Char(digit) if digit.is_ascii_digit() => {
@@ -424,7 +424,12 @@ impl App {
                 self.mode = Mode::Browse;
                 self.set_rank(self.top.len() + 1);
             }
-            KeyCode::Char('d') | KeyCode::Delete | KeyCode::Backspace => {
+            KeyCode::Char('d') => {
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.mark_done()
+            }
+            KeyCode::Delete | KeyCode::Backspace => {
                 self.input.clear();
                 self.mode = Mode::Browse;
                 self.drop_rank()
@@ -455,7 +460,8 @@ impl App {
             other => {
                 self.input.clear();
                 self.mode = Mode::Browse;
-                self.status = format!("{other:?} is not a rank; digits, t, d, or p");
+                self.status =
+                    format!("{other:?} is not a task action; digits, t, d, delete, p, or g");
             }
         }
     }
@@ -798,14 +804,13 @@ impl App {
             Action::Columns => self.open_columns_picker(),
             Action::Paint => self.open_paint_target_picker(),
             Action::Ball => self.pass_ball(),
-            Action::Done => self.mark_done(),
             Action::Pass => self.pass_work(),
             Action::Settings => self.open_settings(),
             Action::Rank => {
                 self.mode = Mode::RankChord;
                 self.input.clear();
                 self.status = format!(
-                    "task: a number ranks it (1 is top, {} last) · t appends · d drops · p {} · g goals",
+                    "task: a number ranks it (1 is top, {} last) · t appends · d Done · delete drops · p {} · g goals",
                     self.top.len() + 1,
                     if self.state.pin_top { "unpins" } else { "pins" }
                 );

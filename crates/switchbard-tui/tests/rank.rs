@@ -89,11 +89,11 @@ fn ranks_are_ordered_open_ended_appendable_and_droppable() {
         "enter commits a pending digit"
     );
     h.press(KeyCode::Char('t'));
-    h.press(KeyCode::Char('d'));
+    h.press(KeyCode::Delete);
     assert_eq!(h.app.status, "TASK-15 left the top list");
     assert_eq!(h.app.top.len(), 11);
     h.press(KeyCode::Char('t'));
-    h.press(KeyCode::Char('d'));
+    h.press(KeyCode::Backspace);
     assert_eq!(h.app.status, "TASK-15 was not in the top list");
 }
 
