@@ -32,7 +32,7 @@
 //!   TASK-28's scar).
 
 use super::allocate::{claim_task_id, create_task_allocating_id, strip_id_prefix};
-use super::ball::Ball;
+use super::ball::{Ball, BALL_LABEL_PREFIX};
 use super::goals::rename_task_in_goals;
 use super::parse::{
     configured_task_prefix, load_backlog_repo, parse_config_statuses, parse_task_file,
@@ -214,16 +214,28 @@ pub fn set_backlog_label(
     Ok(outcome_message(task_id, outcome))
 }
 
-/// Hand the ball to `me`, `agent`, or nobody (`None`) — see [`super::ball`].
-/// Two surgical label writes at most, each reading the file at write time
-/// like [`set_backlog_label`]; a task already in the requested state is a
-/// byte no-op that reports `no changes`.
+/// Hand the ball to `me`, `agent`, a named person, or nobody (`None`) — see
+/// [`super::ball`]. Every pre-existing `ball:*` label is reconciled so the
+/// task has at most one holder; unrelated labels stay untouched.
 pub fn set_backlog_ball(project_root: &Path, task_id: &str, ball: Option<Ball>) -> Result<String> {
     let path = resolve_task_file(project_root, task_id)?;
+    let desired = ball.as_ref().map(Ball::label);
+    let (task, _) = parse_task_file(&path, BacklogTaskSource::Active)?;
+    let existing = task
+        .labels
+        .iter()
+        .filter(|label| label.starts_with(BALL_LABEL_PREFIX))
+        .cloned()
+        .collect::<Vec<_>>();
     let mut changed = false;
-    for holder in [Ball::Me, Ball::Agent] {
-        let enabled = ball == Some(holder);
-        changed |= set_task_label(&path, Ball::label(holder), enabled)?.changed();
+    for label in &existing {
+        if desired.as_deref() != Some(label) {
+            changed |= set_task_label(&path, label, false)?.changed();
+        }
+    }
+    if let Some(label) = desired.filter(|label| !existing.iter().any(|existing| existing == label))
+    {
+        changed |= set_task_label(&path, &label, true)?.changed();
     }
     let outcome = if changed {
         WriteOutcome::Changed
@@ -553,6 +565,11 @@ mod tests {
             "Edited TASK-7"
         );
         assert_eq!(labels_of(&dir), vec!["ball:agent"]);
+        assert_eq!(
+            set_backlog_ball(root, "TASK-7", Ball::parse("Nick").expect("nick")).expect("nick"),
+            "Edited TASK-7"
+        );
+        assert_eq!(labels_of(&dir), vec!["ball:nick"]);
         assert_eq!(
             set_backlog_ball(root, "TASK-7", None).expect("drop"),
             "Edited TASK-7"

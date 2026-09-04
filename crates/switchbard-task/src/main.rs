@@ -278,10 +278,10 @@ struct EditArgs {
     /// id. Applied after every other edit; prints `Moved <OLD> -> <NEW>`
     #[arg(long, value_name = "ID|none")]
     parent: Option<String>,
-    /// Pass the ball - who acts next on this task: `me`, `agent`, or `none`
-    /// to drop it (stored as the ball:me / ball:agent label, the same one
-    /// sbt's `b` key writes)
-    #[arg(long, value_name = "me|agent|none")]
+    /// Pass the ball - who acts next: `me`, `agent`, a named person, or `none`
+    /// to drop it (stored as a ball:<holder> label; sbt's `b` key cycles the
+    /// me / agent / none shortcuts)
+    #[arg(long, value_name = "me|agent|PERSON|none")]
     ball: Option<String>,
     /// Add one label, leaving the rest untouched
     #[arg(long, value_name = "LABEL")]

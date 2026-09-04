@@ -78,3 +78,32 @@ fn a_dispatching_task_reads_as_agent_without_a_ball_label() {
     );
     assert_eq!(h.app.selected_task().unwrap().id, id);
 }
+
+#[test]
+fn named_ball_holder_renders_filters_and_b_drops_it() {
+    let mut h = Harness::new();
+    let id = h.app.selected_task().unwrap().id.clone();
+    switchbard_core::set_backlog_label(&h.root, &id, "ball:nick", true).unwrap();
+    h.app.tick();
+    h.press(KeyCode::Char('c'));
+    h.type_text("b");
+    h.press(KeyCode::Esc);
+    assert!(h.render().contains("nick"));
+    h.press(KeyCode::Char('/'));
+    let screen = h.type_text("ball:nick");
+    assert!(
+        screen.contains("1/3") && screen.contains("Fix login redirect loop"),
+        "{screen}"
+    );
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('h'));
+    let screen = h.press(KeyCode::Char('b'));
+    assert!(screen.contains("ball dropped"), "{screen}");
+    let file = std::fs::read_dir(h.root.join("backlog/tasks"))
+        .unwrap()
+        .flatten()
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+        .find(|text| text.contains(&format!("id: {id}")))
+        .unwrap();
+    assert!(!file.contains("ball:"), "{file}");
+}
