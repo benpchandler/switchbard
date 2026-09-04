@@ -1,6 +1,7 @@
 # Stack ranking - written by switchbard (`rank` / `expedite` commands); records,
 # not documents - never hand-edit. See docs/product-trajectory.md ("Stack ranking").
 expedite:
+  - TASK-80
   - TASK-127
 projects:
   - Task Queue
