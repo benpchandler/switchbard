@@ -34,7 +34,7 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
   in `views/<repo path>.lua`; `vs<n>` saves to repo, `vg<n>` promotes to global; slot 1 opens.
 - `paint.rs` - `p` rules in a hierarchy: `by:<col>=v:c,...`, `rows:<filter>=c`, `column:<col>=c`.
   Top rule is the base (whole rows); lower rules paint only their scope. `po` reorders.
-- `group.rs` - `o`: rows = headings + tasks over the filtered, sorted order; project headings carry def status, done/total.
+- `group.rs` - `o`: headings + tasks over the filtered, sorted order; project headings: def status, done/total; goal headings: week actual/target, pace.
 - `ball.rs` - who holds the ball: `ball:me`/`ball:agent` labels (`dispatching` = agent); `b` cycles.
 - Top list = core's expedite lane: `t<n>` places (`tt` appends), `td` drops, `tp` pins it first; `#` column.
 - `settings.rs` - `,` panel: hide statuses everywhere; per-repo file, `g` promotes to global.

@@ -61,7 +61,7 @@ impl App {
     pub(super) fn is_categorical(&self, column: Column) -> bool {
         column
             .filter_field()
-            .is_some_and(|field| !tasks::field_values(&self.tasks, field).is_empty())
+            .is_some_and(|field| !tasks::field_values(&self.tasks, field, &self.goals).is_empty())
     }
 
     /// A column entry paints by its values when it has categories, else the whole column.
@@ -82,7 +82,7 @@ impl App {
             Payload::Auto,
         )];
         options.extend(
-            tasks::field_values(&self.tasks, field)
+            tasks::field_values(&self.tasks, field, &self.goals)
                 .into_iter()
                 .map(|(value, count)| PickOption::text(value, count)),
         );
@@ -128,7 +128,10 @@ impl App {
         } else {
             self.config.palette.clone()
         };
-        for (index, (value, _)) in tasks::field_values(&self.tasks, field).iter().enumerate() {
+        for (index, (value, _)) in tasks::field_values(&self.tasks, field, &self.goals)
+            .iter()
+            .enumerate()
+        {
             let color = &palette[index % palette.len()];
             paint::set_value_color(&mut self.state.paint, column, value, Some(color));
         }

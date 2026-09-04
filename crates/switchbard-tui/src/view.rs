@@ -119,14 +119,16 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     );
                 }
                 for (column, cell) in app.state.columns.iter().zip(cells.iter()) {
-                    let value = column.cell_text(task);
+                    let value = column.cell_text(task, &app.goals);
                     let text = if app.state.glyph_columns.contains(column) && !value.is_empty() {
                         app.config.glyph(*column, &value)
                     } else {
                         app.cell(*column, task)
                     };
                     let mut style = theme.column_style(*column);
-                    if let Some(color) = paint::cell_color(&app.state.paint, task, *column) {
+                    if let Some(color) =
+                        paint::cell_color(&app.state.paint, task, *column, &app.goals)
+                    {
                         style = style.fg(color);
                     }
                     if selected {

@@ -3,7 +3,7 @@
 
 use std::cmp::Ordering;
 
-use switchbard_core::BacklogTask;
+use switchbard_core::{BacklogTask, GoalDef};
 
 use crate::columns::Column;
 
@@ -80,20 +80,43 @@ pub fn orders_for(column: Column) -> Vec<Order> {
     }
 }
 
-pub fn apply(tasks: &[BacklogTask], visible: &mut [usize], sort: Sort, top: &[String]) {
-    visible.sort_by(|&a, &b| compare(&tasks[a], &tasks[b], sort, top));
+pub fn apply(
+    tasks: &[BacklogTask],
+    visible: &mut [usize],
+    sort: Sort,
+    top: &[String],
+    goals: &[GoalDef],
+) {
+    visible.sort_by(|&a, &b| compare(&tasks[a], &tasks[b], sort, top, goals));
 }
 
-fn compare(a: &BacklogTask, b: &BacklogTask, sort: Sort, top: &[String]) -> Ordering {
+fn compare(
+    a: &BacklogTask,
+    b: &BacklogTask,
+    sort: Sort,
+    top: &[String],
+    goals: &[GoalDef],
+) -> Ordering {
     let ordering = match sort.order {
-        Order::Semantic => semantic_rank(a, sort.column).cmp(&semantic_rank(b, sort.column)),
-        Order::Ascending => plain_key(a, sort.column, top).cmp(&plain_key(b, sort.column, top)),
-        Order::Descending => plain_key(b, sort.column, top).cmp(&plain_key(a, sort.column, top)),
+        Order::Semantic => {
+            semantic_rank(a, sort.column, goals).cmp(&semantic_rank(b, sort.column, goals))
+        }
+        Order::Ascending => {
+            plain_key(a, sort.column, top, goals).cmp(&plain_key(b, sort.column, top, goals))
+        }
+        Order::Descending => {
+            plain_key(b, sort.column, top, goals).cmp(&plain_key(a, sort.column, top, goals))
+        }
     };
     ordering.then_with(|| id_number(&a.id).cmp(&id_number(&b.id)))
 }
 
-fn plain_key(task: &BacklogTask, column: Column, top: &[String]) -> (u64, String) {
+fn plain_key(
+    task: &BacklogTask,
+    column: Column,
+    top: &[String],
+    goals: &[GoalDef],
+) -> (u64, String) {
     match column {
         Column::Id => (id_number(&task.id), String::new()),
         Column::Rank => (
@@ -103,12 +126,12 @@ fn plain_key(task: &BacklogTask, column: Column, top: &[String]) -> (u64, String
                 .unwrap_or(u64::MAX),
             String::new(),
         ),
-        other => (0, other.cell_text(task).to_lowercase()),
+        other => (0, other.cell_text(task, goals).to_lowercase()),
     }
 }
 
-fn semantic_rank(task: &BacklogTask, column: Column) -> usize {
-    match column.values(task).first() {
+fn semantic_rank(task: &BacklogTask, column: Column, goals: &[GoalDef]) -> usize {
+    match column.values(task, goals).first() {
         Some(value) => column.vocabulary_rank(value),
         None => usize::MAX,
     }

@@ -205,3 +205,34 @@ pub fn header_line(screen: &str) -> String {
         .unwrap_or_default()
         .to_string()
 }
+
+/// A tasks-measured goal for the current week, scoped to `scope` (a project
+/// name or label) with `attached` task ids as explicit inputs.
+pub fn seed_goal(
+    root: &Path,
+    name: &str,
+    unit: &str,
+    target: i64,
+    scope: Option<&str>,
+    attached: &[&str],
+) {
+    let week = switchbard_core::week_monday_of(chrono::Local::now().date_naive())
+        .format("%Y-%m-%d")
+        .to_string();
+    switchbard_core::create_goal(
+        root,
+        &switchbard_core::NewGoal {
+            name: name.to_string(),
+            unit: unit.to_string(),
+            measure: switchbard_core::GoalMeasure::Tasks,
+            scope: scope.map(str::to_string),
+            week,
+            target,
+        },
+    )
+    .unwrap();
+    if !attached.is_empty() {
+        let ids: Vec<String> = attached.iter().map(|s| s.to_string()).collect();
+        switchbard_core::attach_goal_inputs(root, name, &ids, &[]).unwrap();
+    }
+}

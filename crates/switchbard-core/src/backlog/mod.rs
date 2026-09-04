@@ -23,7 +23,7 @@ pub use ball::{Ball, BALL_AGENT_LABEL, BALL_ME_LABEL};
 
 pub use goals::{
     attach_goal_inputs, check_in_goal, create_goal, detach_goal_inputs, edit_goal_target,
-    roll_goals, GoalCheckIn, GoalDef, GoalInputs, GoalMeasure, GoalWeek, NewGoal,
+    goals_feeding, roll_goals, GoalCheckIn, GoalDef, GoalInputs, GoalMeasure, GoalWeek, NewGoal,
 };
 
 pub use hierarchy::{

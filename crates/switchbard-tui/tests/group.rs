@@ -164,7 +164,7 @@ fn group_by_another_column_and_the_command_form_and_saved_views() {
     h.press(KeyCode::Enter);
     assert_eq!(
         h.app.status,
-        "group by one of status, priority, project, ball, or off"
+        "group by one of status, priority, project, ball, goal, or off"
     );
     h.press(KeyCode::Char(':'));
     h.type_text("group project");
@@ -262,7 +262,7 @@ fn a_theme_preset_is_one_line_and_overrides_layer_on_it() {
     assert!(
         h.app
             .status
-            .contains("unknown theme 'nope': one of berg, bloomberg, plain"),
+            .contains("unknown theme 'nope': one of berg, bloomberg, darkroom, plain"),
         "{}",
         h.app.status
     );

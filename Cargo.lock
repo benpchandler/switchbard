@@ -4191,6 +4191,7 @@ name = "switchbard-tui"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "crossterm",
  "dirs",
