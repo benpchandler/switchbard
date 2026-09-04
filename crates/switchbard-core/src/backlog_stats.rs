@@ -335,29 +335,15 @@ pub fn compute_goal_statuses(
                     )
                 }
                 crate::GoalMeasure::Tasks => {
-                    let scope = goal.scope.as_deref();
-                    let inputs = &goal.inputs;
                     let count = repos
                         .iter()
                         .flat_map(|r| in_scope_tasks(r))
                         .filter(|task| {
-                            // A task counts once if it matches the scope OR
-                            // is an attached input (directly, or via an
-                            // attached project) — one pass, so overlap
+                            // One membership predicate (`GoalDef::counts_task`)
+                            // evaluated once per task, so scope/input overlap
                             // cannot double-count.
-                            let matches = scope.is_some_and(|s| {
-                                task.project.as_deref() == Some(s)
-                                    || task.labels.iter().any(|l| l == s)
-                            }) || inputs
-                                .tasks
-                                .iter()
-                                .any(|t| t.eq_ignore_ascii_case(&task.id))
-                                || task
-                                    .project
-                                    .as_deref()
-                                    .is_some_and(|p| inputs.projects.iter().any(|ip| ip == p));
                             task.is_done()
-                                && matches
+                                && goal.counts_task(task)
                                 && task
                                     .updated_date
                                     .as_deref()

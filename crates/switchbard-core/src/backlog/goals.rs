@@ -91,6 +91,38 @@ pub struct GoalDef {
     pub weeks: BTreeMap<String, GoalWeek>,
 }
 
+impl GoalDef {
+    /// Whether `task` is one of this goal's inputs: it matches `scope` (its
+    /// project or one of its labels), is attached directly, or belongs to an
+    /// attached project. One predicate so the Digest's actuals, `sb goal
+    /// view`, and sbt's goal column can never disagree about membership;
+    /// done-ness and the week window are the caller's concern.
+    pub fn counts_task(&self, task: &super::types::BacklogTask) -> bool {
+        let scoped = self.scope.as_deref().is_some_and(|s| {
+            task.project.as_deref() == Some(s) || task.labels.iter().any(|l| l == s)
+        });
+        let attached = self
+            .inputs
+            .tasks
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case(&task.id));
+        let via_project = task
+            .project
+            .as_deref()
+            .is_some_and(|p| self.inputs.projects.iter().any(|ip| ip == p));
+        scoped || attached || via_project
+    }
+}
+
+/// Names of every goal `task` feeds, in `goals` order.
+pub fn goals_feeding<'a>(goals: &'a [GoalDef], task: &super::types::BacklogTask) -> Vec<&'a str> {
+    goals
+        .iter()
+        .filter(|goal| goal.counts_task(task))
+        .map(|goal| goal.name.as_str())
+        .collect()
+}
+
 /// Input for [`create_goal`] — one goal with its first week.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewGoal {

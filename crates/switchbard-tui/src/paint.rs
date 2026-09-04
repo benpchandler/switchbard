@@ -5,7 +5,7 @@
 use std::str::FromStr;
 
 use ratatui::style::Color;
-use switchbard_core::BacklogTask;
+use switchbard_core::{BacklogTask, GoalDef};
 
 use crate::columns::Column;
 use crate::tasks::{Filter, FilterField};
@@ -132,7 +132,13 @@ impl PaintRule {
     }
 
     /// The color this rule gives a cell, honoring `is_base` for by-column rules.
-    fn claim(&self, task: &BacklogTask, column: Column, is_base: bool) -> Option<Color> {
+    fn claim(
+        &self,
+        task: &BacklogTask,
+        column: Column,
+        is_base: bool,
+        goals: &[GoalDef],
+    ) -> Option<Color> {
         match self {
             PaintRule::ByColumn {
                 column: painted,
@@ -142,14 +148,14 @@ impl PaintRule {
                     return None;
                 }
                 let field = painted.filter_field()?;
-                let value = field_value(task, field)?;
+                let value = field_value(task, field, goals)?;
                 colors
                     .iter()
                     .find(|(known, _)| *known == Filter::loose_key(&value))
                     .and_then(|(_, color)| Color::from_str(color).ok())
             }
             PaintRule::Rows { filter, color } => Filter::parse(filter)
-                .matches(task)
+                .matches(task, goals)
                 .then(|| Color::from_str(color).ok())
                 .flatten(),
             PaintRule::Column {
@@ -162,18 +168,23 @@ impl PaintRule {
     }
 }
 
-fn field_value(task: &BacklogTask, field: FilterField) -> Option<String> {
-    field.column().values(task).into_iter().next()
+fn field_value(task: &BacklogTask, field: FilterField, goals: &[GoalDef]) -> Option<String> {
+    field.column().values(task, goals).into_iter().next()
 }
 
 /// The color for one cell: the lowest (most specific) rule that claims it wins;
 /// the top rule is the base and claims whole rows.
-pub fn cell_color(rules: &[PaintRule], task: &BacklogTask, column: Column) -> Option<Color> {
+pub fn cell_color(
+    rules: &[PaintRule],
+    task: &BacklogTask,
+    column: Column,
+    goals: &[GoalDef],
+) -> Option<Color> {
     rules
         .iter()
         .enumerate()
         .rev()
-        .find_map(|(index, rule)| rule.claim(task, column, index == 0))
+        .find_map(|(index, rule)| rule.claim(task, column, index == 0, goals))
 }
 
 /// The color a by-column rule assigns `value`, if any.

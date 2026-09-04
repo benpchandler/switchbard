@@ -43,7 +43,7 @@ return {
       hint       = { fg = "#9e9e9e" },
       status     = { fg = "#d7d7d7" },
       accent     = { fg = "#4dc7f9" },
-      columns    = { id = "label", project = "link" },
+      columns    = { id = "label", project = "link", goal = "link" },
     },
     -- Bloomberg data screen: amber identity chip and labels over white data.
     bloomberg = {
@@ -61,7 +61,33 @@ return {
       hint       = { fg = "#8b949e" },
       status     = { fg = "#ffcc00" },
       accent     = { fg = "#ffcc00" },
-      columns    = { id = "label", project = "link" },
+      columns    = { id = "label", project = "link", goal = "link" },
+    },
+    -- Darkroom: for a dark room with the display at its lowest usable backlight.
+    -- Every color is solved for a target contrast ratio against near-black, not
+    -- picked by eye, and the targets are the design. Body text sits at 8:1 and
+    -- everything else between 1.6:1 and 6.5:1 -- ordinary dark themes run 12-16:1,
+    -- which in an unlit room is a glare source, because the screen is the only
+    -- light in it and your eyes are dark-adapted to nothing. Warm carries more
+    -- of the weight than cool: long wavelengths cost the least dark adaptation,
+    -- which is the darkroom safelight the name comes from. Pairs with the
+    -- Darkroom WezTerm scheme, but stands alone on any near-black background.
+    darkroom = {
+      title_repo = { fg = "#D8C9B3", bg = "#6A4D23", bold = true },  -- dim amber fill, not a lamp
+      title      = { fg = "#7B6E5E" },
+      border     = { fg = "#483D34" },
+      header     = { fg = "#837463" },
+      heading    = { fg = "#C09348", bold = true },
+      selected   = { bg = "#413223", bold = true },  -- no fg: paint stays >= 3.3:1 on the cursor row
+      label      = { fg = "#B68836" },
+      text       = { fg = "#B2A28C" },
+      link       = { fg = "#7492B8" },
+      chip       = { fg = "#D8C9B3", bg = "#6A4D23" },
+      keys       = { fg = "#559E9C" },
+      hint       = { fg = "#72675A" },
+      status     = { fg = "#A0927F" },
+      accent     = { fg = "#C09348" },
+      columns    = { id = "label", project = "link", goal = "link" },
     },
     -- Your terminal's own colors, nothing forced.
     plain = {
@@ -94,6 +120,11 @@ return {
     muted    = { "#c9b07a", "#7fa6bd", "#8db58d", "#c08a84", "#a692bd", "#7fb5ae", "#c49c7a", "#b98da0" },
     balanced = { "#ffd166", "#4fc3f7", "#7ee787", "#ff7b72", "#c792ea", "#5ee6d8", "#ffa657", "#f78da7" },
     vivid    = { "#ffcc00", "#00bfff", "#33ff66", "#ff4d4d", "#c060ff", "#00e5cc", "#ff8800", "#ff66b3" },
+    -- Darkroom: ten hues all solved to the same 5.4:1 against near-black, so no
+    -- painted value shouts louder than another just because green is a brighter
+    -- hue than blue. Sand first -- it is nearest the body text, so the most
+    -- common value stays quiet; green and red last, they read as up/down.
+    darkroom = { "#97816F", "#A97E35", "#6887B1", "#4E908E", "#B86F93", "#8F7CB2", "#568CA0", "#8D883C", "#659248", "#C26F62" },
   },
 
   -- Glyphs shown when a column is in glyph mode (`c`, then `g` on the column).

@@ -1,10 +1,19 @@
 //! Grouping: a projection over the already-filtered, already-sorted task order
 //! into rows, where a heading is an ordinary row the cursor skips.
 
-use switchbard_core::BacklogTask;
+use switchbard_core::{BacklogTask, GoalDef};
 
 use crate::columns::Column;
-use crate::tasks::ProjectSummary;
+use crate::tasks::{GoalSummary, ProjectSummary};
+
+/// Everything a heading can say beyond the section's key: project facts by
+/// stack rank, goal facts in `goals.yml` order, and the goal defs membership
+/// derives from.
+pub struct Headings<'a> {
+    pub projects: &'a [ProjectSummary],
+    pub goals: &'a [GoalDef],
+    pub goal_summaries: &'a [GoalSummary],
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
@@ -19,7 +28,7 @@ pub fn rows(
     tasks: &[BacklogTask],
     ordered: &[usize],
     group: Option<Column>,
-    projects: &[ProjectSummary],
+    headings: &Headings<'_>,
     pinned: &[String],
 ) -> Vec<Row> {
     let mut rows = Vec::new();
@@ -47,16 +56,16 @@ pub fn rows(
         return rows;
     };
     let ordered = ordered.as_slice();
-    for key in section_keys(tasks, ordered, column, projects) {
+    for key in section_keys(tasks, ordered, column, headings) {
         let members: Vec<usize> = ordered
             .iter()
             .copied()
-            .filter(|&index| section_key(&tasks[index], column) == key)
+            .filter(|&index| section_key(&tasks[index], column, headings.goals) == key)
             .collect();
         if members.is_empty() {
             continue;
         }
-        rows.push(Row::Heading(heading(column, &key, projects)));
+        rows.push(Row::Heading(heading(column, &key, headings)));
         rows.extend(
             with_subissues_under_parents(tasks, &members)
                 .into_iter()
@@ -77,21 +86,27 @@ pub fn initiatives(projects: &[ProjectSummary]) -> Vec<String> {
     names
 }
 
-fn section_key(task: &BacklogTask, column: Column) -> String {
-    column.values(task).into_iter().next().unwrap_or_default()
+/// A task sits in one section: its first value (a task feeding several goals
+/// files under the first in `goals.yml` order).
+fn section_key(task: &BacklogTask, column: Column, goals: &[GoalDef]) -> String {
+    column
+        .values(task, goals)
+        .into_iter()
+        .next()
+        .unwrap_or_default()
 }
 
-/// Section order: projects by stack rank; vocabulary columns by their rank;
-/// otherwise by name. Tasks without a value come last.
+/// Section order: projects by stack rank; goals in `goals.yml` order;
+/// vocabulary columns by their rank; otherwise by name. Tasks without a value come last.
 fn section_keys(
     tasks: &[BacklogTask],
     ordered: &[usize],
     column: Column,
-    projects: &[ProjectSummary],
+    headings: &Headings<'_>,
 ) -> Vec<String> {
     let mut keys: Vec<String> = Vec::new();
     for &index in ordered {
-        let key = section_key(&tasks[index], column);
+        let key = section_key(&tasks[index], column, headings.goals);
         if !keys.contains(&key) {
             keys.push(key);
         }
@@ -103,9 +118,19 @@ fn section_keys(
         match column {
             Column::Project => (
                 0,
-                projects
+                headings
+                    .projects
                     .iter()
                     .position(|project| project.name == *key)
+                    .unwrap_or(usize::MAX),
+                key.to_lowercase(),
+            ),
+            Column::Goal => (
+                0,
+                headings
+                    .goals
+                    .iter()
+                    .position(|goal| goal.name == *key)
                     .unwrap_or(usize::MAX),
                 key.to_lowercase(),
             ),
@@ -116,12 +141,24 @@ fn section_keys(
     keys
 }
 
-fn heading(column: Column, key: &str, projects: &[ProjectSummary]) -> String {
+fn heading(column: Column, key: &str, headings: &Headings<'_>) -> String {
     if key.is_empty() {
         return format!("no {}", column.name());
     }
     match column {
-        Column::Project => match projects.iter().find(|project| project.name == key) {
+        Column::Goal => match headings
+            .goal_summaries
+            .iter()
+            .find(|goal| goal.name == key)
+            .and_then(|goal| goal.progress.as_ref())
+        {
+            Some(progress) => format!(
+                "{key} · {}/{} {} · {}",
+                progress.actual, progress.target, progress.unit, progress.pace
+            ),
+            None => key.to_string(),
+        },
+        Column::Project => match headings.projects.iter().find(|project| project.name == key) {
             Some(project) => format!(
                 "{} · {} · {}/{}",
                 project.name,

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
-use switchbard_core::BacklogTask;
+use switchbard_core::{BacklogTask, GoalDef};
 
 use crate::ball::Ball;
 use crate::columns::Column;
@@ -20,7 +20,7 @@ use crate::picker::{ColumnPurpose, Payload, PickOption, PickerPurpose, ValuePick
 use crate::report::{self, ReportContext, ReportKind};
 use crate::settings::{Scope as SettingsScope, SettingsStore};
 use crate::sort;
-use crate::tasks::{self, Filter, ProjectSummary};
+use crate::tasks::{self, Filter, GoalSummary, ProjectSummary};
 use crate::telemetry::Telemetry;
 use crate::views::{ViewState, ViewStore};
 
@@ -57,6 +57,10 @@ pub struct App {
     tasks: Vec<BacklogTask>,
     /// Project headings' facts, by stack rank; refreshed with the tasks.
     pub projects: Vec<ProjectSummary>,
+    /// The repo's goal definitions; the goal column derives membership from them.
+    pub goals: Vec<GoalDef>,
+    /// Goal headings' facts for the current week; refreshed with the tasks.
+    pub goal_summaries: Vec<GoalSummary>,
     /// The Top 5 (expedite lane) ids in order; the queue.
     pub top: Vec<String>,
     /// Filtered and sorted task indices, the truth grouping projects from.
@@ -112,6 +116,8 @@ impl App {
             tasks_seen: None,
             tasks: Vec::new(),
             projects: Vec::new(),
+            goals: Vec::new(),
+            goal_summaries: Vec::new(),
             top: Vec::new(),
             visible: Vec::new(),
             rows: Vec::new(),
@@ -172,7 +178,7 @@ impl App {
                 .rank_of(task)
                 .map(|n| n.to_string())
                 .unwrap_or_default(),
-            other => other.display_text(task, self.state.abbreviated.contains(&other)),
+            other => other.display_text(task, self.state.abbreviated.contains(&other), &self.goals),
         }
     }
 
@@ -687,17 +693,22 @@ impl App {
         let base = self.settings.effective().base_filter(&self.state.filter);
         let filter = Filter::parse(&format!("{base} {}", self.state.filter));
         self.visible = (0..self.tasks.len())
-            .filter(|&index| filter.matches(&self.tasks[index]))
+            .filter(|&index| filter.matches(&self.tasks[index], &self.goals))
             .collect();
         if let Some(sort) = self.state.sort {
-            sort::apply(&self.tasks, &mut self.visible, sort, &self.top);
+            sort::apply(&self.tasks, &mut self.visible, sort, &self.top, &self.goals);
         }
         let pinned: &[String] = if self.state.pin_top { &self.top } else { &[] };
+        let headings = group::Headings {
+            projects: &self.projects,
+            goals: &self.goals,
+            goal_summaries: &self.goal_summaries,
+        };
         self.rows = group::rows(
             &self.tasks,
             &self.visible,
             self.state.group,
-            &self.projects,
+            &headings,
             pinned,
         );
         self.select(self.selected);
@@ -735,7 +746,7 @@ impl App {
 
     /// `,`: the standing preferences, one row per status that can be hidden.
     pub(super) fn open_settings(&mut self) {
-        let options = tasks::field_values(&self.tasks, tasks::FilterField::Status)
+        let options = tasks::field_values(&self.tasks, tasks::FilterField::Status, &self.goals)
             .into_iter()
             .map(|(status, count)| {
                 let mark = if self.settings.effective().is_hidden(&status) {
@@ -836,6 +847,8 @@ impl App {
             Ok(backlog) => {
                 self.tasks = backlog.tasks;
                 self.projects = backlog.projects;
+                self.goals = backlog.goals;
+                self.goal_summaries = backlog.goal_summaries;
                 self.top = backlog.top;
             }
             Err(error) => self.fail(error.to_string()),

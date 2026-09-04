@@ -1,7 +1,9 @@
 //! The column catalog: one row per column with everything the rest of the crate
 //! needs to know about it. Adding a column is one row here plus its value accessor.
 
-use switchbard_core::{BacklogTask, BACKLOG_PRIORITIES, CANONICAL_STATUS_ORDER};
+use switchbard_core::{
+    goals_feeding, BacklogTask, GoalDef, BACKLOG_PRIORITIES, CANONICAL_STATUS_ORDER,
+};
 
 use crate::ball::Ball;
 use crate::tasks::FilterField;
@@ -17,6 +19,8 @@ pub enum Column {
     Ball,
     /// Position in the repo's top list (the expedite lane); empty when not in it.
     Rank,
+    /// The weekly goal(s) the task feeds: by scope, attachment, or attached project.
+    Goal,
 }
 
 pub struct ColumnSpec {
@@ -37,7 +41,7 @@ pub struct ColumnSpec {
     pub groupable: bool,
 }
 
-pub const COLUMNS: [ColumnSpec; 8] = [
+pub const COLUMNS: [ColumnSpec; 9] = [
     ColumnSpec {
         column: Column::Id,
         name: "id",
@@ -118,11 +122,21 @@ pub const COLUMNS: [ColumnSpec; 8] = [
         vocabulary: &[],
         groupable: false,
     },
+    ColumnSpec {
+        column: Column::Goal,
+        name: "goal",
+        alias: None,
+        header: "goal",
+        width: Some(18),
+        field: Some(FilterField::Goal),
+        vocabulary: &[],
+        groupable: true,
+    },
 ];
 
 impl Column {
     /// Every column sbt knows, in catalog order. Shown columns are a user-ordered subset.
-    pub const ALL: [Column; 8] = [
+    pub const ALL: [Column; 9] = [
         Column::Id,
         Column::Status,
         Column::Priority,
@@ -131,6 +145,7 @@ impl Column {
         Column::Project,
         Column::Ball,
         Column::Rank,
+        Column::Goal,
     ];
 
     pub const DEFAULT_SHOWN: [Column; 4] =
@@ -193,8 +208,9 @@ impl Column {
             .unwrap_or(vocabulary.len())
     }
 
-    /// The values a task carries in this column (labels can be several).
-    pub fn values(self, task: &BacklogTask) -> Vec<String> {
+    /// The values a task carries in this column (labels and goals can be several).
+    /// `goals` is the repo's goal set: membership is derived, not stored on the task.
+    pub fn values(self, task: &BacklogTask, goals: &[GoalDef]) -> Vec<String> {
         match self {
             Column::Id => vec![task.id.clone()],
             Column::Status => vec![task.status.clone()],
@@ -212,12 +228,16 @@ impl Column {
             }
             // Rank is not on the task: `App::cell` supplies it from the lane.
             Column::Rank => Vec::new(),
+            Column::Goal => goals_feeding(goals, task)
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
         }
     }
 
     /// The cell as text: the values joined. Filter and sort read this.
-    pub fn cell_text(self, task: &BacklogTask) -> String {
-        self.values(task).join(",")
+    pub fn cell_text(self, task: &BacklogTask, goals: &[GoalDef]) -> String {
+        self.values(task, goals).join(",")
     }
 
     /// Columns with a short form: id without its repo prefix, priority as H/M/L.
@@ -231,7 +251,7 @@ impl Column {
     /// What the table shows. Abbreviated: the id without its repo prefix (the
     /// title bar names the repo; `80.3` is the part that varies), priority as
     /// H/M/L. The detail pane, reports, and filters always keep full values.
-    pub fn display_text(self, task: &BacklogTask, abbreviated: bool) -> String {
+    pub fn display_text(self, task: &BacklogTask, abbreviated: bool, goals: &[GoalDef]) -> String {
         match (self, abbreviated) {
             (Column::Id, true) => bare_id(&task.id).to_string(),
             (Column::Priority, true) => task
@@ -240,7 +260,7 @@ impl Column {
                 .next()
                 .map(|c| c.to_ascii_uppercase().to_string())
                 .unwrap_or_default(),
-            _ => self.cell_text(task),
+            _ => self.cell_text(task, goals),
         }
     }
 

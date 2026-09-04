@@ -4,7 +4,8 @@ use std::path::Path;
 
 use anyhow::Result;
 use switchbard_core::{
-    compute_hierarchy_rollup, load_backlog_repo, BacklogTask, BacklogTaskSource,
+    compute_goal_statuses, compute_hierarchy_rollup, load_backlog_repo, week_monday_of,
+    BacklogTask, BacklogTaskSource, GoalDef,
 };
 
 use crate::columns::Column;
@@ -21,9 +22,29 @@ pub struct ProjectSummary {
     pub initiative: Option<String>,
 }
 
+/// What a goal section heading needs: this week's actual against target and
+/// pace, when the goal has a week on the clock; otherwise just the name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalSummary {
+    pub name: String,
+    pub progress: Option<GoalProgress>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalProgress {
+    pub actual: i64,
+    pub target: i64,
+    pub unit: String,
+    pub pace: &'static str,
+}
+
 pub struct Backlog {
     pub tasks: Vec<BacklogTask>,
     pub projects: Vec<ProjectSummary>,
+    /// The repo's goal definitions; the goal column derives membership from them.
+    pub goals: Vec<GoalDef>,
+    /// Goal headings' facts for the current week, in `goals.yml` order.
+    pub goal_summaries: Vec<GoalSummary>,
     /// The top list: the expedite lane, in order, pruned to tasks that are loaded.
     pub top: Vec<String>,
 }
@@ -51,6 +72,8 @@ pub fn load(root: &Path) -> Result<Backlog> {
             project.name.clone(),
         )
     });
+    let goal_summaries = goal_summaries(&repo, chrono::Local::now().date_naive());
+    let goals = repo.goals.clone();
     let tasks: Vec<BacklogTask> = repo
         .tasks
         .into_iter()
@@ -71,8 +94,33 @@ pub fn load(root: &Path) -> Result<Backlog> {
     Ok(Backlog {
         tasks,
         projects,
+        goals,
+        goal_summaries,
         top,
     })
+}
+
+fn goal_summaries(
+    repo: &switchbard_core::BacklogRepo,
+    today: chrono::NaiveDate,
+) -> Vec<GoalSummary> {
+    let week = week_monday_of(today).format("%Y-%m-%d").to_string();
+    let statuses = compute_goal_statuses(&[repo], &week, today);
+    repo.goals
+        .iter()
+        .map(|goal| GoalSummary {
+            name: goal.name.clone(),
+            progress: statuses
+                .iter()
+                .find(|status| status.name == goal.name)
+                .map(|status| GoalProgress {
+                    actual: status.actual,
+                    target: status.target,
+                    unit: status.unit.clone(),
+                    pace: status.pace.label(),
+                }),
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +131,7 @@ pub enum FilterField {
     Label,
     Project,
     Ball,
+    Goal,
 }
 
 impl FilterField {
@@ -94,6 +143,7 @@ impl FilterField {
             "label" => FilterField::Label,
             "project" => FilterField::Project,
             "ball" => FilterField::Ball,
+            "goal" => FilterField::Goal,
             _ => return None,
         })
     }
@@ -106,6 +156,7 @@ impl FilterField {
             FilterField::Label => "label",
             FilterField::Project => "project",
             FilterField::Ball => "ball",
+            FilterField::Goal => "goal",
         }
     }
 
@@ -118,11 +169,12 @@ impl FilterField {
             FilterField::Label => Column::Labels,
             FilterField::Project => Column::Project,
             FilterField::Ball => Column::Ball,
+            FilterField::Goal => Column::Goal,
         }
     }
 
-    fn values_of(self, task: &BacklogTask) -> Vec<String> {
-        self.column().values(task)
+    fn values_of(self, task: &BacklogTask, goals: &[GoalDef]) -> Vec<String> {
+        self.column().values(task, goals)
     }
 }
 
@@ -184,13 +236,15 @@ impl Filter {
         }
     }
 
-    pub fn matches(&self, task: &BacklogTask) -> bool {
+    pub fn matches(&self, task: &BacklogTask, goals: &[GoalDef]) -> bool {
         self.terms.iter().all(|term| match term {
             Term::Text(needle) => {
                 task.id.to_lowercase().contains(needle)
                     || task.title.to_lowercase().contains(needle)
             }
-            Term::AnyOf(field, _) | Term::Not(field, _) => term.allows(&field.values_of(task)),
+            Term::AnyOf(field, _) | Term::Not(field, _) => {
+                term.allows(&field.values_of(task, goals))
+            }
         })
     }
 
@@ -259,9 +313,13 @@ fn loose(text: &str) -> String {
 }
 
 /// Distinct values a field takes across `tasks`, most common first, with counts.
-pub fn field_values(tasks: &[BacklogTask], field: FilterField) -> Vec<(String, usize)> {
+pub fn field_values(
+    tasks: &[BacklogTask],
+    field: FilterField,
+    goals: &[GoalDef],
+) -> Vec<(String, usize)> {
     let mut counts: Vec<(String, usize)> = Vec::new();
-    for value in tasks.iter().flat_map(|task| field.values_of(task)) {
+    for value in tasks.iter().flat_map(|task| field.values_of(task, goals)) {
         match counts.iter_mut().find(|(seen, _)| *seen == value) {
             Some(entry) => entry.1 += 1,
             None => counts.push((value, 1)),

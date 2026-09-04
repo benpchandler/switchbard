@@ -148,7 +148,7 @@ impl App {
         let Some(field) = column.filter_field() else {
             return String::new();
         };
-        let mut values: Vec<String> = tasks::field_values(&self.tasks, field)
+        let mut values: Vec<String> = tasks::field_values(&self.tasks, field, &self.goals)
             .into_iter()
             .map(|(value, _)| value)
             .collect();
@@ -215,7 +215,7 @@ impl App {
     pub(super) fn open_filter_picker(&mut self, column: Column) {
         match column.filter_field() {
             Some(field) => {
-                let values = tasks::field_values(&self.tasks, field);
+                let values = tasks::field_values(&self.tasks, field, &self.goals);
                 if values.is_empty() {
                     self.status = format!("no {} values to pick from", field.keyword());
                     return;

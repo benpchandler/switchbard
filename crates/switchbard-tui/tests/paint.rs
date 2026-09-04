@@ -319,6 +319,6 @@ fn palette_presets_swap_live_and_recolor_auto_painted_values() {
     h.press(KeyCode::Enter);
     assert_eq!(
         h.app.status,
-        "palette: one of balanced, berg, bloomberg, muted, vivid"
+        "palette: one of balanced, berg, bloomberg, darkroom, muted, vivid"
     );
 }
