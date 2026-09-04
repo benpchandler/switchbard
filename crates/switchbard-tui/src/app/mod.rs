@@ -340,6 +340,7 @@ impl App {
             (period / self.config.work_frames).max(16),
         ))
     }
+
     /// `w`: the owner passes the selected task; every session's claim on it ends.
     fn pass_work(&mut self) {
         let Some(task) = self.selected_task() else {
@@ -677,7 +678,7 @@ impl App {
         if self.input.contains(' ') {
             return Vec::new();
         }
-        let mut names: Vec<String> = ["bug", "idea", "group", "palette", "reload", "q"]
+        let mut names: Vec<String> = ["bug", "idea", "group", "palette", "theme", "reload", "q"]
             .iter()
             .map(|name| name.to_string())
             .collect();
@@ -842,6 +843,7 @@ impl App {
             "q" | "quit" => self.should_quit = true,
             "reload" => self.apply(&Action::Reload),
             "palette" => self.choose_palette(rest.trim()),
+            "theme" => self.choose_theme(rest.trim()),
             "group" => match Grouping::parse(rest) {
                 Some(grouping) => self.set_group(grouping),
                 None => self.fail(format!(
@@ -885,6 +887,30 @@ impl App {
         self.config.palette = colors;
         self.status = format!("palette {name} · keep it: palette = \"{name}\" in tui.lua");
         self.telemetry.record("action", format!("palette {name}"));
+    }
+
+    /// `:theme <name>`. Swaps sbt's own surfaces -- border, header, cursor row,
+    /// hints -- for another preset. Deliberately does NOT touch `palette`: that
+    /// is what `auto` hands out when painting a column, a separate choice that
+    /// a theme switch should not silently redecide.
+    ///
+    /// In-memory only, like `:palette`. Any `theme = { ... }` surface overrides
+    /// from tui.lua are part of the resolved theme this replaces, so they drop
+    /// until the next reload -- which is why the status line names the file.
+    fn choose_theme(&mut self, name: &str) {
+        let Some((_, theme)) = self.config.themes.iter().find(|(known, _)| known == name) else {
+            let names: Vec<&str> = self
+                .config
+                .themes
+                .iter()
+                .map(|(known, _)| known.as_str())
+                .collect();
+            self.fail(format!("theme: one of {}", names.join(", ")));
+            return;
+        };
+        self.config.theme = theme.clone();
+        self.status = format!("theme {name} · keep it: theme = \"{name}\" in tui.lua");
+        self.telemetry.record("action", format!("theme {name}"));
     }
 
     fn file_report(&mut self, kind: ReportKind, intent: &str) {

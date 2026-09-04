@@ -356,6 +356,10 @@ pub struct Config {
     pub palette: Vec<String>,
     /// The presets `:palette <name>` and `palette = "<name>"` choose from.
     pub palettes: Vec<(String, Vec<String>)>,
+    /// The presets `:theme <name>` and `theme = "<name>"` choose from, resolved
+    /// at load so switching is a lookup. Sorted, because the failure message
+    /// lists them and an unstable order would make it unreadable.
+    pub themes: Vec<(String, Theme)>,
     /// Where `:bug` and `:idea` file: sbt's own repo, not the one being browsed.
     /// `None` files into the current repo.
     pub report_repo: Option<PathBuf>,
@@ -551,30 +555,25 @@ impl RawConfig {
         };
         raw_styles.extend(self.theme);
         raw_columns.extend(self.theme_columns);
-        let mut styles = HashMap::new();
-        for (name, raw) in raw_styles {
-            match Surface::parse(&name) {
-                Some(surface) => {
-                    styles.insert(surface, raw.into_style(&name, &mut warnings));
-                }
-                None => warnings.push(format!("unknown theme surface '{name}'")),
-            }
-        }
-        let mut theme_columns = HashMap::new();
-        for (column_name, surface_name) in raw_columns {
-            match (Column::parse(&column_name), Surface::parse(&surface_name)) {
-                (Some(column), Some(surface)) => {
-                    theme_columns.insert(column, surface);
-                }
-                _ => warnings.push(format!(
-                    "theme.columns: '{column_name} = {surface_name}' names no column or surface"
-                )),
-            }
-        }
-        let theme = Theme {
-            styles,
-            columns: theme_columns,
-        };
+
+        // Every preset is resolved, not just the selected one, so `:theme` can
+        // switch by lookup and a broken user preset is reported at load rather
+        // than the first time it is picked. `palettes` already validates all of
+        // its entries this way; a theme that only warned once chosen would be
+        // the odd one out.
+        let mut themes: Vec<(String, Theme)> = self
+            .themes
+            .iter()
+            .map(|(name, (styles, columns))| {
+                (
+                    name.clone(),
+                    resolve_theme(styles.clone(), columns.clone(), &mut warnings),
+                )
+            })
+            .collect();
+        themes.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+        let theme = resolve_theme(raw_styles, raw_columns, &mut warnings);
         let mut glyphs: HashMap<Column, HashMap<String, String>> = HashMap::new();
         for (column_name, map) in self.glyphs {
             match Column::parse(&column_name) {
@@ -628,6 +627,7 @@ impl RawConfig {
             glyphs,
             palette,
             palettes,
+            themes,
             report_repo,
             work_period_ms: self.work_period_ms.unwrap_or(DEFAULT_WORK_PERIOD_MS),
             work_frames: self.work_frames.unwrap_or(DEFAULT_WORK_FRAMES).max(1),
@@ -674,6 +674,36 @@ fn named_string_lists(table: &Table, key: &str) -> mlua::Result<Vec<(String, Vec
     }
     out.sort();
     Ok(out)
+}
+
+/// Turns one preset's raw surface/column tables into a `Theme`. Shared by config
+/// load and `:theme` so a preset can never resolve two different ways.
+fn resolve_theme(
+    raw_styles: HashMap<String, RawStyle>,
+    raw_columns: HashMap<String, String>,
+    warnings: &mut Vec<String>,
+) -> Theme {
+    let mut styles = HashMap::new();
+    for (name, raw) in raw_styles {
+        match Surface::parse(&name) {
+            Some(surface) => {
+                styles.insert(surface, raw.into_style(&name, warnings));
+            }
+            None => warnings.push(format!("unknown theme surface '{name}'")),
+        }
+    }
+    let mut columns = HashMap::new();
+    for (column_name, surface_name) in raw_columns {
+        match (Column::parse(&column_name), Surface::parse(&surface_name)) {
+            (Some(column), Some(surface)) => {
+                columns.insert(column, surface);
+            }
+            _ => warnings.push(format!(
+                "theme.columns: '{column_name} = {surface_name}' names no column or surface"
+            )),
+        }
+    }
+    Theme { styles, columns }
 }
 
 /// `theme = { surface = "color" | { fg=, bg=, bold= ... }, columns = { id = "label" } }`.
