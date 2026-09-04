@@ -1,9 +1,10 @@
 ---
 id: TASK-142
 title: 'sbt idea: organize by goal'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-03 21:34'
+updated_date: '2026-09-04 00:32'
 labels:
   - tui
   - idea
@@ -110,3 +111,9 @@ action command (0.0ms)
 <!-- AC:BEGIN -->
 - [ ] #1 Reporter confirms the behaviour in sbt matches what they were trying to do
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-09-04 shipped on feat/tui-goal-column: sbt gains a goal column. Membership derives from goals.yml (scope = project or label, attached tasks, attached projects) through one core predicate GoalDef::counts_task that the Digest actuals now also use. In sbt: :group goal sections tasks under each goal with this week's actual/target unit and pace in the heading (goals.yml order, no goal last); goal:<name> and goal:!<name> filter; the goal column shows via c or the column picker and paints as a link surface; the digit column menu offers Group on it. E2E tests in crates/switchbard-tui/tests/goal.rs (group headings, filter, column cell). Installed via mise run tui-install. AC1 waits on the reporter driving it in sbt.
+<!-- SECTION:NOTES:END -->
