@@ -281,7 +281,6 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Action::Columns,
         Action::Paint,
         Action::Ball,
-        Action::Goal,
         Action::Group,
         Action::Settings,
         Action::Rank,
@@ -409,7 +408,7 @@ fn browse_footer(app: &App) -> Line<'static> {
         ));
         spans.push(Span::styled("o", theme.style(Surface::Keys)));
         spans.push(Span::styled(
-            " groups by project  ",
+            " organizes by project or goal  ",
             theme.style(Surface::Hint),
         ));
     }
@@ -597,6 +596,7 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::ColumnActions(column) => column.name().to_string(),
         PickerPurpose::Settings => "settings".to_string(),
         PickerPurpose::Goals(id) => format!("{id} · goals"),
+        PickerPurpose::Organize => "organize by".to_string(),
     };
     if picker.typed.is_empty() {
         format!(" {subject} ")

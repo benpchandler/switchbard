@@ -4,14 +4,14 @@
 return {
   -- key -> action. Keys: single chars, "enter", "esc", "tab", "up", "down",
   -- "ctrl-<char>". Actions: down, up, top, bottom, page_down, page_up, open,
-  -- back, filter, filter_column, sort_column, columns, paint, ball, goal, view, command, reload, help, quit.
+  -- back, filter, filter_column, sort_column, columns, paint, ball, group, task, settings, view, command, reload, help, quit.
   keys = {
     j = "down", k = "up", down = "down", up = "up",
     g = "top", G = "bottom",
     ["ctrl-d"] = "page_down", ["ctrl-u"] = "page_up",
     enter = "open", esc = "back",
     ["/"] = "filter", f = "filter_column", s = "sort_column", [":"] = "command",
-    c = "columns", p = "paint", b = "ball", a = "goal", o = "group", t = "rank", v = "view", [","] = "settings", r = "reload", ["?"] = "help", q = "quit",
+    c = "columns", p = "paint", b = "ball", o = "group", t = "task", v = "view", [","] = "settings", r = "reload", ["?"] = "help", q = "quit",
   },
 
   -- Colors: ANSI names (cyan, gray, darkgray, ...) follow your terminal palette;

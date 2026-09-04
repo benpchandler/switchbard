@@ -45,8 +45,10 @@ pub enum PickerPurpose {
     ColumnActions(Column),
     /// `,`: standing preferences under every view.
     Settings,
-    /// `a`: the repo's goals, marked where the named task is attached; picking toggles.
+    /// `tg`: the repo's goals, marked where the named task is attached; picking toggles.
     Goals(String),
+    /// `o`: what to organize the list by; the current choice is marked.
+    Organize,
 }
 
 /// What a column's menu offers; each row is one of these on a letter.
@@ -99,6 +101,8 @@ pub enum Payload {
     Order(Order),
     /// Sort: clear the sort.
     NoSort,
+    /// Organize: flatten the list.
+    NoGroup,
     /// Color: clear the rule on this target.
     NoColor,
     /// Paint: one color per value of the column being painted.
@@ -272,5 +276,8 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::ColumnActions(_) => "letter picks · esc",
         PickerPurpose::Settings => "number or name toggles for this repo · g every repo · esc",
         PickerPurpose::Goals(_) => "number or name attaches or detaches · esc",
+        PickerPurpose::Organize => {
+            "number or name organizes · the current one again flattens · x off · esc"
+        }
     }
 }

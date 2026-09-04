@@ -28,11 +28,11 @@ fn grouped_harness() -> Harness {
 #[test]
 fn flat_view_hints_at_grouping_only_when_there_are_projects_to_group() {
     let mut h = Harness::new();
-    assert!(!h.render().contains("o groups by project"));
+    assert!(!h.render().contains("o organizes by project or goal"));
     let mut h = grouped_harness();
     let screen = h.render();
     assert!(
-        screen.contains("2 projects · o groups by project"),
+        screen.contains("2 projects · o organizes by project or goal"),
         "{screen}"
     );
 }
@@ -41,6 +41,13 @@ fn flat_view_hints_at_grouping_only_when_there_are_projects_to_group() {
 fn o_sections_by_project_in_rank_order_with_status_and_progress() {
     let mut h = grouped_harness();
     let screen = h.press(KeyCode::Char('o'));
+    assert!(screen.contains(" organize by "), "{screen}");
+    assert!(
+        screen.contains("1   project") && screen.contains("2   goal"),
+        "{screen}"
+    );
+    assert!(screen.contains("x   off"), "{screen}");
+    let screen = h.press(KeyCode::Char('1'));
     assert_eq!(
         screen_rows(&h),
         [
@@ -58,9 +65,24 @@ fn o_sections_by_project_in_rank_order_with_status_and_progress() {
     );
     assert!(screen.contains("group:project · Lenders"), "{screen}");
     assert!(screen.contains("Chase · In Progress · 1/3"), "{screen}");
-    assert_eq!(h.app.status, "grouped by project · o flattens");
-    let screen = h.press(KeyCode::Char('o'));
-    assert!(!screen.contains("Chase · In Progress"), "{screen}");
+    assert_eq!(h.app.status, "organized by project · o changes it");
+    h.press(KeyCode::Char('o'));
+    assert!(
+        h.render().contains("✓project"),
+        "the current choice is marked"
+    );
+    let screen = h.press(KeyCode::Char('1'));
+    assert!(
+        !screen.contains("Chase · In Progress"),
+        "picking the current choice flattens: {screen}"
+    );
+    assert_eq!(h.app.status, "flat list");
+    h.press(KeyCode::Char('o'));
+    h.press(KeyCode::Char('2'));
+    assert_eq!(h.app.status, "organized by goal · o changes it");
+    h.press(KeyCode::Char('o'));
+    let screen = h.press(KeyCode::Char('x'));
+    assert!(!screen.contains("# no goal"), "x flattens: {screen}");
     assert_eq!(visible_titles(&h).len(), 7);
 }
 
@@ -68,6 +90,7 @@ fn o_sections_by_project_in_rank_order_with_status_and_progress() {
 fn cursor_skips_headings_and_lands_on_tasks() {
     let mut h = grouped_harness();
     h.press(KeyCode::Char('o'));
+    h.press(KeyCode::Char('1'));
     assert_eq!(
         h.selected_title(),
         "Fix login redirect loop",
@@ -91,6 +114,7 @@ fn cursor_skips_headings_and_lands_on_tasks() {
 fn grouping_composes_with_filter_and_sort_and_omits_empty_sections() {
     let mut h = grouped_harness();
     h.press(KeyCode::Char('o'));
+    h.press(KeyCode::Char('1'));
     h.press(KeyCode::Char('/'));
     h.type_text("status:todo");
     h.press(KeyCode::Enter);
@@ -131,6 +155,7 @@ fn grouping_composes_with_filter_and_sort_and_omits_empty_sections() {
 fn a_sub_issue_stays_under_its_parent_even_when_sort_would_split_them() {
     let mut h = grouped_harness();
     h.press(KeyCode::Char('o'));
+    h.press(KeyCode::Char('1'));
     h.press(KeyCode::Char('s'));
     h.press(KeyCode::Char('4'));
     h.press(KeyCode::Char('1'));
@@ -191,6 +216,7 @@ fn group_by_another_column_and_the_command_form_and_saved_views() {
 fn headings_use_their_own_theme_color_not_the_rows_paint() {
     let mut h = grouped_harness();
     h.press(KeyCode::Char('o'));
+    h.press(KeyCode::Char('1'));
     h.press(KeyCode::Char('/'));
     h.press(KeyCode::Esc);
     h.press(KeyCode::Char(':'));
@@ -220,6 +246,7 @@ fn a_surface_can_be_reshaded_as_a_table_with_bg_and_modifiers() {
     .unwrap();
     h.app.tick();
     h.press(KeyCode::Char('o'));
+    h.press(KeyCode::Char('1'));
     h.render();
     let buffer = h.terminal.backend().buffer();
     let width = buffer.area.width as usize;
@@ -251,6 +278,7 @@ fn a_theme_preset_is_one_line_and_overrides_layer_on_it() {
     std::fs::write(&h.config_path, "return { theme = \"bloomberg\" }").unwrap();
     h.app.tick();
     h.press(KeyCode::Char('o'));
+    h.press(KeyCode::Char('1'));
     h.render();
     assert_eq!(
         cell_fg(&h, "▸ Chase"),
