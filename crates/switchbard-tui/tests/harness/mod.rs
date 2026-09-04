@@ -203,6 +203,19 @@ pub fn cell_fg(h: &Harness, needle: &str) -> Option<ratatui::style::Color> {
     None
 }
 
+pub fn cell_bg(h: &Harness, needle: &str) -> Option<ratatui::style::Color> {
+    let buffer = h.terminal.backend().buffer();
+    let width = buffer.area.width as usize;
+    for (row, cells) in buffer.content.chunks(width).enumerate() {
+        let line: String = cells.iter().map(|cell| cell.symbol()).collect();
+        if let Some(col) = line.find(needle) {
+            let col = line[..col].chars().count();
+            return Some(buffer.content[row * width + col].bg);
+        }
+    }
+    None
+}
+
 pub fn header_line(screen: &str) -> String {
     screen
         .lines()

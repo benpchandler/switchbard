@@ -43,7 +43,7 @@ return {
       hint       = { fg = "#9e9e9e" },
       status     = { fg = "#d7d7d7" },
       accent     = { fg = "#4dc7f9" },
-      working    = { fg = "#4af6c3", bold = true },  -- mint: the one live thing on the board
+      working    = { bg = "#1e3d36", bold = true },  -- dark mint band: the one live thing on the board
       columns    = { id = "label", project = "link", goal = "link" },
     },
     -- Bloomberg data screen: amber identity chip and labels over white data.
@@ -62,7 +62,7 @@ return {
       hint       = { fg = "#8b949e" },
       status     = { fg = "#ffcc00" },
       accent     = { fg = "#ffcc00" },
-      working    = { fg = "#2ea043", bold = true },
+      working    = { bg = "#1b3a2a", bold = true },
       columns    = { id = "label", project = "link", goal = "link" },
     },
     -- Darkroom: for a dark room with the display at its lowest usable backlight.
@@ -89,7 +89,7 @@ return {
       hint       = { fg = "#72675A" },
       status     = { fg = "#A0927F" },
       accent     = { fg = "#C09348" },
-      working    = { fg = "#4E908E", bold = true },  -- teal, the only cool accent
+      working    = { bg = "#26383A", bold = true },  -- teal band, the only cool fill
       columns    = { id = "label", project = "link", goal = "link" },
     },
     -- Your terminal's own colors, nothing forced.
@@ -101,14 +101,15 @@ return {
       hint       = { fg = "gray" },
       chip       = { reverse = true },
       keys       = { bold = true },
-      working    = { bold = true, italic = true },
+      working    = { bold = true, underline = true },
     },
   },
 
-  -- Rows a live agent session is working (`sb work claim`) blink between the
-  -- `working` surface and plain every blink_ms; 0 keeps them lit. The `work`
-  -- column (`c`) shows one ● per session; `w` passes the task and ends its claims.
-  work = { blink_ms = 600 },
+  -- Rows a live agent session is working (`sb work claim`) flash like a
+  -- lighthouse: lit with the `working` surface for flash_ms at the start of
+  -- every period_ms, plain the rest of it; 0 for either keeps them lit. The
+  -- `work` column (`c`) shows one ● per session; `w` passes the task.
+  work = { flash_ms = 500, period_ms = 3000 },
 
   -- What painting a column "auto" hands out, most common value first: keep the
   -- first color quiet so the common case stays calm and the rest stand out. Pick a preset by

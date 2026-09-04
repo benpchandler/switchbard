@@ -12,7 +12,9 @@ use ratatui::style::{Color, Modifier, Style};
 use crate::columns::Column;
 
 const DEFAULT_LUA: &str = include_str!("default.lua");
-const DEFAULT_WORK_BLINK_MS: u64 = 600;
+/// Lighthouse cadence: a short flash, then dark for the rest of the period.
+const DEFAULT_WORK_FLASH_MS: u64 = 500;
+const DEFAULT_WORK_PERIOD_MS: u64 = 3000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -314,8 +316,10 @@ pub struct Config {
     /// Where `:bug` and `:idea` file: sbt's own repo, not the one being browsed.
     /// `None` files into the current repo.
     pub report_repo: Option<PathBuf>,
+    /// How long a working row stays lit each period; 0 keeps it lit steadily.
+    pub work_flash_ms: u64,
     /// The working-row blink period; 0 keeps the row lit steadily.
-    pub work_blink_ms: u64,
+    pub work_period_ms: u64,
     pub warnings: Vec<String>,
 }
 
@@ -376,6 +380,15 @@ pub fn load(user_path: Option<&Path>) -> Config {
     raw.into_config(warnings)
 }
 
+/// `work = { <key> = <ms> }`, absent when the table or key is missing.
+fn work_setting(table: &Table, key: &str) -> Option<u64> {
+    table
+        .get::<Option<Table>>("work")
+        .ok()
+        .flatten()
+        .and_then(|work| work.get::<Option<u64>>(key).ok().flatten())
+}
+
 #[derive(Default)]
 struct RawConfig {
     keys: HashMap<String, String>,
@@ -389,7 +402,8 @@ struct RawConfig {
     palette: Vec<String>,
     palette_name: Option<String>,
     report_repo: Option<String>,
-    work_blink_ms: Option<u64>,
+    work_flash_ms: Option<u64>,
+    work_period_ms: Option<u64>,
     palettes: Vec<(String, Vec<String>)>,
 }
 
@@ -407,11 +421,8 @@ impl RawConfig {
             palette: string_list(&table, "palette")?,
             palette_name: table.get::<Option<String>>("palette").ok().flatten(),
             report_repo: table.get::<Option<String>>("report_repo").ok().flatten(),
-            work_blink_ms: table
-                .get::<Option<Table>>("work")
-                .ok()
-                .flatten()
-                .and_then(|work| work.get::<Option<u64>>("blink_ms").ok().flatten()),
+            work_flash_ms: work_setting(&table, "flash_ms"),
+            work_period_ms: work_setting(&table, "period_ms"),
             palettes: named_string_lists(&table, "palettes")?,
         })
     }
@@ -439,8 +450,11 @@ impl RawConfig {
         if over.report_repo.is_some() {
             self.report_repo = over.report_repo;
         }
-        if over.work_blink_ms.is_some() {
-            self.work_blink_ms = over.work_blink_ms;
+        if over.work_flash_ms.is_some() {
+            self.work_flash_ms = over.work_flash_ms;
+        }
+        if over.work_period_ms.is_some() {
+            self.work_period_ms = over.work_period_ms;
         }
         for (name, colors) in over.palettes {
             self.palettes.retain(|(known, _)| *known != name);
@@ -557,7 +571,8 @@ impl RawConfig {
             palette,
             palettes,
             report_repo,
-            work_blink_ms: self.work_blink_ms.unwrap_or(DEFAULT_WORK_BLINK_MS),
+            work_flash_ms: self.work_flash_ms.unwrap_or(DEFAULT_WORK_FLASH_MS),
+            work_period_ms: self.work_period_ms.unwrap_or(DEFAULT_WORK_PERIOD_MS),
             warnings,
         }
     }

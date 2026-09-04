@@ -113,16 +113,18 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             ),
             Row::Task(index) => {
                 let task = &app.tasks()[*index];
+                // The flash sits on top of the cursor band: it is momentary,
+                // and the cursor is back the rest of the period.
                 let working = !app.working(task).is_empty() && app.work_lit();
-                if working {
-                    frame.render_widget(
-                        Paragraph::new("").style(theme.style(Surface::Working)),
-                        row_area,
-                    );
-                }
                 if selected {
                     frame.render_widget(
                         Paragraph::new("").style(theme.style(Surface::Selected)),
+                        row_area,
+                    );
+                }
+                if working {
+                    frame.render_widget(
+                        Paragraph::new("").style(theme.style(Surface::Working)),
                         row_area,
                     );
                 }
@@ -139,11 +141,11 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     {
                         style = style.fg(color);
                     }
-                    if working {
-                        style = style.patch(theme.style(Surface::Working));
-                    }
                     if selected {
                         style = style.patch(theme.style(Surface::Selected));
+                    }
+                    if working {
+                        style = style.patch(theme.style(Surface::Working));
                     }
                     frame.render_widget(
                         Paragraph::new(text).style(style),

@@ -309,22 +309,38 @@ impl App {
             .count()
     }
 
-    /// Whether a working row wears its surface this frame: the lit half of
-    /// the blink, or always when the period is 0.
+    /// Whether a working row wears its surface this frame: the flash at the
+    /// start of each period, like a lighthouse; always when either is 0.
     pub fn work_lit(&self) -> bool {
-        let period = self.config.work_blink_ms;
-        period == 0 || (self.opened.elapsed().as_millis() / u128::from(period)).is_multiple_of(2)
+        let (flash, period) = self.work_cadence();
+        flash == 0 || period == 0 || self.opened.elapsed().as_millis() % period < flash
     }
 
-    /// Time for the next redraw so a working row keeps blinking while idle.
+    /// Time for the next redraw so a working row keeps flashing while idle:
+    /// the end of the flash if lit, else the start of the next one.
     pub fn next_blink(&self) -> Option<Duration> {
-        let period = self.config.work_blink_ms;
-        if period == 0 || self.working_sessions() == 0 {
+        let (flash, period) = self.work_cadence();
+        if flash == 0 || period == 0 || self.working_sessions() == 0 {
             return None;
         }
-        let elapsed = self.opened.elapsed().as_millis();
-        let remaining = u128::from(period) - elapsed % u128::from(period);
+        let phase = self.opened.elapsed().as_millis() % period;
+        let remaining = if phase < flash {
+            flash - phase
+        } else {
+            period - phase
+        };
         Some(Duration::from_millis(remaining as u64))
+    }
+
+    /// `(flash, period)` in ms; a flash longer than its period is steady light.
+    fn work_cadence(&self) -> (u128, u128) {
+        let flash = u128::from(self.config.work_flash_ms);
+        let period = u128::from(self.config.work_period_ms);
+        if flash >= period {
+            (0, 0)
+        } else {
+            (flash, period)
+        }
     }
 
     /// `w`: the owner passes the selected task; every session's claim on it ends.
