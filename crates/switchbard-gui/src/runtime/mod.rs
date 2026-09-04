@@ -391,8 +391,33 @@ pub enum TasksReadState {
     /// A user-requested refresh is running. Existing rows remain readable.
     Refreshing,
     /// At least one task source failed to load during the last scan. Any
-    /// previously cached rows for failed sources remain readable.
-    Stale { failed_repos: usize },
+    /// previously cached rows for failed sources remain readable, but they
+    /// are cached-only: a write against them would edit a file the model can
+    /// no longer see, so `blocks_writes_to` refuses it until a scan
+    /// succeeds (TASK-127 AC4).
+    Stale { failed_roots: BTreeSet<PathBuf> },
+}
+
+impl TasksReadState {
+    /// True when `root`'s last-known rows are cached-only because its most
+    /// recent read failed. Roots that read cleanly stay writable even while
+    /// a sibling source is stale.
+    pub fn blocks_writes_to(&self, root: &Path) -> bool {
+        match self {
+            TasksReadState::Stale { failed_roots } => failed_roots.contains(root),
+            TasksReadState::InitialLoading | TasksReadState::Ready | TasksReadState::Refreshing => {
+                false
+            }
+        }
+    }
+
+    /// Number of task sources whose last read failed; zero outside `Stale`.
+    pub fn failed_source_count(&self) -> usize {
+        match self {
+            TasksReadState::Stale { failed_roots } => failed_roots.len(),
+            _ => 0,
+        }
+    }
 }
 
 /// One in-flight board drag-drop, keyed by the moved task (task-42: "Board

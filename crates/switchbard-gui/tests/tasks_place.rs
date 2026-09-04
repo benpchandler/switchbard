@@ -158,13 +158,15 @@ fn cold_task_model_shows_loading_instead_of_a_false_empty_result() {
 #[test]
 fn stale_task_model_keeps_last_known_rows_visible() {
     let app = tasks_app(vec![task("TASK-1", "Last-known task", "To Do")]);
-    *app.tasks_read_state.lock().unwrap() = TasksReadState::Stale { failed_repos: 1 };
+    *app.tasks_read_state.lock().unwrap() = TasksReadState::Stale {
+        failed_roots: std::collections::BTreeSet::from([PathBuf::from(REPO_PATH)]),
+    };
     let harness = harness(app);
 
     assert!(harness.query_by_label("Last-known task").is_some());
     assert!(harness.query_by_label("Task data stale").is_some());
     assert!(harness
-        .query_by_label("1 task source could not be refreshed. Showing last-known rows.")
+        .query_by_label("1 task source could not be refreshed. Showing last-known rows; edits to that source are disabled until a refresh succeeds.")
         .is_some());
 }
 

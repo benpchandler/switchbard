@@ -506,8 +506,71 @@ pub(crate) struct Pending {
     pub expedite_set: Option<(PathBuf, String, bool)>,
 }
 
-pub(crate) fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, pending: Pending) {
+impl Pending {
+    /// TASK-127 AC4: drop every task write aimed at a source whose last read
+    /// failed, before anything is spawned. Each dropped intent is explained
+    /// once on the status line by `refuse_stale_source_write`; intents
+    /// against sources that read cleanly survive untouched, so one broken
+    /// repo never freezes the others.
+    fn retain_writable(&mut self, app: &HiveApp) {
+        use crate::ui::tasks_read_state::refuse_stale_source_write as refuse;
+        fn keep<T>(slot: &mut Option<T>, blocked: impl FnOnce(&T) -> bool) {
+            if slot.as_ref().is_some_and(blocked) {
+                *slot = None;
+            }
+        }
+        keep(&mut self.save, |(root, id, _)| refuse(app, root, id));
+        self.bulk_save.retain(|(root, ids, _, label)| {
+            !refuse(app, root, &format!("{label} ({} tasks)", ids.len()))
+        });
+        keep(&mut self.toggle_ac, |(root, id, _, _)| {
+            refuse(app, root, id)
+        });
+        keep(&mut self.toggle_dod, |(root, id, _, _)| {
+            refuse(app, root, id)
+        });
+        keep(&mut self.append_note, |(root, id, _)| refuse(app, root, id));
+        keep(&mut self.create, |(root, _)| {
+            refuse(app, root, "create task")
+        });
+        keep(&mut self.archive, |(root, id)| refuse(app, root, id));
+        keep(&mut self.complete, |(root, id)| refuse(app, root, id));
+        keep(&mut self.refine, |(root, id)| refuse(app, root, id));
+        keep(&mut self.dispatch_toggle, |(root, id, _)| {
+            refuse(app, root, id)
+        });
+        keep(&mut self.goal_checkin, |(root, name, _, _)| {
+            refuse(app, root, name)
+        });
+        keep(&mut self.goal_create, |(root, _)| {
+            refuse(app, root, "create goal")
+        });
+        if let Some(per_project) = &mut self.cleanup {
+            per_project.retain(|(root, _)| !refuse(app, root, "clean up old tasks"));
+        }
+        if let Some(batch) = &mut self.bulk_clear {
+            batch
+                .archive
+                .retain(|(root, _)| !refuse(app, root, "clear board"));
+            batch
+                .complete
+                .retain(|(root, _)| !refuse(app, root, "clear board"));
+        }
+        keep(&mut self.rank_move_task, |(root, id, _)| {
+            refuse(app, root, id)
+        });
+        keep(&mut self.rank_move_project, |(root, name, _)| {
+            refuse(app, root, name)
+        });
+        keep(&mut self.expedite_set, |(root, id, _)| {
+            refuse(app, root, id)
+        });
+    }
+}
+
+pub(crate) fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, mut pending: Pending) {
     let ctx = &ui.ctx().clone();
+    pending.retain_writable(app);
     if let Some((project_root, task_id, patch)) = pending.save {
         app.spawn_backlog_save(project_root, task_id, patch, ctx);
     }

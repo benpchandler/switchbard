@@ -4138,3 +4138,93 @@ fn a_drop_onto_a_column_this_repo_lacks_is_refused_and_offers_the_fix() {
     assert_eq!(blocked.task_id, "TASK-1");
     assert_eq!(blocked.target_status, "Icebox");
 }
+
+// ─── TASK-127 AC4: no mutation against stale cached-only rows ───────────
+//
+// When a task source's last read failed, its rows are still shown (last-
+// known, honestly labelled) but every write intent against that source is
+// refused at the `apply_pending` funnel or the Board drop path, with a
+// status-line explanation instead of a spawned edit. Sources that read
+// cleanly stay writable in the same frame.
+
+fn stale_for(harness: &mut Harness<'static, HiveApp>, roots: &[&str]) {
+    *harness.state_mut().tasks_read_state.lock().unwrap() =
+        switchbard_gui::runtime::TasksReadState::Stale {
+            failed_roots: roots.iter().map(PathBuf::from).collect(),
+        };
+    harness.run();
+}
+
+#[test]
+fn stale_source_refuses_an_acceptance_criterion_toggle() {
+    let mut harness = detail_harness_on(detail_task_with_checklists());
+    stale_for(&mut harness, &[REPO_PATH]);
+    harness.get_by_label("#1 Criterion one").click_accesskit();
+    harness.run();
+    assert_eq!(
+        harness.state().backlog_status.snapshot().as_deref(),
+        Some("TASK-1: edits disabled while its task source is stale; retry the refresh first"),
+        "a stale source must refuse the write instead of spawning it"
+    );
+    assert!(
+        harness.query_by_label("#1 Criterion one").is_some(),
+        "last-known rows stay readable while writes are refused"
+    );
+}
+
+#[test]
+fn stale_source_refuses_a_board_drag() {
+    let mut harness = list_harness_with_tasks(vec![
+        task("TASK-1", "Other card", "To Do"),
+        task("TASK-2", "Draggable card", "To Do"),
+    ]);
+    harness.state_mut().backlog_view.lens = BacklogLens::Board;
+    harness.state_mut().tasks_place.view_mode = TasksViewMode::Board;
+    harness.state_mut().backlog_view.sort_key = BacklogTaskSortKey::Task;
+    stale_for(&mut harness, &[REPO_PATH]);
+
+    let center = |harness: &Harness<'_, HiveApp>, label: &str, dy: f32| {
+        let b = harness
+            .get_by_label(label)
+            .accesskit_node()
+            .raw_bounds()
+            .expect("node should have bounds");
+        let y = if dy == 0.0 {
+            ((b.y0 + b.y1) / 2.0) as f32
+        } else {
+            b.y1 as f32 + dy
+        };
+        egui::Pos2::new(((b.x0 + b.x1) / 2.0) as f32, y)
+    };
+    let source = center(&harness, "Draggable card", 0.0);
+    let target = center(&harness, "In Progress", 80.0);
+    drag_and_drop(&mut harness, source, target);
+
+    assert_eq!(
+        harness.state().backlog_status.snapshot().as_deref(),
+        Some("TASK-2: edits disabled while its task source is stale; retry the refresh first"),
+        "a Board drop on a stale source must be refused before any pending move is stamped"
+    );
+    assert!(
+        harness.state().backlog_view.pending_moves.is_empty(),
+        "no optimistic move may be queued against cached-only rows"
+    );
+}
+
+#[test]
+fn clean_sibling_source_stays_writable_while_another_is_stale() {
+    let mut harness = detail_harness_on(detail_task_with_checklists());
+    stale_for(&mut harness, &["/tmp/switchbard-ui-test/some-other-repo"]);
+    harness.get_by_label("#1 Criterion one").click_accesskit();
+    harness.run();
+    assert_action_status(
+        &harness,
+        "updating TASK-1 AC #1",
+        &[
+            "checked TASK-1 AC #1",
+            "unchecked TASK-1 AC #1",
+            "update TASK-1 AC #1 failed",
+        ],
+        "a stale sibling source must not freeze writes to a source that read cleanly",
+    );
+}
