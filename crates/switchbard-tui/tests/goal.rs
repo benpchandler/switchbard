@@ -47,7 +47,7 @@ fn group_goal_sections_tasks_by_the_goal_they_feed_with_this_weeks_progress() {
     assert_eq!(rows[4], "Write onboarding guide", "{rows:?}");
     assert_eq!(rows[5], "# no goal", "{rows:?}");
     assert!(screen.contains("group:goal"), "{screen}");
-    assert_eq!(h.app.status, "grouped by goal · o flattens");
+    assert_eq!(h.app.status, "organized by goal · o changes it");
 }
 
 #[test]
@@ -113,11 +113,12 @@ fn goal_column_shows_the_goal_name_and_is_empty_for_tasks_outside_every_goal() {
 // ─── linking the selected task to a goal ───────────────────────────────
 
 #[test]
-fn a_opens_the_goal_panel_and_a_pick_attaches_then_detaches_the_selected_task() {
+fn tg_opens_the_goal_panel_and_a_pick_attaches_then_detaches_the_selected_task() {
     let mut h = goal_harness();
     // The default sort puts "Fix login redirect loop" (TASK-1, no goal) first.
     assert_eq!(h.selected_title(), "Fix login redirect loop");
-    let screen = h.press(KeyCode::Char('a'));
+    h.press(KeyCode::Char('t'));
+    let screen = h.press(KeyCode::Char('g'));
     assert!(screen.contains("TASK-1 · goals"), "{screen}");
     assert!(
         screen.contains(" lenders-live") && screen.contains(" docs-shipped"),
@@ -163,7 +164,8 @@ fn goal_panel_marks_tasks_already_in_scope_without_an_attachment() {
     h.type_text("Chase portal");
     h.press(KeyCode::Enter);
     assert_eq!(h.selected_title(), "Chase portal login");
-    let screen = h.press(KeyCode::Char('a'));
+    h.press(KeyCode::Char('t'));
+    let screen = h.press(KeyCode::Char('g'));
     assert!(
         screen.contains("·lenders-live"),
         "scope membership shows as implied, not attached: {screen}"
@@ -187,8 +189,8 @@ fn goal_command_attaches_by_name_and_names_the_goals_on_a_miss() {
 }
 
 #[test]
-fn help_lists_the_goal_key() {
+fn help_lists_the_task_chord_key() {
     let mut h = goal_harness();
     let screen = h.press(KeyCode::Char('?'));
-    assert!(screen.contains("a       goal"), "{screen}");
+    assert!(screen.contains("t       task"), "{screen}");
 }

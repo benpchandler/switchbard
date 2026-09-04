@@ -282,7 +282,7 @@ impl App {
 
     /// After `t`: digits accumulate in `input` (two digits once the list is long
     /// enough that a second could follow), Enter commits, `t` appends, `d` drops,
-    /// `p` pins or unpins the section.
+    /// `p` pins or unpins the section, `g` opens the goal panel.
     fn handle_rank_chord_key(&mut self, event: KeyEvent) {
         match event.code {
             KeyCode::Char(digit) if digit.is_ascii_digit() => {
@@ -317,6 +317,11 @@ impl App {
                 self.input.clear();
                 self.mode = Mode::Browse;
                 self.drop_rank()
+            }
+            KeyCode::Char('g') => {
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.open_goal_picker();
             }
             KeyCode::Char('p') => {
                 self.input.clear();
@@ -417,7 +422,38 @@ impl App {
         }
     }
 
-    /// `a`: the repo's goals, ✓ where the selected task is attached. Picking a
+    /// `o`: what to organize the list by. Project and goal lead, the current
+    /// choice is ✓, `x` flattens; picking the current choice flattens too.
+    pub(super) fn open_organize_picker(&mut self) {
+        let leading = [Column::Project, Column::Goal];
+        let rest = Column::groupable_columns()
+            .into_iter()
+            .filter(|column| !leading.contains(column));
+        let columns: Vec<Column> = leading.into_iter().chain(rest).collect();
+        let mut options: Vec<PickOption> = columns
+            .into_iter()
+            .map(|column| {
+                let mark = if self.state.group == Some(column) {
+                    "✓"
+                } else {
+                    " "
+                };
+                PickOption {
+                    label: format!("{mark}{}", column.name()),
+                    count: 0,
+                    key: None,
+                    payload: Payload::Column(column),
+                }
+            })
+            .collect();
+        options.push(PickOption::keyed('x', " off", Payload::NoGroup));
+        self.open_picker(PickerPurpose::Organize, options);
+        self.status.clear();
+        self.telemetry
+            .record("action", "organize_picker".to_string());
+    }
+
+    /// `tg`: the repo's goals, ✓ where the selected task is attached. Picking a
     /// row attaches or detaches through the core write layer and keeps the
     /// panel open, like `,`.
     pub(super) fn open_goal_picker(&mut self) {
@@ -460,7 +496,7 @@ impl App {
         self.telemetry.record("action", "goal_picker".to_string());
     }
 
-    /// `:goal <name>` or a pick in the `a` panel: attach the selected task to the
+    /// `:goal <name>` or a pick in the `tg` panel: attach the selected task to the
     /// goal, or detach it when already attached.
     pub(super) fn toggle_goal_link(&mut self, name: &str) {
         let Some(task) = self.selected_task() else {
@@ -639,21 +675,17 @@ impl App {
             Action::Columns => self.open_columns_picker(),
             Action::Paint => self.open_paint_target_picker(),
             Action::Ball => self.pass_ball(),
-            Action::Goal => self.open_goal_picker(),
             Action::Settings => self.open_settings(),
             Action::Rank => {
                 self.mode = Mode::RankChord;
                 self.input.clear();
                 self.status = format!(
-                    "rank: a number places this task (1 is top, {} last) · t appends · d drops · p {}",
+                    "task: a number ranks it (1 is top, {} last) · t appends · d drops · p {} · g goals",
                     self.top.len() + 1,
                     if self.state.pin_top { "unpins" } else { "pins" }
                 );
             }
-            Action::Group => match self.state.group {
-                Some(_) => self.set_group(None),
-                None => self.set_group(Some(self.last_group)),
-            },
+            Action::Group => self.open_organize_picker(),
             Action::Command => {
                 self.mode = Mode::Command;
                 self.input.clear();
@@ -830,7 +862,7 @@ impl App {
             }
         }
         self.status = match column {
-            Some(column) => format!("grouped by {} · o flattens", column.name()),
+            Some(column) => format!("organized by {} · o changes it", column.name()),
             None => "flat list".to_string(),
         };
         self.telemetry.record(

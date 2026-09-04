@@ -13,7 +13,7 @@ fn t_digit_ranks_the_selected_task_shows_the_rank_column_and_pins_a_top_section(
     assert!(
         h.app
             .status
-            .starts_with("rank: a number places this task (1 is top, 1 last)"),
+            .starts_with("task: a number ranks it (1 is top, 1 last)"),
         "{}",
         h.app.status
     );
@@ -104,6 +104,7 @@ fn tp_unpins_so_ranked_tasks_sit_in_their_own_sections_and_the_view_remembers() 
     h.press(KeyCode::Char('t'));
     h.press(KeyCode::Char('1'));
     h.press(KeyCode::Char('o'));
+    h.press(KeyCode::Char('1'));
     let rows = screen_rows(&h);
     assert_eq!(rows[0], "# top · 1");
     assert_eq!(rows[1], "Chase portal login");

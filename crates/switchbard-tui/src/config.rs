@@ -36,9 +36,8 @@ pub enum Action {
     View,
     Group,
     Settings,
+    /// The task chord: rank digits, `t`/`d`/`p` for the top list, `g` for goals.
     Rank,
-    /// Link the selected task to a goal (or unlink it).
-    Goal,
 }
 
 impl Action {
@@ -65,8 +64,7 @@ impl Action {
             "view" => Action::View,
             "group" => Action::Group,
             "settings" => Action::Settings,
-            "rank" => Action::Rank,
-            "goal" => Action::Goal,
+            "task" | "rank" => Action::Rank,
             _ => return None,
         })
     }
@@ -94,8 +92,7 @@ impl Action {
             Action::View => "view".to_string(),
             Action::Group => "group".to_string(),
             Action::Settings => "settings".to_string(),
-            Action::Rank => "rank".to_string(),
-            Action::Goal => "goal".to_string(),
+            Action::Rank => "task".to_string(),
         }
     }
 }

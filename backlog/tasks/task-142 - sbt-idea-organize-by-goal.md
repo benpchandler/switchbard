@@ -4,7 +4,7 @@ title: 'sbt idea: organize by goal'
 status: In Progress
 assignee: []
 created_date: '2026-09-03 21:34'
-updated_date: '2026-09-04 09:47'
+updated_date: '2026-09-04 09:59'
 labels:
   - tui
   - idea
@@ -118,4 +118,6 @@ action command (0.0ms)
 2026-09-04 shipped on feat/tui-goal-column: sbt gains a goal column. Membership derives from goals.yml (scope = project or label, attached tasks, attached projects) through one core predicate GoalDef::counts_task that the Digest actuals now also use. In sbt: :group goal sections tasks under each goal with this week's actual/target unit and pace in the heading (goals.yml order, no goal last); goal:<name> and goal:!<name> filter; the goal column shows via c or the column picker and paints as a link surface; the digit column menu offers Group on it. E2E tests in crates/switchbard-tui/tests/goal.rs (group headings, filter, column cell). Installed via mise run tui-install. AC1 waits on the reporter driving it in sbt.
 
 2026-09-04 linking from sbt: a opens the goal panel for the selected task (✓ attached, · in scope already, pick toggles attach/detach and keeps the panel open); :goal <name> is the command form; ? lists a. Core change: manual goals now accept inputs as membership links, only tasks-measured goals count them toward the actual (attach_goal_inputs no longer refuses manual goals; core test updated). E2E: four new tests in crates/switchbard-tui/tests/goal.rs. Installed via mise run tui-install. To verify in budget: select a task, press a, pick a goal, then :group goal.
+
+2026-09-04 owner feedback applied: o now opens an organize picker (1 project, 2 goal, then status/priority/ball, x off, current choice ✓ and picking it again flattens); the goal panel moved to the task chord, tg (a binding removed; t action is named task, rank kept as a Lua alias). Nested organize by both is not built: it needs two-level headings and is filed as its own idea only if wanted.
 <!-- SECTION:NOTES:END -->

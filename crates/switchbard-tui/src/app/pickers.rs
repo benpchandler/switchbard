@@ -560,6 +560,14 @@ impl App {
                 // apply_picked_value took the picker; toggle_setting reopens it.
                 self.toggle_setting(&status)
             }
+            (PickerPurpose::Organize, Payload::Column(column)) => {
+                if self.state.group == Some(column) {
+                    self.set_group(None)
+                } else {
+                    self.set_group(Some(column))
+                }
+            }
+            (PickerPurpose::Organize, Payload::NoGroup) => self.set_group(None),
             (PickerPurpose::Goals(_), Payload::Text(name)) => {
                 // Same shape as settings: the panel stays open with fresh marks.
                 self.open_goal_picker();
