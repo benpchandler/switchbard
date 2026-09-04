@@ -5,6 +5,7 @@ use crate::runtime::TasksReadState;
 use crate::ui::components::{status_pill, StatusKind};
 use crate::ui::theme;
 use eframe::egui;
+use std::path::Path;
 
 /// Render a zero-row state without confusing an incomplete or failed read
 /// with an authoritative empty result.
@@ -28,11 +29,11 @@ pub fn render_empty(app: &HiveApp, ui: &mut egui::Ui, heading: &str, state: &Tas
                         .color(theme::muted_text()),
                 );
             }
-            TasksReadState::Stale { failed_repos } => {
+            TasksReadState::Stale { .. } => {
                 centered_status_pill(ui, StatusKind::Warn, "Task data unavailable");
                 ui.add_space(4.0);
                 ui.label(
-                    egui::RichText::new(failure_message(*failed_repos, false))
+                    egui::RichText::new(failure_message(state.failed_source_count(), false))
                         .color(theme::muted_text()),
                 );
                 ui.add_space(8.0);
@@ -83,11 +84,11 @@ pub fn render_retained_rows_notice(ui: &mut egui::Ui, state: &TasksReadState) {
                 );
             });
         }
-        TasksReadState::Stale { failed_repos } => {
+        TasksReadState::Stale { .. } => {
             ui.horizontal_wrapped(|ui| {
                 status_pill(ui, StatusKind::Warn, "Task data stale", None);
                 ui.label(
-                    egui::RichText::new(failure_message(*failed_repos, true))
+                    egui::RichText::new(failure_message(state.failed_source_count(), true))
                         .color(theme::muted_text()),
                 );
             });
@@ -103,8 +104,25 @@ fn failure_message(failed_repos: usize, retained_rows: bool) -> String {
         format!("{failed_repos} task sources")
     };
     if retained_rows {
-        format!("{source} could not be refreshed. Showing last-known rows.")
+        format!(
+            "{source} could not be refreshed. Showing last-known rows; edits to that source are disabled until a refresh succeeds."
+        )
     } else {
         format!("{source} could not be loaded.")
     }
+}
+
+/// The one write gate for the stale read model (TASK-127 AC4). Returns
+/// `true`, and explains the refusal on the backlog status line, when
+/// `root`'s rows are cached-only because its last read failed. Every task
+/// write intent passes through here (`backlog::apply_pending` and the Board
+/// drop path) so no surface can edit a file the model can no longer see.
+pub fn refuse_stale_source_write(app: &HiveApp, root: &Path, subject: &str) -> bool {
+    if !app.tasks_read_state_snapshot().blocks_writes_to(root) {
+        return false;
+    }
+    app.backlog_status.set(format!(
+        "{subject}: edits disabled while its task source is stale; retry the refresh first"
+    ));
+    true
 }

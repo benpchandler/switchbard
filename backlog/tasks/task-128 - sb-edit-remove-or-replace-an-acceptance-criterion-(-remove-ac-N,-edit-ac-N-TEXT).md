@@ -1,10 +1,10 @@
 ---
 id: TASK-128
 title: 'sb edit: remove or replace an acceptance criterion (--remove-ac N, --edit-ac N TEXT)'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-01 22:43'
-updated_date: '2026-09-01 23:02'
+updated_date: '2026-09-04 00:12'
 labels:
   - cli
   - tasks
@@ -28,3 +28,9 @@ Scope: add `--remove-ac <N>` (repeatable; remove by current number, then renumbe
 - [x] #4 Tests in crates/switchbard-task/tests/cli.rs cover remove, edit, renumbering, and the error path
 - [x] #5 cargo test, cargo clippy --all-targets -- -D warnings, and cargo fmt --check pass
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+sb edit gained --edit-ac N TEXT (replace text, keep checked state) and --remove-ac N (repeatable, contiguous renumber), applied edits then removals then appends so numbers refer to pre-command numbering; out-of-range N exits 1 with one stderr line naming the valid range and leaves the file untouched. Covered in crates/switchbard-task/tests/cli.rs; the switchbard SKILL.md mirror lists both flags. Merged to main.
+<!-- SECTION:FINAL_SUMMARY:END -->

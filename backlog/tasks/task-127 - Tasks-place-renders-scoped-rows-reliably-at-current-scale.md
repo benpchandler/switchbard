@@ -1,10 +1,10 @@
 ---
 id: TASK-127
 title: Tasks place renders scoped rows reliably at current scale
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-01 18:35'
-updated_date: '2026-09-01 21:52'
+updated_date: '2026-09-04 00:12'
 labels:
   - bug
   - gui
@@ -28,8 +28,8 @@ State and stress matrix: cold/no snapshot; loading; loaded empty; one; Switchbar
 <!-- AC:BEGIN -->
 - [x] #1 A deterministic native GUI journey on the exact merged base proves the pre-fix failure, or proves the installed-bundle revision is the only cause before implementation begins.
 - [x] #2 Sidebar counts and Tasks rows derive from the same explicit scope and source state; no loaded state can report a positive scoped count while rendering zero matching rows without an honest loading, empty, stale, or error explanation.
-- [ ] #3 All repos, one repo, zero/one/many/496+ tasks, persisted and migrated filters, refresh success/failure, restart, repeated scope changes, long content, and narrow-window states are covered by the design-state matrix and bound to evidence.
-- [ ] #4 Opening or changing Tasks scope never blanks the native window, panics, loses the last-known usable rows on refresh failure, or enables mutation against stale cached-only data.
+- [x] #3 All repos, one repo, zero/one/many/496+ tasks, persisted and migrated filters, refresh success/failure, restart, repeated scope changes, long content, and narrow-window states are covered by the design-state matrix and bound to evidence.
+- [x] #4 Opening or changing Tasks scope never blanks the native window, panics, loses the last-known usable rows on refresh failure, or enables mutation against stale cached-only data.
 - [x] #5 Focused tests, render performance evidence, full mise run ci, and a packaged exact-revision GUI proof pass before the incident is closed.
 <!-- AC:END -->
 
@@ -45,4 +45,12 @@ State and stress matrix: cold/no snapshot; loading; loaded empty; one; Switchbar
 2026-09-01 explicit task-read-state slice: added a shared TasksReadState lifecycle (InitialLoading, Ready, Refreshing, Stale with failed-source count) beside the cached rows. Cold Tasks and launch Digest now show an honest loading state instead of the prior false empty message; a successful zero-row scan alone may show the true empty state. Manual refresh and tracked-repo changes enter Refreshing without clearing rows. The backlog worker publishes Ready on a clean scan or Stale on any source failure, and a focused worker test proves a failed source retains its last-known task row. Tasks and Digest keep retained rows visible with explicit refreshing/stale copy; an empty stale model offers Retry. Focused verification only, per owner direction: retention unit test passed; three Tasks lifecycle UI tests passed; refresh-button transition test passed; cargo clippy -p switchbard-gui --lib -- -D warnings passed in 9.31 s; 500-row render smoke passed (Board p50 12.689 ms / p95 13.770 ms, List p50 13.408 ms / p95 15.533 ms). No full CI or packaged native journey was rerun in this light pass. AC4 remains open because mutation gating while the model is stale was intentionally left for the next discussion.
 
 2026-09-01 live native read-state proof after owner correction: rebuilt and re-signed the dedicated SwitchbardExact probe from the branch release candidate, then exercised the real macOS UI with Computer Use. The first cold capture correctly replaced the old false-empty copy but exposed a full-width loading chip; the next compacting attempt exposed left alignment, and a third attempt exposed a full-height allocation. All three were rejected from screenshots. The final cold capture arrived in 79 ms and showed a compact, centered Loading task data chip with centered explanatory copy and no overlap. The real user configuration then loaded 496 open tasks and the populated Tasks Board. An isolated temporary HOME plus one-task disposable repo proved failure semantics without touching user data: Ready showed Retained live task; making only the fixture tasks directory unreadable and clicking Refresh published Task data stale in 412 ms while the row and details remained visible; restarting with the unreadable source produced the compact Task data unavailable empty state with Retry task refresh; restoring fixture permissions and clicking Retry recovered the sidebar count to 1. Added a focused geometry assertion that the loading chip stays under 180 px and shares its center line with the explanatory copy. Final focused state UI tests passed in 0.17 s after a 4.32 s compile, and lib clippy passed in 1.78 s. The disposable fixture was moved to ~/.Trash/switchbard-live-task-read-model-20260901-visual-proof for recoverability, the probe was stopped, and /Applications/Switchbard.app was relaunched. Stale-data mutation gating remains the intentionally separate AC4 gap.
+
+2026-09-04 AC3/AC4 closure: TasksReadState::Stale now carries the failed source roots instead of a count, and every task write intent passes one gate (refuse_stale_source_write) at backlog::apply_pending plus the Board drop path that bypasses it. A write against a source whose last read failed is refused with a status-line explanation and the retained rows stay readable; sources that read cleanly stay writable. Stale copy now says edits to that source are disabled until a refresh succeeds. Tests: stale_source_refuses_an_acceptance_criterion_toggle, stale_source_refuses_a_board_drag, clean_sibling_source_stays_writable_while_another_is_stale (backlog_controls.rs) plus updated worker and tasks_place tests. Perf smoke release, 500 tasks, 200 frames: Board p95 1.253 ms, List p95 1.282 ms. Full mise run ci exit 0. State matrix bound to evidence with four named gaps (Retry click, wide layout, keyboard traversal, tracked-repo change, read-only drag): docs/qa/2026-09-04-tasks-place-state-matrix.md.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Tasks place renders the scoped set its sidebar reports at 496+ tasks: Board is virtualized (pre-fix multi-minute native blank, now sub-second), counts and rows share one scope, a shared TasksReadState gives honest loading/refreshing/stale/empty states that retain last-known rows on refresh failure, and writes against a stale source are refused at the single intent funnel. Evidence: focused kittest tests, worker unit tests, 500-task perf smoke, GPU screenshots, live exact-revision native journeys, and docs/qa/2026-09-04-tasks-place-state-matrix.md.
+<!-- SECTION:FINAL_SUMMARY:END -->

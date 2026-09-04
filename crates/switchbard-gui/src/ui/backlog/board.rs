@@ -589,6 +589,11 @@ fn apply_drop(
             .set(format!("{} is read-only; drag ignored", row.task.id));
         return;
     }
+    // N10 means this path bypasses `apply_pending`, so it takes the stale
+    // write gate itself (TASK-127 AC4).
+    if crate::ui::tasks_read_state::refuse_stale_source_write(app, &row.repo.key, &row.task.id) {
+        return;
+    }
     // A cross-repo board shows the union of every scoped repo's columns, so a
     // column can exist because *another* repo declares it. The `backlog` CLI
     // validates against this task's own repo, so refuse here rather than

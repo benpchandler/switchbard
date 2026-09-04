@@ -97,7 +97,7 @@ const RECENT_COMMITS_LIMIT: usize = 10;
 /// Ignored files are tooltip context only; keep a bounded preview so large
 /// dependency trees do not make UI snapshots expensive to clone.
 const IGNORED_FILES_PREVIEW_LIMIT: usize = 8;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -998,20 +998,19 @@ fn apply_tasks_read(
         repos,
         unreadable_roots,
     } = result;
-    let vanished_sources = roots
+    let vanished_sources = roots.iter().filter(|root| {
+        cache.contains_key(*root) && !repos.contains_key(*root) && !unreadable_roots.contains(root)
+    });
+    let failed_roots: BTreeSet<PathBuf> = unreadable_roots
         .iter()
-        .filter(|root| {
-            cache.contains_key(*root)
-                && !repos.contains_key(*root)
-                && !unreadable_roots.contains(root)
-        })
-        .count();
+        .chain(vanished_sources)
+        .cloned()
+        .collect();
     merge_backlog_repos(cache, roots, repos);
-    let failed_repos = unreadable_roots.len() + vanished_sources;
-    if failed_repos == 0 {
+    if failed_roots.is_empty() {
         TasksReadState::Ready
     } else {
-        TasksReadState::Stale { failed_repos }
+        TasksReadState::Stale { failed_roots }
     }
 }
 
@@ -1605,7 +1604,12 @@ mod tests {
             },
         );
 
-        assert_eq!(state, TasksReadState::Stale { failed_repos: 1 });
+        assert_eq!(
+            state,
+            TasksReadState::Stale {
+                failed_roots: BTreeSet::from([root.clone()])
+            }
+        );
         assert_eq!(cache[&root].tasks[0].title, "Last-known task");
     }
 
@@ -1629,7 +1633,12 @@ mod tests {
             TasksReadResult::default(),
         );
 
-        assert_eq!(state, TasksReadState::Stale { failed_repos: 1 });
+        assert_eq!(
+            state,
+            TasksReadState::Stale {
+                failed_roots: BTreeSet::from([root.clone()])
+            }
+        );
         assert_eq!(cache[&root].tasks[0].title, "Last-known task");
     }
 
