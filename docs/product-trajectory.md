@@ -628,9 +628,10 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
     `SessionEnd` drops the record. Bash is not gated: reading, running
     tests, and `sb work claim` itself must stay possible without a claim.
   - *`sbt` renders it, never stores it*: the `work` column shows one `●` per
-    live session, the whole row wears the `working` band as a pulse - brightest at the
-    start of every `work.period_ms`, fading to dark and back, `work.frames`
-    redraws per period (owner-tuned 2026-09-04 from a hard blink; 0 = steady), the title bar counts `working:N`, and the
+    live session, the whole row wears the `working` band as a pulse - a sine over
+    `work.period_ms`, brightest at its start, soft-clipped by `work.flatten`
+    so it holds at full and at dark, `work.frames` redraws per period
+    (owner-tuned 2026-09-04 from a hard blink; 0 = steady), the title bar counts `working:N`, and the
     detail pane names each session, pid, and claim time. The dispatch
     pipeline's `dispatching` label stays the ball's fact; this marker is the
     live-process fact, and the two are not merged (one fact, two sources).

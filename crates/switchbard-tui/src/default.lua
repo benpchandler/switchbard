@@ -105,12 +105,13 @@ return {
     },
   },
 
-  -- Rows a live agent session is working (`sb work claim`) pulse like a
-  -- beacon: the `working` band is brightest at the start of every period_ms,
-  -- fades out, and fades back in, redrawn frames times per period. period_ms
+  -- Rows a live agent session is working (`sb work claim`) pulse: the
+  -- `working` band follows a sine over period_ms, brightest at the start,
+  -- with its tops and bottoms flattened by `flatten` (0 = pure sine, larger
+  -- holds full and dark longer), redrawn frames times per period. period_ms
   -- = 0 keeps them lit. The `work` column (`c`) shows one ● per session; `w`
   -- passes the task.
-  work = { period_ms = 3000, frames = 30 },
+  work = { period_ms = 3000, frames = 30, flatten = 2 },
 
   -- What painting a column "auto" hands out, most common value first: keep the
   -- first color quiet so the common case stays calm and the rest stand out. Pick a preset by

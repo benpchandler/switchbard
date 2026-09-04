@@ -16,6 +16,8 @@ const DEFAULT_LUA: &str = include_str!("default.lua");
 /// redrawn `frames` times per period.
 const DEFAULT_WORK_PERIOD_MS: u64 = 3000;
 const DEFAULT_WORK_FRAMES: u64 = 30;
+/// How hard the pulse is clipped: 0 is a pure sine, larger holds the peak and the dark longer.
+const DEFAULT_WORK_FLATTEN: f64 = 2.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -339,6 +341,8 @@ pub struct Config {
     pub work_period_ms: u64,
     /// Redraws per period: how smooth the fade is.
     pub work_frames: u64,
+    /// Soft-clip strength of the pulse: 0 is a pure sine, 2 flattens the tops and bottoms.
+    pub work_flatten: f64,
     pub warnings: Vec<String>,
 }
 
@@ -408,6 +412,14 @@ fn work_setting(table: &Table, key: &str) -> Option<u64> {
         .and_then(|work| work.get::<Option<u64>>(key).ok().flatten())
 }
 
+fn work_setting_f64(table: &Table, key: &str) -> Option<f64> {
+    table
+        .get::<Option<Table>>("work")
+        .ok()
+        .flatten()
+        .and_then(|work| work.get::<Option<f64>>(key).ok().flatten())
+}
+
 #[derive(Default)]
 struct RawConfig {
     keys: HashMap<String, String>,
@@ -423,6 +435,7 @@ struct RawConfig {
     report_repo: Option<String>,
     work_period_ms: Option<u64>,
     work_frames: Option<u64>,
+    work_flatten: Option<f64>,
     palettes: Vec<(String, Vec<String>)>,
 }
 
@@ -442,6 +455,7 @@ impl RawConfig {
             report_repo: table.get::<Option<String>>("report_repo").ok().flatten(),
             work_period_ms: work_setting(&table, "period_ms"),
             work_frames: work_setting(&table, "frames"),
+            work_flatten: work_setting_f64(&table, "flatten"),
             palettes: named_string_lists(&table, "palettes")?,
         })
     }
@@ -474,6 +488,9 @@ impl RawConfig {
         }
         if over.work_frames.is_some() {
             self.work_frames = over.work_frames;
+        }
+        if over.work_flatten.is_some() {
+            self.work_flatten = over.work_flatten;
         }
         for (name, colors) in over.palettes {
             self.palettes.retain(|(known, _)| *known != name);
@@ -592,6 +609,7 @@ impl RawConfig {
             report_repo,
             work_period_ms: self.work_period_ms.unwrap_or(DEFAULT_WORK_PERIOD_MS),
             work_frames: self.work_frames.unwrap_or(DEFAULT_WORK_FRAMES).max(1),
+            work_flatten: self.work_flatten.unwrap_or(DEFAULT_WORK_FLATTEN).max(0.0),
             warnings,
         }
     }

@@ -309,18 +309,24 @@ impl App {
             .count()
     }
 
-    /// How bright a working row is this frame, 0 to 1: a cosine pulse that
-    /// peaks at the start of each period and is squared so the flash is
-    /// brief and the dark stretch long, like a beacon sweeping past. Always 1
-    /// when the period is 0.
+    /// How bright a working row is this frame, 0 to 1: a sine over the
+    /// period, peaking at its start, pushed through a `tanh` limiter so it
+    /// lingers at full brightness and at dark and fades between them
+    /// (`work.flatten`; 0 is the bare sine). Always 1 when the period is 0.
     pub fn work_glow(&self) -> f64 {
         let period = self.config.work_period_ms;
         if period == 0 {
             return 1.0;
         }
         let phase = (self.opened.elapsed().as_millis() % u128::from(period)) as f64 / period as f64;
-        let cosine = (1.0 + (std::f64::consts::TAU * phase).cos()) / 2.0;
-        cosine * cosine
+        let wave = (std::f64::consts::TAU * phase).cos();
+        let flatten = self.config.work_flatten;
+        let clipped = if flatten <= 0.0 {
+            wave
+        } else {
+            (flatten * wave).tanh() / flatten.tanh()
+        };
+        (1.0 + clipped) / 2.0
     }
 
     /// Time for the next redraw so a working row keeps pulsing while idle:
