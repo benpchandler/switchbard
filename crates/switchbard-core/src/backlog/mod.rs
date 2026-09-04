@@ -19,7 +19,7 @@ mod write;
 
 pub use allocate::{create_task_allocating_id, next_task_id, ACTIVE_BRANCH_DAYS};
 
-pub use ball::{Ball, BALL_AGENT_LABEL, BALL_ME_LABEL};
+pub use ball::{Ball, BALL_AGENT_LABEL, BALL_LABEL_PREFIX, BALL_ME_LABEL};
 
 pub use goals::{
     attach_goal_inputs, check_in_goal, create_goal, detach_goal_inputs, edit_goal_target,

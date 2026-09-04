@@ -517,15 +517,17 @@ impl App {
             return;
         };
         let (id, current) = (task.id.clone(), Ball::of(task));
-        let next = Ball::next(current);
-        match switchbard_core::set_backlog_ball(&self.repo_root, &id, next) {
+        let next = Ball::next(current.as_ref());
+        match switchbard_core::set_backlog_ball(&self.repo_root, &id, next.clone()) {
             Ok(_) => {
                 self.status = match next {
-                    Some(ball) => format!("{id}: ball → {}", Ball::text(Some(ball))),
+                    Some(ref ball) => format!("{id}: ball → {}", ball.text()),
                     None => format!("{id}: ball dropped"),
                 };
-                self.telemetry
-                    .record("action", format!("ball {}", Ball::text(next)));
+                self.telemetry.record(
+                    "action",
+                    format!("ball {}", next.as_ref().map(Ball::text).unwrap_or("")),
+                );
                 self.reload_tasks();
             }
             Err(error) => self.fail(format!("{id}: {error}")),

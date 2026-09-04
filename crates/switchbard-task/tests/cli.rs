@@ -1253,6 +1253,23 @@ fn hook_edit_event(root: &Path, session: &str, event: &str, tool: &str, file: &P
 }
 
 #[test]
+fn edit_assigns_a_named_ball_holder_and_replaces_prior_holder() {
+    let dir = fixture_project();
+    let root = dir.path();
+    ok_stdout(root, &["create", "Named holder"]);
+    assert_eq!(
+        ok_stdout(root, &["edit", "TASK-1", "--ball", "Nick Doe"]),
+        "Edited TASK-1\n"
+    );
+    let view = ok_stdout(root, &["view", "TASK-1"]);
+    assert!(view.contains("ball:nick-doe"), "{view}");
+    ok_stdout(root, &["edit", "TASK-1", "--ball", "agent"]);
+    let view = ok_stdout(root, &["view", "TASK-1"]);
+    assert!(view.contains("ball:agent"), "{view}");
+    assert!(!view.contains("ball:nick-doe"), "{view}");
+}
+
+#[test]
 fn work_claim_release_and_pass_round_trip_through_the_board() {
     let dir = fixture_project();
     let root = dir.path();

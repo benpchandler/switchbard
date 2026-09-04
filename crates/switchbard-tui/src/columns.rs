@@ -109,7 +109,7 @@ pub const COLUMNS: [ColumnSpec; 10] = [
         name: "ball",
         alias: None,
         header: "ball",
-        width: Some(6),
+        width: Some(14),
         field: Some(FilterField::Ball),
         vocabulary: &["me", "agent"],
         groupable: true,
@@ -231,14 +231,10 @@ impl Column {
             Column::Title => vec![task.title.clone()],
             Column::Labels => task.labels.clone(),
             Column::Project => task.project.clone().into_iter().collect(),
-            Column::Ball => {
-                let ball = Ball::text(Ball::of(task));
-                if ball.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![ball.to_string()]
-                }
-            }
+            Column::Ball => Ball::of(task)
+                .map(|ball| ball.text().to_string())
+                .into_iter()
+                .collect(),
             // Rank and work are not on the task: `App::cell` supplies them
             // from the lane and the live session list.
             Column::Rank | Column::Work => Vec::new(),
