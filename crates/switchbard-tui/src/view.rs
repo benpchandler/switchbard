@@ -432,6 +432,11 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             app.status.clone(),
             theme.style(Surface::Status),
         )),
+        Mode::BallName => Line::from(vec![
+            Span::styled(" ball person: ", theme.style(Surface::Accent)),
+            Span::raw(app.input.clone()),
+            Span::styled("▏", theme.style(Surface::Accent)),
+        ]),
         Mode::Browse if !app.status.is_empty() => Line::from(Span::styled(
             app.status.clone(),
             theme.style(Surface::Status),
@@ -649,6 +654,7 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::Settings => "settings".to_string(),
         PickerPurpose::Goals(id) => format!("{id} · goals"),
         PickerPurpose::Organize => "organize by".to_string(),
+        PickerPurpose::Ball => "ball".to_string(),
     };
     if picker.typed.is_empty() {
         format!(" {subject} ")

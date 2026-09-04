@@ -47,7 +47,7 @@ pub enum Action {
     View,
     Group,
     Settings,
-    /// The task chord: rank digits, `t`/`d`/`p` for the top list, `g` for goals.
+    /// The task chord: rank digits, Ball, top-list, and goals actions.
     Rank,
 }
 

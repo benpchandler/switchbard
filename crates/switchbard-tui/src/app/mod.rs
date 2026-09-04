@@ -36,8 +36,10 @@ pub enum Mode {
     ViewSaveSlot,
     /// After `v g`: a digit or `d` picks the slot to promote to the global file.
     ViewGlobalSlot,
-    /// After `t`: 1-5 ranks the selected task, `d` drops it, `p` pins/unpins the Top 5.
+    /// After `t`: rank, assign the ball, complete, pin, or link goals.
     RankChord,
+    /// After `t b`: type a new named ball holder, then Enter assigns it.
+    BallName,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -387,14 +389,18 @@ impl App {
             Mode::ViewSaveSlot => self.handle_view_save_slot_key(event),
             Mode::ViewGlobalSlot => self.handle_view_global_slot_key(event),
             Mode::RankChord => self.handle_rank_chord_key(event),
+            Mode::BallName => self.handle_ball_name_key(event),
         }
     }
 
-    /// After `t`: digits accumulate in `input` (two digits once the list is long
-    /// enough that a second could follow), Enter commits, `t` appends, `d` drops,
-    /// `p` pins or unpins the section, `g` opens the goal panel.
+    /// After `t`: digits rank, `b` assigns the ball, `d` drops rank, `p` pins,
+    /// and `g` opens goals.
     fn handle_rank_chord_key(&mut self, event: KeyEvent) {
         match event.code {
+            KeyCode::Char('b') => {
+                self.input.clear();
+                self.open_ball_picker();
+            }
             KeyCode::Char(digit) if digit.is_ascii_digit() => {
                 self.input.push(digit);
                 let place: usize = self.input.parse().unwrap_or(0);
@@ -516,21 +522,52 @@ impl App {
             self.status = "no task selected".to_string();
             return;
         };
-        let (id, current) = (task.id.clone(), Ball::of(task));
+        let current = Ball::of(task);
         let next = Ball::next(current.as_ref());
-        match switchbard_core::set_backlog_ball(&self.repo_root, &id, next.clone()) {
+        self.assign_ball(next);
+    }
+
+    fn assign_ball(&mut self, ball: Option<Ball>) {
+        let Some(task) = self.selected_task() else {
+            self.status = "no task selected".to_string();
+            return;
+        };
+        let id = task.id.clone();
+        match switchbard_core::set_backlog_ball(&self.repo_root, &id, ball.clone()) {
             Ok(_) => {
-                self.status = match next {
+                self.status = match ball {
                     Some(ref ball) => format!("{id}: ball → {}", ball.text()),
                     None => format!("{id}: ball dropped"),
                 };
                 self.telemetry.record(
                     "action",
-                    format!("ball {}", next.as_ref().map(Ball::text).unwrap_or("")),
+                    format!("ball {}", ball.as_ref().map(Ball::text).unwrap_or("")),
                 );
                 self.reload_tasks();
             }
             Err(error) => self.fail(format!("{id}: {error}")),
+        }
+    }
+
+    fn handle_ball_name_key(&mut self, event: KeyEvent) {
+        match event.code {
+            KeyCode::Esc => self.open_ball_picker(),
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Enter => match Ball::parse(&self.input) {
+                Ok(Some(Ball::Other(holder))) => {
+                    self.input.clear();
+                    self.mode = Mode::Browse;
+                    self.assign_ball(Some(Ball::Other(holder)));
+                }
+                Ok(_) => {
+                    self.status = "enter a named person, or choose me, agent, or none".to_string()
+                }
+                Err(error) => self.status = error.to_string(),
+            },
+            KeyCode::Char(character) => self.input.push(character),
+            _ => {}
         }
     }
 
@@ -805,7 +842,7 @@ impl App {
                 self.mode = Mode::RankChord;
                 self.input.clear();
                 self.status = format!(
-                    "task: a number ranks it (1 is top, {} last) · t appends · d drops · p {} · g goals",
+                    "task: a number ranks it (1 is top, {} last) · b Ball · t appends · d drops · p {} · g goals",
                     self.top.len() + 1,
                     if self.state.pin_top { "unpins" } else { "pins" }
                 );

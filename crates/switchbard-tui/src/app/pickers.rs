@@ -5,6 +5,7 @@ use std::str::FromStr;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Mode};
+use crate::ball::Ball;
 use crate::columns::Column;
 use crate::picker::{
     ColumnAction, ColumnPurpose, PaintPick, Payload, PickOption, PickerPurpose, ValuePicker,
@@ -85,6 +86,33 @@ impl App {
         let options = self.column_picker_options();
         self.open_picker(PickerPurpose::Columns, options);
         self.telemetry.record("action", "columns");
+    }
+
+    /// `t b`: choose a standard holder, a person already named in this repo,
+    /// or the entry path for someone new.
+    pub(super) fn open_ball_picker(&mut self) {
+        let mut people = self
+            .tasks
+            .iter()
+            .filter_map(|task| match Ball::of(task) {
+                Some(Ball::Other(person)) => Some(person),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        people.sort_unstable();
+        people.dedup();
+        let mut options = vec![
+            PickOption::numbered("me", Payload::Ball(Some(Ball::Me))),
+            PickOption::numbered("agent", Payload::Ball(Some(Ball::Agent))),
+            PickOption::numbered("none · drop", Payload::Ball(None)),
+        ];
+        options.extend(people.into_iter().map(|person| {
+            PickOption::numbered(person.clone(), Payload::Ball(Some(Ball::Other(person))))
+        }));
+        options.push(PickOption::numbered("new person…", Payload::NewBallHolder));
+        self.open_picker(PickerPurpose::Ball, options);
+        self.status.clear();
+        self.telemetry.record("action", "ball_picker");
     }
 
     /// Shown columns first in display order, then the hidden ones.
@@ -571,6 +599,11 @@ impl App {
                 // Same shape as settings: the panel stays open with fresh marks.
                 self.open_goal_picker();
                 self.toggle_goal_link(&name)
+            }
+            (PickerPurpose::Ball, Payload::Ball(ball)) => self.assign_ball(ball),
+            (PickerPurpose::Ball, Payload::NewBallHolder) => {
+                self.mode = Mode::BallName;
+                self.input.clear();
             }
             (PickerPurpose::ColumnActions(column), Payload::ColumnAction(action)) => {
                 self.run_column_action(column, action)
