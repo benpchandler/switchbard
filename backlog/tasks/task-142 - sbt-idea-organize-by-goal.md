@@ -1,10 +1,10 @@
 ---
 id: TASK-142
 title: 'sbt idea: organize by goal'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-03 21:34'
-updated_date: '2026-09-04 10:16'
+updated_date: '2026-09-04 10:28'
 labels:
   - tui
   - idea
@@ -109,7 +109,7 @@ action command (0.0ms)
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Reporter confirms the behaviour in sbt matches what they were trying to do
+- [x] #1 Reporter confirms the behaviour in sbt matches what they were trying to do
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -123,3 +123,9 @@ action command (0.0ms)
 
 2026-09-04 nested organize shipped (PR 132): Grouping type with up to two levels; o rows 3/4 are project›goal and goal›project; :group project,goal; saved views keep it; inner headings indent. The earlier note calling this unbuilt is superseded.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+sbt organizes by goal. A goal column derives membership from goals.yml through one core predicate (GoalDef::counts_task, shared with Digest actuals). o opens an organize picker: project, goal, project›goal, goal›project, then status/priority/ball, x off; :group takes the same spellings and saved views keep them. tg attaches or detaches the selected task to a goal; manual goals accept links. Reporter confirmed in sbt on 2026-09-04. PRs 129-132.
+<!-- SECTION:FINAL_SUMMARY:END -->
