@@ -107,3 +107,45 @@ fn named_ball_holder_renders_filters_and_b_drops_it() {
         .unwrap();
     assert!(!file.contains("ball:"), "{file}");
 }
+
+#[test]
+fn task_chord_ball_picker_selects_a_person_or_enters_a_new_one() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('t'));
+    let screen = h.press(KeyCode::Char('b'));
+    assert!(screen.contains("new person"), "{screen}");
+    h.press(KeyCode::Esc);
+
+    let other_id = h.app.tasks()[1].id.clone();
+    switchbard_core::set_backlog_label(&h.root, &other_id, "ball:nick", true).unwrap();
+    h.app.tick();
+
+    h.press(KeyCode::Char('t'));
+    let screen = h.press(KeyCode::Char('b'));
+    assert!(
+        screen.contains("ball") && screen.contains("nick") && screen.contains("new person"),
+        "{screen}"
+    );
+    let screen = h.type_text("ni");
+    assert!(screen.contains("ball → nick"), "{screen}");
+    assert!(h
+        .app
+        .selected_task()
+        .unwrap()
+        .labels
+        .contains(&"ball:nick".to_string()));
+
+    h.press(KeyCode::Char('t'));
+    h.press(KeyCode::Char('b'));
+    let screen = h.press(KeyCode::Char('5'));
+    assert!(screen.contains("ball person:"), "{screen}");
+    h.type_text("Dana Smith");
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("ball → dana-smith"), "{screen}");
+    assert!(h
+        .app
+        .selected_task()
+        .unwrap()
+        .labels
+        .contains(&"ball:dana-smith".to_string()));
+}
