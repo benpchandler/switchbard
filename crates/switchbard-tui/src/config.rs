@@ -16,6 +16,9 @@ const DEFAULT_LUA: &str = include_str!("default.lua");
 /// redrawn `frames` times per period.
 const DEFAULT_WORK_PERIOD_MS: u64 = 3000;
 const DEFAULT_WORK_FRAMES: u64 = 30;
+/// How far the text on a working row swings from its rest colour: 1 would
+/// reach pure white at the peak and pure black at the trough.
+const WORKING_TEXT_SWING: f64 = 0.55;
 /// How hard the pulse is clipped: 0 is a pure sine, larger holds the peak and the dark longer.
 const DEFAULT_WORK_FLATTEN: f64 = 2.0;
 
@@ -241,6 +244,25 @@ impl Theme {
             _ if glow >= 0.5 => full,
             _ => Style::default(),
         }
+    }
+
+    /// The text colour on a working row at `glow`: an RGB colour is pushed
+    /// toward white at full glow and toward black at dark, its rest colour at
+    /// half; anything else is left alone. `None` (terminal default) is taken
+    /// as a mid gray so the breathing still shows.
+    pub fn working_fg(&self, rest: Option<Color>, glow: f64) -> Color {
+        let (r, g, b) = match rest {
+            Some(Color::Rgb(r, g, b)) => (r, g, b),
+            Some(other) => return other,
+            None => (0xb0, 0xb0, 0xb0),
+        };
+        let shift = (glow - 0.5) * 2.0 * WORKING_TEXT_SWING;
+        let channel = |value: u8| {
+            let value = f64::from(value);
+            let target = if shift >= 0.0 { 255.0 } else { 0.0 };
+            (value + (target - value) * shift.abs()).round() as u8
+        };
+        Color::Rgb(channel(r), channel(g), channel(b))
     }
 
     pub fn style(&self, surface: Surface) -> Style {

@@ -115,8 +115,9 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                 let task = &app.tasks()[*index];
                 // The pulse sits on top of the cursor band: it is bright only
                 // briefly, and the cursor shows through as it fades.
-                let working = (!app.working(task).is_empty())
-                    .then(|| theme.working_style(app.work_glow()))
+                let glow = (!app.working(task).is_empty()).then(|| app.work_glow());
+                let working = glow
+                    .map(|glow| theme.working_style(glow))
                     .filter(|style| *style != Style::default());
                 if selected {
                     frame.render_widget(
@@ -143,8 +144,13 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     if selected {
                         style = style.patch(theme.style(Surface::Selected));
                     }
-                    if let Some(glow) = working {
-                        style = style.patch(glow);
+                    if let Some(band) = working {
+                        style = style.patch(band);
+                    }
+                    if let Some(glow) = glow {
+                        // The text breathes with the band: brighter than its
+                        // rest colour at the peak, dimmer in the trough.
+                        style = style.fg(theme.working_fg(style.fg, glow));
                     }
                     frame.render_widget(
                         Paragraph::new(text).style(style),

@@ -76,6 +76,16 @@ fn a_live_session_lights_its_row_and_a_dead_one_is_forgotten() {
         Some(ratatui::style::Color::Rgb(0x2a, 0x6b, 0x5a)),
         "the row wears the berg working band at full glow"
     );
+    let rest = cell_fg(&h, "Write onboarding guide").unwrap();
+    let lit = cell_fg(&h, &title).unwrap();
+    let brightness = |color: ratatui::style::Color| match color {
+        ratatui::style::Color::Rgb(r, g, b) => u32::from(r) + u32::from(g) + u32::from(b),
+        _ => panic!("expected an rgb colour, got {color:?}"),
+    };
+    assert!(
+        brightness(lit) > brightness(rest),
+        "text on the lit row is brighter than at rest: {lit:?} vs {rest:?}"
+    );
     assert!(
         !work.join("dead-1234-abcd.json").exists(),
         "a dead session's record is pruned on read"
