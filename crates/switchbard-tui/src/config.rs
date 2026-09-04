@@ -12,6 +12,15 @@ use ratatui::style::{Color, Modifier, Style};
 use crate::columns::Column;
 
 const DEFAULT_LUA: &str = include_str!("default.lua");
+/// A working row pulses: bright, fading out, fading back in, once per period,
+/// redrawn `frames` times per period.
+const DEFAULT_WORK_PERIOD_MS: u64 = 3000;
+const DEFAULT_WORK_FRAMES: u64 = 30;
+/// How far the text on a working row swings from its rest colour: 1 would
+/// reach pure white at the peak and pure black at the trough.
+const WORKING_TEXT_SWING: f64 = 0.55;
+/// How hard the pulse is clipped: 0 is a pure sine, larger holds the peak and the dark longer.
+const DEFAULT_WORK_FLATTEN: f64 = 2.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -29,6 +38,8 @@ pub enum Action {
     Columns,
     Paint,
     Ball,
+    /// Release every session's claim on the selected task: the owner's word.
+    Pass,
     Command,
     Reload,
     Help,
@@ -57,6 +68,7 @@ impl Action {
             "columns" => Action::Columns,
             "paint" => Action::Paint,
             "ball" => Action::Ball,
+            "pass" => Action::Pass,
             "command" => Action::Command,
             "reload" => Action::Reload,
             "help" => Action::Help,
@@ -85,6 +97,7 @@ impl Action {
             Action::Columns => "columns".to_string(),
             Action::Paint => "paint".to_string(),
             Action::Ball => "ball".to_string(),
+            Action::Pass => "pass".to_string(),
             Action::Command => "command".to_string(),
             Action::Reload => "reload".to_string(),
             Action::Help => "help".to_string(),
@@ -181,6 +194,8 @@ pub enum Surface {
     Status,
     /// Picker highlight, cursors, checkmarks.
     Accent,
+    /// A row a live agent session is working, on the lit half of the blink.
+    Working,
 }
 
 impl Surface {
@@ -200,6 +215,7 @@ impl Surface {
             "hint" | "dim" => Surface::Hint,
             "status" => Surface::Status,
             "accent" => Surface::Accent,
+            "working" => Surface::Working,
             _ => return None,
         })
     }
@@ -212,6 +228,43 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// The `working` surface at `glow` brightness (0 dark, 1 full): an RGB
+    /// background fades toward black and disappears when nearly dark; a
+    /// surface without an RGB background is simply on above half brightness.
+    pub fn working_style(&self, glow: f64) -> Style {
+        let full = self.style(Surface::Working);
+        match full.bg {
+            Some(Color::Rgb(r, g, b)) => {
+                if glow < 0.04 {
+                    return Style::default();
+                }
+                let scale = |channel: u8| (f64::from(channel) * glow).round() as u8;
+                full.bg(Color::Rgb(scale(r), scale(g), scale(b)))
+            }
+            _ if glow >= 0.5 => full,
+            _ => Style::default(),
+        }
+    }
+
+    /// The text colour on a working row at `glow`: an RGB colour is pushed
+    /// toward white at full glow and toward black at dark, its rest colour at
+    /// half; anything else is left alone. `None` (terminal default) is taken
+    /// as a mid gray so the breathing still shows.
+    pub fn working_fg(&self, rest: Option<Color>, glow: f64) -> Color {
+        let (r, g, b) = match rest {
+            Some(Color::Rgb(r, g, b)) => (r, g, b),
+            Some(other) => return other,
+            None => (0xb0, 0xb0, 0xb0),
+        };
+        let shift = (glow - 0.5) * 2.0 * WORKING_TEXT_SWING;
+        let channel = |value: u8| {
+            let value = f64::from(value);
+            let target = if shift >= 0.0 { 255.0 } else { 0.0 };
+            (value + (target - value) * shift.abs()).round() as u8
+        };
+        Color::Rgb(channel(r), channel(g), channel(b))
+    }
+
     pub fn style(&self, surface: Surface) -> Style {
         self.styles.get(&surface).copied().unwrap_or_default()
     }
@@ -306,6 +359,12 @@ pub struct Config {
     /// Where `:bug` and `:idea` file: sbt's own repo, not the one being browsed.
     /// `None` files into the current repo.
     pub report_repo: Option<PathBuf>,
+    /// The working-row pulse period; 0 keeps the row lit steadily.
+    pub work_period_ms: u64,
+    /// Redraws per period: how smooth the fade is.
+    pub work_frames: u64,
+    /// Soft-clip strength of the pulse: 0 is a pure sine, 2 flattens the tops and bottoms.
+    pub work_flatten: f64,
     pub warnings: Vec<String>,
 }
 
@@ -366,6 +425,23 @@ pub fn load(user_path: Option<&Path>) -> Config {
     raw.into_config(warnings)
 }
 
+/// `work = { <key> = <ms> }`, absent when the table or key is missing.
+fn work_setting(table: &Table, key: &str) -> Option<u64> {
+    table
+        .get::<Option<Table>>("work")
+        .ok()
+        .flatten()
+        .and_then(|work| work.get::<Option<u64>>(key).ok().flatten())
+}
+
+fn work_setting_f64(table: &Table, key: &str) -> Option<f64> {
+    table
+        .get::<Option<Table>>("work")
+        .ok()
+        .flatten()
+        .and_then(|work| work.get::<Option<f64>>(key).ok().flatten())
+}
+
 #[derive(Default)]
 struct RawConfig {
     keys: HashMap<String, String>,
@@ -379,6 +455,9 @@ struct RawConfig {
     palette: Vec<String>,
     palette_name: Option<String>,
     report_repo: Option<String>,
+    work_period_ms: Option<u64>,
+    work_frames: Option<u64>,
+    work_flatten: Option<f64>,
     palettes: Vec<(String, Vec<String>)>,
 }
 
@@ -396,6 +475,9 @@ impl RawConfig {
             palette: string_list(&table, "palette")?,
             palette_name: table.get::<Option<String>>("palette").ok().flatten(),
             report_repo: table.get::<Option<String>>("report_repo").ok().flatten(),
+            work_period_ms: work_setting(&table, "period_ms"),
+            work_frames: work_setting(&table, "frames"),
+            work_flatten: work_setting_f64(&table, "flatten"),
             palettes: named_string_lists(&table, "palettes")?,
         })
     }
@@ -422,6 +504,15 @@ impl RawConfig {
         }
         if over.report_repo.is_some() {
             self.report_repo = over.report_repo;
+        }
+        if over.work_period_ms.is_some() {
+            self.work_period_ms = over.work_period_ms;
+        }
+        if over.work_frames.is_some() {
+            self.work_frames = over.work_frames;
+        }
+        if over.work_flatten.is_some() {
+            self.work_flatten = over.work_flatten;
         }
         for (name, colors) in over.palettes {
             self.palettes.retain(|(known, _)| *known != name);
@@ -538,6 +629,9 @@ impl RawConfig {
             palette,
             palettes,
             report_repo,
+            work_period_ms: self.work_period_ms.unwrap_or(DEFAULT_WORK_PERIOD_MS),
+            work_frames: self.work_frames.unwrap_or(DEFAULT_WORK_FRAMES).max(1),
+            work_flatten: self.work_flatten.unwrap_or(DEFAULT_WORK_FLATTEN).max(0.0),
             warnings,
         }
     }

@@ -113,11 +113,20 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             ),
             Row::Task(index) => {
                 let task = &app.tasks()[*index];
+                // The pulse sits on top of the cursor band: it is bright only
+                // briefly, and the cursor shows through as it fades.
+                let glow = (!app.working(task).is_empty()).then(|| app.work_glow());
+                let working = glow
+                    .map(|glow| theme.working_style(glow))
+                    .filter(|style| *style != Style::default());
                 if selected {
                     frame.render_widget(
                         Paragraph::new("").style(theme.style(Surface::Selected)),
                         row_area,
                     );
+                }
+                if let Some(glow) = working {
+                    frame.render_widget(Paragraph::new("").style(glow), row_area);
                 }
                 for (column, cell) in app.state.columns.iter().zip(cells.iter()) {
                     let value = column.cell_text(task, &app.goals);
@@ -134,6 +143,14 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     }
                     if selected {
                         style = style.patch(theme.style(Surface::Selected));
+                    }
+                    if let Some(band) = working {
+                        style = style.patch(band);
+                    }
+                    if let Some(glow) = glow {
+                        // The text breathes with the band: brighter than its
+                        // rest colour at the peak, dimmer in the trough.
+                        style = style.fg(theme.working_fg(style.fg, glow));
                     }
                     frame.render_widget(
                         Paragraph::new(text).style(style),
@@ -214,6 +231,10 @@ fn table_title(app: &App) -> String {
             parts.extend(app.initiatives());
         }
     }
+    match app.working_sessions() {
+        0 => {}
+        n => parts.push(format!("working:{n}")),
+    }
     parts.push(format!("{}/{}", app.visible.len(), app.total_tasks()));
     format!(" {} ", parts.join(" · "))
 }
@@ -236,6 +257,18 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
             ),
             theme.style(Surface::Hint),
         )));
+        for session in app.working(task) {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "working · {} {} (pid {}) since {}",
+                    session.agent,
+                    session.short_id(),
+                    session.pid,
+                    claimed_clock(session, &task.id)
+                ),
+                theme.style(Surface::Working),
+            )));
+        }
         lines.push(Line::from(""));
         for paragraph in task.description.lines() {
             lines.push(Line::from(paragraph.to_string()));
@@ -265,6 +298,17 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+/// `HH:MM` of the claim on `task_id`, from its RFC 3339 stamp.
+fn claimed_clock(session: &switchbard_core::WorkSession, task_id: &str) -> String {
+    session
+        .claims
+        .iter()
+        .find(|claim| claim.task_id == task_id)
+        .and_then(|claim| chrono::DateTime::parse_from_rfc3339(&claim.claimed_at).ok())
+        .map(|stamp| stamp.format("%H:%M").to_string())
+        .unwrap_or_default()
+}
+
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.config.theme;
     let actions = [
@@ -282,6 +326,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Action::Columns,
         Action::Paint,
         Action::Ball,
+        Action::Pass,
         Action::Group,
         Action::Settings,
         Action::Rank,
@@ -334,6 +379,12 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw("file a bug with this screen    "),
         Span::styled(":idea <want>  ", theme.style(Surface::Accent)),
         Span::raw("file an idea with this screen"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(":theme <name>  ", theme.style(Surface::Accent)),
+        Span::raw("how sbt itself looks           "),
+        Span::styled(":palette <name>  ", theme.style(Surface::Accent)),
+        Span::raw("colors `auto` paints with"),
     ]));
     lines.push(Line::from(vec![
         Span::styled(":view <name>  :reload  :q", theme.style(Surface::Accent)),

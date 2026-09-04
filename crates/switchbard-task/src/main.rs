@@ -24,6 +24,7 @@ mod hierarchy_cmd;
 mod queue_cmd;
 mod rank_cmd;
 mod render;
+mod work_cmd;
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
@@ -77,7 +78,15 @@ const MAX_ROOT_WALK: usize = 64;
                   status - keep it for `release`), `queue release <ID> --outcome \
                   dispatched|failed`, `queue prompt <ID>` (the exact headless-agent prompt). \
                   Claim before work; releases walk the same label ladder the built-in \
-                  dispatch pipeline uses."
+                  dispatch pipeline uses.\n\n\
+                  WORK: the `work` family is an interactive session's live-work protocol - \
+                  `work claim <ID>` before editing (the row lights up in sbt, status In \
+                  Progress, ball to the agent), `work release <ID>` when every acceptance \
+                  criterion is checked (or `--note <why>` to hand it back unfinished), \
+                  `work pass <ID>` is the owner's word, `work list` shows live sessions, \
+                  and `work hook` is the Claude Code hook entry point that enforces \
+                  claim-before-edit and no-stop-while-claimed. Identity comes from \
+                  CLAUDE_CODE_SESSION_ID / CLAUDE_PID; the claim dies with the process."
 )]
 struct Cli {
     /// Repo root to act on (default: nearest ancestor of the current
@@ -152,6 +161,9 @@ enum Command {
     /// The dispatch queue protocol (list/send/withdraw/claim/release/prompt)
     #[command(subcommand)]
     Queue(queue_cmd::QueueCmd),
+    /// Live work: which tasks this session is working (claim/release/pass/list/hook)
+    #[command(subcommand)]
+    Work(work_cmd::WorkCmd),
 }
 
 #[derive(Args)]
@@ -337,6 +349,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Expedite { id } => rank_cmd::run_expedite(&root, id),
         Command::Unexpedite { id } => rank_cmd::run_unexpedite(&root, id),
         Command::Queue(cmd) => queue_cmd::run_queue(&root, cmd),
+        Command::Work(cmd) => work_cmd::run_work(&root, cmd),
     }
 }
 
@@ -362,7 +375,7 @@ fn resolve_repo(explicit: Option<&Path>) -> Result<PathBuf> {
     })
 }
 
-fn find_repo_root(start: &Path) -> Option<PathBuf> {
+pub(crate) fn find_repo_root(start: &Path) -> Option<PathBuf> {
     start
         .ancestors()
         .take(MAX_ROOT_WALK)

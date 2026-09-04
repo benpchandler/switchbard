@@ -11,7 +11,7 @@ use switchbard_core::{
     create_project_def, create_task_allocating_id, rank_project, NewBacklogTask, NewProjectDef,
     RankPlacement,
 };
-use switchbard_tui::app::App;
+use switchbard_tui::app::{App, AppPaths};
 use switchbard_tui::telemetry::Telemetry;
 use switchbard_tui::view;
 
@@ -83,11 +83,14 @@ impl Harness {
 pub fn open_app(root: &Path, config_path: &Path) -> App {
     App::open(
         root,
-        Some(config_path.to_path_buf()),
-        Some(root.join("views.lua")),
-        Some(root.join("views-repo.lua")),
-        Some(root.join("settings.lua")),
-        Some(root.join("settings-repo.lua")),
+        AppPaths {
+            config: Some(config_path.to_path_buf()),
+            global_views: Some(root.join("views.lua")),
+            repo_views: Some(root.join("views-repo.lua")),
+            global_settings: Some(root.join("settings.lua")),
+            repo_settings: Some(root.join("settings-repo.lua")),
+            work_dir: Some(root.join("work")),
+        },
         Telemetry::in_memory(),
     )
 }
@@ -195,6 +198,19 @@ pub fn cell_fg(h: &Harness, needle: &str) -> Option<ratatui::style::Color> {
         if let Some(col) = line.find(needle) {
             let col = line[..col].chars().count();
             return Some(buffer.content[row * width + col].fg);
+        }
+    }
+    None
+}
+
+pub fn cell_bg(h: &Harness, needle: &str) -> Option<ratatui::style::Color> {
+    let buffer = h.terminal.backend().buffer();
+    let width = buffer.area.width as usize;
+    for (row, cells) in buffer.content.chunks(width).enumerate() {
+        let line: String = cells.iter().map(|cell| cell.symbol()).collect();
+        if let Some(col) = line.find(needle) {
+            let col = line[..col].chars().count();
+            return Some(buffer.content[row * width + col].bg);
         }
     }
     None

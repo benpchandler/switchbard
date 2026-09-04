@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crossterm::event::KeyCode;
 use harness::*;
-use switchbard_tui::app::App;
+use switchbard_tui::app::{App, AppPaths};
 use switchbard_tui::telemetry::Telemetry;
 
 #[test]
@@ -74,11 +74,11 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
     let other_global = move |root: &Path| {
         App::open(
             root,
-            None,
-            Some(global_file_path.clone()),
-            Some(root.join("views-repo.lua")),
-            None,
-            None,
+            AppPaths {
+                global_views: Some(global_file_path.clone()),
+                repo_views: Some(root.join("views-repo.lua")),
+                ..AppPaths::default()
+            },
             Telemetry::in_memory(),
         )
     };

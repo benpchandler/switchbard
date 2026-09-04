@@ -4,14 +4,14 @@
 return {
   -- key -> action. Keys: single chars, "enter", "esc", "tab", "up", "down",
   -- "ctrl-<char>". Actions: down, up, top, bottom, page_down, page_up, open,
-  -- back, filter, filter_column, sort_column, columns, paint, ball, group, task, settings, view, command, reload, help, quit.
+  -- back, filter, filter_column, sort_column, columns, paint, ball, pass, group, task, settings, view, command, reload, help, quit.
   keys = {
     j = "down", k = "up", down = "down", up = "up",
     g = "top", G = "bottom",
     ["ctrl-d"] = "page_down", ["ctrl-u"] = "page_up",
     enter = "open", esc = "back",
     ["/"] = "filter", f = "filter_column", s = "sort_column", [":"] = "command",
-    c = "columns", p = "paint", b = "ball", o = "group", t = "task", v = "view", [","] = "settings", r = "reload", ["?"] = "help", q = "quit",
+    c = "columns", p = "paint", b = "ball", w = "pass", o = "group", t = "task", v = "view", [","] = "settings", r = "reload", ["?"] = "help", q = "quit",
   },
 
   -- Colors: ANSI names (cyan, gray, darkgray, ...) follow your terminal palette;
@@ -43,6 +43,7 @@ return {
       hint       = { fg = "#9e9e9e" },
       status     = { fg = "#d7d7d7" },
       accent     = { fg = "#4dc7f9" },
+      working    = { bg = "#2a6b5a", bold = true },  -- mint band at full glow; it fades to black between pulses
       columns    = { id = "label", project = "link", goal = "link" },
     },
     -- Bloomberg data screen: amber identity chip and labels over white data.
@@ -61,6 +62,7 @@ return {
       hint       = { fg = "#8b949e" },
       status     = { fg = "#ffcc00" },
       accent     = { fg = "#ffcc00" },
+      working    = { bg = "#23643f", bold = true },
       columns    = { id = "label", project = "link", goal = "link" },
     },
     -- Darkroom: for a dark room with the display at its lowest usable backlight.
@@ -87,6 +89,7 @@ return {
       hint       = { fg = "#72675A" },
       status     = { fg = "#A0927F" },
       accent     = { fg = "#C09348" },
+      working    = { bg = "#345A5C", bold = true },  -- teal band at full glow, the only cool fill
       columns    = { id = "label", project = "link", goal = "link" },
     },
     -- Your terminal's own colors, nothing forced.
@@ -98,8 +101,17 @@ return {
       hint       = { fg = "gray" },
       chip       = { reverse = true },
       keys       = { bold = true },
+      working    = { bold = true, underline = true },
     },
   },
+
+  -- Rows a live agent session is working (`sb work claim`) pulse: the
+  -- `working` band follows a sine over period_ms, brightest at the start,
+  -- with its tops and bottoms flattened by `flatten` (0 = pure sine, larger
+  -- holds full and dark longer), redrawn frames times per period. period_ms
+  -- = 0 keeps them lit. The `work` column (`c`) shows one ● per session; `w`
+  -- passes the task.
+  work = { period_ms = 3000, frames = 30, flatten = 2 },
 
   -- What painting a column "auto" hands out, most common value first: keep the
   -- first color quiet so the common case stays calm and the rest stand out. Pick a preset by

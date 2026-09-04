@@ -601,6 +601,45 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   `ColumnSpec` field, distinct from "categorical" because labels are categorical
   but multi-valued. Collapsing a section is not built.
 
+- **Live work marker and the claim loop (owner-directed 2026-09-04; TASK-150).**
+  The owner wants the board to show which tasks a session is working *right
+  now* (several sessions, several tasks) as a blinking row, and wants that
+  reflected state to be enforceable in the agent harness: an agent has to
+  grab a task and keep working it until a human passes it or its acceptance
+  criteria are met. Decisions:
+  - *A live claim is a new fact with one store*, `~/.switchbard/work/<session>.json`
+    (`switchbard-core/src/work_sessions.rs`; `SWITCHBARD_WORK_DIR` overrides).
+    `In Progress` and `ball:agent` say someone once started a task; forty rows
+    carry them. Liveness is the agent process (`kill(pid, 0)` on the
+    `CLAUDE_PID` recorded at claim), not a heartbeat: a killed session drops
+    off the board on the next read, and a long think never reads as dead. The
+    store is machine-local runtime state, never repo state.
+  - *`sb work` is the protocol* (agent-facing-design): `claim` is the
+    acknowledgment (record the session, status `In Progress`, ball to the
+    agent); `release` carries the outcome and refuses to drop a task with
+    unchecked criteria unless `--note` says what was left; `pass` is the
+    owner's word and releases every holder; `list` shows live sessions;
+    `hook` is the Claude Code hook entry point. `sbt`'s `w` is `pass`.
+  - *Enforcement lives in `.claude/settings.json` and calls `sb work hook`*:
+    `PreToolUse` on the editing tools denies until the session holds a claim
+    in the repo; `Stop` holds the session while it holds claims, bounded by
+    `--max-stop-blocks` (default 5) after which the session is marked
+    *abandoned* - an honest visible failure rather than a looping agent;
+    `SessionEnd` drops the record. Bash is not gated: reading, running
+    tests, and `sb work claim` itself must stay possible without a claim.
+  - *`sbt` renders it, never stores it*: the `work` column shows one `●` per
+    live session, the whole row wears the `working` band as a pulse - a sine over
+    `work.period_ms`, brightest at its start, soft-clipped by `work.flatten`
+    so it holds at full and at dark, the row's text swinging brighter and
+    dimmer with it, `work.frames` redraws per period
+    (owner-tuned 2026-09-04 from a hard blink; 0 = steady), the title bar counts `working:N`, and the
+    detail pane names each session, pid, and claim time. The dispatch
+    pipeline's `dispatching` label stays the ball's fact; this marker is the
+    live-process fact, and the two are not merged (one fact, two sources).
+  - Deferred, owner to decide: the exact exit condition beyond "all ACs
+    checked or `--note`" (a human-pass requirement before `release` is one
+    option); a heartbeat for sessions on other machines; gating Bash writes.
+
 ## Speculative (do NOT pre-build)
 
 - Windows support. (No `cfg` branches, no CI, no demand recorded.)

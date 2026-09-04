@@ -1,7 +1,6 @@
 # sbt - switchbard terminal UI
 
-Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths`.
-Install for the user's tab: `cargo install --path crates/switchbard-tui`.
+Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths`. Install: `cargo install --path crates/switchbard-tui`.
 
 ## Standing commitments (owner-set, 2026-09-02)
 1. Everything the user might tune lives in Lua (`~/.switchbard/tui.lua`, hot reload).
@@ -36,6 +35,7 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
   Top rule is the base (whole rows); lower rules paint only their scope. `po` reorders.
 - `group.rs` - `Grouping` (0-2 nested levels, `project›goal`): `o` picks it; headings over the filtered, sorted order carry project def status, done/total, or goal week actual/target, pace.
 - `ball.rs` - who holds the ball: `ball:me`/`ball:agent` labels (`dispatching` = agent); `b` cycles. `tg` / `:goal <name>`: attach or detach the task to a goal.
+- Live work (core `work_sessions`, TASK-150): `work` column = one ● per live session (`sb work claim`), the `working` band and the row's text pulse on a soft-clipped sine (`work.period_ms`, `work.frames`, `work.flatten`), title counts `working:N`, detail names sessions; `w` passes the task (ends every claim).
 - Top list = core's expedite lane: `t<n>` places (`tt` appends), `td` drops, `tp` pins it first; `#` column.
 - `settings.rs` - `,` panel: hide statuses everywhere; per-repo file, `g` promotes to global.
 - `report.rs` - `:bug`/`:idea` => task via core write layer. `telemetry.rs` - JSONL log, trail, `stats`.
