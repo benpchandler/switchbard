@@ -5,6 +5,7 @@
 use crate::columns::Column;
 use crate::sort::Order;
 use crate::tasks::{Filter, FilterField};
+use switchbard_core::Ball;
 
 /// What a column was picked for: `f` filters by its values, `s` sorts by it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +50,8 @@ pub enum PickerPurpose {
     Goals(String),
     /// `o`: what to organize the list by; the current choice is marked.
     Organize,
+    /// `t b`: who should act next on the selected task.
+    Ball,
 }
 
 /// What a column's menu offers; each row is one of these on a letter.
@@ -119,6 +122,8 @@ pub enum Payload {
     /// Paint rules list: the rule at this position.
     Rule(usize),
     ColumnAction(ColumnAction),
+    Ball(Option<Ball>),
+    NewBallHolder,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -279,5 +284,6 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::Organize => {
             "number or name organizes · the current one again flattens · x off · esc"
         }
+        PickerPurpose::Ball => "number or name picks · new person opens entry · esc",
     }
 }
