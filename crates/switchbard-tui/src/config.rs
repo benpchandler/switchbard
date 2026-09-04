@@ -12,9 +12,10 @@ use ratatui::style::{Color, Modifier, Style};
 use crate::columns::Column;
 
 const DEFAULT_LUA: &str = include_str!("default.lua");
-/// Lighthouse cadence: a short flash, then dark for the rest of the period.
-const DEFAULT_WORK_FLASH_MS: u64 = 500;
+/// A working row pulses: bright, fading out, fading back in, once per period,
+/// redrawn `frames` times per period.
 const DEFAULT_WORK_PERIOD_MS: u64 = 3000;
+const DEFAULT_WORK_FRAMES: u64 = 30;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -222,6 +223,24 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// The `working` surface at `glow` brightness (0 dark, 1 full): an RGB
+    /// background fades toward black and disappears when nearly dark; a
+    /// surface without an RGB background is simply on above half brightness.
+    pub fn working_style(&self, glow: f64) -> Style {
+        let full = self.style(Surface::Working);
+        match full.bg {
+            Some(Color::Rgb(r, g, b)) => {
+                if glow < 0.04 {
+                    return Style::default();
+                }
+                let scale = |channel: u8| (f64::from(channel) * glow).round() as u8;
+                full.bg(Color::Rgb(scale(r), scale(g), scale(b)))
+            }
+            _ if glow >= 0.5 => full,
+            _ => Style::default(),
+        }
+    }
+
     pub fn style(&self, surface: Surface) -> Style {
         self.styles.get(&surface).copied().unwrap_or_default()
     }
@@ -316,10 +335,10 @@ pub struct Config {
     /// Where `:bug` and `:idea` file: sbt's own repo, not the one being browsed.
     /// `None` files into the current repo.
     pub report_repo: Option<PathBuf>,
-    /// How long a working row stays lit each period; 0 keeps it lit steadily.
-    pub work_flash_ms: u64,
-    /// The working-row blink period; 0 keeps the row lit steadily.
+    /// The working-row pulse period; 0 keeps the row lit steadily.
     pub work_period_ms: u64,
+    /// Redraws per period: how smooth the fade is.
+    pub work_frames: u64,
     pub warnings: Vec<String>,
 }
 
@@ -402,8 +421,8 @@ struct RawConfig {
     palette: Vec<String>,
     palette_name: Option<String>,
     report_repo: Option<String>,
-    work_flash_ms: Option<u64>,
     work_period_ms: Option<u64>,
+    work_frames: Option<u64>,
     palettes: Vec<(String, Vec<String>)>,
 }
 
@@ -421,8 +440,8 @@ impl RawConfig {
             palette: string_list(&table, "palette")?,
             palette_name: table.get::<Option<String>>("palette").ok().flatten(),
             report_repo: table.get::<Option<String>>("report_repo").ok().flatten(),
-            work_flash_ms: work_setting(&table, "flash_ms"),
             work_period_ms: work_setting(&table, "period_ms"),
+            work_frames: work_setting(&table, "frames"),
             palettes: named_string_lists(&table, "palettes")?,
         })
     }
@@ -450,11 +469,11 @@ impl RawConfig {
         if over.report_repo.is_some() {
             self.report_repo = over.report_repo;
         }
-        if over.work_flash_ms.is_some() {
-            self.work_flash_ms = over.work_flash_ms;
-        }
         if over.work_period_ms.is_some() {
             self.work_period_ms = over.work_period_ms;
+        }
+        if over.work_frames.is_some() {
+            self.work_frames = over.work_frames;
         }
         for (name, colors) in over.palettes {
             self.palettes.retain(|(known, _)| *known != name);
@@ -571,8 +590,8 @@ impl RawConfig {
             palette,
             palettes,
             report_repo,
-            work_flash_ms: self.work_flash_ms.unwrap_or(DEFAULT_WORK_FLASH_MS),
             work_period_ms: self.work_period_ms.unwrap_or(DEFAULT_WORK_PERIOD_MS),
+            work_frames: self.work_frames.unwrap_or(DEFAULT_WORK_FRAMES).max(1),
             warnings,
         }
     }

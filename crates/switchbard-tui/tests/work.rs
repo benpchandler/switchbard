@@ -73,8 +73,8 @@ fn a_live_session_lights_its_row_and_a_dead_one_is_forgotten() {
     );
     assert_eq!(
         cell_bg(&h, &title),
-        Some(ratatui::style::Color::Rgb(0x1e, 0x3d, 0x36)),
-        "the row wears the berg working band"
+        Some(ratatui::style::Color::Rgb(0x2a, 0x6b, 0x5a)),
+        "the row wears the berg working band at full glow"
     );
     assert!(
         !work.join("dead-1234-abcd.json").exists(),
@@ -172,11 +172,11 @@ fn w_passes_the_task_ending_every_claim_and_dropping_the_ball() {
 }
 
 #[test]
-fn the_flash_alternates_and_help_lists_pass() {
+fn the_band_pulses_through_brightness_levels_and_help_lists_pass() {
     let mut h = Harness::new();
     std::fs::write(
         &h.config_path,
-        "return { work = { flash_ms = 1, period_ms = 2 } }",
+        "return { work = { period_ms = 40, frames = 40 } }",
     )
     .unwrap();
     h.app.tick();
@@ -200,7 +200,10 @@ fn the_flash_alternates_and_help_lists_pass() {
         seen.insert(cell_bg(&h, &title));
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
-    assert!(seen.len() >= 2, "the row colour alternates: {seen:?}");
+    assert!(
+        seen.len() >= 4,
+        "the band fades through several levels: {seen:?}"
+    );
     let help = h.press(KeyCode::Char('?'));
     assert!(help.contains("pass"), "{help}");
 }

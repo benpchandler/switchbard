@@ -43,7 +43,7 @@ return {
       hint       = { fg = "#9e9e9e" },
       status     = { fg = "#d7d7d7" },
       accent     = { fg = "#4dc7f9" },
-      working    = { bg = "#1e3d36", bold = true },  -- dark mint band: the one live thing on the board
+      working    = { bg = "#2a6b5a", bold = true },  -- mint band at full glow; it fades to black between pulses
       columns    = { id = "label", project = "link", goal = "link" },
     },
     -- Bloomberg data screen: amber identity chip and labels over white data.
@@ -62,7 +62,7 @@ return {
       hint       = { fg = "#8b949e" },
       status     = { fg = "#ffcc00" },
       accent     = { fg = "#ffcc00" },
-      working    = { bg = "#1b3a2a", bold = true },
+      working    = { bg = "#23643f", bold = true },
       columns    = { id = "label", project = "link", goal = "link" },
     },
     -- Darkroom: for a dark room with the display at its lowest usable backlight.
@@ -89,7 +89,7 @@ return {
       hint       = { fg = "#72675A" },
       status     = { fg = "#A0927F" },
       accent     = { fg = "#C09348" },
-      working    = { bg = "#26383A", bold = true },  -- teal band, the only cool fill
+      working    = { bg = "#345A5C", bold = true },  -- teal band at full glow, the only cool fill
       columns    = { id = "label", project = "link", goal = "link" },
     },
     -- Your terminal's own colors, nothing forced.
@@ -105,11 +105,12 @@ return {
     },
   },
 
-  -- Rows a live agent session is working (`sb work claim`) flash like a
-  -- lighthouse: lit with the `working` surface for flash_ms at the start of
-  -- every period_ms, plain the rest of it; 0 for either keeps them lit. The
-  -- `work` column (`c`) shows one ● per session; `w` passes the task.
-  work = { flash_ms = 500, period_ms = 3000 },
+  -- Rows a live agent session is working (`sb work claim`) pulse like a
+  -- beacon: the `working` band is brightest at the start of every period_ms,
+  -- fades out, and fades back in, redrawn frames times per period. period_ms
+  -- = 0 keeps them lit. The `work` column (`c`) shows one ● per session; `w`
+  -- passes the task.
+  work = { period_ms = 3000, frames = 30 },
 
   -- What painting a column "auto" hands out, most common value first: keep the
   -- first color quiet so the common case stays calm and the rest stand out. Pick a preset by

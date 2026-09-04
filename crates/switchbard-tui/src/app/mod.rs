@@ -309,40 +309,31 @@ impl App {
             .count()
     }
 
-    /// Whether a working row wears its surface this frame: the flash at the
-    /// start of each period, like a lighthouse; always when either is 0.
-    pub fn work_lit(&self) -> bool {
-        let (flash, period) = self.work_cadence();
-        flash == 0 || period == 0 || self.opened.elapsed().as_millis() % period < flash
+    /// How bright a working row is this frame, 0 to 1: a cosine pulse that
+    /// peaks at the start of each period and is squared so the flash is
+    /// brief and the dark stretch long, like a beacon sweeping past. Always 1
+    /// when the period is 0.
+    pub fn work_glow(&self) -> f64 {
+        let period = self.config.work_period_ms;
+        if period == 0 {
+            return 1.0;
+        }
+        let phase = (self.opened.elapsed().as_millis() % u128::from(period)) as f64 / period as f64;
+        let cosine = (1.0 + (std::f64::consts::TAU * phase).cos()) / 2.0;
+        cosine * cosine
     }
 
-    /// Time for the next redraw so a working row keeps flashing while idle:
-    /// the end of the flash if lit, else the start of the next one.
+    /// Time for the next redraw so a working row keeps pulsing while idle:
+    /// one frame of the fade.
     pub fn next_blink(&self) -> Option<Duration> {
-        let (flash, period) = self.work_cadence();
-        if flash == 0 || period == 0 || self.working_sessions() == 0 {
+        let period = self.config.work_period_ms;
+        if period == 0 || self.working_sessions() == 0 {
             return None;
         }
-        let phase = self.opened.elapsed().as_millis() % period;
-        let remaining = if phase < flash {
-            flash - phase
-        } else {
-            period - phase
-        };
-        Some(Duration::from_millis(remaining as u64))
+        Some(Duration::from_millis(
+            (period / self.config.work_frames).max(16),
+        ))
     }
-
-    /// `(flash, period)` in ms; a flash longer than its period is steady light.
-    fn work_cadence(&self) -> (u128, u128) {
-        let flash = u128::from(self.config.work_flash_ms);
-        let period = u128::from(self.config.work_period_ms);
-        if flash >= period {
-            (0, 0)
-        } else {
-            (flash, period)
-        }
-    }
-
     /// `w`: the owner passes the selected task; every session's claim on it ends.
     fn pass_work(&mut self) {
         let Some(task) = self.selected_task() else {

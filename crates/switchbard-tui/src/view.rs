@@ -113,20 +113,19 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             ),
             Row::Task(index) => {
                 let task = &app.tasks()[*index];
-                // The flash sits on top of the cursor band: it is momentary,
-                // and the cursor is back the rest of the period.
-                let working = !app.working(task).is_empty() && app.work_lit();
+                // The pulse sits on top of the cursor band: it is bright only
+                // briefly, and the cursor shows through as it fades.
+                let working = (!app.working(task).is_empty())
+                    .then(|| theme.working_style(app.work_glow()))
+                    .filter(|style| *style != Style::default());
                 if selected {
                     frame.render_widget(
                         Paragraph::new("").style(theme.style(Surface::Selected)),
                         row_area,
                     );
                 }
-                if working {
-                    frame.render_widget(
-                        Paragraph::new("").style(theme.style(Surface::Working)),
-                        row_area,
-                    );
+                if let Some(glow) = working {
+                    frame.render_widget(Paragraph::new("").style(glow), row_area);
                 }
                 for (column, cell) in app.state.columns.iter().zip(cells.iter()) {
                     let value = column.cell_text(task, &app.goals);
@@ -144,8 +143,8 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     if selected {
                         style = style.patch(theme.style(Surface::Selected));
                     }
-                    if working {
-                        style = style.patch(theme.style(Surface::Working));
+                    if let Some(glow) = working {
+                        style = style.patch(glow);
                     }
                     frame.render_widget(
                         Paragraph::new(text).style(style),
