@@ -22,6 +22,8 @@ pub struct ViewState {
     pub columns: Vec<Column>,
     /// Columns shown as glyphs instead of text.
     pub glyph_columns: Vec<Column>,
+    /// Columns shown in their short form (bare id, H/M/L).
+    pub abbreviated: Vec<Column>,
     pub paint: Vec<PaintRule>,
     /// The column the list is sectioned by, if any.
     pub group: Option<Column>,
@@ -43,6 +45,9 @@ impl ViewState {
         if !self.glyph_columns.is_empty() {
             parts.push(format!("glyphs:{}", columns_text(&self.glyph_columns)));
         }
+        if let Some(label) = self.abbreviated_label() {
+            parts.push(label);
+        }
         if !self.paint.is_empty() {
             parts.push(format!("paint:{}", self.paint.len()));
         }
@@ -54,6 +59,21 @@ impl ViewState {
         } else {
             parts.join(" ")
         }
+    }
+
+    /// `abbr:none` or `abbr:id` when the short-form set differs from the default, else nothing.
+    pub fn abbreviated_label(&self) -> Option<String> {
+        let mut mine = self.abbreviated.clone();
+        mine.sort_by_key(|c| c.name());
+        let mut default = Column::DEFAULT_ABBREVIATED.to_vec();
+        default.sort_by_key(|c| c.name());
+        if mine == default {
+            return None;
+        }
+        if mine.is_empty() {
+            return Some("abbr:none".to_string());
+        }
+        Some(format!("abbr:{}", columns_text(&mine)))
     }
 
     /// `cols:id,title` when the columns differ from the default set, else nothing.
@@ -131,6 +151,7 @@ pub fn starter_views() -> Vec<ViewState> {
         sort: None,
         columns: Column::DEFAULT_SHOWN.to_vec(),
         glyph_columns: Vec::new(),
+        abbreviated: Column::DEFAULT_ABBREVIATED.to_vec(),
         paint: Vec::new(),
         group: None,
     })
@@ -329,6 +350,7 @@ impl Default for ViewState {
             sort: None,
             columns: Column::DEFAULT_SHOWN.to_vec(),
             glyph_columns: Vec::new(),
+            abbreviated: Column::DEFAULT_ABBREVIATED.to_vec(),
             paint: Vec::new(),
             group: None,
         }
@@ -352,6 +374,18 @@ fn parse_view(entry: &Table) -> Result<ViewState, String> {
             .collect(),
         paint: parse_rules(&field("paint")?),
         group: Column::parse(&field("group")?).filter(|column| column.groupable()),
+        // Absent means the default set; an explicit "" means none.
+        abbreviated: match entry
+            .get::<Option<String>>("abbreviated")
+            .map_err(|e| e.to_string())?
+        {
+            None => Column::DEFAULT_ABBREVIATED.to_vec(),
+            Some(text) => text
+                .split(',')
+                .filter_map(|name| Column::parse(name.trim()))
+                .filter(|column| column.abbreviable())
+                .collect(),
+        },
     })
 }
 
@@ -369,12 +403,20 @@ fn lua_view(view: &ViewState) -> String {
     } else {
         format!(", paint = {}", lua_string(&rules_text(&view.paint)))
     };
+    let abbreviated = if view.abbreviated_label().is_none() {
+        String::new()
+    } else {
+        format!(
+            ", abbreviated = {}",
+            lua_string(&columns_text(&view.abbreviated))
+        )
+    };
     let group = match view.group {
         Some(column) => format!(", group = {}", lua_string(column.name())),
         None => String::new(),
     };
     format!(
-        "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint}{group} }}",
+        "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint}{group}{abbreviated} }}",
         lua_string(&view.filter),
         lua_string(&view.sort.map(|sort| sort.to_text()).unwrap_or_default()),
         lua_string(&columns_text(&view.columns)),

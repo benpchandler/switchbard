@@ -40,6 +40,7 @@ impl App {
             ColumnAction::Group,
             ColumnAction::Paint,
             ColumnAction::Glyphs,
+            ColumnAction::Abbreviate,
             ColumnAction::Hide,
             ColumnAction::Move,
         ];
@@ -47,6 +48,7 @@ impl App {
             .into_iter()
             .filter(|action| *action != ColumnAction::Glyphs || self.is_categorical(column))
             .filter(|action| *action != ColumnAction::Group || column.groupable())
+            .filter(|action| *action != ColumnAction::Abbreviate || column.abbreviable())
             .map(|action| {
                 PickOption::keyed(action.key(), action.label(), Payload::ColumnAction(action))
             })
@@ -64,6 +66,7 @@ impl App {
             ColumnAction::Group => self.set_group(Some(column)),
             ColumnAction::Paint => self.paint_column_entry(column),
             ColumnAction::Glyphs => self.toggle_glyph_column(column),
+            ColumnAction::Abbreviate => self.toggle_abbreviated(column),
             ColumnAction::Hide => self.toggle_column(column),
             ColumnAction::Move => {
                 self.move_origin = Some(self.state.columns.clone());
@@ -174,6 +177,26 @@ impl App {
         }
         self.telemetry
             .record("action", format!("glyph_toggle {}", column.name()));
+    }
+
+    /// `1a` or `a` in the columns picker: short form (bare id, H/M/L) on or off.
+    pub(super) fn toggle_abbreviated(&mut self, column: Column) {
+        if !column.abbreviable() {
+            self.status = format!("{} has no short form", column.name());
+            return;
+        }
+        match self.state.abbreviated.iter().position(|c| *c == column) {
+            Some(index) => {
+                self.state.abbreviated.remove(index);
+                self.status = format!("{} shows in full", column.name());
+            }
+            None => {
+                self.state.abbreviated.push(column);
+                self.status = format!("{} abbreviated", column.name());
+            }
+        }
+        self.telemetry
+            .record("action", format!("abbreviate_toggle {}", column.name()));
     }
 
     pub(super) fn move_column(&mut self, column: Column, delta: isize) {
@@ -354,6 +377,11 @@ impl App {
             KeyCode::Char('g') if purpose == PickerPurpose::Columns && typed_empty => {
                 if let Some(Payload::Column(column)) = picker.highlighted().map(|o| o.payload) {
                     self.toggle_glyph_column(column);
+                }
+            }
+            KeyCode::Char('a') if purpose == PickerPurpose::Columns && typed_empty => {
+                if let Some(Payload::Column(column)) = picker.highlighted().map(|o| o.payload) {
+                    self.toggle_abbreviated(column);
                 }
             }
             KeyCode::Char(direction @ ('J' | 'K')) if purpose == PickerPurpose::Columns => {

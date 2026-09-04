@@ -205,13 +205,21 @@ impl Column {
         self.values(task).join(",")
     }
 
-    /// What the table shows: the id without its repo prefix (the title bar
-    /// names the repo; `80.3` is the part that varies) and priority as H/M/L.
-    /// The detail pane, reports, and filters keep the full values.
-    pub fn display_text(self, task: &BacklogTask) -> String {
-        match self {
-            Column::Id => bare_id(&task.id).to_string(),
-            Column::Priority => task
+    /// Columns with a short form: id without its repo prefix, priority as H/M/L.
+    pub fn abbreviable(self) -> bool {
+        matches!(self, Column::Id | Column::Priority)
+    }
+
+    /// Abbreviated by default; a view can turn any of these off (`1a`, or `a` in `c`).
+    pub const DEFAULT_ABBREVIATED: [Column; 2] = [Column::Id, Column::Priority];
+
+    /// What the table shows. Abbreviated: the id without its repo prefix (the
+    /// title bar names the repo; `80.3` is the part that varies), priority as
+    /// H/M/L. The detail pane, reports, and filters always keep full values.
+    pub fn display_text(self, task: &BacklogTask, abbreviated: bool) -> String {
+        match (self, abbreviated) {
+            (Column::Id, true) => bare_id(&task.id).to_string(),
+            (Column::Priority, true) => task
                 .priority
                 .chars()
                 .next()

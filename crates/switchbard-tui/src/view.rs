@@ -123,7 +123,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     let text = if app.state.glyph_columns.contains(column) && !value.is_empty() {
                         app.config.glyph(*column, &value)
                     } else {
-                        column.display_text(task)
+                        column.display_text(task, app.state.abbreviated.contains(column))
                     };
                     let mut style = theme.column_style(*column);
                     if let Some(color) = paint::cell_color(&app.state.paint, task, *column) {
@@ -154,7 +154,15 @@ fn fitted_width(app: &App, column: Column, max: u16) -> u16 {
         .rows
         .iter()
         .filter_map(|row| match row {
-            Row::Task(index) => Some(column.display_text(&app.tasks()[*index]).chars().count()),
+            Row::Task(index) => Some(
+                column
+                    .display_text(
+                        &app.tasks()[*index],
+                        app.state.abbreviated.contains(&column),
+                    )
+                    .chars()
+                    .count(),
+            ),
             Row::Heading(_) => None,
         })
         .max()
@@ -192,6 +200,9 @@ fn table_title(app: &App) -> String {
     }
     if !app.state.glyph_columns.is_empty() {
         parts.push(format!("glyphs:{}", columns_text(&app.state.glyph_columns)));
+    }
+    if let Some(label) = app.state.abbreviated_label() {
+        parts.push(label);
     }
     if !app.state.paint.is_empty() {
         parts.push(format!("paint:{}", app.state.paint.len()));
