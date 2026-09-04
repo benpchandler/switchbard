@@ -4,7 +4,7 @@ title: Support named Ball holders in sbt
 status: In Progress
 assignee: []
 created_date: '2026-09-04 15:01'
-updated_date: '2026-09-04 15:13'
+updated_date: '2026-09-04 15:57'
 labels:
   - ball:agent
 dependencies: []
@@ -23,4 +23,5 @@ Extend the Ball field so a task can be held by me, an agent, or a named person. 
 - [x] #2 sbt renders and filters a named holder in the Ball column
 - [x] #3 Changing or clearing the Ball removes prior ball:* labels without disturbing unrelated labels
 - [x] #4 Core, CLI, and sbt regression coverage passes
+- [x] #5 t b offers standard and existing Ball holders plus a validated new-person entry path
 <!-- AC:END -->
