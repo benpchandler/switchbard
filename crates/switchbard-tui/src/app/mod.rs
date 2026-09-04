@@ -798,6 +798,7 @@ impl App {
             Action::Columns => self.open_columns_picker(),
             Action::Paint => self.open_paint_target_picker(),
             Action::Ball => self.pass_ball(),
+            Action::Done => self.mark_done(),
             Action::Pass => self.pass_work(),
             Action::Settings => self.open_settings(),
             Action::Rank => {
@@ -834,6 +835,34 @@ impl App {
                     self.views.len()
                 );
             }
+        }
+    }
+
+    /// `d`: mark the selected task Done. This is deliberately an ordinary
+    /// native status edit, not archival: completed-task retention stays a
+    /// separate, explicit lifecycle decision.
+    fn mark_done(&mut self) {
+        let Some(task) = self.selected_task() else {
+            self.status = "no task selected".to_string();
+            return;
+        };
+        let id = task.id.clone();
+        if task.status.eq_ignore_ascii_case("Done") {
+            self.status = format!("{id} is already Done");
+            return;
+        }
+        let patch = switchbard_core::BacklogTaskPatch {
+            status: Some("Done".to_string()),
+            ..Default::default()
+        };
+        match switchbard_core::edit_backlog_task(&self.repo_root, &id, &patch) {
+            Ok(_) => {
+                self.reload_tasks();
+                self.select_task(&id);
+                self.status = format!("{id} is Done");
+                self.telemetry.record("action", format!("done {id}"));
+            }
+            Err(error) => self.fail(format!("{id}: {error}")),
         }
     }
 
