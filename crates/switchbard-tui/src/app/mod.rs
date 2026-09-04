@@ -417,6 +417,102 @@ impl App {
         }
     }
 
+    /// `a`: the repo's goals, ✓ where the selected task is attached. Picking a
+    /// row attaches or detaches through the core write layer and keeps the
+    /// panel open, like `,`.
+    pub(super) fn open_goal_picker(&mut self) {
+        let Some(task) = self.selected_task() else {
+            self.status = "no task selected".to_string();
+            return;
+        };
+        if self.goals.is_empty() {
+            self.status = "no goals in this repo · sb goal create makes one".to_string();
+            return;
+        }
+        let id = task.id.clone();
+        let options = self
+            .goals
+            .iter()
+            .map(|goal| {
+                let attached = goal
+                    .inputs
+                    .tasks
+                    .iter()
+                    .any(|t| t.eq_ignore_ascii_case(&id));
+                let implied = !attached && goal.counts_task(task);
+                let mark = if attached {
+                    "✓"
+                } else if implied {
+                    "·"
+                } else {
+                    " "
+                };
+                PickOption {
+                    label: format!("{mark}{}", goal.name),
+                    count: 0,
+                    key: None,
+                    payload: Payload::Text(goal.name.clone()),
+                }
+            })
+            .collect();
+        self.open_picker(PickerPurpose::Goals(id), options);
+        self.status = "✓ attached · · in scope already · enter toggles".to_string();
+        self.telemetry.record("action", "goal_picker".to_string());
+    }
+
+    /// `:goal <name>` or a pick in the `a` panel: attach the selected task to the
+    /// goal, or detach it when already attached.
+    pub(super) fn toggle_goal_link(&mut self, name: &str) {
+        let Some(task) = self.selected_task() else {
+            self.status = "no task selected".to_string();
+            return;
+        };
+        let id = task.id.clone();
+        let Some(goal) = self.goals.iter().find(|goal| goal.name == name) else {
+            let names: Vec<&str> = self.goals.iter().map(|goal| goal.name.as_str()).collect();
+            self.fail(if names.is_empty() {
+                "no goals in this repo · sb goal create makes one".to_string()
+            } else {
+                format!("goal: one of {}", names.join(", "))
+            });
+            return;
+        };
+        let attached = goal
+            .inputs
+            .tasks
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case(&id));
+        let ids = [id.clone()];
+        let result = if attached {
+            switchbard_core::detach_goal_inputs(&self.repo_root, name, &ids, &[])
+                .map(|_| "detached from")
+        } else {
+            switchbard_core::attach_goal_inputs(&self.repo_root, name, &ids, &[])
+                .map(|_| "attached to")
+        };
+        match result {
+            Ok(verb) => {
+                self.telemetry.record(
+                    "action",
+                    format!("goal_{} {name}", if attached { "detach" } else { "attach" }),
+                );
+                self.reload_tasks();
+                let highlighted = self.picker.as_ref().map(|p| p.selected);
+                if matches!(
+                    self.picker.as_ref().map(|p| &p.purpose),
+                    Some(PickerPurpose::Goals(_))
+                ) {
+                    self.open_goal_picker();
+                    if let (Some(picker), Some(row)) = (self.picker.as_mut(), highlighted) {
+                        picker.selected = row;
+                    }
+                }
+                self.status = format!("{id} {verb} {name}");
+            }
+            Err(error) => self.fail(format!("{id}: {error}")),
+        }
+    }
+
     /// Commands that start with what has been typed so far, for the footer hint.
     pub fn command_completions(&self) -> Vec<String> {
         let typed = self.input.split_whitespace().next().unwrap_or("");
@@ -543,6 +639,7 @@ impl App {
             Action::Columns => self.open_columns_picker(),
             Action::Paint => self.open_paint_target_picker(),
             Action::Ball => self.pass_ball(),
+            Action::Goal => self.open_goal_picker(),
             Action::Settings => self.open_settings(),
             Action::Rank => {
                 self.mode = Mode::RankChord;
@@ -604,6 +701,7 @@ impl App {
                     )),
                 },
             },
+            "goal" => self.toggle_goal_link(rest.trim()),
             "bug" => self.file_report(ReportKind::Bug, rest),
             "idea" => self.file_report(ReportKind::Idea, rest),
             "" => {}

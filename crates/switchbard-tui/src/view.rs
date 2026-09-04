@@ -281,6 +281,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Action::Columns,
         Action::Paint,
         Action::Ball,
+        Action::Goal,
         Action::Group,
         Action::Settings,
         Action::Rank,
@@ -595,6 +596,7 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::PaintRules => "paint rules · top is the base".to_string(),
         PickerPurpose::ColumnActions(column) => column.name().to_string(),
         PickerPurpose::Settings => "settings".to_string(),
+        PickerPurpose::Goals(id) => format!("{id} · goals"),
     };
     if picker.typed.is_empty() {
         format!(" {subject} ")

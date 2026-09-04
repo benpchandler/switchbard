@@ -413,7 +413,7 @@ impl App {
                 picker.selected = 0;
                 // A toggle panel must not flip on a unique match: typing the
                 // rest of the word would flip it back. Enter or a number commits.
-                let toggles = matches!(purpose, PickerPurpose::Settings);
+                let toggles = matches!(purpose, PickerPurpose::Settings | PickerPurpose::Goals(_));
                 if !toggles && picker.matching().len() == 1 {
                     self.apply_picked_value();
                 }
@@ -559,6 +559,11 @@ impl App {
             (PickerPurpose::Settings, Payload::Text(status)) => {
                 // apply_picked_value took the picker; toggle_setting reopens it.
                 self.toggle_setting(&status)
+            }
+            (PickerPurpose::Goals(_), Payload::Text(name)) => {
+                // Same shape as settings: the panel stays open with fresh marks.
+                self.open_goal_picker();
+                self.toggle_goal_link(&name)
             }
             (PickerPurpose::ColumnActions(column), Payload::ColumnAction(action)) => {
                 self.run_column_action(column, action)
