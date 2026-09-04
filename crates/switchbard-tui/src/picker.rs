@@ -43,6 +43,8 @@ pub enum PickerPurpose {
     PaintRules,
     /// After a digit in browse: everything that can be done with that column.
     ColumnActions(Column),
+    /// `,`: standing preferences under every view.
+    Settings,
 }
 
 /// What a column's menu offers; each row is one of these on a letter.
@@ -266,5 +268,6 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::PaintColor(_) => "name or #hex · space clears · h back · esc",
         PickerPurpose::PaintRules => "K/J reorder · del removes · h back · esc",
         PickerPurpose::ColumnActions(_) => "letter picks · esc",
+        PickerPurpose::Settings => "number or name toggles for this repo · g every repo · esc",
     }
 }

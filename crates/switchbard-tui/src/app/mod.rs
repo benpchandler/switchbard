@@ -16,8 +16,9 @@ use crate::columns::Column;
 use crate::config::{self, Action, Config, KeyChord};
 use crate::group::{self, Row};
 use crate::paint;
-use crate::picker::{ColumnPurpose, ValuePicker};
+use crate::picker::{ColumnPurpose, Payload, PickOption, PickerPurpose, ValuePicker};
 use crate::report::{self, ReportContext, ReportKind};
+use crate::settings::{Scope as SettingsScope, SettingsStore};
 use crate::sort;
 use crate::tasks::{self, Filter, ProjectSummary};
 use crate::telemetry::Telemetry;
@@ -48,6 +49,7 @@ pub struct App {
     pub repo_root: PathBuf,
     pub config: Config,
     config_path: Option<PathBuf>,
+    pub settings: SettingsStore,
     config_seen: Option<SystemTime>,
     tasks_seen: Option<SystemTime>,
     tasks: Vec<BacklogTask>,
@@ -90,14 +92,19 @@ impl App {
         config_path: Option<PathBuf>,
         global_views_path: Option<PathBuf>,
         repo_views_path: Option<PathBuf>,
+        global_settings_path: Option<PathBuf>,
+        repo_settings_path: Option<PathBuf>,
         telemetry: Telemetry,
     ) -> App {
         let config = config::load(config_path.as_deref());
+        let (settings, settings_warnings) =
+            SettingsStore::load(global_settings_path, repo_settings_path);
         let (views, view_warnings) = ViewStore::load(global_views_path, repo_views_path);
         let mut app = App {
             repo_root: repo_root.to_path_buf(),
             config_seen: config_path.as_deref().and_then(config::modified_at),
             config_path,
+            settings,
             tasks_seen: None,
             tasks: Vec::new(),
             projects: Vec::new(),
@@ -128,6 +135,9 @@ impl App {
         app.report_config_warnings();
         if let Some(warning) = view_warnings.first() {
             app.fail(format!("views: {warning}"));
+        }
+        if let Some(warning) = settings_warnings.first() {
+            app.fail(format!("settings: {warning}"));
         }
         app
     }
@@ -390,6 +400,7 @@ impl App {
             Action::Columns => self.open_columns_picker(),
             Action::Paint => self.open_paint_target_picker(),
             Action::Ball => self.pass_ball(),
+            Action::Settings => self.open_settings(),
             Action::Group => match self.state.group {
                 Some(_) => self.set_group(None),
                 None => self.set_group(Some(self.last_group)),
@@ -512,7 +523,8 @@ impl App {
     }
 
     fn refilter(&mut self) {
-        let filter = Filter::parse(&self.state.filter);
+        let base = self.settings.effective().base_filter(&self.state.filter);
+        let filter = Filter::parse(&format!("{base} {}", self.state.filter));
         self.visible = (0..self.tasks.len())
             .filter(|&index| filter.matches(&self.tasks[index]))
             .collect();
@@ -551,6 +563,75 @@ impl App {
                 column.map(|column| column.name()).unwrap_or("off")
             ),
         );
+    }
+
+    /// `,`: the standing preferences, one row per status that can be hidden.
+    pub(super) fn open_settings(&mut self) {
+        let options = tasks::field_values(&self.tasks, tasks::FilterField::Status)
+            .into_iter()
+            .map(|(status, count)| {
+                let mark = if self.settings.effective().is_hidden(&status) {
+                    "✓"
+                } else {
+                    " "
+                };
+                PickOption {
+                    label: format!("{mark}hide {status}"),
+                    count,
+                    key: None,
+                    payload: Payload::Text(status),
+                }
+            })
+            .collect();
+        self.open_picker(PickerPurpose::Settings, options);
+        self.status = match self.settings.scope() {
+            SettingsScope::Repo => "this repo's settings".to_string(),
+            SettingsScope::Global => "settings shared by every repo".to_string(),
+        };
+        self.telemetry.record("action", "settings");
+    }
+
+    /// A settings row picked: flip it for this repo, write the file, keep the panel open.
+    pub(super) fn toggle_setting(&mut self, status: &str) {
+        if let Err(error) = self
+            .settings
+            .edit_repo(|settings| settings.toggle_hidden(status))
+        {
+            self.fail(error);
+        }
+        self.refilter();
+        let highlighted = self.picker.as_ref().map(|p| p.selected).unwrap_or(0);
+        self.open_settings();
+        if let Some(picker) = self.picker.as_mut() {
+            picker.selected = highlighted;
+        }
+        self.status = match self.settings.effective().label() {
+            Some(label) => format!("{label} · this repo · g makes it every repo"),
+            None => "nothing hidden · this repo".to_string(),
+        };
+        self.telemetry
+            .record("action", format!("settings_hide {status}"));
+    }
+
+    /// `g` in the settings panel: this repo's settings become every repo's.
+    pub(super) fn promote_settings(&mut self) {
+        match self.settings.promote() {
+            Ok(()) => {
+                self.status = match self.settings.effective().label() {
+                    Some(label) => format!("{label} · every repo"),
+                    None => "nothing hidden · every repo".to_string(),
+                };
+                self.telemetry.record("action", "settings_promote");
+            }
+            Err(error) => self.fail(error),
+        }
+        let highlighted = self.picker.as_ref().map(|p| p.selected).unwrap_or(0);
+        let status = std::mem::take(&mut self.status);
+        self.open_settings();
+        self.status = status;
+        if let Some(picker) = self.picker.as_mut() {
+            picker.selected = highlighted;
+        }
     }
 
     /// Land on `row`, or the nearest task row after it (before it at the end).

@@ -37,7 +37,7 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
   Top rule is the base (whole rows); lower rules paint only their scope. `po` reorders.
 - `group.rs` - `o`: rows = headings + tasks over the filtered, sorted order; project headings carry def status, done/total.
 - `ball.rs` - who holds the ball: `ball:me`/`ball:agent` labels (`dispatching` = agent); `b` cycles.
-- `sort.rs` - `s <n>`: ascending/descending/semantic (vocabulary rank), ties by id.
+- `settings.rs` - `,` panel: hide statuses under every view; per-repo file overrides the global one, `g` promotes.
 - `report.rs` - `:bug`/`:idea` => task via core write layer. `telemetry.rs` - JSONL log, trail, `stats`.
 
 ## Loop

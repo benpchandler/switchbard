@@ -35,6 +35,7 @@ pub enum Action {
     Quit,
     View,
     Group,
+    Settings,
 }
 
 impl Action {
@@ -60,6 +61,7 @@ impl Action {
             "quit" => Action::Quit,
             "view" => Action::View,
             "group" => Action::Group,
+            "settings" => Action::Settings,
             _ => return None,
         })
     }
@@ -86,6 +88,7 @@ impl Action {
             Action::Quit => "quit".to_string(),
             Action::View => "view".to_string(),
             Action::Group => "group".to_string(),
+            Action::Settings => "settings".to_string(),
         }
     }
 }

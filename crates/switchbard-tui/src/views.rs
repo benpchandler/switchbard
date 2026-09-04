@@ -118,7 +118,17 @@ pub fn global_path() -> Option<PathBuf> {
 }
 
 pub fn repo_path(repo_root: &Path) -> Option<PathBuf> {
-    let key: String = repo_root
+    dirs::home_dir().map(|home| {
+        home.join(".switchbard")
+            .join("views")
+            .join(format!("{}.lua", repo_file_key(repo_root)))
+    })
+}
+
+/// A repo root as a file name: `Users_bpc_Dev_switchbard`. Views and settings
+/// both key their per-repo files by it.
+pub fn repo_file_key(repo_root: &Path) -> String {
+    repo_root
         .to_string_lossy()
         .trim_start_matches('/')
         .chars()
@@ -129,12 +139,7 @@ pub fn repo_path(repo_root: &Path) -> Option<PathBuf> {
                 '_'
             }
         })
-        .collect();
-    dirs::home_dir().map(|home| {
-        home.join(".switchbard")
-            .join("views")
-            .join(format!("{key}.lua"))
-    })
+        .collect()
 }
 
 pub fn starter_views() -> Vec<ViewState> {

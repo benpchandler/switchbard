@@ -204,6 +204,9 @@ fn table_title(app: &App) -> String {
     if let Some(label) = app.state.abbreviated_label() {
         parts.push(label);
     }
+    if let Some(label) = app.settings.effective().label() {
+        parts.push(label);
+    }
     if !app.state.paint.is_empty() {
         parts.push(format!("paint:{}", app.state.paint.len()));
     }
@@ -282,6 +285,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Action::Paint,
         Action::Ball,
         Action::Group,
+        Action::Settings,
         Action::Command,
         Action::Reload,
         Action::Help,
@@ -417,6 +421,7 @@ fn browse_footer(app: &App) -> Line<'static> {
         ("p", "paint"),
         ("b", "ball"),
         ("v", "views"),
+        (",", "settings"),
         (":", "command"),
         ("?", "keys"),
         ("q", "quit"),
@@ -588,6 +593,7 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::PaintColor(_) => "color".to_string(),
         PickerPurpose::PaintRules => "paint rules · top is the base".to_string(),
         PickerPurpose::ColumnActions(column) => column.name().to_string(),
+        PickerPurpose::Settings => "settings".to_string(),
     };
     if picker.typed.is_empty() {
         format!(" {subject} ")

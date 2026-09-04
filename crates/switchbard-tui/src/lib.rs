@@ -6,6 +6,7 @@ pub mod group;
 pub mod paint;
 pub mod picker;
 pub mod report;
+pub mod settings;
 pub mod sort;
 pub mod tasks;
 pub mod telemetry;

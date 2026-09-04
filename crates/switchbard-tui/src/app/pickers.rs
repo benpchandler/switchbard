@@ -379,6 +379,9 @@ impl App {
                     self.toggle_glyph_column(column);
                 }
             }
+            KeyCode::Char('g') if purpose == PickerPurpose::Settings && typed_empty => {
+                self.promote_settings();
+            }
             KeyCode::Char('a') if purpose == PickerPurpose::Columns && typed_empty => {
                 if let Some(Payload::Column(column)) = picker.highlighted().map(|o| o.payload) {
                     self.toggle_abbreviated(column);
@@ -408,7 +411,10 @@ impl App {
             KeyCode::Char(c) => {
                 picker.typed.push(c);
                 picker.selected = 0;
-                if picker.matching().len() == 1 {
+                // A toggle panel must not flip on a unique match: typing the
+                // rest of the word would flip it back. Enter or a number commits.
+                let toggles = matches!(purpose, PickerPurpose::Settings);
+                if !toggles && picker.matching().len() == 1 {
                     self.apply_picked_value();
                 }
             }
@@ -550,6 +556,10 @@ impl App {
                 self.apply_paint(pick, &color)
             }
             (PickerPurpose::PaintColor(pick), Payload::NoColor) => self.apply_paint(pick, "none"),
+            (PickerPurpose::Settings, Payload::Text(status)) => {
+                // apply_picked_value took the picker; toggle_setting reopens it.
+                self.toggle_setting(&status)
+            }
             (PickerPurpose::ColumnActions(column), Payload::ColumnAction(action)) => {
                 self.run_column_action(column, action)
             }
