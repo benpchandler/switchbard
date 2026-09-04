@@ -1241,9 +1241,14 @@ fn work_ok(root: &Path, work_dir: &Path, args: &[&str]) -> String {
 }
 
 fn hook_event(root: &Path, session: &str, event: &str, tool: &str) -> String {
+    hook_edit_event(root, session, event, tool, &root.join("src/lib.rs"))
+}
+
+fn hook_edit_event(root: &Path, session: &str, event: &str, tool: &str, file: &Path) -> String {
     format!(
-        r#"{{"session_id":"{session}","hook_event_name":"{event}","tool_name":"{tool}","cwd":"{}"}}"#,
-        root.display()
+        r#"{{"session_id":"{session}","hook_event_name":"{event}","tool_name":"{tool}","cwd":"{}","tool_input":{{"file_path":"{}"}}}}"#,
+        root.display(),
+        file.display()
     )
 }
 
@@ -1386,6 +1391,39 @@ fn work_hook_denies_edits_without_a_claim_holds_stop_while_claimed_and_lets_go_b
         Some(&hook_event(root, session, "PreToolUse", "Bash")),
     );
     assert!(out.stdout.is_empty(), "only editing tools are gated");
+    let elsewhere = tempfile::tempdir().unwrap();
+    let out = work_bin(
+        root,
+        work.path(),
+        &["work", "hook"],
+        Some(&hook_edit_event(
+            root,
+            session,
+            "PreToolUse",
+            "Write",
+            &elsewhere.path().join("notes.md"),
+        )),
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "a file outside the repo (memory, scratch) needs no claim"
+    );
+    let out = work_bin(
+        root,
+        work.path(),
+        &["work", "hook"],
+        Some(&hook_edit_event(
+            root,
+            session,
+            "PreToolUse",
+            "Write",
+            Path::new("src/main.rs"),
+        )),
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("deny"),
+        "a relative path is inside the repo"
+    );
     let out = work_bin(
         root,
         work.path(),

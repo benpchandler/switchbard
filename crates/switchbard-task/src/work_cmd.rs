@@ -17,8 +17,9 @@
 //!   this repo, hold the session at Stop while it still holds claims (bounded
 //!   by `--max-stop-blocks`, after which the session is marked abandoned so
 //!   the board shows an honest failure instead of a looping agent), and drop
-//!   the record at SessionEnd. Every other event, and any repo without a
-//!   backlog, is a silent exit 0.
+//!   the record at SessionEnd. Every other event, an edit to a file outside
+//!   the repo (the agent's own memory, scratch files), and any repo without
+//!   a backlog, is a silent exit 0.
 //!
 //! stdout carries the payload only; narration goes to stderr.
 
@@ -255,6 +256,16 @@ struct HookEvent {
     tool_name: String,
     #[serde(default)]
     cwd: Option<PathBuf>,
+    /// The editing tools' arguments; only `file_path` is read, to gate edits
+    /// inside the repo and leave the agent's own notes and memory alone.
+    #[serde(default)]
+    tool_input: ToolInput,
+}
+
+#[derive(Deserialize, Default)]
+struct ToolInput {
+    #[serde(default)]
+    file_path: Option<PathBuf>,
 }
 
 const EDITING_TOOLS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -271,7 +282,10 @@ fn hook(dir: &Path, text: &str, max_stop_blocks: u32) -> Result<()> {
     let session = switchbard_core::load_work_session(dir, &event.session_id)?
         .filter(|session| session.claims_in(&root));
     match event.hook_event_name.as_str() {
-        "PreToolUse" if EDITING_TOOLS.contains(&event.tool_name.as_str()) => {
+        "PreToolUse"
+            if EDITING_TOOLS.contains(&event.tool_name.as_str())
+                && edits_inside(&root, event.tool_input.file_path.as_deref()) =>
+        {
             let held = session
                 .as_ref()
                 .filter(|session| !session.claims.is_empty() && !session.abandoned);
@@ -324,6 +338,43 @@ fn hook(dir: &Path, text: &str, max_stop_blocks: u32) -> Result<()> {
         _ => {}
     }
     Ok(())
+}
+
+/// Whether an edit lands in the repo the claim is about. A relative path is
+/// taken against the repo; no path at all (a tool this hook does not know the
+/// shape of) counts as inside, so the gate fails closed on the repo's files.
+fn edits_inside(root: &Path, file_path: Option<&Path>) -> bool {
+    let Some(file_path) = file_path else {
+        return true;
+    };
+    let absolute = if file_path.is_absolute() {
+        file_path.to_path_buf()
+    } else {
+        root.join(file_path)
+    };
+    resolve_existing_prefix(&absolute).starts_with(resolve_existing_prefix(root))
+}
+
+/// Canonicalize the longest existing ancestor (a new file has none of its
+/// own yet) and re-append the rest, so `/var` and `/private/var` compare equal.
+fn resolve_existing_prefix(path: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut current = path;
+    loop {
+        if let Ok(canonical) = std::fs::canonicalize(current) {
+            return rest
+                .iter()
+                .rev()
+                .fold(canonical, |acc, part| acc.join(part));
+        }
+        match (current.file_name(), current.parent()) {
+            (Some(name), Some(parent)) => {
+                rest.push(name.to_os_string());
+                current = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
 }
 
 fn load(root: &Path) -> Result<BacklogRepo> {
