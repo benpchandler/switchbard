@@ -38,6 +38,8 @@ pub enum Action {
     Columns,
     Paint,
     Ball,
+    /// Mark the selected task Done through the native backlog mutation boundary.
+    Done,
     /// Release every session's claim on the selected task: the owner's word.
     Pass,
     Command,
@@ -68,6 +70,7 @@ impl Action {
             "columns" => Action::Columns,
             "paint" => Action::Paint,
             "ball" => Action::Ball,
+            "done" => Action::Done,
             "pass" => Action::Pass,
             "command" => Action::Command,
             "reload" => Action::Reload,
@@ -97,6 +100,7 @@ impl Action {
             Action::Columns => "columns".to_string(),
             Action::Paint => "paint".to_string(),
             Action::Ball => "ball".to_string(),
+            Action::Done => "done".to_string(),
             Action::Pass => "pass".to_string(),
             Action::Command => "command".to_string(),
             Action::Reload => "reload".to_string(),
