@@ -1201,3 +1201,276 @@ fn queue_errors_name_the_next_step_and_prompt_matches_the_pipeline() {
     assert!(prompt.contains("Proof"), "{prompt}");
     assert!(prompt.contains("TASK-1"), "{prompt}");
 }
+
+fn work_bin(root: &Path, work_dir: &Path, args: &[&str], stdin: Option<&str>) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_sb"))
+        .arg("--repo")
+        .arg(root)
+        .args(args)
+        .env("SWITCHBARD_WORK_DIR", work_dir)
+        .env_remove("CLAUDE_CODE_SESSION_ID")
+        .env_remove("CLAUDE_PID")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("binary runs");
+    if let Some(text) = stdin {
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(text.as_bytes())
+            .unwrap();
+    } else {
+        drop(child.stdin.take());
+    }
+    child.wait_with_output().expect("binary exits")
+}
+
+fn work_ok(root: &Path, work_dir: &Path, args: &[&str]) -> String {
+    let out = work_bin(root, work_dir, args, None);
+    assert!(
+        out.status.success(),
+        "`sb {args:?}` failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
+fn hook_event(root: &Path, session: &str, event: &str, tool: &str) -> String {
+    format!(
+        r#"{{"session_id":"{session}","hook_event_name":"{event}","tool_name":"{tool}","cwd":"{}"}}"#,
+        root.display()
+    )
+}
+
+#[test]
+fn work_claim_release_and_pass_round_trip_through_the_board() {
+    let dir = fixture_project();
+    let root = dir.path();
+    let work = tempfile::tempdir().unwrap();
+    let pid = std::process::id().to_string();
+    let me = ["--session", "sess-1234-abcd", "--pid", pid.as_str()];
+    ok_stdout(
+        root,
+        &["create", "Light the row", "--ac", "One", "--ac", "Two"],
+    );
+
+    let out = work_bin(root, work.path(), &["work", "claim", "TASK-1"], None);
+    assert!(!out.status.success(), "no identity outside a harness");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--session"));
+
+    let claimed = work_ok(
+        root,
+        work.path(),
+        &[&["work", "claim", "TASK-1"][..], &me[..]].concat(),
+    );
+    assert_eq!(claimed, "Claimed TASK-1 (session sess-123 holds: TASK-1)\n");
+    let view = ok_stdout(root, &["view", "TASK-1"]);
+    assert!(view.contains("In Progress"), "{view}");
+    assert!(view.contains("ball:agent"), "{view}");
+    let list = work_ok(root, work.path(), &["work", "list"]);
+    assert!(
+        list.starts_with(&format!("sess-1234-abcd\t{pid}\tclaude\tlive\tTASK-1\t")),
+        "{list}"
+    );
+
+    let out = work_bin(
+        root,
+        work.path(),
+        &[&["work", "release", "TASK-1"][..], &me[..]].concat(),
+        None,
+    );
+    assert!(
+        !out.status.success(),
+        "unchecked criteria refuse a bare release"
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("2 unchecked acceptance criteria") && err.contains("--note"),
+        "{err}"
+    );
+
+    let released = work_ok(
+        root,
+        work.path(),
+        &[
+            &[
+                "work",
+                "release",
+                "TASK-1",
+                "--note",
+                "blocked on the design",
+            ][..],
+            &me[..],
+        ]
+        .concat(),
+    );
+    assert_eq!(
+        released,
+        "Released TASK-1 (session sess-123 still holds: nothing)\n"
+    );
+    let view = ok_stdout(root, &["view", "TASK-1"]);
+    assert!(
+        view.contains("Released unfinished by session sess-123: blocked on the design"),
+        "{view}"
+    );
+    assert!(view.contains("ball:me"), "{view}");
+
+    work_ok(
+        root,
+        work.path(),
+        &[&["work", "claim", "TASK-1"][..], &me[..]].concat(),
+    );
+    ok_stdout(
+        root,
+        &["edit", "TASK-1", "--check-ac", "1", "--check-ac", "2"],
+    );
+    let out = work_bin(
+        root,
+        work.path(),
+        &[&["work", "release", "TASK-1"][..], &me[..]].concat(),
+        None,
+    );
+    assert!(
+        out.status.success(),
+        "all criteria checked: release needs no note"
+    );
+
+    work_ok(
+        root,
+        work.path(),
+        &[&["work", "claim", "TASK-1"][..], &me[..]].concat(),
+    );
+    assert_eq!(
+        work_ok(root, work.path(), &["work", "pass", "TASK-1"]),
+        "Passed TASK-1 (released from sess-123)\n"
+    );
+    assert_eq!(
+        work_ok(root, work.path(), &["work", "pass", "TASK-1"]),
+        "no session is working TASK-1\n"
+    );
+    assert!(!ok_stdout(root, &["view", "TASK-1"]).contains("ball:"));
+}
+
+#[test]
+fn work_hook_denies_edits_without_a_claim_holds_stop_while_claimed_and_lets_go_bounded() {
+    let dir = fixture_project();
+    let root = dir.path();
+    let work = tempfile::tempdir().unwrap();
+    let pid = std::process::id().to_string();
+    ok_stdout(root, &["create", "Hooked", "--ac", "One"]);
+    let session = "hook-sess-1";
+
+    let out = work_bin(
+        root,
+        work.path(),
+        &["work", "hook"],
+        Some(&hook_event(root, session, "PreToolUse", "Edit")),
+    );
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(r#""permissionDecision":"deny""#),
+        "{stdout}"
+    );
+    assert!(stdout.contains("sb work claim"), "{stdout}");
+
+    let out = work_bin(
+        root,
+        work.path(),
+        &["work", "hook"],
+        Some(&hook_event(root, session, "PreToolUse", "Bash")),
+    );
+    assert!(out.stdout.is_empty(), "only editing tools are gated");
+    let out = work_bin(
+        root,
+        work.path(),
+        &["work", "hook"],
+        Some(&hook_event(root, session, "Stop", "")),
+    );
+    assert!(out.stdout.is_empty(), "nothing held: stop is free");
+
+    let outside = tempfile::tempdir().unwrap();
+    let out = work_bin(
+        root,
+        work.path(),
+        &["work", "hook"],
+        Some(&hook_event(outside.path(), session, "PreToolUse", "Edit")),
+    );
+    assert!(
+        out.status.success() && out.stdout.is_empty(),
+        "a cwd with no backlog is silent"
+    );
+
+    work_ok(
+        root,
+        work.path(),
+        &[
+            "work",
+            "claim",
+            "TASK-1",
+            "--session",
+            session,
+            "--pid",
+            &pid,
+        ],
+    );
+    let out = work_bin(
+        root,
+        work.path(),
+        &["work", "hook"],
+        Some(&hook_event(root, session, "PreToolUse", "Write")),
+    );
+    assert!(out.stdout.is_empty(), "claimed: edits pass");
+
+    for expected in ["1/2", "2/2"] {
+        let out = work_bin(
+            root,
+            work.path(),
+            &["work", "hook", "--max-stop-blocks", "2"],
+            Some(&hook_event(root, session, "Stop", "")),
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains(r#""decision":"block""#), "{stdout}");
+        assert!(
+            stdout.contains("TASK-1") && stdout.contains(expected),
+            "{stdout}"
+        );
+    }
+    let out = work_bin(
+        root,
+        work.path(),
+        &["work", "hook", "--max-stop-blocks", "2"],
+        Some(&hook_event(root, session, "Stop", "")),
+    );
+    assert!(out.stdout.is_empty(), "past the cap the session is let go");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("abandoned"));
+    let list = work_ok(root, work.path(), &["work", "list"]);
+    assert!(list.contains("\tabandoned\tTASK-1\t"), "{list}");
+    let out = work_bin(
+        root,
+        work.path(),
+        &["work", "hook"],
+        Some(&hook_event(root, session, "PreToolUse", "Edit")),
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("deny"),
+        "an abandoned claim no longer licenses edits"
+    );
+
+    let out = work_bin(
+        root,
+        work.path(),
+        &["work", "hook"],
+        Some(&hook_event(root, session, "SessionEnd", "")),
+    );
+    assert!(out.status.success());
+    assert!(
+        work_ok(root, work.path(), &["work", "list"]).is_empty(),
+        "session end drops the record"
+    );
+}

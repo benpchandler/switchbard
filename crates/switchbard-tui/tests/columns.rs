@@ -114,12 +114,15 @@ fn shift_k_moves_a_column_up_and_the_order_saves_with_the_view() {
 #[test]
 fn the_last_column_cannot_be_hidden() {
     let mut h = Harness::new();
+    // Ten columns in the catalog: `1` waits for a possible `0`, enter confirms it.
     for _ in 0..3 {
         h.press(KeyCode::Char('c'));
         h.press(KeyCode::Char('1'));
+        h.press(KeyCode::Enter);
     }
     h.press(KeyCode::Char('c'));
-    let screen = h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Char('1'));
+    let screen = h.press(KeyCode::Enter);
     assert!(screen.contains("at least one column must stay"), "{screen}");
     assert_eq!(h.app.state.columns.len(), 1);
 }

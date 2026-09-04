@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use crossterm::event::{self, Event};
-use switchbard_tui::app::App;
+use switchbard_tui::app::{App, AppPaths};
 use switchbard_tui::settings;
 use switchbard_tui::telemetry::{self, Telemetry};
 use switchbard_tui::{config, view, views};
@@ -87,11 +87,14 @@ fn run(repo_root: PathBuf) -> Result<()> {
     };
     let mut app = App::open(
         &repo_root,
-        config::user_config_path(),
-        views::global_path(),
-        views::repo_path(&repo_root),
-        settings::global_path(),
-        settings::repo_path(&repo_root),
+        AppPaths {
+            config: config::user_config_path(),
+            global_views: views::global_path(),
+            repo_views: views::repo_path(&repo_root),
+            global_settings: settings::global_path(),
+            repo_settings: settings::repo_path(&repo_root),
+            work_dir: switchbard_core::default_work_dir(),
+        },
         telemetry,
     );
     app.resume_from(std::env::var(RESUME_ENV).ok().as_deref());
@@ -116,7 +119,11 @@ fn drive(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Exit>
         let started = Instant::now();
         terminal.draw(|frame| view::draw(frame, app))?;
         app.telemetry.record_render(started);
-        if event::poll(Duration::from_millis(500))? {
+        let wait = app
+            .next_blink()
+            .unwrap_or(Duration::from_millis(500))
+            .min(Duration::from_millis(500));
+        if event::poll(wait)? {
             if let Event::Key(key) = event::read()? {
                 app.handle_key(key);
             }

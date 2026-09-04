@@ -21,6 +21,8 @@ pub enum Column {
     Rank,
     /// The weekly goal(s) the task feeds: by scope, attachment, or attached project.
     Goal,
+    /// One glyph per live agent session working the task; empty when none is.
+    Work,
 }
 
 pub struct ColumnSpec {
@@ -41,7 +43,7 @@ pub struct ColumnSpec {
     pub groupable: bool,
 }
 
-pub const COLUMNS: [ColumnSpec; 9] = [
+pub const COLUMNS: [ColumnSpec; 10] = [
     ColumnSpec {
         column: Column::Id,
         name: "id",
@@ -132,11 +134,21 @@ pub const COLUMNS: [ColumnSpec; 9] = [
         vocabulary: &[],
         groupable: true,
     },
+    ColumnSpec {
+        column: Column::Work,
+        name: "work",
+        alias: None,
+        header: "work",
+        width: Some(4),
+        field: None,
+        vocabulary: &[],
+        groupable: false,
+    },
 ];
 
 impl Column {
     /// Every column sbt knows, in catalog order. Shown columns are a user-ordered subset.
-    pub const ALL: [Column; 9] = [
+    pub const ALL: [Column; 10] = [
         Column::Id,
         Column::Status,
         Column::Priority,
@@ -146,6 +158,7 @@ impl Column {
         Column::Ball,
         Column::Rank,
         Column::Goal,
+        Column::Work,
     ];
 
     pub const DEFAULT_SHOWN: [Column; 4] =
@@ -226,8 +239,9 @@ impl Column {
                     vec![ball.to_string()]
                 }
             }
-            // Rank is not on the task: `App::cell` supplies it from the lane.
-            Column::Rank => Vec::new(),
+            // Rank and work are not on the task: `App::cell` supplies them
+            // from the lane and the live session list.
+            Column::Rank | Column::Work => Vec::new(),
             Column::Goal => goals_feeding(goals, task)
                 .into_iter()
                 .map(str::to_string)

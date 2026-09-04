@@ -11,7 +11,7 @@ use switchbard_core::{
     create_project_def, create_task_allocating_id, rank_project, NewBacklogTask, NewProjectDef,
     RankPlacement,
 };
-use switchbard_tui::app::App;
+use switchbard_tui::app::{App, AppPaths};
 use switchbard_tui::telemetry::Telemetry;
 use switchbard_tui::view;
 
@@ -83,11 +83,14 @@ impl Harness {
 pub fn open_app(root: &Path, config_path: &Path) -> App {
     App::open(
         root,
-        Some(config_path.to_path_buf()),
-        Some(root.join("views.lua")),
-        Some(root.join("views-repo.lua")),
-        Some(root.join("settings.lua")),
-        Some(root.join("settings-repo.lua")),
+        AppPaths {
+            config: Some(config_path.to_path_buf()),
+            global_views: Some(root.join("views.lua")),
+            repo_views: Some(root.join("views-repo.lua")),
+            global_settings: Some(root.join("settings.lua")),
+            repo_settings: Some(root.join("settings-repo.lua")),
+            work_dir: Some(root.join("work")),
+        },
         Telemetry::in_memory(),
     )
 }

@@ -12,6 +12,7 @@ use ratatui::style::{Color, Modifier, Style};
 use crate::columns::Column;
 
 const DEFAULT_LUA: &str = include_str!("default.lua");
+const DEFAULT_WORK_BLINK_MS: u64 = 600;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -29,6 +30,8 @@ pub enum Action {
     Columns,
     Paint,
     Ball,
+    /// Release every session's claim on the selected task: the owner's word.
+    Pass,
     Command,
     Reload,
     Help,
@@ -57,6 +60,7 @@ impl Action {
             "columns" => Action::Columns,
             "paint" => Action::Paint,
             "ball" => Action::Ball,
+            "pass" => Action::Pass,
             "command" => Action::Command,
             "reload" => Action::Reload,
             "help" => Action::Help,
@@ -85,6 +89,7 @@ impl Action {
             Action::Columns => "columns".to_string(),
             Action::Paint => "paint".to_string(),
             Action::Ball => "ball".to_string(),
+            Action::Pass => "pass".to_string(),
             Action::Command => "command".to_string(),
             Action::Reload => "reload".to_string(),
             Action::Help => "help".to_string(),
@@ -181,6 +186,8 @@ pub enum Surface {
     Status,
     /// Picker highlight, cursors, checkmarks.
     Accent,
+    /// A row a live agent session is working, on the lit half of the blink.
+    Working,
 }
 
 impl Surface {
@@ -200,6 +207,7 @@ impl Surface {
             "hint" | "dim" => Surface::Hint,
             "status" => Surface::Status,
             "accent" => Surface::Accent,
+            "working" => Surface::Working,
             _ => return None,
         })
     }
@@ -306,6 +314,8 @@ pub struct Config {
     /// Where `:bug` and `:idea` file: sbt's own repo, not the one being browsed.
     /// `None` files into the current repo.
     pub report_repo: Option<PathBuf>,
+    /// The working-row blink period; 0 keeps the row lit steadily.
+    pub work_blink_ms: u64,
     pub warnings: Vec<String>,
 }
 
@@ -379,6 +389,7 @@ struct RawConfig {
     palette: Vec<String>,
     palette_name: Option<String>,
     report_repo: Option<String>,
+    work_blink_ms: Option<u64>,
     palettes: Vec<(String, Vec<String>)>,
 }
 
@@ -396,6 +407,11 @@ impl RawConfig {
             palette: string_list(&table, "palette")?,
             palette_name: table.get::<Option<String>>("palette").ok().flatten(),
             report_repo: table.get::<Option<String>>("report_repo").ok().flatten(),
+            work_blink_ms: table
+                .get::<Option<Table>>("work")
+                .ok()
+                .flatten()
+                .and_then(|work| work.get::<Option<u64>>("blink_ms").ok().flatten()),
             palettes: named_string_lists(&table, "palettes")?,
         })
     }
@@ -422,6 +438,9 @@ impl RawConfig {
         }
         if over.report_repo.is_some() {
             self.report_repo = over.report_repo;
+        }
+        if over.work_blink_ms.is_some() {
+            self.work_blink_ms = over.work_blink_ms;
         }
         for (name, colors) in over.palettes {
             self.palettes.retain(|(known, _)| *known != name);
@@ -538,6 +557,7 @@ impl RawConfig {
             palette,
             palettes,
             report_repo,
+            work_blink_ms: self.work_blink_ms.unwrap_or(DEFAULT_WORK_BLINK_MS),
             warnings,
         }
     }

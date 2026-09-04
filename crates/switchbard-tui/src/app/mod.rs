@@ -6,10 +6,10 @@ mod pickers;
 mod slots;
 
 use std::path::{Path, PathBuf};
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
-use switchbard_core::{BacklogTask, GoalDef};
+use switchbard_core::{BacklogTask, GoalDef, WorkSession};
 
 use crate::ball::Ball;
 use crate::columns::Column;
@@ -47,6 +47,19 @@ pub enum Pane {
     Help,
 }
 
+/// Where the app reads and writes outside the repo. Every field is optional:
+/// `None` means that file is not consulted (tests, or no home directory).
+#[derive(Debug, Clone, Default)]
+pub struct AppPaths {
+    pub config: Option<PathBuf>,
+    pub global_views: Option<PathBuf>,
+    pub repo_views: Option<PathBuf>,
+    pub global_settings: Option<PathBuf>,
+    pub repo_settings: Option<PathBuf>,
+    /// The live-work session store (`switchbard_core::default_work_dir`).
+    pub work_dir: Option<PathBuf>,
+}
+
 pub struct App {
     pub repo_root: PathBuf,
     pub config: Config,
@@ -63,6 +76,11 @@ pub struct App {
     pub goal_summaries: Vec<GoalSummary>,
     /// The Top 5 (expedite lane) ids in order; the queue.
     pub top: Vec<String>,
+    /// Live agent sessions holding tasks in this repo; refreshed every tick.
+    pub work: Vec<WorkSession>,
+    work_dir: Option<PathBuf>,
+    /// When the app opened: the working-row blink counts from here.
+    opened: Instant,
     /// Filtered and sorted task indices, the truth grouping projects from.
     pub visible: Vec<usize>,
     /// What the table shows: tasks, with a heading before each section when grouped.
@@ -93,19 +111,18 @@ pub struct App {
 }
 
 impl App {
-    pub fn open(
-        repo_root: &Path,
-        config_path: Option<PathBuf>,
-        global_views_path: Option<PathBuf>,
-        repo_views_path: Option<PathBuf>,
-        global_settings_path: Option<PathBuf>,
-        repo_settings_path: Option<PathBuf>,
-        telemetry: Telemetry,
-    ) -> App {
+    pub fn open(repo_root: &Path, paths: AppPaths, telemetry: Telemetry) -> App {
+        let AppPaths {
+            config: config_path,
+            global_views,
+            repo_views,
+            global_settings,
+            repo_settings,
+            work_dir,
+        } = paths;
         let config = config::load(config_path.as_deref());
-        let (settings, settings_warnings) =
-            SettingsStore::load(global_settings_path, repo_settings_path);
-        let (views, view_warnings) = ViewStore::load(global_views_path, repo_views_path);
+        let (settings, settings_warnings) = SettingsStore::load(global_settings, repo_settings);
+        let (views, view_warnings) = ViewStore::load(global_views, repo_views);
         let mut app = App {
             repo_root: repo_root.to_path_buf(),
             config_seen: config_path.as_deref().and_then(config::modified_at),
@@ -117,6 +134,9 @@ impl App {
             goals: Vec::new(),
             goal_summaries: Vec::new(),
             top: Vec::new(),
+            work: Vec::new(),
+            work_dir,
+            opened: Instant::now(),
             visible: Vec::new(),
             rows: Vec::new(),
             selected: 0,
@@ -139,6 +159,7 @@ impl App {
             should_quit: false,
         };
         app.reload_tasks();
+        app.reload_work();
         app.switch_view(0);
         app.report_config_warnings();
         if let Some(warning) = view_warnings.first() {
@@ -175,6 +196,7 @@ impl App {
                 .rank_of(task)
                 .map(|n| n.to_string())
                 .unwrap_or_default(),
+            Column::Work => "●".repeat(self.working(task).len().min(3)),
             other => other.display_text(task, self.state.abbreviated.contains(&other), &self.goals),
         }
     }
@@ -258,6 +280,84 @@ impl App {
         let now = config::modified_at(&self.repo_root.join("backlog/tasks"));
         if now != self.tasks_seen {
             self.reload_tasks();
+        }
+        self.reload_work();
+    }
+
+    /// Re-read the live session records: a handful of small files, and the
+    /// read is what notices a session's process has gone.
+    fn reload_work(&mut self) {
+        let Some(dir) = self.work_dir.as_deref() else {
+            return;
+        };
+        match switchbard_core::list_work_sessions(dir, &self.repo_root) {
+            Ok(sessions) => self.work = sessions,
+            Err(error) => self.fail(format!("work sessions: {error}")),
+        }
+    }
+
+    /// The live sessions working `task`, oldest first.
+    pub fn working(&self, task: &BacklogTask) -> Vec<&WorkSession> {
+        switchbard_core::sessions_working(&self.work, &task.id)
+    }
+
+    /// How many live sessions hold anything here: the title-bar count.
+    pub fn working_sessions(&self) -> usize {
+        self.work
+            .iter()
+            .filter(|session| !session.abandoned && !session.claims.is_empty())
+            .count()
+    }
+
+    /// Whether a working row wears its surface this frame: the lit half of
+    /// the blink, or always when the period is 0.
+    pub fn work_lit(&self) -> bool {
+        let period = self.config.work_blink_ms;
+        period == 0 || (self.opened.elapsed().as_millis() / u128::from(period)).is_multiple_of(2)
+    }
+
+    /// Time for the next redraw so a working row keeps blinking while idle.
+    pub fn next_blink(&self) -> Option<Duration> {
+        let period = self.config.work_blink_ms;
+        if period == 0 || self.working_sessions() == 0 {
+            return None;
+        }
+        let elapsed = self.opened.elapsed().as_millis();
+        let remaining = u128::from(period) - elapsed % u128::from(period);
+        Some(Duration::from_millis(remaining as u64))
+    }
+
+    /// `w`: the owner passes the selected task; every session's claim on it ends.
+    fn pass_work(&mut self) {
+        let Some(task) = self.selected_task() else {
+            self.status = "no task selected".to_string();
+            return;
+        };
+        let id = task.id.clone();
+        let Some(dir) = self.work_dir.clone() else {
+            self.fail("no work store: no home directory".to_string());
+            return;
+        };
+        match switchbard_core::pass_work(&dir, &self.repo_root, &id) {
+            Ok(released) if released.is_empty() => {
+                self.status = format!("{id}: no session is working it");
+            }
+            Ok(released) => {
+                let _ = switchbard_core::set_backlog_ball(&self.repo_root, &id, None);
+                self.status = format!(
+                    "{id}: passed · released from {}",
+                    released
+                        .iter()
+                        .map(WorkSession::short_id)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                self.telemetry
+                    .record("action", format!("pass {}", released.len()));
+                self.reload_work();
+                self.reload_tasks();
+            }
+            Err(error) => self.fail(format!("{id}: {error}")),
         }
     }
 
@@ -684,6 +784,7 @@ impl App {
             Action::Columns => self.open_columns_picker(),
             Action::Paint => self.open_paint_target_picker(),
             Action::Ball => self.pass_ball(),
+            Action::Pass => self.pass_work(),
             Action::Settings => self.open_settings(),
             Action::Rank => {
                 self.mode = Mode::RankChord;
