@@ -2,10 +2,8 @@
 # not documents - never hand-edit. See docs/product-trajectory.md ("Stack ranking").
 expedite:
   - TASK-80
-  - TASK-127
-  - TASK-142
   - TASK-141
-  - TASK-128
+  - TASK-150
 projects:
   - Task Queue
   - Information Architecture V2
