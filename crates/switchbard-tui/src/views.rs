@@ -27,7 +27,7 @@ pub struct ViewState {
     pub paint: Vec<PaintRule>,
     /// The column the list is sectioned by, if any.
     pub group: Option<Column>,
-    /// Whether the Top 5 sits as its own first section.
+    /// Whether the top list sits as its own first section.
     pub pin_top: bool,
 }
 

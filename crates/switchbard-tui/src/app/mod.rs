@@ -274,38 +274,71 @@ impl App {
         }
     }
 
+    /// After `t`: digits accumulate in `input` (two digits once the list is long
+    /// enough that a second could follow), Enter commits, `t` appends, `d` drops,
+    /// `p` pins or unpins the section.
     fn handle_rank_chord_key(&mut self, event: KeyEvent) {
-        self.mode = Mode::Browse;
-        self.status.clear();
         match event.code {
-            KeyCode::Char(digit) if ('1'..='5').contains(&digit) => {
-                let place = digit.to_digit(10).unwrap_or(1) as usize;
-                self.set_rank(place);
+            KeyCode::Char(digit) if digit.is_ascii_digit() => {
+                self.input.push(digit);
+                let place: usize = self.input.parse().unwrap_or(0);
+                let room = self.top.len() + 1;
+                if place == 0 {
+                    self.input.clear();
+                    self.status = "rank: 1 is the top".to_string();
+                    return;
+                }
+                if place * 10 <= room {
+                    self.status = format!("rank: {place}▏ (another digit, or enter)");
+                    return;
+                }
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.set_rank(place.min(room));
             }
-            KeyCode::Char('d') | KeyCode::Char('0') | KeyCode::Delete | KeyCode::Backspace => {
+            KeyCode::Enter if !self.input.is_empty() => {
+                let place: usize = self.input.parse().unwrap_or(1);
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.set_rank(place.max(1).min(self.top.len() + 1));
+            }
+            KeyCode::Char('t') => {
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.set_rank(self.top.len() + 1);
+            }
+            KeyCode::Char('d') | KeyCode::Delete | KeyCode::Backspace => {
+                self.input.clear();
+                self.mode = Mode::Browse;
                 self.drop_rank()
             }
             KeyCode::Char('p') => {
+                self.input.clear();
+                self.mode = Mode::Browse;
                 self.state.pin_top = !self.state.pin_top;
                 self.refilter();
                 self.status = if self.state.pin_top {
-                    format!("top {} pinned first", group::TOP_SIZE)
+                    "top list pinned first".to_string()
                 } else {
-                    format!(
-                        "top {} unpinned: ranked tasks sit in their sections",
-                        group::TOP_SIZE
-                    )
+                    "top list unpinned: ranked tasks sit in their sections".to_string()
                 };
                 self.telemetry
                     .record("action", format!("pin_top {}", self.state.pin_top));
             }
-            KeyCode::Esc => {}
-            other => self.status = format!("{other:?} is not a rank; 1-5, d, or p"),
+            KeyCode::Esc => {
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.status.clear();
+            }
+            other => {
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.status = format!("{other:?} is not a rank; digits, t, d, or p");
+            }
         }
     }
 
-    /// `t<n>`: the selected task takes place `n` in the Top 5; whoever falls
-    /// off the end is dropped and named.
+    /// `t<n>`: the selected task takes place `n` in the top list; the rest shift down.
     fn set_rank(&mut self, place: usize) {
         let Some(task) = self.selected_task() else {
             self.status = "no task selected".to_string();
@@ -317,28 +350,12 @@ impl App {
             return;
         }
         self.reload_tasks();
-        let mut dropped = None;
-        if self.top.len() > group::TOP_SIZE {
-            let last = self.top[group::TOP_SIZE].clone();
-            if let Err(error) = switchbard_core::unexpedite_task(&self.repo_root, &last) {
-                self.fail(format!("{last}: {error}"));
-                return;
-            }
-            dropped = Some(last);
-            self.reload_tasks();
-        }
         if !self.state.columns.contains(&Column::Rank) {
             self.state.columns.push(Column::Rank);
             self.refilter();
         }
         self.select_task(&id);
-        self.status = match dropped {
-            Some(last) => format!(
-                "{id} is #{place} · {last} fell off the top {}",
-                group::TOP_SIZE
-            ),
-            None => format!("{id} is #{place}"),
-        };
+        self.status = format!("{id} is #{place} of {}", self.top.len());
         self.telemetry
             .record("action", format!("rank {place} {id}"));
     }
@@ -353,10 +370,10 @@ impl App {
             Ok(outcome) if outcome.changed() => {
                 self.reload_tasks();
                 self.select_task(&id);
-                self.status = format!("{id} left the top {}", group::TOP_SIZE);
+                self.status = format!("{id} left the top list");
                 self.telemetry.record("action", format!("unrank {id}"));
             }
-            Ok(_) => self.status = format!("{id} was not in the top {}", group::TOP_SIZE),
+            Ok(_) => self.status = format!("{id} was not in the top list"),
             Err(error) => self.fail(format!("{id}: {error}")),
         }
     }
@@ -523,12 +540,11 @@ impl App {
             Action::Settings => self.open_settings(),
             Action::Rank => {
                 self.mode = Mode::RankChord;
+                self.input.clear();
                 self.status = format!(
-                    "rank: 1-{} places this task in the top {} · d drops it · p {} the top {}",
-                    group::TOP_SIZE,
-                    group::TOP_SIZE,
-                    if self.state.pin_top { "unpins" } else { "pins" },
-                    group::TOP_SIZE
+                    "rank: a number places this task (1 is top, {} last) · t appends · d drops · p {}",
+                    self.top.len() + 1,
+                    if self.state.pin_top { "unpins" } else { "pins" }
                 );
             }
             Action::Group => match self.state.group {

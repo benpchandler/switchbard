@@ -15,7 +15,7 @@ pub enum Column {
     Labels,
     Project,
     Ball,
-    /// Position in the repo's Top 5 (the expedite lane); empty when not in it.
+    /// Position in the repo's top list (the expedite lane); empty when not in it.
     Rank,
 }
 

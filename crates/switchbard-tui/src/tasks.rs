@@ -24,7 +24,7 @@ pub struct ProjectSummary {
 pub struct Backlog {
     pub tasks: Vec<BacklogTask>,
     pub projects: Vec<ProjectSummary>,
-    /// The Top 5: the expedite lane, in order, pruned to tasks that are loaded.
+    /// The top list: the expedite lane, in order, pruned to tasks that are loaded.
     pub top: Vec<String>,
 }
 

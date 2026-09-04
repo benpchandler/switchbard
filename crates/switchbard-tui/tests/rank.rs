@@ -1,4 +1,4 @@
-//! `t`: the Top 5, a repo-wide ordered short list that doubles as the queue.
+//! `t`: the top list, a repo-wide ordered queue of any length.
 
 mod harness;
 
@@ -13,18 +13,18 @@ fn t_digit_ranks_the_selected_task_shows_the_rank_column_and_pins_a_top_section(
     assert!(
         h.app
             .status
-            .starts_with("rank: 1-5 places this task in the top 5"),
+            .starts_with("rank: a number places this task (1 is top, 1 last)"),
         "{}",
         h.app.status
     );
     let screen = h.press(KeyCode::Char('1'));
-    assert_eq!(h.app.status, "TASK-2 is #1");
-    assert!(screen.contains("▸ top 5 · 1/5"), "{screen}");
+    assert_eq!(h.app.status, "TASK-2 is #1 of 1");
+    assert!(screen.contains("▸ top · 1"), "{screen}");
     assert!(
         header_line(&screen).contains("5 #"),
         "rank column appeared: {screen}"
     );
-    assert_eq!(screen_rows(&h)[0], "# top 5 · 1/5");
+    assert_eq!(screen_rows(&h)[0], "# top · 1");
     assert_eq!(screen_rows(&h)[1], "Add dark theme");
     assert_eq!(
         h.selected_title(),
@@ -42,41 +42,59 @@ fn t_digit_ranks_the_selected_task_shows_the_rank_column_and_pins_a_top_section(
 }
 
 #[test]
-fn ranks_are_ordered_capped_at_five_and_droppable() {
+fn ranks_are_ordered_open_ended_appendable_and_droppable() {
     let mut h = Harness::new();
-    for n in 4..=9 {
+    for n in 4..=15 {
         seed(&h.root, &format!("Extra {n}"), "To Do", &[]);
     }
     h.press(KeyCode::Char('r'));
-    for (title, place) in [
-        ("Extra 4", '1'),
-        ("Extra 5", '1'),
-        ("Extra 6", '2'),
-        ("Extra 7", '5'),
-        ("Extra 8", '5'),
+    for (title, keys) in [
+        ("Extra 4", "1"),
+        ("Extra 5", "1"),
+        ("Extra 6", "2"),
+        ("Extra 7", "9"),
+        ("Extra 8", "t"),
     ] {
         goto(&mut h, title);
         h.press(KeyCode::Char('t'));
-        h.press(KeyCode::Char(place));
+        h.type_text(keys);
     }
     assert_eq!(
         h.app.top,
         ["TASK-5", "TASK-6", "TASK-4", "TASK-7", "TASK-8"],
-        "insert-at semantics"
+        "insert-at semantics; past the end appends; tt appends"
     );
-    goto(&mut h, "Extra 9");
+    assert_eq!(h.app.status, "TASK-8 is #5 of 5");
+    for n in 9..=13 {
+        goto(&mut h, &format!("Extra {n}"));
+        h.press(KeyCode::Char('t'));
+        h.press(KeyCode::Char('t'));
+    }
+    assert_eq!(h.app.top.len(), 10, "no cap");
+    goto(&mut h, "Extra 14");
     h.press(KeyCode::Char('t'));
-    h.press(KeyCode::Char('3'));
-    assert_eq!(h.app.status, "TASK-9 is #3 · TASK-8 fell off the top 5");
-    assert_eq!(h.app.top.len(), 5);
-    goto(&mut h, "Extra 9");
+    h.press(KeyCode::Char('1'));
+    assert_eq!(
+        h.app.status, "rank: 1▏ (another digit, or enter)",
+        "with ten ranked, a 1 could be 10 or 11"
+    );
+    h.press(KeyCode::Char('1'));
+    assert_eq!(h.app.status, "TASK-14 is #11 of 11");
+    goto(&mut h, "Extra 15");
+    h.press(KeyCode::Char('t'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Enter);
+    assert_eq!(
+        h.app.status, "TASK-15 is #1 of 12",
+        "enter commits a pending digit"
+    );
     h.press(KeyCode::Char('t'));
     h.press(KeyCode::Char('d'));
-    assert_eq!(h.app.status, "TASK-9 left the top 5");
-    assert!(!h.app.top.contains(&"TASK-9".to_string()));
+    assert_eq!(h.app.status, "TASK-15 left the top list");
+    assert_eq!(h.app.top.len(), 11);
     h.press(KeyCode::Char('t'));
     h.press(KeyCode::Char('d'));
-    assert_eq!(h.app.status, "TASK-9 was not in the top 5");
+    assert_eq!(h.app.status, "TASK-15 was not in the top list");
 }
 
 #[test]
@@ -87,7 +105,7 @@ fn tp_unpins_so_ranked_tasks_sit_in_their_own_sections_and_the_view_remembers() 
     h.press(KeyCode::Char('1'));
     h.press(KeyCode::Char('o'));
     let rows = screen_rows(&h);
-    assert_eq!(rows[0], "# top 5 · 1/5");
+    assert_eq!(rows[0], "# top · 1");
     assert_eq!(rows[1], "Chase portal login");
     assert!(
         !rows[2..].contains(&"Chase portal login".to_string()),

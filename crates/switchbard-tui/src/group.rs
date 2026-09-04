@@ -13,10 +13,7 @@ pub enum Row {
 }
 
 /// `ordered` is the sorted task order; the result keeps it inside each section.
-/// The Top 5 lane holds at most this many.
-pub const TOP_SIZE: usize = 5;
-
-/// `pinned` (the Top 5 ids, in order, or empty) becomes the first section,
+/// `pinned` (the top list's ids, in order, or empty) becomes the first section,
 /// like a project that outranks every project; its members leave their own.
 pub fn rows(
     tasks: &[BacklogTask],
@@ -36,10 +33,7 @@ pub fn rows(
         })
         .collect();
     if !top.is_empty() {
-        rows.push(Row::Heading(format!(
-            "top {TOP_SIZE} · {}/{TOP_SIZE}",
-            pinned.len()
-        )));
+        rows.push(Row::Heading(format!("top · {}", pinned.len())));
         rows.extend(top.iter().copied().map(Row::Task));
     }
     let ordered: Vec<usize> = ordered
