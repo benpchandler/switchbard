@@ -45,6 +45,8 @@ pub enum PickerPurpose {
     ColumnActions(Column),
     /// `,`: standing preferences under every view.
     Settings,
+    /// `a`: the repo's goals, marked where the named task is attached; picking toggles.
+    Goals(String),
 }
 
 /// What a column's menu offers; each row is one of these on a letter.
@@ -269,5 +271,6 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::PaintRules => "K/J reorder · del removes · h back · esc",
         PickerPurpose::ColumnActions(_) => "letter picks · esc",
         PickerPurpose::Settings => "number or name toggles for this repo · g every repo · esc",
+        PickerPurpose::Goals(_) => "number or name attaches or detaches · esc",
     }
 }

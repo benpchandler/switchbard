@@ -83,8 +83,9 @@ pub struct GoalDef {
     /// For [`GoalMeasure::Tasks`]: a project name or label the counted
     /// tasks must match.
     pub scope: Option<String>,
-    /// Attached inputs, also counted for [`GoalMeasure::Tasks`]; empty when
-    /// nothing is attached.
+    /// Attached inputs. Always membership (the task organizes under this
+    /// goal); counted toward the actual only for [`GoalMeasure::Tasks`].
+    /// Empty when nothing is attached.
     pub inputs: GoalInputs,
     /// Keyed by the week's Monday (`YYYY-MM-DD`); `BTreeMap` keeps weeks
     /// chronological for free since the keys are ISO dates.
@@ -643,7 +644,8 @@ fn parsed_goal(root: &Path, name: &str) -> Result<GoalDef> {
         .with_context(|| format!("no goal '{name}' — check `goal list` for the exact name"))
 }
 
-/// Attach tasks and/or projects to a tasks-measured goal as counted inputs.
+/// Attach tasks and/or projects to a goal as inputs: membership for any
+/// goal, counted toward the actual when the goal is tasks-measured.
 /// Duplicates dedupe silently; returns how many inputs were actually added
 /// (0 means everything was already attached and nothing was written).
 pub fn attach_goal_inputs(
@@ -657,11 +659,6 @@ pub fn attach_goal_inputs(
         bail!("nothing to attach — pass --task <ID> and/or --in-project <NAME>");
     }
     let goal = parsed_goal(root, name)?;
-    if goal.measure == GoalMeasure::Manual {
-        bail!(
-            "goal '{name}' is measured by manual check-ins — inputs only apply to `--measure tasks` goals"
-        );
-    }
     let mut inputs = goal.inputs.clone();
     let mut added = 0usize;
     for task in tasks {
@@ -948,7 +945,7 @@ mod tests {
     }
 
     #[test]
-    fn attach_guards_manual_goals_empty_args_and_bad_detaches() {
+    fn attach_links_manual_goals_and_guards_empty_args_and_bad_detaches() {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = repo(&dir);
         create_goal(&root, &goal("Manual", "2026-09-01", 5)).expect("create");
@@ -956,9 +953,15 @@ mod tests {
         g.measure = GoalMeasure::Tasks;
         create_goal(&root, &g).expect("create");
 
-        let err = attach_goal_inputs(&root, "Manual", &["TASK-1".to_string()], &[])
-            .expect_err("manual refuses inputs");
-        assert!(err.to_string().contains("check-ins"), "{err}");
+        // A manual goal takes inputs as membership (sbt's "organize by goal");
+        // only a tasks-measured goal counts them toward its actual.
+        let added = attach_goal_inputs(&root, "Manual", &["TASK-1".to_string()], &[])
+            .expect("manual goals accept links");
+        assert_eq!(added, 1);
+        assert_eq!(
+            parsed_goal(&root, "Manual").expect("reload").inputs.tasks,
+            vec!["TASK-1".to_string()]
+        );
 
         let err = attach_goal_inputs(&root, "Tasks", &[], &[]).expect_err("nothing to attach");
         assert!(err.to_string().contains("--task"), "{err}");

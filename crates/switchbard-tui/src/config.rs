@@ -37,6 +37,8 @@ pub enum Action {
     Group,
     Settings,
     Rank,
+    /// Link the selected task to a goal (or unlink it).
+    Goal,
 }
 
 impl Action {
@@ -64,6 +66,7 @@ impl Action {
             "group" => Action::Group,
             "settings" => Action::Settings,
             "rank" => Action::Rank,
+            "goal" => Action::Goal,
             _ => return None,
         })
     }
@@ -92,6 +95,7 @@ impl Action {
             Action::Group => "group".to_string(),
             Action::Settings => "settings".to_string(),
             Action::Rank => "rank".to_string(),
+            Action::Goal => "goal".to_string(),
         }
     }
 }

@@ -109,3 +109,86 @@ fn goal_column_shows_the_goal_name_and_is_empty_for_tasks_outside_every_goal() {
         "{ally_row}"
     );
 }
+
+// ─── linking the selected task to a goal ───────────────────────────────
+
+#[test]
+fn a_opens_the_goal_panel_and_a_pick_attaches_then_detaches_the_selected_task() {
+    let mut h = goal_harness();
+    // The default sort puts "Fix login redirect loop" (TASK-1, no goal) first.
+    assert_eq!(h.selected_title(), "Fix login redirect loop");
+    let screen = h.press(KeyCode::Char('a'));
+    assert!(screen.contains("TASK-1 · goals"), "{screen}");
+    assert!(
+        screen.contains(" lenders-live") && screen.contains(" docs-shipped"),
+        "{screen}"
+    );
+
+    h.press(KeyCode::Char('1'));
+    let screen = h.render();
+    assert!(
+        screen.contains("✓lenders-live"),
+        "picking marks it attached: {screen}"
+    );
+    // The footer shows the panel's hint while it is open; the status line
+    // behind it carries the outcome.
+    assert_eq!(h.app.status, "TASK-1 attached to lenders-live");
+    assert!(
+        std::fs::read_to_string(h.root.join("backlog/goals.yml"))
+            .unwrap()
+            .contains("'TASK-1'"),
+        "the attachment is written through core"
+    );
+
+    h.press(KeyCode::Char('1'));
+    let screen = h.render();
+    assert!(screen.contains(" lenders-live"), "{screen}");
+    assert!(
+        !screen.contains("✓lenders-live"),
+        "a second pick detaches: {screen}"
+    );
+    assert_eq!(h.app.status, "TASK-1 detached from lenders-live");
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char(':'));
+    h.type_text("group goal");
+    h.press(KeyCode::Enter);
+    let rows = screen_rows(&h);
+    assert!(rows.contains(&"# no goal".to_string()), "{rows:?}");
+}
+
+#[test]
+fn goal_panel_marks_tasks_already_in_scope_without_an_attachment() {
+    let mut h = goal_harness();
+    h.press(KeyCode::Char('/'));
+    h.type_text("Chase portal");
+    h.press(KeyCode::Enter);
+    assert_eq!(h.selected_title(), "Chase portal login");
+    let screen = h.press(KeyCode::Char('a'));
+    assert!(
+        screen.contains("·lenders-live"),
+        "scope membership shows as implied, not attached: {screen}"
+    );
+}
+
+#[test]
+fn goal_command_attaches_by_name_and_names_the_goals_on_a_miss() {
+    let mut h = goal_harness();
+    h.press(KeyCode::Char(':'));
+    h.type_text("goal docs-shipped");
+    let screen = h.press(KeyCode::Enter);
+    assert!(
+        screen.contains("TASK-1 attached to docs-shipped"),
+        "{screen}"
+    );
+    h.press(KeyCode::Char(':'));
+    h.type_text("goal nope");
+    h.press(KeyCode::Enter);
+    assert_eq!(h.app.status, "goal: one of lenders-live, docs-shipped");
+}
+
+#[test]
+fn help_lists_the_goal_key() {
+    let mut h = goal_harness();
+    let screen = h.press(KeyCode::Char('?'));
+    assert!(screen.contains("a       goal"), "{screen}");
+}
