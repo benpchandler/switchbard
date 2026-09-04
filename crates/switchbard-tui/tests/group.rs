@@ -183,13 +183,13 @@ fn group_by_another_column_and_the_command_form_and_saved_views() {
     h.press(KeyCode::Char(':'));
     h.type_text("group off");
     h.press(KeyCode::Enter);
-    assert!(h.app.state.group.is_none());
+    assert!(h.app.state.group.is_flat());
     h.press(KeyCode::Char(':'));
     h.type_text("group labels");
     h.press(KeyCode::Enter);
     assert_eq!(
         h.app.status,
-        "group by one of status, priority, project, ball, goal, or off"
+        "group by one of status, priority, project, ball, goal, two of them as a,b, or off"
     );
     h.press(KeyCode::Char(':'));
     h.type_text("group project");
@@ -198,7 +198,10 @@ fn group_by_another_column_and_the_command_form_and_saved_views() {
     h.press(KeyCode::Char('s'));
     h.press(KeyCode::Char('2'));
     let reopened = open_app(&h.root, &h.config_path);
-    assert!(reopened.views.get(1).unwrap().group == Some(switchbard_tui::columns::Column::Project));
+    assert!(
+        reopened.views.get(1).unwrap().group
+            == switchbard_tui::group::Grouping::by(switchbard_tui::columns::Column::Project)
+    );
     let mut h2 = Harness {
         _dir: h._dir,
         root: h.root,

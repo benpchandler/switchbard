@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use mlua::{Lua, Table};
 
 use crate::columns::Column;
+use crate::group::Grouping;
 use crate::paint::{parse_rules, rules_text, PaintRule};
 use crate::sort::Sort;
 
@@ -26,7 +27,7 @@ pub struct ViewState {
     pub abbreviated: Vec<Column>,
     pub paint: Vec<PaintRule>,
     /// The column the list is sectioned by, if any.
-    pub group: Option<Column>,
+    pub group: Grouping,
     /// Whether the top list sits as its own first section.
     pub pin_top: bool,
 }
@@ -53,8 +54,8 @@ impl ViewState {
         if !self.paint.is_empty() {
             parts.push(format!("paint:{}", self.paint.len()));
         }
-        if let Some(group) = self.group {
-            parts.push(format!("group:{}", group.name()));
+        if !self.group.is_flat() {
+            parts.push(format!("group:{}", self.group.name()));
         }
         if !self.pin_top {
             parts.push("nopin".to_string());
@@ -163,7 +164,7 @@ pub fn starter_views() -> Vec<ViewState> {
         glyph_columns: Vec::new(),
         abbreviated: Column::DEFAULT_ABBREVIATED.to_vec(),
         paint: Vec::new(),
-        group: None,
+        group: Grouping::flat(),
         pin_top: true,
     })
     .collect()
@@ -363,7 +364,7 @@ impl Default for ViewState {
             glyph_columns: Vec::new(),
             abbreviated: Column::DEFAULT_ABBREVIATED.to_vec(),
             paint: Vec::new(),
-            group: None,
+            group: Grouping::flat(),
             pin_top: true,
         }
     }
@@ -385,7 +386,7 @@ fn parse_view(entry: &Table) -> Result<ViewState, String> {
             .filter_map(|name| Column::parse(name.trim()))
             .collect(),
         paint: parse_rules(&field("paint")?),
-        group: Column::parse(&field("group")?).filter(|column| column.groupable()),
+        group: Grouping::parse(&field("group")?).unwrap_or_default(),
         pin_top: entry
             .get::<Option<bool>>("pin")
             .map_err(|e| e.to_string())?
@@ -432,9 +433,10 @@ fn lua_view(view: &ViewState) -> String {
             lua_string(&columns_text(&view.abbreviated))
         )
     };
-    let group = match view.group {
-        Some(column) => format!(", group = {}", lua_string(column.name())),
-        None => String::new(),
+    let group = if view.group.is_flat() {
+        String::new()
+    } else {
+        format!(", group = {}", lua_string(&view.group.text()))
     };
     format!(
         "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint}{group}{abbreviated}{pin} }}",

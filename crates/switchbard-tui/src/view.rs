@@ -106,8 +106,9 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         let selected = app.scroll + line == app.selected;
         match row {
-            Row::Heading(text) => frame.render_widget(
-                Paragraph::new(format!("▸ {text}")).style(theme.style(Surface::Heading)),
+            Row::Heading { text, depth } => frame.render_widget(
+                Paragraph::new(format!("{}▸ {text}", "  ".repeat(*depth)))
+                    .style(theme.style(Surface::Heading)),
                 row_area,
             ),
             Row::Task(index) => {
@@ -157,7 +158,7 @@ fn fitted_width(app: &App, column: Column, max: u16) -> u16 {
         .iter()
         .filter_map(|row| match row {
             Row::Task(index) => Some(app.cell(column, &app.tasks()[*index]).chars().count()),
-            Row::Heading(_) => None,
+            Row::Heading { .. } => None,
         })
         .max()
         .unwrap_or(0);
@@ -174,7 +175,7 @@ fn scroll_to_show(scroll: usize, selected: usize, window: usize, rows: &[Row]) -
     if selected >= scroll + window {
         scroll = selected + 1 - window;
     }
-    let heading_above = selected > 0 && matches!(rows.get(selected - 1), Some(Row::Heading(_)));
+    let heading_above = selected > 0 && matches!(rows.get(selected - 1), Some(Row::Heading { .. }));
     if heading_above && scroll == selected {
         scroll -= 1;
     }
@@ -207,9 +208,9 @@ fn table_title(app: &App) -> String {
     if !app.state.paint.is_empty() {
         parts.push(format!("paint:{}", app.state.paint.len()));
     }
-    if let Some(group) = app.state.group {
-        parts.push(format!("group:{}", group.name()));
-        if group == Column::Project {
+    if !app.state.group.is_flat() {
+        parts.push(format!("group:{}", app.state.group.name()));
+        if app.state.group.levels().contains(&Column::Project) {
             parts.extend(app.initiatives());
         }
     }
@@ -401,7 +402,7 @@ fn browse_footer(app: &App) -> Line<'static> {
         ));
         spans.push(Span::raw("  "));
     }
-    if app.state.group.is_none() && app.grouping_is_useful() {
+    if app.state.group.is_flat() && app.grouping_is_useful() {
         spans.push(Span::styled(
             format!("{} projects · ", app.projects.len()),
             theme.style(Surface::Hint),

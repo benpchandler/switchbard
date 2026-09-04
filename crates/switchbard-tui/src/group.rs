@@ -17,8 +17,85 @@ pub struct Headings<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
-    Heading(String),
+    /// A section heading; `depth` 0 is outermost, 1 is nested inside it.
+    Heading {
+        text: String,
+        depth: usize,
+    },
     Task(usize),
+}
+
+/// What the list is organized by: nothing, one column, or one column nested
+/// inside another (`project›goal`). The one spelling every surface uses: the
+/// `o` picker, `:group`, the title bar, and saved views.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Grouping(Vec<Column>);
+
+impl Grouping {
+    pub const MAX_DEPTH: usize = 2;
+
+    pub fn flat() -> Grouping {
+        Grouping(Vec::new())
+    }
+
+    pub fn by(column: Column) -> Grouping {
+        Grouping(vec![column])
+    }
+
+    pub fn nested(outer: Column, inner: Column) -> Grouping {
+        Grouping(vec![outer, inner])
+    }
+
+    pub fn levels(&self) -> &[Column] {
+        &self.0
+    }
+
+    pub fn is_flat(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn outer(&self) -> Option<Column> {
+        self.0.first().copied()
+    }
+
+    /// `project`, `project,goal` (or `project›goal`), `off`, or empty. Every
+    /// level must be groupable and distinct, at most `MAX_DEPTH` deep.
+    pub fn parse(text: &str) -> Option<Grouping> {
+        let text = text.trim();
+        if text.is_empty() || text == "off" || text == "none" {
+            return Some(Grouping::flat());
+        }
+        let mut levels: Vec<Column> = Vec::new();
+        for name in text.split([',', '›']) {
+            let column = Column::parse(name.trim()).filter(|column| column.groupable())?;
+            if levels.contains(&column) {
+                return None;
+            }
+            levels.push(column);
+        }
+        (levels.len() <= Grouping::MAX_DEPTH).then_some(Grouping(levels))
+    }
+
+    /// How it reads on screen: `project›goal`, or `off`.
+    pub fn name(&self) -> String {
+        if self.is_flat() {
+            return "off".to_string();
+        }
+        self.0
+            .iter()
+            .map(|column| column.name())
+            .collect::<Vec<_>>()
+            .join("›")
+    }
+
+    /// The saved-view and `:group` spelling: `project,goal`.
+    pub fn text(&self) -> String {
+        self.0
+            .iter()
+            .map(|column| column.name())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
 }
 
 /// `ordered` is the sorted task order; the result keeps it inside each section.
@@ -27,7 +104,7 @@ pub enum Row {
 pub fn rows(
     tasks: &[BacklogTask],
     ordered: &[usize],
-    group: Option<Column>,
+    grouping: &Grouping,
     headings: &Headings<'_>,
     pinned: &[String],
 ) -> Vec<Row> {
@@ -42,7 +119,10 @@ pub fn rows(
         })
         .collect();
     if !top.is_empty() {
-        rows.push(Row::Heading(format!("top · {}", pinned.len())));
+        rows.push(Row::Heading {
+            text: format!("top · {}", pinned.len()),
+            depth: 0,
+        });
         rows.extend(top.iter().copied().map(Row::Task));
     }
     let ordered: Vec<usize> = ordered
@@ -51,11 +131,26 @@ pub fn rows(
         .filter(|index| !top.contains(index))
         .collect();
     top.clear();
-    let Some(column) = group else {
-        rows.extend(ordered.iter().map(|&index| Row::Task(index)));
-        return rows;
+    rows.extend(sections(tasks, &ordered, grouping.levels(), headings, 0));
+    rows
+}
+
+/// One level of sections over `ordered`, recursing into `levels[1..]` inside
+/// each; the innermost level places sub-issues under their parents.
+fn sections(
+    tasks: &[BacklogTask],
+    ordered: &[usize],
+    levels: &[Column],
+    headings: &Headings<'_>,
+    depth: usize,
+) -> Vec<Row> {
+    let Some((&column, inner)) = levels.split_first() else {
+        return with_subissues_under_parents(tasks, ordered)
+            .into_iter()
+            .map(Row::Task)
+            .collect();
     };
-    let ordered = ordered.as_slice();
+    let mut rows = Vec::new();
     for key in section_keys(tasks, ordered, column, headings) {
         let members: Vec<usize> = ordered
             .iter()
@@ -65,12 +160,11 @@ pub fn rows(
         if members.is_empty() {
             continue;
         }
-        rows.push(Row::Heading(heading(column, &key, headings)));
-        rows.extend(
-            with_subissues_under_parents(tasks, &members)
-                .into_iter()
-                .map(Row::Task),
-        );
+        rows.push(Row::Heading {
+            text: heading(column, &key, headings),
+            depth,
+        });
+        rows.extend(sections(tasks, &members, inner, headings, depth + 1));
     }
     rows
 }
