@@ -243,3 +243,38 @@ fn ids_drop_the_repo_prefix_priority_is_a_letter_and_columns_fit_their_content()
         "detail keeps the full id: {detail}"
     );
 }
+
+#[test]
+fn abbreviation_toggles_per_column_from_the_digit_menu_and_the_columns_picker_and_saves() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('1'));
+    let screen = h.press(KeyCode::Char('a'));
+    assert_eq!(h.app.status, "id shows in full");
+    assert!(screen.contains("TASK-2 "), "full id back: {screen}");
+    assert!(
+        screen.contains("abbr:priority"),
+        "title says what differs: {screen}"
+    );
+    h.press(KeyCode::Char('c'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('j'));
+    h.press(KeyCode::Char('a'));
+    let screen = h.press(KeyCode::Esc);
+    assert_eq!(h.app.status, "priority shows in full");
+    assert!(screen.contains(" medium "), "{screen}");
+    assert!(screen.contains("abbr:none"), "{screen}");
+    h.press(KeyCode::Char('4'));
+    let screen = h.press(KeyCode::Char('a'));
+    assert!(
+        !screen.contains("a  abbreviate"),
+        "title has no short form: {screen}"
+    );
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('d'));
+    let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
+    assert!(file.contains("abbreviated = \"\""), "{file}");
+    let fresh = open_app(&h.root, &h.config_path);
+    assert!(fresh.state.abbreviated.is_empty());
+}

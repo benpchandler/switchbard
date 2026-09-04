@@ -6,6 +6,7 @@ use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use crossterm::event::{self, Event};
 use switchbard_tui::app::App;
+use switchbard_tui::settings;
 use switchbard_tui::telemetry::{self, Telemetry};
 use switchbard_tui::{config, view, views};
 
@@ -55,6 +56,18 @@ fn main() -> Result<()> {
                 );
             }
             println!(
+                "settings: {}",
+                settings::global_path().unwrap_or_default().display()
+            );
+            if let Ok(cwd) = std::env::current_dir() {
+                println!(
+                    "repo settings: {}",
+                    settings::repo_path(&cli.repo.clone().unwrap_or(cwd))
+                        .unwrap_or_default()
+                        .display()
+                );
+            }
+            println!(
                 "events: {}",
                 telemetry::default_log_path().unwrap_or_default().display()
             );
@@ -77,6 +90,8 @@ fn run(repo_root: PathBuf) -> Result<()> {
         config::user_config_path(),
         views::global_path(),
         views::repo_path(&repo_root),
+        settings::global_path(),
+        settings::repo_path(&repo_root),
         telemetry,
     );
     app.resume_from(std::env::var(RESUME_ENV).ok().as_deref());

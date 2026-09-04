@@ -174,3 +174,37 @@ fn broken_lua_config_keeps_defaults_and_says_so() {
     h.press(KeyCode::Char('q'));
     assert!(h.app.should_quit);
 }
+
+#[test]
+fn reports_file_into_the_configured_repo_not_the_one_being_browsed() {
+    let mut h = Harness::new();
+    let tool_repo = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tool_repo.path().join("backlog/tasks")).unwrap();
+    std::fs::write(
+        tool_repo.path().join("backlog/config.yml"),
+        "project_name: sbt\nstatuses: [\"To Do\", \"Done\"]\ntask_prefix: task\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &h.config_path,
+        format!(
+            "return {{ report_repo = \"{}\" }}",
+            tool_repo.path().display()
+        ),
+    )
+    .unwrap();
+    h.app.tick();
+    h.press(KeyCode::Char(':'));
+    h.type_text("bug the footer overlaps");
+    h.press(KeyCode::Enter);
+    assert!(h.app.status.starts_with("filed 1 in "), "{}", h.app.status);
+    assert_eq!(
+        h.app.total_tasks(),
+        3,
+        "nothing filed into the browsed repo"
+    );
+    let filed = std::fs::read_dir(tool_repo.path().join("backlog/tasks"))
+        .unwrap()
+        .count();
+    assert_eq!(filed, 1);
+}

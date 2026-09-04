@@ -703,6 +703,32 @@ pub fn expedite_task(root: &Path, id: &str) -> Result<WriteOutcome> {
     write_expedite(root, &ranking.expedite, &updated)
 }
 
+/// Put a task at 1-based `position` in the expedite lane (moving it if it is
+/// already there), so the lane can serve as an ordered short list. Positions
+/// past the end append. Dead entries are pruned as `expedite_task` does.
+pub fn expedite_task_at(root: &Path, id: &str, position: usize) -> Result<WriteOutcome> {
+    let repo = load_backlog_repo(root)?;
+    let task = rankable_task(&repo, id)?;
+    let mut warnings = Vec::new();
+    let ranking = load_ranking(root, &mut warnings);
+    let mut updated: Vec<String> = ranking
+        .expedite
+        .iter()
+        .filter(|entry| {
+            **entry != task.id
+                && repo
+                    .tasks
+                    .iter()
+                    .find(|t| t.id == **entry)
+                    .is_some_and(rankable)
+        })
+        .cloned()
+        .collect();
+    let index = position.saturating_sub(1).min(updated.len());
+    updated.insert(index, task.id.clone());
+    write_expedite(root, &ranking.expedite, &updated)
+}
+
 /// Remove a task from the expedite lane.
 pub fn unexpedite_task(root: &Path, id: &str) -> Result<WriteOutcome> {
     let mut warnings = Vec::new();
@@ -1434,5 +1460,38 @@ mod tests {
         assert!(expedite_task(&root, "TASK-2").expect("expedite").changed());
         assert!(!expedite_task(&root, "TASK-2").expect("again").changed());
         assert!(!unexpedite_task(&root, "TASK-9").expect("absent").changed());
+    }
+
+    #[test]
+    fn expedite_at_places_and_moves_within_the_lane() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = repo(&dir);
+        for n in 1..=4 {
+            write_task(&root, &format!("TASK-{n}"), "To Do", None);
+        }
+        assert!(expedite_task_at(&root, "TASK-1", 1)
+            .expect("first")
+            .changed());
+        assert!(expedite_task_at(&root, "TASK-2", 1)
+            .expect("ahead of it")
+            .changed());
+        assert!(expedite_task_at(&root, "TASK-3", 9)
+            .expect("past the end appends")
+            .changed());
+        let mut warnings = Vec::new();
+        assert_eq!(
+            load_ranking(&root, &mut warnings).expedite,
+            ["TASK-2", "TASK-1", "TASK-3"]
+        );
+        assert!(expedite_task_at(&root, "TASK-3", 2)
+            .expect("move up")
+            .changed());
+        assert_eq!(
+            load_ranking(&root, &mut warnings).expedite,
+            ["TASK-2", "TASK-3", "TASK-1"]
+        );
+        assert!(!expedite_task_at(&root, "TASK-3", 2)
+            .expect("same place")
+            .changed());
     }
 }

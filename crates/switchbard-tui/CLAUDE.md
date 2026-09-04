@@ -19,9 +19,8 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
 ## Module map
 - `app/` - `mod.rs` state, loop, browse keys, commands; `pickers.rs` column/filter/sort
   pickers + the shared picker key handler; `paint_flow.rs` the `p` flow; `slots.rs` the `v` chords.
-- `picker.rs` - the one list every menu uses: typed `PickOption` payloads, numbered and
-  lettered rows, type-ahead; `app/` dispatches on payloads, never label text. A digit in
-  browse opens `ColumnActions` for that header position: filter/sort/paint/glyphs/hide/move.
+- `picker.rs` - the one list every menu uses: typed `PickOption` payloads, numbered/lettered rows,
+  type-ahead; `app/` dispatches on payloads. A digit in browse opens that column's `ColumnActions`.
 - `view.rs` - rendering only (the table is hand-drawn so headings span the row); snapshots the screen text for reports.
 - `columns.rs` - the column catalog: one `ColumnSpec` row per column (name, header, width,
   field, vocabulary) plus `values`/`cell_text`; every other module asks it.
@@ -37,7 +36,8 @@ Install for the user's tab: `cargo install --path crates/switchbard-tui`.
   Top rule is the base (whole rows); lower rules paint only their scope. `po` reorders.
 - `group.rs` - `o`: rows = headings + tasks over the filtered, sorted order; project headings carry def status, done/total.
 - `ball.rs` - who holds the ball: `ball:me`/`ball:agent` labels (`dispatching` = agent); `b` cycles.
-- `sort.rs` - `s <n>`: ascending/descending/semantic (vocabulary rank), ties by id.
+- Top list = core's expedite lane: `t<n>` places (`tt` appends), `td` drops, `tp` pins it first; `#` column.
+- `settings.rs` - `,` panel: hide statuses everywhere; per-repo file, `g` promotes to global.
 - `report.rs` - `:bug`/`:idea` => task via core write layer. `telemetry.rs` - JSONL log, trail, `stats`.
 
 ## Loop

@@ -77,6 +77,8 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
             None,
             Some(global_file_path.clone()),
             Some(root.join("views-repo.lua")),
+            None,
+            None,
             Telemetry::in_memory(),
         )
     };

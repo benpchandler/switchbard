@@ -13,16 +13,40 @@ pub enum Row {
 }
 
 /// `ordered` is the sorted task order; the result keeps it inside each section.
+/// `pinned` (the top list's ids, in order, or empty) becomes the first section,
+/// like a project that outranks every project; its members leave their own.
 pub fn rows(
     tasks: &[BacklogTask],
     ordered: &[usize],
     group: Option<Column>,
     projects: &[ProjectSummary],
+    pinned: &[String],
 ) -> Vec<Row> {
-    let Some(column) = group else {
-        return ordered.iter().map(|&index| Row::Task(index)).collect();
-    };
     let mut rows = Vec::new();
+    let mut top: Vec<usize> = pinned
+        .iter()
+        .filter_map(|id| {
+            ordered
+                .iter()
+                .copied()
+                .find(|&index| tasks[index].id == *id)
+        })
+        .collect();
+    if !top.is_empty() {
+        rows.push(Row::Heading(format!("top · {}", pinned.len())));
+        rows.extend(top.iter().copied().map(Row::Task));
+    }
+    let ordered: Vec<usize> = ordered
+        .iter()
+        .copied()
+        .filter(|index| !top.contains(index))
+        .collect();
+    top.clear();
+    let Some(column) = group else {
+        rows.extend(ordered.iter().map(|&index| Row::Task(index)));
+        return rows;
+    };
+    let ordered = ordered.as_slice();
     for key in section_keys(tasks, ordered, column, projects) {
         let members: Vec<usize> = ordered
             .iter()

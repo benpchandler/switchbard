@@ -16,8 +16,9 @@ use crate::columns::Column;
 use crate::config::{self, Action, Config, KeyChord};
 use crate::group::{self, Row};
 use crate::paint;
-use crate::picker::{ColumnPurpose, ValuePicker};
+use crate::picker::{ColumnPurpose, Payload, PickOption, PickerPurpose, ValuePicker};
 use crate::report::{self, ReportContext, ReportKind};
+use crate::settings::{Scope as SettingsScope, SettingsStore};
 use crate::sort;
 use crate::tasks::{self, Filter, ProjectSummary};
 use crate::telemetry::Telemetry;
@@ -35,6 +36,8 @@ pub enum Mode {
     ViewSaveSlot,
     /// After `v g`: a digit or `d` picks the slot to promote to the global file.
     ViewGlobalSlot,
+    /// After `t`: 1-5 ranks the selected task, `d` drops it, `p` pins/unpins the Top 5.
+    RankChord,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,11 +51,14 @@ pub struct App {
     pub repo_root: PathBuf,
     pub config: Config,
     config_path: Option<PathBuf>,
+    pub settings: SettingsStore,
     config_seen: Option<SystemTime>,
     tasks_seen: Option<SystemTime>,
     tasks: Vec<BacklogTask>,
     /// Project headings' facts, by stack rank; refreshed with the tasks.
     pub projects: Vec<ProjectSummary>,
+    /// The Top 5 (expedite lane) ids in order; the queue.
+    pub top: Vec<String>,
     /// Filtered and sorted task indices, the truth grouping projects from.
     pub visible: Vec<usize>,
     /// What the table shows: tasks, with a heading before each section when grouped.
@@ -90,17 +96,23 @@ impl App {
         config_path: Option<PathBuf>,
         global_views_path: Option<PathBuf>,
         repo_views_path: Option<PathBuf>,
+        global_settings_path: Option<PathBuf>,
+        repo_settings_path: Option<PathBuf>,
         telemetry: Telemetry,
     ) -> App {
         let config = config::load(config_path.as_deref());
+        let (settings, settings_warnings) =
+            SettingsStore::load(global_settings_path, repo_settings_path);
         let (views, view_warnings) = ViewStore::load(global_views_path, repo_views_path);
         let mut app = App {
             repo_root: repo_root.to_path_buf(),
             config_seen: config_path.as_deref().and_then(config::modified_at),
             config_path,
+            settings,
             tasks_seen: None,
             tasks: Vec::new(),
             projects: Vec::new(),
+            top: Vec::new(),
             visible: Vec::new(),
             rows: Vec::new(),
             selected: 0,
@@ -129,6 +141,9 @@ impl App {
         if let Some(warning) = view_warnings.first() {
             app.fail(format!("views: {warning}"));
         }
+        if let Some(warning) = settings_warnings.first() {
+            app.fail(format!("settings: {warning}"));
+        }
         app
     }
 
@@ -143,6 +158,22 @@ impl App {
     /// Whether more than one project exists, so grouping is worth pointing at.
     pub fn grouping_is_useful(&self) -> bool {
         self.projects.len() > 1
+    }
+
+    /// 1-based place in the Top 5, if the task is in it.
+    pub fn rank_of(&self, task: &BacklogTask) -> Option<usize> {
+        self.top.iter().position(|id| *id == task.id).map(|p| p + 1)
+    }
+
+    /// A cell's text: what the column says, plus what only the app knows (rank).
+    pub fn cell(&self, column: Column, task: &BacklogTask) -> String {
+        match column {
+            Column::Rank => self
+                .rank_of(task)
+                .map(|n| n.to_string())
+                .unwrap_or_default(),
+            other => other.display_text(task, self.state.abbreviated.contains(&other)),
+        }
     }
 
     /// The initiative names behind the grouped projects, for the title bar.
@@ -239,6 +270,122 @@ impl App {
             Mode::ViewChord => self.handle_view_chord_key(event),
             Mode::ViewSaveSlot => self.handle_view_save_slot_key(event),
             Mode::ViewGlobalSlot => self.handle_view_global_slot_key(event),
+            Mode::RankChord => self.handle_rank_chord_key(event),
+        }
+    }
+
+    /// After `t`: digits accumulate in `input` (two digits once the list is long
+    /// enough that a second could follow), Enter commits, `t` appends, `d` drops,
+    /// `p` pins or unpins the section.
+    fn handle_rank_chord_key(&mut self, event: KeyEvent) {
+        match event.code {
+            KeyCode::Char(digit) if digit.is_ascii_digit() => {
+                self.input.push(digit);
+                let place: usize = self.input.parse().unwrap_or(0);
+                let room = self.top.len() + 1;
+                if place == 0 {
+                    self.input.clear();
+                    self.status = "rank: 1 is the top".to_string();
+                    return;
+                }
+                if place * 10 <= room {
+                    self.status = format!("rank: {place}▏ (another digit, or enter)");
+                    return;
+                }
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.set_rank(place.min(room));
+            }
+            KeyCode::Enter if !self.input.is_empty() => {
+                let place: usize = self.input.parse().unwrap_or(1);
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.set_rank(place.max(1).min(self.top.len() + 1));
+            }
+            KeyCode::Char('t') => {
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.set_rank(self.top.len() + 1);
+            }
+            KeyCode::Char('d') | KeyCode::Delete | KeyCode::Backspace => {
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.drop_rank()
+            }
+            KeyCode::Char('p') => {
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.state.pin_top = !self.state.pin_top;
+                self.refilter();
+                self.status = if self.state.pin_top {
+                    "top list pinned first".to_string()
+                } else {
+                    "top list unpinned: ranked tasks sit in their sections".to_string()
+                };
+                self.telemetry
+                    .record("action", format!("pin_top {}", self.state.pin_top));
+            }
+            KeyCode::Esc => {
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.status.clear();
+            }
+            other => {
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.status = format!("{other:?} is not a rank; digits, t, d, or p");
+            }
+        }
+    }
+
+    /// `t<n>`: the selected task takes place `n` in the top list; the rest shift down.
+    fn set_rank(&mut self, place: usize) {
+        let Some(task) = self.selected_task() else {
+            self.status = "no task selected".to_string();
+            return;
+        };
+        let id = task.id.clone();
+        if let Err(error) = switchbard_core::expedite_task_at(&self.repo_root, &id, place) {
+            self.fail(format!("{id}: {error}"));
+            return;
+        }
+        self.reload_tasks();
+        if !self.state.columns.contains(&Column::Rank) {
+            self.state.columns.push(Column::Rank);
+            self.refilter();
+        }
+        self.select_task(&id);
+        self.status = format!("{id} is #{place} of {}", self.top.len());
+        self.telemetry
+            .record("action", format!("rank {place} {id}"));
+    }
+
+    fn drop_rank(&mut self) {
+        let Some(task) = self.selected_task() else {
+            self.status = "no task selected".to_string();
+            return;
+        };
+        let id = task.id.clone();
+        match switchbard_core::unexpedite_task(&self.repo_root, &id) {
+            Ok(outcome) if outcome.changed() => {
+                self.reload_tasks();
+                self.select_task(&id);
+                self.status = format!("{id} left the top list");
+                self.telemetry.record("action", format!("unrank {id}"));
+            }
+            Ok(_) => self.status = format!("{id} was not in the top list"),
+            Err(error) => self.fail(format!("{id}: {error}")),
+        }
+    }
+
+    /// Put the cursor on `id` wherever the projection placed it.
+    fn select_task(&mut self, id: &str) {
+        if let Some(row) = self
+            .rows
+            .iter()
+            .position(|row| matches!(row, Row::Task(index) if self.tasks[*index].id == id))
+        {
+            self.select(row);
         }
     }
 
@@ -390,6 +537,16 @@ impl App {
             Action::Columns => self.open_columns_picker(),
             Action::Paint => self.open_paint_target_picker(),
             Action::Ball => self.pass_ball(),
+            Action::Settings => self.open_settings(),
+            Action::Rank => {
+                self.mode = Mode::RankChord;
+                self.input.clear();
+                self.status = format!(
+                    "rank: a number places this task (1 is top, {} last) · t appends · d drops · p {}",
+                    self.top.len() + 1,
+                    if self.state.pin_top { "unpins" } else { "pins" }
+                );
+            }
             Action::Group => match self.state.group {
                 Some(_) => self.set_group(None),
                 None => self.set_group(Some(self.last_group)),
@@ -483,7 +640,22 @@ impl App {
             screen: &self.last_screen,
             trail: &trail,
         };
-        match report::file_report(&self.repo_root, kind, context) {
+        let target = self
+            .config
+            .report_repo
+            .clone()
+            .unwrap_or_else(|| self.repo_root.clone());
+        let elsewhere = target != self.repo_root;
+        match report::file_report(&target, kind, context) {
+            Ok(bare_id) if elsewhere => {
+                let repo = target
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                self.status = format!("filed {bare_id} in {repo}");
+                self.telemetry
+                    .record("report", format!("{kind:?} {bare_id} in {repo}"));
+            }
             Ok(bare_id) => {
                 self.reload_tasks();
                 let filed = self
@@ -512,14 +684,22 @@ impl App {
     }
 
     fn refilter(&mut self) {
-        let filter = Filter::parse(&self.state.filter);
+        let base = self.settings.effective().base_filter(&self.state.filter);
+        let filter = Filter::parse(&format!("{base} {}", self.state.filter));
         self.visible = (0..self.tasks.len())
             .filter(|&index| filter.matches(&self.tasks[index]))
             .collect();
         if let Some(sort) = self.state.sort {
-            sort::apply(&self.tasks, &mut self.visible, sort);
+            sort::apply(&self.tasks, &mut self.visible, sort, &self.top);
         }
-        self.rows = group::rows(&self.tasks, &self.visible, self.state.group, &self.projects);
+        let pinned: &[String] = if self.state.pin_top { &self.top } else { &[] };
+        self.rows = group::rows(
+            &self.tasks,
+            &self.visible,
+            self.state.group,
+            &self.projects,
+            pinned,
+        );
         self.select(self.selected);
     }
 
@@ -551,6 +731,75 @@ impl App {
                 column.map(|column| column.name()).unwrap_or("off")
             ),
         );
+    }
+
+    /// `,`: the standing preferences, one row per status that can be hidden.
+    pub(super) fn open_settings(&mut self) {
+        let options = tasks::field_values(&self.tasks, tasks::FilterField::Status)
+            .into_iter()
+            .map(|(status, count)| {
+                let mark = if self.settings.effective().is_hidden(&status) {
+                    "✓"
+                } else {
+                    " "
+                };
+                PickOption {
+                    label: format!("{mark}hide {status}"),
+                    count,
+                    key: None,
+                    payload: Payload::Text(status),
+                }
+            })
+            .collect();
+        self.open_picker(PickerPurpose::Settings, options);
+        self.status = match self.settings.scope() {
+            SettingsScope::Repo => "this repo's settings".to_string(),
+            SettingsScope::Global => "settings shared by every repo".to_string(),
+        };
+        self.telemetry.record("action", "settings");
+    }
+
+    /// A settings row picked: flip it for this repo, write the file, keep the panel open.
+    pub(super) fn toggle_setting(&mut self, status: &str) {
+        if let Err(error) = self
+            .settings
+            .edit_repo(|settings| settings.toggle_hidden(status))
+        {
+            self.fail(error);
+        }
+        self.refilter();
+        let highlighted = self.picker.as_ref().map(|p| p.selected).unwrap_or(0);
+        self.open_settings();
+        if let Some(picker) = self.picker.as_mut() {
+            picker.selected = highlighted;
+        }
+        self.status = match self.settings.effective().label() {
+            Some(label) => format!("{label} · this repo · g makes it every repo"),
+            None => "nothing hidden · this repo".to_string(),
+        };
+        self.telemetry
+            .record("action", format!("settings_hide {status}"));
+    }
+
+    /// `g` in the settings panel: this repo's settings become every repo's.
+    pub(super) fn promote_settings(&mut self) {
+        match self.settings.promote() {
+            Ok(()) => {
+                self.status = match self.settings.effective().label() {
+                    Some(label) => format!("{label} · every repo"),
+                    None => "nothing hidden · every repo".to_string(),
+                };
+                self.telemetry.record("action", "settings_promote");
+            }
+            Err(error) => self.fail(error),
+        }
+        let highlighted = self.picker.as_ref().map(|p| p.selected).unwrap_or(0);
+        let status = std::mem::take(&mut self.status);
+        self.open_settings();
+        self.status = status;
+        if let Some(picker) = self.picker.as_mut() {
+            picker.selected = highlighted;
+        }
     }
 
     /// Land on `row`, or the nearest task row after it (before it at the end).
@@ -587,6 +836,7 @@ impl App {
             Ok(backlog) => {
                 self.tasks = backlog.tasks;
                 self.projects = backlog.projects;
+                self.top = backlog.top;
             }
             Err(error) => self.fail(error.to_string()),
         }

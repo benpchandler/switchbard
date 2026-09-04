@@ -35,6 +35,8 @@ pub enum Action {
     Quit,
     View,
     Group,
+    Settings,
+    Rank,
 }
 
 impl Action {
@@ -60,6 +62,8 @@ impl Action {
             "quit" => Action::Quit,
             "view" => Action::View,
             "group" => Action::Group,
+            "settings" => Action::Settings,
+            "rank" => Action::Rank,
             _ => return None,
         })
     }
@@ -86,6 +90,8 @@ impl Action {
             Action::Quit => "quit".to_string(),
             Action::View => "view".to_string(),
             Action::Group => "group".to_string(),
+            Action::Settings => "settings".to_string(),
+            Action::Rank => "rank".to_string(),
         }
     }
 }
@@ -296,6 +302,9 @@ pub struct Config {
     pub palette: Vec<String>,
     /// The presets `:palette <name>` and `palette = "<name>"` choose from.
     pub palettes: Vec<(String, Vec<String>)>,
+    /// Where `:bug` and `:idea` file: sbt's own repo, not the one being browsed.
+    /// `None` files into the current repo.
+    pub report_repo: Option<PathBuf>,
     pub warnings: Vec<String>,
 }
 
@@ -368,6 +377,7 @@ struct RawConfig {
     glyphs: HashMap<String, HashMap<String, String>>,
     palette: Vec<String>,
     palette_name: Option<String>,
+    report_repo: Option<String>,
     palettes: Vec<(String, Vec<String>)>,
 }
 
@@ -384,6 +394,7 @@ impl RawConfig {
             glyphs: nested_string_map(&table, "glyphs")?,
             palette: string_list(&table, "palette")?,
             palette_name: table.get::<Option<String>>("palette").ok().flatten(),
+            report_repo: table.get::<Option<String>>("report_repo").ok().flatten(),
             palettes: named_string_lists(&table, "palettes")?,
         })
     }
@@ -407,6 +418,9 @@ impl RawConfig {
         } else if over.palette_name.is_some() {
             self.palette_name = over.palette_name;
             self.palette = Vec::new();
+        }
+        if over.report_repo.is_some() {
+            self.report_repo = over.report_repo;
         }
         for (name, colors) in over.palettes {
             self.palettes.retain(|(known, _)| *known != name);
@@ -515,12 +529,14 @@ impl RawConfig {
                 }
             }
         }
+        let report_repo = self.report_repo.map(|text| expand_home(&text));
         Config {
             keys,
             theme,
             glyphs,
             palette,
             palettes,
+            report_repo,
             warnings,
         }
     }
@@ -604,6 +620,16 @@ fn theme_presets(table: &Table) -> mlua::Result<HashMap<String, RawTheme>> {
         out.insert(name, (surface_map(&theme)?, string_map(&theme, "columns")?));
     }
     Ok(out)
+}
+
+/// `~/x` -> `$HOME/x`; anything else is taken as written.
+fn expand_home(text: &str) -> PathBuf {
+    match text.strip_prefix("~/") {
+        Some(rest) => dirs::home_dir()
+            .map(|home| home.join(rest))
+            .unwrap_or_else(|| PathBuf::from(text)),
+        None => PathBuf::from(text),
+    }
 }
 
 fn string_list(table: &Table, key: &str) -> mlua::Result<Vec<String>> {

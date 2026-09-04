@@ -43,6 +43,8 @@ pub enum PickerPurpose {
     PaintRules,
     /// After a digit in browse: everything that can be done with that column.
     ColumnActions(Column),
+    /// `,`: standing preferences under every view.
+    Settings,
 }
 
 /// What a column's menu offers; each row is one of these on a letter.
@@ -53,6 +55,7 @@ pub enum ColumnAction {
     Group,
     Paint,
     Glyphs,
+    Abbreviate,
     Hide,
     Move,
 }
@@ -65,6 +68,7 @@ impl ColumnAction {
             ColumnAction::Group => 'o',
             ColumnAction::Paint => 'p',
             ColumnAction::Glyphs => 'g',
+            ColumnAction::Abbreviate => 'a',
             ColumnAction::Hide => 'x',
             ColumnAction::Move => 'm',
         }
@@ -77,6 +81,7 @@ impl ColumnAction {
             ColumnAction::Group => "group by it",
             ColumnAction::Paint => "paint by it",
             ColumnAction::Glyphs => "glyphs on/off",
+            ColumnAction::Abbreviate => "abbreviate on/off",
             ColumnAction::Hide => "hide it",
             ColumnAction::Move => "move columns",
         }
@@ -253,7 +258,9 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::Filter(_) => "number or name picks one · space toggles · esc",
         PickerPurpose::Sort(_) => "number or name picks · esc",
         PickerPurpose::ChooseColumn(_) => "number or name · hidden columns listed last · esc",
-        PickerPurpose::Columns => "number or name toggles · m reorder · g glyphs · K/J nudge · esc",
+        PickerPurpose::Columns => {
+            "number or name toggles · m reorder · g glyphs · a abbreviate · K/J nudge · esc"
+        }
         PickerPurpose::MoveColumns(_) => "type column numbers in the order you want · enter done",
         PickerPurpose::PaintValues(_) => "value then color · repeats · h back · esc done",
         PickerPurpose::PaintColumn => "number or name · h back · esc",
@@ -261,5 +268,6 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::PaintColor(_) => "name or #hex · space clears · h back · esc",
         PickerPurpose::PaintRules => "K/J reorder · del removes · h back · esc",
         PickerPurpose::ColumnActions(_) => "letter picks · esc",
+        PickerPurpose::Settings => "number or name toggles for this repo · g every repo · esc",
     }
 }

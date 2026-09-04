@@ -123,7 +123,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     let text = if app.state.glyph_columns.contains(column) && !value.is_empty() {
                         app.config.glyph(*column, &value)
                     } else {
-                        column.display_text(task)
+                        app.cell(*column, task)
                     };
                     let mut style = theme.column_style(*column);
                     if let Some(color) = paint::cell_color(&app.state.paint, task, *column) {
@@ -154,7 +154,7 @@ fn fitted_width(app: &App, column: Column, max: u16) -> u16 {
         .rows
         .iter()
         .filter_map(|row| match row {
-            Row::Task(index) => Some(column.display_text(&app.tasks()[*index]).chars().count()),
+            Row::Task(index) => Some(app.cell(column, &app.tasks()[*index]).chars().count()),
             Row::Heading(_) => None,
         })
         .max()
@@ -192,6 +192,15 @@ fn table_title(app: &App) -> String {
     }
     if !app.state.glyph_columns.is_empty() {
         parts.push(format!("glyphs:{}", columns_text(&app.state.glyph_columns)));
+    }
+    if let Some(label) = app.state.abbreviated_label() {
+        parts.push(label);
+    }
+    if !app.state.pin_top {
+        parts.push("nopin".to_string());
+    }
+    if let Some(label) = app.settings.effective().label() {
+        parts.push(label);
     }
     if !app.state.paint.is_empty() {
         parts.push(format!("paint:{}", app.state.paint.len()));
@@ -271,6 +280,8 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Action::Paint,
         Action::Ball,
         Action::Group,
+        Action::Settings,
+        Action::Rank,
         Action::Command,
         Action::Reload,
         Action::Help,
@@ -359,12 +370,14 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             format!(" {}", picker::hint(app.picker.as_ref().expect("checked"))),
             theme.style(Surface::Hint),
         )),
-        Mode::PickValue | Mode::ViewChord | Mode::ViewSaveSlot | Mode::ViewGlobalSlot => {
-            Line::from(Span::styled(
-                app.status.clone(),
-                theme.style(Surface::Status),
-            ))
-        }
+        Mode::PickValue
+        | Mode::ViewChord
+        | Mode::ViewSaveSlot
+        | Mode::ViewGlobalSlot
+        | Mode::RankChord => Line::from(Span::styled(
+            app.status.clone(),
+            theme.style(Surface::Status),
+        )),
         Mode::Browse if !app.status.is_empty() => Line::from(Span::styled(
             app.status.clone(),
             theme.style(Surface::Status),
@@ -405,7 +418,9 @@ fn browse_footer(app: &App) -> Line<'static> {
         ("c", "columns"),
         ("p", "paint"),
         ("b", "ball"),
+        ("t", "rank"),
         ("v", "views"),
+        (",", "settings"),
         (":", "command"),
         ("?", "keys"),
         ("q", "quit"),
@@ -577,6 +592,7 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::PaintColor(_) => "color".to_string(),
         PickerPurpose::PaintRules => "paint rules · top is the base".to_string(),
         PickerPurpose::ColumnActions(column) => column.name().to_string(),
+        PickerPurpose::Settings => "settings".to_string(),
     };
     if picker.typed.is_empty() {
         format!(" {subject} ")

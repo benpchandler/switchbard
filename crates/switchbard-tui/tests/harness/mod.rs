@@ -86,6 +86,8 @@ pub fn open_app(root: &Path, config_path: &Path) -> App {
         Some(config_path.to_path_buf()),
         Some(root.join("views.lua")),
         Some(root.join("views-repo.lua")),
+        Some(root.join("settings.lua")),
+        Some(root.join("settings-repo.lua")),
         Telemetry::in_memory(),
     )
 }

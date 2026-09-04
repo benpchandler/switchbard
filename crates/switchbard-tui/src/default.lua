@@ -11,7 +11,7 @@ return {
     ["ctrl-d"] = "page_down", ["ctrl-u"] = "page_up",
     enter = "open", esc = "back",
     ["/"] = "filter", f = "filter_column", s = "sort_column", [":"] = "command",
-    c = "columns", p = "paint", b = "ball", o = "group", v = "view", r = "reload", ["?"] = "help", q = "quit",
+    c = "columns", p = "paint", b = "ball", o = "group", t = "rank", v = "view", [","] = "settings", r = "reload", ["?"] = "help", q = "quit",
   },
 
   -- Colors: ANSI names (cyan, gray, darkgray, ...) follow your terminal palette;
@@ -79,6 +79,10 @@ return {
   -- first color quiet so the common case stays calm and the rest stand out. Pick a preset by
   -- name (`:palette <name>` inside sbt previews them live), or give your own list:
   -- palette = { "#d4b872", "#7fb3c9", ... }. Hex reads the same on every terminal.
+  -- Where `:bug` and `:idea` file. sbt's own repo, so reports about the tool
+  -- never land in the backlog you happen to be browsing. Unset files locally.
+  -- report_repo = "~/Dev/switchbard",
+
   palette = "berg",
   palettes = {
     -- Berg: Bloomberg's categorical hues (the Terminal's chart legend and
