@@ -194,3 +194,61 @@ fn help_lists_the_task_chord_key() {
     let screen = h.press(KeyCode::Char('?'));
     assert!(screen.contains("t       task"), "{screen}");
 }
+
+// ─── organize by both: goal nested inside project ──────────────────────
+
+#[test]
+fn o_3_nests_goal_headings_inside_project_headings_and_a_saved_view_keeps_it() {
+    let mut h = goal_harness();
+    h.press(KeyCode::Char('o'));
+    let screen = h.press(KeyCode::Char('3'));
+    assert_eq!(h.app.status, "organized by project›goal · o changes it");
+    assert!(screen.contains("group:project›goal"), "{screen}");
+    let rows = screen_rows(&h);
+    assert_eq!(rows[0], "# Chase · In Progress · 1/2", "{rows:?}");
+    assert!(
+        rows[1].starts_with("  # lenders-live · 0/3 journeys · "),
+        "the inner heading is indented one level: {rows:?}"
+    );
+    assert_eq!(
+        rows[2..4],
+        ["Chase portal login", "Chase rate sheet"],
+        "{rows:?}"
+    );
+    assert_eq!(rows[4], "# Ally · no def · 0/1", "{rows:?}");
+    assert_eq!(rows[5], "  # no goal", "{rows:?}");
+    assert_eq!(rows[6], "Ally intake form", "{rows:?}");
+    assert_eq!(rows[7], "# no project", "{rows:?}");
+    assert!(
+        rows[8].starts_with("  # docs-shipped · 0/1 guides · "),
+        "{rows:?}"
+    );
+    assert_eq!(rows[9], "Write onboarding guide", "{rows:?}");
+    assert_eq!(rows[10], "  # no goal", "{rows:?}");
+    assert!(screen.contains("  ▸ lenders-live"), "{screen}");
+
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('2'));
+    let reopened = open_app(&h.root, &h.config_path);
+    assert_eq!(
+        reopened.views.get(1).unwrap().group,
+        switchbard_tui::group::Grouping::nested(
+            switchbard_tui::columns::Column::Project,
+            switchbard_tui::columns::Column::Goal
+        )
+    );
+
+    h.press(KeyCode::Char(':'));
+    h.type_text("group goal,project");
+    h.press(KeyCode::Enter);
+    assert_eq!(h.app.status, "organized by goal›project · o changes it");
+    h.press(KeyCode::Char(':'));
+    h.type_text("group project,project");
+    h.press(KeyCode::Enter);
+    assert!(
+        h.app.status.starts_with("group by one of"),
+        "{}",
+        h.app.status
+    );
+}

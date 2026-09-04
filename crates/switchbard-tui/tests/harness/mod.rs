@@ -179,7 +179,9 @@ pub fn screen_rows(h: &Harness) -> Vec<String> {
         .iter()
         .enumerate()
         .map(|(row, entry)| match entry {
-            switchbard_tui::group::Row::Heading(text) => format!("# {text}"),
+            switchbard_tui::group::Row::Heading { text, depth } => {
+                format!("{}# {text}", "  ".repeat(*depth))
+            }
             switchbard_tui::group::Row::Task(_) => h.app.task(row).unwrap().title.clone(),
         })
         .collect()

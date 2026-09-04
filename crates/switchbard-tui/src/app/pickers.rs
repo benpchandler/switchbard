@@ -63,7 +63,7 @@ impl App {
         match action {
             ColumnAction::Filter => self.open_filter_picker(column),
             ColumnAction::Sort => self.open_sort_picker(column),
-            ColumnAction::Group => self.set_group(Some(column)),
+            ColumnAction::Group => self.set_group(crate::group::Grouping::by(column)),
             ColumnAction::Paint => self.paint_column_entry(column),
             ColumnAction::Glyphs => self.toggle_glyph_column(column),
             ColumnAction::Abbreviate => self.toggle_abbreviated(column),
@@ -560,14 +560,13 @@ impl App {
                 // apply_picked_value took the picker; toggle_setting reopens it.
                 self.toggle_setting(&status)
             }
-            (PickerPurpose::Organize, Payload::Column(column)) => {
-                if self.state.group == Some(column) {
-                    self.set_group(None)
+            (PickerPurpose::Organize, Payload::Grouping(grouping)) => {
+                if self.state.group == grouping && !grouping.is_flat() {
+                    self.set_group(crate::group::Grouping::flat())
                 } else {
-                    self.set_group(Some(column))
+                    self.set_group(grouping)
                 }
             }
-            (PickerPurpose::Organize, Payload::NoGroup) => self.set_group(None),
             (PickerPurpose::Goals(_), Payload::Text(name)) => {
                 // Same shape as settings: the panel stays open with fresh marks.
                 self.open_goal_picker();

@@ -101,8 +101,8 @@ pub enum Payload {
     Order(Order),
     /// Sort: clear the sort.
     NoSort,
-    /// Organize: flatten the list.
-    NoGroup,
+    /// Organize: what to organize by (flat when empty).
+    Grouping(crate::group::Grouping),
     /// Color: clear the rule on this target.
     NoColor,
     /// Paint: one color per value of the column being painted.

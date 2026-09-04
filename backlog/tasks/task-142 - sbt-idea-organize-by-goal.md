@@ -4,7 +4,7 @@ title: 'sbt idea: organize by goal'
 status: In Progress
 assignee: []
 created_date: '2026-09-03 21:34'
-updated_date: '2026-09-04 09:59'
+updated_date: '2026-09-04 10:16'
 labels:
   - tui
   - idea
@@ -120,4 +120,6 @@ action command (0.0ms)
 2026-09-04 linking from sbt: a opens the goal panel for the selected task (✓ attached, · in scope already, pick toggles attach/detach and keeps the panel open); :goal <name> is the command form; ? lists a. Core change: manual goals now accept inputs as membership links, only tasks-measured goals count them toward the actual (attach_goal_inputs no longer refuses manual goals; core test updated). E2E: four new tests in crates/switchbard-tui/tests/goal.rs. Installed via mise run tui-install. To verify in budget: select a task, press a, pick a goal, then :group goal.
 
 2026-09-04 owner feedback applied: o now opens an organize picker (1 project, 2 goal, then status/priority/ball, x off, current choice ✓ and picking it again flattens); the goal panel moved to the task chord, tg (a binding removed; t action is named task, rank kept as a Lua alias). Nested organize by both is not built: it needs two-level headings and is filed as its own idea only if wanted.
+
+2026-09-04 nested organize shipped (PR 132): Grouping type with up to two levels; o rows 3/4 are project›goal and goal›project; :group project,goal; saved views keep it; inner headings indent. The earlier note calling this unbuilt is superseded.
 <!-- SECTION:NOTES:END -->

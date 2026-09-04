@@ -14,7 +14,7 @@ use switchbard_core::{BacklogTask, GoalDef};
 use crate::ball::Ball;
 use crate::columns::Column;
 use crate::config::{self, Action, Config, KeyChord};
-use crate::group::{self, Row};
+use crate::group::{self, Grouping, Row};
 use crate::paint;
 use crate::picker::{ColumnPurpose, Payload, PickOption, PickerPurpose, ValuePicker};
 use crate::report::{self, ReportContext, ReportKind};
@@ -71,8 +71,6 @@ pub struct App {
     pub selected: usize,
     /// First row on screen; the renderer keeps `selected` inside the window.
     pub scroll: usize,
-    /// The column `o` returns to after grouping was switched off.
-    last_group: Column,
     /// Column order when `c m` began, so typed numbers keep meaning what the header showed.
     move_origin: Option<Vec<Column>>,
     /// Which values list to return to after a color is picked.
@@ -123,7 +121,6 @@ impl App {
             rows: Vec::new(),
             selected: 0,
             scroll: 0,
-            last_group: Column::Project,
             move_origin: None,
             paint_return: None,
             views,
@@ -157,7 +154,7 @@ impl App {
     pub fn task(&self, row: usize) -> Option<&BacklogTask> {
         match self.rows.get(row)? {
             Row::Task(index) => Some(&self.tasks[*index]),
-            Row::Heading(_) => None,
+            Row::Heading { .. } => None,
         }
     }
 
@@ -422,31 +419,43 @@ impl App {
         }
     }
 
-    /// `o`: what to organize the list by. Project and goal lead, the current
-    /// choice is ✓, `x` flattens; picking the current choice flattens too.
+    /// `o`: what to organize the list by. Project, goal, and the two nestings
+    /// lead; the current choice is ✓, `x` flattens; picking the current
+    /// choice flattens too.
     pub(super) fn open_organize_picker(&mut self) {
-        let leading = [Column::Project, Column::Goal];
-        let rest = Column::groupable_columns()
+        let leading = [
+            Grouping::by(Column::Project),
+            Grouping::by(Column::Goal),
+            Grouping::nested(Column::Project, Column::Goal),
+            Grouping::nested(Column::Goal, Column::Project),
+        ];
+        let rest: Vec<Grouping> = Column::groupable_columns()
             .into_iter()
-            .filter(|column| !leading.contains(column));
-        let columns: Vec<Column> = leading.into_iter().chain(rest).collect();
-        let mut options: Vec<PickOption> = columns
+            .map(Grouping::by)
+            .filter(|grouping| !leading.contains(grouping))
+            .collect();
+        let mut options: Vec<PickOption> = leading
             .into_iter()
-            .map(|column| {
-                let mark = if self.state.group == Some(column) {
+            .chain(rest)
+            .map(|grouping| {
+                let mark = if self.state.group == grouping {
                     "✓"
                 } else {
                     " "
                 };
                 PickOption {
-                    label: format!("{mark}{}", column.name()),
+                    label: format!("{mark}{}", grouping.name()),
                     count: 0,
                     key: None,
-                    payload: Payload::Column(column),
+                    payload: Payload::Grouping(grouping),
                 }
             })
             .collect();
-        options.push(PickOption::keyed('x', " off", Payload::NoGroup));
+        options.push(PickOption::keyed(
+            'x',
+            " off",
+            Payload::Grouping(Grouping::flat()),
+        ));
         self.open_picker(PickerPurpose::Organize, options);
         self.status.clear();
         self.telemetry
@@ -719,19 +728,16 @@ impl App {
             "q" | "quit" => self.should_quit = true,
             "reload" => self.apply(&Action::Reload),
             "palette" => self.choose_palette(rest.trim()),
-            "group" => match rest.trim() {
-                "" | "off" | "none" => self.set_group(None),
-                name => match Column::parse(name).filter(|column| column.groupable()) {
-                    Some(column) => self.set_group(Some(column)),
-                    None => self.fail(format!(
-                        "group by one of {}, or off",
-                        Column::groupable_columns()
-                            .iter()
-                            .map(|column| column.name())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )),
-                },
+            "group" => match Grouping::parse(rest) {
+                Some(grouping) => self.set_group(grouping),
+                None => self.fail(format!(
+                    "group by one of {}, two of them as a,b, or off",
+                    Column::groupable_columns()
+                        .iter()
+                        .map(|column| column.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
             },
             "goal" => self.toggle_goal_link(rest.trim()),
             "bug" => self.file_report(ReportKind::Bug, rest),
@@ -837,20 +843,17 @@ impl App {
         self.rows = group::rows(
             &self.tasks,
             &self.visible,
-            self.state.group,
+            &self.state.group,
             &headings,
             pinned,
         );
         self.select(self.selected);
     }
 
-    /// `o`, `:group`, or a column's menu: section the list by `column`, or flatten it.
-    pub(super) fn set_group(&mut self, column: Option<Column>) {
+    /// `o`, `:group`, or a column's menu: organize the list, or flatten it.
+    pub(super) fn set_group(&mut self, grouping: Grouping) {
         let kept = self.selected_task().map(|task| task.id.clone());
-        self.state.group = column;
-        if let Some(column) = column {
-            self.last_group = column;
-        }
+        self.state.group = grouping;
         self.refilter();
         if let Some(id) = kept {
             if let Some(row) = self
@@ -861,17 +864,13 @@ impl App {
                 self.select(row);
             }
         }
-        self.status = match column {
-            Some(column) => format!("organized by {} · o changes it", column.name()),
-            None => "flat list".to_string(),
+        self.status = if self.state.group.is_flat() {
+            "flat list".to_string()
+        } else {
+            format!("organized by {} · o changes it", self.state.group.name())
         };
-        self.telemetry.record(
-            "action",
-            format!(
-                "group {}",
-                column.map(|column| column.name()).unwrap_or("off")
-            ),
-        );
+        self.telemetry
+            .record("action", format!("group {}", self.state.group.name()));
     }
 
     /// `,`: the standing preferences, one row per status that can be hidden.
