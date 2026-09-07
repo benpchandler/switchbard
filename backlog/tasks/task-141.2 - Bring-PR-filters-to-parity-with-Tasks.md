@@ -1,10 +1,10 @@
 ---
 id: TASK-141.2
 title: Bring PR filters to parity with Tasks
-status: In Progress
+status: In Review
 assignee: []
 created_date: '2026-09-07 01:32'
-updated_date: '2026-09-07 01:37'
+updated_date: '2026-09-07 01:51'
 labels:
   - tui
   - github
@@ -28,7 +28,13 @@ Owner requested these as tracked tasks before live claiming and implementation. 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The shared filter picker exposes every applicable PR column, including linked tasks, checks, review and merge observations.
-- [ ] #2 Text and categorical filters compose, clear, and persist in PR settings without modifying the task filter or GitHub data.
-- [ ] #3 Real-key E2E journeys prove positive/negative/empty results, unknown/historical observations and page/restart isolation.
+- [x] #1 The shared filter picker exposes every applicable PR column, including linked tasks, checks, review and merge observations.
+- [x] #2 Text and categorical filters compose, clear, and persist in PR settings without modifying the task filter or GitHub data.
+- [x] #3 Real-key E2E journeys prove positive/negative/empty results, unknown/historical observations and page/restart isolation.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented in feat/tui-pr-pane (source ea277a1). Full TUI fmt/clippy/tests/install passed. All 20 page/PR/control E2E journeys passed with actual GitHub reads; title/check sorts and review/merge facets also passed on budget PR observations. Evidence: docs/tui-pr-controls-ledger.md and docs/tui-pr-controls-evidence.md. Independent source review has no remaining verified blocker. Delivery pipeline/PR/CI and human visual review remain pending; not merged.
+<!-- SECTION:NOTES:END -->
