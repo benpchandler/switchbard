@@ -17,14 +17,7 @@ impl App {
     /// After `f`/`s`: shown columns first, numbered as in the header, then hidden ones.
     pub(super) fn open_column_chooser(&mut self, purpose: ColumnPurpose) {
         self.column_purpose = purpose;
-        let options = if self.page == crate::page::Page::PullRequests {
-            [Column::Status, Column::Id, Column::Title]
-                .into_iter()
-                .map(|c| PickOption::column(c, false))
-                .collect()
-        } else {
-            self.column_picker_options()
-        };
+        let options = self.column_picker_options();
         self.open_picker(PickerPurpose::ChooseColumn(purpose), options);
         self.status.clear();
     }
@@ -55,8 +48,14 @@ impl App {
         let options = actions
             .into_iter()
             .filter(|action| *action != ColumnAction::Glyphs || self.is_categorical(column))
-            .filter(|action| *action != ColumnAction::Group || column.groupable())
-            .filter(|action| *action != ColumnAction::Abbreviate || column.abbreviable())
+            .filter(|action| {
+                *action != ColumnAction::Group
+                    || (self.page == crate::page::Page::Tasks && column.groupable())
+            })
+            .filter(|action| {
+                *action != ColumnAction::Abbreviate
+                    || (self.page == crate::page::Page::Tasks && column.abbreviable())
+            })
             .map(|action| {
                 PickOption::keyed(action.key(), action.label(), Payload::ColumnAction(action))
             })
@@ -129,7 +128,7 @@ impl App {
             .iter()
             .map(|column| PickOption::column(*column, false))
             .chain(
-                Column::ALL
+                self.page_columns()
                     .iter()
                     .filter(|column| !self.state.columns.contains(column))
                     .map(|column| PickOption::column(*column, true)),
@@ -216,7 +215,7 @@ impl App {
 
     /// `1a` or `a` in the columns picker: short form (bare id, H/M/L) on or off.
     pub(super) fn toggle_abbreviated(&mut self, column: Column) {
-        if !column.abbreviable() {
+        if self.page == crate::page::Page::PullRequests || !column.abbreviable() {
             self.status = format!("{} has no short form", column.name());
             return;
         }
@@ -247,36 +246,26 @@ impl App {
             .record("action", format!("column_move {} {delta}", column.name()));
     }
 
-    fn pr_filter_values(&self, field: FilterField) -> Vec<(String, usize)> {
-        let rows = self
-            .pull_requests
-            .snapshot
-            .as_ref()
-            .map(|s| s.rows.as_slice())
-            .unwrap_or(&[]);
-        if field == FilterField::Status {
-            ["Open", "Closed", "Merged"]
-                .into_iter()
-                .map(|state| {
-                    (
-                        state.to_string(),
-                        rows.iter().filter(|r| r.lifecycle.label() == state).count(),
-                    )
-                })
-                .collect()
+    pub(super) fn column_values(&self, column: Column) -> Vec<(String, usize)> {
+        if self.page == crate::page::Page::PullRequests {
+            self.pull_requests.column_values(column)
         } else {
-            rows.iter().map(|r| (r.number.to_string(), 1)).collect()
+            column
+                .filter_field()
+                .map(|field| tasks::field_values(&self.tasks, field, &self.goals))
+                .unwrap_or_default()
         }
     }
 
     pub(super) fn open_filter_picker(&mut self, column: Column) {
-        match column.filter_field() {
+        let field = if self.page == crate::page::Page::PullRequests && column == Column::Id {
+            Some(FilterField::Id)
+        } else {
+            column.filter_field()
+        };
+        match field {
             Some(field) => {
-                let values = if self.page == crate::page::Page::PullRequests {
-                    self.pr_filter_values(field)
-                } else {
-                    tasks::field_values(&self.tasks, field, &self.goals)
-                };
+                let values = self.column_values(column);
                 if values.is_empty() {
                     self.status = format!("no {} values to pick from", field.keyword());
                     return;

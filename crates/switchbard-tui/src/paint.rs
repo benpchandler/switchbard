@@ -8,7 +8,7 @@ use ratatui::style::Color;
 use switchbard_core::{BacklogTask, GoalDef};
 
 use crate::columns::Column;
-use crate::tasks::{Filter, FilterField};
+use crate::tasks::Filter;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaintRule {
@@ -134,10 +134,10 @@ impl PaintRule {
     /// The color this rule gives a cell, honoring `is_base` for by-column rules.
     fn claim(
         &self,
-        task: &BacklogTask,
         column: Column,
         is_base: bool,
-        goals: &[GoalDef],
+        values: &impl Fn(Column) -> Vec<String>,
+        matches: &impl Fn(&Filter) -> bool,
     ) -> Option<Color> {
         match self {
             PaintRule::ByColumn {
@@ -147,15 +147,17 @@ impl PaintRule {
                 if *painted != column && !is_base {
                     return None;
                 }
-                let field = painted.filter_field()?;
-                let value = field_value(task, field, goals)?;
+                let values = values(*painted);
                 colors
                     .iter()
-                    .find(|(known, _)| *known == Filter::loose_key(&value))
+                    .find(|(known, _)| {
+                        values
+                            .iter()
+                            .any(|value| *known == Filter::loose_key(value))
+                    })
                     .and_then(|(_, color)| Color::from_str(color).ok())
             }
-            PaintRule::Rows { filter, color } => Filter::parse(filter)
-                .matches(task, goals)
+            PaintRule::Rows { filter, color } => matches(&Filter::parse(filter))
                 .then(|| Color::from_str(color).ok())
                 .flatten(),
             PaintRule::Column {
@@ -168,10 +170,6 @@ impl PaintRule {
     }
 }
 
-fn field_value(task: &BacklogTask, field: FilterField, goals: &[GoalDef]) -> Option<String> {
-    field.column().values(task, goals).into_iter().next()
-}
-
 /// The color for one cell: the lowest (most specific) rule that claims it wins;
 /// the top rule is the base and claims whole rows.
 pub fn cell_color(
@@ -180,11 +178,25 @@ pub fn cell_color(
     column: Column,
     goals: &[GoalDef],
 ) -> Option<Color> {
+    cell_color_with(
+        rules,
+        column,
+        |column| column.values(task, goals).into_iter().take(1).collect(),
+        |filter| filter.matches(task, goals),
+    )
+}
+
+pub fn cell_color_with(
+    rules: &[PaintRule],
+    column: Column,
+    values: impl Fn(Column) -> Vec<String>,
+    matches: impl Fn(&Filter) -> bool,
+) -> Option<Color> {
     rules
         .iter()
         .enumerate()
         .rev()
-        .find_map(|(index, rule)| rule.claim(task, column, index == 0, goals))
+        .find_map(|(index, rule)| rule.claim(column, index == 0, &values, &matches))
 }
 
 /// The color a by-column rule assigns `value`, if any.

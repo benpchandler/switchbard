@@ -102,6 +102,9 @@ pub struct App {
     pub view: usize,
     /// Filter, sort, columns, glyphs, paint: what a slot saves and a restart resumes.
     pub state: ViewState,
+    inactive_state: ViewState,
+    inactive_views: ViewStore,
+    inactive_view: usize,
     pub mode: Mode,
     pub input: String,
     pub pane: Pane,
@@ -128,7 +131,15 @@ impl App {
         } = paths;
         let config = config::load(config_path.as_deref());
         let (settings, settings_warnings) = SettingsStore::load(global_settings, repo_settings);
-        let (views, view_warnings) = ViewStore::load(global_views, repo_views);
+        let (mut pr_views, pr_warnings) = ViewStore::load_with_defaults(
+            global_views.as_ref().map(|p| p.with_extension("prs.lua")),
+            repo_views.as_ref().map(|p| p.with_extension("prs.lua")),
+            vec![ViewState::pull_requests()],
+        );
+        pr_views.sanitize(Page::PullRequests);
+        let pr_state = pr_views.get(0).unwrap_or_else(ViewState::pull_requests);
+        let (mut views, view_warnings) = ViewStore::load(global_views, repo_views);
+        views.sanitize(Page::Tasks);
         let mut app = App {
             repo_root: repo_root.to_path_buf(),
             config_seen: config_path.as_deref().and_then(config::modified_at),
@@ -152,6 +163,9 @@ impl App {
             views,
             view: 0,
             state: ViewState::default(),
+            inactive_state: pr_state,
+            inactive_views: pr_views,
+            inactive_view: 0,
             config,
             mode: Mode::Browse,
             input: String::new(),
@@ -172,6 +186,9 @@ impl App {
         app.report_config_warnings();
         if let Some(warning) = view_warnings.first() {
             app.fail(format!("views: {warning}"));
+        }
+        if let Some(warning) = pr_warnings.first() {
+            app.fail(format!("PR views: {warning}"));
         }
         if let Some(warning) = settings_warnings.first() {
             app.fail(format!("settings: {warning}"));
@@ -255,17 +272,34 @@ impl App {
 
     /// Preserve the page and task view across a self-restart; old task-only records still read.
     pub fn resume_state(&self) -> String {
+        let (tasks, task_slot, prs, pr_slot) = if self.page == Page::Tasks {
+            (
+                &self.state,
+                self.view,
+                &self.inactive_state,
+                self.inactive_view,
+            )
+        } else {
+            (
+                &self.inactive_state,
+                self.inactive_view,
+                &self.state,
+                self.view,
+            )
+        };
         format!(
-            "prfilter={}\t{}{}\t{}\t{}",
-            serde_json::to_string(&self.pull_requests.filter).expect("string serialization"),
-            if self.page == Page::PullRequests {
-                "prs\t"
-            } else {
-                ""
-            },
-            self.view,
-            self.selected,
-            self.state.to_lua()
+            "pages={}",
+            serde_json::to_string(&(
+                self.page == Page::PullRequests,
+                task_slot,
+                self.selected,
+                tasks.to_lua(),
+                pr_slot,
+                prs.to_lua(),
+                self.pull_requests.selected,
+                self.pull_requests.selection_identity()
+            ))
+            .expect("page state serialization")
         )
     }
 
@@ -273,6 +307,13 @@ impl App {
         let Some(state) = state else {
             return;
         };
+        if let Some(record) = state.strip_prefix("pages=") {
+            self.resume_pages(record);
+            return;
+        }
+        if self.page == Page::PullRequests {
+            self.toggle_page_state();
+        }
         let state = if let Some(rest) = state.strip_prefix("prfilter=") {
             if let Some((filter, record)) = rest.split_once('\t') {
                 self.pull_requests.filter = serde_json::from_str(filter).unwrap_or_default();
@@ -283,8 +324,9 @@ impl App {
         } else {
             state
         };
+        let was_pr = state.starts_with("prs\t");
         let state = if let Some(record) = state.strip_prefix("prs\t") {
-            self.page = Page::PullRequests;
+            self.page = Page::Tasks;
             record
         } else {
             self.page = Page::Tasks;
@@ -297,10 +339,56 @@ impl App {
         let selected = parts.next().and_then(|n| n.parse().ok());
         if let Some(record) = parts.next() {
             self.state = ViewState::from_lua(record);
+            self.state.sanitize(Page::Tasks);
         }
         self.refilter();
         if let Some(selected) = selected {
             self.select(selected);
+        }
+        self.inactive_state.filter = self.pull_requests.filter.clone();
+        if was_pr {
+            self.toggle_page_state();
+        }
+        self.status = "updated to the new build".to_string();
+    }
+
+    fn resume_pages(&mut self, record: &str) {
+        type Resume = (
+            bool,
+            usize,
+            usize,
+            String,
+            usize,
+            String,
+            usize,
+            Option<String>,
+        );
+        let parsed = serde_json::from_str::<Resume>(record).or_else(|_| {
+            serde_json::from_str::<(bool, usize, usize, String, usize, String, usize)>(record).map(
+                |(page, slot, selected, tasks, pr_slot, prs, pr_selected)| {
+                    (page, slot, selected, tasks, pr_slot, prs, pr_selected, None)
+                },
+            )
+        });
+        let Ok((pr_page, task_slot, selected, tasks, pr_slot, prs, pr_selected, pr_id)) = parsed
+        else {
+            return;
+        };
+        if self.page == Page::PullRequests {
+            self.toggle_page_state();
+        }
+        self.view = task_slot;
+        self.state = ViewState::from_lua(&tasks);
+        self.state.sanitize(Page::Tasks);
+        self.inactive_view = pr_slot;
+        self.inactive_state = ViewState::from_lua(&prs);
+        self.inactive_state.sanitize(Page::PullRequests);
+        self.refilter();
+        self.select(selected);
+        self.pull_requests.selected = pr_selected;
+        self.pull_requests.restore_selection(pr_id);
+        if pr_page {
+            self.toggle_page_state();
         }
         self.status = "updated to the new build".to_string();
     }
@@ -772,7 +860,7 @@ impl App {
 
     fn handle_browse_key(&mut self, event: KeyEvent) {
         let chord = KeyChord::from_event(&event);
-        if self.page == Page::Tasks {
+        {
             if let (KeyCode::Char(digit), false) = (event.code, chord.ctrl) {
                 if let Some(position) = digit.to_digit(10).filter(|n| *n > 0) {
                     self.open_column_actions(position as usize);
@@ -860,6 +948,7 @@ impl App {
             self.config.pr_refresh_seconds,
         ) {
             self.pull_requests.refresh_links(&self.tasks);
+            self.pull_requests.refilter();
             let after = self.pull_requests.row().map(|row| row.id.clone());
             if self.page == Page::PullRequests && self.pane == Pane::Detail && before != after {
                 self.pane = Pane::None;
@@ -915,7 +1004,7 @@ impl App {
         }
         match action {
             Action::Page => {
-                self.page = self.page.toggle();
+                self.toggle_page_state();
                 if self.page == Page::PullRequests {
                     self.refresh_pr_state();
                 }
@@ -1156,6 +1245,23 @@ impl App {
         }
     }
 
+    fn toggle_page_state(&mut self) {
+        std::mem::swap(&mut self.state, &mut self.inactive_state);
+        std::mem::swap(&mut self.views, &mut self.inactive_views);
+        std::mem::swap(&mut self.view, &mut self.inactive_view);
+        self.page = self.page.toggle();
+        self.state.sanitize(self.page);
+        self.refilter();
+    }
+
+    pub fn page_columns(&self) -> &'static [Column] {
+        if self.page == Page::PullRequests {
+            &Column::PR_ALL
+        } else {
+            &Column::ALL
+        }
+    }
+
     pub fn filter_text(&self) -> &str {
         if self.page == Page::PullRequests {
             &self.pull_requests.filter
@@ -1166,6 +1272,7 @@ impl App {
 
     fn set_filter(&mut self, text: String) {
         if self.page == Page::PullRequests {
+            self.state.filter = text.clone();
             self.pull_requests.filter = text;
             self.pull_requests.refilter();
             return;
@@ -1175,27 +1282,36 @@ impl App {
     }
 
     fn refilter(&mut self) {
-        let base = self.settings.effective().base_filter(&self.state.filter);
-        let filter = Filter::parse(&format!("{base} {}", self.state.filter));
+        if self.page == Page::PullRequests {
+            self.pull_requests.filter = self.state.filter.clone();
+            self.pull_requests.sort = self.state.sort;
+            self.pull_requests.refilter();
+            return;
+        }
+        self.refilter_tasks();
+    }
+
+    fn refilter_tasks(&mut self) {
+        let state = if self.page == Page::Tasks {
+            &self.state
+        } else {
+            &self.inactive_state
+        };
+        let base = self.settings.effective().base_filter(&state.filter);
+        let filter = Filter::parse(&format!("{base} {}", state.filter));
         self.visible = (0..self.tasks.len())
             .filter(|&index| filter.matches(&self.tasks[index], &self.goals))
             .collect();
-        if let Some(sort) = self.state.sort {
+        if let Some(sort) = state.sort {
             sort::apply(&self.tasks, &mut self.visible, sort, &self.top, &self.goals);
         }
-        let pinned: &[String] = if self.state.pin_top { &self.top } else { &[] };
+        let pinned: &[String] = if state.pin_top { &self.top } else { &[] };
         let headings = group::Headings {
             projects: &self.projects,
             goals: &self.goals,
             goal_summaries: &self.goal_summaries,
         };
-        self.rows = group::rows(
-            &self.tasks,
-            &self.visible,
-            &self.state.group,
-            &headings,
-            pinned,
-        );
+        self.rows = group::rows(&self.tasks, &self.visible, &state.group, &headings, pinned);
         self.select(self.selected);
     }
 
@@ -1320,6 +1436,7 @@ impl App {
     }
 
     fn reload_tasks(&mut self) {
+        let selected_id = self.selected_task().map(|task| task.id.clone());
         self.tasks_seen = config::modified_at(&self.repo_root.join("backlog/tasks"));
         match tasks::load(&self.repo_root) {
             Ok(backlog) => {
@@ -1331,8 +1448,20 @@ impl App {
             }
             Err(error) => self.fail(error.to_string()),
         }
-        self.refilter();
+        self.refilter_tasks();
+        if let Some(id) = selected_id {
+            if let Some(index) = self
+                .rows
+                .iter()
+                .position(|row| matches!(row, Row::Task(i) if self.tasks[*i].id == id))
+            {
+                self.select(index);
+            }
+        }
         self.pull_requests.refresh_links(&self.tasks);
+        if self.page == Page::PullRequests {
+            self.refilter();
+        }
     }
 
     fn reload_config(&mut self) {

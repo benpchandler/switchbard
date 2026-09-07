@@ -198,7 +198,7 @@ fn pr_filters_use_the_shared_picker_and_preserve_task_filter_and_restart() {
     h.type_text("/theme");
     h.press(KeyCode::Enter);
     h.press(KeyCode::Tab);
-    h.type_text("f1");
+    h.type_text("f2");
     let screen = h.render();
     assert!(
         screen.contains("Open") && screen.contains("Closed") && screen.contains("Merged"),
@@ -206,7 +206,9 @@ fn pr_filters_use_the_shared_picker_and_preserve_task_filter_and_restart() {
     );
     h.press(KeyCode::Char('3'));
     assert_eq!(h.app.pull_requests.filter, "status:merged");
+    h.press(KeyCode::Tab);
     assert_eq!(h.app.state.filter, "theme");
+    h.press(KeyCode::Tab);
     let state = h.app.resume_state();
     h.app = open_app(&h.root, &h.config_path);
     h.app.resume_from(Some(&state));
@@ -232,7 +234,7 @@ fn live_all_states_can_be_filtered_without_refetching() {
         .iter()
         .any(|r| r.lifecycle == switchbard_core::PrLifecycle::Merged));
     assert_eq!(h.app.pull_requests.visible.len(), snapshot.rows.len());
-    h.type_text("f1");
+    h.type_text("f2");
     h.press(KeyCode::Char('3'));
     assert!(!h.app.pull_requests.visible.is_empty());
     let snapshot = h.app.pull_requests.snapshot.as_ref().unwrap();

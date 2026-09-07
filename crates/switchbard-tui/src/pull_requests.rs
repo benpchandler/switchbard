@@ -12,6 +12,8 @@ pub struct PullRequests {
     pub scroll: usize,
     pub detail_scroll: u16,
     pub filter: String,
+    pub sort: Option<crate::sort::Sort>,
+    pending_selection: Option<String>,
     pub visible: Vec<usize>,
     requested_limit: usize,
     pub links: std::collections::BTreeMap<String, Vec<(String, String)>>,
@@ -75,17 +77,12 @@ impl PullRequests {
                 snapshot
                     .rows
                     .sort_by_key(|row| (row.attention_rank(), std::cmp::Reverse(row.number)));
-                let id = self.row().map(|row| row.id.clone());
+                if self.pending_selection.is_none() {
+                    self.pending_selection = self.row().map(|row| row.id.clone());
+                }
                 self.snapshot = Some(snapshot);
                 self.error = None;
-                self.refilter();
-                self.selected = id
-                    .and_then(|id| {
-                        self.visible.iter().position(|&i| {
-                            self.snapshot.as_ref().expect("accepted snapshot").rows[i].id == id
-                        })
-                    })
-                    .unwrap_or(0);
+                // App refreshes task links before projecting the accepted snapshot.
             }
             Err(error) => self.error = Some(error),
         }
@@ -124,9 +121,66 @@ impl PullRequests {
         self.refresh(root);
     }
 
+    pub fn selection_identity(&self) -> Option<String> {
+        self.pending_selection
+            .clone()
+            .or_else(|| self.row().map(|row| row.id.clone()))
+    }
+
+    pub fn restore_selection(&mut self, id: Option<String>) {
+        self.pending_selection = id;
+    }
+
+    pub fn values(&self, column: crate::columns::Column, row: &PrListRow) -> Vec<String> {
+        let links = self.links.get(&row.url).map(Vec::as_slice).unwrap_or(&[]);
+        column.pr_values(row, links)
+    }
+
+    pub fn matches(&self, filter: &crate::tasks::Filter, row: &PrListRow) -> bool {
+        filter.matches_values(&[&row.number.to_string(), &row.title], |field| {
+            self.values(field.column(), row)
+        })
+    }
+
+    pub fn column_values(&self, column: crate::columns::Column) -> Vec<(String, usize)> {
+        let mut counts = std::collections::BTreeMap::<String, usize>::new();
+        if let Some(snapshot) = &self.snapshot {
+            for row in &snapshot.rows {
+                for value in self.values(column, row) {
+                    *counts.entry(value).or_default() += 1;
+                }
+            }
+        }
+        for value in column.spec().vocabulary {
+            counts.entry((*value).to_string()).or_default();
+        }
+        let mut values: Vec<_> = counts.into_iter().collect();
+        values.sort_by(|a, b| {
+            if column == crate::columns::Column::Id {
+                a.0.parse::<u64>()
+                    .unwrap_or(u64::MAX)
+                    .cmp(&b.0.parse::<u64>().unwrap_or(u64::MAX))
+            } else {
+                column
+                    .vocabulary_rank(&a.0)
+                    .cmp(&column.vocabulary_rank(&b.0))
+                    .then_with(|| b.1.cmp(&a.1))
+                    .then_with(|| a.0.cmp(&b.0))
+            }
+        });
+        values
+    }
+
     pub fn refilter(&mut self) {
+        let Some(_) = self.snapshot else {
+            return;
+        };
+        let restored = self.pending_selection.take();
+        let selected = restored
+            .clone()
+            .or_else(|| self.row().map(|row| row.id.clone()));
         let filter = crate::tasks::Filter::parse(&self.filter);
-        self.visible = self
+        let mut visible: Vec<usize> = self
             .snapshot
             .as_ref()
             .map(|snapshot| {
@@ -134,23 +188,50 @@ impl PullRequests {
                     .rows
                     .iter()
                     .enumerate()
-                    .filter(|(_, row)| {
-                        filter.matches_values(&[&row.number.to_string(), &row.title], |field| {
-                            match field {
-                                crate::tasks::FilterField::Status => {
-                                    vec![row.lifecycle.label().to_string()]
-                                }
-                                crate::tasks::FilterField::Id => vec![row.number.to_string()],
-                                _ => Vec::new(),
-                            }
-                        })
-                    })
-                    .map(|(index, _)| index)
+                    .filter(|(_, row)| self.matches(&filter, row))
+                    .map(|(i, _)| i)
                     .collect()
             })
             .unwrap_or_default();
-        self.selected = self.selected.min(self.visible.len().saturating_sub(1));
+        if let Some(snapshot) = &self.snapshot {
+            if let Some(sort) = self.sort {
+                visible.sort_by(|&a, &b| self.compare(&snapshot.rows[a], &snapshot.rows[b], sort));
+            }
+        }
+        self.visible = visible;
+        self.selected = selected
+            .and_then(|id| {
+                self.visible
+                    .iter()
+                    .position(|&i| self.snapshot.as_ref().is_some_and(|s| s.rows[i].id == id))
+            })
+            .unwrap_or_else(|| {
+                if restored.is_some() {
+                    0
+                } else {
+                    self.selected.min(self.visible.len().saturating_sub(1))
+                }
+            });
         self.scroll = self.scroll.min(self.selected);
+    }
+
+    fn compare(&self, a: &PrListRow, b: &PrListRow, sort: crate::sort::Sort) -> std::cmp::Ordering {
+        use crate::{columns::Column, sort::Order};
+        let values = |row| self.values(sort.column, row).join(",");
+        let order = match sort.order {
+            Order::Semantic => sort
+                .column
+                .vocabulary_rank(&values(a))
+                .cmp(&sort.column.vocabulary_rank(&values(b))),
+            _ if sort.column == Column::Id => a.number.cmp(&b.number),
+            _ => values(a).to_lowercase().cmp(&values(b).to_lowercase()),
+        };
+        let order = if sort.order == Order::Descending {
+            order.reverse()
+        } else {
+            order
+        };
+        order.then_with(|| a.number.cmp(&b.number))
     }
 
     pub fn loading(&self) -> bool {

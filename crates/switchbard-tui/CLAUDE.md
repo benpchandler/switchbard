@@ -14,7 +14,7 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
 8. Telemetry (`~/.switchbard/tui-events.jsonl`) records key, action, timing, error.
    `sbt stats` is how we learn what is used, slow, or unbound.
 ## Module map
-- `page.rs` - Tasks / Pull Requests identity and allowed actions; Tab (`page` in Lua) toggles, the header marks the active page. `pull_requests.rs` caches bounded repo reads off-thread; `pr_view.rs` renders the list/detail. PR refresh uses `pr_refresh_seconds` (default 60); r retries errors. The source includes Open/Closed/Merged, initially 100 rows; `:more` expands by 100 up to 1000 with explicit partial coverage. `/` and `f` reuse task filter grammar/pickers with separate PR filter state (`status:open`); Enter toggles the right detail pane, j/k select rows, Ctrl-d/u scroll details. Metadata survives optional active-check enrichment failures. State/Tasks/Checks use compact widths; Tasks shows an ID or link count, absent links a dash. Checks shows only check observations (closed/merged: NF, expanded to Not fetched in details); review and merge observations remain separately labeled in details.
+- `page.rs` - Tasks / Pull Requests identity and allowed actions; Tab (`page` in Lua) toggles, the header marks the active page. `pull_requests.rs` caches bounded repo reads off-thread; `pr_view.rs` renders the list/detail. PR refresh uses `pr_refresh_seconds` (default 60); r retries errors. The source includes Open/Closed/Merged, initially 100 rows; `:more` expands by 100 up to 1000 with explicit partial coverage. `/`, `f`, `s`, `p`, `c`, numbered headers and `v` reuse shared controls with independent PR state; `status:`/`lifecycle:`, `tasks:`, `checks:`, `review:`, `merge:`, `draft:` and `title:` read cached PR fields. Sorting retains selected identity; painting never writes PRs; Enter toggles the right detail pane, j/k select rows, Ctrl-d/u scroll details. Metadata survives optional active-check enrichment failures. State/Tasks/Checks use compact widths; Tasks shows an ID or link count, absent links a dash. Checks shows only check observations (closed/merged: NF, expanded to Not fetched in details); review and merge observations remain separately labeled in details.
 - `app/` - `mod.rs` state, loop, browse keys, commands; `pickers.rs` column/filter/sort
   pickers + the shared picker key handler; `paint_flow.rs` the `p` flow; `slots.rs` the `v` chords.
 - `picker.rs` - the one list every menu uses: typed `PickOption` payloads, numbered/lettered rows,
@@ -30,7 +30,7 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
   loose match: `status:todo` == "To Do"); `field_values` feeds the `f <n>` picker.
 - `views.rs` - `ViewState` (filter, sort, columns, glyphs, paint, group) is what a slot saves and
   a restart resumes, one Lua record for both; global `~/.switchbard/views.lua`, per-repo overrides
-  in `views/<repo path>.lua`; `vs<n>` saves to repo, `vg<n>` promotes to global; slot 1 opens.
+  in `views/<repo path>.lua`; PRs use `.prs.lua` beside these files. `vs<n>` saves to repo, `vg<n>` promotes to global; slot 1 opens. Both page states survive Tab/restart.
 - `paint.rs` - `p` rules in a hierarchy: `by:<col>=v:c,...`, `rows:<filter>=c`, `column:<col>=c`.
   Top rule is the base (whole rows); lower rules paint only their scope. `po` reorders.
 - `group.rs` - `Grouping` (0-2 nested levels, `project›goal`): `o` picks it; headings over the filtered, sorted order carry project def status, done/total, or goal week actual/target, pace.

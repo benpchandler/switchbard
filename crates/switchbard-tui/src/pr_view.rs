@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
-use switchbard_core::{PrChecks, PrListRow};
+use switchbard_core::PrListRow;
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.pane == Pane::Detail {
@@ -71,7 +71,7 @@ fn observation(app: &App) -> String {
         .or(snapshot.enrichment_warning.as_deref())
         .unwrap_or(if prs.loading() { "refreshing" } else { "" });
     format!(
-        "{} · {} {}s\n{}/{} shown · {}\nfilter: {}\n{}",
+        "{} · {} {}s\n{}/{} shown · {}\nfilter: {}{}\n{}",
         snapshot.repository,
         health,
         age,
@@ -82,6 +82,16 @@ fn observation(app: &App) -> String {
             "all"
         } else {
             &prs.filter
+        },
+        {
+            let mut active = String::new();
+            if let Some(sort) = app.state.sort {
+                active.push_str(&format!(" · {}", sort.label()));
+            }
+            if !app.state.paint.is_empty() {
+                active.push_str(&format!(" · paint:{}", app.state.paint.len()));
+            }
+            active
         },
         suffix
     )
@@ -112,16 +122,28 @@ fn list(frame: &mut Frame, app: &mut App, area: Rect) {
         height: area.height.min(1),
         ..area
     };
+    let headers: Vec<String> = app
+        .state
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(i, column)| {
+            format!(
+                "{} {}",
+                i + 1,
+                if *column == crate::columns::Column::Checks && area.width < 70 {
+                    "Ck"
+                } else {
+                    column.header()
+                }
+            )
+        })
+        .collect();
     draw_cells(
         frame,
+        app,
         header,
-        [
-            "PR",
-            "State",
-            "Tasks",
-            if area.width < 70 { "Ck" } else { "Checks" },
-            "Title",
-        ],
+        &headers,
         app.config.theme.style(Surface::Header),
     );
     for (offset, index) in app
@@ -148,21 +170,36 @@ fn list(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-fn draw_cells(frame: &mut Frame, rect: Rect, texts: [&str; 5], style: ratatui::style::Style) {
-    let compact = rect.width < 70;
-    let widths = [
-        Constraint::Length(7),
-        Constraint::Length(6),
-        Constraint::Length(10),
-        Constraint::Length(if compact { 2 } else { 7 }),
-        Constraint::Min(1),
-    ];
+fn draw_cells(
+    frame: &mut Frame,
+    app: &App,
+    rect: Rect,
+    texts: &[String],
+    style: ratatui::style::Style,
+) {
+    let widths = column_widths(app, rect.width);
     for (text, cell) in texts
         .iter()
         .zip(Layout::horizontal(widths).spacing(1).split(rect).iter())
     {
-        frame.render_widget(Paragraph::new(*text).style(style), *cell);
+        frame.render_widget(Paragraph::new(text.as_str()).style(style), *cell);
     }
+}
+
+fn column_widths(app: &App, width: u16) -> Vec<Constraint> {
+    app.state
+        .columns
+        .iter()
+        .map(|column| match column {
+            crate::columns::Column::Id => Constraint::Length(7),
+            crate::columns::Column::Tasks if width < 70 => Constraint::Length(10),
+            crate::columns::Column::Checks if width < 70 => Constraint::Length(4),
+            column => column
+                .max_width()
+                .map(Constraint::Length)
+                .unwrap_or(Constraint::Min(1)),
+        })
+        .collect()
 }
 
 fn draw_row(frame: &mut Frame, app: &App, row: &PrListRow, rect: Rect, selected: bool) {
@@ -170,51 +207,66 @@ fn draw_row(frame: &mut Frame, app: &App, row: &PrListRow, rect: Rect, selected:
         .pull_requests
         .links
         .get(&row.url)
-        .map(|v| {
-            if v.len() > 1 {
-                format!("{} linked", v.len())
-            } else {
-                v[0].0.clone()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let texts: Vec<String> = app
+        .state
+        .columns
+        .iter()
+        .map(|column| {
+            let values = column.pr_values(row, links);
+            match column {
+                crate::columns::Column::Id => format!("#{}", row.number),
+                crate::columns::Column::Tasks if values.len() > 1 => {
+                    format!("{} linked", values.len())
+                }
+                crate::columns::Column::Tasks if values.is_empty() => "-".to_string(),
+                crate::columns::Column::Checks
+                    if row.lifecycle != switchbard_core::PrLifecycle::Open =>
+                {
+                    "NF".to_string()
+                }
+                crate::columns::Column::Checks
+                    if rect.width < 70 && !app.state.glyph_columns.contains(column) =>
+                {
+                    match row.checks {
+                        switchbard_core::PrChecks::Failed => "!",
+                        switchbard_core::PrChecks::Running => "~",
+                        switchbard_core::PrChecks::Passing => "+",
+                        _ => "?",
+                    }
+                    .to_string()
+                }
+                _ if app.state.glyph_columns.contains(column) => {
+                    app.config.glyph(*column, &values.join(","))
+                }
+                _ => values.join(","),
             }
         })
-        .unwrap_or_else(|| "-".into());
-    let signal = if rect.width < 70 {
-        checks(row, true)
-    } else if row.lifecycle != switchbard_core::PrLifecycle::Open {
-        "NF"
-    } else if row.checks == PrChecks::NoneObserved {
-        "None"
-    } else {
-        checks(row, false)
-    };
-    let identity = format!("#{}", row.number);
+        .collect();
     let style = app.config.theme.style(if selected {
         Surface::Selected
     } else {
         Surface::Text
     });
-    draw_cells(
-        frame,
-        rect,
-        [&identity, row.lifecycle.label(), &links, signal, &row.title],
-        style,
-    );
-}
-
-fn checks(row: &PrListRow, compact: bool) -> &'static str {
-    if row.lifecycle != switchbard_core::PrLifecycle::Open {
-        return if compact { "NF" } else { "Not fetched" };
-    }
-    match (row.checks, compact) {
-        (PrChecks::Failed, true) => "!",
-        (PrChecks::Unknown | PrChecks::NoneObserved, true) => "?",
-        (PrChecks::Running, true) => "~",
-        (PrChecks::Passing, true) => "+",
-        (PrChecks::Failed, false) => "Failed",
-        (PrChecks::Unknown, false) => "Unknown",
-        (PrChecks::NoneObserved, false) => "None observed",
-        (PrChecks::Running, false) => "Pending",
-        (PrChecks::Passing, false) => "Passed",
+    frame.render_widget(Paragraph::new("").style(style), rect);
+    let cells = Layout::horizontal(column_widths(app, rect.width))
+        .spacing(1)
+        .split(rect);
+    for ((column, text), cell) in app.state.columns.iter().zip(&texts).zip(cells.iter()) {
+        let mut style = app.config.theme.column_style(*column);
+        if let Some(color) = crate::paint::cell_color_with(
+            &app.state.paint,
+            *column,
+            |column| app.pull_requests.values(column, row),
+            |filter| app.pull_requests.matches(filter, row),
+        ) {
+            style = style.fg(color);
+        }
+        if selected {
+            style = style.patch(app.config.theme.style(Surface::Selected));
+        }
+        frame.render_widget(Paragraph::new(text.as_str()).style(style), *cell);
     }
 }
 
@@ -249,7 +301,12 @@ fn detail_lines(app: &App) -> Vec<Line<'static>> {
         Line::from(row.url.clone()),
         Line::from(""),
         crate::detail_pane::section("checks and review", theme),
-        Line::from(format!("Checks: {}", checks(row, false))),
+        Line::from(format!(
+            "Checks: {}",
+            app.pull_requests
+                .values(crate::columns::Column::Checks, row)
+                .join(",")
+        )),
         Line::from(format!("Review: {}", row.review.label())),
         Line::from(format!("Merge: {}", row.merge.label())),
         Line::from(format!("Head: {}", row.head_oid)),

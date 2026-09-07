@@ -132,18 +132,30 @@ pub enum FilterField {
     Project,
     Ball,
     Goal,
+    Title,
+    Tasks,
+    Checks,
+    Review,
+    Merge,
+    Draft,
 }
 
 impl FilterField {
     fn parse(keyword: &str) -> Option<FilterField> {
         Some(match keyword {
             "id" => FilterField::Id,
-            "status" => FilterField::Status,
+            "status" | "lifecycle" => FilterField::Status,
             "pri" | "priority" => FilterField::Priority,
             "label" => FilterField::Label,
             "project" => FilterField::Project,
             "ball" => FilterField::Ball,
             "goal" => FilterField::Goal,
+            "title" => FilterField::Title,
+            "tasks" => FilterField::Tasks,
+            "checks" => FilterField::Checks,
+            "review" => FilterField::Review,
+            "merge" => FilterField::Merge,
+            "draft" => FilterField::Draft,
             _ => return None,
         })
     }
@@ -157,6 +169,12 @@ impl FilterField {
             FilterField::Project => "project",
             FilterField::Ball => "ball",
             FilterField::Goal => "goal",
+            FilterField::Draft => "draft",
+            FilterField::Merge => "merge",
+            FilterField::Review => "review",
+            FilterField::Checks => "checks",
+            FilterField::Tasks => "tasks",
+            FilterField::Title => "title",
         }
     }
 
@@ -170,6 +188,12 @@ impl FilterField {
             FilterField::Project => Column::Project,
             FilterField::Ball => Column::Ball,
             FilterField::Goal => Column::Goal,
+            FilterField::Draft => Column::Draft,
+            FilterField::Merge => Column::Merge,
+            FilterField::Review => Column::Review,
+            FilterField::Checks => Column::Checks,
+            FilterField::Tasks => Column::Tasks,
+            FilterField::Title => Column::Title,
         }
     }
 
@@ -213,7 +237,7 @@ impl Term {
         match self {
             Term::Text(_) => true,
             // `id:` is exact so a painted TASK-13 never also paints TASK-130.
-            Term::AnyOf(FilterField::Id, wanted) => values
+            Term::AnyOf(FilterField::Id | FilterField::Tasks, wanted) => values
                 .iter()
                 .any(|value| wanted.iter().any(|want| loose(value) == *want)),
             Term::AnyOf(_, wanted) => values

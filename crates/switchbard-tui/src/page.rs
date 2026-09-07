@@ -20,7 +20,11 @@ impl Page {
         self == Self::Tasks
             || matches!(
                 action,
-                Action::Filter
+                Action::Columns
+                    | Action::SortColumn
+                    | Action::Paint
+                    | Action::View
+                    | Action::Filter
                     | Action::FilterColumn
                     | Action::Down
                     | Action::Up

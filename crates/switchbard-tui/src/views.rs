@@ -184,16 +184,24 @@ impl ViewStore {
         global_path: Option<PathBuf>,
         repo_path: Option<PathBuf>,
     ) -> (ViewStore, Vec<String>) {
+        Self::load_with_defaults(global_path, repo_path, starter_views())
+    }
+
+    pub fn load_with_defaults(
+        global_path: Option<PathBuf>,
+        repo_path: Option<PathBuf>,
+        defaults: Vec<ViewState>,
+    ) -> (ViewStore, Vec<String>) {
         let mut warnings = Vec::new();
         let global = match global_path
             .as_deref()
             .map(|path| read_lua(path, parse_sequence))
         {
             Some(Ok(Some(views))) if !views.is_empty() => views,
-            Some(Ok(_)) | None => starter_views(),
+            Some(Ok(_)) | None => defaults.clone(),
             Some(Err(error)) => {
                 warnings.push(error);
-                starter_views()
+                defaults.clone()
             }
         };
         let repo = match repo_path
@@ -214,6 +222,15 @@ impl ViewStore {
             repo,
         };
         (store, warnings)
+    }
+
+    pub fn sanitize(&mut self, page: crate::page::Page) {
+        for state in &mut self.global {
+            state.sanitize(page);
+        }
+        for state in self.repo.values_mut() {
+            state.sanitize(page);
+        }
     }
 
     /// The slots as the user sees them: repo overrides win, global fills the rest.
@@ -352,6 +369,84 @@ impl ViewState {
             .ok()
             .and_then(|table| parse_view(&table).ok())
             .unwrap_or_default()
+    }
+}
+
+impl ViewState {
+    pub fn sanitize(&mut self, page: crate::page::Page) {
+        let pr = page == crate::page::Page::PullRequests;
+        let catalog = if pr {
+            &Column::PR_ALL[..]
+        } else {
+            &Column::ALL[..]
+        };
+        let canonical = |column: Column| {
+            if pr && column == Column::Status {
+                Column::Lifecycle
+            } else {
+                column
+            }
+        };
+        self.columns = self
+            .columns
+            .iter()
+            .copied()
+            .map(canonical)
+            .filter(|c| catalog.contains(c))
+            .collect();
+        let mut seen = Vec::new();
+        self.columns.retain(|column| {
+            if seen.contains(column) {
+                false
+            } else {
+                seen.push(*column);
+                true
+            }
+        });
+        if self.columns.is_empty() {
+            self.columns = if pr {
+                Column::PR_DEFAULT.to_vec()
+            } else {
+                Column::DEFAULT_SHOWN.to_vec()
+            };
+        }
+        self.glyph_columns = self
+            .glyph_columns
+            .iter()
+            .copied()
+            .map(canonical)
+            .filter(|c| catalog.contains(c) && c.filter_field().is_some())
+            .collect();
+        self.sort = self
+            .sort
+            .map(|sort| Sort {
+                column: canonical(sort.column),
+                ..sort
+            })
+            .filter(|sort| catalog.contains(&sort.column));
+        self.paint.retain_mut(|rule| match rule {
+            PaintRule::ByColumn { column, .. } | PaintRule::Column { column, .. } => {
+                *column = canonical(*column);
+                catalog.contains(column)
+            }
+            PaintRule::Rows { .. } => true,
+        });
+        if pr {
+            self.group = Grouping::flat();
+            self.pin_top = false;
+            self.abbreviated.clear();
+        } else {
+            self.abbreviated.retain(|column| catalog.contains(column));
+        }
+    }
+
+    pub fn pull_requests() -> Self {
+        Self {
+            columns: Column::PR_DEFAULT.to_vec(),
+            abbreviated: Vec::new(),
+            pin_top: false,
+            ..Self::default()
+        }
     }
 }
 

@@ -51,8 +51,10 @@ fn page_survives_self_restart_and_hidden_task_commands_do_nothing() {
     h.press(KeyCode::Tab);
     h.type_text(":group status");
     h.press(KeyCode::Enter);
-    h.type_text("1bwv");
+    h.type_text("bw");
+    h.press(KeyCode::Tab);
     assert_eq!(h.app.state, before);
+    h.press(KeyCode::Tab);
     let resume = h.app.resume_state();
     h.app = open_app(&h.root, &h.config_path);
     h.app.resume_from(Some(&resume));

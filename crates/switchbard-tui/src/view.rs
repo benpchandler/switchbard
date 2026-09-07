@@ -362,6 +362,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     ];
     let entries: Vec<(String, String)> = actions
         .iter()
+        .filter(|action| app.page.allows(action))
         .map(|action| (app.config.bindings_for(action).join(" "), action.name()))
         .chain(std::iter::once((
             "1-9".to_string(),
@@ -416,6 +417,9 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
             "    f/s <col#> filter/sort by column; v<n> open view, vs<n> save it (vsd = default)",
         ),
     ]));
+    if app.page == Page::PullRequests {
+        lines.push(Line::from("PR fields: status/lifecycle, id, title, tasks, checks, review, merge, draft; PR views use .prs.lua files."));
+    }
     lines.push(Line::from(Span::styled(
         "config ~/.switchbard/tui.lua (hot reload) · views ~/.switchbard/views.lua + views/<repo>.lua · events ~/.switchbard/tui-events.jsonl",
         theme.style(Surface::Hint),
@@ -477,6 +481,10 @@ fn browse_footer(app: &App) -> Line<'static> {
         let mut hints = [
             (Action::Filter, "search"),
             (Action::FilterColumn, "filter"),
+            (Action::SortColumn, "sort"),
+            (Action::Paint, "paint"),
+            (Action::Columns, "columns"),
+            (Action::View, "views"),
             (Action::Down, "select"),
             (Action::Open, "detail"),
             (Action::Reload, "refresh"),

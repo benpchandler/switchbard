@@ -152,9 +152,16 @@ return {
     priority = { high = "↑", medium = "·", low = "↓" },
     status = { icebox = "❄", todo = "○", inprogress = "◐", inreview = "◑", done = "●" },
     ball = { me = "●", agent = "◌" },
+    lifecycle = { open = "○", closed = "×", merged = "●" },
+    checks = { failed = "!", unknown = "?", pending = "~", passed = "+", noneobserved = "?", notfetched = "·" },
+    review = { changesrequested = "!", reviewunknown = "?", reviewrequired = "○", approved = "+" },
+    merge = { mergeconflict = "!", mergeabilityunknown = "?", nomergeconflict = "+" },
+    draft = { draft = "D", ready = "R" },
   },
 
   -- Columns are picked and ordered inside sbt (`c`) and saved with each view,
   -- together with the filter and sort, in ~/.switchbard/views.lua (global) and
   -- ~/.switchbard/views/<repo>.lua (per repo). Slot 1 opens by default.
+  -- PR views use views.prs.lua and views/<repo>.prs.lua, independently.
+  -- PR column names for theme/glyphs: id, lifecycle, tasks, checks, title, review, merge, draft.
 }
