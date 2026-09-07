@@ -121,8 +121,8 @@ fn list(frame: &mut Frame, app: &mut App, area: Rect) {
         header,
         [
             "PR",
-            "Status",
-            "Linked tasks",
+            "State",
+            "Tasks",
             if area.width < 70 { "Ck" } else { "Checks" },
             "Title",
         ],
@@ -156,9 +156,9 @@ fn draw_cells(frame: &mut Frame, rect: Rect, texts: [&str; 5], style: ratatui::s
     let compact = rect.width < 70;
     let widths = [
         Constraint::Length(7),
-        Constraint::Length(7),
-        Constraint::Length(if compact { 12 } else { 16 }),
-        Constraint::Length(if compact { 2 } else { 18 }),
+        Constraint::Length(6),
+        Constraint::Length(10),
+        Constraint::Length(if compact { 2 } else { 7 }),
         Constraint::Min(1),
     ];
     for (text, cell) in texts
@@ -176,20 +176,21 @@ fn draw_row(frame: &mut Frame, app: &App, row: &PrListRow, rect: Rect, selected:
         .get(&row.url)
         .map(|v| {
             if v.len() > 1 {
-                format!("{} +{}", v[0].0, v.len() - 1)
+                format!("{} linked", v.len())
             } else {
                 v[0].0.clone()
             }
         })
-        .unwrap_or_else(|| {
-            if rect.width < 70 {
-                "-"
-            } else {
-                "No recorded link"
-            }
-            .into()
-        });
-    let signal = checks(row, rect.width < 70);
+        .unwrap_or_else(|| "-".into());
+    let signal = if rect.width < 70 {
+        checks(row, true)
+    } else if row.lifecycle != switchbard_core::PrLifecycle::Open {
+        "NF"
+    } else if row.checks == PrChecks::NoneObserved {
+        "None"
+    } else {
+        checks(row, false)
+    };
     let identity = format!("#{}", row.number);
     let style = app.config.theme.style(if selected {
         Surface::Selected

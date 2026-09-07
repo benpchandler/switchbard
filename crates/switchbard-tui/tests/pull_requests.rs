@@ -58,10 +58,10 @@ fn live_repository_renders_actual_pull_requests() {
     if let Some((number, title)) = first {
         assert!(screen.contains(&format!("#{number}")), "{screen}");
         let detail = h.press(KeyCode::Enter);
-        assert!(detail.contains("Linked tasks"), "{detail}");
+        assert!(detail.contains("Tasks"), "{detail}");
         assert!(detail.contains(" PR details "), "{detail}");
         assert!(
-            detail.contains("Status"),
+            detail.contains("State"),
             "PR list remains beside the detail: {detail}"
         );
         assert!(
