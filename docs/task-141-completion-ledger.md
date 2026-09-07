@@ -31,3 +31,11 @@ Notifications: after the first PR visit, continue bounded periodic reads on eith
 | Reporter appearance confirmation | Explicit outstanding acceptance gate; automated tests cannot supply it. |
 
 Command owns integration/app/config/tests/docs/tracker/delivery. Notification worker owns PullRequests and rendering. Scout independently audited remaining scope. No shared app or watcher restart.
+
+## Verification 2026-09-07
+
+`mise run tui-install` passed full TUI formatting, clippy, E2E suite, and release installation from cc05a6b. The existing installed countdown from 5005d98 was integrated (d277dea/cc05a6b) before installing; its tests now also prove hidden-page automatic retry and accommodate the optional alert row. No primary checkout edits were made.
+
+`SBT_PR_REPO=/Users/bpc/Dev/.worktrees/switchbard-finish-141 cargo test -p switchbard-tui --test pr_actions --test pr_notifications --test pr_refresh -- --include-ignored` passed all seven then-present tests: actual default-browser opening, no-selection routing, cross-page failure deduplication and dismissal at 40/80/120/180 columns, actual 30-second background GitHub refresh, removal/restoration of a real local origin with cached-data retention and recovery, and both countdown journeys. The later ignored delivery-transition observer requires SBT_WATCH_PR and will be run during delivery if a naturally changing CI observation is available. No synthetic PR snapshots or GitHub mutations were used.
+
+Independent scout reviewed the original gap and then the completed countdown/notification integration: no source blocker found. Actual remote lifecycle/review/draft transitions and notification-cap eviction remain explicit unexercised states, not claimed proof. Full workspace preflight is configured as the no-mistakes lint gate. Reporter confirmation remains outstanding.

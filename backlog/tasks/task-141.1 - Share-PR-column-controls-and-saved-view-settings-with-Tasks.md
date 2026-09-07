@@ -1,18 +1,19 @@
 ---
 id: TASK-141.1
 title: Share PR column controls and saved view settings with Tasks
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-09-07 01:32'
-updated_date: '2026-09-07 01:51'
+updated_date: '2026-09-07 13:27'
 labels:
   - tui
   - github
   - parity
-  - ball:agent
 dependencies: []
 priority: medium
 parent_task_id: '141'
+references:
+  - https://github.com/benpchandler/switchbard/pull/136
 ---
 
 ## Description
@@ -36,4 +37,6 @@ Owner requested these as tracked tasks before live claiming and implementation. 
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented in feat/tui-pr-pane (source ea277a1). Full TUI fmt/clippy/tests/install passed. All 20 page/PR/control E2E journeys passed with actual GitHub reads; title/check sorts and review/merge facets also passed on budget PR observations. Evidence: docs/tui-pr-controls-ledger.md and docs/tui-pr-controls-evidence.md. Independent source review has no remaining verified blocker. Delivery pipeline/PR/CI and human visual review remain pending; not merged.
+
+Verified 2026-09-07: PR #136 merged at be9428d, all eight GitHub checks passed. This child implementation contract is complete; parent TASK-141 still tracks actions, cross-page alerts, and reporter confirmation.
 <!-- SECTION:NOTES:END -->

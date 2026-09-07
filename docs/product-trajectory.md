@@ -724,3 +724,7 @@ The PR page starts with the repository list across Open, Closed and Merged. Acti
 ## TUI PR controls parity (owner-directed 2026-09-07)
 
 The PR page now reuses the Tasks filter, sort, paint, numbered column, and saved-view controls while retaining isolated PR state and `.prs.lua` persistence. Filters cover cached lifecycle, linked-task, checks, review and merge observations; sorts preserve selected PR identity through refresh; paint supports categorical, row, column and palette rules. The controls remain read-only with respect to GitHub and do not mutate task data. Implementation and E2E evidence are recorded in `docs/tui-pr-controls-ledger.md` and `docs/tui-pr-controls-evidence.md`; delivery, CI, human visual approval and merge remain separate gates.
+
+## Terminal PR actions and cross-page status (TASK-141)
+
+After the first Pull Requests visit, sbt continues its bounded refresh cadence while Tasks is visible. O opens the selected PR in the default browser; Enter retains its existing detail action. Changes to previously observed lifecycle, checks, review, merge, or draft status and refresh availability produce at most 32 session alerts across pages. The first snapshot is a baseline; n dismisses the latest alert. Restart resets session alerts and establishes a new baseline. Guarded review/merge writes remain owned by the GitHub Operations contracts.

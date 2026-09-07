@@ -187,3 +187,45 @@ fn live_refresh_failure_retains_rows_then_recovers_across_pages_without_duplicat
     h.press(KeyCode::Char('n'));
     assert!(h.app.pull_requests.notifications.is_empty());
 }
+
+#[test]
+#[ignore = "requires SBT_PR_REPO and SBT_WATCH_PR with naturally changing live GitHub status; read-only up to 10 minutes"]
+fn live_delivery_transition_is_reported_while_tasks_are_visible() {
+    let root = std::env::var_os("SBT_PR_REPO").expect("SBT_PR_REPO");
+    let number = std::env::var("SBT_WATCH_PR").expect("SBT_WATCH_PR");
+    let mut h = Harness::new();
+    std::fs::write(&h.config_path, "return { pr_refresh_seconds = 30 }").unwrap();
+    h.app = open_app(std::path::Path::new(&root), &h.config_path);
+    h.press(KeyCode::Tab);
+    settle(&mut h);
+    assert!(h.app.pull_requests.error.is_none());
+    assert!(h
+        .app
+        .pull_requests
+        .snapshot
+        .as_ref()
+        .unwrap()
+        .rows
+        .iter()
+        .any(|r| r.number.to_string() == number));
+    h.press(KeyCode::Tab);
+    let prefix = format!("#{number}:");
+    let deadline = Instant::now() + Duration::from_secs(600);
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+        h.app.tick();
+        if h.app
+            .pull_requests
+            .notifications
+            .latest()
+            .is_some_and(|message| message.starts_with(&prefix))
+        {
+            let screen = h.render();
+            assert!(screen.contains("[Tasks]"), "{screen}");
+            assert!(screen.contains(&prefix), "{screen}");
+            println!("{screen}");
+            return;
+        }
+    }
+    panic!("No live transition for PR {number} observed within ten minutes");
+}
