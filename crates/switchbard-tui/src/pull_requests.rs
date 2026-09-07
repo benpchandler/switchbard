@@ -2,7 +2,7 @@
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
-use switchbard_core::{fetch_pull_requests, PrListRow, PrSnapshot};
+use switchbard_core::{fetch_pull_requests_with_limit, PrListRow, PrSnapshot};
 
 #[derive(Default)]
 pub struct PullRequests {
@@ -11,6 +11,9 @@ pub struct PullRequests {
     pub selected: usize,
     pub scroll: usize,
     pub detail_scroll: u16,
+    pub filter: String,
+    pub visible: Vec<usize>,
+    requested_limit: usize,
     pub links: std::collections::BTreeMap<String, Vec<(String, String)>>,
     pending: Option<Receiver<Result<PrSnapshot, String>>>,
     attempted: Option<Instant>,
@@ -23,12 +26,16 @@ impl PullRequests {
         }
         let (tx, rx) = mpsc::sync_channel(1);
         let root = root.to_path_buf();
+        let limit = self.requested_limit.max(100);
         self.attempted = Some(Instant::now());
         match std::thread::Builder::new()
             .name("sbt-pr-read".into())
             .spawn(move || {
                 // A closed receiver means the app quit; no result remains to publish.
-                if tx.send(fetch_pull_requests(&root)).is_err() { /* app already closed */ }
+                if tx
+                    .send(fetch_pull_requests_with_limit(&root, limit))
+                    .is_err()
+                { /* app already closed */ }
             }) {
             Ok(_) => self.pending = Some(rx),
             Err(error) => self.error = Some(format!("Could not start refresh: {error}")),
@@ -69,11 +76,16 @@ impl PullRequests {
                     .rows
                     .sort_by_key(|row| (row.attention_rank(), std::cmp::Reverse(row.number)));
                 let id = self.row().map(|row| row.id.clone());
-                self.selected = id
-                    .and_then(|id| snapshot.rows.iter().position(|row| row.id == id))
-                    .unwrap_or(0);
                 self.snapshot = Some(snapshot);
                 self.error = None;
+                self.refilter();
+                self.selected = id
+                    .and_then(|id| {
+                        self.visible.iter().position(|&i| {
+                            self.snapshot.as_ref().expect("accepted snapshot").rows[i].id == id
+                        })
+                    })
+                    .unwrap_or(0);
             }
             Err(error) => self.error = Some(error),
         }
@@ -98,17 +110,67 @@ impl PullRequests {
         }
     }
 
+    pub fn load_more(&mut self, root: &Path) {
+        if self.loading()
+            || self
+                .snapshot
+                .as_ref()
+                .is_some_and(|s| !s.truncated || s.limit >= switchbard_core::MAX_PULL_REQUESTS)
+        {
+            return;
+        }
+        self.requested_limit =
+            (self.requested_limit.max(100) + 100).min(switchbard_core::MAX_PULL_REQUESTS);
+        self.refresh(root);
+    }
+
+    pub fn refilter(&mut self) {
+        let filter = crate::tasks::Filter::parse(&self.filter);
+        self.visible = self
+            .snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .rows
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, row)| {
+                        filter.matches_values(&[&row.number.to_string(), &row.title], |field| {
+                            match field {
+                                crate::tasks::FilterField::Status => {
+                                    vec![row.lifecycle.label().to_string()]
+                                }
+                                crate::tasks::FilterField::Id => vec![row.number.to_string()],
+                                _ => Vec::new(),
+                            }
+                        })
+                    })
+                    .map(|(index, _)| index)
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.selected = self.selected.min(self.visible.len().saturating_sub(1));
+        self.scroll = self.scroll.min(self.selected);
+    }
+
     pub fn loading(&self) -> bool {
         self.pending.is_some()
     }
     pub fn row(&self) -> Option<&PrListRow> {
-        self.snapshot.as_ref()?.rows.get(self.selected)
+        self.snapshot
+            .as_ref()?
+            .rows
+            .get(*self.visible.get(self.selected)?)
     }
     pub fn step(&mut self, delta: isize) {
-        let count = self.snapshot.as_ref().map_or(0, |s| s.rows.len());
+        let previous = self.selected;
+        let count = self.visible.len();
         self.selected = self
             .selected
             .saturating_add_signed(delta)
             .min(count.saturating_sub(1));
+        if self.selected != previous {
+            self.detail_scroll = 0;
+        }
     }
 }

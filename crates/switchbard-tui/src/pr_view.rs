@@ -1,4 +1,4 @@
-//! PR list and full-width detail, rendered only from cached observations.
+//! PR list and right-hand detail, rendered only from cached observations.
 use crate::{
     app::{App, Pane},
     config::Surface,
@@ -18,7 +18,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .border_style(app.config.theme.style(Surface::Border));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let [status, body] = Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(inner);
+    let [status, body] = Layout::vertical([
+        Constraint::Length(if area.width < 70 { 5 } else { 4 }),
+        Constraint::Min(0),
+    ])
+    .areas(inner);
     frame.render_widget(
         Paragraph::new(observation(app))
             .wrap(Wrap { trim: false })
@@ -26,7 +30,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         status,
     );
     if app.pane == Pane::Detail {
-        detail(frame, app, body);
+        let [left, right] =
+            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .areas(body);
+        list(frame, app, left);
+        let detail_block = Block::default()
+            .borders(Borders::ALL)
+            .title(" PR details ")
+            .border_style(app.config.theme.style(Surface::Border));
+        let detail_area = detail_block.inner(right);
+        frame.render_widget(detail_block, right);
+        detail(frame, app, detail_area);
     } else {
         list(frame, app, body);
     }
@@ -47,17 +61,33 @@ fn observation(app: &App) -> String {
         "Observed"
     };
     let coverage = if snapshot.truncated {
-        "PARTIAL: first 100 open PRs"
+        if snapshot.limit < switchbard_core::MAX_PULL_REQUESTS {
+            "PARTIAL · :more"
+        } else {
+            "PARTIAL · fetch cap"
+        }
     } else {
-        "open PRs"
+        "all loaded"
     };
     let suffix = prs
         .error
         .as_deref()
+        .or(snapshot.enrichment_warning.as_deref())
         .unwrap_or(if prs.loading() { "refreshing" } else { "" });
     format!(
-        "{} · {} {}s ago · {}\n{}",
-        snapshot.repository, health, age, coverage, suffix
+        "{} · {} {}s\n{}/{} shown · {}\nfilter: {}\n{}",
+        snapshot.repository,
+        health,
+        age,
+        prs.visible.len(),
+        snapshot.rows.len(),
+        coverage,
+        if prs.filter.is_empty() {
+            "all"
+        } else {
+            &prs.filter
+        },
+        suffix
     )
 }
 
@@ -65,13 +95,13 @@ fn list(frame: &mut Frame, app: &mut App, area: Rect) {
     let Some(snapshot) = &app.pull_requests.snapshot else {
         return;
     };
-    if snapshot.rows.is_empty() {
+    if app.pull_requests.visible.is_empty() {
         let text = if snapshot.truncated {
-            "No PR rows observed; coverage is incomplete."
+            "No matches in loaded PRs; history is incomplete."
         } else if app.pull_requests.error.is_some() {
-            "Last observation had no open PRs. Current state unknown."
+            "No matches in stale observations. Current state unknown."
         } else {
-            "No open pull requests in this repository at last observation."
+            "No PRs match the current filter."
         };
         frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
         return;
@@ -91,19 +121,22 @@ fn list(frame: &mut Frame, app: &mut App, area: Rect) {
         header,
         [
             "PR",
+            "Status",
             "Linked tasks",
             if area.width < 70 { "!" } else { "Delivery" },
             "Title",
         ],
         app.config.theme.style(Surface::Header),
     );
-    for (offset, row) in snapshot
-        .rows
+    for (offset, index) in app
+        .pull_requests
+        .visible
         .iter()
         .skip(app.pull_requests.scroll)
         .take(slots)
         .enumerate()
     {
+        let row = &snapshot.rows[*index];
         let rect = Rect {
             y: area.y + 1 + offset as u16,
             height: 1,
@@ -119,9 +152,10 @@ fn list(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-fn draw_cells(frame: &mut Frame, rect: Rect, texts: [&str; 4], style: ratatui::style::Style) {
+fn draw_cells(frame: &mut Frame, rect: Rect, texts: [&str; 5], style: ratatui::style::Style) {
     let compact = rect.width < 70;
     let widths = [
+        Constraint::Length(7),
         Constraint::Length(7),
         Constraint::Length(if compact { 12 } else { 16 }),
         Constraint::Length(if compact { 2 } else { 18 }),
@@ -172,10 +206,24 @@ fn draw_row(frame: &mut Frame, app: &App, row: &PrListRow, rect: Rect, selected:
     } else {
         Surface::Text
     });
-    draw_cells(frame, rect, [&identity, &links, &signal, &row.title], style);
+    draw_cells(
+        frame,
+        rect,
+        [
+            &identity,
+            row.lifecycle.label(),
+            &links,
+            &signal,
+            &row.title,
+        ],
+        style,
+    );
 }
 
 fn delivery(row: &PrListRow) -> String {
+    if row.lifecycle != switchbard_core::PrLifecycle::Open {
+        return "Historical".into();
+    }
     if row.merge == PrMerge::Conflicting {
         return "! Conflict".into();
     }
@@ -208,8 +256,9 @@ fn detail(frame: &mut Frame, app: &mut App, area: Rect) {
         )),
         Line::from(row.url.clone()),
         Line::from(format!(
-            "{} · {}",
-            if row.draft { "Draft" } else { "Open" },
+            "{}{} · {}",
+            row.lifecycle.label(),
+            if row.draft { " (draft)" } else { "" },
             delivery(row)
         )),
         Line::from(format!(

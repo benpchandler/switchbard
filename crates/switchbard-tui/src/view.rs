@@ -448,7 +448,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let line = match app.mode {
         Mode::Filter => Line::from(vec![
             Span::styled("/", theme.style(Surface::Accent)),
-            Span::raw(app.state.filter.clone()),
+            Span::raw(app.filter_text().to_string()),
             Span::styled("▏", theme.style(Surface::Accent)),
         ]),
         Mode::Command => Line::from(vec![
@@ -490,13 +490,10 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 /// the keys with their letters on the `keys` surface.
 fn browse_footer(app: &App) -> Line<'static> {
     if app.page == Page::PullRequests {
-        let movement = if app.pane == Pane::Detail {
-            "scroll"
-        } else {
-            "select"
-        };
-        let hints = [
-            (Action::Down, movement),
+        let mut hints = [
+            (Action::Filter, "search"),
+            (Action::FilterColumn, "filter"),
+            (Action::Down, "select"),
             (Action::Open, "detail"),
             (Action::Reload, "refresh"),
             (Action::Help, "help"),
@@ -505,6 +502,12 @@ fn browse_footer(app: &App) -> Line<'static> {
         .map(|(action, label)| format!("{} {label}", app.config.bindings_for(action).join("/")))
         .collect::<Vec<_>>()
         .join(" · ");
+        if app.pane == Pane::Detail {
+            hints.push_str(&format!(
+                " · {} scroll",
+                app.config.bindings_for(&Action::PageDown).join("/")
+            ));
+        }
         return Line::from(Span::styled(hints, app.config.theme.style(Surface::Hint)));
     }
     let theme = &app.config.theme;
@@ -579,7 +582,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             let value = &option.label;
             let shown = match (&picker.purpose, &option.payload) {
                 (PickerPurpose::Filter(field), Payload::Text(value)) => {
-                    Filter::field_allows(&app.state.filter, *field, value)
+                    Filter::field_allows(app.filter_text(), *field, value)
                 }
                 (PickerPurpose::Sort(_), Payload::Order(order)) => {
                     app.state.sort.is_some_and(|sort| sort.order == *order)

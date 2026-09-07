@@ -13,6 +13,7 @@ fn parse(value: Value) -> Result<(Vec<PrListRow>, bool), String> {
     rows(
         &serde_json::to_vec(&value).expect("fixture serializes"),
         REPO,
+        super::super::DEFAULT_PULL_REQUEST_LIMIT,
     )
 }
 
@@ -22,7 +23,7 @@ fn empty_is_distinct_from_unavailable_and_malformed() {
     for value in [json!(null), json!({}), json!([{}]), json!([fixture(), {}])] {
         assert!(parse(value).is_err());
     }
-    assert!(rows(b"not json", REPO).is_err());
+    assert!(rows(b"not json", REPO, 100).is_err());
 }
 
 #[test]
@@ -99,7 +100,7 @@ fn identity_is_scoped_and_never_guessed() {
         ("url", json!("https://github.com/other/repo/pull/1")),
         ("number", json!(0)),
         ("id", json!("")),
-        ("state", json!("CLOSED")),
+        ("state", json!("FUTURE_STATE")),
         ("headRefOid", json!("not-a-revision")),
     ] {
         let mut pr = fixture();
@@ -140,5 +141,51 @@ fn repository_identity_refuses_host_or_path_ambiguity() {
         json!({"nameWithOwner":"owner/../repo","url":"https://github.com/owner/../repo"}),
     ] {
         assert!(repository(&serde_json::to_vec(&value).expect("fixture")).is_err());
+    }
+}
+
+#[test]
+fn every_lifecycle_is_observed_and_history_sorts_after_active_work() {
+    let mut pr = fixture();
+    for (state, lifecycle, rank) in [
+        ("OPEN", PrLifecycle::Open, 1),
+        ("CLOSED", PrLifecycle::Closed, 4),
+        ("MERGED", PrLifecycle::Merged, 4),
+    ] {
+        pr["state"] = json!(state);
+        let (rows, partial) = parse(json!([pr])).expect("known lifecycle");
+        assert_eq!(rows[0].lifecycle, lifecycle);
+        assert_eq!(rows[0].attention_rank(), rank);
+        assert!(!partial);
+    }
+    pr["statusCheckRollup"] = json!([{"__typename":"StatusContext","state":"FAILURE"}]);
+    assert_eq!(
+        parse(json!([pr])).expect("historical failed check").0[0].attention_rank(),
+        4
+    );
+}
+
+#[test]
+fn progressive_windows_and_hard_cap_retain_explicit_truncation() {
+    let entries: Vec<Value> = (1..=1001)
+        .map(|n| {
+            let mut pr = fixture();
+            pr["id"] = json!(format!("PR_{n}"));
+            pr["number"] = json!(n);
+            pr["url"] = json!(format!("{REPO}/pull/{n}"));
+            pr["state"] = json!(if n % 2 == 0 { "MERGED" } else { "OPEN" });
+            pr
+        })
+        .collect();
+    for limit in [100, 200, 1000] {
+        let bytes = serde_json::to_vec(&entries[..=limit]).expect("fixture");
+        let (result, partial) = rows(&bytes, REPO, limit).expect("bounded mixed-lifecycle list");
+        assert_eq!(result.len(), limit);
+        assert!(partial);
+        let exact = serde_json::to_vec(&entries[..limit]).expect("fixture");
+        assert!(!rows(&exact, REPO, limit).expect("complete window").1);
+    }
+    for limit in [0, 1001, usize::MAX] {
+        assert!(rows(b"[]", REPO, limit).is_err());
     }
 }

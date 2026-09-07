@@ -256,7 +256,8 @@ impl App {
     /// Preserve the page and task view across a self-restart; old task-only records still read.
     pub fn resume_state(&self) -> String {
         format!(
-            "{}{}\t{}\t{}",
+            "prfilter={}\t{}{}\t{}\t{}",
+            serde_json::to_string(&self.pull_requests.filter).expect("string serialization"),
             if self.page == Page::PullRequests {
                 "prs\t"
             } else {
@@ -271,6 +272,16 @@ impl App {
     pub fn resume_from(&mut self, state: Option<&str>) {
         let Some(state) = state else {
             return;
+        };
+        let state = if let Some(rest) = state.strip_prefix("prfilter=") {
+            if let Some((filter, record)) = rest.split_once('\t') {
+                self.pull_requests.filter = serde_json::from_str(filter).unwrap_or_default();
+                record
+            } else {
+                state
+            }
+        } else {
+            state
         };
         let state = if let Some(record) = state.strip_prefix("prs\t") {
             self.page = Page::PullRequests;
@@ -752,6 +763,9 @@ impl App {
             .iter()
             .map(|name| name.to_string())
             .collect();
+        if self.page == Page::PullRequests {
+            names.push("more".to_string());
+        }
         names.retain(|name| name.starts_with(typed) && name != typed);
         names
     }
@@ -789,15 +803,17 @@ impl App {
             KeyCode::Enter => {
                 self.mode = Mode::Browse;
                 self.telemetry
-                    .record("action", format!("filter_apply {}", self.state.filter));
+                    .record("action", format!("filter_apply {}", self.filter_text()));
             }
             KeyCode::Backspace => {
-                self.state.filter.pop();
-                self.refilter();
+                let mut text = self.filter_text().to_string();
+                text.pop();
+                self.set_filter(text);
             }
             KeyCode::Char(c) => {
-                self.state.filter.push(c);
-                self.refilter();
+                let mut text = self.filter_text().to_string();
+                text.push(c);
+                self.set_filter(text);
             }
             _ => {}
         }
@@ -847,7 +863,7 @@ impl App {
             let after = self.pull_requests.row().map(|row| row.id.clone());
             if self.page == Page::PullRequests && self.pane == Pane::Detail && before != after {
                 self.pane = Pane::None;
-                self.status = "Selected PR is no longer in the open list".into();
+                self.status = "Selected PR is no longer in the filtered list".into();
             }
         }
     }
@@ -855,12 +871,8 @@ impl App {
     fn apply_pr_action(&mut self, action: &Action) -> bool {
         if self.pane == Pane::Detail {
             let delta = match action {
-                Action::Down => Some(1),
-                Action::Up => Some(-1),
                 Action::PageDown => Some(self.page_size as i32),
                 Action::PageUp => Some(-(self.page_size as i32)),
-                Action::Top => Some(-65535),
-                Action::Bottom => Some(65535),
                 _ => None,
             };
             if let Some(delta) = delta {
@@ -872,7 +884,7 @@ impl App {
         match action {
             Action::Down => self.pull_requests.step(1),
             Action::Up => self.pull_requests.step(-1),
-            Action::Top => self.pull_requests.selected = 0,
+            Action::Top => self.pull_requests.step(isize::MIN),
             Action::Bottom => self.pull_requests.step(isize::MAX),
             Action::PageDown => self.pull_requests.step(self.page_size as isize),
             Action::PageUp => self.pull_requests.step(-(self.page_size as isize)),
@@ -925,7 +937,7 @@ impl App {
             Action::Back => {
                 if self.pane != Pane::None {
                     self.pane = Pane::None;
-                } else if self.page == Page::Tasks && !self.state.filter.is_empty() {
+                } else if !self.filter_text().is_empty() {
                     self.set_filter(String::new());
                 }
                 self.status.clear();
@@ -933,8 +945,9 @@ impl App {
             Action::Filter => {
                 self.mode = Mode::Filter;
                 self.status.clear();
-                if !self.state.filter.is_empty() && !self.state.filter.ends_with(' ') {
-                    self.state.filter.push(' ');
+                let text = self.filter_text();
+                if !text.is_empty() && !text.ends_with(' ') {
+                    self.set_filter(format!("{text} "));
                 }
             }
             Action::FilterColumn => self.open_column_chooser(ColumnPurpose::Filter),
@@ -1020,6 +1033,9 @@ impl App {
             return;
         }
         match verb {
+            "more" if self.page == Page::PullRequests => {
+                self.pull_requests.load_more(&self.repo_root)
+            }
             "q" | "quit" => self.should_quit = true,
             "reload" => self.apply(&Action::Reload),
             "palette" => self.choose_palette(rest.trim()),
@@ -1140,7 +1156,20 @@ impl App {
         }
     }
 
+    pub fn filter_text(&self) -> &str {
+        if self.page == Page::PullRequests {
+            &self.pull_requests.filter
+        } else {
+            &self.state.filter
+        }
+    }
+
     fn set_filter(&mut self, text: String) {
+        if self.page == Page::PullRequests {
+            self.pull_requests.filter = text;
+            self.pull_requests.refilter();
+            return;
+        }
         self.state.filter = text;
         self.refilter();
     }

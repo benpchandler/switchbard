@@ -1,4 +1,4 @@
-use super::{PrChecks, PrListRow, PrMerge, PrReview, MAX_PULL_REQUESTS};
+use super::{PrChecks, PrLifecycle, PrListRow, PrMerge, PrReview};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -59,21 +59,29 @@ struct Check {
     head_sha: Option<String>,
 }
 
-pub(super) fn rows(data: &[u8], repo_url: &str) -> Result<(Vec<PrListRow>, bool), String> {
+pub(super) fn rows(
+    data: &[u8],
+    repo_url: &str,
+    limit: usize,
+) -> Result<(Vec<PrListRow>, bool), String> {
+    super::validate_limit(limit)?;
     let raw: Vec<RawPr> =
         serde_json::from_slice(data).map_err(|e| format!("Invalid GitHub PR list: {e}"))?;
-    if raw.len() > MAX_PULL_REQUESTS + 1 {
+    if raw.len() > limit + 1 {
         return Err("GitHub PR list exceeded requested row limit".into());
     }
-    let truncated = raw.len() > MAX_PULL_REQUESTS;
+    let truncated = raw.len() > limit;
     let mut ids = std::collections::HashSet::new();
     let mut numbers = std::collections::HashSet::new();
-    let mut result = Vec::with_capacity(raw.len().min(MAX_PULL_REQUESTS));
-    for pr in raw.into_iter().take(MAX_PULL_REQUESTS) {
+    let mut result = Vec::with_capacity(raw.len().min(limit));
+    for pr in raw.into_iter().take(limit + 1) {
         if !ids.insert(pr.id.clone()) || !numbers.insert(pr.number) {
             return Err("Duplicate GitHub PR identity".into());
         }
-        result.push(row(pr, repo_url)?);
+        let row = row(pr, repo_url)?;
+        if result.len() < limit {
+            result.push(row);
+        }
     }
     Ok((result, truncated))
 }
@@ -82,7 +90,6 @@ fn row(pr: RawPr, repo_url: &str) -> Result<PrListRow, String> {
     if pr.id.is_empty()
         || pr.id.len() > 256
         || pr.number == 0
-        || pr.state != "OPEN"
         || pr.url != format!("{repo_url}/pull/{}", pr.number)
         || !matches!(pr.head_ref_oid.len(), 40 | 64)
         || !pr.head_ref_oid.bytes().all(|c| c.is_ascii_hexdigit())
@@ -105,7 +112,17 @@ fn row(pr: RawPr, repo_url: &str) -> Result<PrListRow, String> {
         url: pr.url,
         head_oid: pr.head_ref_oid,
         draft: pr.is_draft,
+        lifecycle: lifecycle(&pr.state)?,
     })
+}
+
+fn lifecycle(value: &str) -> Result<PrLifecycle, String> {
+    match value {
+        "OPEN" => Ok(PrLifecycle::Open),
+        "CLOSED" => Ok(PrLifecycle::Closed),
+        "MERGED" => Ok(PrLifecycle::Merged),
+        _ => Err("GitHub returned an unknown PR lifecycle state".into()),
+    }
 }
 
 fn review(value: Option<&str>) -> PrReview {

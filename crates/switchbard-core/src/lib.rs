@@ -149,5 +149,6 @@ pub use worktree_remove::{
 pub use worktree_size::{humanize_size, probe_worktree_size};
 
 pub use pr_list::{
-    fetch_pull_requests, PrChecks, PrListRow, PrMerge, PrReview, PrSnapshot, MAX_PULL_REQUESTS,
+    fetch_pull_requests, fetch_pull_requests_with_limit, PrChecks, PrLifecycle, PrListRow, PrMerge,
+    PrReview, PrSnapshot, DEFAULT_PULL_REQUEST_LIMIT, MAX_PULL_REQUESTS,
 };

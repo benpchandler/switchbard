@@ -237,14 +237,22 @@ impl Filter {
     }
 
     pub fn matches(&self, task: &BacklogTask, goals: &[GoalDef]) -> bool {
+        self.matches_values(&[&task.id, &task.title], |field| {
+            field.values_of(task, goals)
+        })
+    }
+
+    /// Shared filter grammar; each page supplies the values its fields mean.
+    pub fn matches_values(
+        &self,
+        text: &[&str],
+        values: impl Fn(FilterField) -> Vec<String>,
+    ) -> bool {
         self.terms.iter().all(|term| match term {
-            Term::Text(needle) => {
-                task.id.to_lowercase().contains(needle)
-                    || task.title.to_lowercase().contains(needle)
-            }
-            Term::AnyOf(field, _) | Term::Not(field, _) => {
-                term.allows(&field.values_of(task, goals))
-            }
+            Term::Text(needle) => text
+                .iter()
+                .any(|value| value.to_lowercase().contains(needle)),
+            Term::AnyOf(field, _) | Term::Not(field, _) => term.allows(&values(*field)),
         })
     }
 

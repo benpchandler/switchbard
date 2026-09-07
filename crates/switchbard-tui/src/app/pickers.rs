@@ -17,7 +17,14 @@ impl App {
     /// After `f`/`s`: shown columns first, numbered as in the header, then hidden ones.
     pub(super) fn open_column_chooser(&mut self, purpose: ColumnPurpose) {
         self.column_purpose = purpose;
-        let options = self.column_picker_options();
+        let options = if self.page == crate::page::Page::PullRequests {
+            [Column::Status, Column::Id, Column::Title]
+                .into_iter()
+                .map(|c| PickOption::column(c, false))
+                .collect()
+        } else {
+            self.column_picker_options()
+        };
         self.open_picker(PickerPurpose::ChooseColumn(purpose), options);
         self.status.clear();
     }
@@ -240,10 +247,36 @@ impl App {
             .record("action", format!("column_move {} {delta}", column.name()));
     }
 
+    fn pr_filter_values(&self, field: FilterField) -> Vec<(String, usize)> {
+        let rows = self
+            .pull_requests
+            .snapshot
+            .as_ref()
+            .map(|s| s.rows.as_slice())
+            .unwrap_or(&[]);
+        if field == FilterField::Status {
+            ["Open", "Closed", "Merged"]
+                .into_iter()
+                .map(|state| {
+                    (
+                        state.to_string(),
+                        rows.iter().filter(|r| r.lifecycle.label() == state).count(),
+                    )
+                })
+                .collect()
+        } else {
+            rows.iter().map(|r| (r.number.to_string(), 1)).collect()
+        }
+    }
+
     pub(super) fn open_filter_picker(&mut self, column: Column) {
         match column.filter_field() {
             Some(field) => {
-                let values = tasks::field_values(&self.tasks, field, &self.goals);
+                let values = if self.page == crate::page::Page::PullRequests {
+                    self.pr_filter_values(field)
+                } else {
+                    tasks::field_values(&self.tasks, field, &self.goals)
+                };
                 if values.is_empty() {
                     self.status = format!("no {} values to pick from", field.keyword());
                     return;
@@ -483,7 +516,7 @@ impl App {
             .collect();
         let mut shown: Vec<String> = all
             .iter()
-            .filter(|candidate| Filter::field_allows(&self.state.filter, field, candidate))
+            .filter(|candidate| Filter::field_allows(self.filter_text(), field, candidate))
             .cloned()
             .collect();
         match shown.iter().position(|candidate| candidate == value) {
@@ -492,7 +525,7 @@ impl App {
             }
             None => shown.push(value.to_string()),
         }
-        let text = Filter::with_shown(&self.state.filter, field, &all, &shown);
+        let text = Filter::with_shown(self.filter_text(), field, &all, &shown);
         self.set_filter(text);
         self.telemetry.record(
             "action",
@@ -518,7 +551,7 @@ impl App {
         };
         match (picker.purpose, picked.payload) {
             (PickerPurpose::Filter(field), Payload::Text(value)) => {
-                let text = Filter::with_only(&self.state.filter, field, &value);
+                let text = Filter::with_only(self.filter_text(), field, &value);
                 self.set_filter(text);
                 self.telemetry
                     .record("action", format!("filter_pick {}:{value}", field.keyword()));
