@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
-use switchbard_core::{PrChecks, PrListRow, PrMerge, PrReview};
+use switchbard_core::{PrChecks, PrListRow};
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::default()
@@ -123,7 +123,7 @@ fn list(frame: &mut Frame, app: &mut App, area: Rect) {
             "PR",
             "Status",
             "Linked tasks",
-            if area.width < 70 { "!" } else { "Delivery" },
+            if area.width < 70 { "Ck" } else { "Checks" },
             "Title",
         ],
         app.config.theme.style(Surface::Header),
@@ -189,17 +189,7 @@ fn draw_row(frame: &mut Frame, app: &App, row: &PrListRow, rect: Rect, selected:
             }
             .into()
         });
-    let signal = if rect.width < 70 {
-        match row.attention_rank() {
-            0 => "!",
-            1 => "?",
-            2 => "~",
-            _ => "+",
-        }
-        .into()
-    } else {
-        delivery(row)
-    };
+    let signal = checks(row, rect.width < 70);
     let identity = format!("#{}", row.number);
     let style = app.config.theme.style(if selected {
         Surface::Selected
@@ -209,40 +199,26 @@ fn draw_row(frame: &mut Frame, app: &App, row: &PrListRow, rect: Rect, selected:
     draw_cells(
         frame,
         rect,
-        [
-            &identity,
-            row.lifecycle.label(),
-            &links,
-            &signal,
-            &row.title,
-        ],
+        [&identity, row.lifecycle.label(), &links, signal, &row.title],
         style,
     );
 }
 
-fn delivery(row: &PrListRow) -> String {
+fn checks(row: &PrListRow, compact: bool) -> &'static str {
     if row.lifecycle != switchbard_core::PrLifecycle::Open {
-        return "Historical".into();
+        return if compact { "NF" } else { "Not fetched" };
     }
-    if row.merge == PrMerge::Conflicting {
-        return "! Conflict".into();
+    match (row.checks, compact) {
+        (PrChecks::Failed, true) => "!",
+        (PrChecks::Unknown | PrChecks::NoneObserved, true) => "?",
+        (PrChecks::Running, true) => "~",
+        (PrChecks::Passing, true) => "+",
+        (PrChecks::Failed, false) => "Failed",
+        (PrChecks::Unknown, false) => "Unknown",
+        (PrChecks::NoneObserved, false) => "None observed",
+        (PrChecks::Running, false) => "Pending",
+        (PrChecks::Passing, false) => "Passed",
     }
-    if row.review == PrReview::ChangesRequested {
-        return "! Changes asked".into();
-    }
-    match row.checks {
-        PrChecks::Failed => "! Checks failed",
-        PrChecks::Unknown => "? Checks unknown",
-        PrChecks::NoneObserved => "? No checks seen",
-        PrChecks::Running => "Checks pending",
-        PrChecks::Passing if row.review == PrReview::Unknown || row.merge == PrMerge::Unknown => {
-            "? Review / merge"
-        }
-        PrChecks::Passing if row.review == PrReview::Required => "Review required",
-        PrChecks::Passing if row.draft => "Draft",
-        PrChecks::Passing => "Checks passed",
-    }
-    .into()
 }
 
 fn detail(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -256,17 +232,13 @@ fn detail(frame: &mut Frame, app: &mut App, area: Rect) {
         )),
         Line::from(row.url.clone()),
         Line::from(format!(
-            "{}{} · {}",
+            "{}{}",
             row.lifecycle.label(),
-            if row.draft { " (draft)" } else { "" },
-            delivery(row)
+            if row.draft { " (draft)" } else { "" }
         )),
-        Line::from(format!(
-            "{} · {} · {}",
-            row.checks.label(),
-            row.review.label(),
-            row.merge.label()
-        )),
+        Line::from(format!("Checks: {}", checks(row, false))),
+        Line::from(format!("Review: {}", row.review.label())),
+        Line::from(format!("Merge: {}", row.merge.label())),
         Line::from(format!("Head: {}", row.head_oid)),
         Line::from("Linked tasks (loaded task references):"),
     ];
