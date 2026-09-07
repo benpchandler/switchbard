@@ -5,6 +5,8 @@ mod paint_flow;
 mod pickers;
 mod slots;
 
+use crate::page::Page;
+
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -103,6 +105,7 @@ pub struct App {
     pub mode: Mode,
     pub input: String,
     pub pane: Pane,
+    pub page: Page,
     pub picker: Option<ValuePicker>,
     pub column_purpose: ColumnPurpose,
     pub status: String,
@@ -152,6 +155,7 @@ impl App {
             mode: Mode::Browse,
             input: String::new(),
             pane: Pane::None,
+            page: Page::Tasks,
             picker: None,
             column_purpose: ColumnPurpose::Filter,
             status: String::new(),
@@ -235,7 +239,8 @@ impl App {
             .map(|task| task.id.clone())
             .unwrap_or_else(|| "nothing".to_string());
         format!(
-            "view={} filter=\"{}\" sort={} selected={selected} pane={:?}",
+            "page={:?} view={} filter=\"{}\" sort={} selected={selected} pane={:?}",
+            self.page,
             self.view_label(),
             self.state.filter,
             self.state
@@ -246,14 +251,31 @@ impl App {
         )
     }
 
-    /// `slot\tfilter\tsort\tselected`, enough to land where the user was after a self-restart.
+    /// Preserve the page and task view across a self-restart; old task-only records still read.
     pub fn resume_state(&self) -> String {
-        format!("{}\t{}\t{}", self.view, self.selected, self.state.to_lua())
+        format!(
+            "{}{}\t{}\t{}",
+            if self.page == Page::PullRequests {
+                "prs\t"
+            } else {
+                ""
+            },
+            self.view,
+            self.selected,
+            self.state.to_lua()
+        )
     }
 
     pub fn resume_from(&mut self, state: Option<&str>) {
         let Some(state) = state else {
             return;
+        };
+        let state = if let Some(record) = state.strip_prefix("prs\t") {
+            self.page = Page::PullRequests;
+            record
+        } else {
+            self.page = Page::Tasks;
+            state
         };
         let mut parts = state.splitn(3, '\t');
         if let Some(slot) = parts.next().and_then(|n| n.parse().ok()) {
@@ -733,10 +755,12 @@ impl App {
 
     fn handle_browse_key(&mut self, event: KeyEvent) {
         let chord = KeyChord::from_event(&event);
-        if let (KeyCode::Char(digit), false) = (event.code, chord.ctrl) {
-            if let Some(position) = digit.to_digit(10).filter(|n| *n > 0) {
-                self.open_column_actions(position as usize);
-                return;
+        if self.page == Page::Tasks {
+            if let (KeyCode::Char(digit), false) = (event.code, chord.ctrl) {
+                if let Some(position) = digit.to_digit(10).filter(|n| *n > 0) {
+                    self.open_column_actions(position as usize);
+                    return;
+                }
             }
         }
         match self.config.keys.get(&chord).cloned() {
@@ -810,7 +834,16 @@ impl App {
     }
 
     fn apply(&mut self, action: &Action) {
+        if !self.page.allows(action) {
+            self.status = "Switch to Tasks to use task controls".to_string();
+            return;
+        }
         match action {
+            Action::Page => {
+                self.page = self.page.toggle();
+                self.pane = Pane::None;
+                self.status.clear();
+            }
             Action::Down => self.step(1),
             Action::Up => self.step(-1),
             Action::Top => self.select(0),
@@ -826,7 +859,7 @@ impl App {
             Action::Back => {
                 if self.pane != Pane::None {
                     self.pane = Pane::None;
-                } else if !self.state.filter.is_empty() {
+                } else if self.page == Page::Tasks && !self.state.filter.is_empty() {
                     self.set_filter(String::new());
                 }
                 self.status.clear();
@@ -863,7 +896,11 @@ impl App {
             Action::Reload => {
                 self.reload_config();
                 self.reload_tasks();
-                self.status = format!("reloaded {} tasks", self.tasks.len());
+                self.status = if self.page == Page::Tasks {
+                    format!("reloaded {} tasks", self.tasks.len())
+                } else {
+                    "PR data is not connected yet".to_string()
+                };
             }
             Action::Help => {
                 self.pane = match self.pane {
@@ -912,6 +949,10 @@ impl App {
 
     fn run_command(&mut self, command: &str) {
         let (verb, rest) = command.split_once(' ').unwrap_or((command, ""));
+        if self.page == Page::PullRequests && matches!(verb, "group" | "goal") {
+            self.status = "Switch to Tasks to use task controls".to_string();
+            return;
+        }
         match verb {
             "q" | "quit" => self.should_quit = true,
             "reload" => self.apply(&Action::Reload),

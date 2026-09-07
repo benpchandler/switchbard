@@ -3,6 +3,7 @@ pub mod ball;
 pub mod columns;
 pub mod config;
 pub mod group;
+pub mod page;
 pub mod paint;
 pub mod picker;
 pub mod report;

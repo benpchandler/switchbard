@@ -704,3 +704,9 @@ The control and projection health indicators are independent. Queue drafts and d
   mission-sidecar matrix to mission-sensitive changes.
   The push-to-main trigger remains because `main` is not branch-protected, so it is the only
   independent verification of the actual merge commit.
+
+## TUI page navigation (owner-directed 2026-09-06)
+
+The first PR slice is navigation only: Tasks and Pull Requests are separate pages, Tab toggles through the configurable `page` action, and a persistent header marks the active page with brackets and the theme chip. Saved task views remain task views. Switching pages preserves task filters and selection, closes transient detail/help, and cannot operate on hidden tasks. Self-restart retains the page. Pull Requests explicitly says its data is not connected yet; it does not claim a successful empty GitHub result. GitHub observations and controls remain subsequent slices.
+
+State/stress evidence: `crates/switchbard-tui/tests/pages.rs` exercises real keys and rendered screens for toggle/return, filtered selection, hidden-task controls, key remapping, help, self-restart, empty backlog, and 80x24 / 120x40 / 180x50 / 40x8 / zero-sized terminals. Loading, remote errors, stale delivery and writes are N/A to this unconnected page shell. Native owner visual review follows installation and is not implied by passing tests.

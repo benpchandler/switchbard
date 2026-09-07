@@ -13,24 +13,34 @@ use crate::app::{App, Mode, Pane};
 use crate::columns::Column;
 use crate::config::{Action, Surface};
 use crate::group::Row;
+use crate::page::Page;
 use crate::paint::{self, PaintRule};
 use crate::picker::{self, ColumnPurpose, PaintPick, Payload, PickerPurpose, ValuePicker};
 use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let [body, footer] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
+    let [navigation, body, footer] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(frame.area());
+    draw_navigation(frame, app, navigation);
     app.page_size = body.height.saturating_sub(3).max(1) as usize;
-    match app.pane {
-        Pane::None => draw_table(frame, app, body),
-        Pane::Help => draw_help(frame, app, body),
-        Pane::Detail => {
-            let [left, right] =
-                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .areas(body);
-            draw_table(frame, app, left);
-            draw_detail(frame, app, right);
+    if app.page == Page::PullRequests && app.pane != Pane::Help {
+        draw_pull_requests(frame, app, body);
+    } else {
+        match app.pane {
+            Pane::None => draw_table(frame, app, body),
+            Pane::Help => draw_help(frame, app, body),
+            Pane::Detail => {
+                let [left, right] =
+                    Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .areas(body);
+                draw_table(frame, app, left);
+                draw_detail(frame, app, right);
+            }
         }
     }
     draw_footer(frame, app, footer);
@@ -38,6 +48,50 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         draw_picker(frame, app, picker, body);
     }
     app.last_screen = buffer_text(frame.buffer_mut());
+}
+
+fn draw_navigation(frame: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.config.theme;
+    let labels = [
+        (Page::Tasks, "Tasks"),
+        (Page::PullRequests, "Pull Requests"),
+    ];
+    let mut spans = Vec::with_capacity(3);
+    for (page, label) in labels {
+        let active = page == app.page;
+        let text = if active {
+            format!(" [{label}] ")
+        } else {
+            format!("  {label}  ")
+        };
+        spans.push(Span::styled(
+            text,
+            theme.style(if active { Surface::Chip } else { Surface::Hint }),
+        ));
+    }
+    spans.push(Span::styled(
+        format!(
+            " {} switch page",
+            app.config.bindings_for(&Action::Page).join("/")
+        ),
+        theme.style(Surface::Keys),
+    ));
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn draw_pull_requests(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(app.config.theme.style(Surface::Border))
+        .title(" Pull Requests ");
+    let text = "PR data is not connected yet.\n\nThis page will show pull requests and their delivery state.";
+    frame.render_widget(
+        Paragraph::new(text)
+            .style(app.config.theme.style(Surface::Text))
+            .wrap(Wrap { trim: false })
+            .block(block),
+        area,
+    );
 }
 
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -312,6 +366,7 @@ fn claimed_clock(session: &switchbard_core::WorkSession, task_id: &str) -> Strin
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.config.theme;
     let actions = [
+        Action::Page,
         Action::Down,
         Action::Up,
         Action::Top,
@@ -449,6 +504,12 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 /// The footer while browsing: what is in effect as a chip, the situation, then
 /// the keys with their letters on the `keys` surface.
 fn browse_footer(app: &App) -> Line<'static> {
+    if app.page == Page::PullRequests {
+        return Line::from(Span::styled(
+            " ? help · : command · q quit",
+            app.config.theme.style(Surface::Hint),
+        ));
+    }
     let theme = &app.config.theme;
     let mut spans: Vec<Span> = vec![Span::raw(" ")];
     if !app.state.filter.is_empty() {

@@ -45,6 +45,7 @@ pub enum Action {
     Help,
     Quit,
     View,
+    Page,
     Group,
     Settings,
     /// The task chord: rank digits, Ball, top-list, completion, and goals actions.
@@ -74,6 +75,7 @@ impl Action {
             "help" => Action::Help,
             "quit" => Action::Quit,
             "view" => Action::View,
+            "page" => Action::Page,
             "group" => Action::Group,
             "settings" => Action::Settings,
             "task" | "rank" => Action::Rank,
@@ -103,6 +105,7 @@ impl Action {
             Action::Help => "help".to_string(),
             Action::Quit => "quit".to_string(),
             Action::View => "view".to_string(),
+            Action::Page => "page".to_string(),
             Action::Group => "group".to_string(),
             Action::Settings => "settings".to_string(),
             Action::Rank => "task".to_string(),
