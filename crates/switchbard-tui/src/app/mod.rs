@@ -106,6 +106,7 @@ pub struct App {
     pub input: String,
     pub pane: Pane,
     pub page: Page,
+    pub pull_requests: crate::pull_requests::PullRequests,
     pub picker: Option<ValuePicker>,
     pub column_purpose: ColumnPurpose,
     pub status: String,
@@ -156,6 +157,7 @@ impl App {
             input: String::new(),
             pane: Pane::None,
             page: Page::Tasks,
+            pull_requests: Default::default(),
             picker: None,
             column_purpose: ColumnPurpose::Filter,
             status: String::new(),
@@ -294,6 +296,7 @@ impl App {
 
     /// Cheap per-tick work: pick up edits to the config file or the task files.
     pub fn tick(&mut self) {
+        self.refresh_pr_state();
         if let Some(path) = self.config_path.as_deref() {
             let now = config::modified_at(path);
             if now != self.config_seen {
@@ -833,14 +836,77 @@ impl App {
         }
     }
 
+    fn refresh_pr_state(&mut self) {
+        let before = self.pull_requests.row().map(|row| row.id.clone());
+        if self.pull_requests.tick(
+            &self.repo_root,
+            self.page == Page::PullRequests,
+            self.config.pr_refresh_seconds,
+        ) {
+            self.pull_requests.refresh_links(&self.tasks);
+            let after = self.pull_requests.row().map(|row| row.id.clone());
+            if self.page == Page::PullRequests && self.pane == Pane::Detail && before != after {
+                self.pane = Pane::None;
+                self.status = "Selected PR is no longer in the open list".into();
+            }
+        }
+    }
+
+    fn apply_pr_action(&mut self, action: &Action) -> bool {
+        if self.pane == Pane::Detail {
+            let delta = match action {
+                Action::Down => Some(1),
+                Action::Up => Some(-1),
+                Action::PageDown => Some(self.page_size as i32),
+                Action::PageUp => Some(-(self.page_size as i32)),
+                Action::Top => Some(-65535),
+                Action::Bottom => Some(65535),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                self.pull_requests.detail_scroll =
+                    (i32::from(self.pull_requests.detail_scroll) + delta).clamp(0, 65535) as u16;
+                return true;
+            }
+        }
+        match action {
+            Action::Down => self.pull_requests.step(1),
+            Action::Up => self.pull_requests.step(-1),
+            Action::Top => self.pull_requests.selected = 0,
+            Action::Bottom => self.pull_requests.step(isize::MAX),
+            Action::PageDown => self.pull_requests.step(self.page_size as isize),
+            Action::PageUp => self.pull_requests.step(-(self.page_size as isize)),
+            Action::Open => {
+                self.pull_requests.detail_scroll = 0;
+                self.pane = if self.pane == Pane::Detail {
+                    Pane::None
+                } else {
+                    Pane::Detail
+                }
+            }
+            Action::Reload => {
+                self.pull_requests.refresh(&self.repo_root);
+                self.status.clear();
+            }
+            _ => return false,
+        }
+        true
+    }
+
     fn apply(&mut self, action: &Action) {
         if !self.page.allows(action) {
             self.status = "Switch to Tasks to use task controls".to_string();
             return;
         }
+        if self.page == Page::PullRequests && self.apply_pr_action(action) {
+            return;
+        }
         match action {
             Action::Page => {
                 self.page = self.page.toggle();
+                if self.page == Page::PullRequests {
+                    self.refresh_pr_state();
+                }
                 self.pane = Pane::None;
                 self.status.clear();
             }
@@ -1237,6 +1303,7 @@ impl App {
             Err(error) => self.fail(error.to_string()),
         }
         self.refilter();
+        self.pull_requests.refresh_links(&self.tasks);
     }
 
     fn reload_config(&mut self) {

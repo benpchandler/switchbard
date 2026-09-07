@@ -370,6 +370,7 @@ pub struct Config {
     pub work_period_ms: u64,
     /// Redraws per period: how smooth the fade is.
     pub work_frames: u64,
+    pub pr_refresh_seconds: u64,
     /// Soft-clip strength of the pulse: 0 is a pure sine, 2 flattens the tops and bottoms.
     pub work_flatten: f64,
     pub warnings: Vec<String>,
@@ -464,6 +465,7 @@ struct RawConfig {
     report_repo: Option<String>,
     work_period_ms: Option<u64>,
     work_frames: Option<u64>,
+    pr_refresh_seconds: Option<u64>,
     work_flatten: Option<f64>,
     palettes: Vec<(String, Vec<String>)>,
 }
@@ -484,6 +486,10 @@ impl RawConfig {
             report_repo: table.get::<Option<String>>("report_repo").ok().flatten(),
             work_period_ms: work_setting(&table, "period_ms"),
             work_frames: work_setting(&table, "frames"),
+            pr_refresh_seconds: table
+                .get::<Option<u64>>("pr_refresh_seconds")
+                .ok()
+                .flatten(),
             work_flatten: work_setting_f64(&table, "flatten"),
             palettes: named_string_lists(&table, "palettes")?,
         })
@@ -514,6 +520,9 @@ impl RawConfig {
         }
         if over.work_period_ms.is_some() {
             self.work_period_ms = over.work_period_ms;
+        }
+        if over.pr_refresh_seconds.is_some() {
+            self.pr_refresh_seconds = over.pr_refresh_seconds;
         }
         if over.work_frames.is_some() {
             self.work_frames = over.work_frames;
@@ -634,6 +643,7 @@ impl RawConfig {
             report_repo,
             work_period_ms: self.work_period_ms.unwrap_or(DEFAULT_WORK_PERIOD_MS),
             work_frames: self.work_frames.unwrap_or(DEFAULT_WORK_FRAMES).max(1),
+            pr_refresh_seconds: self.pr_refresh_seconds.unwrap_or(60).clamp(30, 3600),
             work_flatten: self.work_flatten.unwrap_or(DEFAULT_WORK_FLATTEN).max(0.0),
             warnings,
         }

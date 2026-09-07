@@ -29,7 +29,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_navigation(frame, app, navigation);
     app.page_size = body.height.saturating_sub(3).max(1) as usize;
     if app.page == Page::PullRequests && app.pane != Pane::Help {
-        draw_pull_requests(frame, app, body);
+        crate::pr_view::draw(frame, app, body);
     } else {
         match app.pane {
             Pane::None => draw_table(frame, app, body),
@@ -77,21 +77,6 @@ fn draw_navigation(frame: &mut Frame, app: &App, area: Rect) {
         theme.style(Surface::Keys),
     ));
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
-}
-
-fn draw_pull_requests(frame: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(app.config.theme.style(Surface::Border))
-        .title(" Pull Requests ");
-    let text = "PR data is not connected yet.\n\nThis page will show pull requests and their delivery state.";
-    frame.render_widget(
-        Paragraph::new(text)
-            .style(app.config.theme.style(Surface::Text))
-            .wrap(Wrap { trim: false })
-            .block(block),
-        area,
-    );
 }
 
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -505,10 +490,22 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 /// the keys with their letters on the `keys` surface.
 fn browse_footer(app: &App) -> Line<'static> {
     if app.page == Page::PullRequests {
-        return Line::from(Span::styled(
-            " ? help · : command · q quit",
-            app.config.theme.style(Surface::Hint),
-        ));
+        let movement = if app.pane == Pane::Detail {
+            "scroll"
+        } else {
+            "select"
+        };
+        let hints = [
+            (Action::Down, movement),
+            (Action::Open, "detail"),
+            (Action::Reload, "refresh"),
+            (Action::Help, "help"),
+        ]
+        .iter()
+        .map(|(action, label)| format!("{} {label}", app.config.bindings_for(action).join("/")))
+        .collect::<Vec<_>>()
+        .join(" · ");
+        return Line::from(Span::styled(hints, app.config.theme.style(Surface::Hint)));
     }
     let theme = &app.config.theme;
     let mut spans: Vec<Span> = vec![Span::raw(" ")];

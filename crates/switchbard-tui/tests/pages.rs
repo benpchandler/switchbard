@@ -11,7 +11,7 @@ fn toggles_pages_without_losing_task_context() {
     let selected = h.selected_title();
     let screen = h.press(KeyCode::Tab);
     assert!(screen.contains("[Pull Requests]"), "{screen}");
-    assert!(screen.contains("PR data is not connected yet"), "{screen}");
+    assert!(screen.contains("Loading pull requests"), "{screen}");
     assert!(!screen.contains("Add dark theme"), "{screen}");
     h.type_text("td");
     h.press(KeyCode::Esc);
@@ -78,7 +78,7 @@ fn pages_render_at_small_and_large_terminal_sizes_with_no_tasks() {
         let screen = h.press(KeyCode::Tab);
         if width > 0 {
             assert!(screen.contains("[Pull Requests]"), "{screen}");
-            assert!(screen.contains("PR data is not connected yet"), "{screen}");
+            assert!(screen.contains("Loading pull requests"), "{screen}");
         }
         h.press(KeyCode::Tab);
     }

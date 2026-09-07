@@ -20,7 +20,14 @@ impl Page {
         self == Self::Tasks
             || matches!(
                 action,
-                Action::Page
+                Action::Down
+                    | Action::Up
+                    | Action::Top
+                    | Action::Bottom
+                    | Action::PageDown
+                    | Action::PageUp
+                    | Action::Open
+                    | Action::Page
                     | Action::Help
                     | Action::Back
                     | Action::Quit

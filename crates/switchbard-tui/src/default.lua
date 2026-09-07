@@ -113,6 +113,9 @@ return {
   -- holds full and dark longer), redrawn frames times per period. period_ms
   -- = 0 keeps them lit. The `work` column (`c`) shows one ● per session; `w`
   -- passes the task.
+  -- PR reads refresh while the page is visible (30-3600 seconds); failures require r.
+  pr_refresh_seconds = 60,
+
   work = { period_ms = 3000, frames = 30, flatten = 2 },
 
   -- What painting a column "auto" hands out, most common value first: keep the

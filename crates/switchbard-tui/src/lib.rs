@@ -6,6 +6,8 @@ pub mod group;
 pub mod page;
 pub mod paint;
 pub mod picker;
+pub mod pr_view;
+pub mod pull_requests;
 pub mod report;
 pub mod settings;
 pub mod sort;
