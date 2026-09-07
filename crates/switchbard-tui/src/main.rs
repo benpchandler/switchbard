@@ -115,6 +115,8 @@ enum Exit {
 
 fn drive(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Exit> {
     let binary = InstalledBinary::current();
+    app.tick();
+    let mut last_tick = Instant::now();
     while !app.should_quit {
         let started = Instant::now();
         terminal.draw(|frame| view::draw(frame, app))?;
@@ -123,12 +125,15 @@ fn drive(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Exit>
             .next_blink()
             .unwrap_or(Duration::from_millis(500))
             .min(Duration::from_millis(500));
-        if event::poll(wait)? {
+        let input_ready = event::poll(wait)?;
+        if input_ready {
             if let Event::Key(key) = event::read()? {
                 app.handle_key(key);
             }
-        } else {
+        }
+        if !input_ready || last_tick.elapsed() >= Duration::from_millis(500) {
             app.tick();
+            last_tick = Instant::now();
             if binary.was_replaced() {
                 app.telemetry
                     .record("self_restart", binary.path.display().to_string());

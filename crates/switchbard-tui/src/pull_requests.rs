@@ -19,7 +19,8 @@ pub struct PullRequests {
     requested_limit: usize,
     pub links: std::collections::BTreeMap<String, Vec<(String, String)>>,
     pending: Option<Receiver<Result<PrSnapshot, String>>>,
-    attempted: Option<Instant>,
+    completed_at: Option<Instant>,
+    remaining_seconds: u64,
 }
 
 impl PullRequests {
@@ -30,7 +31,6 @@ impl PullRequests {
         let (tx, rx) = mpsc::sync_channel(1);
         let root = root.to_path_buf();
         let limit = self.requested_limit.max(100);
-        self.attempted = Some(Instant::now());
         match std::thread::Builder::new()
             .name("sbt-pr-read".into())
             .spawn(move || {
@@ -41,11 +41,14 @@ impl PullRequests {
                 { /* app already closed */ }
             }) {
             Ok(_) => self.pending = Some(rx),
-            Err(error) => self.fail(format!("Could not start refresh: {error}")),
+            Err(error) => {
+                self.fail(format!("Could not start refresh: {error}"));
+                self.completed_at = Some(Instant::now());
+            }
         }
     }
 
-    pub fn tick(&mut self, root: &Path, visible: bool, refresh_seconds: u64) -> bool {
+    pub fn tick(&mut self, root: &Path, visible: bool, refresh_seconds: u64, now: Instant) -> bool {
         let mut changed = false;
         if let Some(rx) = &self.pending {
             match rx.try_recv() {
@@ -53,18 +56,26 @@ impl PullRequests {
                     self.pending = None;
                     changed = result.is_ok();
                     self.accept(result);
+                    self.completed_at = Some(now);
                 }
                 Err(TryRecvError::Disconnected) => {
                     self.pending = None;
                     self.fail("Refresh worker stopped; retry refresh".into());
+                    self.completed_at = Some(now);
                 }
                 Err(TryRecvError::Empty) => {}
             }
         }
-        if (visible || self.attempted.is_some())
-            && self
-                .attempted
-                .is_none_or(|t| t.elapsed() >= Duration::from_secs(refresh_seconds))
+        let elapsed = self
+            .completed_at
+            .map(|completed| now.saturating_duration_since(completed));
+        self.remaining_seconds = elapsed.map_or(0, |elapsed| {
+            Duration::from_secs(refresh_seconds)
+                .saturating_sub(elapsed)
+                .as_secs()
+        });
+        if (visible || self.completed_at.is_some())
+            && elapsed.is_none_or(|elapsed| elapsed >= Duration::from_secs(refresh_seconds))
         {
             self.refresh(root);
         }
@@ -263,6 +274,14 @@ impl PullRequests {
             order
         };
         order.then_with(|| a.number.cmp(&b.number))
+    }
+
+    pub fn refresh_label(&self) -> String {
+        if self.loading() {
+            "refreshing".into()
+        } else {
+            format!("{}s", self.remaining_seconds)
+        }
     }
 
     pub fn loading(&self) -> bool {

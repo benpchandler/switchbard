@@ -946,6 +946,7 @@ impl App {
             &self.repo_root,
             self.page == Page::PullRequests,
             self.config.pr_refresh_seconds,
+            Instant::now(),
         ) {
             self.pull_requests.refresh_links(&self.tasks);
             self.pull_requests.refilter();
