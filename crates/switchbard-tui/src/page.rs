@@ -33,6 +33,8 @@ impl Page {
                     | Action::PageDown
                     | Action::PageUp
                     | Action::Open
+                    | Action::OpenBrowser
+                    | Action::DismissNotifications
                     | Action::Page
                     | Action::Help
                     | Action::Back

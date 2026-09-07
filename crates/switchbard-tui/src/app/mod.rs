@@ -971,6 +971,7 @@ impl App {
             }
         }
         match action {
+            Action::OpenBrowser => self.open_pr_browser(),
             Action::Down => self.pull_requests.step(1),
             Action::Up => self.pull_requests.step(-1),
             Action::Top => self.pull_requests.step(isize::MIN),
@@ -994,6 +995,18 @@ impl App {
         true
     }
 
+    fn open_pr_browser(&mut self) {
+        let Some(row) = self.pull_requests.row() else {
+            self.status = "No PR selected".into();
+            return;
+        };
+        let url = row.url.clone();
+        match switchbard_core::open_url(&url, None) {
+            Ok(()) => self.status = format!("Opened {url}"),
+            Err(error) => self.fail(format!("Could not open PR: {error}")),
+        }
+    }
+
     fn apply(&mut self, action: &Action) {
         if !self.page.allows(action) {
             self.status = "Switch to Tasks to use task controls".to_string();
@@ -1003,6 +1016,8 @@ impl App {
             return;
         }
         match action {
+            Action::OpenBrowser => self.status = "Switch to Pull Requests to open a PR".into(),
+            Action::DismissNotifications => self.pull_requests.dismiss_notifications(),
             Action::Page => {
                 self.toggle_page_state();
                 if self.page == Page::PullRequests {
@@ -1127,6 +1142,8 @@ impl App {
             }
             "q" | "quit" => self.should_quit = true,
             "reload" => self.apply(&Action::Reload),
+            "open" => self.apply(&Action::OpenBrowser),
+            "dismiss" => self.apply(&Action::DismissNotifications),
             "palette" => self.choose_palette(rest.trim()),
             "theme" => self.choose_theme(rest.trim()),
             "group" => match Grouping::parse(rest) {

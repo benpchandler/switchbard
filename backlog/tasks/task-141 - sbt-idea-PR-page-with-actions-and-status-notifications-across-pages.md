@@ -1,12 +1,14 @@
 ---
 id: TASK-141
 title: 'sbt idea: PR page with actions and status notifications across pages'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-03 21:33'
+updated_date: '2026-09-07 13:22'
 labels:
   - tui
   - idea
+  - ball:agent
 dependencies: []
 priority: medium
 ---
@@ -107,3 +109,9 @@ action command (0.0ms)
 <!-- AC:BEGIN -->
 - [ ] #1 Reporter confirms the behaviour in sbt matches what they were trying to do
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Completion resumed from merged PR #136 on isolated feat/finish-task-141. Remaining work: browser action and cross-page bounded PR status alerts. Contract and state matrix: docs/task-141-completion-ledger.md. Reporter confirmation stays unchecked.
+<!-- SECTION:NOTES:END -->

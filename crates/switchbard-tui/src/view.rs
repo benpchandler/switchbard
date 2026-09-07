@@ -20,13 +20,15 @@ use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let [navigation, body, footer] = Layout::vertical([
+    let [navigation, notification, body, footer] = Layout::vertical([
         Constraint::Length(1),
+        Constraint::Length(u16::from(!app.pull_requests.notifications.is_empty())),
         Constraint::Min(1),
         Constraint::Length(1),
     ])
     .areas(frame.area());
     draw_navigation(frame, app, navigation);
+    draw_notification(frame, app, notification);
     app.page_size = body.height.saturating_sub(3).max(1) as usize;
     if app.page == Page::PullRequests && app.pane != Pane::Help {
         crate::pr_view::draw(frame, app, body);
@@ -46,6 +48,30 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         draw_picker(frame, app, picker, body);
     }
     app.last_screen = buffer_text(frame.buffer_mut());
+}
+
+fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
+    let alerts = &app.pull_requests.notifications;
+    let Some(message) = alerts.latest() else {
+        return;
+    };
+    let dismiss = app
+        .config
+        .bindings_for(&Action::DismissNotifications)
+        .join("/");
+    let hint = format!(" {} · {dismiss} dismiss", alerts.len());
+    let hint_width = u16::try_from(hint.chars().count()).unwrap_or(u16::MAX);
+    let [message_area, hint_area] = Layout::horizontal([
+        Constraint::Min(1),
+        Constraint::Length(hint_width.min(area.width / 2)),
+    ])
+    .areas(area);
+    let style = app.config.theme.style(Surface::Status);
+    frame.render_widget(
+        Paragraph::new(format!("PR {message}")).style(style),
+        message_area,
+    );
+    frame.render_widget(Paragraph::new(hint).style(style), hint_area);
 }
 
 fn draw_navigation(frame: &mut Frame, app: &App, area: Rect) {
@@ -356,6 +382,8 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Action::Rank,
         Action::Command,
         Action::Reload,
+        Action::OpenBrowser,
+        Action::DismissNotifications,
         Action::Help,
         Action::View,
         Action::Quit,
@@ -487,6 +515,7 @@ fn browse_footer(app: &App) -> Line<'static> {
             (Action::View, "views"),
             (Action::Down, "select"),
             (Action::Open, "detail"),
+            (Action::OpenBrowser, "browser"),
             (Action::Reload, "refresh"),
             (Action::Help, "help"),
         ]

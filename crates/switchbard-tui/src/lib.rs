@@ -7,6 +7,7 @@ pub mod group;
 pub mod page;
 pub mod paint;
 pub mod picker;
+pub mod pr_notifications;
 pub mod pr_view;
 pub mod pull_requests;
 pub mod report;

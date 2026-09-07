@@ -8,6 +8,7 @@ use switchbard_core::{fetch_pull_requests_with_limit, PrListRow, PrSnapshot};
 pub struct PullRequests {
     pub snapshot: Option<PrSnapshot>,
     pub error: Option<String>,
+    pub notifications: crate::pr_notifications::PrNotifications,
     pub selected: usize,
     pub scroll: usize,
     pub detail_scroll: u16,
@@ -40,7 +41,7 @@ impl PullRequests {
                 { /* app already closed */ }
             }) {
             Ok(_) => self.pending = Some(rx),
-            Err(error) => self.error = Some(format!("Could not start refresh: {error}")),
+            Err(error) => self.fail(format!("Could not start refresh: {error}")),
         }
     }
 
@@ -55,13 +56,12 @@ impl PullRequests {
                 }
                 Err(TryRecvError::Disconnected) => {
                     self.pending = None;
-                    self.error = Some("Refresh worker stopped; retry refresh".into());
+                    self.fail("Refresh worker stopped; retry refresh".into());
                 }
                 Err(TryRecvError::Empty) => {}
             }
         }
-        if visible
-            && self.error.is_none()
+        if (visible || self.attempted.is_some())
             && self
                 .attempted
                 .is_none_or(|t| t.elapsed() >= Duration::from_secs(refresh_seconds))
@@ -74,6 +74,7 @@ impl PullRequests {
     fn accept(&mut self, result: Result<PrSnapshot, String>) {
         match result {
             Ok(mut snapshot) => {
+                self.observe_notifications(&snapshot);
                 snapshot
                     .rows
                     .sort_by_key(|row| (row.attention_rank(), std::cmp::Reverse(row.number)));
@@ -84,8 +85,38 @@ impl PullRequests {
                 self.error = None;
                 // App refreshes task links before projecting the accepted snapshot.
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => self.fail(error),
         }
+    }
+
+    fn fail(&mut self, error: String) {
+        if self.error.as_ref() != Some(&error) {
+            self.notifications.push(format!("Refresh failed: {error}"));
+        }
+        self.error = Some(error);
+    }
+
+    fn observe_notifications(&mut self, snapshot: &PrSnapshot) {
+        self.notifications.observe(self.snapshot.as_ref(), snapshot);
+        if self.error.is_some() {
+            self.notifications.push("Refresh recovered".into());
+        }
+        let previous_warning = self
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.enrichment_warning.as_ref());
+        if previous_warning != snapshot.enrichment_warning.as_ref() {
+            if let Some(warning) = &snapshot.enrichment_warning {
+                self.notifications
+                    .push(format!("Delivery details unavailable: {warning}"));
+            } else if previous_warning.is_some() {
+                self.notifications.push("Delivery details recovered".into());
+            }
+        }
+    }
+
+    pub fn dismiss_notifications(&mut self) {
+        self.notifications.dismiss();
     }
 
     pub fn refresh_links(&mut self, tasks: &[switchbard_core::BacklogTask]) {
