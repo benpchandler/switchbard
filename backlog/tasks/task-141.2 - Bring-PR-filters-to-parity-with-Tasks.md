@@ -1,13 +1,15 @@
 ---
 id: TASK-141.2
 title: Bring PR filters to parity with Tasks
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-07 01:32'
+updated_date: '2026-09-07 01:37'
 labels:
   - tui
   - github
   - parity
+  - ball:agent
 dependencies:
   - '141.1'
 priority: medium
