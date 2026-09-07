@@ -2,6 +2,7 @@ pub mod app;
 pub mod ball;
 pub mod columns;
 pub mod config;
+mod detail_pane;
 pub mod group;
 pub mod page;
 pub mod paint;

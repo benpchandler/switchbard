@@ -6,7 +6,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, Mode, Pane};
@@ -35,9 +35,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Pane::None => draw_table(frame, app, body),
             Pane::Help => draw_help(frame, app, body),
             Pane::Detail => {
-                let [left, right] =
-                    Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-                        .areas(body);
+                let [left, right] = crate::detail_pane::split(body);
                 draw_table(frame, app, left);
                 draw_detail(frame, app, right);
             }
@@ -282,11 +280,8 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.config.theme;
     let mut lines: Vec<Line> = Vec::new();
     if let Some(task) = app.selected_task() {
-        lines.push(Line::from(Span::styled(
-            task.title.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(Span::styled(
+        lines.push(crate::detail_pane::title(task.title.clone()));
+        lines.push(crate::detail_pane::metadata(
             format!(
                 "{} · {} · {} · {}",
                 task.id,
@@ -294,8 +289,8 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                 task.priority,
                 task.labels.join(",")
             ),
-            theme.style(Surface::Hint),
-        )));
+            theme,
+        ));
         for session in app.working(task) {
             lines.push(Line::from(Span::styled(
                 format!(
@@ -314,10 +309,7 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
         }
         if !task.acceptance_criteria.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "acceptance",
-                theme.style(Surface::Accent),
-            )));
+            lines.push(crate::detail_pane::section("acceptance", theme));
             for item in &task.acceptance_criteria {
                 let mark = if item.checked { "x" } else { " " };
                 lines.push(Line::from(format!("[{mark}] {}", item.text)));
@@ -326,15 +318,7 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         lines.push(Line::from("nothing selected"));
     }
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme.style(Surface::Border));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(block),
-        area,
-    );
+    crate::detail_pane::draw(frame, theme, area, lines, 0);
 }
 
 /// `HH:MM` of the claim on `task_id`, from its RFC 3339 stamp.

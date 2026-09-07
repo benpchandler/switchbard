@@ -1,7 +1,6 @@
 # sbt - switchbard terminal UI
 
 Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths`. Install: `cargo install --path crates/switchbard-tui`.
-
 ## Standing commitments (owner-set, 2026-09-02)
 1. Everything the user might tune lives in Lua (`~/.switchbard/tui.lua`, hot reload).
    New feature => new config surface only if a user would plausibly change it.
@@ -14,13 +13,13 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
 7. This file stays under 50 lines and is updated every slice.
 8. Telemetry (`~/.switchbard/tui-events.jsonl`) records key, action, timing, error.
    `sbt stats` is how we learn what is used, slow, or unbound.
-
 ## Module map
 - `page.rs` - Tasks / Pull Requests identity and allowed actions; Tab (`page` in Lua) toggles, the header marks the active page. `pull_requests.rs` caches bounded repo reads off-thread; `pr_view.rs` renders the list/detail. PR refresh uses `pr_refresh_seconds` (default 60); r retries errors. The source includes Open/Closed/Merged, initially 100 rows; `:more` expands by 100 up to 1000 with explicit partial coverage. `/` and `f` reuse task filter grammar/pickers with separate PR filter state (`status:open`); Enter toggles the right detail pane, j/k select rows, Ctrl-d/u scroll details. Metadata survives optional active-check enrichment failures. State/Tasks/Checks use compact widths; Tasks shows an ID or link count, absent links a dash. Checks shows only check observations (closed/merged: NF, expanded to Not fetched in details); review and merge observations remain separately labeled in details.
 - `app/` - `mod.rs` state, loop, browse keys, commands; `pickers.rs` column/filter/sort
   pickers + the shared picker key handler; `paint_flow.rs` the `p` flow; `slots.rs` the `v` chords.
 - `picker.rs` - the one list every menu uses: typed `PickOption` payloads, numbered/lettered rows,
   type-ahead; `app/` dispatches on payloads. A digit in browse opens that column's `ColumnActions`.
+- `detail_pane.rs` - shared task/PR split, border, bold title, muted metadata, accent sections, wrapping and bounded scroll.
 - `view.rs` - rendering only (the table is hand-drawn so headings span the row); snapshots the screen text for reports.
 - `columns.rs` - the column catalog: one `ColumnSpec` row per column (name, header, width,
   field, vocabulary) plus `values`/`cell_text`; every other module asks it.
@@ -40,11 +39,9 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
 - Top list = core's expedite lane: `t<n>` places (`tt` appends), `td` drops, `tp` pins it first; `#` column.
 - `settings.rs` - `,` panel: hide statuses everywhere; per-repo file, `g` promotes to global.
 - `report.rs` - `:bug`/`:idea` => task via core write layer. `telemetry.rs` - JSONL log, trail, `stats`.
-
 ## Loop
 Slice => commit on a `feat/tui-*` branch => `mise run tui-install` => the running sbt re-execs
 itself (`main.rs::InstalledBinary`, resumes view/filter/row) => user drives it => drain `label:tui`.
-
 ## Gates
 Per slice: `mise run tui-install` (fmt, clippy, tests for this crate only, then install).
 Never run `mise run ci` mid-loop: its RUSTFLAGS differ from cargo install, so the

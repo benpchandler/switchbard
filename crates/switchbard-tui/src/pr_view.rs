@@ -5,13 +5,23 @@ use crate::{
 };
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    text::{Line, Span},
+    text::Line,
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
 use switchbard_core::{PrChecks, PrListRow};
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
+    if app.pane == Pane::Detail {
+        let [left, right] = crate::detail_pane::split(area);
+        draw_list(frame, app, left);
+        detail(frame, app, right);
+    } else {
+        draw_list(frame, app, area);
+    }
+}
+
+fn draw_list(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Pull Requests ")
@@ -29,21 +39,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .style(app.config.theme.style(Surface::Hint)),
         status,
     );
-    if app.pane == Pane::Detail {
-        let [left, right] =
-            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .areas(body);
-        list(frame, app, left);
-        let detail_block = Block::default()
-            .borders(Borders::ALL)
-            .title(" PR details ")
-            .border_style(app.config.theme.style(Surface::Border));
-        let detail_area = detail_block.inner(right);
-        frame.render_widget(detail_block, right);
-        detail(frame, app, detail_area);
-    } else {
-        list(frame, app, body);
-    }
+    list(frame, app, body);
 }
 
 fn observation(app: &App) -> String {
@@ -223,26 +219,52 @@ fn checks(row: &PrListRow, compact: bool) -> &'static str {
 }
 
 fn detail(frame: &mut Frame, app: &mut App, area: Rect) {
+    let lines = detail_lines(app);
+    app.pull_requests.detail_scroll = crate::detail_pane::draw(
+        frame,
+        &app.config.theme,
+        area,
+        lines,
+        app.pull_requests.detail_scroll,
+    );
+}
+
+fn detail_lines(app: &App) -> Vec<Line<'static>> {
     let Some(row) = app.pull_requests.row() else {
-        return;
+        return vec![Line::from("nothing selected")];
     };
+    let theme = &app.config.theme;
     let mut lines = vec![
-        Line::from(Span::styled(
-            format!("#{} {}", row.number, row.title),
-            app.config.theme.style(Surface::Heading),
-        )),
+        crate::detail_pane::title(row.title.clone()),
+        crate::detail_pane::metadata(
+            format!(
+                "#{} · {}{}",
+                row.number,
+                row.lifecycle.label(),
+                if row.draft { " · draft" } else { "" }
+            ),
+            theme,
+        ),
+        Line::from(""),
         Line::from(row.url.clone()),
-        Line::from(format!(
-            "{}{}",
-            row.lifecycle.label(),
-            if row.draft { " (draft)" } else { "" }
-        )),
+        Line::from(""),
+        crate::detail_pane::section("checks and review", theme),
         Line::from(format!("Checks: {}", checks(row, false))),
         Line::from(format!("Review: {}", row.review.label())),
         Line::from(format!("Merge: {}", row.merge.label())),
         Line::from(format!("Head: {}", row.head_oid)),
-        Line::from("Linked tasks (loaded task references):"),
+        Line::from(""),
+        crate::detail_pane::section("linked tasks", theme),
     ];
+    append_links(&mut lines, app, row);
+    lines.push(Line::from(""));
+    lines.push(crate::detail_pane::metadata(
+        "Required-check coverage unknown. Checks do not prove task completion or continued progress.".into(), theme,
+    ));
+    lines
+}
+
+fn append_links(lines: &mut Vec<Line<'static>>, app: &App, row: &PrListRow) {
     if let Some(links) = app.pull_requests.links.get(&row.url) {
         lines.extend(
             links
@@ -259,16 +281,4 @@ fn detail(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         lines.push(Line::from("No matching PR reference in loaded tasks"));
     }
-    lines.push(Line::from(
-        "Required-check coverage unknown. Checks do not prove task completion or continued progress.",
-    ));
-    let paragraph = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .style(app.config.theme.style(Surface::Text));
-    let max_scroll = paragraph
-        .line_count(area.width)
-        .saturating_sub(area.height as usize)
-        .min(u16::MAX as usize) as u16;
-    app.pull_requests.detail_scroll = app.pull_requests.detail_scroll.min(max_scroll);
-    frame.render_widget(paragraph.scroll((app.pull_requests.detail_scroll, 0)), area);
 }

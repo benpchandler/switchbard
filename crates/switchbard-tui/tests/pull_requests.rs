@@ -59,7 +59,34 @@ fn live_repository_renders_actual_pull_requests() {
         assert!(screen.contains(&format!("#{number}")), "{screen}");
         let detail = h.press(KeyCode::Enter);
         assert!(detail.contains("Tasks"), "{detail}");
-        assert!(detail.contains(" PR details "), "{detail}");
+        assert!(!detail.contains(" PR details "), "{detail}");
+        let buffer = h.terminal.backend().buffer();
+        assert_eq!(buffer[(50, 1)].symbol(), "┌", "{detail}");
+        assert!(buffer[(51, 2)]
+            .modifier
+            .contains(ratatui::style::Modifier::BOLD));
+        assert_eq!(
+            cell_fg(&h, &format!("#{number} ·")),
+            Some(
+                h.app
+                    .config
+                    .theme
+                    .style(switchbard_tui::config::Surface::Hint)
+                    .fg
+                    .unwrap()
+            ),
+        );
+        assert_eq!(
+            cell_fg(&h, "checks and review"),
+            Some(
+                h.app
+                    .config
+                    .theme
+                    .style(switchbard_tui::config::Surface::Accent)
+                    .fg
+                    .unwrap()
+            ),
+        );
         assert!(
             detail.contains("State"),
             "PR list remains beside the detail: {detail}"
@@ -72,7 +99,7 @@ fn live_repository_renders_actual_pull_requests() {
         if h.app.pull_requests.visible.len() > 1 {
             let next = h.press(KeyCode::Char('j'));
             assert_ne!(h.app.pull_requests.row().unwrap().id, previous);
-            assert!(next.contains(" PR details "), "{next}");
+            assert!(!next.contains(" PR details "), "{next}");
             h.press(KeyCode::Char('k'));
             assert_eq!(h.app.pull_requests.row().unwrap().id, previous);
         }
@@ -238,4 +265,26 @@ fn live_all_states_can_be_filtered_without_refetching() {
         assert_eq!(h.app.pull_requests.filter, "status:open");
     }
     println!("{}", h.render());
+}
+
+#[test]
+fn pr_detail_matches_task_pane_frame_and_empty_state() {
+    let mut h = Harness::new();
+    for (width, height) in [(40, 12), (80, 24), (120, 40), (180, 50)] {
+        h.terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        h.press(KeyCode::Enter);
+        let task = h.terminal.backend().buffer().clone();
+        h.press(KeyCode::Tab);
+        h.press(KeyCode::Enter);
+        let screen = h.render();
+        let pr = h.terminal.backend().buffer();
+        for x in width / 2..width {
+            assert_eq!(pr[(x, 1)], task[(x, 1)], "pane top border: {screen}");
+        }
+        assert!(screen.contains("nothing selected"), "{screen}");
+        h.press(KeyCode::Enter);
+        h.press(KeyCode::Tab);
+    }
+    settle(&mut h);
 }
