@@ -4,12 +4,12 @@ title: Share PR column controls and saved view settings with Tasks
 status: In Review
 assignee: []
 created_date: '2026-09-07 01:32'
-updated_date: '2026-09-07 02:15'
+updated_date: '2026-09-07 02:20'
 labels:
   - tui
   - github
   - parity
-  - ball:agent
+  - ball:me
 dependencies: []
 priority: medium
 parent_task_id: '141'
@@ -44,4 +44,6 @@ Delivery run 01M1X6S8BVE6H8F1BVR3A5H2CK: rebase onto current main completed and 
 Owner approved the missing-visual-evidence gate and instructed continue. Run 01M1X6S8BVE6H8F1BVR3A5H2CK resumed: test gate approved using the installed build and recorded real E2E evidence; documentation/lint/push/PR/CI pending. This is not a claim of a captured screenshot or human appearance approval.
 
 PR #136 is open at published commit 1e0af80e45b1c84cc241f41f9468e537bd1bbea3; CI is running. Full preflight passed on rerun after an intermittent mission-sidecar timeout; no source fix was made for that timeout. Original local feature history is preserved because guarded sync refused rewritten history; final install is being verified from a separate checkout of the published commit.
+
+Delivery verified: PR #136 at 1e0af80e45b1c84cc241f41f9468e537bd1bbea3 has all eight GitHub checks passing. Exact published revision passed mise run tui-install and eight live GitHub-data E2E tests, and is installed locally. Earlier 20-test suite also passed. Native screenshot gap was explicitly approved by the owner. Full workspace preflight passed on rerun after a mission-sidecar timeout; no timeout fix is claimed. Implementation is ready for review; PR remains open and unmerged.
 <!-- SECTION:NOTES:END -->
