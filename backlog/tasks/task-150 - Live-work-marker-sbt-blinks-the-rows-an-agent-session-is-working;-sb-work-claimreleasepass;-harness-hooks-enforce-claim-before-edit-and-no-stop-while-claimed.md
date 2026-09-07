@@ -4,11 +4,11 @@ title: 'Live work marker: sbt blinks the rows an agent session is working; sb wo
 status: In Progress
 assignee: []
 created_date: '2026-09-04 10:22'
-updated_date: '2026-09-04 10:41'
+updated_date: '2026-09-04 11:01'
 labels:
   - tui
   - agent-protocol
-  - ball:agent
+  - ball:me
 dependencies: []
 priority: high
 references:

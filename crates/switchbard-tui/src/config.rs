@@ -45,9 +45,10 @@ pub enum Action {
     Help,
     Quit,
     View,
+    Page,
     Group,
     Settings,
-    /// The task chord: rank digits, `t`/`d`/`p` for the top list, `g` for goals.
+    /// The task chord: rank digits, Ball, top-list, completion, and goals actions.
     Rank,
 }
 
@@ -74,6 +75,7 @@ impl Action {
             "help" => Action::Help,
             "quit" => Action::Quit,
             "view" => Action::View,
+            "page" => Action::Page,
             "group" => Action::Group,
             "settings" => Action::Settings,
             "task" | "rank" => Action::Rank,
@@ -103,6 +105,7 @@ impl Action {
             Action::Help => "help".to_string(),
             Action::Quit => "quit".to_string(),
             Action::View => "view".to_string(),
+            Action::Page => "page".to_string(),
             Action::Group => "group".to_string(),
             Action::Settings => "settings".to_string(),
             Action::Rank => "task".to_string(),
@@ -356,6 +359,10 @@ pub struct Config {
     pub palette: Vec<String>,
     /// The presets `:palette <name>` and `palette = "<name>"` choose from.
     pub palettes: Vec<(String, Vec<String>)>,
+    /// The presets `:theme <name>` and `theme = "<name>"` choose from, resolved
+    /// at load so switching is a lookup. Sorted, because the failure message
+    /// lists them and an unstable order would make it unreadable.
+    pub themes: Vec<(String, Theme)>,
     /// Where `:bug` and `:idea` file: sbt's own repo, not the one being browsed.
     /// `None` files into the current repo.
     pub report_repo: Option<PathBuf>,
@@ -363,6 +370,7 @@ pub struct Config {
     pub work_period_ms: u64,
     /// Redraws per period: how smooth the fade is.
     pub work_frames: u64,
+    pub pr_refresh_seconds: u64,
     /// Soft-clip strength of the pulse: 0 is a pure sine, 2 flattens the tops and bottoms.
     pub work_flatten: f64,
     pub warnings: Vec<String>,
@@ -457,6 +465,7 @@ struct RawConfig {
     report_repo: Option<String>,
     work_period_ms: Option<u64>,
     work_frames: Option<u64>,
+    pr_refresh_seconds: Option<u64>,
     work_flatten: Option<f64>,
     palettes: Vec<(String, Vec<String>)>,
 }
@@ -477,6 +486,10 @@ impl RawConfig {
             report_repo: table.get::<Option<String>>("report_repo").ok().flatten(),
             work_period_ms: work_setting(&table, "period_ms"),
             work_frames: work_setting(&table, "frames"),
+            pr_refresh_seconds: table
+                .get::<Option<u64>>("pr_refresh_seconds")
+                .ok()
+                .flatten(),
             work_flatten: work_setting_f64(&table, "flatten"),
             palettes: named_string_lists(&table, "palettes")?,
         })
@@ -507,6 +520,9 @@ impl RawConfig {
         }
         if over.work_period_ms.is_some() {
             self.work_period_ms = over.work_period_ms;
+        }
+        if over.pr_refresh_seconds.is_some() {
+            self.pr_refresh_seconds = over.pr_refresh_seconds;
         }
         if over.work_frames.is_some() {
             self.work_frames = over.work_frames;
@@ -551,30 +567,25 @@ impl RawConfig {
         };
         raw_styles.extend(self.theme);
         raw_columns.extend(self.theme_columns);
-        let mut styles = HashMap::new();
-        for (name, raw) in raw_styles {
-            match Surface::parse(&name) {
-                Some(surface) => {
-                    styles.insert(surface, raw.into_style(&name, &mut warnings));
-                }
-                None => warnings.push(format!("unknown theme surface '{name}'")),
-            }
-        }
-        let mut theme_columns = HashMap::new();
-        for (column_name, surface_name) in raw_columns {
-            match (Column::parse(&column_name), Surface::parse(&surface_name)) {
-                (Some(column), Some(surface)) => {
-                    theme_columns.insert(column, surface);
-                }
-                _ => warnings.push(format!(
-                    "theme.columns: '{column_name} = {surface_name}' names no column or surface"
-                )),
-            }
-        }
-        let theme = Theme {
-            styles,
-            columns: theme_columns,
-        };
+
+        // Every preset is resolved, not just the selected one, so `:theme` can
+        // switch by lookup and a broken user preset is reported at load rather
+        // than the first time it is picked. `palettes` already validates all of
+        // its entries this way; a theme that only warned once chosen would be
+        // the odd one out.
+        let mut themes: Vec<(String, Theme)> = self
+            .themes
+            .iter()
+            .map(|(name, (styles, columns))| {
+                (
+                    name.clone(),
+                    resolve_theme(styles.clone(), columns.clone(), &mut warnings),
+                )
+            })
+            .collect();
+        themes.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+        let theme = resolve_theme(raw_styles, raw_columns, &mut warnings);
         let mut glyphs: HashMap<Column, HashMap<String, String>> = HashMap::new();
         for (column_name, map) in self.glyphs {
             match Column::parse(&column_name) {
@@ -628,9 +639,11 @@ impl RawConfig {
             glyphs,
             palette,
             palettes,
+            themes,
             report_repo,
             work_period_ms: self.work_period_ms.unwrap_or(DEFAULT_WORK_PERIOD_MS),
             work_frames: self.work_frames.unwrap_or(DEFAULT_WORK_FRAMES).max(1),
+            pr_refresh_seconds: self.pr_refresh_seconds.unwrap_or(60).clamp(30, 3600),
             work_flatten: self.work_flatten.unwrap_or(DEFAULT_WORK_FLATTEN).max(0.0),
             warnings,
         }
@@ -674,6 +687,36 @@ fn named_string_lists(table: &Table, key: &str) -> mlua::Result<Vec<(String, Vec
     }
     out.sort();
     Ok(out)
+}
+
+/// Turns one preset's raw surface/column tables into a `Theme`. Shared by config
+/// load and `:theme` so a preset can never resolve two different ways.
+fn resolve_theme(
+    raw_styles: HashMap<String, RawStyle>,
+    raw_columns: HashMap<String, String>,
+    warnings: &mut Vec<String>,
+) -> Theme {
+    let mut styles = HashMap::new();
+    for (name, raw) in raw_styles {
+        match Surface::parse(&name) {
+            Some(surface) => {
+                styles.insert(surface, raw.into_style(&name, warnings));
+            }
+            None => warnings.push(format!("unknown theme surface '{name}'")),
+        }
+    }
+    let mut columns = HashMap::new();
+    for (column_name, surface_name) in raw_columns {
+        match (Column::parse(&column_name), Surface::parse(&surface_name)) {
+            (Some(column), Some(surface)) => {
+                columns.insert(column, surface);
+            }
+            _ => warnings.push(format!(
+                "theme.columns: '{column_name} = {surface_name}' names no column or surface"
+            )),
+        }
+    }
+    Theme { styles, columns }
 }
 
 /// `theme = { surface = "color" | { fg=, bg=, bold= ... }, columns = { id = "label" } }`.

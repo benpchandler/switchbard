@@ -5,6 +5,8 @@ mod paint_flow;
 mod pickers;
 mod slots;
 
+use crate::page::Page;
+
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -36,8 +38,10 @@ pub enum Mode {
     ViewSaveSlot,
     /// After `v g`: a digit or `d` picks the slot to promote to the global file.
     ViewGlobalSlot,
-    /// After `t`: 1-5 ranks the selected task, `d` drops it, `p` pins/unpins the Top 5.
+    /// After `t`: rank, assign the ball, complete, pin, or link goals.
     RankChord,
+    /// After `t b`: type a new named ball holder, then Enter assigns it.
+    BallName,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,9 +102,14 @@ pub struct App {
     pub view: usize,
     /// Filter, sort, columns, glyphs, paint: what a slot saves and a restart resumes.
     pub state: ViewState,
+    inactive_state: ViewState,
+    inactive_views: ViewStore,
+    inactive_view: usize,
     pub mode: Mode,
     pub input: String,
     pub pane: Pane,
+    pub page: Page,
+    pub pull_requests: crate::pull_requests::PullRequests,
     pub picker: Option<ValuePicker>,
     pub column_purpose: ColumnPurpose,
     pub status: String,
@@ -122,7 +131,15 @@ impl App {
         } = paths;
         let config = config::load(config_path.as_deref());
         let (settings, settings_warnings) = SettingsStore::load(global_settings, repo_settings);
-        let (views, view_warnings) = ViewStore::load(global_views, repo_views);
+        let (mut pr_views, pr_warnings) = ViewStore::load_with_defaults(
+            global_views.as_ref().map(|p| p.with_extension("prs.lua")),
+            repo_views.as_ref().map(|p| p.with_extension("prs.lua")),
+            vec![ViewState::pull_requests()],
+        );
+        pr_views.sanitize(Page::PullRequests);
+        let pr_state = pr_views.get(0).unwrap_or_else(ViewState::pull_requests);
+        let (mut views, view_warnings) = ViewStore::load(global_views, repo_views);
+        views.sanitize(Page::Tasks);
         let mut app = App {
             repo_root: repo_root.to_path_buf(),
             config_seen: config_path.as_deref().and_then(config::modified_at),
@@ -146,10 +163,15 @@ impl App {
             views,
             view: 0,
             state: ViewState::default(),
+            inactive_state: pr_state,
+            inactive_views: pr_views,
+            inactive_view: 0,
             config,
             mode: Mode::Browse,
             input: String::new(),
             pane: Pane::None,
+            page: Page::Tasks,
+            pull_requests: Default::default(),
             picker: None,
             column_purpose: ColumnPurpose::Filter,
             status: String::new(),
@@ -164,6 +186,9 @@ impl App {
         app.report_config_warnings();
         if let Some(warning) = view_warnings.first() {
             app.fail(format!("views: {warning}"));
+        }
+        if let Some(warning) = pr_warnings.first() {
+            app.fail(format!("PR views: {warning}"));
         }
         if let Some(warning) = settings_warnings.first() {
             app.fail(format!("settings: {warning}"));
@@ -233,7 +258,8 @@ impl App {
             .map(|task| task.id.clone())
             .unwrap_or_else(|| "nothing".to_string());
         format!(
-            "view={} filter=\"{}\" sort={} selected={selected} pane={:?}",
+            "page={:?} view={} filter=\"{}\" sort={} selected={selected} pane={:?}",
+            self.page,
             self.view_label(),
             self.state.filter,
             self.state
@@ -244,14 +270,67 @@ impl App {
         )
     }
 
-    /// `slot\tfilter\tsort\tselected`, enough to land where the user was after a self-restart.
+    /// Preserve the page and task view across a self-restart; old task-only records still read.
     pub fn resume_state(&self) -> String {
-        format!("{}\t{}\t{}", self.view, self.selected, self.state.to_lua())
+        let (tasks, task_slot, prs, pr_slot) = if self.page == Page::Tasks {
+            (
+                &self.state,
+                self.view,
+                &self.inactive_state,
+                self.inactive_view,
+            )
+        } else {
+            (
+                &self.inactive_state,
+                self.inactive_view,
+                &self.state,
+                self.view,
+            )
+        };
+        format!(
+            "pages={}",
+            serde_json::to_string(&(
+                self.page == Page::PullRequests,
+                task_slot,
+                self.selected,
+                tasks.to_lua(),
+                pr_slot,
+                prs.to_lua(),
+                self.pull_requests.selected,
+                self.pull_requests.selection_identity()
+            ))
+            .expect("page state serialization")
+        )
     }
 
     pub fn resume_from(&mut self, state: Option<&str>) {
         let Some(state) = state else {
             return;
+        };
+        if let Some(record) = state.strip_prefix("pages=") {
+            self.resume_pages(record);
+            return;
+        }
+        if self.page == Page::PullRequests {
+            self.toggle_page_state();
+        }
+        let state = if let Some(rest) = state.strip_prefix("prfilter=") {
+            if let Some((filter, record)) = rest.split_once('\t') {
+                self.pull_requests.filter = serde_json::from_str(filter).unwrap_or_default();
+                record
+            } else {
+                state
+            }
+        } else {
+            state
+        };
+        let was_pr = state.starts_with("prs\t");
+        let state = if let Some(record) = state.strip_prefix("prs\t") {
+            self.page = Page::Tasks;
+            record
+        } else {
+            self.page = Page::Tasks;
+            state
         };
         let mut parts = state.splitn(3, '\t');
         if let Some(slot) = parts.next().and_then(|n| n.parse().ok()) {
@@ -260,16 +339,63 @@ impl App {
         let selected = parts.next().and_then(|n| n.parse().ok());
         if let Some(record) = parts.next() {
             self.state = ViewState::from_lua(record);
+            self.state.sanitize(Page::Tasks);
         }
         self.refilter();
         if let Some(selected) = selected {
             self.select(selected);
+        }
+        self.inactive_state.filter = self.pull_requests.filter.clone();
+        if was_pr {
+            self.toggle_page_state();
+        }
+        self.status = "updated to the new build".to_string();
+    }
+
+    fn resume_pages(&mut self, record: &str) {
+        type Resume = (
+            bool,
+            usize,
+            usize,
+            String,
+            usize,
+            String,
+            usize,
+            Option<String>,
+        );
+        let parsed = serde_json::from_str::<Resume>(record).or_else(|_| {
+            serde_json::from_str::<(bool, usize, usize, String, usize, String, usize)>(record).map(
+                |(page, slot, selected, tasks, pr_slot, prs, pr_selected)| {
+                    (page, slot, selected, tasks, pr_slot, prs, pr_selected, None)
+                },
+            )
+        });
+        let Ok((pr_page, task_slot, selected, tasks, pr_slot, prs, pr_selected, pr_id)) = parsed
+        else {
+            return;
+        };
+        if self.page == Page::PullRequests {
+            self.toggle_page_state();
+        }
+        self.view = task_slot;
+        self.state = ViewState::from_lua(&tasks);
+        self.state.sanitize(Page::Tasks);
+        self.inactive_view = pr_slot;
+        self.inactive_state = ViewState::from_lua(&prs);
+        self.inactive_state.sanitize(Page::PullRequests);
+        self.refilter();
+        self.select(selected);
+        self.pull_requests.selected = pr_selected;
+        self.pull_requests.restore_selection(pr_id);
+        if pr_page {
+            self.toggle_page_state();
         }
         self.status = "updated to the new build".to_string();
     }
 
     /// Cheap per-tick work: pick up edits to the config file or the task files.
     pub fn tick(&mut self) {
+        self.refresh_pr_state();
         if let Some(path) = self.config_path.as_deref() {
             let now = config::modified_at(path);
             if now != self.config_seen {
@@ -340,6 +466,7 @@ impl App {
             (period / self.config.work_frames).max(16),
         ))
     }
+
     /// `w`: the owner passes the selected task; every session's claim on it ends.
     fn pass_work(&mut self) {
         let Some(task) = self.selected_task() else {
@@ -387,14 +514,18 @@ impl App {
             Mode::ViewSaveSlot => self.handle_view_save_slot_key(event),
             Mode::ViewGlobalSlot => self.handle_view_global_slot_key(event),
             Mode::RankChord => self.handle_rank_chord_key(event),
+            Mode::BallName => self.handle_ball_name_key(event),
         }
     }
 
-    /// After `t`: digits accumulate in `input` (two digits once the list is long
-    /// enough that a second could follow), Enter commits, `t` appends, `d` drops,
-    /// `p` pins or unpins the section, `g` opens the goal panel.
+    /// After `t`: digits rank, `b` assigns the ball, `d` marks Done, `p` pins,
+    /// and `g` opens goals.
     fn handle_rank_chord_key(&mut self, event: KeyEvent) {
         match event.code {
+            KeyCode::Char('b') => {
+                self.input.clear();
+                self.open_ball_picker();
+            }
             KeyCode::Char(digit) if digit.is_ascii_digit() => {
                 self.input.push(digit);
                 let place: usize = self.input.parse().unwrap_or(0);
@@ -423,7 +554,12 @@ impl App {
                 self.mode = Mode::Browse;
                 self.set_rank(self.top.len() + 1);
             }
-            KeyCode::Char('d') | KeyCode::Delete | KeyCode::Backspace => {
+            KeyCode::Char('d') => {
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.mark_done()
+            }
+            KeyCode::Delete | KeyCode::Backspace => {
                 self.input.clear();
                 self.mode = Mode::Browse;
                 self.drop_rank()
@@ -454,7 +590,8 @@ impl App {
             other => {
                 self.input.clear();
                 self.mode = Mode::Browse;
-                self.status = format!("{other:?} is not a rank; digits, t, d, or p");
+                self.status =
+                    format!("{other:?} is not a task action; digits, t, d, delete, p, or g");
             }
         }
     }
@@ -516,19 +653,52 @@ impl App {
             self.status = "no task selected".to_string();
             return;
         };
-        let (id, current) = (task.id.clone(), Ball::of(task));
-        let next = Ball::next(current);
-        match switchbard_core::set_backlog_ball(&self.repo_root, &id, next) {
+        let current = Ball::of(task);
+        let next = Ball::next(current.as_ref());
+        self.assign_ball(next);
+    }
+
+    fn assign_ball(&mut self, ball: Option<Ball>) {
+        let Some(task) = self.selected_task() else {
+            self.status = "no task selected".to_string();
+            return;
+        };
+        let id = task.id.clone();
+        match switchbard_core::set_backlog_ball(&self.repo_root, &id, ball.clone()) {
             Ok(_) => {
-                self.status = match next {
-                    Some(ball) => format!("{id}: ball → {}", Ball::text(Some(ball))),
+                self.status = match ball {
+                    Some(ref ball) => format!("{id}: ball → {}", ball.text()),
                     None => format!("{id}: ball dropped"),
                 };
-                self.telemetry
-                    .record("action", format!("ball {}", Ball::text(next)));
+                self.telemetry.record(
+                    "action",
+                    format!("ball {}", ball.as_ref().map(Ball::text).unwrap_or("")),
+                );
                 self.reload_tasks();
             }
             Err(error) => self.fail(format!("{id}: {error}")),
+        }
+    }
+
+    fn handle_ball_name_key(&mut self, event: KeyEvent) {
+        match event.code {
+            KeyCode::Esc => self.open_ball_picker(),
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Enter => match Ball::parse(&self.input) {
+                Ok(Some(Ball::Other(holder))) => {
+                    self.input.clear();
+                    self.mode = Mode::Browse;
+                    self.assign_ball(Some(Ball::Other(holder)));
+                }
+                Ok(_) => {
+                    self.status = "enter a named person, or choose me, agent, or none".to_string()
+                }
+                Err(error) => self.status = error.to_string(),
+            },
+            KeyCode::Char(character) => self.input.push(character),
+            _ => {}
         }
     }
 
@@ -677,20 +847,25 @@ impl App {
         if self.input.contains(' ') {
             return Vec::new();
         }
-        let mut names: Vec<String> = ["bug", "idea", "group", "palette", "reload", "q"]
+        let mut names: Vec<String> = ["bug", "idea", "group", "palette", "theme", "reload", "q"]
             .iter()
             .map(|name| name.to_string())
             .collect();
+        if self.page == Page::PullRequests {
+            names.push("more".to_string());
+        }
         names.retain(|name| name.starts_with(typed) && name != typed);
         names
     }
 
     fn handle_browse_key(&mut self, event: KeyEvent) {
         let chord = KeyChord::from_event(&event);
-        if let (KeyCode::Char(digit), false) = (event.code, chord.ctrl) {
-            if let Some(position) = digit.to_digit(10).filter(|n| *n > 0) {
-                self.open_column_actions(position as usize);
-                return;
+        {
+            if let (KeyCode::Char(digit), false) = (event.code, chord.ctrl) {
+                if let Some(position) = digit.to_digit(10).filter(|n| *n > 0) {
+                    self.open_column_actions(position as usize);
+                    return;
+                }
             }
         }
         match self.config.keys.get(&chord).cloned() {
@@ -716,15 +891,17 @@ impl App {
             KeyCode::Enter => {
                 self.mode = Mode::Browse;
                 self.telemetry
-                    .record("action", format!("filter_apply {}", self.state.filter));
+                    .record("action", format!("filter_apply {}", self.filter_text()));
             }
             KeyCode::Backspace => {
-                self.state.filter.pop();
-                self.refilter();
+                let mut text = self.filter_text().to_string();
+                text.pop();
+                self.set_filter(text);
             }
             KeyCode::Char(c) => {
-                self.state.filter.push(c);
-                self.refilter();
+                let mut text = self.filter_text().to_string();
+                text.push(c);
+                self.set_filter(text);
             }
             _ => {}
         }
@@ -763,8 +940,77 @@ impl App {
         }
     }
 
-    fn apply(&mut self, action: &Action) {
+    fn refresh_pr_state(&mut self) {
+        let before = self.pull_requests.row().map(|row| row.id.clone());
+        if self.pull_requests.tick(
+            &self.repo_root,
+            self.page == Page::PullRequests,
+            self.config.pr_refresh_seconds,
+        ) {
+            self.pull_requests.refresh_links(&self.tasks);
+            self.pull_requests.refilter();
+            let after = self.pull_requests.row().map(|row| row.id.clone());
+            if self.page == Page::PullRequests && self.pane == Pane::Detail && before != after {
+                self.pane = Pane::None;
+                self.status = "Selected PR is no longer in the filtered list".into();
+            }
+        }
+    }
+
+    fn apply_pr_action(&mut self, action: &Action) -> bool {
+        if self.pane == Pane::Detail {
+            let delta = match action {
+                Action::PageDown => Some(self.page_size as i32),
+                Action::PageUp => Some(-(self.page_size as i32)),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                self.pull_requests.detail_scroll =
+                    (i32::from(self.pull_requests.detail_scroll) + delta).clamp(0, 65535) as u16;
+                return true;
+            }
+        }
         match action {
+            Action::Down => self.pull_requests.step(1),
+            Action::Up => self.pull_requests.step(-1),
+            Action::Top => self.pull_requests.step(isize::MIN),
+            Action::Bottom => self.pull_requests.step(isize::MAX),
+            Action::PageDown => self.pull_requests.step(self.page_size as isize),
+            Action::PageUp => self.pull_requests.step(-(self.page_size as isize)),
+            Action::Open => {
+                self.pull_requests.detail_scroll = 0;
+                self.pane = if self.pane == Pane::Detail {
+                    Pane::None
+                } else {
+                    Pane::Detail
+                }
+            }
+            Action::Reload => {
+                self.pull_requests.refresh(&self.repo_root);
+                self.status.clear();
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn apply(&mut self, action: &Action) {
+        if !self.page.allows(action) {
+            self.status = "Switch to Tasks to use task controls".to_string();
+            return;
+        }
+        if self.page == Page::PullRequests && self.apply_pr_action(action) {
+            return;
+        }
+        match action {
+            Action::Page => {
+                self.toggle_page_state();
+                if self.page == Page::PullRequests {
+                    self.refresh_pr_state();
+                }
+                self.pane = Pane::None;
+                self.status.clear();
+            }
             Action::Down => self.step(1),
             Action::Up => self.step(-1),
             Action::Top => self.select(0),
@@ -780,7 +1026,7 @@ impl App {
             Action::Back => {
                 if self.pane != Pane::None {
                     self.pane = Pane::None;
-                } else if !self.state.filter.is_empty() {
+                } else if !self.filter_text().is_empty() {
                     self.set_filter(String::new());
                 }
                 self.status.clear();
@@ -788,8 +1034,9 @@ impl App {
             Action::Filter => {
                 self.mode = Mode::Filter;
                 self.status.clear();
-                if !self.state.filter.is_empty() && !self.state.filter.ends_with(' ') {
-                    self.state.filter.push(' ');
+                let text = self.filter_text();
+                if !text.is_empty() && !text.ends_with(' ') {
+                    self.set_filter(format!("{text} "));
                 }
             }
             Action::FilterColumn => self.open_column_chooser(ColumnPurpose::Filter),
@@ -803,7 +1050,7 @@ impl App {
                 self.mode = Mode::RankChord;
                 self.input.clear();
                 self.status = format!(
-                    "task: a number ranks it (1 is top, {} last) · t appends · d drops · p {} · g goals",
+                    "task: a number ranks it (1 is top, {} last) · b Ball · t appends · d Done · delete drops · p {} · g goals",
                     self.top.len() + 1,
                     if self.state.pin_top { "unpins" } else { "pins" }
                 );
@@ -817,7 +1064,11 @@ impl App {
             Action::Reload => {
                 self.reload_config();
                 self.reload_tasks();
-                self.status = format!("reloaded {} tasks", self.tasks.len());
+                self.status = if self.page == Page::Tasks {
+                    format!("reloaded {} tasks", self.tasks.len())
+                } else {
+                    "PR data is not connected yet".to_string()
+                };
             }
             Action::Help => {
                 self.pane = match self.pane {
@@ -836,12 +1087,48 @@ impl App {
         }
     }
 
+    /// `d`: mark the selected task Done. This is deliberately an ordinary
+    /// native status edit, not archival: completed-task retention stays a
+    /// separate, explicit lifecycle decision.
+    fn mark_done(&mut self) {
+        let Some(task) = self.selected_task() else {
+            self.status = "no task selected".to_string();
+            return;
+        };
+        let id = task.id.clone();
+        if task.status.eq_ignore_ascii_case("Done") {
+            self.status = format!("{id} is already Done");
+            return;
+        }
+        let patch = switchbard_core::BacklogTaskPatch {
+            status: Some("Done".to_string()),
+            ..Default::default()
+        };
+        match switchbard_core::edit_backlog_task(&self.repo_root, &id, &patch) {
+            Ok(_) => {
+                self.reload_tasks();
+                self.select_task(&id);
+                self.status = format!("{id} is Done");
+                self.telemetry.record("action", format!("done {id}"));
+            }
+            Err(error) => self.fail(format!("{id}: {error}")),
+        }
+    }
+
     fn run_command(&mut self, command: &str) {
         let (verb, rest) = command.split_once(' ').unwrap_or((command, ""));
+        if self.page == Page::PullRequests && matches!(verb, "group" | "goal") {
+            self.status = "Switch to Tasks to use task controls".to_string();
+            return;
+        }
         match verb {
+            "more" if self.page == Page::PullRequests => {
+                self.pull_requests.load_more(&self.repo_root)
+            }
             "q" | "quit" => self.should_quit = true,
             "reload" => self.apply(&Action::Reload),
             "palette" => self.choose_palette(rest.trim()),
+            "theme" => self.choose_theme(rest.trim()),
             "group" => match Grouping::parse(rest) {
                 Some(grouping) => self.set_group(grouping),
                 None => self.fail(format!(
@@ -885,6 +1172,30 @@ impl App {
         self.config.palette = colors;
         self.status = format!("palette {name} · keep it: palette = \"{name}\" in tui.lua");
         self.telemetry.record("action", format!("palette {name}"));
+    }
+
+    /// `:theme <name>`. Swaps sbt's own surfaces -- border, header, cursor row,
+    /// hints -- for another preset. Deliberately does NOT touch `palette`: that
+    /// is what `auto` hands out when painting a column, a separate choice that
+    /// a theme switch should not silently redecide.
+    ///
+    /// In-memory only, like `:palette`. Any `theme = { ... }` surface overrides
+    /// from tui.lua are part of the resolved theme this replaces, so they drop
+    /// until the next reload -- which is why the status line names the file.
+    fn choose_theme(&mut self, name: &str) {
+        let Some((_, theme)) = self.config.themes.iter().find(|(known, _)| known == name) else {
+            let names: Vec<&str> = self
+                .config
+                .themes
+                .iter()
+                .map(|(known, _)| known.as_str())
+                .collect();
+            self.fail(format!("theme: one of {}", names.join(", ")));
+            return;
+        };
+        self.config.theme = theme.clone();
+        self.status = format!("theme {name} · keep it: theme = \"{name}\" in tui.lua");
+        self.telemetry.record("action", format!("theme {name}"));
     }
 
     fn file_report(&mut self, kind: ReportKind, intent: &str) {
@@ -934,33 +1245,73 @@ impl App {
         }
     }
 
+    fn toggle_page_state(&mut self) {
+        std::mem::swap(&mut self.state, &mut self.inactive_state);
+        std::mem::swap(&mut self.views, &mut self.inactive_views);
+        std::mem::swap(&mut self.view, &mut self.inactive_view);
+        self.page = self.page.toggle();
+        self.state.sanitize(self.page);
+        self.refilter();
+    }
+
+    pub fn page_columns(&self) -> &'static [Column] {
+        if self.page == Page::PullRequests {
+            &Column::PR_ALL
+        } else {
+            &Column::ALL
+        }
+    }
+
+    pub fn filter_text(&self) -> &str {
+        if self.page == Page::PullRequests {
+            &self.pull_requests.filter
+        } else {
+            &self.state.filter
+        }
+    }
+
     fn set_filter(&mut self, text: String) {
+        if self.page == Page::PullRequests {
+            self.state.filter = text.clone();
+            self.pull_requests.filter = text;
+            self.pull_requests.refilter();
+            return;
+        }
         self.state.filter = text;
         self.refilter();
     }
 
     fn refilter(&mut self) {
-        let base = self.settings.effective().base_filter(&self.state.filter);
-        let filter = Filter::parse(&format!("{base} {}", self.state.filter));
+        if self.page == Page::PullRequests {
+            self.pull_requests.filter = self.state.filter.clone();
+            self.pull_requests.sort = self.state.sort;
+            self.pull_requests.refilter();
+            return;
+        }
+        self.refilter_tasks();
+    }
+
+    fn refilter_tasks(&mut self) {
+        let state = if self.page == Page::Tasks {
+            &self.state
+        } else {
+            &self.inactive_state
+        };
+        let base = self.settings.effective().base_filter(&state.filter);
+        let filter = Filter::parse(&format!("{base} {}", state.filter));
         self.visible = (0..self.tasks.len())
             .filter(|&index| filter.matches(&self.tasks[index], &self.goals))
             .collect();
-        if let Some(sort) = self.state.sort {
+        if let Some(sort) = state.sort {
             sort::apply(&self.tasks, &mut self.visible, sort, &self.top, &self.goals);
         }
-        let pinned: &[String] = if self.state.pin_top { &self.top } else { &[] };
+        let pinned: &[String] = if state.pin_top { &self.top } else { &[] };
         let headings = group::Headings {
             projects: &self.projects,
             goals: &self.goals,
             goal_summaries: &self.goal_summaries,
         };
-        self.rows = group::rows(
-            &self.tasks,
-            &self.visible,
-            &self.state.group,
-            &headings,
-            pinned,
-        );
+        self.rows = group::rows(&self.tasks, &self.visible, &state.group, &headings, pinned);
         self.select(self.selected);
     }
 
@@ -1085,6 +1436,7 @@ impl App {
     }
 
     fn reload_tasks(&mut self) {
+        let selected_id = self.selected_task().map(|task| task.id.clone());
         self.tasks_seen = config::modified_at(&self.repo_root.join("backlog/tasks"));
         match tasks::load(&self.repo_root) {
             Ok(backlog) => {
@@ -1096,7 +1448,20 @@ impl App {
             }
             Err(error) => self.fail(error.to_string()),
         }
-        self.refilter();
+        self.refilter_tasks();
+        if let Some(id) = selected_id {
+            if let Some(index) = self
+                .rows
+                .iter()
+                .position(|row| matches!(row, Row::Task(i) if self.tasks[*i].id == id))
+            {
+                self.select(index);
+            }
+        }
+        self.pull_requests.refresh_links(&self.tasks);
+        if self.page == Page::PullRequests {
+            self.refilter();
+        }
     }
 
     fn reload_config(&mut self) {

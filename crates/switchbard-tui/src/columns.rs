@@ -23,6 +23,12 @@ pub enum Column {
     Goal,
     /// One glyph per live agent session working the task; empty when none is.
     Work,
+    Lifecycle,
+    Tasks,
+    Checks,
+    Review,
+    Merge,
+    Draft,
 }
 
 pub struct ColumnSpec {
@@ -43,7 +49,7 @@ pub struct ColumnSpec {
     pub groupable: bool,
 }
 
-pub const COLUMNS: [ColumnSpec; 10] = [
+pub const COLUMNS: [ColumnSpec; 16] = [
     ColumnSpec {
         column: Column::Id,
         name: "id",
@@ -109,7 +115,7 @@ pub const COLUMNS: [ColumnSpec; 10] = [
         name: "ball",
         alias: None,
         header: "ball",
-        width: Some(6),
+        width: Some(14),
         field: Some(FilterField::Ball),
         vocabulary: &["me", "agent"],
         groupable: true,
@@ -144,6 +150,82 @@ pub const COLUMNS: [ColumnSpec; 10] = [
         vocabulary: &[],
         groupable: false,
     },
+    ColumnSpec {
+        column: Column::Lifecycle,
+        name: "lifecycle",
+        alias: None,
+        header: "State",
+        width: Some(7),
+        field: Some(FilterField::Status),
+        vocabulary: &["Open", "Closed", "Merged"],
+        groupable: false,
+    },
+    ColumnSpec {
+        column: Column::Tasks,
+        name: "tasks",
+        alias: None,
+        header: "Tasks",
+        width: Some(12),
+        field: Some(FilterField::Tasks),
+        vocabulary: &[],
+        groupable: false,
+    },
+    ColumnSpec {
+        column: Column::Checks,
+        name: "checks",
+        alias: None,
+        header: "Checks",
+        width: Some(14),
+        field: Some(FilterField::Checks),
+        vocabulary: &[
+            "Failed",
+            "Unknown",
+            "Pending",
+            "Passed",
+            "None observed",
+            "Not fetched",
+        ],
+        groupable: false,
+    },
+    ColumnSpec {
+        column: Column::Review,
+        name: "review",
+        alias: None,
+        header: "Review",
+        width: Some(18),
+        field: Some(FilterField::Review),
+        vocabulary: &[
+            "Changes requested",
+            "Review unknown",
+            "Review required",
+            "Approved",
+        ],
+        groupable: false,
+    },
+    ColumnSpec {
+        column: Column::Merge,
+        name: "merge",
+        alias: None,
+        header: "Merge",
+        width: Some(18),
+        field: Some(FilterField::Merge),
+        vocabulary: &[
+            "Merge conflict",
+            "Mergeability unknown",
+            "No merge conflict",
+        ],
+        groupable: false,
+    },
+    ColumnSpec {
+        column: Column::Draft,
+        name: "draft",
+        alias: None,
+        header: "Draft",
+        width: Some(7),
+        field: Some(FilterField::Draft),
+        vocabulary: &["Draft", "Ready"],
+        groupable: false,
+    },
 ];
 
 impl Column {
@@ -159,6 +241,25 @@ impl Column {
         Column::Rank,
         Column::Goal,
         Column::Work,
+    ];
+
+    pub const PR_ALL: [Column; 8] = [
+        Column::Id,
+        Column::Lifecycle,
+        Column::Tasks,
+        Column::Checks,
+        Column::Title,
+        Column::Review,
+        Column::Merge,
+        Column::Draft,
+    ];
+
+    pub const PR_DEFAULT: [Column; 5] = [
+        Column::Id,
+        Column::Lifecycle,
+        Column::Tasks,
+        Column::Checks,
+        Column::Title,
     ];
 
     pub const DEFAULT_SHOWN: [Column; 4] =
@@ -231,21 +332,54 @@ impl Column {
             Column::Title => vec![task.title.clone()],
             Column::Labels => task.labels.clone(),
             Column::Project => task.project.clone().into_iter().collect(),
-            Column::Ball => {
-                let ball = Ball::text(Ball::of(task));
-                if ball.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![ball.to_string()]
-                }
-            }
+            Column::Ball => Ball::of(task)
+                .map(|ball| ball.text().to_string())
+                .into_iter()
+                .collect(),
             // Rank and work are not on the task: `App::cell` supplies them
             // from the lane and the live session list.
-            Column::Rank | Column::Work => Vec::new(),
+            Column::Rank
+            | Column::Work
+            | Column::Lifecycle
+            | Column::Tasks
+            | Column::Checks
+            | Column::Review
+            | Column::Merge
+            | Column::Draft => Vec::new(),
             Column::Goal => goals_feeding(goals, task)
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
+        }
+    }
+
+    pub fn pr_values(
+        self,
+        row: &switchbard_core::PrListRow,
+        links: &[(String, String)],
+    ) -> Vec<String> {
+        use switchbard_core::{PrChecks, PrLifecycle};
+        match self {
+            Column::Id => vec![row.number.to_string()],
+            Column::Title => vec![row.title.clone()],
+            Column::Lifecycle | Column::Status => vec![row.lifecycle.label().to_string()],
+            Column::Tasks => links.iter().map(|(id, _)| id.clone()).collect(),
+            Column::Checks => vec![if row.lifecycle != PrLifecycle::Open {
+                "Not fetched"
+            } else {
+                match row.checks {
+                    PrChecks::Failed => "Failed",
+                    PrChecks::Unknown => "Unknown",
+                    PrChecks::Running => "Pending",
+                    PrChecks::Passing => "Passed",
+                    PrChecks::NoneObserved => "None observed",
+                }
+            }
+            .to_string()],
+            Column::Review => vec![row.review.label().to_string()],
+            Column::Merge => vec![row.merge.label().to_string()],
+            Column::Draft => vec![if row.draft { "Draft" } else { "Ready" }.to_string()],
+            _ => Vec::new(),
         }
     }
 

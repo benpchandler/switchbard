@@ -128,6 +128,7 @@ impl App {
         };
         self.view = slot;
         self.state = saved;
+        self.state.sanitize(self.page);
         self.refilter();
     }
 }

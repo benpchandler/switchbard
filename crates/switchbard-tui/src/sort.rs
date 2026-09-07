@@ -73,7 +73,7 @@ impl Sort {
 /// Orders offered for a column; semantic only where the vocabulary has one.
 pub fn orders_for(column: Column) -> Vec<Order> {
     match column {
-        Column::Priority | Column::Status => {
+        _ if !column.spec().vocabulary.is_empty() => {
             vec![Order::Semantic, Order::Ascending, Order::Descending]
         }
         _ => vec![Order::Ascending, Order::Descending],

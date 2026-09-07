@@ -4,6 +4,8 @@ mod harness;
 
 use crossterm::event::KeyCode;
 use harness::*;
+use ratatui::style::Color;
+use switchbard_tui::config::Surface;
 
 #[test]
 fn hiding_a_status_applies_under_every_view_and_a_view_that_names_status_wins() {
@@ -64,4 +66,66 @@ fn g_in_the_panel_promotes_this_repos_settings_to_every_repo() {
     assert!(file.contains("hide_statuses = { \"Done\" }"), "{file}");
     h.press(KeyCode::Esc);
     assert!(h.render().contains("hide:done"));
+}
+
+/// `:theme` swaps sbt's own surfaces and leaves the paint palette alone. The
+/// states that matter are the switch itself, a name that does not exist, an
+/// empty name, and what a reload does to a runtime choice.
+#[test]
+fn theme_command_switches_surfaces_reports_unknown_names_and_yields_to_reload() {
+    let mut h = Harness::new();
+    seed(&h.root, "Ship the thing", "todo", &[]);
+    h.press(KeyCode::Char('r'));
+
+    let berg_border = h.app.config.theme.style(Surface::Border).fg;
+
+    h.press(KeyCode::Char(':'));
+    h.type_text("theme darkroom");
+    h.press(KeyCode::Enter);
+    assert_eq!(
+        h.app.status,
+        "theme darkroom · keep it: theme = \"darkroom\" in tui.lua"
+    );
+    let dark_border = h.app.config.theme.style(Surface::Border).fg;
+    assert_eq!(
+        dark_border,
+        Some(Color::Rgb(0x48, 0x3D, 0x34)),
+        "border takes the darkroom preset's value"
+    );
+    assert_ne!(
+        berg_border, dark_border,
+        "the switch actually changed something"
+    );
+
+    // The palette is a separate choice and a theme switch must not redecide it.
+    let palette_before = h.app.config.palette.clone();
+    h.press(KeyCode::Char(':'));
+    h.type_text("theme plain");
+    h.press(KeyCode::Enter);
+    assert_eq!(
+        h.app.config.palette, palette_before,
+        "theme leaves palette alone"
+    );
+
+    // Unknown and empty names both fail the same way, listing what exists.
+    for typed in ["theme nope", "theme"] {
+        h.press(KeyCode::Char(':'));
+        h.type_text(typed);
+        h.press(KeyCode::Enter);
+        assert_eq!(
+            h.app.status, "theme: one of berg, bloomberg, darkroom, plain",
+            "`:{typed}` should list the presets"
+        );
+    }
+
+    // A runtime switch is in-memory only: reload puts the file back in charge.
+    h.press(KeyCode::Char(':'));
+    h.type_text("theme darkroom");
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Char('r'));
+    assert_eq!(
+        h.app.config.theme.style(Surface::Border).fg,
+        berg_border,
+        "reload discards the runtime theme and re-reads the config"
+    );
 }

@@ -5,6 +5,7 @@ use std::str::FromStr;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Mode};
+use crate::ball::Ball;
 use crate::columns::Column;
 use crate::picker::{
     ColumnAction, ColumnPurpose, PaintPick, Payload, PickOption, PickerPurpose, ValuePicker,
@@ -47,8 +48,14 @@ impl App {
         let options = actions
             .into_iter()
             .filter(|action| *action != ColumnAction::Glyphs || self.is_categorical(column))
-            .filter(|action| *action != ColumnAction::Group || column.groupable())
-            .filter(|action| *action != ColumnAction::Abbreviate || column.abbreviable())
+            .filter(|action| {
+                *action != ColumnAction::Group
+                    || (self.page == crate::page::Page::Tasks && column.groupable())
+            })
+            .filter(|action| {
+                *action != ColumnAction::Abbreviate
+                    || (self.page == crate::page::Page::Tasks && column.abbreviable())
+            })
             .map(|action| {
                 PickOption::keyed(action.key(), action.label(), Payload::ColumnAction(action))
             })
@@ -87,6 +94,33 @@ impl App {
         self.telemetry.record("action", "columns");
     }
 
+    /// `t b`: choose a standard holder, a person already named in this repo,
+    /// or the entry path for someone new.
+    pub(super) fn open_ball_picker(&mut self) {
+        let mut people = self
+            .tasks
+            .iter()
+            .filter_map(|task| match Ball::of(task) {
+                Some(Ball::Other(person)) => Some(person),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        people.sort_unstable();
+        people.dedup();
+        let mut options = vec![
+            PickOption::numbered("me", Payload::Ball(Some(Ball::Me))),
+            PickOption::numbered("agent", Payload::Ball(Some(Ball::Agent))),
+            PickOption::numbered("none · drop", Payload::Ball(None)),
+        ];
+        options.extend(people.into_iter().map(|person| {
+            PickOption::numbered(person.clone(), Payload::Ball(Some(Ball::Other(person))))
+        }));
+        options.push(PickOption::numbered("new person…", Payload::NewBallHolder));
+        self.open_picker(PickerPurpose::Ball, options);
+        self.status.clear();
+        self.telemetry.record("action", "ball_picker");
+    }
+
     /// Shown columns first in display order, then the hidden ones.
     pub(super) fn column_picker_options(&self) -> Vec<PickOption> {
         self.state
@@ -94,7 +128,7 @@ impl App {
             .iter()
             .map(|column| PickOption::column(*column, false))
             .chain(
-                Column::ALL
+                self.page_columns()
                     .iter()
                     .filter(|column| !self.state.columns.contains(column))
                     .map(|column| PickOption::column(*column, true)),
@@ -181,7 +215,7 @@ impl App {
 
     /// `1a` or `a` in the columns picker: short form (bare id, H/M/L) on or off.
     pub(super) fn toggle_abbreviated(&mut self, column: Column) {
-        if !column.abbreviable() {
+        if self.page == crate::page::Page::PullRequests || !column.abbreviable() {
             self.status = format!("{} has no short form", column.name());
             return;
         }
@@ -212,10 +246,26 @@ impl App {
             .record("action", format!("column_move {} {delta}", column.name()));
     }
 
+    pub(super) fn column_values(&self, column: Column) -> Vec<(String, usize)> {
+        if self.page == crate::page::Page::PullRequests {
+            self.pull_requests.column_values(column)
+        } else {
+            column
+                .filter_field()
+                .map(|field| tasks::field_values(&self.tasks, field, &self.goals))
+                .unwrap_or_default()
+        }
+    }
+
     pub(super) fn open_filter_picker(&mut self, column: Column) {
-        match column.filter_field() {
+        let field = if self.page == crate::page::Page::PullRequests && column == Column::Id {
+            Some(FilterField::Id)
+        } else {
+            column.filter_field()
+        };
+        match field {
             Some(field) => {
-                let values = tasks::field_values(&self.tasks, field, &self.goals);
+                let values = self.column_values(column);
                 if values.is_empty() {
                     self.status = format!("no {} values to pick from", field.keyword());
                     return;
@@ -455,7 +505,7 @@ impl App {
             .collect();
         let mut shown: Vec<String> = all
             .iter()
-            .filter(|candidate| Filter::field_allows(&self.state.filter, field, candidate))
+            .filter(|candidate| Filter::field_allows(self.filter_text(), field, candidate))
             .cloned()
             .collect();
         match shown.iter().position(|candidate| candidate == value) {
@@ -464,7 +514,7 @@ impl App {
             }
             None => shown.push(value.to_string()),
         }
-        let text = Filter::with_shown(&self.state.filter, field, &all, &shown);
+        let text = Filter::with_shown(self.filter_text(), field, &all, &shown);
         self.set_filter(text);
         self.telemetry.record(
             "action",
@@ -490,7 +540,7 @@ impl App {
         };
         match (picker.purpose, picked.payload) {
             (PickerPurpose::Filter(field), Payload::Text(value)) => {
-                let text = Filter::with_only(&self.state.filter, field, &value);
+                let text = Filter::with_only(self.filter_text(), field, &value);
                 self.set_filter(text);
                 self.telemetry
                     .record("action", format!("filter_pick {}:{value}", field.keyword()));
@@ -571,6 +621,11 @@ impl App {
                 // Same shape as settings: the panel stays open with fresh marks.
                 self.open_goal_picker();
                 self.toggle_goal_link(&name)
+            }
+            (PickerPurpose::Ball, Payload::Ball(ball)) => self.assign_ball(ball),
+            (PickerPurpose::Ball, Payload::NewBallHolder) => {
+                self.mode = Mode::BallName;
+                self.input.clear();
             }
             (PickerPurpose::ColumnActions(column), Payload::ColumnAction(action)) => {
                 self.run_column_action(column, action)

@@ -704,3 +704,23 @@ The control and projection health indicators are independent. Queue drafts and d
   mission-sidecar matrix to mission-sensitive changes.
   The push-to-main trigger remains because `main` is not branch-protected, so it is the only
   independent verification of the actual merge commit.
+
+## TUI page navigation (owner-directed 2026-09-06)
+
+The first PR slice established navigation: Tasks and Pull Requests are separate pages, Tab toggles through the configurable `page` action, and a persistent header marks the active page with brackets and the theme chip. Saved task views remain task views. Switching pages preserves task filters and selection, closes transient detail/help, and cannot operate on hidden tasks. Self-restart retains the page. Later repository PR and controls slices supersede the original unconnected PR-page placeholder.
+
+State/stress evidence: `crates/switchbard-tui/tests/pages.rs` exercises real keys and rendered screens for toggle/return, filtered selection, hidden-task controls, key remapping, help, self-restart, empty backlog, and 80x24 / 120x40 / 180x50 / 40x8 / zero-sized terminals. Loading, remote errors, stale delivery and writes are N/A to this unconnected page shell. Native owner visual review follows installation and is not implied by passing tests.
+
+## TUI repository PR list (owner-directed 2026-09-07)
+
+The next incremental slice reads repository PRs across Open, Closed and Merged for the repository selected by GitHub CLI from the sbt working repo, then pins that resolved github.com repository explicitly for the list read. This is a repository PR surface, not a replacement for the TASK-80 GitHub Project queue/binding model. No source bindings, persistent cache, task writes or GitHub mutations are introduced. It shows up to 100 PRs with an explicit partial flag beyond that bound, and matches only exact canonical recorded task references to observed PR URLs. No title/branch inference or task completion inference is permitted. References in task prose and archived tasks are outside this first association view, which labels scope as loaded task references.
+
+One bounded worker runs off the event/render path. Last-success data stays visible and becomes stale on refresh failure; successful reads refresh while the page is visible at Lua pr_refresh_seconds (60 by default, bounded 30-3600), errors require explicit retry. Snapshots older than twice the interval also show stale. Observation time is distinct from progress. Attention ordering favors observed failures, then unknowns, then pending observations. No required-check completeness or workflow-progress claim is made. Enter opens full-width PR details; Tab returns to preserved Tasks state. Workflow jobs/attempts, linking controls, task-row PR signals and GitHub operations remain subsequent owner-directed slices. Shared filters, sorting, painting, numbered column controls, and independent saved PR settings are implemented in the current parity slice; see `docs/tui-pr-controls-ledger.md`.
+
+## PR lifecycle filters and shared detail interaction (owner correction)
+
+The PR page starts with the repository list across Open, Closed and Merged. Active PRs are a status filter over that list. Fetch bounded metadata first, then enrich loaded active PRs with read-only delivery observations; failed enrichment must not hide the list. Reuse task search/filter grammar and picker interactions, retain independent filters across page switches and self-restart, and disclose incomplete history. Enter opens the selected PR in a right-hand detail pane with the list still visible; row navigation updates that pane and page-scroll keys scroll its contents. This supersedes the earlier open-only source choice. Shared sorting, painting, numbered column controls, and independent saved PR views are now covered by the parity slice; grouping, workflow operations, linking controls and task-row PR signals remain later slices.
+
+## TUI PR controls parity (owner-directed 2026-09-07)
+
+The PR page now reuses the Tasks filter, sort, paint, numbered column, and saved-view controls while retaining isolated PR state and `.prs.lua` persistence. Filters cover cached lifecycle, linked-task, checks, review and merge observations; sorts preserve selected PR identity through refresh; paint supports categorical, row, column and palette rules. The controls remain read-only with respect to GitHub and do not mutate task data. Implementation and E2E evidence are recorded in `docs/tui-pr-controls-ledger.md` and `docs/tui-pr-controls-evidence.md`; delivery, CI, human visual approval and merge remain separate gates.

@@ -4,12 +4,12 @@
 return {
   -- key -> action. Keys: single chars, "enter", "esc", "tab", "up", "down",
   -- "ctrl-<char>". Actions: down, up, top, bottom, page_down, page_up, open,
-  -- back, filter, filter_column, sort_column, columns, paint, ball, pass, group, task, settings, view, command, reload, help, quit.
+  -- back, filter, filter_column, sort_column, columns, paint, ball, pass, group, task, settings, view, command, reload, help, quit, page.
   keys = {
     j = "down", k = "up", down = "down", up = "up",
     g = "top", G = "bottom",
     ["ctrl-d"] = "page_down", ["ctrl-u"] = "page_up",
-    enter = "open", esc = "back",
+    enter = "open", esc = "back", tab = "page",
     ["/"] = "filter", f = "filter_column", s = "sort_column", [":"] = "command",
     c = "columns", p = "paint", b = "ball", w = "pass", o = "group", t = "task", v = "view", [","] = "settings", r = "reload", ["?"] = "help", q = "quit",
   },
@@ -22,6 +22,8 @@ return {
   -- reverse. Colors: ANSI names follow your terminal palette, hex is exact.
   -- `theme = "<name>"` picks a preset from `themes`; `theme = { ... }` overlays
   -- surfaces on the current preset (put both in your file to pick and tweak).
+  -- `:theme <name>` inside sbt switches presets live to try them; it is
+  -- in-memory, so write the name here to keep it.
   theme = "berg",
   themes = {
     -- Berg (github.com/jx22/berg): the Bloomberg terminal as a reading theme.
@@ -67,28 +69,28 @@ return {
     },
     -- Darkroom: for a dark room with the display at its lowest usable backlight.
     -- Every color is solved for a target contrast ratio against near-black, not
-    -- picked by eye, and the targets are the design. Body text sits at 8:1 and
-    -- everything else between 1.6:1 and 6.5:1 -- ordinary dark themes run 12-16:1,
+    -- picked by eye, and the targets are the design. Body text sits at 10:1 and
+    -- everything else between 1.6:1 and 8.6:1 -- ordinary dark themes run 12-16:1,
     -- which in an unlit room is a glare source, because the screen is the only
     -- light in it and your eyes are dark-adapted to nothing. Warm carries more
     -- of the weight than cool: long wavelengths cost the least dark adaptation,
     -- which is the darkroom safelight the name comes from. Pairs with the
     -- Darkroom WezTerm scheme, but stands alone on any near-black background.
     darkroom = {
-      title_repo = { fg = "#D8C9B3", bg = "#6A4D23", bold = true },  -- dim amber fill, not a lamp
-      title      = { fg = "#7B6E5E" },
+      title_repo = { fg = "#D0C7BB", bg = "#634921", bold = true },  -- dim amber fill, not a lamp
+      title      = { fg = "#8D7D6C" },
       border     = { fg = "#483D34" },
-      header     = { fg = "#837463" },
-      heading    = { fg = "#C09348", bold = true },
-      selected   = { bg = "#413223", bold = true },  -- no fg: paint stays >= 3.3:1 on the cursor row
-      label      = { fg = "#B68836" },
-      text       = { fg = "#B2A28C" },
-      link       = { fg = "#7492B8" },
-      chip       = { fg = "#D8C9B3", bg = "#6A4D23" },
-      keys       = { fg = "#559E9C" },
-      hint       = { fg = "#72675A" },
-      status     = { fg = "#A0927F" },
-      accent     = { fg = "#C09348" },
+      header     = { fg = "#958472" },
+      heading    = { fg = "#CEA765", bold = true },
+      selected   = { bg = "#413223", bold = true },  -- no fg: paint stays >= 4.1:1 on the cursor row
+      label      = { fg = "#C89A49" },
+      text       = { fg = "#C3B7A6" },
+      link       = { fg = "#9FB6D2" },
+      chip       = { fg = "#D0C7BB", bg = "#634921" },
+      keys       = { fg = "#77B5B5" },
+      hint       = { fg = "#837667" },
+      status     = { fg = "#B0A394" },
+      accent     = { fg = "#CEA765" },
       working    = { bg = "#345A5C", bold = true },  -- teal band at full glow, the only cool fill
       columns    = { id = "label", project = "link", goal = "link" },
     },
@@ -111,6 +113,9 @@ return {
   -- holds full and dark longer), redrawn frames times per period. period_ms
   -- = 0 keeps them lit. The `work` column (`c`) shows one ● per session; `w`
   -- passes the task.
+  -- PR reads refresh while the page is visible (30-3600 seconds); failures require r.
+  pr_refresh_seconds = 60,
+
   work = { period_ms = 3000, frames = 30, flatten = 2 },
 
   -- What painting a column "auto" hands out, most common value first: keep the
@@ -132,11 +137,13 @@ return {
     muted    = { "#c9b07a", "#7fa6bd", "#8db58d", "#c08a84", "#a692bd", "#7fb5ae", "#c49c7a", "#b98da0" },
     balanced = { "#ffd166", "#4fc3f7", "#7ee787", "#ff7b72", "#c792ea", "#5ee6d8", "#ffa657", "#f78da7" },
     vivid    = { "#ffcc00", "#00bfff", "#33ff66", "#ff4d4d", "#c060ff", "#00e5cc", "#ff8800", "#ff66b3" },
-    -- Darkroom: ten hues all solved to the same 5.4:1 against near-black, so no
-    -- painted value shouts louder than another just because green is a brighter
-    -- hue than blue. Sand first -- it is nearest the body text, so the most
-    -- common value stays quiet; green and red last, they read as up/down.
-    darkroom = { "#97816F", "#A97E35", "#6887B1", "#4E908E", "#B86F93", "#8F7CB2", "#568CA0", "#8D883C", "#659248", "#C26F62" },
+    -- Darkroom: ten hues at 7.0-8.2:1 against near-black. Not one flat number --
+    -- a contrast ratio is luminance only, and blue and red both read softer than
+    -- they measure at night (sparse S-cones for blue; rods, which carry night
+    -- vision, barely respond to red). Those two trade saturation for luminance.
+    -- Sand first -- nearest the body text, so the most common value stays quiet;
+    -- green and red last, they read as up/down.
+    darkroom = { "#A89787", "#C3964A", "#91A8C7", "#71AAAB", "#C695AA", "#B09FCB", "#82AABC", "#A7A04B", "#78A957", "#D0978B" },
   },
 
   -- Glyphs shown when a column is in glyph mode (`c`, then `g` on the column).
@@ -145,9 +152,16 @@ return {
     priority = { high = "↑", medium = "·", low = "↓" },
     status = { icebox = "❄", todo = "○", inprogress = "◐", inreview = "◑", done = "●" },
     ball = { me = "●", agent = "◌" },
+    lifecycle = { open = "○", closed = "×", merged = "●" },
+    checks = { failed = "!", unknown = "?", pending = "~", passed = "+", noneobserved = "?", notfetched = "·" },
+    review = { changesrequested = "!", reviewunknown = "?", reviewrequired = "○", approved = "+" },
+    merge = { mergeconflict = "!", mergeabilityunknown = "?", nomergeconflict = "+" },
+    draft = { draft = "D", ready = "R" },
   },
 
   -- Columns are picked and ordered inside sbt (`c`) and saved with each view,
   -- together with the filter and sort, in ~/.switchbard/views.lua (global) and
   -- ~/.switchbard/views/<repo>.lua (per repo). Slot 1 opens by default.
+  -- PR views use views.prs.lua and views/<repo>.prs.lua, independently.
+  -- PR column names for theme/glyphs: id, lifecycle, tasks, checks, title, review, merge, draft.
 }

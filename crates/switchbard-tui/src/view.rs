@@ -6,31 +6,39 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, Mode, Pane};
 use crate::columns::Column;
 use crate::config::{Action, Surface};
 use crate::group::Row;
+use crate::page::Page;
 use crate::paint::{self, PaintRule};
 use crate::picker::{self, ColumnPurpose, PaintPick, Payload, PickerPurpose, ValuePicker};
 use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let [body, footer] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
+    let [navigation, body, footer] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(frame.area());
+    draw_navigation(frame, app, navigation);
     app.page_size = body.height.saturating_sub(3).max(1) as usize;
-    match app.pane {
-        Pane::None => draw_table(frame, app, body),
-        Pane::Help => draw_help(frame, app, body),
-        Pane::Detail => {
-            let [left, right] =
-                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .areas(body);
-            draw_table(frame, app, left);
-            draw_detail(frame, app, right);
+    if app.page == Page::PullRequests && app.pane != Pane::Help {
+        crate::pr_view::draw(frame, app, body);
+    } else {
+        match app.pane {
+            Pane::None => draw_table(frame, app, body),
+            Pane::Help => draw_help(frame, app, body),
+            Pane::Detail => {
+                let [left, right] = crate::detail_pane::split(body);
+                draw_table(frame, app, left);
+                draw_detail(frame, app, right);
+            }
         }
     }
     draw_footer(frame, app, footer);
@@ -38,6 +46,35 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         draw_picker(frame, app, picker, body);
     }
     app.last_screen = buffer_text(frame.buffer_mut());
+}
+
+fn draw_navigation(frame: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.config.theme;
+    let labels = [
+        (Page::Tasks, "Tasks"),
+        (Page::PullRequests, "Pull Requests"),
+    ];
+    let mut spans = Vec::with_capacity(3);
+    for (page, label) in labels {
+        let active = page == app.page;
+        let text = if active {
+            format!(" [{label}] ")
+        } else {
+            format!("  {label}  ")
+        };
+        spans.push(Span::styled(
+            text,
+            theme.style(if active { Surface::Chip } else { Surface::Hint }),
+        ));
+    }
+    spans.push(Span::styled(
+        format!(
+            " {} switch page",
+            app.config.bindings_for(&Action::Page).join("/")
+        ),
+        theme.style(Surface::Keys),
+    ));
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -243,11 +280,8 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.config.theme;
     let mut lines: Vec<Line> = Vec::new();
     if let Some(task) = app.selected_task() {
-        lines.push(Line::from(Span::styled(
-            task.title.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(Span::styled(
+        lines.push(crate::detail_pane::title(task.title.clone()));
+        lines.push(crate::detail_pane::metadata(
             format!(
                 "{} · {} · {} · {}",
                 task.id,
@@ -255,8 +289,8 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                 task.priority,
                 task.labels.join(",")
             ),
-            theme.style(Surface::Hint),
-        )));
+            theme,
+        ));
         for session in app.working(task) {
             lines.push(Line::from(Span::styled(
                 format!(
@@ -275,10 +309,7 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
         }
         if !task.acceptance_criteria.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "acceptance",
-                theme.style(Surface::Accent),
-            )));
+            lines.push(crate::detail_pane::section("acceptance", theme));
             for item in &task.acceptance_criteria {
                 let mark = if item.checked { "x" } else { " " };
                 lines.push(Line::from(format!("[{mark}] {}", item.text)));
@@ -287,15 +318,7 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         lines.push(Line::from("nothing selected"));
     }
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme.style(Surface::Border));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(block),
-        area,
-    );
+    crate::detail_pane::draw(frame, theme, area, lines, 0);
 }
 
 /// `HH:MM` of the claim on `task_id`, from its RFC 3339 stamp.
@@ -312,6 +335,7 @@ fn claimed_clock(session: &switchbard_core::WorkSession, task_id: &str) -> Strin
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.config.theme;
     let actions = [
+        Action::Page,
         Action::Down,
         Action::Up,
         Action::Top,
@@ -338,6 +362,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     ];
     let entries: Vec<(String, String)> = actions
         .iter()
+        .filter(|action| app.page.allows(action))
         .map(|action| (app.config.bindings_for(action).join(" "), action.name()))
         .chain(std::iter::once((
             "1-9".to_string(),
@@ -392,6 +417,9 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
             "    f/s <col#> filter/sort by column; v<n> open view, vs<n> save it (vsd = default)",
         ),
     ]));
+    if app.page == Page::PullRequests {
+        lines.push(Line::from("PR fields: status/lifecycle, id, title, tasks, checks, review, merge, draft; PR views use .prs.lua files."));
+    }
     lines.push(Line::from(Span::styled(
         "config ~/.switchbard/tui.lua (hot reload) · views ~/.switchbard/views.lua + views/<repo>.lua · events ~/.switchbard/tui-events.jsonl",
         theme.style(Surface::Hint),
@@ -408,7 +436,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let line = match app.mode {
         Mode::Filter => Line::from(vec![
             Span::styled("/", theme.style(Surface::Accent)),
-            Span::raw(app.state.filter.clone()),
+            Span::raw(app.filter_text().to_string()),
             Span::styled("▏", theme.style(Surface::Accent)),
         ]),
         Mode::Command => Line::from(vec![
@@ -432,6 +460,11 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             app.status.clone(),
             theme.style(Surface::Status),
         )),
+        Mode::BallName => Line::from(vec![
+            Span::styled(" ball person: ", theme.style(Surface::Accent)),
+            Span::raw(app.input.clone()),
+            Span::styled("▏", theme.style(Surface::Accent)),
+        ]),
         Mode::Browse if !app.status.is_empty() => Line::from(Span::styled(
             app.status.clone(),
             theme.style(Surface::Status),
@@ -444,6 +477,31 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 /// The footer while browsing: what is in effect as a chip, the situation, then
 /// the keys with their letters on the `keys` surface.
 fn browse_footer(app: &App) -> Line<'static> {
+    if app.page == Page::PullRequests {
+        let mut hints = [
+            (Action::Filter, "search"),
+            (Action::FilterColumn, "filter"),
+            (Action::SortColumn, "sort"),
+            (Action::Paint, "paint"),
+            (Action::Columns, "columns"),
+            (Action::View, "views"),
+            (Action::Down, "select"),
+            (Action::Open, "detail"),
+            (Action::Reload, "refresh"),
+            (Action::Help, "help"),
+        ]
+        .iter()
+        .map(|(action, label)| format!("{} {label}", app.config.bindings_for(action).join("/")))
+        .collect::<Vec<_>>()
+        .join(" · ");
+        if app.pane == Pane::Detail {
+            hints.push_str(&format!(
+                " · {} scroll",
+                app.config.bindings_for(&Action::PageDown).join("/")
+            ));
+        }
+        return Line::from(Span::styled(hints, app.config.theme.style(Surface::Hint)));
+    }
     let theme = &app.config.theme;
     let mut spans: Vec<Span> = vec![Span::raw(" ")];
     if !app.state.filter.is_empty() {
@@ -516,7 +574,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             let value = &option.label;
             let shown = match (&picker.purpose, &option.payload) {
                 (PickerPurpose::Filter(field), Payload::Text(value)) => {
-                    Filter::field_allows(&app.state.filter, *field, value)
+                    Filter::field_allows(app.filter_text(), *field, value)
                 }
                 (PickerPurpose::Sort(_), Payload::Order(order)) => {
                     app.state.sort.is_some_and(|sort| sort.order == *order)
@@ -649,6 +707,7 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::Settings => "settings".to_string(),
         PickerPurpose::Goals(id) => format!("{id} · goals"),
         PickerPurpose::Organize => "organize by".to_string(),
+        PickerPurpose::Ball => "ball".to_string(),
     };
     if picker.typed.is_empty() {
         format!(" {subject} ")

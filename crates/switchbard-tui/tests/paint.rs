@@ -23,7 +23,10 @@ fn p_lists_columns_first_then_row_filtered_column_and_hidden_fields() {
         screen.contains("5  labels · hidden"),
         "hidden categorical field by name: {screen}"
     );
-    let title = screen.lines().nth(2).unwrap_or_default().to_string();
+    let title = screen
+        .lines()
+        .find(|line| line.contains("┌ paint ─"))
+        .expect("paint picker heading");
     assert!(
         title.contains("┌ paint ─") && !title.contains("r row"),
         "{title}"

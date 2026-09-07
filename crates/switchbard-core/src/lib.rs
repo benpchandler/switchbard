@@ -22,6 +22,7 @@ pub mod mission_projection;
 pub mod mission_sidecar_protocol;
 pub mod mission_supervisor;
 pub mod open_url;
+pub mod pr_list;
 pub mod refine;
 pub mod removal_safety;
 pub mod resolve;
@@ -146,3 +147,8 @@ pub use worktree_remove::{
     BranchDeleteAssessment, DirtyFile,
 };
 pub use worktree_size::{humanize_size, probe_worktree_size};
+
+pub use pr_list::{
+    fetch_pull_requests, fetch_pull_requests_with_limit, PrChecks, PrLifecycle, PrListRow, PrMerge,
+    PrReview, PrSnapshot, DEFAULT_PULL_REQUEST_LIMIT, MAX_PULL_REQUESTS,
+};
