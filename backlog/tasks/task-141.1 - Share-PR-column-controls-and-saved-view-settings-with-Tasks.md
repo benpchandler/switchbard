@@ -1,10 +1,10 @@
 ---
 id: TASK-141.1
 title: Share PR column controls and saved view settings with Tasks
-status: In Progress
+status: In Review
 assignee: []
 created_date: '2026-09-07 01:32'
-updated_date: '2026-09-07 01:33'
+updated_date: '2026-09-07 01:51'
 labels:
   - tui
   - github
@@ -27,7 +27,13 @@ Owner requested these as tracked tasks before live claiming and implementation. 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 PR header digits open the shared column-action picker; show/hide/reorder operates on PR columns.
-- [ ] #2 PR settings and saved view slots persist independently of Tasks across page switches and restart; existing task views remain compatible.
-- [ ] #3 Help and footer accurately advertise available PR controls; real-key E2E journeys cover narrow/empty layouts and page isolation.
+- [x] #1 PR header digits open the shared column-action picker; show/hide/reorder operates on PR columns.
+- [x] #2 PR settings and saved view slots persist independently of Tasks across page switches and restart; existing task views remain compatible.
+- [x] #3 Help and footer accurately advertise available PR controls; real-key E2E journeys cover narrow/empty layouts and page isolation.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented in feat/tui-pr-pane (source ea277a1). Full TUI fmt/clippy/tests/install passed. All 20 page/PR/control E2E journeys passed with actual GitHub reads; title/check sorts and review/merge facets also passed on budget PR observations. Evidence: docs/tui-pr-controls-ledger.md and docs/tui-pr-controls-evidence.md. Independent source review has no remaining verified blocker. Delivery pipeline/PR/CI and human visual review remain pending; not merged.
+<!-- SECTION:NOTES:END -->
