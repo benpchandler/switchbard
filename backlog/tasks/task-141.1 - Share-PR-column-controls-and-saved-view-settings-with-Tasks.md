@@ -1,13 +1,15 @@
 ---
 id: TASK-141.1
 title: Share PR column controls and saved view settings with Tasks
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-07 01:32'
+updated_date: '2026-09-07 01:33'
 labels:
   - tui
   - github
   - parity
+  - ball:agent
 dependencies: []
 priority: medium
 parent_task_id: '141'
