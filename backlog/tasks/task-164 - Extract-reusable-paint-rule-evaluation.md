@@ -4,6 +4,7 @@ title: Extract reusable paint rule evaluation
 status: To Do
 assignee: []
 created_date: '2026-09-07 10:05'
+updated_date: '2026-09-07 12:13'
 labels:
   - abstraction
   - refactor
@@ -32,3 +33,9 @@ Discovery: owner-requested reuse assessment in session 01a07c1d-7259-73d1-82b7-9
 - [ ] #3 Tests prove category, row and column rule precedence, multiple matches, no match, missing fields and invalid rule handling, preserving existing results.
 - [ ] #4 Current paint configuration remains compatible and palette-token behavior respects TASK-152; no second matcher is introduced.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Owner-requested concrete consumer added 2026-09-07: TASK-167, painting by When merged and/or When task filed. Shape shared field access and paint evaluation to support these authoritative timestamps and composable time rules; coordinate with TASK-162/TASK-163. TASK-167 owns the visible feature and its date semantics, while this task retains the reusable evaluation boundary.
+<!-- SECTION:NOTES:END -->
