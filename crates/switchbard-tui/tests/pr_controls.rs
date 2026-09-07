@@ -251,6 +251,18 @@ fn live_pr_paint_links_and_saved_view_survive_page_switch_and_restart() {
     if h.app.picker.is_some() {
         h.press(KeyCode::Esc);
     }
+    h.type_text("pf");
+    pick(&mut h, "green");
+    assert_eq!(
+        cell_fg(&h, &format!("#{number}")),
+        Some(ratatui::style::Color::Green)
+    );
+    h.type_text("pf");
+    pick(&mut h, "none");
+    assert_eq!(
+        cell_fg(&h, &format!("#{number}")),
+        Some(ratatui::style::Color::Red)
+    );
     h.type_text("s1");
     pick(&mut h, "ascending");
     let pr_state = h.app.state.clone();
@@ -424,4 +436,72 @@ fn live_pr_historical_facets_and_paint_rule_order_use_shared_controls() {
         Some(painted),
         "deleting base restores categorical row color"
     );
+}
+
+#[test]
+#[ignore = "requires authenticated GitHub and SBT_PR_REPO; reads only"]
+fn live_pr_title_check_sorts_and_review_merge_facets_match_observations() {
+    let mut h = live();
+    for (order, descending) in [("ascending", false), ("descending", true)] {
+        h.type_text("s5");
+        pick(&mut h, order);
+        let snapshot = h.app.pull_requests.snapshot.as_ref().unwrap();
+        let titles: Vec<_> = h
+            .app
+            .pull_requests
+            .visible
+            .iter()
+            .map(|&i| snapshot.rows[i].title.to_lowercase())
+            .collect();
+        assert!(titles.windows(2).all(|p| if descending {
+            p[0] >= p[1]
+        } else {
+            p[0] <= p[1]
+        }));
+    }
+    h.type_text("s4");
+    pick(&mut h, "semantic");
+    let snapshot = h.app.pull_requests.snapshot.as_ref().unwrap();
+    let ranks: Vec<_> = h
+        .app
+        .pull_requests
+        .visible
+        .iter()
+        .map(|&i| {
+            let row = &snapshot.rows[i];
+            if row.lifecycle != switchbard_core::PrLifecycle::Open {
+                return 5;
+            }
+            match row.checks {
+                switchbard_core::PrChecks::Failed => 0,
+                switchbard_core::PrChecks::Unknown => 1,
+                switchbard_core::PrChecks::Running => 2,
+                switchbard_core::PrChecks::Passing => 3,
+                switchbard_core::PrChecks::NoneObserved => 4,
+            }
+        })
+        .collect();
+    assert!(ranks.windows(2).all(|p| p[0] <= p[1]));
+    for field in ["review", "merge"] {
+        set_filter(&mut h, "");
+        let row = h.app.pull_requests.row().unwrap();
+        let wanted = if field == "review" {
+            row.review.label()
+        } else {
+            row.merge.label()
+        };
+        h.press(KeyCode::Char('f'));
+        pick(&mut h, field);
+        pick(&mut h, wanted);
+        let snapshot = h.app.pull_requests.snapshot.as_ref().unwrap();
+        assert!(!h.app.pull_requests.visible.is_empty());
+        assert!(h.app.pull_requests.visible.iter().all(|&i| {
+            let row = &snapshot.rows[i];
+            (if field == "review" {
+                row.review.label()
+            } else {
+                row.merge.label()
+            }) == wanted
+        }));
+    }
 }
