@@ -4,7 +4,7 @@ title: Bring PR sorting to parity with Tasks
 status: In Review
 assignee: []
 created_date: '2026-09-07 01:32'
-updated_date: '2026-09-07 02:00'
+updated_date: '2026-09-07 02:15'
 labels:
   - tui
   - github
@@ -14,6 +14,8 @@ dependencies:
   - '141.1'
 priority: medium
 parent_task_id: '141'
+references:
+  - https://github.com/benpchandler/switchbard/pull/136
 ---
 
 ## Description
@@ -41,4 +43,6 @@ Implemented in feat/tui-pr-pane (source ea277a1). Full TUI fmt/clippy/tests/inst
 Delivery run 01M1X6S8BVE6H8F1BVR3A5H2CK: rebase onto current main completed and code review passed without findings; pipeline targeted tests passed. Pipeline is paused at ask-user finding missing-visual-evidence (native terminal screenshot/GIF). Installed build and all 20 originating live/page/control tests are proved; CUA refused WezTerm capture. Owner decision requested before proceeding. No PR or CI result yet. Live claim retained for resumption.
 
 Owner approved the missing-visual-evidence gate and instructed continue. Run 01M1X6S8BVE6H8F1BVR3A5H2CK resumed: test gate approved using the installed build and recorded real E2E evidence; documentation/lint/push/PR/CI pending. This is not a claim of a captured screenshot or human appearance approval.
+
+PR #136 is open at published commit 1e0af80e45b1c84cc241f41f9468e537bd1bbea3; CI is running. Full preflight passed on rerun after an intermittent mission-sidecar timeout; no source fix was made for that timeout. Original local feature history is preserved because guarded sync refused rewritten history; final install is being verified from a separate checkout of the published commit.
 <!-- SECTION:NOTES:END -->
