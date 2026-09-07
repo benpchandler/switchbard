@@ -1,15 +1,15 @@
 ---
 id: TASK-168
 title: 'PR tab: countdown to refresh in the first row'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-07 13:02'
-updated_date: '2026-09-07 13:02'
+updated_date: '2026-09-07 13:11'
 labels:
   - tui
   - prs
   - refresh
-  - ball:agent
+  - ball:me
 dependencies: []
 priority: medium
 ---
@@ -24,8 +24,14 @@ Evidence: owner request 2026-09-07. At origin/main be9428d, PR observation in cr
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The first-row refresh interval counts down to 0 and shows refreshing while the request is pending.
-- [ ] #2 The countdown restarts from the configured interval when refresh completes, including failure, and manual refresh continues to work.
-- [ ] #3 The separate refreshing note is removed; errors and stale-data warnings remain visible.
-- [ ] #4 Deterministic lifecycle and terminal-render tests verify ticking without input, completion, retry, and narrow/wide layouts.
+- [x] #1 The first-row refresh interval counts down to 0 and shows refreshing while the request is pending.
+- [x] #2 The countdown restarts from the configured interval when refresh completes, including failure, and manual refresh continues to work.
+- [x] #3 The separate refreshing note is removed; errors and stale-data warnings remain visible.
+- [x] #4 Deterministic lifecycle and terminal-render tests verify ticking without input, completion, retry, and narrow/wide layouts.
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented at commit 5005d98 on fix/pr-refresh-countdown, retained in /Users/bpc/Dev/.worktrees/switchbard-pr-refresh-countdown and installed to ~/.cargo/bin/sbt. mise run tui-install passed full TUI tests, fmt and clippy; eight targeted tests including live GitHub reads passed. Independent review is clear. Countdown reaches visible zero, shows refreshing in its first-row slot, and resets on completion. No separate refreshing note. QA matrix and terminal evidence live in docs/tui-pr-refresh-countdown.md and docs/tui-pr-refresh-terminal-evidence.md on that branch. No push, PR or merge performed.
+<!-- SECTION:FINAL_SUMMARY:END -->
