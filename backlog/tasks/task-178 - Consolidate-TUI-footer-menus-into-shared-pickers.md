@@ -1,10 +1,10 @@
 ---
 id: TASK-178
 title: Consolidate TUI footer menus into shared pickers
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-08 11:58'
-updated_date: '2026-09-08 13:31'
+updated_date: '2026-09-08 18:06'
 labels:
   - tui
   - ux
@@ -37,10 +37,16 @@ Addressed all five owner annotations: configured Status picker, project linking,
 PR140 Linux CI exposed a native task writer defect: a long Unicode title produced a 258-byte filename. Added executable writer regression, reproduced before fix, cap slug at180 UTF-8 bytes without truncating persisted title;34 writer tests pass. Cancelled malfunctioning pipeline after it accidentally committed target-ci build artifacts; remote stayed at clean05ec96b6, rejected commit preserved by guarded recovery, local synchronized to remote. Completing direct preflight and GitHub CI before merge.
 
 Final writer fix budgets the complete basename including configured prefix/id and extension, caps slug bytes on UTF-8 boundaries, and covers original Unicode, mid-character truncation, and100-byte prefix cases. All three regression scenarios pass; independent review clear.
+
+Closing bookkeeping only - this work was authored by a different session, not here.
+
+Shipped in PR #140 (merged 2026-09-08 17:39Z, main f5c5f61c), which carried the shared-picker consolidation, app/task_project.rs and app/task_status.rs, the ~200 lines app/mod.rs sheds into pickers.rs, tests/menu_pickers.rs, and the nine verification screenshots under docs/verification/tui-menu-pickers/. All four acceptance criteria were already checked by the authoring session; the status was simply never moved off In Progress.
+
+Note for the record: PR #142 merged the same branch a second time at 20:43Z. It was a no-op - `git diff ba639c1d 1703a7d6` is empty - so main carries one empty merge commit and no duplicated content. Left in place at the owner's direction; reverting it would add noise without removing any.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Installed consolidated task/view/column/settings/paint pickers, including tn New, ts Status, tp Project, tr Top list, vp top-list display. Left/Right and Vim navigation supported with documented legacy filter typeahead precedence. Isolated tui-install passed fmt, clippy, 117 tests and rustdoc; nine fixture renders refreshed; all five Visual Review annotations resolved. Evidence docs/verification/tui-menu-pickers.md. Branch feat/tui-menu-pickers; no push or primary merge.
+Delivered in PR #140 by a separate session, with all four ACs checked and verification screenshots committed. Closed here as bookkeeping only - the status had been left at In Progress after the work merged. No code was written for this task in this session.
 <!-- SECTION:FINAL_SUMMARY:END -->
