@@ -317,7 +317,8 @@ impl App {
             && !state.as_bytes().first().is_some_and(u8::is_ascii_digit)
         {
             self.telemetry.record("error", "unreadable resume record");
-            self.status = "the new build could not read the previous view; opened your saved view".to_string();
+            self.status = "the new build could not read the previous view; opened your saved view"
+                .to_string();
             return;
         }
         if let Some((page, record)) = state
@@ -387,7 +388,13 @@ impl App {
         self.select(record.task_selected);
         self.pull_requests.selected = record.pr_selected;
         self.pull_requests.restore_selection(record.pr_id.clone());
-        self.switch_page(if record.inbox_page { Page::Inbox } else if record.pr_page { Page::PullRequests } else { Page::Tasks });
+        self.switch_page(if record.inbox_page {
+            Page::Inbox
+        } else if record.pr_page {
+            Page::PullRequests
+        } else {
+            Page::Tasks
+        });
         self.status = "updated to the new build".to_string();
     }
 
