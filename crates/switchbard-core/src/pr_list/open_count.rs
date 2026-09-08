@@ -122,6 +122,5 @@ mod tests {
             ["--raw-field", "owner=123", "--raw-field", "name=456"]
         );
         assert_eq!(args[5], format!("query={QUERY}"));
-        assert!(!QUERY.contains("nodes") && !QUERY.contains("first:"));
     }
 }

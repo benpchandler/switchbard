@@ -72,10 +72,15 @@ fn pr_count_spans(app: &App) -> Vec<Span<'static>> {
         Some(Err(_)) => prs
             .last_open_count()
             .map(|(count, _)| {
-                vec![
-                    Span::styled(format!(" {count} "), theme.style(Surface::AttentionBadge)),
-                    Span::styled(" ?", theme.style(Surface::Hint)),
-                ]
+                let mut spans = Vec::with_capacity(2);
+                if count > 0 {
+                    spans.push(Span::styled(
+                        format!(" {count} "),
+                        theme.style(Surface::AttentionBadge),
+                    ));
+                }
+                spans.push(Span::styled(" ?", theme.style(Surface::Hint)));
+                spans
             })
             .unwrap_or_else(|| vec![Span::styled(" ?", theme.style(Surface::Hint))]),
         _ => vec![Span::styled(
