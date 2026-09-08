@@ -1,12 +1,12 @@
 # Switchbard-owned storage (TASK-147)
 
-Status: discovery in progress; storage scope and repo-summary purpose await owner input. This is not an approved implementation contract.
+Status: pre-implementation contract accepted after independent review and targeted finding closure. Implementation, migration and reporter acceptance remain open.
 
 ## Objective ledger
 
-The owner selected TASK-147 next on 2026-09-08: Switchbard persists data instead of repository files, possibly leaving a summary in the repo. Preserve that outcome across discovery and implementation; a decision document alone does not complete the task.
+The owner selected TASK-147 next on 2026-09-08 and clarified that Switchbard owns one central database across repositories, with one optional file per repo for collaboration and sync through Git. Preserve that outcome across discovery and implementation; a decision document alone does not complete the task.
 
-Current acceptance is only reporter confirmation. Refine it into concrete storage, migration, compatibility, recovery, and summary behavior once the intended boundary is known.
+The primary checkout's TASK-147 now carries acceptance for shared central records, optional one-file exchange, conflict safety, lossless migration/recovery, supported consumers, and reporter confirmation. Its worktree copy still reflects the older task; primary task edits were made through sb and remain separate from these decision artifacts.
 
 ## Conservation rule
 
@@ -18,17 +18,19 @@ Authorized now: discovery, repository audit, reversible planning, task tracking.
 
 ## Sequence
 
-1. Inspect current storage owners and consumers.
-2. Resolve what all data means and what the repo summary is for.
-3. Model alternatives, stable identity, migration conflicts, concurrency, backups, and rollback.
-4. Produce and independently audit the executable implementation contract.
+1. Completed: inspect current storage owners and consumers.
+2. Completed: obtain owner clarification of central authority and optional Git exchange.
+3. Completed at synthetic scope: model shared records, merge/replay, bootstrap and conflicts. Full product proof remains open.
+4. Completed at decision scope: executable implementation contract, independent review and finding closure.
 5. Implement the agreed contract, verify real transitions, and obtain reporter confirmation.
 
-## Open decisions
+## Owner clarification
 
-- Whether the primary outcome is central task storage with repo summaries, removing task records from Git/worktree conflicts, or consolidating all Switchbard-managed records.
-- Whether a repo summary is for human reading, agent context, portability, or some combination.
-- Whether independent clones and other machines must share changes in the first implementation.
+Switchbard owns, uses, and updates one central database for all repositories. Local worktrees share that database and no longer need task PRs to synchronize ordinary updates. A repository can optionally carry one file that is committed and PR-ed for collaboration and sync. That file is an exchange artifact, not merely a prose summary, and not the live source of local worktree state.
+
+## Proposed defaults to pressure-test
+
+Use a machine-local SQLite database for native task-domain records across all repos. Preserve repo association while giving it a stable identity independent of checkout path. Use an explicit, deterministic per-repo JSON exchange file; do not rewrite it on every task mutation. Import previews differences and conflicts before applying them transactionally. Never infer deletes from absent records. Runtime claims remain machine-specific and xplan retains ownership of mission state. These are implementation proposals derived from the owner intent, not additional owner decisions.
 
 ## Current evidence
 
@@ -42,4 +44,13 @@ Authorized now: discovery, repository audit, reversible planning, task tracking.
 
 ## Validation state
 
-Read-only source inspection only. No tests run, synthetic scenarios executed, or migration behavior proved yet. Existing primary-checkout changes are preserved; decision artifacts are isolated on `codex/task-147-storage-contract`.
+Synthetic model: 34/34 scenarios pass; 22 invalid cases reject without modeled durable effects. Fixed wire vectors pass 30/30 and verifier selftests pass 11/11. Limits and omissions are explicit in their result files. Plan lint, Rust formatting, Git-hook and CI-routing contract checks pass. All 34 product criteria remain RED because storage commands do not exist. No production migration behavior or GUI/TUI storage journey is proved. Existing primary-checkout changes are preserved; decision artifacts are isolated on codex/task-147-storage-contract.
+
+## Package map
+
+- [Decision](decision.md), [architecture](architecture.md), [source inventory](discovery.md), and [blast radius](blast-radius.json).
+- [Implementation plan](plan.md), [acceptance](acceptance.md), and [state/evidence matrix](testing-matrix.md).
+- [Wire specification](exchange-v1.md), [closed schema](exchange-v1.schema.json), and [fixed vectors](exchange-v1-vectors.json).
+- [Independent audit and scope limits](audit.md).
+
+Run the single product acceptance command with `python3 docs/decisions/switchbard-owned-storage/verify.py`. A failure is expected until the actual product behavior is implemented; the synthetic scripts are separate decision evidence and cannot turn it green.

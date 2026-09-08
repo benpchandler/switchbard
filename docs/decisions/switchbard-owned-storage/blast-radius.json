@@ -1,0 +1,150 @@
+{
+  "decision": "switchbard-owned-storage",
+  "source_revision": "4bf20c2b",
+  "surfaces": [
+    {
+      "id": "BR-01",
+      "path": "crates/switchbard-core/src/backlog/parse.rs",
+      "line": 20,
+      "disposition": "Route migrated reads centrally; retain legacy importer"
+    },
+    {
+      "id": "BR-02",
+      "path": "crates/switchbard-core/src/backlog/types.rs",
+      "line": 150,
+      "disposition": "Stable identity and raw payload instead of file authority"
+    },
+    {
+      "id": "BR-03",
+      "path": "crates/switchbard-core/src/backlog/write.rs",
+      "line": 1,
+      "disposition": "Pure surgical buffer edits"
+    },
+    {
+      "id": "BR-04",
+      "path": "crates/switchbard-core/src/backlog/mutations.rs",
+      "line": 54,
+      "disposition": "Transactional write facade"
+    },
+    {
+      "id": "BR-05",
+      "path": "crates/switchbard-core/src/backlog/allocate.rs",
+      "line": 1,
+      "disposition": "Central unique allocation; scan legacy sources for migration"
+    },
+    {
+      "id": "BR-06",
+      "path": "crates/switchbard-core/src/backlog/hierarchy.rs",
+      "line": 1,
+      "disposition": "Central definitions and links"
+    },
+    {
+      "id": "BR-07",
+      "path": "crates/switchbard-core/src/backlog/goals.rs",
+      "line": 1,
+      "disposition": "Central goals/check-ins"
+    },
+    {
+      "id": "BR-08",
+      "path": "crates/switchbard-core/src/backlog/ranking.rs",
+      "line": 1,
+      "disposition": "Central rank and related effects"
+    },
+    {
+      "id": "BR-09",
+      "path": "crates/switchbard-core/src/dispatch.rs",
+      "line": 619,
+      "disposition": "Central lifecycle; separate execution paths"
+    },
+    {
+      "id": "BR-10",
+      "path": "crates/switchbard-core/src/refine.rs",
+      "line": 562,
+      "disposition": "Versioned document input and central apply"
+    },
+    {
+      "id": "BR-11",
+      "path": "crates/switchbard-core/src/work_sessions.rs",
+      "line": 9,
+      "disposition": "Keep machine liveness; central task effects"
+    },
+    {
+      "id": "BR-12",
+      "path": "crates/switchbard-core/src/config.rs",
+      "line": 19,
+      "disposition": "Keep machine config; bind repo paths to stable identity"
+    },
+    {
+      "id": "BR-13",
+      "path": "crates/switchbard-core/src/backlog_triage.rs",
+      "line": 153,
+      "disposition": "Preserve cross-repo order"
+    },
+    {
+      "id": "BR-14",
+      "path": "crates/switchbard-core/src/mission_projection.rs",
+      "line": 1,
+      "disposition": "Preserve xplan authority"
+    },
+    {
+      "id": "BR-15",
+      "path": "crates/switchbard-core/src/dispatch_inspect.rs",
+      "line": 7,
+      "disposition": "Preserve historical run locators"
+    },
+    {
+      "id": "BR-16",
+      "path": "crates/switchbard-core/src/worktree.rs",
+      "line": 20,
+      "disposition": "Common Git identity; removal preserves task data"
+    },
+    {
+      "id": "BR-17",
+      "path": "crates/switchbard-task/src/main.rs",
+      "line": 365,
+      "disposition": "Central repo discovery and storage/sync commands"
+    },
+    {
+      "id": "BR-18",
+      "path": "crates/switchbard-tui/src/main.rs",
+      "line": 82,
+      "disposition": "Central repo startup without backlog dir"
+    },
+    {
+      "id": "BR-19",
+      "path": "crates/switchbard-gui/src/workers.rs",
+      "line": 1,
+      "disposition": "Change-sequence refresh"
+    },
+    {
+      "id": "BR-20",
+      "path": "crates/switchbard-tui/src/views.rs",
+      "line": 246,
+      "disposition": "Keep executable views out of exchange"
+    },
+    {
+      "id": "BR-21",
+      "path": "orchestrator/README.md",
+      "line": 1,
+      "disposition": "Conserve sb queue protocol"
+    },
+    {
+      "id": "BR-22",
+      "path": "docs/decisions/task-queue-authority-model/decision.md",
+      "line": 1,
+      "disposition": "Supersede file authority and root identity clauses explicitly"
+    },
+    {
+      "id": "BR-23",
+      "path": "crates/switchbard-core/src/backlog/status_config.rs",
+      "line": 54,
+      "disposition": "Migrate and exchange task config/status vocabulary; route status/config reads and writes centrally for migrated scopes; preserve explicit legacy mode."
+    },
+    {
+      "id": "BR-24",
+      "path": "crates/switchbard-gui/src/runtime/mod.rs",
+      "line": 372,
+      "disposition": "Replace path/display task keys in selection, drafts, locks, dispatch/task maps and repo cache with stable repo/record identity; keep paths as execution locators."
+    }
+  ]
+}

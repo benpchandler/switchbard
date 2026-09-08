@@ -1,0 +1,185 @@
+{
+  "evidence_scope": "Proposed synthetic merge algorithm only; no product implementation proof.",
+  "model_limits": [
+    "Tasks only; no full hierarchy graph or migration model.",
+    "Small synthetic size limits; not production v1 limit tests.",
+    "Raw text/source fixtures, not the production base64/privacy envelope.",
+    "SQLite-only export checkpoints; no filesystem replacement/crash protocol.",
+    "Source change is modeled by envelope bytes; no real file preview.",
+    "Repository binding is synthetic; no Git common-directory detection."
+  ],
+  "passed": 34,
+  "failed": 0,
+  "cases": [
+    {
+      "id": "shared-worktree-identity-and-repo-scoped-display-id",
+      "status": "pass",
+      "rejections_without_effects": 0
+    },
+    {
+      "id": "deterministic-export-successor-preserves-prior-snapshot",
+      "status": "pass",
+      "rejections_without_effects": 0
+    },
+    {
+      "id": "remote-update-and-identical-replay",
+      "status": "pass",
+      "rejections_without_effects": 0
+    },
+    {
+      "id": "disjoint-records-merge",
+      "status": "pass",
+      "rejections_without_effects": 0
+    },
+    {
+      "id": "incoming-base-keeps-current",
+      "status": "pass",
+      "rejections_without_effects": 0
+    },
+    {
+      "id": "equal-concurrent-edit-is-no-op",
+      "status": "pass",
+      "rejections_without_effects": 0
+    },
+    {
+      "id": "omission-preserves-record",
+      "status": "pass",
+      "rejections_without_effects": 0
+    },
+    {
+      "id": "explicit-tombstone-retained-and-replayed",
+      "status": "pass",
+      "rejections_without_effects": 0
+    },
+    {
+      "id": "remote-create-stable-uuid",
+      "status": "pass",
+      "rejections_without_effects": 0
+    },
+    {
+      "id": "explicit-empty-repo-bootstrap-stores-checkpoint",
+      "status": "pass",
+      "rejections_without_effects": 0
+    },
+    {
+      "id": "preview-and-apply-unchanged-inputs",
+      "status": "pass",
+      "rejections_without_effects": 0
+    },
+    {
+      "id": "successor-export-repeat-stable-base-and-bytes",
+      "status": "pass",
+      "rejections_without_effects": 0
+    },
+    {
+      "id": "concurrent-record-conflict",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "same-record-disjoint-fields-conflict",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "delete-versus-edit-conflict",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "edit-versus-delete-conflict",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "foreign-repo-rejected",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "unknown-version-rejected",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "unknown-base-rejected",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "duplicate-id-rejected",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "display-collision-rejected",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "existing-display-collision-rolls-back",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "unknown-tombstone-rejected",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "non-boolean-tombstone-rejected",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "forced-partial-write-rolls-back",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "invalid-identity-rejected",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "bounded-record-count",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "bounded-text",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "bootstrap-refuses-populated-repo",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "base-payload-digest-mismatch",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "current-payload-digest-mismatch",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "stale-preview-refuses-apply",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "changed-source-refuses-apply",
+      "status": "pass",
+      "rejections_without_effects": 1
+    },
+    {
+      "id": "preview-rejects-edit-then-revert",
+      "status": "pass",
+      "rejections_without_effects": 1
+    }
+  ]
+}

@@ -1,0 +1,496 @@
+{
+  "plan": "switchbard-owned-storage",
+  "result": "FAIL",
+  "commit": "b85bd2fc593e79ffdc8fdd2ae7470d18834661cb",
+  "timestamp": "2026-09-08T20:59:32.117082+00:00",
+  "criteria": [
+    {
+      "id": "MUST-001",
+      "kind": "behavior",
+      "label": "All native domain records and workspace ordering persist across two repositories without backlog files",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "all_domain_records_reload"
+    },
+    {
+      "id": "MUST-002",
+      "kind": "behavior",
+      "label": "Linked worktrees share one scope while independent repos and forks remain separate",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "repository_identity_and_explicit_binding"
+    },
+    {
+      "id": "MUST-003",
+      "kind": "behavior",
+      "label": "Public locators remain compatible and RecordId survives hierarchy changes",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "stable_identity_and_locators"
+    },
+    {
+      "id": "MUST-004",
+      "kind": "behavior",
+      "label": "Raw legacy bytes and unresolved optional memberships survive migration and edits",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "lossless_raw_records_and_optional_memberships"
+    },
+    {
+      "id": "MUST-005",
+      "kind": "behavior",
+      "label": "Whole multi-record command commits or rolls back across processes",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "multiprocess_atomic_commands"
+    },
+    {
+      "id": "MUST-006",
+      "kind": "behavior",
+      "label": "Stale revisions reject and exact replay is idempotent while mismatched replay rejects",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "revision_and_command_receipts"
+    },
+    {
+      "id": "MUST-007",
+      "kind": "contract",
+      "label": "Illegal scoped record graphs reject without side effects",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "graph_constraints"
+    },
+    {
+      "id": "MUST-008",
+      "kind": "quality",
+      "label": "Busy handling terminates within five seconds with retry feedback",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "busy_timeout_five_seconds"
+    },
+    {
+      "id": "MUST-009",
+      "kind": "behavior",
+      "label": "Migration inventories lifecycle, sibling and branch sources with explicit reconciliation",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "migration_inventory_and_divergence"
+    },
+    {
+      "id": "MUST-010",
+      "kind": "behavior",
+      "label": "Backup precedes atomic migration activation and source changes abort safely",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "migration_cutover_and_source_recheck"
+    },
+    {
+      "id": "MUST-011",
+      "kind": "behavior",
+      "label": "Updated clients never write legacy files and report later legacy divergence",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "legacy_cutover_no_fallback"
+    },
+    {
+      "id": "MUST-012",
+      "kind": "behavior",
+      "label": "Normal domain edits change no repo files in clean or already dirty worktrees",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "normal_edits_no_git_churn"
+    },
+    {
+      "id": "MUST-013",
+      "kind": "behavior",
+      "label": "All consumers and headless queue agree after worktree removal",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "consumer_and_queue_conservation"
+    },
+    {
+      "id": "MUST-014",
+      "kind": "behavior",
+      "label": "Refine applies versioned raw content centrally and rejects stale results",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "refine_versioned_raw_apply"
+    },
+    {
+      "id": "MUST-015",
+      "kind": "quality",
+      "label": "Active GUI and TUI see commits within two seconds with at most one poll per second",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "storage_acceptance::active_client_visibility"
+    },
+    {
+      "id": "MUST-016",
+      "kind": "behavior",
+      "label": "Refocus refreshes before writes and concurrent-edit conflicts retain drafts",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "storage_acceptance::refocus_and_drafts"
+    },
+    {
+      "id": "MUST-017",
+      "kind": "contract",
+      "label": "One deterministic v1 file round-trips every native record and excludes machine authorities",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "single_file_lossless_envelope"
+    },
+    {
+      "id": "MUST-018",
+      "kind": "behavior",
+      "label": "Export uses a consistent snapshot and atomic replacement with recoverable checkpoint ordering",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "atomic_export_and_checkpoint_recovery"
+    },
+    {
+      "id": "MUST-019",
+      "kind": "behavior",
+      "label": "Independent target edits are protected and unchanged repeat export is byte-identical",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "export_protection_and_idempotence"
+    },
+    {
+      "id": "MUST-020",
+      "kind": "behavior",
+      "label": "Explicit empty bound scope bootstraps while populated scope requires trusted ancestry",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "bootstrap_and_known_base"
+    },
+    {
+      "id": "MUST-021",
+      "kind": "behavior",
+      "label": "Three-way merge preserves omissions and detects same-record, locator and tombstone conflicts",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "three_way_merge_and_tombstones"
+    },
+    {
+      "id": "MUST-022",
+      "kind": "behavior",
+      "label": "Preview apply rechecks file digest and repository revision before atomic import",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "stale_preview_and_atomic_apply"
+    },
+    {
+      "id": "MUST-023",
+      "kind": "behavior",
+      "label": "Explicit resolution preserves originals and validates the complete resulting graph",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "resolution_graph_validation"
+    },
+    {
+      "id": "MUST-024",
+      "kind": "contract",
+      "label": "Input boundary limits and malformed or untrusted documents reject without live effects",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "untrusted_input_limits"
+    },
+    {
+      "id": "MUST-025",
+      "kind": "behavior",
+      "label": "Canonicalization repairs format without importing or trusting unknown ancestry",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "canonicalize_not_import"
+    },
+    {
+      "id": "MUST-026",
+      "kind": "behavior",
+      "label": "Unavailable or corrupt database reports failure without empty success or Markdown fallback",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "database_failure_is_explicit"
+    },
+    {
+      "id": "MUST-027",
+      "kind": "behavior",
+      "label": "Database-consistent restore retains post-cutover writes and reverse migration reconciles newer data",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "backup_restore_and_reverse_migration"
+    },
+    {
+      "id": "MUST-028",
+      "kind": "behavior",
+      "label": "TUI real-key state journeys preserve drafts and existing legacy fixture behavior",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "storage_state_and_keyboard_journey"
+    },
+    {
+      "id": "MUST-029",
+      "kind": "visual",
+      "label": "GUI storage states render in narrow current and wide containers against an approved canonical",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "storage_acceptance::visual_state_matrix"
+    },
+    {
+      "id": "MUST-030",
+      "kind": "visual",
+      "label": "TUI storage states render at 80x24 and current size against an approved canonical",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "storage_visual_state_matrix"
+    },
+    {
+      "id": "MUST-031",
+      "kind": "quality",
+      "label": "Integrated implementation passes platform gates and render performance comparison",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "integration_gates"
+    },
+    {
+      "id": "MUST-032",
+      "kind": "behavior",
+      "label": "Reporter confirms two-client no-PR workflow and independent-clone single-file exchange",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "reporter_journey"
+    },
+    {
+      "id": "MUST-033",
+      "kind": "contract",
+      "label": "Authority and compatibility documentation matches tested behavior and preserves independent authorities",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "documentation_review"
+    },
+    {
+      "id": "MUST-034",
+      "kind": "contract",
+      "label": "Storage files and backups preserve private ownership and permissions under permissive umask",
+      "status": "fail",
+      "check_type": "api-roundtrip",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "metric": null,
+      "named_test": "storage_privacy_and_path_substitution"
+    }
+  ],
+  "metrics": {},
+  "artifacts": [
+    "acceptance.md",
+    "verify.py"
+  ],
+  "skipped": [],
+  "failures": [
+    "MUST-001",
+    "MUST-002",
+    "MUST-003",
+    "MUST-004",
+    "MUST-005",
+    "MUST-006",
+    "MUST-007",
+    "MUST-008",
+    "MUST-009",
+    "MUST-010",
+    "MUST-011",
+    "MUST-012",
+    "MUST-013",
+    "MUST-014",
+    "MUST-015",
+    "MUST-016",
+    "MUST-017",
+    "MUST-018",
+    "MUST-019",
+    "MUST-020",
+    "MUST-021",
+    "MUST-022",
+    "MUST-023",
+    "MUST-024",
+    "MUST-025",
+    "MUST-026",
+    "MUST-027",
+    "MUST-028",
+    "MUST-029",
+    "MUST-030",
+    "MUST-031",
+    "MUST-032",
+    "MUST-033",
+    "MUST-034"
+  ],
+  "probes": {
+    "storage": {
+      "command": [
+        "cargo",
+        "run",
+        "-q",
+        "-p",
+        "switchbard-task",
+        "--",
+        "--repo",
+        "/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-storage-acceptance-66ruy3wm/repo",
+        "storage",
+        "--help"
+      ],
+      "returncode": 2,
+      "output": "error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.\n"
+    },
+    "migration": {
+      "command": [
+        "cargo",
+        "run",
+        "-q",
+        "-p",
+        "switchbard-task",
+        "--",
+        "--repo",
+        "/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-storage-acceptance-66ruy3wm/repo",
+        "storage",
+        "migrate",
+        "--help"
+      ],
+      "returncode": 2,
+      "output": "error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.\n"
+    },
+    "export": {
+      "command": [
+        "cargo",
+        "run",
+        "-q",
+        "-p",
+        "switchbard-task",
+        "--",
+        "--repo",
+        "/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-storage-acceptance-66ruy3wm/repo",
+        "storage",
+        "export",
+        "--help"
+      ],
+      "returncode": 2,
+      "output": "error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.\n"
+    },
+    "import": {
+      "command": [
+        "cargo",
+        "run",
+        "-q",
+        "-p",
+        "switchbard-task",
+        "--",
+        "--repo",
+        "/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-storage-acceptance-66ruy3wm/repo",
+        "storage",
+        "import",
+        "--help"
+      ],
+      "returncode": 2,
+      "output": "error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.\n"
+    }
+  },
+  "runners": {},
+  "mutation_gate": {
+    "all_flipped": false,
+    "mutations": [],
+    "deferred": [
+      "MUST-001",
+      "MUST-002",
+      "MUST-003",
+      "MUST-004",
+      "MUST-005",
+      "MUST-006",
+      "MUST-007",
+      "MUST-009",
+      "MUST-010",
+      "MUST-011",
+      "MUST-012",
+      "MUST-013",
+      "MUST-014",
+      "MUST-016",
+      "MUST-017",
+      "MUST-018",
+      "MUST-019",
+      "MUST-020",
+      "MUST-021",
+      "MUST-022",
+      "MUST-023",
+      "MUST-024",
+      "MUST-025",
+      "MUST-026",
+      "MUST-027",
+      "MUST-028",
+      "MUST-032",
+      "MUST-033",
+      "MUST-034"
+    ],
+    "reason": "Production mutations deferred to first GREEN; each behavior and distinct schema target must flip."
+  }
+}
