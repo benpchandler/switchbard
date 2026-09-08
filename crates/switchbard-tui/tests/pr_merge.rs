@@ -143,3 +143,31 @@ fn live_merge_confirmation_defaults_to_cancel_and_refuses_hidden_confirmation() 
     assert!(!h.app.pr_merge.is_submitting());
     assert!(h.app.pr_merge.last_result.is_none());
 }
+
+/// TASK-171: a PR GitHub will merge but does not call green (UNSTABLE, checks
+/// failing with none required) used to be refused outright. It now prepares,
+/// and the confirmation names the reason on screen, so the guard is the human
+/// reading that line rather than sbt calling a mergeable PR unmergeable.
+#[test]
+#[ignore = "requires SBT_PR_REPO and an open, non-CLEAN SBT_PR_MERGE_NUMBER; prepares and cancels only"]
+fn live_confirmation_names_a_non_clean_readiness_state() {
+    let mut h = live_pr();
+    h.terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    h.press(KeyCode::Char('m'));
+    settle_merge(&mut h);
+    assert!(h.app.picker.is_some(), "{}", h.app.status);
+    let checks = h
+        .app
+        .pr_merge
+        .confirmation_lines()
+        .into_iter()
+        .find(|line| line.starts_with("Checks:"))
+        .expect("a non-CLEAN PR names its readiness in the confirmation");
+    let screen = h.render();
+    println!("{screen}");
+    assert!(screen.contains(&checks), "{screen}");
+    h.press(KeyCode::Esc);
+    assert!(h.app.picker.is_none());
+    assert!(!h.app.pr_merge.is_submitting());
+    assert!(h.app.pr_merge.last_result.is_none());
+}

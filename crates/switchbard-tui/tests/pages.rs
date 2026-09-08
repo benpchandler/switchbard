@@ -22,6 +22,25 @@ fn toggles_pages_without_losing_task_context() {
     assert_ne!(h.app.selected_task().unwrap().status, "Done");
 }
 
+/// TASK-172: the Pull Requests tab has to be on the very first frame, in any
+/// repo, before anything is fetched and whether or not the repo has a GitHub
+/// remote at all - it is how the page is discovered.
+#[test]
+fn the_pull_requests_tab_is_on_the_first_frame_of_a_repo_with_no_remote() {
+    let mut h = Harness::new();
+    let first = h.render();
+    assert!(first.contains("[Tasks]"), "{first}");
+    assert!(first.contains("Pull Requests"), "{first}");
+    assert!(first.contains("tab switch page"), "{first}");
+    let screen = h.press(KeyCode::Tab);
+    assert!(screen.contains("[Pull Requests]"), "{screen}");
+    assert!(
+        !h.app.status.contains("not bound"),
+        "tab is bound out of the box: {}",
+        h.app.status
+    );
+}
+
 #[test]
 fn page_binding_is_configurable_and_help_is_available_on_both_pages() {
     let mut h = Harness::new();

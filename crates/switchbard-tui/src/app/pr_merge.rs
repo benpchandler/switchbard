@@ -50,15 +50,19 @@ impl MergeFlow {
         let Some(prepared) = &self.prepared else {
             return Vec::new();
         };
-        vec![
+        let mut lines = vec![
             format!("{} #{}", prepared.repository(), prepared.number()),
             prepared.title().to_string(),
             format!("Head: {}", prepared.head_oid()),
             format!("Base: {} ({})", prepared.base_ref(), prepared.base_oid()),
             format!("Signed in as: {}", prepared.viewer()),
             prepared.url().to_string(),
-            "Choose a method to confirm this merge. Task status stays unchanged.".into(),
-        ]
+        ];
+        // A merge GitHub allows but does not call green is confirmed with the
+        // reason in front of the choice, never behind it (TASK-171).
+        lines.extend(prepared.readiness_caveat());
+        lines.push("Choose a method to confirm this merge. Task status stays unchanged.".into());
+        lines
     }
 }
 

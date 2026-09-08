@@ -11,6 +11,15 @@ mod tests;
 use crate::{PrListRow, PrSnapshot};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// GitHub computes `mergeable` lazily: the first read of a PR it has not
+/// looked at recently answers `UNKNOWN` and *starts* the computation. One
+/// look is therefore not an answer, and reporting it as "not mergeable" is
+/// how TASK-171 refused a PR that merged fine seconds later. Ask again, a
+/// bounded number of times, before believing it.
+const MERGEABILITY_ATTEMPTS: usize = 3;
+const MERGEABILITY_SETTLE: Duration = Duration::from_millis(700);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum PrMergeMethod {
@@ -76,6 +85,12 @@ impl PreparedPrMerge {
     pub fn methods(&self) -> Vec<PrMergeMethod> {
         self.observation.methods()
     }
+    /// What to tell the human about this merge's readiness beyond "green", so
+    /// a merge GitHub allows but does not love is confirmed with that fact in
+    /// view rather than behind it.
+    pub fn readiness_caveat(&self) -> Option<String> {
+        self.observation.readiness_caveat()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -97,16 +112,29 @@ pub fn prepare_pr_merge(
     snapshot: &PrSnapshot,
     row: &PrListRow,
 ) -> Result<PrMergePreparation, String> {
-    prepare(&mut observe::Github { repo }, snapshot, row)
+    prepare(
+        &mut observe::Github { repo },
+        snapshot,
+        row,
+        MERGEABILITY_SETTLE,
+    )
 }
 
 fn prepare(
     transport: &mut impl observe::Transport,
     snapshot: &PrSnapshot,
     row: &PrListRow,
+    settle: Duration,
 ) -> Result<PrMergePreparation, String> {
     let host = observe::validate_selection(snapshot, row)?;
-    let observation = transport.observe(&host, &snapshot.repository, row.number)?;
+    let mut observation = transport.observe(&host, &snapshot.repository, row.number)?;
+    for _ in 1..MERGEABILITY_ATTEMPTS {
+        if !observation.mergeability_pending() {
+            break;
+        }
+        std::thread::sleep(settle);
+        observation = transport.observe(&host, &snapshot.repository, row.number)?;
+    }
     let pr = observation.pr();
     if observation.repository.name_with_owner != snapshot.repository
         || pr.id != row.id

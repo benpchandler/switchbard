@@ -48,9 +48,48 @@ pub(super) struct PullRequest {
 pub(super) struct Commit {
     pub oid: String,
 }
+/// The `mergeStateStatus` values GitHub itself will merge on. `CLEAN` is all
+/// green; `HAS_HOOKS` is clean with a pre-receive hook to run; `UNSTABLE` is
+/// mergeable with checks failing or still running where *none of them is
+/// required*, which is the state GitHub's own merge button stays live in.
+/// Gating on `CLEAN` alone refused merges GitHub permits (TASK-171).
+/// Everything else - `BLOCKED`, `BEHIND`, `DIRTY`, `DRAFT`, `UNKNOWN` - is a
+/// state GitHub refuses or has not decided, and stays refused here.
+const MERGE_READY: [&str; 3] = ["CLEAN", "HAS_HOOKS", "UNSTABLE"];
+/// `mergeable` before GitHub has finished computing it. The answer is not
+/// "no", it is "not yet", so asking again is the only correct response.
+pub(super) const MERGEABILITY_PENDING: &str = "UNKNOWN";
+
 impl Observation {
     pub fn pr(&self) -> &PullRequest {
         &self.repository.pull_request
+    }
+
+    /// GitHub's own two words for this PR's readiness, `(mergeable,
+    /// mergeStateStatus)`, for tests that compare our verdict against it.
+    #[cfg(test)]
+    pub(super) fn merge_readiness(&self) -> (&str, &str) {
+        let pr = self.pr();
+        (&pr.mergeable, &pr.merge_state_status)
+    }
+
+    /// True while GitHub is still computing mergeability and a second look is
+    /// worth taking.
+    pub(super) fn mergeability_pending(&self) -> bool {
+        self.pr().mergeable == MERGEABILITY_PENDING
+    }
+
+    /// What the human confirming this merge needs told about its readiness,
+    /// when that is anything other than plainly green. `None` is `CLEAN`.
+    pub fn readiness_caveat(&self) -> Option<String> {
+        match self.pr().merge_state_status.as_str() {
+            "CLEAN" => None,
+            "UNSTABLE" => Some(
+                "Checks: not all green (UNSTABLE) - none of them is required, so GitHub allows this merge".into(),
+            ),
+            "HAS_HOOKS" => Some("Checks: green, with a repository pre-receive hook to run (HAS_HOOKS)".into()),
+            other => Some(format!("Checks: {other}")),
+        }
     }
     pub fn methods(&self) -> Vec<PrMergeMethod> {
         [
@@ -76,7 +115,7 @@ impl Observation {
         ) {
             return Err("Current account lacks confirmed merge permission".into());
         }
-        if pr.mergeable != "MERGEABLE" || pr.merge_state_status != "CLEAN" {
+        if pr.mergeable != "MERGEABLE" || !MERGE_READY.contains(&pr.merge_state_status.as_str()) {
             return Err(format!(
                 "GitHub has not confirmed merge readiness ({}/{})",
                 pr.mergeable, pr.merge_state_status
