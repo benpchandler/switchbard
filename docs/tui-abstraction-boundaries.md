@@ -1,0 +1,25 @@
+# TUI abstraction boundaries
+
+## Columns and matching (TASK-162, TASK-163)
+
+TASK-141.1 through TASK-141.4 already supplied PR controls parity: shared column identities, filter syntax, paint controls and independent saved views. This extraction retains those behaviors and removes the remaining parallel comparator and task ownership of query parsing.
+
+The boundary is frontend-local. `columns.rs` remains the sole column catalog, including persisted names, aliases, labels, widths, categorical vocabulary, grouping eligibility, numeric ordering and multi-valued capability. `column_values.rs` supplies two explicit adapters, `TaskValues` and `PrValues`, through `ColumnValues`. Core owns task and PR facts; the TUI owns their column representation. A registry or plugin framework would add no demonstrated capability.
+
+Display, grouping and existing callers retain `Column::values` and `Column::pr_values` compatibility entry points; both delegate to the same adapters used by sorting and matching. Labels and linked tasks are multi-valued and non-groupable. Goals are multi-valued but retain their established first-goal grouping behavior. PR grouping stays unavailable. Rank reads the existing expedite sequence and keeps missing rank last ascending and first descending.
+
+`sort::compare_values` owns numeric, lexical and vocabulary ordering for both pages. Semantic sorts retain vocabulary order; plain descending reverses the primary key only. Ties compare numeric ID, then full identity to make equal numeric identities deterministic. Empty text keeps its existing lexical behavior, and absent semantic values sort after the known vocabulary. Task numeric ID arithmetic saturates instead of overflowing for malformed oversized IDs.
+
+`filter.rs` owns parsing, loose normalization, predicate evaluation and facet rewrite operations without importing task entities. `Filter::matches_row` reads the explicit column adapter. The task-specific `matches` compatibility method resides in `tasks.rs`; PR search and paint use the same engine through `PullRequests::matches`. Unsupported positive fields have no values and do not match; unsupported negated fields match. Unknown keywords remain literal text. Empty recognized values retain legacy substring behavior. ID and linked-task predicates remain exact after normalization; text searches ID and title. Space-separated terms compose with AND; comma-separated positive field values compose with OR.
+
+To add a column, add its identity and catalog row, declare cardinality and numeric/grouping capabilities, and implement its values in each applicable adapter. Add it to the page's explicit column list. Numeric columns additionally supply `numeric_key`; text and categorical columns use the existing shared algorithms. Keep saved names stable and add real-key E2E coverage for the new behavior. No comparator or parser branch is needed for ordinary text or categorical additions.
+
+## State and stress evidence
+
+The extraction changes representation rather than layout. Applicable regression states are default/many task rows, numeric IDs above nine, duplicate text ties, semantic/plain ascending/descending, absent values, multi-valued composition and negation, unsupported/invalid queries, zero matches and reset, grouping and rank compatibility, page isolation and saved-view restoration. Evidence lives in `tests/sort.rs`, `tests/filter.rs`, `tests/group.rs`, `tests/rank.rs` and `tests/pr_controls.rs`; the latter's populated PR journeys require authenticated read-only GitHub access and are explicitly ignored in ordinary runs. Existing page tests own narrow/short/zero viewport evidence. Native visual approval is not implied by terminal-buffer tests.
+
+No new loading, save, authorization or remote mutation paths are introduced; these remain owned by existing page/worker contracts. Offline PR observation and refresh lifecycle are outside this extraction. Real populated PR proof must run the opt-in journeys before claiming both consumers verified.
+
+Verification on 2026-09-08 used dedicated `CARGO_TARGET_DIR=/tmp/switchbard-columns-target`: filter 9/9, sort 3/3, group 9/9, rank 3/3 and ordinary PR controls 4/4 passed. All six opt-in PR controls journeys passed against the real `benpchandler/switchbard` repository with `SBT_PR_REPO=/Users/bpc/Dev/switchbard` and `SBT_WORK_TASK=TASK-162` (20.75s), including the added unsupported-field and composition assertions. `cargo clippy -p switchbard-tui --all-targets -- -D warnings` passed. This is working-tree evidence, not deployment or human approval.
+
+The expanded PR checks found and fixed an existing E2E helper defect: its supposed filter replacement appended to the committed query because slash starts an additional input segment. The helper now clears through the normal Escape key before typing the replacement. The rendered failure showed both the prior positive and new negative predicates, establishing the test defect before the fix. No product behavior was changed for this issue.

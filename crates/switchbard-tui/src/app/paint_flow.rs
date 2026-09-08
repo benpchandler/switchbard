@@ -13,7 +13,7 @@ impl App {
             .state
             .columns
             .iter()
-            .map(|column| PickOption::column(*column, false))
+            .map(|column| PickOption::paint_column(*column, false))
             .collect();
         let selected_id = if self.page == crate::page::Page::PullRequests {
             self.pull_requests.row().map(|row| row.number.to_string())
@@ -54,7 +54,7 @@ impl App {
         }
         for &column in self.page_columns() {
             if !self.state.columns.contains(&column) && column.filter_field().is_some() {
-                options.push(PickOption::column(column, true));
+                options.push(PickOption::paint_column(column, true));
             }
         }
         self.paint_return = None;

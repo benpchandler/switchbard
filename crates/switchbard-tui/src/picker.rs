@@ -192,6 +192,16 @@ impl PickOption {
         }
     }
 
+    pub fn paint_column(column: Column, hidden: bool) -> PickOption {
+        let mut option = Self::column(column, hidden);
+        option.label = if hidden {
+            format!("{}{}", column.label(), Column::HIDDEN_TAG)
+        } else {
+            column.label().to_string()
+        };
+        option
+    }
+
     pub fn column(column: Column, hidden: bool) -> PickOption {
         let label = if hidden {
             format!("{}{}", column.name(), Column::HIDDEN_TAG)

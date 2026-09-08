@@ -179,9 +179,7 @@ impl PullRequests {
     }
 
     pub fn matches(&self, filter: &crate::tasks::Filter, row: &PrListRow) -> bool {
-        filter.matches_values(&[&row.number.to_string(), &row.title], |field| {
-            self.values(field.column(), row)
-        })
+        filter.matches_row(&self.column_adapter(row))
     }
 
     pub fn column_values(&self, column: crate::columns::Column) -> Vec<(String, usize)> {
@@ -258,22 +256,12 @@ impl PullRequests {
     }
 
     fn compare(&self, a: &PrListRow, b: &PrListRow, sort: crate::sort::Sort) -> std::cmp::Ordering {
-        use crate::{columns::Column, sort::Order};
-        let values = |row| self.values(sort.column, row).join(",");
-        let order = match sort.order {
-            Order::Semantic => sort
-                .column
-                .vocabulary_rank(&values(a))
-                .cmp(&sort.column.vocabulary_rank(&values(b))),
-            _ if sort.column == Column::Id => a.number.cmp(&b.number),
-            _ => values(a).to_lowercase().cmp(&values(b).to_lowercase()),
-        };
-        let order = if sort.order == Order::Descending {
-            order.reverse()
-        } else {
-            order
-        };
-        order.then_with(|| a.number.cmp(&b.number))
+        crate::sort::compare_values(&self.column_adapter(a), &self.column_adapter(b), sort)
+    }
+
+    pub fn column_adapter<'a>(&'a self, row: &'a PrListRow) -> crate::column_values::PrValues<'a> {
+        let links = self.links.get(&row.url).map(Vec::as_slice).unwrap_or(&[]);
+        crate::column_values::PrValues { row, links }
     }
 
     pub fn refresh_label(&self) -> String {

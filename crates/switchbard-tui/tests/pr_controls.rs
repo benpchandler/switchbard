@@ -140,11 +140,9 @@ fn numbers(h: &Harness) -> Vec<u64> {
 }
 
 fn set_filter(h: &mut Harness, query: &str) {
+    // Browse Escape clears the committed filter; slash starts a new query.
+    h.press(KeyCode::Esc);
     h.press(KeyCode::Char('/'));
-    // Replace the current search through ordinary editing keys.
-    for _ in 0..h.app.input.chars().count() {
-        h.press(KeyCode::Backspace);
-    }
     h.type_text(query);
     h.press(KeyCode::Enter);
 }
@@ -175,6 +173,29 @@ fn live_pr_sort_filter_and_refresh_preserve_identity_and_task_state() {
     settle(&mut h);
     assert_eq!(h.app.pull_requests.row().unwrap().id, identity);
     assert!(numbers(&h).windows(2).all(|p| p[0] > p[1]));
+    set_filter(&mut h, "priority:high");
+    assert!(
+        h.app.pull_requests.visible.is_empty(),
+        "task-only positive field has no PR values"
+    );
+    set_filter(&mut h, "priority:!high");
+    assert!(
+        !h.app.pull_requests.visible.is_empty(),
+        "task-only negation retains PR rows: {}",
+        h.render()
+    );
+    set_filter(&mut h, "unknown:value");
+    assert!(
+        h.app.pull_requests.visible.is_empty(),
+        "unknown fields remain literal text"
+    );
+    set_filter(&mut h, &format!("id:{number} status:!impossible"));
+    assert_eq!(
+        numbers(&h),
+        [number],
+        "exact ID and categorical negation compose"
+    );
+    assert!(h.render().contains(&format!("#{number}")));
     set_filter(&mut h, "id:999999999999");
     assert!(h.app.pull_requests.visible.is_empty());
     let empty = h.render();

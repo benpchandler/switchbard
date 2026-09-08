@@ -43,6 +43,7 @@ struct RawPr {
     state: String,
     head_ref_oid: String,
     is_draft: bool,
+    merged_at: Option<String>,
     status_check_rollup: Option<Vec<Check>>,
     review_decision: Option<String>,
     mergeable: Option<String>,
@@ -113,6 +114,15 @@ fn row(pr: RawPr, repo_url: &str) -> Result<PrListRow, String> {
         head_oid: pr.head_ref_oid,
         draft: pr.is_draft,
         lifecycle: lifecycle(&pr.state)?,
+        merged_at: pr
+            .merged_at
+            .as_deref()
+            .filter(|_| pr.state == "MERGED")
+            .and_then(|value| {
+                chrono::DateTime::parse_from_rfc3339(value)
+                    .ok()
+                    .map(|instant| instant.with_timezone(&chrono::Utc))
+            }),
     })
 }
 

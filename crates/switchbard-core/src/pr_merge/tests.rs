@@ -276,6 +276,7 @@ fn selection() -> (PrSnapshot, PrListRow) {
         head_oid: "a".repeat(40),
         draft: false,
         lifecycle: crate::PrLifecycle::Open,
+        merged_at: None,
         checks: crate::PrChecks::Unknown,
         review: crate::PrReview::Unknown,
         merge: crate::PrMerge::Unknown,

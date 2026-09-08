@@ -90,6 +90,9 @@ pub struct App {
     pub selected: usize,
     /// First row on screen; the renderer keeps `selected` inside the window.
     pub scroll: usize,
+    pub help_scroll: u16,
+    /// UTC epoch day used to invalidate relative date projections on the next tick.
+    pub calendar_day: i64,
     /// Column order when `c m` began, so typed numbers keep meaning what the header showed.
     move_origin: Option<Vec<Column>>,
     /// Which values list to return to after a color is picked.
@@ -130,15 +133,11 @@ impl App {
         } = paths;
         let config = config::load(config_path.as_deref());
         let (settings, settings_warnings) = SettingsStore::load(global_settings, repo_settings);
-        let (mut pr_views, pr_warnings) = ViewStore::load_with_defaults(
-            global_views.as_ref().map(|p| p.with_extension("prs.lua")),
-            repo_views.as_ref().map(|p| p.with_extension("prs.lua")),
-            vec![ViewState::pull_requests()],
-        );
-        pr_views.sanitize(Page::PullRequests);
+        let (pr_views, pr_warnings) =
+            ViewStore::load_for_page(global_views.clone(), repo_views.clone(), Page::PullRequests);
         let pr_state = pr_views.get(0).unwrap_or_else(ViewState::pull_requests);
-        let (mut views, view_warnings) = ViewStore::load(global_views, repo_views);
-        views.sanitize(Page::Tasks);
+        let (views, view_warnings) =
+            ViewStore::load_for_page(global_views, repo_views, Page::Tasks);
         let mut app = App {
             repo_root: repo_root.to_path_buf(),
             config_seen: config_path.as_deref().and_then(config::modified_at),
@@ -157,6 +156,8 @@ impl App {
             rows: Vec::new(),
             selected: 0,
             scroll: 0,
+            help_scroll: 0,
+            calendar_day: crate::date_fields::today(),
             move_origin: None,
             paint_return: None,
             views,
@@ -396,6 +397,7 @@ impl App {
 
     /// Cheap per-tick work: pick up edits to the config file or the task files.
     pub fn tick(&mut self) {
+        self.refresh_calendar_day();
         self.refresh_pr_state();
         self.tick_pr_merge();
         if let Some(path) = self.config_path.as_deref() {
@@ -410,6 +412,16 @@ impl App {
             self.reload_tasks();
         }
         self.reload_work();
+    }
+
+    fn refresh_calendar_day(&mut self) {
+        let today = crate::date_fields::today();
+        if self.calendar_day == today {
+            return;
+        }
+        self.calendar_day = today;
+        self.refilter_tasks();
+        self.pull_requests.refilter();
     }
 
     /// Re-read the live session records: a handful of small files, and the
@@ -956,7 +968,27 @@ impl App {
         }
     }
 
+    fn scroll_help(&mut self, action: &Action) -> bool {
+        if self.pane != Pane::Help {
+            return false;
+        }
+        let page = self.page_size.min(u16::MAX as usize) as u16;
+        self.help_scroll = match action {
+            Action::Down => self.help_scroll.saturating_add(1),
+            Action::Up => self.help_scroll.saturating_sub(1),
+            Action::PageDown => self.help_scroll.saturating_add(page),
+            Action::PageUp => self.help_scroll.saturating_sub(page),
+            Action::Top => 0,
+            Action::Bottom => u16::MAX,
+            _ => return false,
+        };
+        true
+    }
+
     fn apply(&mut self, action: &Action) {
+        if self.scroll_help(action) {
+            return;
+        }
         if !self.page.allows(action) {
             self.status = "Switch to Tasks to use task controls".to_string();
             return;
@@ -1031,6 +1063,7 @@ impl App {
                 };
             }
             Action::Help => {
+                self.help_scroll = 0;
                 self.pane = match self.pane {
                     Pane::Help => Pane::None,
                     _ => Pane::Help,
@@ -1183,11 +1216,7 @@ impl App {
     }
 
     pub fn page_columns(&self) -> &'static [Column] {
-        if self.page == Page::PullRequests {
-            &Column::PR_ALL
-        } else {
-            &Column::ALL
-        }
+        crate::list_settings::ListSettings(self.page).catalog()
     }
 
     pub fn filter_text(&self) -> &str {

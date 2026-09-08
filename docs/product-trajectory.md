@@ -45,6 +45,8 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 
 ## Planned
 
+- **Reusable terminal list contracts (owner-directed 2026-09-08, TASK-144/162-167).** Tasks and Pull Requests share explicit column capabilities and entity adapters, one deterministic sorter and filter matcher, semantic paint precedence, bounded terminal presentation inputs, feature-scoped view settings and one configurable keyboard action catalog. This is a frontend-local boundary because the two concrete consumers are terminal lists; core retains domain facts and no UI dependencies. Existing GUI table/filter/badge primitives stay separate. `p` offers When task filed and When merged using authoritative timestamps and UTC calendar-day categories; no task completion or file modification surrogate is used. Existing view file names and Lua records remain the persistence authority, with explicit non-destructive handling of unreadable/unsupported records and external edits. See `docs/tui-abstraction-boundaries.md`, `docs/tui-date-paint-evidence.md`, `docs/tui-list-state-evidence.md` and `docs/tui-view-scope-evidence.md` for rationale, compatibility and state evidence.
+
 - Cross-platform parity (macOS + Linux) stays a first-class, shipped invariant — keep
   `#[cfg(target_os = …)]` scanner branches in lock-step; don't regress to macOS-only.
 - Worktree-first model (one repo → many worktrees) remains foundational; never collapse.

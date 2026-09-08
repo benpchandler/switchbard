@@ -1,12 +1,9 @@
 //! The column catalog: one row per column with everything the rest of the crate
 //! needs to know about it. Adding a column is one row here plus its value accessor.
 
-use switchbard_core::{
-    goals_feeding, BacklogTask, GoalDef, BACKLOG_PRIORITIES, CANONICAL_STATUS_ORDER,
-};
+use switchbard_core::{BacklogTask, GoalDef, BACKLOG_PRIORITIES, CANONICAL_STATUS_ORDER};
 
-use crate::ball::Ball;
-use crate::tasks::FilterField;
+use crate::filter::FilterField;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Column {
@@ -29,6 +26,8 @@ pub enum Column {
     Review,
     Merge,
     Draft,
+    Filed,
+    Merged,
 }
 
 pub struct ColumnSpec {
@@ -47,9 +46,11 @@ pub struct ColumnSpec {
     pub vocabulary: &'static [&'static str],
     /// Whether `g` can section the list by this column: one value per task, few values.
     pub groupable: bool,
+    pub multi_valued: bool,
+    pub numeric: bool,
 }
 
-pub const COLUMNS: [ColumnSpec; 16] = [
+pub const COLUMNS: [ColumnSpec; 18] = [
     ColumnSpec {
         column: Column::Id,
         name: "id",
@@ -59,6 +60,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
         field: Some(FilterField::Id),
         vocabulary: &[],
         groupable: false,
+        multi_valued: false,
+        numeric: true,
     },
     ColumnSpec {
         column: Column::Status,
@@ -69,6 +72,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
         field: Some(FilterField::Status),
         vocabulary: CANONICAL_STATUS_ORDER,
         groupable: true,
+        multi_valued: false,
+        numeric: false,
     },
     ColumnSpec {
         column: Column::Priority,
@@ -79,6 +84,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
         field: Some(FilterField::Priority),
         vocabulary: BACKLOG_PRIORITIES,
         groupable: true,
+        multi_valued: false,
+        numeric: false,
     },
     ColumnSpec {
         column: Column::Title,
@@ -89,6 +96,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
         field: None,
         vocabulary: &[],
         groupable: false,
+        multi_valued: false,
+        numeric: false,
     },
     ColumnSpec {
         column: Column::Labels,
@@ -99,6 +108,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
         field: Some(FilterField::Label),
         vocabulary: &[],
         groupable: false,
+        multi_valued: true,
+        numeric: false,
     },
     ColumnSpec {
         column: Column::Project,
@@ -109,6 +120,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
         field: Some(FilterField::Project),
         vocabulary: &[],
         groupable: true,
+        multi_valued: false,
+        numeric: false,
     },
     ColumnSpec {
         column: Column::Ball,
@@ -119,6 +132,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
         field: Some(FilterField::Ball),
         vocabulary: &["me", "agent"],
         groupable: true,
+        multi_valued: false,
+        numeric: false,
     },
     ColumnSpec {
         column: Column::Rank,
@@ -129,6 +144,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
         field: None,
         vocabulary: &[],
         groupable: false,
+        multi_valued: false,
+        numeric: true,
     },
     ColumnSpec {
         column: Column::Goal,
@@ -139,6 +156,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
         field: Some(FilterField::Goal),
         vocabulary: &[],
         groupable: true,
+        multi_valued: true,
+        numeric: false,
     },
     ColumnSpec {
         column: Column::Work,
@@ -149,6 +168,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
         field: None,
         vocabulary: &[],
         groupable: false,
+        multi_valued: false,
+        numeric: false,
     },
     ColumnSpec {
         column: Column::Lifecycle,
@@ -159,6 +180,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
         field: Some(FilterField::Status),
         vocabulary: &["Open", "Closed", "Merged"],
         groupable: false,
+        multi_valued: false,
+        numeric: false,
     },
     ColumnSpec {
         column: Column::Tasks,
@@ -169,6 +192,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
         field: Some(FilterField::Tasks),
         vocabulary: &[],
         groupable: false,
+        multi_valued: true,
+        numeric: false,
     },
     ColumnSpec {
         column: Column::Checks,
@@ -186,6 +211,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
             "Not fetched",
         ],
         groupable: false,
+        multi_valued: false,
+        numeric: false,
     },
     ColumnSpec {
         column: Column::Review,
@@ -201,6 +228,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
             "Approved",
         ],
         groupable: false,
+        multi_valued: false,
+        numeric: false,
     },
     ColumnSpec {
         column: Column::Merge,
@@ -215,6 +244,8 @@ pub const COLUMNS: [ColumnSpec; 16] = [
             "No merge conflict",
         ],
         groupable: false,
+        multi_valued: false,
+        numeric: false,
     },
     ColumnSpec {
         column: Column::Draft,
@@ -225,12 +256,38 @@ pub const COLUMNS: [ColumnSpec; 16] = [
         field: Some(FilterField::Draft),
         vocabulary: &["Draft", "Ready"],
         groupable: false,
+        multi_valued: false,
+        numeric: false,
+    },
+    ColumnSpec {
+        column: Column::Filed,
+        name: "filed",
+        alias: Some("created"),
+        header: "filed (UTC)",
+        width: Some(16),
+        field: Some(FilterField::Filed),
+        vocabulary: crate::date_fields::BUCKETS,
+        groupable: false,
+        multi_valued: true,
+        numeric: false,
+    },
+    ColumnSpec {
+        column: Column::Merged,
+        name: "merged",
+        alias: Some("merged_at"),
+        header: "merged (UTC)",
+        width: Some(16),
+        field: Some(FilterField::Merged),
+        vocabulary: crate::date_fields::BUCKETS,
+        groupable: false,
+        multi_valued: true,
+        numeric: false,
     },
 ];
 
 impl Column {
     /// Every column sbt knows, in catalog order. Shown columns are a user-ordered subset.
-    pub const ALL: [Column; 10] = [
+    pub const ALL: [Column; 11] = [
         Column::Id,
         Column::Status,
         Column::Priority,
@@ -241,9 +298,10 @@ impl Column {
         Column::Rank,
         Column::Goal,
         Column::Work,
+        Column::Filed,
     ];
 
-    pub const PR_ALL: [Column; 8] = [
+    pub const PR_ALL: [Column; 9] = [
         Column::Id,
         Column::Lifecycle,
         Column::Tasks,
@@ -252,6 +310,7 @@ impl Column {
         Column::Review,
         Column::Merge,
         Column::Draft,
+        Column::Merged,
     ];
 
     pub const PR_DEFAULT: [Column; 5] = [
@@ -285,6 +344,18 @@ impl Column {
 
     pub fn name(self) -> &'static str {
         self.spec().name
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Filed => "When task filed",
+            Self::Merged => "When merged",
+            _ => self.name(),
+        }
+    }
+
+    pub fn is_date(self) -> bool {
+        matches!(self, Self::Filed | Self::Merged)
     }
 
     pub fn header(self) -> &'static str {
@@ -325,32 +396,14 @@ impl Column {
     /// The values a task carries in this column (labels and goals can be several).
     /// `goals` is the repo's goal set: membership is derived, not stored on the task.
     pub fn values(self, task: &BacklogTask, goals: &[GoalDef]) -> Vec<String> {
-        match self {
-            Column::Id => vec![task.id.clone()],
-            Column::Status => vec![task.status.clone()],
-            Column::Priority => vec![task.priority.clone()],
-            Column::Title => vec![task.title.clone()],
-            Column::Labels => task.labels.clone(),
-            Column::Project => task.project.clone().into_iter().collect(),
-            Column::Ball => Ball::of(task)
-                .map(|ball| ball.text().to_string())
-                .into_iter()
-                .collect(),
-            // Rank and work are not on the task: `App::cell` supplies them
-            // from the lane and the live session list.
-            Column::Rank
-            | Column::Work
-            | Column::Lifecycle
-            | Column::Tasks
-            | Column::Checks
-            | Column::Review
-            | Column::Merge
-            | Column::Draft => Vec::new(),
-            Column::Goal => goals_feeding(goals, task)
-                .into_iter()
-                .map(str::to_string)
-                .collect(),
-        }
+        crate::column_values::ColumnValues::values(
+            &crate::column_values::TaskValues {
+                task,
+                goals,
+                top: &[],
+            },
+            self,
+        )
     }
 
     pub fn pr_values(
@@ -358,34 +411,22 @@ impl Column {
         row: &switchbard_core::PrListRow,
         links: &[(String, String)],
     ) -> Vec<String> {
-        use switchbard_core::{PrChecks, PrLifecycle};
-        match self {
-            Column::Id => vec![row.number.to_string()],
-            Column::Title => vec![row.title.clone()],
-            Column::Lifecycle | Column::Status => vec![row.lifecycle.label().to_string()],
-            Column::Tasks => links.iter().map(|(id, _)| id.clone()).collect(),
-            Column::Checks => vec![if row.lifecycle != PrLifecycle::Open {
-                "Not fetched"
-            } else {
-                match row.checks {
-                    PrChecks::Failed => "Failed",
-                    PrChecks::Unknown => "Unknown",
-                    PrChecks::Running => "Pending",
-                    PrChecks::Passing => "Passed",
-                    PrChecks::NoneObserved => "None observed",
-                }
-            }
-            .to_string()],
-            Column::Review => vec![row.review.label().to_string()],
-            Column::Merge => vec![row.merge.label().to_string()],
-            Column::Draft => vec![if row.draft { "Draft" } else { "Ready" }.to_string()],
-            _ => Vec::new(),
-        }
+        crate::column_values::ColumnValues::values(
+            &crate::column_values::PrValues { row, links },
+            self,
+        )
     }
 
     /// The cell as text: the values joined. Filter and sort read this.
     pub fn cell_text(self, task: &BacklogTask, goals: &[GoalDef]) -> String {
-        self.values(task, goals).join(",")
+        if self.is_date() {
+            self.values(task, goals)
+                .into_iter()
+                .next()
+                .unwrap_or_default()
+        } else {
+            self.values(task, goals).join(",")
+        }
     }
 
     /// Columns with a short form: id without its repo prefix, priority as H/M/L.
