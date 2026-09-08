@@ -41,3 +41,9 @@ GitHub CLI supports an expected-head guard and a separate explicit admin overrid
 ## Verification so far
 
 Core worker ran seven scoped tests, including authenticated historical PR137 preparation returning Disabled. The parent then ran real-key historical rejection and leave-during-preparation journeys, both passing against GitHub. `mise run tui-install` passed formatting, clippy, the full TUI suite and release installation. Full workspace preflight and independent adversarial review are in progress. The positive eligible confirmation/cancel journey will run against the delivery PR when GitHub reports it ready; no production merge is part of verification.
+
+## Local delivery gates
+
+Full `mise run preflight` passed (workspace formatting, clippy, all-target tests, and developer-gate contracts). The final focused core run passed ten guard/receipt/readback/identity/method tests; the authenticated historical read-only case had already passed separately. Independent adversarial review found no source blocker. Its requested additional selection/method tests were added and passed. The terminal test suite also includes a live eligible-PR test for Cancel default, typeahead refusal, 80/120/180-column rendering and 40x12 confirmation refusal; execution of that final live test is pending the delivery PR.
+
+Explicit remaining matrix gaps: actual remote merge, submit-time quit/reexec behavior under a real write, extreme Unicode/title stress, and native screenshot/reporter approval. These are not represented as completed live evidence. The receipt/core transport tests prove successful, rejected and unknown-result logic without changing GitHub.
