@@ -6,7 +6,7 @@ The Tasks paths remain `views.lua` and the existing repo override path; Pull Req
 
 ## Compatibility and preservation policy
 
-Older task records with omitted fields retain the established defaults. Recognized aliases load and serialize under their canonical names. Missing files use starter slots and can be saved. Unknown columns, fields, sorting/grouping forms, malformed Lua, invalid paint rules or unsupported slot numbers produce a warning and prevent writes to the affected file. Recognized columns that are unsupported on the current feature are omitted from the usable in-memory view but block replacement of their source. Unsupported feature grouping likewise blocks replacement. Existing unsupported data is not silently rewritten as defaults.
+Older task records with omitted fields retain the established defaults. Recognized aliases load and serialize under their canonical names. Missing files use starter slots and can be saved. Unknown columns, fields, sorting/grouping forms, malformed Lua, invalid paint rules or unsupported slot numbers produce a warning and prevent writes to the affected file. Recognized columns and parsed filter fields that are unsupported on the current feature remain unusable and block replacement of their source. Filter aliases are checked through the shared parser and page catalog, so a Tasks view cannot silently accept a PR-only field, and a PR view cannot silently accept a task-only field. Unsupported feature grouping likewise blocks replacement. Existing unsupported data is not silently rewritten as defaults.
 
 Valid portions of a malformed paint string are not used to overwrite its source; unknown target columns and partially invalid categorical color mappings are rejected as persisted records. Free-text filter grammar retains its existing behavior.
 
@@ -23,7 +23,7 @@ Global slots must be contiguous from 1; sparse global Lua sequences are rejected
 | Missing source, ordinary save/global promotion | Existing `views` suite |
 | Malformed Lua, future fields/columns/sort forms, repeated save/promotion | `view_scope::malformed_and_future_records_are_preserved_on_save_and_promotion` |
 | External edit, conflict, reopen recovery, other-page save | `view_scope::external_edit_blocks_save_and_reopen_recovers_without_changing_other_page` |
-| Unsupported PR grouping/columns | `view_scope::unsupported_feature_columns_and_grouping_do_not_get_overwritten` |
+| Unsupported PR grouping/columns and cross-page filter fields | `view_scope::unsupported_feature_columns_and_grouping_do_not_get_overwritten`, `view_scope::unsupported_saved_filter_fields_are_preserved_and_block_save` |
 | Global failure with independent repo save; failed promotion preserves both | `view_scope::malformed_global_file_allows_repo_save_but_cannot_be_promoted_over` |
 | Sparse global sequences and sparse repo slot 9 | `view_scope::sparse_global_slots_are_preserved_instead_of_truncated_on_promotion`, `view_scope::sparse_repo_slot_keeps_nine_in_picker_help_load_save_and_restart` |
 | Promotion second-write failure and repair retry; external edit after partial result | `view_scope::promotion_reports_confirmed_global_write_and_retries_repo_removal`, `view_scope::partial_promotion_retry_never_overwrites_later_external_global_edit` |
