@@ -20,13 +20,14 @@ use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    let footer_height = if app.mode == Mode::NewTask { 3 } else { 1 };
     let [navigation, notification, body, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(u16::from(
             !app.pull_requests.notifications.is_empty() || app.pr_merge.ongoing().is_some(),
         )),
-        Constraint::Min(1),
-        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(footer_height),
     ])
     .areas(frame.area());
     draw_navigation(frame, app, navigation);
@@ -371,6 +372,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.config.theme;
     let actions = [
         Action::Page,
+        Action::NewTask,
         Action::Down,
         Action::Up,
         Action::Top,
@@ -470,6 +472,10 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
+    if app.mode == Mode::NewTask {
+        draw_new_task(frame, app, area);
+        return;
+    }
     let theme = &app.config.theme;
     let line = match app.mode {
         Mode::Filter => Line::from(vec![
@@ -490,7 +496,8 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             format!(" {}", picker::hint(app.picker.as_ref().expect("checked"))),
             theme.style(Surface::Hint),
         )),
-        Mode::PickValue
+        Mode::NewTask
+        | Mode::PickValue
         | Mode::ViewChord
         | Mode::ViewSaveSlot
         | Mode::ViewGlobalSlot
@@ -510,6 +517,36 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Mode::Browse => browse_footer(app),
     };
     frame.render_widget(Paragraph::new(line), area);
+}
+
+/// Keep the end of the bounded UTF-8 draft and its cursor visible while typing.
+fn draw_new_task(frame: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.config.theme;
+    let prefix = if area.width >= 20 { "new task: " } else { ":" };
+    let room = usize::from(area.width).saturating_sub(prefix.len() + 1);
+    let mut start = app.input.len();
+    let mut width = 0;
+    let draft = Span::raw(app.input.as_str());
+    let graphemes: Vec<_> = draft.styled_graphemes(Style::default()).collect();
+    for grapheme in graphemes.iter().rev() {
+        let character_width = Span::raw(grapheme.symbol).width();
+        if width + character_width > room {
+            break;
+        }
+        width += character_width;
+        start -= grapheme.symbol.len();
+    }
+    let input = Line::from(vec![
+        Span::styled(prefix, theme.style(Surface::Accent)),
+        Span::raw(app.input[start..].to_string()),
+        Span::styled("▏", theme.style(Surface::Accent)),
+    ]);
+    let lines = vec![
+        input,
+        Line::styled(app.status.clone(), theme.style(Surface::Status)),
+        Line::styled("Enter create · Esc cancel", theme.style(Surface::Hint)),
+    ];
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 /// The footer while browsing: what is in effect as a chip, the situation, then

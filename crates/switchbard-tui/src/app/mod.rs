@@ -1,6 +1,7 @@
 //! Application state and the single place key events turn into state changes.
 //! Submodules extend `App` by concept: `pickers`, `paint_flow`, `slots`.
 
+mod new_task;
 mod paint_flow;
 mod pickers;
 pub mod pr_merge;
@@ -32,6 +33,7 @@ pub enum Mode {
     Browse,
     Filter,
     Command,
+    NewTask,
     PickValue,
     /// After `v`: a digit opens that slot, `s` starts a save.
     ViewChord,
@@ -513,6 +515,7 @@ impl App {
             Mode::Browse => self.handle_browse_key(event),
             Mode::Filter => self.handle_filter_key(event),
             Mode::Command => self.handle_command_key(event),
+            Mode::NewTask => self.handle_new_task_key(event),
             Mode::PickValue => self.handle_pick_value_key(event),
             Mode::ViewChord => self.handle_view_chord_key(event),
             Mode::ViewSaveSlot => self.handle_view_save_slot_key(event),
@@ -872,6 +875,9 @@ impl App {
     }
 
     fn handle_browse_key(&mut self, event: KeyEvent) {
+        if event.code == KeyCode::Enter && event.kind == KeyEventKind::Repeat {
+            return;
+        }
         let chord = KeyChord::from_event(&event);
         {
             if let (KeyCode::Char(digit), false) = (event.code, chord.ctrl) {
@@ -1054,6 +1060,7 @@ impl App {
                 self.pane = Pane::None;
                 self.status.clear();
             }
+            Action::NewTask => self.open_new_task(),
             Action::Down => self.step(1),
             Action::Up => self.step(-1),
             Action::Top => self.select(0),
