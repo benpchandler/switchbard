@@ -590,6 +590,8 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 
 - **Terminal task capture (owner-directed 2026-09-08).** `sbt` provides a `t n` task/new chord (the task prefix is configurable; `new_task` also remains bindable) to enter an ordinary task title. Enter writes through the same core task creation facade as `sb create`; Esc cancels. Validation and write failures retain the draft for correction or retry. Success selects the new task when visible and explicitly reports when existing filters hide it. Capture does not infer metadata from filters or attach bug-report context.
 
+- **Terminal parent linking (owner-directed 2026-09-08; TASK-182/183).** The Tasks menu offers `t a` to choose an existing eligible parent by ID and title. Search accepts IDs and titles without committing; Enter saves, and No parent promotes to top level. The picker discloses that the existing native move operation assigns a new ID. Core owns candidate eligibility and fresh write validation; loading resolves legacy shorthand parent references to existing canonical IDs without rewriting documents. Self-parenting and nested sub-issues are rejected.
+
 - **Terminal UI grouping (owner-directed 2026-09-02).** `sbt` sections the task
   list by a groupable column (`o`, `:group <column>`, the header-digit menu; view
   records carry `group = "<column>"`). Grouping is a projection over the already

@@ -6,6 +6,7 @@ mod paint_flow;
 mod pickers;
 pub mod pr_merge;
 mod slots;
+mod task_parent;
 mod task_project;
 mod task_status;
 
@@ -1399,6 +1400,7 @@ impl App {
                         PickerPurpose::Task
                             | PickerPurpose::TaskStatus(_)
                             | PickerPurpose::TaskProject(_)
+                            | PickerPurpose::TaskParent(_)
                             | PickerPurpose::TopList
                             | PickerPurpose::Ball
                             | PickerPurpose::Goals(_)
