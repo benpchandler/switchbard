@@ -11,7 +11,8 @@ fn legacy_slots_and_both_feature_records_survive_save_and_restart() {
     h.app = open_app(&h.root, &h.config_path);
     let task = h.app.state.clone();
     assert!(h.render().contains("status:todo"));
-    assert!(h.type_text("vsd").contains("saved v1"));
+    let screen = h.type_text("vsd");
+    assert!(screen.contains("saved v1"), "{screen}");
     h.press(KeyCode::Tab);
     let pr = h.app.state.clone();
     let screen = h.press(KeyCode::Char('v'));
@@ -87,6 +88,41 @@ fn unsupported_feature_columns_and_grouping_do_not_get_overwritten() {
         assert!(screen.contains("repair file and reopen"), "{screen}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
     }
+}
+
+#[test]
+fn unsupported_saved_filter_fields_are_preserved_and_block_save() {
+    for (file, filter) in [
+        ("views-repo.lua", "merged:today"),
+        ("views-repo.prs.lua", "goal:foo"),
+    ] {
+        let mut h = Harness::new();
+        let path = h.root.join(file);
+        let source = format!("return {{ [1] = {{ filter='{filter}' }} }}");
+        std::fs::write(&path, &source).unwrap();
+        h.app = open_app(&h.root, &h.config_path);
+        if file.ends_with(".prs.lua") {
+            h.press(KeyCode::Tab);
+        }
+        let screen = h.type_text("vsd");
+        assert!(screen.contains("repair file and reopen"), "{screen}");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), source);
+    }
+}
+
+#[test]
+fn supported_saved_filter_aliases_remain_compatible_per_page() {
+    let mut h = Harness::new();
+    let task_path = h.root.join("views-repo.lua");
+    let task_source = "return { [1] = { filter='created:today' } }";
+    std::fs::write(&task_path, task_source).unwrap();
+    let pr_path = h.root.join("views-repo.prs.lua");
+    let pr_source = "return { [1] = { filter='status:merged' } }";
+    std::fs::write(&pr_path, pr_source).unwrap();
+    h.app = open_app(&h.root, &h.config_path);
+    assert_eq!(h.app.state.filter, "created:today");
+    h.press(KeyCode::Tab);
+    assert_eq!(h.app.pull_requests.filter, "status:merged");
 }
 
 #[test]

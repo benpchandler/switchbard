@@ -142,6 +142,10 @@ impl Filter {
         }
     }
 
+    pub fn fields(&self) -> impl Iterator<Item = FilterField> + '_ {
+        self.terms.iter().filter_map(Term::field)
+    }
+
     pub fn matches_row(&self, row: &impl crate::column_values::ColumnValues) -> bool {
         let text = row.text();
         let text: Vec<&str> = text.iter().map(String::as_str).collect();

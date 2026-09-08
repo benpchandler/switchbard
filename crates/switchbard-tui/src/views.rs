@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use mlua::{Lua, Table};
 
 use crate::columns::Column;
+use crate::filter::Filter;
 use crate::group::Grouping;
 use crate::list_settings::ListSettings;
 use crate::paint::{parse_rules, rules_text, PaintRule};
@@ -643,6 +644,9 @@ impl ViewState {
                 .glyph_columns
                 .iter()
                 .any(|c| scope.canonical(*c).filter_field().is_none())
+            || Filter::parse(&self.filter)
+                .fields()
+                .any(|field| unsupported(field.column()))
             || self.sort.is_some_and(|s| unsupported(s.column))
             || (!scope.supports_grouping() && !self.group.is_flat())
             || self.paint.iter().any(|rule| match rule {
