@@ -1,5 +1,7 @@
 # Switchbard-owned storage (TASK-147)
 
+Owner clarification (2026-09-08): [schema flexibility](schema-flexibility.md) is a governing requirement. Use a stable envelope with extensible content, preserve unknown fields and kinds, and avoid schema migrations for custom fields. It extends MUST-004 and MUST-017. Earlier wire/schema/model details require revision where inconsistent; implementation readiness remains open.
+
 Status: revision required following the fresh [second opinion](second-opinion.md). Central SQLite authority is supported; exchange ancestry, record granularity, PR readability, and verification require revision before implementation. The earlier audit remains historical evidence of its narrower finding closure. Implementation, migration and reporter acceptance remain open.
 
 ## Objective ledger

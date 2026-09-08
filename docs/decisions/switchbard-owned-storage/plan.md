@@ -1,5 +1,7 @@
 # Central storage and repository exchange - Plan
 
+Owner clarification (2026-09-08): [schema flexibility](schema-flexibility.md) is a governing requirement. Use a stable envelope with extensible content, preserve unknown fields and kinds, and avoid schema migrations for custom fields. It extends MUST-004 and MUST-017. Earlier wire/schema/model details require revision where inconsistent; implementation readiness remains open.
+
 ## 1. What ships
 
 Switchbard owns one machine-local database for every repository's native planning data. Linked worktrees share committed records immediately on the next CLI read and within two seconds in active GUI/TUI clients. Normal edits require no Git change or PR. An explicit export creates one optional lossless repository exchange file; collaborators import, edit, export and PR that file to exchange independent database changes.

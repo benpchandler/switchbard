@@ -1,5 +1,7 @@
 # Switchbard repository exchange v1
 
+Owner clarification (2026-09-08): [schema flexibility](schema-flexibility.md) is a governing requirement. Use a stable envelope with extensible content, preserve unknown fields and kinds, and avoid schema migrations for custom fields. It extends MUST-004 and MUST-017. Earlier wire/schema/model details require revision where inconsistent; implementation readiness remains open.
+
 This is the proposed normative wire specification for `.switchbard/tasks.json`. `exchange-v1.schema.json` defines closed object shapes; the algorithmic rules below are additionally mandatory. `exchange_v1_vectors.py` executes fixed specification vectors, not the product parser, import path, database, or migration. Passing these vectors does not implement TASK-147.
 
 ## Envelope and limits

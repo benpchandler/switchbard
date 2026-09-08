@@ -1,5 +1,7 @@
 # Decision: one database, optional repository exchange
 
+Owner clarification (2026-09-08): [schema flexibility](schema-flexibility.md) is a governing requirement. Use a stable envelope with extensible content, preserve unknown fields and kinds, and avoid schema migrations for custom fields. It extends MUST-004 and MUST-017. Earlier wire/schema/model details require revision where inconsistent; implementation readiness remains open.
+
 Status: the owner confirmed the central-database and optional single-file direction. This detailed implementation proposal still needs review. No production migration has occurred.
 
 ## Owner outcome

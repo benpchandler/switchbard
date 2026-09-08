@@ -1,5 +1,7 @@
 # Required evidence and state coverage
 
+Owner clarification (2026-09-08): [schema flexibility](schema-flexibility.md) is a governing requirement. Use a stable envelope with extensible content, preserve unknown fields and kinds, and avoid schema migrations for custom fields. It extends MUST-004 and MUST-017. Earlier wire/schema/model details require revision where inconsistent; implementation readiness remains open.
+
 Synthetic checks pressure-test decisions only. Product acceptance must execute the real core/CLI/UI seams; a green model is not implementation evidence.
 
 | Required outcome | Product evidence required |
