@@ -6,8 +6,17 @@
 # matrix, TASK-180) and `mission_sidecar` (the live helper matrix). Each
 # scope script owns its own answer; this owns the diff and nothing else.
 #
-# Fails open on purpose: a base we cannot resolve, or a diff we cannot take,
-# means we do not know what changed, so everything runs.
+# The comparison is against the MERGE BASE, not the base branch's tip. A
+# two-dot `base..head` diff on a branch whose base has moved on also reports
+# every path in the commits landed since, so on a busy main it says "the
+# whole repo changed" for a one-file PR and every matrix runs. That is safe -
+# it fails open - but it makes the routing inert, which is the entire point
+# of it. Verified: PR #146 changed one Markdown file and the two-dot diff
+# reported 60 paths.
+#
+# Fails open on purpose: a base we cannot resolve, a merge base we cannot
+# find, or a diff we cannot take means we do not know what changed, so
+# everything runs.
 set -euo pipefail
 
 repo="."
@@ -66,9 +75,15 @@ if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]] || \
   exit 0
 fi
 
+merge_base="$(git -C "$repo_root" merge-base "$base_sha" "$head_sha" 2>/dev/null || true)"
+if [[ -z "$merge_base" ]]; then
+  emit_all true
+  exit 0
+fi
+
 changed_paths="$(mktemp)"
 trap 'rm -f "$changed_paths"' EXIT
-if ! git -C "$repo_root" diff --name-only -z "$base_sha" "$head_sha" > "$changed_paths"; then
+if ! git -C "$repo_root" diff --name-only -z "$merge_base" "$head_sha" > "$changed_paths"; then
   emit_all true
   exit 0
 fi
