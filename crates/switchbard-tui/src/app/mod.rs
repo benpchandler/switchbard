@@ -5,6 +5,7 @@ mod new_task;
 mod paint_flow;
 mod pickers;
 pub mod pr_merge;
+pub mod resume;
 mod slots;
 mod task_project;
 mod task_status;
@@ -271,7 +272,9 @@ impl App {
         )
     }
 
-    /// Preserve the page and task view across a self-restart; old task-only records still read.
+    /// Preserve the page and both views across a self-restart. The record's
+    /// format, and its tolerance for the build on the other side of the
+    /// handoff being a different one, live in `resume`.
     pub fn resume_state(&self) -> String {
         let (tasks, task_slot, prs, pr_slot) = if self.page == Page::Tasks {
             (
@@ -288,113 +291,56 @@ impl App {
                 self.view,
             )
         };
-        format!(
-            "pages={}",
-            serde_json::to_string(&(
-                self.page == Page::PullRequests,
-                task_slot,
-                self.selected,
-                tasks.to_lua(),
-                pr_slot,
-                prs.to_lua(),
-                self.pull_requests.selected,
-                self.pull_requests.selection_identity()
-            ))
-            .expect("page state serialization")
-        )
+        resume::ResumeRecord {
+            pr_page: self.page == Page::PullRequests,
+            task_slot,
+            task_view: tasks.to_lua(),
+            task_selected: self.selected,
+            pr_slot,
+            pr_view: prs.to_lua(),
+            pr_selected: self.pull_requests.selected,
+            pr_id: self.pull_requests.selection_identity(),
+        }
+        .encode()
     }
 
+    /// Take up where the previous build left off. A record this build cannot
+    /// read is named in the status line rather than dropped: the alternative
+    /// is opening on saved slot 1 with no sign the live view was lost, which
+    /// is what TASK-173 reported as "the build updated and my view reset".
     pub fn resume_from(&mut self, state: Option<&str>) {
-        let Some(state) = state else {
-            return;
-        };
-        if let Some(record) = state.strip_prefix("pages=") {
-            self.resume_pages(record);
-            return;
-        }
-        if self.page == Page::PullRequests {
-            self.toggle_page_state();
-        }
-        let state = if let Some(rest) = state.strip_prefix("prfilter=") {
-            if let Some((filter, record)) = rest.split_once('\t') {
-                self.pull_requests.filter = serde_json::from_str(filter).unwrap_or_default();
-                record
-            } else {
-                state
+        match resume::decode(state) {
+            resume::Restored::Absent => {}
+            resume::Restored::Record(record) => self.restore(&record),
+            resume::Restored::Unreadable => {
+                self.telemetry.record("error", "unreadable resume record");
+                self.status =
+                    "the new build could not read the previous view; opened your saved view"
+                        .to_string();
             }
-        } else {
-            state
-        };
-        let was_pr = state.starts_with("prs\t");
-        let state = if let Some(record) = state.strip_prefix("prs\t") {
-            self.page = Page::Tasks;
-            record
-        } else {
-            self.page = Page::Tasks;
-            state
-        };
-        let mut parts = state.splitn(3, '\t');
-        if let Some(slot) = parts.next().and_then(|n| n.parse().ok()) {
-            self.view = slot;
         }
-        let selected = parts.next().and_then(|n| n.parse().ok());
-        if let Some(record) = parts.next() {
-            self.state = ViewState::from_lua(record);
-            self.state.sanitize(Page::Tasks);
-        }
-        self.refilter();
-        if let Some(selected) = selected {
-            self.select(selected);
-        }
-        self.inactive_state.filter = self.pull_requests.filter.clone();
-        if was_pr {
-            self.toggle_page_state();
-        }
-        self.status = "updated to the new build".to_string();
     }
 
-    fn resume_pages(&mut self, record: &str) {
-        type Resume = (
-            bool,
-            usize,
-            usize,
-            String,
-            usize,
-            String,
-            usize,
-            Option<String>,
-        );
-        let parsed = serde_json::from_str::<Resume>(record).or_else(|_| {
-            serde_json::from_str::<(bool, usize, usize, String, usize, String, usize)>(record).map(
-                |(page, slot, selected, tasks, pr_slot, prs, pr_selected)| {
-                    (page, slot, selected, tasks, pr_slot, prs, pr_selected, None)
-                },
-            )
-        });
-        let Ok((pr_page, task_slot, selected, tasks, pr_slot, prs, pr_selected, pr_id)) = parsed
-        else {
-            return;
-        };
+    fn restore(&mut self, record: &resume::ResumeRecord) {
         if self.page == Page::PullRequests {
             self.toggle_page_state();
         }
-        self.view = task_slot;
-        self.state = ViewState::from_lua(&tasks);
+        self.view = record.task_slot;
+        self.state = ViewState::from_lua(&record.task_view);
         self.state.sanitize(Page::Tasks);
-        self.inactive_view = pr_slot;
-        self.inactive_state = ViewState::from_lua(&prs);
+        self.inactive_view = record.pr_slot;
+        self.inactive_state = ViewState::from_lua(&record.pr_view);
         self.inactive_state.sanitize(Page::PullRequests);
         self.refilter();
-        self.select(selected);
-        self.pull_requests.selected = pr_selected;
-        self.pull_requests.restore_selection(pr_id);
-        if pr_page {
+        self.select(record.task_selected);
+        self.pull_requests.selected = record.pr_selected;
+        self.pull_requests.restore_selection(record.pr_id.clone());
+        if record.pr_page {
             self.toggle_page_state();
         }
         self.status = "updated to the new build".to_string();
     }
 
-    /// Cheap per-tick work: pick up edits to the config file or the task files.
     pub fn tick(&mut self) {
         self.refresh_pr_state();
         self.tick_pr_merge();

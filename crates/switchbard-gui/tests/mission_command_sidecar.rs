@@ -481,7 +481,15 @@ fn mission_render_path_has_no_process_or_disk_io() {
     );
 }
 
+/// Duplicate of `mission_command_view::mission_command_fifty_row_perf_smoke`
+/// (same Missions place, same 50 rows, same 200 samples, same 33ms budget),
+/// which is already an opt-in smoke. Ignored to match it: every wall-clock
+/// budget in this repo is opted out of the gate, because on a shared runner
+/// the number measures how busy the machine is as much as how fast the code
+/// is. Seen at 35.995ms under load, with the idle figure ~20x inside budget
+/// (TASK-187). Coverage is unchanged; the twin still measures this.
 #[test]
+#[ignore = "50-row render perf smoke: run explicitly with --ignored --nocapture"]
 fn mission_controls_50_row_p95_is_within_33ms() {
     let mut model = ready_model();
     model.populate_scale_fixture(50, MissionStatus::Running);

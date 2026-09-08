@@ -18,7 +18,9 @@ use egui_kittest::kittest::NodeT;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use common::{harness, isolated_config_save_path, seeded_app, REPO_PATH};
+use common::{
+    harness, isolated_config_save_path, seeded_app, settle_until, step_past_spawn, REPO_PATH,
+};
 use egui_kittest::kittest::{self, Queryable};
 use switchbard_core::config::Config;
 use switchbard_core::{BacklogRepo, BacklogTask, BacklogTaskSource, Repo, WorktreeRef};
@@ -577,7 +579,11 @@ fn clean_up_old_tasks_confirm_archives_the_done_task_in_both_real_repos() {
     h.get_by_label("Clean Up Old Tasks").click();
     h.run();
     h.get_by_label("Confirm cleanup").click();
-    h.run();
+    // `step_past_spawn`, not `run`: the click spawns the cleanup worker,
+    // which requests a repaint per task, so `run()` cannot settle while it
+    // lives (TASK-181 - it failed on CI here, and fails every time once the
+    // repo holds enough Done tasks to outlast the step budget).
+    step_past_spawn(&mut h);
 
     // Synchronous, pre-spawn status message (set before the background
     // thread's per-task archive calls even start). Since the format fork's
@@ -593,21 +599,9 @@ fn clean_up_old_tasks_confirm_archives_the_done_task_in_both_real_repos() {
         "unexpected status right after confirm: {immediate:?}"
     );
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        h.run();
-        if h.state().backlog_status.snapshot().as_deref()
-            == Some("cleaned up 2/2 Done tasks across 2 repos")
-        {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "cleanup's background thread did not report completion in time; last status: {:?}",
-            h.state().backlog_status.snapshot()
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    settle_until(&mut h, "the cleanup worker to finish", |app| {
+        app.backlog_status.snapshot().as_deref() == Some("cleaned up 2/2 Done tasks across 2 repos")
+    });
 
     for root in [repo_a.path(), repo_b.path()] {
         let repo = switchbard_core::load_backlog_repo(root)

@@ -221,8 +221,8 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                         style = style.patch(band);
                     }
                     if let Some(glow) = glow {
-                        // The text breathes with the band: brighter than its
-                        // rest colour at the peak, dimmer in the trough.
+                        // The text breathes with the band: lifted toward
+                        // white at the peak, its rest colour in the trough.
                         style = style.fg(theme.working_fg(style.fg, glow));
                     }
                     frame.render_widget(

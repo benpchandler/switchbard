@@ -83,6 +83,62 @@ fn resume_state_survives_a_self_restart() {
     assert_eq!(fresh.selected, 1);
 }
 
+/// TASK-173: a self-restart hands the live view to a *different* build. The
+/// record has to survive that build having a field this one does not, and a
+/// record that cannot be read has to say so - landing quietly on the saved
+/// slot is what the report called "the build updated and my view reset".
+#[test]
+fn a_view_survives_a_restart_into_a_build_with_a_field_this_one_lacks() {
+    let h = Harness::new();
+    // A saved slot 1 to fall back to, the way a real repo has one: the reset
+    // is invisible unless the live view differs from what slot 1 holds.
+    std::fs::write(
+        h.root.join("views-repo.lua"),
+        "return { [1] = { filter = \"status:todo\", columns = \"id,status,priority,title\" } }",
+    )
+    .unwrap();
+    let mut h = Harness {
+        app: open_app(&h.root, &h.config_path),
+        ..h
+    };
+    h.render();
+    h.press(KeyCode::Char('/'));
+    h.type_text("labels:ui");
+    h.press(KeyCode::Enter);
+    let live = h.render();
+    assert!(live.contains("custom · status:todo labels:ui"), "{live}");
+
+    // The next build writes the same named record plus one field of its own.
+    let record = h.app.resume_state();
+    let (prefix, json) = record.split_once('=').unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
+    value["a_field_a_later_build_added"] = serde_json::json!(true);
+    let from_a_newer_build = format!("{prefix}={value}");
+
+    let mut fresh = open_app(&h.root, &h.config_path);
+    fresh.resume_from(Some(&from_a_newer_build));
+    assert_eq!(
+        fresh.state.filter, "status:todo labels:ui",
+        "the live view is kept, not the saved slot it was built from"
+    );
+    assert_eq!(fresh.view_label(), "custom");
+    assert_eq!(fresh.status, "updated to the new build");
+}
+
+#[test]
+fn a_resume_record_this_build_cannot_read_is_reported_not_swallowed() {
+    let h = Harness::new();
+    let mut fresh = open_app(&h.root, &h.config_path);
+    fresh.resume_from(Some("pages=something this build cannot parse"));
+    assert_eq!(
+        fresh.status,
+        "the new build could not read the previous view; opened your saved view"
+    );
+    let mut cold = open_app(&h.root, &h.config_path);
+    cold.resume_from(None);
+    assert_eq!(cold.status, "", "an ordinary cold start says nothing");
+}
+
 #[test]
 fn zero_size_terminal_does_not_crash() {
     let mut h = Harness::new();
