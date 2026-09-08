@@ -5,7 +5,9 @@ mod new_task;
 mod paint_flow;
 mod pickers;
 pub mod pr_merge;
+pub mod resume;
 mod slots;
+mod task_parent;
 mod task_project;
 mod task_status;
 
@@ -288,31 +290,36 @@ impl App {
                 self.view,
             )
         };
-        format!(
-            "pages3={}\t{}",
-            match self.page {
-                Page::Tasks => "tasks",
-                Page::PullRequests => "prs",
-                Page::Inbox => "inbox",
-            },
-            serde_json::to_string(&(
-                self.page == Page::PullRequests,
-                task_slot,
-                self.selected,
-                tasks.to_lua(),
-                pr_slot,
-                prs.to_lua(),
-                self.pull_requests.selected,
-                self.pull_requests.selection_identity()
-            ))
-            .expect("page state serialization")
-        )
+        resume::ResumeRecord {
+            pr_page: self.page == Page::PullRequests,
+            inbox_page: self.page == Page::Inbox,
+            task_slot,
+            task_view: tasks.to_lua(),
+            task_selected: self.selected,
+            pr_slot,
+            pr_view: prs.to_lua(),
+            pr_selected: self.pull_requests.selected,
+            pr_id: self.pull_requests.selection_identity(),
+        }
+        .encode()
     }
 
     pub fn resume_from(&mut self, state: Option<&str>) {
-        let Some(state) = state else {
+        if state.is_none() {
             return;
-        };
+        }
+        let state = state.unwrap_or_default();
+        if let resume::Restored::Record(record) = resume::decode(Some(state)) {
+            self.restore_resume(&record);
+            return;
+        }
+        if matches!(resume::decode(Some(state)), resume::Restored::Unreadable)
+            && !state.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        {
+            self.telemetry.record("error", "unreadable resume record");
+            self.status = "the new build could not read the previous view; opened your saved view".to_string();
+            return;
+        }
         if let Some((page, record)) = state
             .strip_prefix("pages3=")
             .and_then(|s| s.split_once('\t'))
@@ -365,6 +372,22 @@ impl App {
         if was_pr {
             self.toggle_page_state();
         }
+        self.status = "updated to the new build".to_string();
+    }
+
+    fn restore_resume(&mut self, record: &resume::ResumeRecord) {
+        self.switch_page(Page::Tasks);
+        self.view = record.task_slot;
+        self.state = ViewState::from_lua(&record.task_view);
+        self.state.sanitize(Page::Tasks);
+        self.inactive_view = record.pr_slot;
+        self.inactive_state = ViewState::from_lua(&record.pr_view);
+        self.inactive_state.sanitize(Page::PullRequests);
+        self.refilter();
+        self.select(record.task_selected);
+        self.pull_requests.selected = record.pr_selected;
+        self.pull_requests.restore_selection(record.pr_id.clone());
+        self.switch_page(if record.inbox_page { Page::Inbox } else if record.pr_page { Page::PullRequests } else { Page::Tasks });
         self.status = "updated to the new build".to_string();
     }
 
@@ -1440,6 +1463,7 @@ impl App {
                         PickerPurpose::Task
                             | PickerPurpose::TaskStatus(_)
                             | PickerPurpose::TaskProject(_)
+                            | PickerPurpose::TaskParent(_)
                             | PickerPurpose::TopList
                             | PickerPurpose::Ball
                             | PickerPurpose::Goals(_)

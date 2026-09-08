@@ -29,6 +29,8 @@ const LEGACY_PREFIX: &str = "pages=";
 pub struct ResumeRecord {
     /// Which page was in front: the Tasks page is the default.
     pub pr_page: bool,
+    #[serde(default)]
+    pub inbox_page: bool,
     pub task_slot: usize,
     /// The live task view as its Lua record, the same text a saved slot holds.
     pub task_view: String,
@@ -43,8 +45,19 @@ pub struct ResumeRecord {
 impl ResumeRecord {
     /// The environment value handed to the replacement build.
     pub fn encode(&self) -> String {
+        let legacy = serde_json::to_string(&(
+            self.pr_page,
+            self.task_slot,
+            self.task_selected,
+            self.task_view.clone(),
+            self.pr_slot,
+            self.pr_view.clone(),
+            self.pr_selected,
+            self.pr_id.clone(),
+        ))
+        .expect("legacy resume compatibility serialization");
         format!(
-            "{PREFIX}{}",
+            "{PREFIX}{}\t{legacy}",
             serde_json::to_string(self).expect("resume record serialization")
         )
     }
@@ -67,6 +80,7 @@ pub fn decode(value: Option<&str>) -> Restored {
         return Restored::Absent;
     };
     if let Some(json) = value.strip_prefix(PREFIX) {
+        let json = json.split_once('\t').map_or(json, |(json, _)| json);
         return match serde_json::from_str(json) {
             Ok(record) => Restored::Record(record),
             Err(_) => Restored::Unreadable,
@@ -118,6 +132,7 @@ fn decode_legacy(record: &str) -> Restored {
             pr_id,
         )) => Restored::Record(ResumeRecord {
             pr_page,
+            inbox_page: false,
             task_slot,
             task_view,
             task_selected,
@@ -137,6 +152,7 @@ mod tests {
     fn record() -> ResumeRecord {
         ResumeRecord {
             pr_page: true,
+            inbox_page: false,
             task_slot: 2,
             task_view: "{ filter = \"status:!done\", group = \"project\" }".into(),
             task_selected: 7,
