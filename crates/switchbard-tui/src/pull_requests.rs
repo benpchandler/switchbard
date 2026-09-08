@@ -48,7 +48,7 @@ impl PullRequests {
         }
     }
 
-    pub fn tick(&mut self, root: &Path, visible: bool, refresh_seconds: u64, now: Instant) -> bool {
+    pub fn tick(&mut self, root: &Path, refresh_seconds: u64, now: Instant) -> bool {
         let mut changed = false;
         if let Some(rx) = &self.pending {
             match rx.try_recv() {
@@ -74,9 +74,7 @@ impl PullRequests {
                 .saturating_sub(elapsed)
                 .as_secs()
         });
-        if (visible || self.completed_at.is_some())
-            && elapsed.is_none_or(|elapsed| elapsed >= Duration::from_secs(refresh_seconds))
-        {
+        if elapsed.is_none_or(|elapsed| elapsed >= Duration::from_secs(refresh_seconds)) {
             self.refresh(root);
         }
         changed
@@ -108,6 +106,19 @@ impl PullRequests {
     }
 
     fn observe_notifications(&mut self, snapshot: &PrSnapshot) {
+        let previous = self
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.open_count.as_ref().err());
+        let current = snapshot.open_count.as_ref().err();
+        if previous != current {
+            if let Some(error) = current {
+                self.notifications
+                    .push(format!("Open PR count unavailable: {error}"));
+            } else if previous.is_some() {
+                self.notifications.push("Open PR count recovered".into());
+            }
+        }
         self.notifications.observe(self.snapshot.as_ref(), snapshot);
         if self.error.is_some() {
             self.notifications.push("Refresh recovered".into());
@@ -274,6 +285,16 @@ impl PullRequests {
             order
         };
         order.then_with(|| a.number.cmp(&b.number))
+    }
+
+    pub fn observation_stale(&self, refresh_seconds: u64) -> bool {
+        self.error.is_some()
+            || self.snapshot.as_ref().is_some_and(|snapshot| {
+                snapshot
+                    .observed_at
+                    .elapsed()
+                    .is_ok_and(|age| age.as_secs() >= refresh_seconds.saturating_mul(2))
+            })
     }
 
     pub fn refresh_label(&self) -> String {

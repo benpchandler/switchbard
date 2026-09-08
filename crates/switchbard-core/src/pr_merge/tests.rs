@@ -338,6 +338,7 @@ fn selection() -> (PrSnapshot, PrListRow) {
         rows: vec![row.clone()],
         truncated: false,
         limit: 100,
+        open_count: Ok(1),
         enrichment_warning: None,
     };
     (snapshot, row)

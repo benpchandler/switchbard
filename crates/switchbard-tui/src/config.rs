@@ -203,6 +203,8 @@ pub enum Surface {
     Link,
     /// The active filter in the footer, and other "in effect" chips.
     Chip,
+    /// Persistent navigation counts that call attention to a destination.
+    AttentionBadge,
     /// Key letters in footer hints and in `?`.
     Keys,
     /// Explanatory text: hints, counts, secondary lines.
@@ -228,6 +230,7 @@ impl Surface {
             "text" => Surface::Text,
             "link" => Surface::Link,
             "chip" => Surface::Chip,
+            "attention_badge" => Surface::AttentionBadge,
             "keys" => Surface::Keys,
             "hint" | "dim" => Surface::Hint,
             "status" => Surface::Status,
@@ -283,7 +286,15 @@ impl Theme {
     }
 
     pub fn style(&self, surface: Surface) -> Style {
-        self.styles.get(&surface).copied().unwrap_or_default()
+        self.styles
+            .get(&surface)
+            .or_else(|| {
+                (surface == Surface::AttentionBadge)
+                    .then(|| self.styles.get(&Surface::Chip))
+                    .flatten()
+            })
+            .copied()
+            .unwrap_or_default()
     }
 
     /// The surface a column's cells wear before paint: label, link, or text.

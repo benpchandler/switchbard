@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 fn complete_at(h: &mut Harness, now: Instant) {
     let deadline = Instant::now() + Duration::from_secs(100);
     while h.app.pull_requests.loading() && Instant::now() < deadline {
-        h.app.pull_requests.tick(&h.root, false, 60, now);
+        h.app.pull_requests.tick(&h.root, 60, now);
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(!h.app.pull_requests.loading(), "refresh must finish");
@@ -45,7 +45,7 @@ fn screens(h: &mut Harness, expected: &str, state: &str) {
 #[test]
 fn countdown_failure_retry_and_manual_refresh_render_in_one_slot() {
     let mut h = Harness::new();
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     screens(&mut h, "refreshing", "loading");
     let completed = Instant::now();
     complete_at(&mut h, completed);
@@ -56,7 +56,7 @@ fn countdown_failure_retry_and_manual_refresh_render_in_one_slot() {
     for (seconds, expected) in [(1, "59s"), (59, "1s")] {
         h.app
             .pull_requests
-            .tick(&h.root, false, 60, completed + Duration::from_secs(seconds));
+            .tick(&h.root, 60, completed + Duration::from_secs(seconds));
         assert!(
             !h.app.pull_requests.loading(),
             "background refresh waits for its deadline"
@@ -65,12 +65,12 @@ fn countdown_failure_retry_and_manual_refresh_render_in_one_slot() {
     }
     h.app
         .pull_requests
-        .tick(&h.root, true, 60, completed + Duration::from_millis(59_500));
+        .tick(&h.root, 60, completed + Duration::from_millis(59_500));
     assert!(!h.app.pull_requests.loading());
     screens(&mut h, "0s", "visible-zero");
     h.app
         .pull_requests
-        .tick(&h.root, false, 60, completed + Duration::from_secs(60));
+        .tick(&h.root, 60, completed + Duration::from_secs(60));
     assert!(
         h.app.pull_requests.loading(),
         "failed refresh retries on the hidden page at deadline"
@@ -83,12 +83,9 @@ fn countdown_failure_retry_and_manual_refresh_render_in_one_slot() {
     let delayed_completion = completed + Duration::from_secs(160);
     complete_at(&mut h, delayed_completion);
     screens(&mut h, "60s", "delayed-completion");
-    h.app.pull_requests.tick(
-        &h.root,
-        true,
-        60,
-        delayed_completion + Duration::from_secs(59),
-    );
+    h.app
+        .pull_requests
+        .tick(&h.root, 60, delayed_completion + Duration::from_secs(59));
     screens(&mut h, "1s", "after-delay");
     assert!(
         !h.app.pull_requests.loading(),
@@ -98,7 +95,7 @@ fn countdown_failure_retry_and_manual_refresh_render_in_one_slot() {
     h.press(KeyCode::Char('r'));
     h.press(KeyCode::Char('r'));
     screens(&mut h, "refreshing", "manual-retry");
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert!(h.render().contains("[Tasks]"));
     assert!(!h.render().contains("refreshing"));
     complete_at(&mut h, delayed_completion + Duration::from_secs(60));
@@ -110,7 +107,7 @@ fn live_success_countdown_refresh_and_cached_failure_share_the_header_slot() {
     let root = std::env::var_os("SBT_PR_REPO").expect("SBT_PR_REPO");
     let mut h = Harness::new();
     h.app = open_app(std::path::Path::new(&root), &h.config_path);
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     let completed = Instant::now();
     complete_at(&mut h, completed);
     assert!(
@@ -124,7 +121,7 @@ fn live_success_countdown_refresh_and_cached_failure_share_the_header_slot() {
     for (seconds, expected) in [(1, "59s"), (59, "1s")] {
         h.app
             .pull_requests
-            .tick(&h.root, false, 60, completed + Duration::from_secs(seconds));
+            .tick(&h.root, 60, completed + Duration::from_secs(seconds));
         screens(&mut h, expected, &format!("live-countdown-{seconds}"));
     }
     // A real invalid repository fails without replacing the successful cache.

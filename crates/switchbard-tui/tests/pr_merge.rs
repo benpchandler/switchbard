@@ -20,10 +20,10 @@ fn merge_on_tasks_or_empty_prs_cannot_change_tasks() {
     let before = h.app.resume_state();
     h.press(KeyCode::Char('m'));
     assert_eq!(h.app.resume_state(), before);
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     h.press(KeyCode::Char('m'));
     assert!(h.render().contains("No PR selected"));
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert_eq!(h.selected_title(), selected);
     settle_prs(&mut h);
 }
@@ -43,7 +43,7 @@ fn live_pr() -> Harness {
     let number = std::env::var("SBT_PR_MERGE_NUMBER").expect("SBT_PR_MERGE_NUMBER");
     let mut h = Harness::new();
     h.app = open_app(std::path::Path::new(&root), &h.config_path);
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     settle_prs(&mut h);
     assert!(h.app.pull_requests.error.is_none());
     h.type_text(&format!("/id:{number}"));
@@ -73,12 +73,12 @@ fn leaving_during_preparation_never_reopens_confirmation() {
     let mut h = live_pr();
     h.press(KeyCode::Char('m'));
     h.press(KeyCode::Char('m'));
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     settle_merge(&mut h);
     assert!(h.render().contains("[Tasks]"));
     assert!(h.app.picker.is_none());
     assert!(!h.app.pr_merge.is_submitting());
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert!(h.app.picker.is_none());
 }
 

@@ -17,14 +17,14 @@ fn settle(h: &mut Harness) {
 fn failed_refresh_alert_survives_navigation_and_deduplicates_retries() {
     let mut h = Harness::new();
     assert!(h.app.pull_requests.notifications.is_empty());
-    h.press(KeyCode::Tab);
-    h.press(KeyCode::Tab);
+    h.next_list_page();
+    h.next_list_page();
     settle(&mut h);
     let screen = h.render();
     assert!(screen.contains("[Tasks]"), "{screen}");
     assert!(screen.contains("PR Refresh failed"), "{screen}");
     assert!(screen.contains("Refresh failed"), "{screen}");
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     h.press(KeyCode::Char('r'));
     settle(&mut h);
     assert_eq!(h.app.pull_requests.notifications.len(), 1);
@@ -36,11 +36,11 @@ fn failed_refresh_alert_survives_navigation_and_deduplicates_retries() {
         assert!(screen.contains("n dismiss"), "{screen}");
         assert!(screen.contains("Pull Requests"), "{screen}");
     }
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     h.press(KeyCode::Char('n'));
     assert!(h.app.pull_requests.notifications.is_empty());
     assert!(!h.render().contains("n dismiss"));
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     h.press(KeyCode::Char('r'));
     settle(&mut h);
     assert!(
@@ -57,7 +57,7 @@ fn live_baseline_has_no_historical_flood_and_refresh_continues_on_tasks() {
     let mut h = Harness::new();
     std::fs::write(&h.config_path, "return { pr_refresh_seconds = 30 }").unwrap();
     h.app = open_app(std::path::Path::new(&root), &h.config_path);
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     settle(&mut h);
     assert!(
         h.app.pull_requests.error.is_none(),
@@ -80,7 +80,7 @@ fn live_baseline_has_no_historical_flood_and_refresh_continues_on_tasks() {
         h.app.pull_requests.notifications.is_empty(),
         "first observation is a baseline"
     );
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     let deadline = Instant::now() + Duration::from_secs(130);
     while Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
@@ -128,7 +128,7 @@ fn live_refresh_failure_retains_rows_then_recovers_across_pages_without_duplicat
         &h.root,
         &["remote", "add", "origin", &source.repository_url],
     );
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     settle(&mut h);
     assert!(h.app.pull_requests.error.is_none());
     assert!(h.app.pull_requests.notifications.is_empty());
@@ -141,7 +141,7 @@ fn live_refresh_failure_retains_rows_then_recovers_across_pages_without_duplicat
         .clone();
     git(&h.root, &["remote", "remove", "origin"]);
     h.press(KeyCode::Char('r'));
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     settle(&mut h);
     assert!(h.app.pull_requests.error.is_some());
     assert_eq!(
@@ -162,9 +162,9 @@ fn live_refresh_failure_retains_rows_then_recovers_across_pages_without_duplicat
         &h.root,
         &["remote", "add", "origin", &source.repository_url],
     );
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     h.press(KeyCode::Char('r'));
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     settle(&mut h);
     assert!(h.app.pull_requests.error.is_none());
     assert_eq!(
@@ -177,9 +177,9 @@ fn live_refresh_failure_retains_rows_then_recovers_across_pages_without_duplicat
         screen.contains("[Tasks]") && screen.contains("PR Refresh recovered"),
         "{screen}"
     );
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     h.press(KeyCode::Char('r'));
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     settle(&mut h);
     assert_eq!(h.app.pull_requests.notifications.len(), recovered_count);
     h.press(KeyCode::Char('n'));
@@ -196,7 +196,7 @@ fn live_delivery_transition_is_reported_while_tasks_are_visible() {
     let mut h = Harness::new();
     std::fs::write(&h.config_path, "return { pr_refresh_seconds = 30 }").unwrap();
     h.app = open_app(std::path::Path::new(&root), &h.config_path);
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     settle(&mut h);
     assert!(h.app.pull_requests.error.is_none());
     assert!(h
@@ -208,7 +208,7 @@ fn live_delivery_transition_is_reported_while_tasks_are_visible() {
         .rows
         .iter()
         .any(|r| r.number.to_string() == number));
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     let prefix = format!("#{number}:");
     let deadline = Instant::now() + Duration::from_secs(600);
     while Instant::now() < deadline {

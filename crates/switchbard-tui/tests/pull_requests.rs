@@ -20,13 +20,13 @@ fn settle(h: &mut Harness) {
 fn non_repository_is_unavailable_not_a_successful_empty_list() {
     let mut h = Harness::new();
     let selected = h.selected_title();
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     settle(&mut h);
     let screen = h.render();
     assert!(screen.contains("Unavailable"), "{screen}");
     assert!(!screen.contains("No PRs match"), "{screen}");
     h.press(KeyCode::Char('r'));
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert_eq!(h.selected_title(), selected);
     settle(&mut h);
     assert!(h.render().contains("[Tasks]"));
@@ -38,7 +38,7 @@ fn live_repository_renders_actual_pull_requests() {
     let root = std::env::var_os("SBT_PR_REPO").expect("SBT_PR_REPO");
     let mut h = Harness::new();
     h.app = open_app(std::path::Path::new(&root), &h.config_path);
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     settle(&mut h);
     assert!(
         h.app.pull_requests.error.is_none(),
@@ -148,7 +148,7 @@ fn live_task_links_and_failed_refresh_preserve_real_task_bytes() {
             (path, bytes)
         })
         .collect();
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     settle(&mut h);
     assert!(
         h.app.pull_requests.error.is_none(),
@@ -197,7 +197,7 @@ fn pr_filters_use_the_shared_picker_and_preserve_task_filter_and_restart() {
     let mut h = Harness::new();
     h.type_text("/theme");
     h.press(KeyCode::Enter);
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     h.type_text("f2");
     let screen = h.render();
     assert!(
@@ -206,16 +206,16 @@ fn pr_filters_use_the_shared_picker_and_preserve_task_filter_and_restart() {
     );
     h.press(KeyCode::Char('3'));
     assert_eq!(h.app.pull_requests.filter, "status:merged");
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert_eq!(h.app.state.filter, "theme");
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     let state = h.app.resume_state();
     h.app = open_app(&h.root, &h.config_path);
     h.app.resume_from(Some(&state));
     assert_eq!(h.app.pull_requests.filter, "status:merged");
     h.press(KeyCode::Esc);
     assert_eq!(h.app.pull_requests.filter, "");
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert!(h.render().contains("Add dark theme"));
 }
 
@@ -225,7 +225,7 @@ fn live_all_states_can_be_filtered_without_refetching() {
     let root = std::env::var_os("SBT_PR_REPO").expect("SBT_PR_REPO");
     let mut h = Harness::new();
     h.app = open_app(std::path::Path::new(&root), &h.config_path);
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     settle(&mut h);
     let snapshot = h.app.pull_requests.snapshot.as_ref().expect("snapshot");
     let observed = snapshot.observed_at;
@@ -290,8 +290,7 @@ fn pr_detail_matches_task_pane_frame_and_empty_state() {
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
         h.press(KeyCode::Enter);
         let task = h.terminal.backend().buffer().clone();
-        let task_row = pane_frame_row(&task, width);
-        h.press(KeyCode::Tab);
+        h.next_list_page();
         h.press(KeyCode::Enter);
         let screen = h.render();
         let pr = h.terminal.backend().buffer();
@@ -305,7 +304,7 @@ fn pr_detail_matches_task_pane_frame_and_empty_state() {
         }
         assert!(screen.contains("nothing selected"), "{screen}");
         h.press(KeyCode::Enter);
-        h.press(KeyCode::Tab);
+        h.next_list_page();
     }
     settle(&mut h);
 }

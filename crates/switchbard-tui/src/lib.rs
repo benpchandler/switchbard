@@ -4,6 +4,8 @@ pub mod columns;
 pub mod config;
 mod detail_pane;
 pub mod group;
+pub mod inbox;
+mod navigation;
 pub mod page;
 pub mod paint;
 pub mod picker;

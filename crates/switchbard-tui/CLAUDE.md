@@ -21,6 +21,7 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
 - `picker.rs` - the one list every menu uses: typed `PickOption` payloads, numbered/lettered rows,
   type-ahead; `app/` dispatches on payloads. Task/view menus and column/settings/paint-rule actions are selectable rows; mutation menus require Enter after type-ahead. A bounded parent stack supports ←/h back and →/l open, with Esc closing all; filter-value initials h/l keep typeahead precedence when matching a label (arrows always navigate); merge confirmation retains explicit authorization. Short pickers scroll to selection; results stay in the footer. A digit in browse opens that column's `ColumnActions`.
 - `detail_pane.rs` - shared task/PR split, border, bold title, muted metadata, accent sections, wrapping and bounded scroll.
+- `page.rs` / `inbox.rs` - Tasks, Pull Requests, blank Inbox navigation; shared `attention_badge` counts all open PRs.
 - `view.rs` - rendering only (the table is hand-drawn so headings span the row); snapshots the screen text for reports.
 - `columns.rs` - the column catalog: one `ColumnSpec` row per column (name, header, width,
   field, vocabulary) plus `values`/`cell_text`; every other module asks it.

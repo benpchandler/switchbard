@@ -6,17 +6,31 @@ pub enum Page {
     #[default]
     Tasks,
     PullRequests,
+    Inbox,
 }
 
 impl Page {
     pub fn toggle(self) -> Self {
         match self {
             Self::Tasks => Self::PullRequests,
-            Self::PullRequests => Self::Tasks,
+            Self::PullRequests => Self::Inbox,
+            Self::Inbox => Self::Tasks,
         }
     }
 
     pub fn allows(self, action: &Action) -> bool {
+        if self == Self::Inbox {
+            return matches!(
+                action,
+                Action::Page
+                    | Action::Help
+                    | Action::Back
+                    | Action::Quit
+                    | Action::Command
+                    | Action::Reload
+                    | Action::DismissNotifications
+            );
+        }
         self == Self::Tasks
             || matches!(
                 action,

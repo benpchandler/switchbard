@@ -30,10 +30,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Constraint::Length(footer_height),
     ])
     .areas(frame.area());
-    draw_navigation(frame, app, navigation);
+    crate::navigation::draw(frame, app, navigation);
     draw_notification(frame, app, notification);
     app.page_size = body.height.saturating_sub(3).max(1) as usize;
-    if app.page == Page::PullRequests && app.pane != Pane::Help {
+    if app.page == Page::Inbox && app.pane != Pane::Help {
+        crate::inbox::draw(frame, app, body);
+    } else if app.page == Page::PullRequests && app.pane != Pane::Help {
         crate::pr_view::draw(frame, app, body);
     } else {
         match app.pane {
@@ -82,35 +84,6 @@ fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
         message_area,
     );
     frame.render_widget(Paragraph::new(hint).style(style), hint_area);
-}
-
-fn draw_navigation(frame: &mut Frame, app: &App, area: Rect) {
-    let theme = &app.config.theme;
-    let labels = [
-        (Page::Tasks, "Tasks"),
-        (Page::PullRequests, "Pull Requests"),
-    ];
-    let mut spans = Vec::with_capacity(3);
-    for (page, label) in labels {
-        let active = page == app.page;
-        let text = if active {
-            format!(" [{label}] ")
-        } else {
-            format!("  {label}  ")
-        };
-        spans.push(Span::styled(
-            text,
-            theme.style(if active { Surface::Chip } else { Surface::Hint }),
-        ));
-    }
-    spans.push(Span::styled(
-        format!(
-            " {} switch page",
-            app.config.bindings_for(&Action::Page).join("/")
-        ),
-        theme.style(Surface::Keys),
-    ));
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -369,6 +342,10 @@ fn claimed_clock(session: &switchbard_core::WorkSession, task_id: &str) -> Strin
 }
 
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
+    if app.page == Page::Inbox {
+        crate::inbox::draw_help(frame, app, area);
+        return;
+    }
     let theme = &app.config.theme;
     let actions = [
         Action::Page,
@@ -549,7 +526,9 @@ fn draw_new_task(frame: &mut Frame, app: &App, area: Rect) {
 /// The footer while browsing: what is in effect as a chip, the situation, then
 /// the keys with their letters on the `keys` surface.
 fn browse_footer(app: &App) -> Line<'static> {
-    let actions = if app.page == Page::Tasks {
+    let actions = if app.page == Page::Inbox {
+        vec![(Action::Page, "page"), (Action::Help, "keys")]
+    } else if app.page == Page::Tasks {
         vec![
             (Action::Rank, "tasks"),
             (Action::View, "views"),

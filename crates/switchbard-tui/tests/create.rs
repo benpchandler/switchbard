@@ -183,10 +183,10 @@ fn capture_and_pr_tab_coexist_without_losing_new_task() {
     h.type_text("Capture alongside PRs");
     let screen = h.press(KeyCode::Enter);
     assert!(screen.contains("created TASK-4"), "{screen}");
-    let screen = h.press(KeyCode::Tab);
+    let screen = h.next_list_page();
     assert!(screen.contains("[Pull Requests]"), "{screen}");
     assert!(screen.contains("Loading pull requests"), "{screen}");
-    let screen = h.press(KeyCode::Tab);
+    let screen = h.next_list_page();
     assert!(screen.contains("[Tasks]"), "{screen}");
     assert_eq!(h.selected_title(), "Capture alongside PRs");
 }
