@@ -309,18 +309,6 @@ impl App {
             return;
         }
         let state = state.unwrap_or_default();
-        if let resume::Restored::Record(record) = resume::decode(Some(state)) {
-            self.restore_resume(&record);
-            return;
-        }
-        if matches!(resume::decode(Some(state)), resume::Restored::Unreadable)
-            && !state.as_bytes().first().is_some_and(u8::is_ascii_digit)
-        {
-            self.telemetry.record("error", "unreadable resume record");
-            self.status = "the new build could not read the previous view; opened your saved view"
-                .to_string();
-            return;
-        }
         if let Some((page, record)) = state
             .strip_prefix("pages3=")
             .and_then(|s| s.split_once('\t'))
@@ -331,6 +319,18 @@ impl App {
                 "inbox" => Page::Inbox,
                 _ => Page::Tasks,
             });
+            return;
+        }
+        if let resume::Restored::Record(record) = resume::decode(Some(state)) {
+            self.restore_resume(&record);
+            return;
+        }
+        if matches!(resume::decode(Some(state)), resume::Restored::Unreadable)
+            && !state.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        {
+            self.telemetry.record("error", "unreadable resume record");
+            self.status = "the new build could not read the previous view; opened your saved view"
+                .to_string();
             return;
         }
         if let Some(record) = state.strip_prefix("pages=") {

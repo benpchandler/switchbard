@@ -89,8 +89,11 @@ fn legacy_page_and_task_records_still_resume() {
     let task_state = h.app.state.clone();
     let old_task = format!("1\t0\t{}", task_state.to_lua());
     h.press(KeyCode::Tab);
-    let resume = h.app.resume_state();
-    let old_pages = format!("pages={}", resume.split_once('\t').unwrap().1);
+    let old_pages = format!(
+        "pages=[true,0,0,{},0,\"{}\",0]",
+        serde_json::to_string(&task_state.to_lua()).unwrap(),
+        "{}"
+    );
     h.press(KeyCode::Tab);
     h.app.resume_from(Some(&old_pages));
     assert_eq!(h.app.page, Page::PullRequests);
