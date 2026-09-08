@@ -134,7 +134,10 @@ fn drive(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Exit>
         if !input_ready || last_tick.elapsed() >= Duration::from_millis(500) {
             app.tick();
             last_tick = Instant::now();
-            if !app.pr_merge.is_submitting() && binary.was_replaced() {
+            if app.mode == switchbard_tui::app::Mode::Browse
+                && !app.pr_merge.is_submitting()
+                && binary.was_replaced()
+            {
                 app.telemetry
                     .record("self_restart", binary.path.display().to_string());
                 return Ok(Exit::Restart);

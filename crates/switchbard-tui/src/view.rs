@@ -20,13 +20,14 @@ use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    let footer_height = if app.mode == Mode::NewTask { 3 } else { 1 };
     let [navigation, notification, body, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(u16::from(
             !app.pull_requests.notifications.is_empty() || app.pr_merge.ongoing().is_some(),
         )),
-        Constraint::Min(1),
-        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(footer_height),
     ])
     .areas(frame.area());
     draw_navigation(frame, app, navigation);
@@ -371,6 +372,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.config.theme;
     let actions = [
         Action::Page,
+        Action::NewTask,
         Action::Down,
         Action::Up,
         Action::Top,
@@ -470,6 +472,10 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
+    if app.mode == Mode::NewTask {
+        draw_new_task(frame, app, area);
+        return;
+    }
     let theme = &app.config.theme;
     let line = match app.mode {
         Mode::Filter => Line::from(vec![
@@ -486,15 +492,10 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 theme.style(Surface::Hint),
             ),
         ]),
-        Mode::PickValue if app.picker.is_some() => Line::from(Span::styled(
-            format!(" {}", picker::hint(app.picker.as_ref().expect("checked"))),
-            theme.style(Surface::Hint),
-        )),
-        Mode::PickValue
-        | Mode::ViewChord
-        | Mode::ViewSaveSlot
-        | Mode::ViewGlobalSlot
-        | Mode::RankChord => Line::from(Span::styled(
+        Mode::PickValue if app.picker.is_some() => {
+            Line::from(Span::styled(app.status.clone(), theme.style(Surface::Hint)))
+        }
+        Mode::NewTask | Mode::PickValue => Line::from(Span::styled(
             app.status.clone(),
             theme.style(Surface::Status),
         )),
@@ -512,78 +513,54 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
+/// Keep the end of the bounded UTF-8 draft and its cursor visible while typing.
+fn draw_new_task(frame: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.config.theme;
+    let prefix = if area.width >= 20 { "new task: " } else { ":" };
+    let room = usize::from(area.width).saturating_sub(prefix.len() + 1);
+    let mut start = app.input.len();
+    let mut width = 0;
+    let draft = Span::raw(app.input.as_str());
+    let graphemes: Vec<_> = draft.styled_graphemes(Style::default()).collect();
+    for grapheme in graphemes.iter().rev() {
+        let character_width = Span::raw(grapheme.symbol).width();
+        if width + character_width > room {
+            break;
+        }
+        width += character_width;
+        start -= grapheme.symbol.len();
+    }
+    let input = Line::from(vec![
+        Span::styled(prefix, theme.style(Surface::Accent)),
+        Span::raw(app.input[start..].to_string()),
+        Span::styled("▏", theme.style(Surface::Accent)),
+    ]);
+    let lines = vec![
+        input,
+        Line::styled(app.status.clone(), theme.style(Surface::Status)),
+        Line::styled("Enter create · Esc cancel", theme.style(Surface::Hint)),
+    ];
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
 /// The footer while browsing: what is in effect as a chip, the situation, then
 /// the keys with their letters on the `keys` surface.
 fn browse_footer(app: &App) -> Line<'static> {
-    if app.page == Page::PullRequests {
-        let mut hints = [
-            (Action::Filter, "search"),
-            (Action::FilterColumn, "filter"),
-            (Action::SortColumn, "sort"),
-            (Action::Paint, "paint"),
-            (Action::Columns, "columns"),
+    let actions = if app.page == Page::Tasks {
+        vec![
+            (Action::Rank, "tasks"),
             (Action::View, "views"),
-            (Action::Down, "select"),
-            (Action::Open, "detail"),
-            (Action::OpenBrowser, "browser"),
-            (Action::Merge, "merge"),
-            (Action::Reload, "refresh"),
-            (Action::Help, "help"),
+            (Action::Help, "keys"),
         ]
+    } else {
+        vec![(Action::View, "views"), (Action::Help, "keys")]
+    };
+    let text = actions
         .iter()
         .map(|(action, label)| format!("{} {label}", app.config.bindings_for(action).join("/")))
         .collect::<Vec<_>>()
         .join(" · ");
-        if app.pane == Pane::Detail {
-            hints.push_str(&format!(
-                " · {} scroll",
-                app.config.bindings_for(&Action::PageDown).join("/")
-            ));
-        }
-        return Line::from(Span::styled(hints, app.config.theme.style(Surface::Hint)));
-    }
-    let theme = &app.config.theme;
-    let mut spans: Vec<Span> = vec![Span::raw(" ")];
-    if !app.state.filter.is_empty() {
-        spans.push(Span::styled(
-            format!(" {} ", app.state.filter),
-            theme.style(Surface::Chip),
-        ));
-        spans.push(Span::raw("  "));
-    }
-    if app.state.group.is_flat() && app.grouping_is_useful() {
-        spans.push(Span::styled(
-            format!("{} projects · ", app.projects.len()),
-            theme.style(Surface::Hint),
-        ));
-        spans.push(Span::styled("o", theme.style(Surface::Keys)));
-        spans.push(Span::styled(
-            " organizes by project or goal  ",
-            theme.style(Surface::Hint),
-        ));
-    }
-    for (key, name) in [
-        ("/", "filter"),
-        ("f", "filter-by"),
-        ("s", "sort"),
-        ("o", "group"),
-        ("c", "columns"),
-        ("p", "paint"),
-        ("b", "ball"),
-        ("t", "rank"),
-        ("v", "views"),
-        (",", "settings"),
-        (":", "command"),
-        ("?", "keys"),
-        ("q", "quit"),
-    ] {
-        spans.push(Span::styled(key.to_string(), theme.style(Surface::Keys)));
-        spans.push(Span::styled(
-            format!(" {name}  "),
-            theme.style(Surface::Hint),
-        ));
-    }
-    Line::from(spans)
+    Line::from(Span::styled(text, app.config.theme.style(Surface::Hint)))
 }
 
 fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rect) {
@@ -604,7 +581,10 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         width
     };
     let rows = picker.matching();
-    let height = (rows.len() as u16 + 4).min(body.height.saturating_sub(2));
+    let height = rows
+        .len()
+        .saturating_add(4)
+        .min(body.height.saturating_sub(2) as usize) as u16;
     let area = Rect {
         x: body.x + 2,
         y: body.y + 2,
@@ -632,6 +612,8 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                     | PickerPurpose::PaintTarget,
                     Payload::Column(column),
                 ) => app.state.columns.contains(column),
+                (PickerPurpose::TaskProject(id), Payload::Project(project)) => app.tasks().iter().any(|task| task.id == *id && task.project == *project),
+                (PickerPurpose::TaskStatus(id), Payload::Text(status)) => app.tasks().iter().any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
                 (PickerPurpose::MoveColumns(placed), _) => placed.contains(&(index + 1)),
                 (PickerPurpose::PaintRules, Payload::Rule(rule)) => *rule == 0,
                 (PickerPurpose::PaintValues(column), Payload::Text(value)) => {
@@ -723,6 +705,22 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         .border_style(theme.style(Surface::Accent))
         .title_style(title_style)
         .title(pending + &picker_title(picker, preview.is_some()));
+    let block = if picker.purpose != PickerPurpose::Merge
+        && rows.len().saturating_add(4) > height as usize
+    {
+        let navigation = if width >= 28 {
+            "↑↓ →open ←back Esc"
+        } else {
+            "↑↓ Esc"
+        };
+        block.title_bottom(Line::from(format!(
+            " {navigation} · {}/{} ",
+            picker.selected.saturating_add(1).min(rows.len()),
+            rows.len()
+        )))
+    } else {
+        block
+    };
     if picker.purpose == PickerPurpose::Merge {
         let mut confirmation: Vec<Line> = app
             .pr_merge
@@ -754,7 +752,16 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         }
     } else {
         frame.render_widget(Clear, area);
-        frame.render_widget(Paragraph::new(lines).block(block), area);
+        let visible_rows = area.height.saturating_sub(2).max(1) as usize;
+        let offset = picker
+            .selected
+            .saturating_sub(visible_rows.saturating_sub(1));
+        frame.render_widget(
+            Paragraph::new(lines)
+                .scroll((offset.min(u16::MAX as usize) as u16, 0))
+                .block(block),
+            area,
+        );
     }
 }
 
@@ -779,12 +786,21 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::PaintTarget => "paint".to_string(),
         PickerPurpose::PaintColor(_) => "color".to_string(),
         PickerPurpose::PaintRules => "paint rules · top is the base".to_string(),
+        PickerPurpose::ChoosePaintRule(action) => format!("{action:?} paint rule"),
         PickerPurpose::ColumnActions(column) => column.name().to_string(),
         PickerPurpose::Settings => "settings".to_string(),
         PickerPurpose::Goals(id) => format!("{id} · goals"),
         PickerPurpose::Organize => "organize by".to_string(),
         PickerPurpose::Ball => "ball".to_string(),
         PickerPurpose::Merge => "Confirm PR merge".to_string(),
+        PickerPurpose::Task => "task".to_string(),
+        PickerPurpose::TopList => "task · top list".to_string(),
+        PickerPurpose::TaskProject(id) => format!("{id} · project"),
+        PickerPurpose::TaskStatus(id) => format!("{id} · status"),
+        PickerPurpose::Views => "views".to_string(),
+        PickerPurpose::SaveView => "save view".to_string(),
+        PickerPurpose::GlobalView => "make view global".to_string(),
+        PickerPurpose::ChooseColumnAction(action) => action.label().to_string(),
     };
     if picker.typed.is_empty() {
         format!(" {subject} ")

@@ -1,10 +1,13 @@
 //! Application state and the single place key events turn into state changes.
 //! Submodules extend `App` by concept: `pickers`, `paint_flow`, `slots`.
 
+mod new_task;
 mod paint_flow;
 mod pickers;
 pub mod pr_merge;
 mod slots;
+mod task_project;
+mod task_status;
 
 use crate::page::Page;
 
@@ -32,15 +35,8 @@ pub enum Mode {
     Browse,
     Filter,
     Command,
+    NewTask,
     PickValue,
-    /// After `v`: a digit opens that slot, `s` starts a save.
-    ViewChord,
-    /// After `v s`: a digit or `d` (slot 1) picks the slot to save into.
-    ViewSaveSlot,
-    /// After `v g`: a digit or `d` picks the slot to promote to the global file.
-    ViewGlobalSlot,
-    /// After `t`: rank, assign the ball, complete, pin, or link goals.
-    RankChord,
     /// After `t b`: type a new named ball holder, then Enter assigns it.
     BallName,
 }
@@ -112,6 +108,7 @@ pub struct App {
     pub page: Page,
     pub pull_requests: crate::pull_requests::PullRequests,
     pub picker: Option<ValuePicker>,
+    picker_parents: Vec<ValuePicker>,
     pub pr_merge: pr_merge::MergeFlow,
     pub column_purpose: ColumnPurpose,
     pub status: String,
@@ -175,6 +172,7 @@ impl App {
             page: Page::Tasks,
             pull_requests: Default::default(),
             picker: None,
+            picker_parents: Vec::new(),
             column_purpose: ColumnPurpose::Filter,
             status: String::new(),
             last_screen: String::new(),
@@ -513,11 +511,8 @@ impl App {
             Mode::Browse => self.handle_browse_key(event),
             Mode::Filter => self.handle_filter_key(event),
             Mode::Command => self.handle_command_key(event),
+            Mode::NewTask => self.handle_new_task_key(event),
             Mode::PickValue => self.handle_pick_value_key(event),
-            Mode::ViewChord => self.handle_view_chord_key(event),
-            Mode::ViewSaveSlot => self.handle_view_save_slot_key(event),
-            Mode::ViewGlobalSlot => self.handle_view_global_slot_key(event),
-            Mode::RankChord => self.handle_rank_chord_key(event),
             Mode::BallName => self.handle_ball_name_key(event),
         }
         if !self.merge_target_current()
@@ -532,83 +527,7 @@ impl App {
     }
 
     /// After `t`: digits rank, `b` assigns the ball, `d` marks Done, `p` pins,
-    /// and `g` opens goals.
-    fn handle_rank_chord_key(&mut self, event: KeyEvent) {
-        match event.code {
-            KeyCode::Char('b') => {
-                self.input.clear();
-                self.open_ball_picker();
-            }
-            KeyCode::Char(digit) if digit.is_ascii_digit() => {
-                self.input.push(digit);
-                let place: usize = self.input.parse().unwrap_or(0);
-                let room = self.top.len() + 1;
-                if place == 0 {
-                    self.input.clear();
-                    self.status = "rank: 1 is the top".to_string();
-                    return;
-                }
-                if place * 10 <= room {
-                    self.status = format!("rank: {place}▏ (another digit, or enter)");
-                    return;
-                }
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.set_rank(place.min(room));
-            }
-            KeyCode::Enter if !self.input.is_empty() => {
-                let place: usize = self.input.parse().unwrap_or(1);
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.set_rank(place.max(1).min(self.top.len() + 1));
-            }
-            KeyCode::Char('t') => {
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.set_rank(self.top.len() + 1);
-            }
-            KeyCode::Char('d') => {
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.mark_done()
-            }
-            KeyCode::Delete | KeyCode::Backspace => {
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.drop_rank()
-            }
-            KeyCode::Char('g') => {
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.open_goal_picker();
-            }
-            KeyCode::Char('p') => {
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.state.pin_top = !self.state.pin_top;
-                self.refilter();
-                self.status = if self.state.pin_top {
-                    "top list pinned first".to_string()
-                } else {
-                    "top list unpinned: ranked tasks sit in their sections".to_string()
-                };
-                self.telemetry
-                    .record("action", format!("pin_top {}", self.state.pin_top));
-            }
-            KeyCode::Esc => {
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.status.clear();
-            }
-            other => {
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.status =
-                    format!("{other:?} is not a task action; digits, t, d, delete, p, or g");
-            }
-        }
-    }
-
+    /// `n` creates a task, and `g` opens goals.
     /// `t<n>`: the selected task takes place `n` in the top list; the rest shift down.
     fn set_rank(&mut self, place: usize) {
         let Some(task) = self.selected_task() else {
@@ -872,6 +791,10 @@ impl App {
     }
 
     fn handle_browse_key(&mut self, event: KeyEvent) {
+        self.picker_parents.clear();
+        if event.code == KeyCode::Enter && event.kind == KeyEventKind::Repeat {
+            return;
+        }
         let chord = KeyChord::from_event(&event);
         {
             if let (KeyCode::Char(digit), false) = (event.code, chord.ctrl) {
@@ -1054,6 +977,7 @@ impl App {
                 self.pane = Pane::None;
                 self.status.clear();
             }
+            Action::NewTask => self.open_new_task(),
             Action::Down => self.step(1),
             Action::Up => self.step(-1),
             Action::Top => self.select(0),
@@ -1090,15 +1014,7 @@ impl App {
             Action::Ball => self.pass_ball(),
             Action::Pass => self.pass_work(),
             Action::Settings => self.open_settings(),
-            Action::Rank => {
-                self.mode = Mode::RankChord;
-                self.input.clear();
-                self.status = format!(
-                    "task: a number ranks it (1 is top, {} last) · b Ball · t appends · d Done · delete drops · p {} · g goals",
-                    self.top.len() + 1,
-                    if self.state.pin_top { "unpins" } else { "pins" }
-                );
-            }
+            Action::Rank => self.open_task_picker(),
             Action::Group => self.open_organize_picker(),
             Action::Command => {
                 self.mode = Mode::Command;
@@ -1121,41 +1037,7 @@ impl App {
                 }
             }
             Action::Quit => self.request_quit(),
-            Action::View => {
-                self.mode = Mode::ViewChord;
-                self.status = format!(
-                    "view: 1-{} opens a slot · s saves · g makes global",
-                    self.views.len()
-                );
-            }
-        }
-    }
-
-    /// `d`: mark the selected task Done. This is deliberately an ordinary
-    /// native status edit, not archival: completed-task retention stays a
-    /// separate, explicit lifecycle decision.
-    fn mark_done(&mut self) {
-        let Some(task) = self.selected_task() else {
-            self.status = "no task selected".to_string();
-            return;
-        };
-        let id = task.id.clone();
-        if task.status.eq_ignore_ascii_case("Done") {
-            self.status = format!("{id} is already Done");
-            return;
-        }
-        let patch = switchbard_core::BacklogTaskPatch {
-            status: Some("Done".to_string()),
-            ..Default::default()
-        };
-        match switchbard_core::edit_backlog_task(&self.repo_root, &id, &patch) {
-            Ok(_) => {
-                self.reload_tasks();
-                self.select_task(&id);
-                self.status = format!("{id} is Done");
-                self.telemetry.record("action", format!("done {id}"));
-            }
-            Err(error) => self.fail(format!("{id}: {error}")),
+            Action::View => self.open_view_picker(PickerPurpose::Views),
         }
     }
 
@@ -1386,22 +1268,28 @@ impl App {
 
     /// `,`: the standing preferences, one row per status that can be hidden.
     pub(super) fn open_settings(&mut self) {
-        let options = tasks::field_values(&self.tasks, tasks::FilterField::Status, &self.goals)
-            .into_iter()
-            .map(|(status, count)| {
-                let mark = if self.settings.effective().is_hidden(&status) {
-                    "✓"
-                } else {
-                    " "
-                };
-                PickOption {
-                    label: format!("{mark}hide {status}"),
-                    count,
-                    key: None,
-                    payload: Payload::Text(status),
-                }
-            })
-            .collect();
+        let mut options: Vec<PickOption> =
+            tasks::field_values(&self.tasks, tasks::FilterField::Status, &self.goals)
+                .into_iter()
+                .map(|(status, count)| {
+                    let mark = if self.settings.effective().is_hidden(&status) {
+                        "✓"
+                    } else {
+                        " "
+                    };
+                    PickOption {
+                        label: format!("{mark}hide {status}"),
+                        count,
+                        key: None,
+                        payload: Payload::Text(status),
+                    }
+                })
+                .collect();
+        options.push(PickOption::keyed(
+            'g',
+            "Use these settings in every repo",
+            Payload::GlobalSettings,
+        ));
         self.open_picker(PickerPurpose::Settings, options);
         self.status = match self.settings.scope() {
             SettingsScope::Repo => "this repo's settings".to_string(),
@@ -1416,7 +1304,9 @@ impl App {
             .settings
             .edit_repo(|settings| settings.toggle_hidden(status))
         {
+            self.open_settings();
             self.fail(error);
+            return;
         }
         self.refilter();
         let highlighted = self.picker.as_ref().map(|p| p.selected).unwrap_or(0);
@@ -1425,7 +1315,7 @@ impl App {
             picker.selected = highlighted;
         }
         self.status = match self.settings.effective().label() {
-            Some(label) => format!("{label} · this repo · g makes it every repo"),
+            Some(label) => format!("{label} · this repo"),
             None => "nothing hidden · this repo".to_string(),
         };
         self.telemetry
@@ -1502,6 +1392,24 @@ impl App {
                 .position(|row| matches!(row, Row::Task(i) if self.tasks[*i].id == id))
             {
                 self.select(index);
+            } else if self.mode == Mode::BallName
+                || self.picker.as_ref().is_some_and(|picker| {
+                    matches!(
+                        picker.purpose,
+                        PickerPurpose::Task
+                            | PickerPurpose::TaskStatus(_)
+                            | PickerPurpose::TaskProject(_)
+                            | PickerPurpose::TopList
+                            | PickerPurpose::Ball
+                            | PickerPurpose::Goals(_)
+                    )
+                })
+            {
+                self.picker = None;
+                self.mode = Mode::Browse;
+                self.input.clear();
+                self.picker_parents.clear();
+                self.status = format!("{id} is no longer visible; task action canceled");
             }
         }
         self.pull_requests.refresh_links(&self.tasks);

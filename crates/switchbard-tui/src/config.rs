@@ -34,6 +34,7 @@ pub enum Action {
     OpenBrowser,
     Merge,
     DismissNotifications,
+    NewTask,
     Back,
     Filter,
     FilterColumn,
@@ -51,7 +52,7 @@ pub enum Action {
     Page,
     Group,
     Settings,
-    /// The task chord: rank digits, Ball, top-list, completion, and goals actions.
+    /// The task chord: rank digits, Ball, top-list, status, and goals actions.
     Rank,
 }
 
@@ -68,6 +69,7 @@ impl Action {
             "merge" => Action::Merge,
             "open_browser" => Action::OpenBrowser,
             "dismiss_notifications" => Action::DismissNotifications,
+            "new_task" => Action::NewTask,
             "back" => Action::Back,
             "filter" => Action::Filter,
             "filter_column" => Action::FilterColumn,
@@ -101,6 +103,7 @@ impl Action {
             Action::Merge => "merge".to_string(),
             Action::OpenBrowser => "open_browser".to_string(),
             Action::DismissNotifications => "dismiss_notifications".to_string(),
+            Action::NewTask => "new_task".to_string(),
             Action::Back => "back".to_string(),
             Action::Filter => "filter".to_string(),
             Action::FilterColumn => "filter_column".to_string(),
@@ -410,6 +413,14 @@ impl Config {
             .filter(|(_, bound)| *bound == action)
             .map(|(chord, _)| chord.label())
             .collect();
+        if *action == Action::NewTask {
+            keys.extend(
+                self.keys
+                    .iter()
+                    .filter(|(_, bound)| **bound == Action::Rank)
+                    .map(|(key, _)| format!("{} n", key.label())),
+            );
+        }
         keys.sort();
         keys
     }

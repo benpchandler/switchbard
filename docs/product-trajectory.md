@@ -586,6 +586,10 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   so an agent-worked task is visible to someone reading the board rather than the
   dispatch pill.
 
+- **Terminal menu consolidation (owner-directed 2026-09-08).** Choices previously packed into footer sentences use shared pickers. Task actions include New (`t n`), configured Status (`t s`), Project (`t p`), and a Top list submenu (`t r`) for rank and membership. Views (`v p`) separately shows or hides the top-list section without changing membership. View save/global destinations and column/settings/paint actions are selectable rows. Left/Right navigate back/open; h/l do the same except where legacy value typeahead needs the initial letter. Footer copy is limited to concise navigation, input prompts and results. Status and project changes use the native task editor.
+
+- **Terminal task capture (owner-directed 2026-09-08).** `sbt` provides a `t n` task/new chord (the task prefix is configurable; `new_task` also remains bindable) to enter an ordinary task title. Enter writes through the same core task creation facade as `sb create`; Esc cancels. Validation and write failures retain the draft for correction or retry. Success selects the new task when visible and explicitly reports when existing filters hide it. Capture does not infer metadata from filters or attach bug-report context.
+
 - **Terminal UI grouping (owner-directed 2026-09-02).** `sbt` sections the task
   list by a groupable column (`o`, `:group <column>`, the header-digit menu; view
   records carry `group = "<column>"`). Grouping is a projection over the already
