@@ -89,12 +89,55 @@ fn legacy_page_and_task_records_still_resume() {
     let task_state = h.app.state.clone();
     let old_task = format!("1\t0\t{}", task_state.to_lua());
     h.press(KeyCode::Tab);
-    let resume = h.app.resume_state();
-    let old_pages = format!("pages={}", resume.split_once('\t').unwrap().1);
+    let old_pages = format!(
+        "pages=[true,0,0,{},0,\"{}\",0]",
+        serde_json::to_string(&task_state.to_lua()).unwrap(),
+        "{}"
+    );
     h.press(KeyCode::Tab);
     h.app.resume_from(Some(&old_pages));
     assert_eq!(h.app.page, Page::PullRequests);
     h.app.resume_from(Some(&old_task));
     assert_eq!(h.app.page, Page::Tasks);
     assert_eq!(h.app.state, task_state);
+}
+
+#[test]
+fn legacy_pages3_inbox_restores_both_views_and_reencodes_one_named_record() {
+    let mut h = Harness::new();
+    h.type_text("/theme");
+    h.press(KeyCode::Enter);
+    let tasks = h.app.state.clone();
+    h.press(KeyCode::Tab);
+    h.type_text("/title:example");
+    h.press(KeyCode::Enter);
+    let prs = h.app.state.clone();
+    let legacy = format!(
+        "pages3=inbox\t{}",
+        serde_json::to_string(&(
+            false,
+            0usize,
+            0usize,
+            tasks.to_lua(),
+            0usize,
+            prs.to_lua(),
+            0usize,
+            Option::<String>::None,
+        ))
+        .expect("legacy positional fixture")
+    );
+    h.app = open_app(&h.root, &h.config_path);
+    h.app.resume_from(Some(&legacy));
+    assert_eq!(h.app.page, Page::Inbox);
+    let encoded = h.app.resume_state();
+    let json = encoded
+        .strip_prefix("sbt-resume-1=")
+        .expect("named protocol");
+    let record: switchbard_tui::app::resume::ResumeRecord =
+        serde_json::from_str(json).expect("exactly one JSON record without trailing tuple");
+    assert!(record.inbox_page);
+    h.press(KeyCode::Tab);
+    assert_eq!(h.app.state, tasks);
+    h.press(KeyCode::Tab);
+    assert_eq!(h.app.state, prs);
 }

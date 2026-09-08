@@ -45,19 +45,8 @@ pub struct ResumeRecord {
 impl ResumeRecord {
     /// The environment value handed to the replacement build.
     pub fn encode(&self) -> String {
-        let legacy = serde_json::to_string(&(
-            self.pr_page,
-            self.task_slot,
-            self.task_selected,
-            self.task_view.clone(),
-            self.pr_slot,
-            self.pr_view.clone(),
-            self.pr_selected,
-            self.pr_id.clone(),
-        ))
-        .expect("legacy resume compatibility serialization");
         format!(
-            "{PREFIX}{}\t{legacy}",
+            "{PREFIX}{}",
             serde_json::to_string(self).expect("resume record serialization")
         )
     }
@@ -80,7 +69,6 @@ pub fn decode(value: Option<&str>) -> Restored {
         return Restored::Absent;
     };
     if let Some(json) = value.strip_prefix(PREFIX) {
-        let json = json.split_once('\t').map_or(json, |(json, _)| json);
         return match serde_json::from_str(json) {
             Ok(record) => Restored::Record(record),
             Err(_) => Restored::Unreadable,
