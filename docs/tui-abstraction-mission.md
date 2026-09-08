@@ -40,3 +40,34 @@ Evidence and remaining gaps are updated here and in the task-specific evidence d
 ## Initial observations
 
 The installed sbt launched successfully in an agent-owned PTY at 80x24 and rendered Abstraction in the requested rank order with TASK-162's live claim. Existing primary changes were recorded outside the repository under /tmp/switchbard-abstractions-evidence. Shared target provenance risk is already tracked as TASK-179; this mission uses an isolated Cargo target for authoritative verification.
+
+## Verified closeout
+
+Implementation code is committed as `815bcf01` on `feat/tui-abstractions`. The six tasks TASK-162, 163, 164, 167, 165 and 166 are Done in the canonical primary-checkout tracker. TASK-144's engineering criteria pass and its code is implemented; it remains In Review solely because its original AC1 requires the human reporter's confirmation. All mission claims were released through `sb work release`; that remaining criterion was explicitly recorded, never checked on the reporter's behalf.
+
+The tracker rank remains 162, 163, 164, 167, 165, 166, 144, all medium priority based on their recorded impacts. Tracker edits remain in the user's existing checkout alongside its pre-existing dirty state, rather than sweeping unrelated work into a commit. Seven unrelated pre-existing tracked diffs were compared against the captured baseline and remained byte-identical; concurrent unrelated additions were preserved. The implementation worktree is independently committed.
+
+### Final verification
+
+- `CARGO_TARGET_DIR=/tmp/switchbard-abstractions-target cargo test -p switchbard-core`: 582 passed, one existing opt-in test ignored; all-target core clippy passed.
+- `CARGO_TARGET_DIR=/tmp/switchbard-abstractions-target CARGO_INSTALL_ROOT=/Users/bpc/.local/share/switchbard-builds/abstractions mise run tui-install`: exit 0; formatting and all-target TUI clippy passed; 141 TUI tests passed, 19 opt-in tests ignored in the ordinary gate; optimized binary installed.
+- Seven relevant opt-in journeys separately passed against authenticated read-only GitHub and the real work store: six PR-control journeys and one authoritative merge-date paint/restart journey. The final live-claim invocation initially omitted its required `SBT_WORK_TASK`; rerunning that check with `SBT_WORK_TASK=TASK-162` passed. Other live journeys were green. No product fix or skipped assertion was used to resolve that invocation error.
+- Real PTY dogfooding used the original installed sbt for ranked-task inspection, live claims, help, and all five bug filings. The newly installed isolated release binary then exercised 80x24 scrolling help (complete report instructions), task filing-date paint, page switching, real 100-row PR history and merge-date painting. Both agent-owned terminal sessions exited normally.
+- The isolated binary is `/Users/bpc/.local/share/switchbard-builds/abstractions/bin/sbt`, SHA-256 `12ae567900fb6ecc5416595fe4b469f24e3e06165788e3db9e6126970532614a`. The user's default sbt was preserved because it contains the unmerged parent-picker feature from another branch. No shared GUI process was restarted.
+- No GitHub push, pull request, merge, deployment or Linux CI run is claimed. GUI rendering was not changed, so its render-path performance gate is not applicable. Tests, buffers and PTY interaction do not constitute human visual approval.
+
+### Issues filed through sbt and fixed
+
+| Issue | Priority and user impact | Verified repair |
+| --- | --- | --- |
+| TASK-188 | Medium: terminal users could not read full help, and help navigation moved hidden selection | Wrapped scrolling help, configured keys, selection preserved; 80x24 and 40x8 regression plus real PTY |
+| TASK-189 | Medium: users leaving relative-date views open saw stale membership across UTC midnight | Both cached page projections invalidate at the next UTC-day-change tick, including offline PR cache |
+| TASK-190 | Medium: users with one list body row could not see the selected grouped task | Keep heading only when at least two body slots fit; real-key resize/navigation regression |
+| TASK-191 | High: users with sparse view slots could lose saved definitions or load a different numbered slot | Reject sparse global sequences without overwrite; retain explicit sparse repo slot identities |
+| TASK-192 | Medium: users encountering a partial promotion could not retry after repair | Report confirmed global write, retain repo override, update source guard and allow safe retry |
+
+All five issues are Done with checkable criteria and evidence recorded through sb. Additional test maintenance corrected a PR-filter helper that appended instead of replacing the query and updated an old no-match probe now that the new filed column legitimately matches `f`. Legacy `cw` remains available by using canonical short names in column controls and descriptive date labels only in painting controls.
+
+### Remaining boundary
+
+No implementation or automated verification gap remains for the seven requested engineering outcomes. Human reporter confirmation for TASK-144 remains open. The default installation and remote delivery are intentionally separate from this verified isolated build. Date projections refresh at the next app tick after midnight; no strict across-every-operation single-frame clock snapshot is claimed.
