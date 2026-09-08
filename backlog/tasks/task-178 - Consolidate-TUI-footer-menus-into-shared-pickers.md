@@ -1,10 +1,10 @@
 ---
 id: TASK-178
 title: Consolidate TUI footer menus into shared pickers
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-09-08 11:58'
-updated_date: '2026-09-08 12:33'
+updated_date: '2026-09-08 13:31'
 labels:
   - tui
   - ux
@@ -33,6 +33,10 @@ Impact: TUI users cannot see or navigate choices that are packed into clipped fo
 Owner visual annotation requests replacing Mark Done with s Status and a subsequent status picker. Implementing before closing the review.
 
 Addressed all five owner annotations: configured Status picker, project linking, arrow/Vim parent navigation, and separate Top list membership from view display. Fixed full-suite filter/paint navigation regressions before installation.
+
+PR140 Linux CI exposed a native task writer defect: a long Unicode title produced a 258-byte filename. Added executable writer regression, reproduced before fix, cap slug at180 UTF-8 bytes without truncating persisted title;34 writer tests pass. Cancelled malfunctioning pipeline after it accidentally committed target-ci build artifacts; remote stayed at clean05ec96b6, rejected commit preserved by guarded recovery, local synchronized to remote. Completing direct preflight and GitHub CI before merge.
+
+Final writer fix budgets the complete basename including configured prefix/id and extension, caps slug bytes on UTF-8 boundaries, and covers original Unicode, mid-character truncation, and100-byte prefix cases. All three regression scenarios pass; independent review clear.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
