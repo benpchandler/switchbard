@@ -4,7 +4,7 @@ title: 'sbt bug: on PR 481, the app incorrectly reported that the PR wasn''t mer
 status: Done
 assignee: []
 created_date: '2026-09-08 11:20'
-updated_date: '2026-09-08 12:40'
+updated_date: '2026-09-08 13:53'
 labels:
   - tui
   - bug
@@ -133,6 +133,12 @@ Evidence, live against benpchandler/janus#88 (MERGEABLE/UNSTABLE, read-only, not
 Tests: pr_merge/tests.rs::states_github_itself_merges_on_are_allowed_and_each_names_its_caveat, ::an_unstable_pr_prepares_and_its_confirmation_carries_the_reason, ::pending_mergeability_is_asked_again_rather_than_reported_as_a_refusal, ::live_open_pr_verdict_matches_what_github_permits (ignored, live), and tui tests/pr_merge.rs::live_confirmation_names_a_non_clean_readiness_state (ignored, live).
 
 Decision to review: loosening the gate is a safety-posture change. It was proposed to the owner and taken as the default when no answer came - the guard is now the human reading the named state, not sbt refusing a merge GitHub permits. Reverting is a one-line change to MERGE_READY in pr_merge/observe.rs.
+
+Self-review for annoying edge cases (owner request), two found and fixed in 14ae034:
+
+1. The UNKNOWN retry could make pressing m take 91 seconds. run_gh bounds one gh call at 30s (30s poll, 4 MiB output cap, process-group kill on cleanup - so no hang), but three attempts plus two 700ms settles is 91.4s of 'Preparing merge' ending in the same refusal. The retry only makes sense for a FAST UNKNOWN, which is what GitHub returns while it computes; a slow round trip means the request is the slow part and asking again buys nothing. Attempts, settle and a 5s elapsed budget are now one MergeabilityRetry policy, checked before each retry, so worst case is back to roughly a single request. Covered by a_slow_first_look_is_not_asked_again (a slow transport gets no second look; the same UNKNOWN answered fast still gets its retries) and the_live_retry_policy_cannot_outlast_a_single_request.
+
+2. Worse, while that request was in flight, pressing m again did nothing at all and said nothing - open_pr_merge returned early on is_pending(). Esc dismisses the confirmation but does not end the request behind it, so the sequence 'm, wait, Esc, m' read as m being broken for up to 91 seconds. It now reports which of the two states it is in.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

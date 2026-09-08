@@ -4,7 +4,7 @@ title: 'sbt bug: ensure the CI checks do not run the full rust check on every PR
 status: Done
 assignee: []
 created_date: '2026-09-08 12:42'
-updated_date: '2026-09-08 13:23'
+updated_date: '2026-09-08 13:53'
 labels:
   - ci
   - build
@@ -115,6 +115,14 @@ Evidence:
 - All of the above run in the change-scope job on every PR (9s), so the router is itself gated.
 
 Note: main has no branch protection (checked: 'Branch not protected'), so a skipped job cannot block a merge on a required check. If protection is added later, add a small always-run summary job rather than making these matrices unconditional again.
+
+Self-review for edge cases (owner request), two found and fixed in 14ae034:
+
+1. Fail-open was only half implemented. The scripts fail open, but the workflow read the route as `== 'true'`, so an output that was empty rather than false - a step that died before writing, a renamed key, a partial write - would SKIP the matrix on a green run. That is the one failure mode routing must not have. Both matrices now read `!= 'false'`, and test-ci-workflow.rb fails if either regresses to `== 'true'`.
+
+2. `docs/**` was not provably inert, which was my own stated bar for adding to the skip list. crates/switchbard-gui/tests/mission_command_sidecar_visual.rs reads canonical PNG baselines from docs/qa/screenshots and compares against them; its tests are not #[ignore]d (they no-op unless MISSION_SIDECAR_VISUAL_ACTUAL_DIR is set, but the coupling is one env var away and the mission-sidecar matrix is where that would be set). Narrowed to Markdown anywhere plus backlog/**, and docs/qa/screenshots/*.png now pins to true in the scope test.
+
+Also verified while checking: no test in the gate reads this repo's own backlog/ - every backlog/... path in the suites is built under a tempdir root - so the backlog/** rule stands. That check is now recorded in the script's own header comment.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
