@@ -106,7 +106,13 @@ fn pages_render_at_small_and_large_terminal_sizes_with_no_tasks() {
                 screen.contains("[Pull Requests]") || screen.contains("[PRs]"),
                 "{screen}"
             );
-            assert!(screen.contains("Loading pull requests"), "{screen}");
+            let expected = if h.app.pull_requests.error.is_some() {
+                "Unavailable"
+            } else {
+                assert!(h.app.pull_requests.loading(), "{screen}");
+                "Loading pull requests"
+            };
+            assert!(screen.contains(expected), "{screen}");
         }
         h.next_list_page();
     }

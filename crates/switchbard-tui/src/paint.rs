@@ -130,44 +130,6 @@ impl PaintRule {
             }
         }
     }
-
-    /// The color this rule gives a cell, honoring `is_base` for by-column rules.
-    fn claim(
-        &self,
-        column: Column,
-        is_base: bool,
-        values: &impl Fn(Column) -> Vec<String>,
-        matches: &impl Fn(&Filter) -> bool,
-    ) -> Option<Color> {
-        match self {
-            PaintRule::ByColumn {
-                column: painted,
-                colors,
-            } => {
-                if *painted != column && !is_base {
-                    return None;
-                }
-                let values = values(*painted);
-                colors
-                    .iter()
-                    .find(|(known, _)| {
-                        values
-                            .iter()
-                            .any(|value| *known == Filter::loose_key(value))
-                    })
-                    .and_then(|(_, color)| Color::from_str(color).ok())
-            }
-            PaintRule::Rows { filter, color } => matches(&Filter::parse(filter))
-                .then(|| Color::from_str(color).ok())
-                .flatten(),
-            PaintRule::Column {
-                column: painted,
-                color,
-            } => (*painted == column)
-                .then(|| Color::from_str(color).ok())
-                .flatten(),
-        }
-    }
 }
 
 /// The color for one cell: the lowest (most specific) rule that claims it wins;
@@ -181,7 +143,14 @@ pub fn cell_color(
     cell_color_with(
         rules,
         column,
-        |column| column.values(task, goals).into_iter().take(1).collect(),
+        |column| {
+            let values = column.values(task, goals);
+            if column.is_date() {
+                values
+            } else {
+                values.into_iter().take(1).collect()
+            }
+        },
         |filter| filter.matches(task, goals),
     )
 }
@@ -192,11 +161,8 @@ pub fn cell_color_with(
     values: impl Fn(Column) -> Vec<String>,
     matches: impl Fn(&Filter) -> bool,
 ) -> Option<Color> {
-    rules
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(index, rule)| rule.claim(column, index == 0, &values, &matches))
+    crate::paint_eval::cell_token(rules, column, values, matches)
+        .and_then(|token| Color::from_str(token).ok())
 }
 
 /// The color a by-column rule assigns `value`, if any.

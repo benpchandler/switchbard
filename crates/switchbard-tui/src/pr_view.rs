@@ -145,12 +145,16 @@ fn list(frame: &mut Frame, app: &mut App, area: Rect) {
         frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
         return;
     }
-    let slots = area.height.saturating_sub(1) as usize;
     let selected = app.pull_requests.selected;
-    app.pull_requests.scroll = app.pull_requests.scroll.min(selected);
-    if slots > 0 && selected >= app.pull_requests.scroll + slots {
-        app.pull_requests.scroll = selected + 1 - slots;
-    }
+    let viewport = crate::list_presentation::ListViewport::new(
+        app.pull_requests.scroll,
+        selected,
+        app.pull_requests.visible.len(),
+        area.height.saturating_sub(1) as usize,
+        false,
+    );
+    app.pull_requests.scroll = viewport.scroll;
+    let slots = viewport.slots;
     let header = Rect {
         height: area.height.min(1),
         ..area
@@ -211,12 +215,8 @@ fn draw_cells(
     style: ratatui::style::Style,
 ) {
     let widths = column_widths(app, rect.width);
-    for (text, cell) in texts
-        .iter()
-        .zip(Layout::horizontal(widths).spacing(1).split(rect).iter())
-    {
-        frame.render_widget(Paragraph::new(text.as_str()).style(style), *cell);
-    }
+    let cells = crate::list_presentation::cells(rect, &widths);
+    crate::list_presentation::header(frame, rect, &cells, texts, style);
 }
 
 fn column_widths(app: &App, width: u16) -> Vec<Constraint> {
@@ -283,9 +283,7 @@ fn draw_row(frame: &mut Frame, app: &App, row: &PrListRow, rect: Rect, selected:
         Surface::Text
     });
     frame.render_widget(Paragraph::new("").style(style), rect);
-    let cells = Layout::horizontal(column_widths(app, rect.width))
-        .spacing(1)
-        .split(rect);
+    let cells = crate::list_presentation::cells(rect, &column_widths(app, rect.width));
     for ((column, text), cell) in app.state.columns.iter().zip(&texts).zip(cells.iter()) {
         let mut style = app.config.theme.column_style(*column);
         if let Some(color) = crate::paint::cell_color_with(

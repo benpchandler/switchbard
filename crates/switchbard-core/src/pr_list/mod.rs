@@ -37,6 +37,9 @@ pub struct PrListRow {
     pub head_oid: String,
     pub draft: bool,
     pub lifecycle: PrLifecycle,
+    /// Authoritative GitHub merge instant, normalized to UTC. Missing or invalid
+    /// metadata remains unknown; neither closure nor update time implies a merge.
+    pub merged_at: Option<chrono::DateTime<chrono::Utc>>,
     pub checks: PrChecks,
     pub review: PrReview,
     pub merge: PrMerge,
@@ -174,7 +177,7 @@ pub fn fetch_pull_requests_with_limit(repo: &Path, limit: usize) -> Result<PrSna
             "--limit",
             &query_limit,
             "--json",
-            "id,number,title,url,state,headRefOid,isDraft",
+            "id,number,title,url,state,headRefOid,isDraft,mergedAt",
         ],
     )?;
     let (rows, truncated) = parse::rows(&data, &repository_url, limit)?;

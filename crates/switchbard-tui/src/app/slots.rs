@@ -10,8 +10,13 @@ impl App {
             .views
             .slots()
             .into_iter()
-            .enumerate()
-            .map(|(slot, (view, _))| PickOption::numbered(view.name(), Payload::ViewSlot(slot)))
+            .map(|(slot, view, _)| {
+                PickOption::keyed(
+                    char::from_digit((slot + 1) as u32, 10).expect("slots are bounded to nine"),
+                    view.name(),
+                    Payload::ViewSlot(slot),
+                )
+            })
             .collect();
         match purpose {
             PickerPurpose::Views => {
@@ -38,10 +43,13 @@ impl App {
                 ));
             }
             PickerPurpose::SaveView => {
-                if options.len() < views::MAX_SLOTS {
-                    options.push(PickOption::numbered(
+                if let Some(slot) =
+                    (0..views::MAX_SLOTS).find(|slot| self.views.get(*slot).is_none())
+                {
+                    options.push(PickOption::keyed(
+                        char::from_digit((slot + 1) as u32, 10).expect("slots are bounded to nine"),
                         "New slot",
-                        Payload::ViewSlot(options.len()),
+                        Payload::ViewSlot(slot),
                     ));
                 }
                 options.push(PickOption::keyed(

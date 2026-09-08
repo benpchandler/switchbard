@@ -147,8 +147,32 @@ fn f_opens_the_column_list_with_shown_columns_numbered_as_in_the_header() {
     ] {
         assert!(screen.contains(entry), "{entry} missing: {screen}");
     }
-    let screen = h.type_text("f");
-    assert!(screen.contains("filter by column: f▏"), "{screen}");
+    let screen = h.type_text("z");
+    assert!(screen.contains("filter by column: z▏"), "{screen}");
     let screen = h.press(KeyCode::Enter);
-    assert!(screen.contains("nothing matches 'f'"), "{screen}");
+    assert!(screen.contains("nothing matches 'z'"), "{screen}");
+}
+
+#[test]
+fn composed_multivalue_missing_and_unknown_fields_keep_query_semantics() {
+    let mut h = Harness::new();
+    for (query, count) in [
+        ("login label:bug,docs status:!done", "1/3"),
+        ("label:auth label:bug", "1/3"),
+        ("project:missing", "0/3"),
+        ("project:!missing", "3/3"),
+        ("checks:passed", "0/3"),
+        ("checks:!passed", "3/3"),
+        ("unknown:value", "0/3"),
+        ("status:", "3/3"),
+        ("id:task-1", "1/3"),
+    ] {
+        h.press(KeyCode::Esc);
+        h.press(KeyCode::Char('/'));
+        h.type_text(query);
+        let screen = h.press(KeyCode::Enter);
+        assert!(screen.contains(count), "{query}: {screen}");
+    }
+    let screen = h.press(KeyCode::Esc);
+    assert!(screen.contains("3/3"), "{screen}");
 }
