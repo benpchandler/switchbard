@@ -189,3 +189,50 @@ fn progressive_windows_and_hard_cap_retain_explicit_truncation() {
         assert!(rows(b"[]", REPO, limit).is_err());
     }
 }
+
+#[test]
+fn merge_instant_uses_authoritative_metadata_and_normalizes_to_utc() {
+    let mut pr = fixture();
+    pr["state"] = json!("MERGED");
+    pr["mergedAt"] = json!("2026-09-08T23:30:00-04:00");
+    pr["closedAt"] = json!("2026-09-07T00:00:00Z");
+    pr["updatedAt"] = json!("2026-09-10T00:00:00Z");
+    let result = parse(json!([pr])).expect("valid merge metadata");
+    let instant = result.0[0].merged_at.expect("authoritative merge instant");
+    assert_eq!(instant.to_rfc3339(), "2026-09-09T03:30:00+00:00");
+    assert_eq!(result.0[0].lifecycle, PrLifecycle::Merged);
+}
+
+#[test]
+fn unknown_merge_date_never_falls_back_to_closure_or_update_time() {
+    let mut pr = fixture();
+    pr["state"] = json!("MERGED");
+    pr["closedAt"] = json!("2026-09-08T12:00:00Z");
+    pr["updatedAt"] = json!("2026-09-08T13:00:00Z");
+    assert!(parse(json!([pr])).expect("absent date").0[0]
+        .merged_at
+        .is_none());
+    for value in [
+        Value::Null,
+        json!(""),
+        json!("invalid"),
+        json!("2026-02-30T00:00:00Z"),
+    ] {
+        pr["mergedAt"] = value;
+        let result = parse(json!([pr])).expect("unknown date retains PR");
+        assert!(result.0[0].merged_at.is_none());
+        assert_eq!(result.0[0].lifecycle, PrLifecycle::Merged);
+    }
+}
+
+#[test]
+fn nonmerged_lifecycle_cannot_acquire_a_merge_date() {
+    let mut pr = fixture();
+    pr["mergedAt"] = json!("2026-09-08T12:00:00Z");
+    for state in ["OPEN", "CLOSED"] {
+        pr["state"] = json!(state);
+        let result = parse(json!([pr])).expect("known lifecycle");
+        assert!(result.0[0].merged_at.is_none());
+        assert_ne!(result.0[0].lifecycle, PrLifecycle::Merged);
+    }
+}

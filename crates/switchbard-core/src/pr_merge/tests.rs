@@ -327,6 +327,7 @@ fn selection() -> (PrSnapshot, PrListRow) {
         head_oid: "a".repeat(40),
         draft: false,
         lifecycle: crate::PrLifecycle::Open,
+        merged_at: None,
         checks: crate::PrChecks::Unknown,
         review: crate::PrReview::Unknown,
         merge: crate::PrMerge::Unknown,
@@ -338,6 +339,7 @@ fn selection() -> (PrSnapshot, PrListRow) {
         rows: vec![row.clone()],
         truncated: false,
         limit: 100,
+        open_count: Ok(1),
         enrichment_warning: None,
     };
     (snapshot, row)

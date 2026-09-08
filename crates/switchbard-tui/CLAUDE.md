@@ -21,7 +21,10 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
 - `picker.rs` - the one list every menu uses: typed `PickOption` payloads, numbered/lettered rows,
   type-ahead; `app/` dispatches on payloads. Task/view menus and column/settings/paint-rule actions are selectable rows; mutation menus require Enter after type-ahead. A bounded parent stack supports ←/h back and →/l open, with Esc closing all; filter-value initials h/l keep typeahead precedence when matching a label (arrows always navigate); merge confirmation retains explicit authorization. Short pickers scroll to selection; results stay in the footer. A digit in browse opens that column's `ColumnActions`.
 - `detail_pane.rs` - shared task/PR split, border, bold title, muted metadata, accent sections, wrapping and bounded scroll.
+- `page.rs` / `inbox.rs` - Tasks, Pull Requests, blank Inbox navigation; shared `attention_badge` counts all open PRs.
 - `view.rs` - rendering only (the table is hand-drawn so headings span the row); snapshots the screen text for reports.
+- `column_values.rs` / `filter.rs` / `sort.rs` - explicit Tasks/PR adapters, one matcher and deterministic sorting; `shortcuts.rs` owns action names, aliases, page availability and help order.
+- `list_presentation.rs` owns bounded terminal layout inputs; `list_settings.rs` owns feature scope and capabilities.
 - `columns.rs` - the column catalog: one `ColumnSpec` row per column (name, header, width,
   field, vocabulary) plus `values`/`cell_text`; every other module asks it.
 - `config.rs` - `default.lua` baked in, user file layered over; keys, theme, glyphs, palettes.
@@ -32,6 +35,7 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
 - `views.rs` - `ViewState` (filter, sort, columns, glyphs, paint, group) is what a slot saves and
   a restart resumes, one Lua record for both; global `~/.switchbard/views.lua`, per-repo overrides
   in `views/<repo path>.lua`; PRs use `.prs.lua` beside these files. `vs<n>` saves to repo, `vg<n>` promotes to global; slot 1 opens. Both page states survive Tab/restart.
+- `date_fields.rs`: `p` offers When task filed / When merged in UTC buckets; authoritative creation/merge dates only. `paint_eval.rs` chooses semantic tokens; terminal conversion stays in `paint.rs`.
 - `paint.rs` - `p` rules in a hierarchy: `by:<col>=v:c,...`, `rows:<filter>=c`, `column:<col>=c`.
   Top rule is the base (whole rows); lower rules paint only their scope. `po` reorders.
 - `group.rs` - `Grouping` (0-2 nested levels, `project›goal`): `o` picks it; headings over the filtered, sorted order carry project def status, done/total, or goal week actual/target, pace.
@@ -41,9 +45,7 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
 - `settings.rs` - `,` panel: hide statuses everywhere; per-repo file, `g` promotes to global.
 - `report.rs` - `:bug`/`:idea` => task via core write layer. `telemetry.rs` - JSONL log, trail, `stats`.
 ## Loop
-Slice => commit on a `feat/tui-*` branch => `mise run tui-install` => the running sbt re-execs
-itself (`main.rs::InstalledBinary`, resumes view/filter/row) => user drives it => drain `label:tui`.
+Slice => commit on a `feat/tui-*` branch => `mise run tui-install` => running sbt re-execs (`main.rs::InstalledBinary`, resumes view/filter/row) => user drives it => drain `label:tui`.
 ## Gates
 Per slice: `mise run tui-install` (fmt, clippy, tests for this crate only, then install).
-Never run `mise run ci` mid-loop: its RUSTFLAGS differ from cargo install, so the
-whole workspace including the GUI rebuilds. Run it once before merge.
+Never run `mise run ci` mid-loop: its RUSTFLAGS differ from cargo install, rebuilding the workspace/GUI. Run it once before merge.

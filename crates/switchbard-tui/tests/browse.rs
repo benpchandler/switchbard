@@ -199,7 +199,7 @@ fn colon_shows_completions_and_tab_accepts() {
     h.press(KeyCode::Char(':'));
     let screen = h.type_text("b");
     assert!(screen.contains(":b▏   bug"), "{screen}");
-    let screen = h.press(KeyCode::Tab);
+    let screen = h.next_list_page();
     assert!(screen.contains(":bug▏"), "{screen}");
     h.type_text(" tab test");
     let screen = h.press(KeyCode::Enter);

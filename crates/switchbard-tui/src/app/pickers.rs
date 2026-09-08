@@ -379,14 +379,23 @@ impl App {
     }
 
     pub(super) fn column_values(&self, column: Column) -> Vec<(String, usize)> {
-        if self.page == crate::page::Page::PullRequests {
+        let mut values = if self.page == crate::page::Page::PullRequests {
             self.pull_requests.column_values(column)
         } else {
             column
                 .filter_field()
                 .map(|field| tasks::field_values(&self.tasks, field, &self.goals))
                 .unwrap_or_default()
+        };
+        if column.is_date() {
+            for bucket in column.spec().vocabulary {
+                if !values.iter().any(|(value, _)| value == bucket) {
+                    values.push(((*bucket).to_string(), 0));
+                }
+            }
+            values.sort_by_key(|(value, _)| column.vocabulary_rank(value));
         }
+        values
     }
 
     pub(super) fn open_filter_picker(&mut self, column: Column) {
@@ -518,6 +527,16 @@ impl App {
                 let index: usize = picker.number.parse().unwrap_or(0);
                 let count = if matches!(purpose, PickerPurpose::Task | PickerPurpose::TopList) {
                     task_rank_room
+                } else if matches!(
+                    purpose,
+                    PickerPurpose::Views | PickerPurpose::SaveView | PickerPurpose::GlobalView
+                ) {
+                    picker
+                        .row_keys()
+                        .iter()
+                        .filter_map(|key| key.parse::<usize>().ok())
+                        .max()
+                        .unwrap_or(0)
                 } else {
                     picker.numbered_count()
                 };
@@ -553,6 +572,10 @@ impl App {
                     } else if let Some(position) = picker.position_of_number(index) {
                         picker.selected = position;
                         self.apply_picked_value();
+                    } else if matches!(purpose, PickerPurpose::Views | PickerPurpose::GlobalView) {
+                        self.status = format!("no view in slot {index}");
+                    } else if purpose == PickerPurpose::SaveView {
+                        self.status = format!("slot {index} is out of reach");
                     }
                 }
             }

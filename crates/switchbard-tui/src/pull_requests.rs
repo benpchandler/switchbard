@@ -21,6 +21,7 @@ pub struct PullRequests {
     pending: Option<Receiver<Result<PrSnapshot, String>>>,
     completed_at: Option<Instant>,
     remaining_seconds: u64,
+    last_open_count: Option<(u64, std::time::SystemTime)>,
 }
 
 impl PullRequests {
@@ -48,7 +49,7 @@ impl PullRequests {
         }
     }
 
-    pub fn tick(&mut self, root: &Path, visible: bool, refresh_seconds: u64, now: Instant) -> bool {
+    pub fn tick(&mut self, root: &Path, refresh_seconds: u64, now: Instant) -> bool {
         let mut changed = false;
         if let Some(rx) = &self.pending {
             match rx.try_recv() {
@@ -74,9 +75,7 @@ impl PullRequests {
                 .saturating_sub(elapsed)
                 .as_secs()
         });
-        if (visible || self.completed_at.is_some())
-            && elapsed.is_none_or(|elapsed| elapsed >= Duration::from_secs(refresh_seconds))
-        {
+        if elapsed.is_none_or(|elapsed| elapsed >= Duration::from_secs(refresh_seconds)) {
             self.refresh(root);
         }
         changed
@@ -85,6 +84,15 @@ impl PullRequests {
     fn accept(&mut self, result: Result<PrSnapshot, String>) {
         match result {
             Ok(mut snapshot) => {
+                let same_repository = self
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|previous| previous.repository == snapshot.repository);
+                match &snapshot.open_count {
+                    Ok(count) => self.last_open_count = Some((*count, snapshot.observed_at)),
+                    Err(_) if !same_repository => self.last_open_count = None,
+                    Err(_) => {}
+                }
                 self.observe_notifications(&snapshot);
                 snapshot
                     .rows
@@ -108,6 +116,19 @@ impl PullRequests {
     }
 
     fn observe_notifications(&mut self, snapshot: &PrSnapshot) {
+        let previous = self
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.open_count.as_ref().err());
+        let current = snapshot.open_count.as_ref().err();
+        if previous != current {
+            if let Some(error) = current {
+                self.notifications
+                    .push(format!("Open PR count unavailable: {error}"));
+            } else if previous.is_some() {
+                self.notifications.push("Open PR count recovered".into());
+            }
+        }
         self.notifications.observe(self.snapshot.as_ref(), snapshot);
         if self.error.is_some() {
             self.notifications.push("Refresh recovered".into());
@@ -179,9 +200,7 @@ impl PullRequests {
     }
 
     pub fn matches(&self, filter: &crate::tasks::Filter, row: &PrListRow) -> bool {
-        filter.matches_values(&[&row.number.to_string(), &row.title], |field| {
-            self.values(field.column(), row)
-        })
+        filter.matches_row(&self.column_adapter(row))
     }
 
     pub fn column_values(&self, column: crate::columns::Column) -> Vec<(String, usize)> {
@@ -258,22 +277,26 @@ impl PullRequests {
     }
 
     fn compare(&self, a: &PrListRow, b: &PrListRow, sort: crate::sort::Sort) -> std::cmp::Ordering {
-        use crate::{columns::Column, sort::Order};
-        let values = |row| self.values(sort.column, row).join(",");
-        let order = match sort.order {
-            Order::Semantic => sort
-                .column
-                .vocabulary_rank(&values(a))
-                .cmp(&sort.column.vocabulary_rank(&values(b))),
-            _ if sort.column == Column::Id => a.number.cmp(&b.number),
-            _ => values(a).to_lowercase().cmp(&values(b).to_lowercase()),
-        };
-        let order = if sort.order == Order::Descending {
-            order.reverse()
-        } else {
-            order
-        };
-        order.then_with(|| a.number.cmp(&b.number))
+        crate::sort::compare_values(&self.column_adapter(a), &self.column_adapter(b), sort)
+    }
+
+    pub fn column_adapter<'a>(&'a self, row: &'a PrListRow) -> crate::column_values::PrValues<'a> {
+        let links = self.links.get(&row.url).map(Vec::as_slice).unwrap_or(&[]);
+        crate::column_values::PrValues { row, links }
+    }
+
+    pub fn observation_stale(&self, refresh_seconds: u64) -> bool {
+        self.error.is_some()
+            || self.snapshot.as_ref().is_some_and(|snapshot| {
+                snapshot
+                    .observed_at
+                    .elapsed()
+                    .is_ok_and(|age| age.as_secs() >= refresh_seconds.saturating_mul(2))
+            })
+    }
+
+    pub fn last_open_count(&self) -> Option<(u64, std::time::SystemTime)> {
+        self.last_open_count
     }
 
     pub fn refresh_label(&self) -> String {
@@ -303,5 +326,46 @@ impl PullRequests {
         if self.selected != previous {
             self.detail_scroll = 0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::SystemTime;
+    use switchbard_core::PrSnapshot;
+
+    fn snapshot(repository: &str, open_count: Result<u64, String>) -> PrSnapshot {
+        PrSnapshot {
+            repository: repository.into(),
+            repository_url: format!("https://github.com/{repository}"),
+            observed_at: SystemTime::now(),
+            rows: Vec::new(),
+            truncated: false,
+            limit: 100,
+            open_count,
+            enrichment_warning: None,
+        }
+    }
+
+    #[test]
+    fn count_failure_retains_last_known_positive_and_zero_without_hiding_error() {
+        for count in [0, 5] {
+            let mut prs = PullRequests::default();
+            prs.accept(Ok(snapshot("owner/repo", Ok(count))));
+            prs.accept(Ok(snapshot("owner/repo", Err("offline".into()))));
+
+            assert_eq!(prs.last_open_count().map(|(value, _)| value), Some(count));
+            assert!(prs.snapshot.unwrap().open_count.is_err());
+        }
+    }
+
+    #[test]
+    fn count_failure_does_not_cross_repository_boundary() {
+        let mut prs = PullRequests::default();
+        prs.accept(Ok(snapshot("owner/old", Ok(5))));
+        prs.accept(Ok(snapshot("owner/new", Err("offline".into()))));
+
+        assert_eq!(prs.last_open_count(), None);
     }
 }

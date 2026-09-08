@@ -6,42 +6,19 @@ pub enum Page {
     #[default]
     Tasks,
     PullRequests,
+    Inbox,
 }
 
 impl Page {
     pub fn toggle(self) -> Self {
         match self {
             Self::Tasks => Self::PullRequests,
-            Self::PullRequests => Self::Tasks,
+            Self::PullRequests => Self::Inbox,
+            Self::Inbox => Self::Tasks,
         }
     }
 
     pub fn allows(self, action: &Action) -> bool {
-        self == Self::Tasks
-            || matches!(
-                action,
-                Action::Columns
-                    | Action::SortColumn
-                    | Action::Paint
-                    | Action::View
-                    | Action::Filter
-                    | Action::FilterColumn
-                    | Action::Down
-                    | Action::Up
-                    | Action::Top
-                    | Action::Bottom
-                    | Action::PageDown
-                    | Action::PageUp
-                    | Action::Open
-                    | Action::Merge
-                    | Action::OpenBrowser
-                    | Action::DismissNotifications
-                    | Action::Page
-                    | Action::Help
-                    | Action::Back
-                    | Action::Quit
-                    | Action::Command
-                    | Action::Reload
-            )
+        action.available_on(self)
     }
 }

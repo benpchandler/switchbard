@@ -59,3 +59,47 @@ fn sort_survives_filtering_and_title_sorts_alphabetically() {
         ["Add dark theme", "Write onboarding guide"]
     );
 }
+
+#[test]
+fn numeric_ids_and_equal_text_have_deterministic_order_through_real_keys() {
+    let mut h = Harness::new();
+    for _ in 0..9 {
+        seed(&h.root, "Duplicate title", "To Do", &[]);
+    }
+    h.app.tick();
+    choose_sort(&mut h, "id", "ascending");
+    let screen = h.render();
+    assert!(screen.contains("↑id"), "{screen}");
+    let ids: Vec<_> = h
+        .app
+        .visible
+        .iter()
+        .map(|&i| h.app.tasks()[i].id.clone())
+        .collect();
+    assert_eq!(&ids[8..12], ["TASK-9", "TASK-10", "TASK-11", "TASK-12"]);
+    choose_sort(&mut h, "title", "ascending");
+    let first = h.app.visible.clone();
+    choose_sort(&mut h, "title", "descending");
+    choose_sort(&mut h, "title", "ascending");
+    assert_eq!(h.app.visible, first);
+    assert!(h.render().contains("↑title"));
+}
+
+fn choose_sort(h: &mut Harness, column: &str, order: &str) {
+    h.press(KeyCode::Char('s'));
+    for label in [column, order] {
+        let picker = h.app.picker.as_ref().expect("sort picker");
+        let index = picker
+            .matching()
+            .iter()
+            .position(|option| option.label == label)
+            .expect("sort choice");
+        for _ in 0..picker.selected {
+            h.press(KeyCode::Up);
+        }
+        for _ in 0..index {
+            h.press(KeyCode::Down);
+        }
+        h.press(KeyCode::Enter);
+    }
+}

@@ -6,7 +6,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::{App, Mode, Pane};
@@ -30,10 +30,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Constraint::Length(footer_height),
     ])
     .areas(frame.area());
-    draw_navigation(frame, app, navigation);
+    crate::navigation::draw(frame, app, navigation);
     draw_notification(frame, app, notification);
     app.page_size = body.height.saturating_sub(3).max(1) as usize;
-    if app.page == Page::PullRequests && app.pane != Pane::Help {
+    if app.page == Page::Inbox && app.pane != Pane::Help {
+        crate::inbox::draw(frame, app, body);
+    } else if app.page == Page::PullRequests && app.pane != Pane::Help {
         crate::pr_view::draw(frame, app, body);
     } else {
         match app.pane {
@@ -84,35 +86,6 @@ fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(hint).style(style), hint_area);
 }
 
-fn draw_navigation(frame: &mut Frame, app: &App, area: Rect) {
-    let theme = &app.config.theme;
-    let labels = [
-        (Page::Tasks, "Tasks"),
-        (Page::PullRequests, "Pull Requests"),
-    ];
-    let mut spans = Vec::with_capacity(3);
-    for (page, label) in labels {
-        let active = page == app.page;
-        let text = if active {
-            format!(" [{label}] ")
-        } else {
-            format!("  {label}  ")
-        };
-        spans.push(Span::styled(
-            text,
-            theme.style(if active { Surface::Chip } else { Surface::Hint }),
-        ));
-    }
-    spans.push(Span::styled(
-        format!(
-            " {} switch page",
-            app.config.bindings_for(&Action::Page).join("/")
-        ),
-        theme.style(Surface::Keys),
-    ));
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
-}
-
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = app.config.theme.clone();
     let repo = app
@@ -148,24 +121,39 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
     let header_area = Rect { height: 1, ..inner };
-    let cells = Layout::horizontal(widths).spacing(1).split(header_area);
-    frame.render_widget(
-        Paragraph::new("").style(theme.style(Surface::Header)),
+    let cells = crate::list_presentation::cells(header_area, &widths);
+    let headers: Vec<String> = app
+        .state
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            let label = if app.state.glyph_columns.contains(column) {
+                app.glyph_legend(*column)
+            } else {
+                column.header().to_string()
+            };
+            format!("{} {}", index + 1, label)
+        })
+        .collect();
+    crate::list_presentation::header(
+        frame,
         header_area,
+        &cells,
+        &headers,
+        theme.style(Surface::Header),
     );
-    for (index, (column, cell)) in app.state.columns.iter().zip(cells.iter()).enumerate() {
-        let text = if app.state.glyph_columns.contains(column) {
-            format!("{} {}", index + 1, app.glyph_legend(*column))
-        } else {
-            format!("{} {}", index + 1, column.header())
-        };
-        frame.render_widget(
-            Paragraph::new(text).style(theme.style(Surface::Header)),
-            *cell,
-        );
-    }
-    let window = inner.height.saturating_sub(1) as usize;
-    app.scroll = scroll_to_show(app.scroll, app.selected, window, &app.rows);
+    let heading =
+        app.selected > 0 && matches!(app.rows.get(app.selected - 1), Some(Row::Heading { .. }));
+    let viewport = crate::list_presentation::ListViewport::new(
+        app.scroll,
+        app.selected,
+        app.rows.len(),
+        inner.height.saturating_sub(1) as usize,
+        heading,
+    );
+    app.scroll = viewport.scroll;
+    let window = viewport.slots;
     let body = Rect {
         y: inner.y + 1,
         height: inner.height - 1,
@@ -253,23 +241,6 @@ fn fitted_width(app: &App, column: Column, max: u16) -> u16 {
         .max()
         .unwrap_or(0);
     (header.max(widest) as u16).min(max.max(header as u16))
-}
-
-/// The first row on screen: keeps `selected` in the window, and shows the
-/// heading above it when the selected task opens its section.
-fn scroll_to_show(scroll: usize, selected: usize, window: usize, rows: &[Row]) -> usize {
-    if window == 0 {
-        return scroll;
-    }
-    let mut scroll = scroll.min(selected);
-    if selected >= scroll + window {
-        scroll = selected + 1 - window;
-    }
-    let heading_above = selected > 0 && matches!(rows.get(selected - 1), Some(Row::Heading { .. }));
-    if heading_above && scroll == selected {
-        scroll -= 1;
-    }
-    scroll
 }
 
 fn table_title(app: &App) -> String {
@@ -368,67 +339,41 @@ fn claimed_clock(session: &switchbard_core::WorkSession, task_id: &str) -> Strin
         .unwrap_or_default()
 }
 
-fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
+    if app.page == Page::Inbox {
+        crate::inbox::draw_help(frame, app, area);
+        return;
+    }
     let theme = &app.config.theme;
-    let actions = [
-        Action::Page,
-        Action::NewTask,
-        Action::Down,
-        Action::Up,
-        Action::Top,
-        Action::Bottom,
-        Action::PageDown,
-        Action::PageUp,
-        Action::Open,
-        Action::Back,
-        Action::Filter,
-        Action::FilterColumn,
-        Action::SortColumn,
-        Action::Columns,
-        Action::Paint,
-        Action::Ball,
-        Action::Pass,
-        Action::Group,
-        Action::Settings,
-        Action::Rank,
-        Action::Command,
-        Action::Reload,
-        Action::OpenBrowser,
-        Action::Merge,
-        Action::DismissNotifications,
-        Action::Help,
-        Action::View,
-        Action::Quit,
-    ];
-    let entries: Vec<(String, String)> = actions
-        .iter()
+    let entries: Vec<(String, String)> = Action::all()
         .filter(|action| app.page.allows(action))
-        .map(|action| (app.config.bindings_for(action).join(" "), action.name()))
-        .chain(
-            (app.page == Page::Tasks).then(|| ("t a".to_string(), "link parent task".to_string())),
-        )
+        .map(|action| (app.config.bindings_for(&action).join(" "), action.name()))
+        .chain((app.page == Page::Tasks).then(|| {
+            let keys = app
+                .config
+                .bindings_for(&Action::Rank)
+                .iter()
+                .map(|key| format!("{key} a"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            (keys, "link parent task".to_string())
+        }))
         .chain(std::iter::once((
             "1-9".to_string(),
             "column actions".to_string(),
         )))
-        .chain(
-            app.views
-                .slots()
-                .into_iter()
-                .enumerate()
-                .map(|(index, (saved, scope))| {
-                    let scope = match scope {
-                        Scope::Global => "",
-                        Scope::Repo => " [repo]",
-                    };
-                    (
-                        format!("v{}", index + 1),
-                        format!("{}{scope}", saved.name()),
-                    )
-                }),
-        )
+        .chain(app.views.slots().into_iter().map(|(index, saved, scope)| {
+            let scope = match scope {
+                Scope::Global => "",
+                Scope::Repo => " [repo]",
+            };
+            (
+                format!("v{}", index + 1),
+                format!("{}{scope}", saved.name()),
+            )
+        }))
         .collect();
-    let per_line = (area.width as usize / 32).max(1);
+    let per_line = (area.width.saturating_sub(2) as usize / 32).max(1);
     let mut lines: Vec<Line> = entries
         .chunks(per_line)
         .map(|chunk| {
@@ -442,24 +387,20 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
     lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled(":bug <doing>  ", theme.style(Surface::Accent)),
-        Span::raw("file a bug with this screen    "),
-        Span::styled(":idea <want>  ", theme.style(Surface::Accent)),
-        Span::raw("file an idea with this screen"),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled(":theme <name>  ", theme.style(Surface::Accent)),
-        Span::raw("how sbt itself looks           "),
-        Span::styled(":palette <name>  ", theme.style(Surface::Accent)),
-        Span::raw("colors `auto` paints with"),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled(":view <name>  :reload  :q", theme.style(Surface::Accent)),
-        Span::raw(
-            "    f/s <col#> filter/sort by column; v<n> open view, vs<n> save it (vsd = default)",
-        ),
-    ]));
+    for (command, description) in [
+        (":bug <doing>", "file a bug with this screen"),
+        (":idea <want>", "file an idea with this screen"),
+        (":theme <name>", "how sbt itself looks"),
+        (":palette <name>", "colors `auto` paints with"),
+        (":view <name>  :reload  :q", ""),
+        ("f/s <col#>", "filter/sort by column"),
+        ("v<n>", "open view; vs<n> save it (vsd = default)"),
+    ] {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{command}  "), theme.style(Surface::Accent)),
+            Span::raw(description),
+        ]));
+    }
     if app.page == Page::PullRequests {
         lines.push(Line::from("PR fields: status/lifecycle, id, title, tasks, checks, review, merge, draft; PR views use .prs.lua files."));
     }
@@ -467,11 +408,23 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         "config ~/.switchbard/tui.lua (hot reload) · views ~/.switchbard/views.lua + views/<repo>.lua · events ~/.switchbard/tui-events.jsonl",
         theme.style(Surface::Hint),
     )));
+    let up = app.config.bindings_for(&Action::Up).join("/");
+    let down = app.config.bindings_for(&Action::Down).join("/");
+    let back = app.config.bindings_for(&Action::Back).join("/");
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme.style(Surface::Border))
-        .title(" keys ");
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+        .title(" keys ")
+        .title_bottom(format!(" {up}/{down} scroll · {back} close "));
+    let inner = block.inner(area);
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    let max_scroll = paragraph
+        .line_count(inner.width)
+        .saturating_sub(inner.height as usize);
+    app.help_scroll = app
+        .help_scroll
+        .min(max_scroll.min(u16::MAX as usize) as u16);
+    frame.render_widget(paragraph.scroll((app.help_scroll, 0)).block(block), area);
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
@@ -549,7 +502,9 @@ fn draw_new_task(frame: &mut Frame, app: &App, area: Rect) {
 /// The footer while browsing: what is in effect as a chip, the situation, then
 /// the keys with their letters on the `keys` surface.
 fn browse_footer(app: &App) -> Line<'static> {
-    let actions = if app.page == Page::Tasks {
+    let actions = if app.page == Page::Inbox {
+        vec![(Action::Page, "page"), (Action::Help, "keys")]
+    } else if app.page == Page::Tasks {
         vec![
             (Action::Rank, "tasks"),
             (Action::View, "views"),
@@ -739,38 +694,20 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
             .collect();
         confirmation.push(Line::from(""));
         confirmation.extend(lines);
-        let paragraph = Paragraph::new(confirmation).wrap(Wrap { trim: false });
-        let required_height = paragraph
-            .line_count(width.saturating_sub(2))
-            .saturating_add(2);
         let area = Rect {
             height: body.height.saturating_sub(2),
             ..area
         };
-        frame.render_widget(Clear, area);
-        if width >= 40 && required_height <= area.height as usize {
-            app.pr_merge.confirmation_visible = true;
-            frame.render_widget(paragraph.block(block), area);
-        } else {
-            frame.render_widget(
-                Paragraph::new("Enlarge terminal to confirm merge. Esc cancels.")
-                    .wrap(Wrap { trim: false })
-                    .block(block),
-                area,
-            );
-        }
-    } else {
-        frame.render_widget(Clear, area);
-        let visible_rows = area.height.saturating_sub(2).max(1) as usize;
-        let offset = picker
-            .selected
-            .saturating_sub(visible_rows.saturating_sub(1));
-        frame.render_widget(
-            Paragraph::new(lines)
-                .scroll((offset.min(u16::MAX as usize) as u16, 0))
-                .block(block),
+        app.pr_merge.confirmation_visible = crate::list_presentation::picker(
+            frame,
             area,
+            block,
+            confirmation,
+            picker.selected,
+            true,
         );
+    } else {
+        crate::list_presentation::picker(frame, area, block, lines, picker.selected, false);
     }
 }
 

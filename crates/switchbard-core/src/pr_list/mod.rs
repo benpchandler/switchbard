@@ -1,6 +1,7 @@
 //! Read-only, bounded PR observations across every lifecycle state for one resolved GitHub repository.
 //! Local task associations belong to generic reference matching, never title guessing.
 mod enrich;
+mod open_count;
 mod parse;
 pub(crate) mod process;
 
@@ -20,6 +21,9 @@ pub struct PrSnapshot {
     pub rows: Vec<PrListRow>,
     pub truncated: bool,
     pub limit: usize,
+    /// Repository-wide open PR total, independent of the bounded history window.
+    /// An unavailable observation must never be treated as zero or a loaded-row count.
+    pub open_count: Result<u64, String>,
     /// Metadata succeeded, but optional active-PR delivery observations are incomplete.
     pub enrichment_warning: Option<String>,
 }
@@ -33,6 +37,9 @@ pub struct PrListRow {
     pub head_oid: String,
     pub draft: bool,
     pub lifecycle: PrLifecycle,
+    /// Authoritative GitHub merge instant, normalized to UTC. Missing or invalid
+    /// metadata remains unknown; neither closure nor update time implies a merge.
+    pub merged_at: Option<chrono::DateTime<chrono::Utc>>,
     pub checks: PrChecks,
     pub review: PrReview,
     pub merge: PrMerge,
@@ -139,7 +146,7 @@ impl PrMerge {
     }
 }
 
-/// Blocks for at most three bounded `gh` queries. Invoke on a background worker.
+/// Blocks for at most four bounded `gh` queries. Invoke on a background worker.
 /// Auth, malformed data and inaccessible repositories return errors, never empty rows.
 pub fn fetch_pull_requests(repo: &Path) -> Result<PrSnapshot, String> {
     fetch_pull_requests_with_limit(repo, DEFAULT_PULL_REQUEST_LIMIT)
@@ -170,10 +177,11 @@ pub fn fetch_pull_requests_with_limit(repo: &Path, limit: usize) -> Result<PrSna
             "--limit",
             &query_limit,
             "--json",
-            "id,number,title,url,state,headRefOid,isDraft",
+            "id,number,title,url,state,headRefOid,isDraft,mergedAt",
         ],
     )?;
     let (rows, truncated) = parse::rows(&data, &repository_url, limit)?;
+    let open_count = open_count::fetch(repo, &repository, &repository_url);
     let mut snapshot = PrSnapshot {
         repository,
         repository_url,
@@ -181,6 +189,7 @@ pub fn fetch_pull_requests_with_limit(repo: &Path, limit: usize) -> Result<PrSna
         rows,
         truncated,
         limit,
+        open_count,
         enrichment_warning: None,
     };
     snapshot.enrichment_warning = enrich::fetch(repo, &mut snapshot.rows, &snapshot.repository_url);
