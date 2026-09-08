@@ -1,20 +1,21 @@
 ---
 id: TASK-141.4
 title: Bring PR paint to parity with Tasks
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-09-07 01:32'
-updated_date: '2026-09-07 01:51'
+updated_date: '2026-09-07 13:27'
 labels:
   - tui
   - github
   - parity
-  - ball:agent
 dependencies:
   - '141.1'
   - '141.2'
 priority: medium
 parent_task_id: '141'
+references:
+  - https://github.com/benpchandler/switchbard/pull/136
 ---
 
 ## Description
@@ -38,4 +39,6 @@ Owner requested these as tracked tasks before live claiming and implementation. 
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented in feat/tui-pr-pane (source ea277a1). Full TUI fmt/clippy/tests/install passed. All 20 page/PR/control E2E journeys passed with actual GitHub reads; title/check sorts and review/merge facets also passed on budget PR observations. Evidence: docs/tui-pr-controls-ledger.md and docs/tui-pr-controls-evidence.md. Independent source review has no remaining verified blocker. Delivery pipeline/PR/CI and human visual review remain pending; not merged.
+
+Verified PR #136 merged with all eight checks passing; scoped implementation criteria complete. Parent TASK-141 remains open.
 <!-- SECTION:NOTES:END -->

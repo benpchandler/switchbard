@@ -152,3 +152,9 @@ pub use pr_list::{
     fetch_pull_requests, fetch_pull_requests_with_limit, PrChecks, PrLifecycle, PrListRow, PrMerge,
     PrReview, PrSnapshot, DEFAULT_PULL_REQUEST_LIMIT, MAX_PULL_REQUESTS,
 };
+
+pub mod pr_merge;
+pub use pr_merge::{
+    execute_pr_merge, prepare_pr_merge, PrMergeMethod, PrMergeOutcome, PrMergePreparation,
+    PrMergeResult, PreparedPrMerge,
+};

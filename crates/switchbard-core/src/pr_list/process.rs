@@ -1,4 +1,4 @@
-//! Bound both wall time and allocation for authenticated CLI reads.
+//! Bound both wall time and allocation for authenticated CLI requests.
 use std::io::Read;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -9,7 +9,7 @@ use std::time::Duration;
 const OUTPUT_LIMIT: u64 = 4 * 1024 * 1024;
 const POLLS: usize = 300;
 
-pub(super) fn run_gh(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+pub(crate) fn run_gh(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let mut command = command(repo, args);
     let mut child = command.spawn().map_err(|e| format!("Cannot run gh: {e}"))?;
     let stdout = reader(child.stdout.take().expect("piped stdout"));
@@ -28,7 +28,7 @@ pub(super) fn run_gh(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
             .filter(|c| !c.is_control())
             .take(500)
             .collect();
-        return Err(format!("GitHub read failed: {detail}"));
+        return Err(format!("GitHub request failed: {detail}"));
     }
     Ok(out)
 }
@@ -91,7 +91,7 @@ fn wait(child: &mut Child) -> Result<ExitStatus, String> {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    Err("GitHub read timed out after 30 seconds".to_owned())
+    Err("GitHub request timed out after 30 seconds".to_owned())
 }
 
 fn cleanup(child: &mut Child) -> Result<(), String> {

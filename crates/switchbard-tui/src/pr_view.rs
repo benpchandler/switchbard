@@ -33,28 +33,62 @@ fn draw_list(frame: &mut Frame, app: &mut App, area: Rect) {
         Constraint::Min(0),
     ])
     .areas(inner);
-    frame.render_widget(
-        Paragraph::new(observation(app))
-            .wrap(Wrap { trim: false })
-            .style(app.config.theme.style(Surface::Hint)),
-        status,
-    );
+    draw_observation(frame, app, status);
     list(frame, app, body);
+}
+
+fn draw_observation(frame: &mut Frame, app: &App, area: Rect) {
+    let observation = observation(app);
+    let style = app.config.theme.style(Surface::Hint);
+    let Some(snapshot) = &app.pull_requests.snapshot else {
+        frame.render_widget(
+            Paragraph::new(observation)
+                .wrap(Wrap { trim: false })
+                .style(style),
+            area,
+        );
+        return;
+    };
+    let age = snapshot.observed_at.elapsed().map_or(0, |d| d.as_secs());
+    let health = if app.pull_requests.error.is_some() || age >= app.config.pr_refresh_seconds * 2 {
+        "STALE"
+    } else {
+        "Observed"
+    };
+    let suffix = format!(" · {health} {}", app.pull_requests.refresh_label());
+    let [header, body] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    let timer_width = Line::from(suffix.as_str()).width() as u16;
+    let repository_width = (Line::from(snapshot.repository.as_str()).width() as u16)
+        .min(header.width.saturating_sub(timer_width));
+    let [repository, timer, _] = Layout::horizontal([
+        Constraint::Length(repository_width),
+        Constraint::Length(timer_width),
+        Constraint::Min(0),
+    ])
+    .areas(header);
+    frame.render_widget(
+        Paragraph::new(snapshot.repository.as_str()).style(style),
+        repository,
+    );
+    frame.render_widget(Paragraph::new(suffix).style(style), timer);
+    frame.render_widget(
+        Paragraph::new(observation)
+            .wrap(Wrap { trim: false })
+            .style(style),
+        body,
+    );
 }
 
 fn observation(app: &App) -> String {
     let prs = &app.pull_requests;
     let Some(snapshot) = &prs.snapshot else {
         return match &prs.error {
-            Some(error) => format!("Unavailable: {error}. Use refresh to retry."),
-            None => "Loading pull requests...".into(),
+            Some(error) => format!(
+                "{} · Unavailable: {error}. Use refresh to retry.",
+                prs.refresh_label()
+            ),
+            None => format!("{} · Loading pull requests...", prs.refresh_label()),
         };
-    };
-    let age = snapshot.observed_at.elapsed().map_or(0, |d| d.as_secs());
-    let health = if prs.error.is_some() || age >= app.config.pr_refresh_seconds * 2 {
-        "STALE"
-    } else {
-        "Observed"
     };
     let coverage = if snapshot.truncated {
         if snapshot.limit < switchbard_core::MAX_PULL_REQUESTS {
@@ -69,12 +103,9 @@ fn observation(app: &App) -> String {
         .error
         .as_deref()
         .or(snapshot.enrichment_warning.as_deref())
-        .unwrap_or(if prs.loading() { "refreshing" } else { "" });
+        .unwrap_or("");
     format!(
-        "{} · {} {}s\n{}/{} shown · {}\nfilter: {}{}\n{}",
-        snapshot.repository,
-        health,
-        age,
+        "{}/{} shown · {}\nfilter: {}{}\n{}",
         prs.visible.len(),
         snapshot.rows.len(),
         coverage,

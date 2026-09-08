@@ -6,7 +6,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::{App, Mode, Pane};
@@ -20,13 +20,17 @@ use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let [navigation, body, footer] = Layout::vertical([
+    let [navigation, notification, body, footer] = Layout::vertical([
         Constraint::Length(1),
+        Constraint::Length(u16::from(
+            !app.pull_requests.notifications.is_empty() || app.pr_merge.ongoing().is_some(),
+        )),
         Constraint::Min(1),
         Constraint::Length(1),
     ])
     .areas(frame.area());
     draw_navigation(frame, app, navigation);
+    draw_notification(frame, app, notification);
     app.page_size = body.height.saturating_sub(3).max(1) as usize;
     if app.page == Page::PullRequests && app.pane != Pane::Help {
         crate::pr_view::draw(frame, app, body);
@@ -42,10 +46,41 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
     draw_footer(frame, app, footer);
-    if let Some(picker) = &app.picker {
-        draw_picker(frame, app, picker, body);
+    app.pr_merge.confirmation_visible = false;
+    if let Some(picker) = app.picker.clone() {
+        draw_picker(frame, app, &picker, body);
     }
     app.last_screen = buffer_text(frame.buffer_mut());
+}
+
+fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
+    let alerts = &app.pull_requests.notifications;
+    let Some(message) = app.pr_merge.ongoing().or_else(|| alerts.latest()) else {
+        return;
+    };
+    let dismiss = app
+        .config
+        .bindings_for(&Action::DismissNotifications)
+        .join("/");
+    let hint = if app.pr_merge.is_submitting() {
+        " pending".to_string()
+    } else if app.pr_merge.ongoing().is_some() {
+        " Esc cancels".to_string()
+    } else {
+        format!(" {} · {dismiss} dismiss", alerts.len())
+    };
+    let hint_width = u16::try_from(hint.chars().count()).unwrap_or(u16::MAX);
+    let [message_area, hint_area] = Layout::horizontal([
+        Constraint::Min(1),
+        Constraint::Length(hint_width.min(area.width / 2)),
+    ])
+    .areas(area);
+    let style = app.config.theme.style(Surface::Status);
+    frame.render_widget(
+        Paragraph::new(format!("PR {message}")).style(style),
+        message_area,
+    );
+    frame.render_widget(Paragraph::new(hint).style(style), hint_area);
 }
 
 fn draw_navigation(frame: &mut Frame, app: &App, area: Rect) {
@@ -356,6 +391,9 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Action::Rank,
         Action::Command,
         Action::Reload,
+        Action::OpenBrowser,
+        Action::Merge,
+        Action::DismissNotifications,
         Action::Help,
         Action::View,
         Action::Quit,
@@ -487,6 +525,8 @@ fn browse_footer(app: &App) -> Line<'static> {
             (Action::View, "views"),
             (Action::Down, "select"),
             (Action::Open, "detail"),
+            (Action::OpenBrowser, "browser"),
+            (Action::Merge, "merge"),
             (Action::Reload, "refresh"),
             (Action::Help, "help"),
         ]
@@ -546,7 +586,7 @@ fn browse_footer(app: &App) -> Line<'static> {
     Line::from(spans)
 }
 
-fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
+fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rect) {
     let theme = &app.config.theme;
     let hint = picker::hint(picker);
     let width = picker
@@ -558,6 +598,11 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         .unwrap_or(20)
         .max(60)
         .min(body.width.saturating_sub(4) as usize) as u16;
+    let width = if picker.purpose == PickerPurpose::Merge {
+        body.width.saturating_sub(4)
+    } else {
+        width
+    };
     let rows = picker.matching();
     let height = (rows.len() as u16 + 4).min(body.height.saturating_sub(2));
     let area = Rect {
@@ -641,7 +686,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                     theme.style(Surface::Accent),
                 ),
                 Span::styled(
-                    format!("{mark}{value:<width$}", width = width as usize - 9),
+                    format!("{mark}{value:<width$}", width = (width as usize).saturating_sub(9)),
                     style,
                 ),
                 Span::styled(
@@ -678,8 +723,39 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         .border_style(theme.style(Surface::Accent))
         .title_style(title_style)
         .title(pending + &picker_title(picker, preview.is_some()));
-    frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    if picker.purpose == PickerPurpose::Merge {
+        let mut confirmation: Vec<Line> = app
+            .pr_merge
+            .confirmation_lines()
+            .into_iter()
+            .map(Line::from)
+            .collect();
+        confirmation.push(Line::from(""));
+        confirmation.extend(lines);
+        let paragraph = Paragraph::new(confirmation).wrap(Wrap { trim: false });
+        let required_height = paragraph
+            .line_count(width.saturating_sub(2))
+            .saturating_add(2);
+        let area = Rect {
+            height: body.height.saturating_sub(2),
+            ..area
+        };
+        frame.render_widget(Clear, area);
+        if width >= 40 && required_height <= area.height as usize {
+            app.pr_merge.confirmation_visible = true;
+            frame.render_widget(paragraph.block(block), area);
+        } else {
+            frame.render_widget(
+                Paragraph::new("Enlarge terminal to confirm merge. Esc cancels.")
+                    .wrap(Wrap { trim: false })
+                    .block(block),
+                area,
+            );
+        }
+    } else {
+        frame.render_widget(Clear, area);
+        frame.render_widget(Paragraph::new(lines).block(block), area);
+    }
 }
 
 /// What is being picked, plus any typed text. Key hints live in the footer.
@@ -708,6 +784,7 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::Goals(id) => format!("{id} · goals"),
         PickerPurpose::Organize => "organize by".to_string(),
         PickerPurpose::Ball => "ball".to_string(),
+        PickerPurpose::Merge => "Confirm PR merge".to_string(),
     };
     if picker.typed.is_empty() {
         format!(" {subject} ")
