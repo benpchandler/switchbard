@@ -26,9 +26,10 @@ The seven abstraction tasks remain a separate implemented branch awaiting PR del
 
 Implementation and local validation complete; PR delivery and owner acceptance pending. Logs: `/tmp/switchbard-inbox-evidence/`. Initial primary checkout dirt preserved. Worktree: `/Users/bpc/Dev/.worktrees/switchbard-inbox`, branch `feat/tui-inbox-badges`.
 
-- `mise run tui-install` passed formatting, all-target TUI clippy, the TUI E2E suite, and release installation. Review binary: `/Users/bpc/.local/share/switchbard-builds/inbox/bin/sbt`. The existing default binary is preserved because it includes unrelated unmerged parent-picker work.
+- `mise run tui-install` passed formatting, all-target TUI clippy, the TUI E2E suite, and release installation. Review binary: `/Users/bpc/.local/share/switchbard-builds/inbox/bin/sbt`. The merged parent-picker behavior remains included in the review build.
 - Exact-total parser and query tests: 18 core PR-list tests passed; core all-target clippy passed. The parser covers zero and counts above the historical row cap.
 - Live rendered journeys passed against Switchbard (one open PR) and budget (zero open PRs), covering all three pages, filtering to no matches, theme hot reload, and a real invalid-repo refresh retaining stale data. Terminal sizes: 40x8, 80x24, 120x40, 180x50. Captures are named `sbt-navigation-badges-{0,1}.txt` in the OS temporary directory.
-- Inbox tests cover blocked list actions, reporting, legacy resume records, and independent list filters across restart. An actual PTY session observed the startup count on Tasks and opened Inbox via two Tabs.
+- Inbox tests cover blocked list actions, reporting, the named `sbt-resume-1` resume contract with legacy record compatibility, and independent list filters across restart. The merged parent-picker behavior remains covered alongside these flows. An actual PTY session observed the startup count on Tasks and opened Inbox via two Tabs.
+- The initial live-large journey passed against the recorded large-fixture repository, covering bounded rendering and the exact-total badge contract.
 - Independent review found a legacy-theme compatibility bug. The live E2E first failed with missing badge background, then passed after omitted `attention_badge` inherited `chip`. Explicit overrides remain authoritative. No remaining review blockers.
-- Remaining gaps: owner visual acceptance, live large-count repository, actual remote access revocation, and CI on the delivered revision. No GUI render paths changed; egui performance smoke is N/A.
+- Remaining gaps: owner visual acceptance, actual remote access revocation, and CI on the delivered revision. No GUI render paths changed; egui performance smoke is N/A.
