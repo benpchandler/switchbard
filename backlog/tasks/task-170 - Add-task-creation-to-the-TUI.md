@@ -4,7 +4,7 @@ title: Add task creation to the TUI
 status: Done
 assignee: []
 created_date: '2026-09-08 11:18'
-updated_date: '2026-09-08 11:35'
+updated_date: '2026-09-08 11:55'
 labels:
   - tui
   - enhancement
@@ -37,5 +37,5 @@ Reopened after user reported missing PR tab. Cargo install provenance confirmed 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Corrected the initial installation regression by combining task capture with the previously installed PR-enabled revision 1d14a58. a adds a task; existing n notification dismissal and Tab PR navigation are preserved. Isolated mise run tui-install passes fmt, clippy, 102 tests and rustdoc (17 existing opt-in tests skipped), and installed binary provenance is verified. Independent review clear. Branch fix/tui-add-task-pr; no push or merge to primary.
+Installed task/new chord: t then n creates a task, replacing default a. Existing standalone n notification dismissal and PR tab preserved. Help lists configured task prefix plus n, and task menu leads with n New. Isolated mise run tui-install passed all checks; 103 tests passed and 17 existing opt-in tests skipped. Branch feat/tui-task-new, no push or primary merge.
 <!-- SECTION:FINAL_SUMMARY:END -->

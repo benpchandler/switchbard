@@ -8,7 +8,7 @@ use ratatui::{backend::TestBackend, Terminal};
 #[test]
 fn creates_selects_and_persists_without_report_metadata() {
     let mut h = Harness::new();
-    h.press(KeyCode::Char('a'));
+    h.type_text("tn");
     h.type_text("Capture a task");
     let screen = h.press(KeyCode::Enter);
     assert!(screen.contains("created TASK-4"), "{screen}");
@@ -25,7 +25,7 @@ fn creates_selects_and_persists_without_report_metadata() {
 #[test]
 fn blank_is_recoverable_and_escape_cancels() {
     let mut h = Harness::new();
-    h.press(KeyCode::Char('a'));
+    h.type_text("tn");
     h.type_text("   ");
     let screen = h.press(KeyCode::Enter);
     assert!(screen.to_lowercase().contains("title"), "{screen}");
@@ -33,7 +33,7 @@ fn blank_is_recoverable_and_escape_cancels() {
     h.type_text("cancel this");
     h.press(KeyCode::Esc);
     assert_eq!(h.app.total_tasks(), 3);
-    h.press(KeyCode::Char('a'));
+    h.type_text("tn");
     h.type_text("Keep meX");
     h.press(KeyCode::Backspace);
     h.press(KeyCode::Enter);
@@ -47,7 +47,7 @@ fn failure_retains_draft_and_retry_creates_once() {
     let saved = h.root.join("saved-tasks");
     std::fs::rename(&tasks, &saved).unwrap();
     std::fs::write(&tasks, "blocked").unwrap();
-    h.press(KeyCode::Char('a'));
+    h.type_text("tn");
     h.type_text("Retry this title");
     let screen = h.press(KeyCode::Enter);
     assert!(screen.contains("Retry this title"), "{screen}");
@@ -66,7 +66,7 @@ fn filtered_creation_reports_hidden_without_changing_filter() {
     h.type_text("label:auth");
     h.press(KeyCode::Enter);
     let filter = h.app.state.filter.clone();
-    h.press(KeyCode::Char('a'));
+    h.type_text("tn");
     h.type_text("Outside this filter");
     let screen = h.press(KeyCode::Enter);
     assert!(screen.contains("hidden"), "{screen}");
@@ -87,7 +87,7 @@ fn empty_repo_custom_prefix_and_duplicate_titles() {
     .unwrap();
     h.app = open_app(&h.root, &h.config_path);
     for _ in 0..2 {
-        h.press(KeyCode::Char('a'));
+        h.type_text("tn");
         h.type_text("Same title");
         let screen = h.press(KeyCode::Enter);
         assert!(screen.contains("Same title"), "{screen}");
@@ -113,7 +113,7 @@ fn configurable_shortcut_and_help() {
 #[test]
 fn unicode_input_survives_resize_tick_and_long_titles() {
     let mut h = Harness::new();
-    h.press(KeyCode::Char('a'));
+    h.type_text("tn");
     h.type_text(&format!("{}e\u{301}終", "界".repeat(80)));
     for (width, height) in [(40, 8), (100, 20), (160, 30)] {
         h.terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -124,14 +124,14 @@ fn unicode_input_survives_resize_tick_and_long_titles() {
     h.press(KeyCode::Enter);
     assert!(h.selected_title().ends_with('終'));
     h.terminal = Terminal::new(TestBackend::new(0, 0)).unwrap();
-    h.press(KeyCode::Char('a'));
+    h.type_text("tn");
     assert_eq!(h.render(), "");
 }
 
 #[test]
 fn bounded_input_and_external_creation_keep_capture_safe() {
     let mut h = Harness::new();
-    h.press(KeyCode::Char('a'));
+    h.type_text("tn");
     let screen = h.type_text(&"a".repeat(1100));
     assert!(screen.contains("limit"), "{screen}");
     assert!(h.app.input.len() <= 1024);
@@ -149,7 +149,7 @@ fn standing_hidden_status_reports_created_task() {
         .settings
         .edit_repo(|settings| settings.toggle_hidden("To Do"))
         .unwrap();
-    h.press(KeyCode::Char('a'));
+    h.type_text("tn");
     h.type_text("Hidden by settings");
     let screen = h.press(KeyCode::Enter);
     assert!(screen.contains("hidden"), "{screen}");
@@ -161,7 +161,7 @@ fn held_enter_does_not_open_detail_after_creating() {
     use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers};
     use switchbard_tui::app::Pane;
     let mut h = Harness::new();
-    h.press(KeyCode::Char('a'));
+    h.type_text("tn");
     h.type_text("One capture");
     h.press(KeyCode::Enter);
     h.app.handle_key(KeyEvent::new_with_kind(
@@ -179,7 +179,7 @@ fn held_enter_does_not_open_detail_after_creating() {
 fn capture_and_pr_tab_coexist_without_losing_new_task() {
     let mut h = Harness::new();
     assert!(h.render().contains("Pull Requests"));
-    h.press(KeyCode::Char('a'));
+    h.type_text("tn");
     h.type_text("Capture alongside PRs");
     let screen = h.press(KeyCode::Enter);
     assert!(screen.contains("created TASK-4"), "{screen}");
@@ -189,4 +189,23 @@ fn capture_and_pr_tab_coexist_without_losing_new_task() {
     let screen = h.press(KeyCode::Tab);
     assert!(screen.contains("[Tasks]"), "{screen}");
     assert_eq!(h.selected_title(), "Capture alongside PRs");
+}
+
+#[test]
+fn task_new_chord_is_discoverable_and_old_a_is_unbound() {
+    let mut h = Harness::new();
+    let screen = h.press(KeyCode::Char('a'));
+    assert!(screen.contains("a is not bound"), "{screen}");
+    let screen = h.press(KeyCode::Char('?'));
+    assert!(screen.contains("t n"), "{screen}");
+    h.press(KeyCode::Esc);
+    let screen = h.press(KeyCode::Char('t'));
+    assert!(screen.contains("n New"), "{screen}");
+    h.press(KeyCode::Esc);
+    assert_eq!(h.app.total_tasks(), 3);
+    std::fs::write(&h.config_path, "return { keys = { x = 'task' } }").unwrap();
+    h.app.tick();
+    h.type_text("xnRebound prefix");
+    h.press(KeyCode::Enter);
+    assert_eq!(h.selected_title(), "Rebound prefix");
 }

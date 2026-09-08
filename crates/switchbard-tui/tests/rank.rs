@@ -13,7 +13,7 @@ fn t_digit_ranks_the_selected_task_shows_the_rank_column_and_pins_a_top_section(
     assert!(
         h.app
             .status
-            .starts_with("task: a number ranks it (1 is top, 1 last)"),
+            .starts_with("task: n New · a number ranks it (1 is top, 1 last)"),
         "{}",
         h.app.status
     );

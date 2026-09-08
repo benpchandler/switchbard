@@ -535,9 +535,10 @@ impl App {
     }
 
     /// After `t`: digits rank, `b` assigns the ball, `d` marks Done, `p` pins,
-    /// and `g` opens goals.
+    /// `n` creates a task, and `g` opens goals.
     fn handle_rank_chord_key(&mut self, event: KeyEvent) {
         match event.code {
+            KeyCode::Char('n') => self.open_new_task(),
             KeyCode::Char('b') => {
                 self.input.clear();
                 self.open_ball_picker();
@@ -1101,7 +1102,7 @@ impl App {
                 self.mode = Mode::RankChord;
                 self.input.clear();
                 self.status = format!(
-                    "task: a number ranks it (1 is top, {} last) · b Ball · t appends · d Done · delete drops · p {} · g goals",
+                    "task: n New · a number ranks it (1 is top, {} last) · b Ball · t appends · d Done · delete drops · p {} · g goals",
                     self.top.len() + 1,
                     if self.state.pin_top { "unpins" } else { "pins" }
                 );

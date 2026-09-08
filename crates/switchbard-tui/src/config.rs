@@ -413,6 +413,14 @@ impl Config {
             .filter(|(_, bound)| *bound == action)
             .map(|(chord, _)| chord.label())
             .collect();
+        if *action == Action::NewTask {
+            keys.extend(
+                self.keys
+                    .iter()
+                    .filter(|(_, bound)| **bound == Action::Rank)
+                    .map(|(key, _)| format!("{} n", key.label())),
+            );
+        }
         keys.sort();
         keys
     }

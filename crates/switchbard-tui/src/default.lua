@@ -9,7 +9,7 @@ return {
     j = "down", k = "up", down = "down", up = "up",
     g = "top", G = "bottom",
     ["ctrl-d"] = "page_down", ["ctrl-u"] = "page_up",
-    enter = "open", esc = "back", tab = "page", a = "new_task",
+    enter = "open", esc = "back", tab = "page",
     ["/"] = "filter", f = "filter_column", s = "sort_column", [":"] = "command",
     c = "columns", p = "paint", b = "ball", w = "pass", o = "group", t = "task", v = "view", [","] = "settings", r = "reload", O = "open_browser", m = "merge", n = "dismiss_notifications", ["?"] = "help", q = "quit",
   },
