@@ -1,6 +1,6 @@
 # Switchbard-owned storage (TASK-147)
 
-Status: pre-implementation contract accepted after independent review and targeted finding closure. Implementation, migration and reporter acceptance remain open.
+Status: revision required following the fresh [second opinion](second-opinion.md). Central SQLite authority is supported; exchange ancestry, record granularity, PR readability, and verification require revision before implementation. The earlier audit remains historical evidence of its narrower finding closure. Implementation, migration and reporter acceptance remain open.
 
 ## Objective ledger
 
@@ -21,7 +21,7 @@ Authorized now: discovery, repository audit, reversible planning, task tracking.
 1. Completed: inspect current storage owners and consumers.
 2. Completed: obtain owner clarification of central authority and optional Git exchange.
 3. Completed at synthetic scope: model shared records, merge/replay, bootstrap and conflicts. Full product proof remains open.
-4. Completed at decision scope: executable implementation contract, independent review and finding closure.
+4. Drafted at decision scope: executable implementation contract and initial audit closure. Fresh second opinion reopened material design and verification findings; revise before implementation.
 5. Implement the agreed contract, verify real transitions, and obtain reporter confirmation.
 
 ## Owner clarification
@@ -51,6 +51,6 @@ Synthetic model: 34/34 scenarios pass; 22 invalid cases reject without modeled d
 - [Decision](decision.md), [architecture](architecture.md), [source inventory](discovery.md), and [blast radius](blast-radius.json).
 - [Implementation plan](plan.md), [acceptance](acceptance.md), and [state/evidence matrix](testing-matrix.md).
 - [Wire specification](exchange-v1.md), [closed schema](exchange-v1.schema.json), and [fixed vectors](exchange-v1-vectors.json).
-- [Independent audit and scope limits](audit.md).
+- [Initial independent audit and scope limits](audit.md), superseded readiness verdict in the [fresh second opinion](second-opinion.md).
 
 Run the single product acceptance command with `python3 docs/decisions/switchbard-owned-storage/verify.py`. A failure is expected until the actual product behavior is implemented; the synthetic scripts are separate decision evidence and cannot turn it green.
