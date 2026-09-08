@@ -21,6 +21,7 @@ pub struct PullRequests {
     pending: Option<Receiver<Result<PrSnapshot, String>>>,
     completed_at: Option<Instant>,
     remaining_seconds: u64,
+    last_open_count: Option<(u64, std::time::SystemTime)>,
 }
 
 impl PullRequests {
@@ -83,6 +84,15 @@ impl PullRequests {
     fn accept(&mut self, result: Result<PrSnapshot, String>) {
         match result {
             Ok(mut snapshot) => {
+                let same_repository = self
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|previous| previous.repository == snapshot.repository);
+                match &snapshot.open_count {
+                    Ok(count) => self.last_open_count = Some((*count, snapshot.observed_at)),
+                    Err(_) if !same_repository => self.last_open_count = None,
+                    Err(_) => {}
+                }
                 self.observe_notifications(&snapshot);
                 snapshot
                     .rows
@@ -297,6 +307,10 @@ impl PullRequests {
             })
     }
 
+    pub fn last_open_count(&self) -> Option<(u64, std::time::SystemTime)> {
+        self.last_open_count
+    }
+
     pub fn refresh_label(&self) -> String {
         if self.loading() {
             "refreshing".into()
@@ -324,5 +338,46 @@ impl PullRequests {
         if self.selected != previous {
             self.detail_scroll = 0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::SystemTime;
+    use switchbard_core::PrSnapshot;
+
+    fn snapshot(repository: &str, open_count: Result<u64, String>) -> PrSnapshot {
+        PrSnapshot {
+            repository: repository.into(),
+            repository_url: format!("https://github.com/{repository}"),
+            observed_at: SystemTime::now(),
+            rows: Vec::new(),
+            truncated: false,
+            limit: 100,
+            open_count,
+            enrichment_warning: None,
+        }
+    }
+
+    #[test]
+    fn count_failure_retains_last_known_positive_and_zero_without_hiding_error() {
+        for count in [0, 5] {
+            let mut prs = PullRequests::default();
+            prs.accept(Ok(snapshot("owner/repo", Ok(count))));
+            prs.accept(Ok(snapshot("owner/repo", Err("offline".into()))));
+
+            assert_eq!(prs.last_open_count().map(|(value, _)| value), Some(count));
+            assert!(prs.snapshot.unwrap().open_count.is_err());
+        }
+    }
+
+    #[test]
+    fn count_failure_does_not_cross_repository_boundary() {
+        let mut prs = PullRequests::default();
+        prs.accept(Ok(snapshot("owner/old", Ok(5))));
+        prs.accept(Ok(snapshot("owner/new", Err("offline".into()))));
+
+        assert_eq!(prs.last_open_count(), None);
     }
 }

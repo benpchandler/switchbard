@@ -69,6 +69,15 @@ fn pr_count_spans(app: &App) -> Vec<Span<'static>> {
             }
             spans
         }
+        Some(Err(_)) => prs
+            .last_open_count()
+            .map(|(count, _)| {
+                vec![
+                    Span::styled(format!(" {count} "), theme.style(Surface::AttentionBadge)),
+                    Span::styled(" ?", theme.style(Surface::Hint)),
+                ]
+            })
+            .unwrap_or_else(|| vec![Span::styled(" ?", theme.style(Surface::Hint))]),
         _ => vec![Span::styled(
             if prs.loading() { " …" } else { " ?" },
             theme.style(Surface::Hint),
