@@ -4,7 +4,7 @@ title: Merge a selected PR from sbt with confirmation and fresh eligibility chec
 status: In Review
 assignee: []
 created_date: '2026-09-08 11:10'
-updated_date: '2026-09-08 11:25'
+updated_date: '2026-09-08 12:20'
 labels:
   - tui
   - github
@@ -13,6 +13,8 @@ labels:
 dependencies: []
 priority: high
 parent_task_id: '141'
+references:
+  - https://github.com/benpchandler/switchbard/pull/138
 ---
 
 ## Description
