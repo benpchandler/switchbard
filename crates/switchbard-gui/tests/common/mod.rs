@@ -182,7 +182,13 @@ pub const SPAWN_FRAMES: usize = 4;
 
 /// How long a spawned worker gets to report its outcome before the test
 /// calls it a failure rather than hanging.
-pub const SPAWN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+///
+/// Generous on purpose. A passing test never waits this long - it returns as
+/// soon as the worker reports - so the only thing a tight budget buys is a
+/// flake on a loaded runner, which is the failure this whole module exists
+/// to stop. The bound's job is to fail instead of hanging, not to be a
+/// performance assertion; a real one belongs in a perf smoke.
+pub const SPAWN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Paint the frames right after an action that spawned a background worker.
 /// Use instead of `Harness::run` at any such step.

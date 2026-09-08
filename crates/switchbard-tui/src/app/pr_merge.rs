@@ -68,7 +68,19 @@ impl MergeFlow {
 
 impl App {
     pub(super) fn open_pr_merge(&mut self) {
-        if self.pr_merge.is_pending() || self.pr_merge.prepared.is_some() {
+        // Say so rather than swallowing the key. Preparation can take a
+        // while when GitHub is slow, and Esc dismisses the confirmation
+        // without ending the request behind it - so a silent no-op here
+        // reads as `m` being broken for as long as that request runs.
+        if self.pr_merge.is_submitting() {
+            self.status = "Merge submitting; wait for the result".into();
+            return;
+        }
+        if self.pr_merge.is_pending() {
+            self.status = "Still checking the last merge; try again in a moment".into();
+            return;
+        }
+        if self.pr_merge.prepared.is_some() {
             return;
         }
         let Some(row) = self.pull_requests.row().cloned() else {

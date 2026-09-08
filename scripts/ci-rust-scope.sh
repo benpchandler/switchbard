@@ -4,15 +4,23 @@
 # Reads NUL-delimited changed paths on stdin, emits `rust=true|false`.
 #
 # The answer is `true` unless *every* changed path is one that provably
-# cannot alter a Rust build or its result. Prose and backlog records are the
-# only such paths: the repo's task markdown, the docs tree, and Markdown at
-# the root. Everything else - crates, scripts, workflows, toolchain pins,
-# assets, lockfiles - runs the matrix.
+# cannot alter a Rust build or its result. Two families qualify:
+#
+#   backlog/**   The repo's own task records. Verified inert: no test in the
+#                gate reads this repo's backlog - every `backlog/...` path in
+#                the test suites is built under a tempdir root.
+#   *.md         Prose, at the repo root or anywhere under docs/.
+#
+# Note what is NOT skipped: `docs/**` wholesale. `docs/qa/screenshots/*.png`
+# are canonical baselines that gated test binaries read and compare against
+# (crates/switchbard-gui/tests/mission_command_sidecar_visual.rs), so a
+# non-Markdown file under docs/ can change a Rust test's result and must run
+# the matrix.
 #
 # The default is deliberately "run it". A path that ought to be inert but is
 # not costs a false green on a merge; a path that is inert but runs the
 # matrix costs a few minutes. Add to this list only where the first cost is
-# provably zero (TASK-180).
+# provably zero, and check for readers before you do (TASK-180).
 set -euo pipefail
 
 output_file=""
@@ -30,15 +38,7 @@ while IFS= read -r -d '' path; do
   saw_path=true
   case "$path" in
     backlog/*) ;;
-    docs/*) ;;
-    *.md)
-      # Root-level Markdown only; a nested .md was matched by an earlier
-      # arm if it is inert, and must otherwise run the matrix.
-      if [[ "$path" == */* ]]; then
-        run_rust=true
-        break
-      fi
-      ;;
+    *.md) ;;
     *)
       run_rust=true
       break

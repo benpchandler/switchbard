@@ -167,14 +167,19 @@ fn mission_supervisor_bounds_kills_reaps_and_reuses_command_id() {
 
 #[test]
 fn mission_supervisor_bounds_reader_joins_when_a_descendant_escapes_the_group() {
-    let (_root, supervisor) = fixture(concat!(
+    // Its own budget, not the generous answering one: this test asserts the
+    // whole thing comes back inside 10s, and the helper waits on a `python3`
+    // start that a loaded runner can drag out. A 20s budget behind a 10s
+    // assertion is a flake waiting to happen; 5s leaves room for the 2s
+    // reader-join grace on top and still proves the join is bounded.
+    let (_root, supervisor) = fixture_with_timeout(concat!(
         "#!/bin/sh\n",
         "read x\n",
         "marker=\"${0%/*}/escaped\"\n",
         "python3 -c \"import os,time; os.setsid(); open('$marker','w').close(); time.sleep(30)\" &\n",
         "while [ ! -e \"$marker\" ]; do sleep 0.05; done\n",
         "echo '{\"protocol_version\":\"xplan-mission-sidecar-v1\",\"request_id\":\"request-fixture:escapee\",\"command_id\":\"fixture:escapee\",\"result\":{}}'\n",
-    ));
+    ), Duration::from_secs(5));
     let started = std::time::Instant::now();
     let error = supervisor
         .invoke(request(MissionCommand::Hello, "fixture:escapee", json!({})))

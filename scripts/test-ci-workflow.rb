@@ -38,6 +38,16 @@ unless rust_condition.to_s.include?("needs.change-scope.outputs.rust")
   raise "Rust matrix routing condition lost: #{rust_condition.inspect}"
 end
 
+# Both matrices must read their route as "run unless explicitly told not to".
+# `== 'true'` would turn a missing or empty output into a silent skip on a
+# green run, which is the one failure mode routing must not have.
+{ "ci" => "rust", "mission-sidecar" => "mission_sidecar" }.each do |job, output|
+  condition = jobs.fetch(job)["if"].to_s
+  unless condition.include?("needs.change-scope.outputs.#{output} != 'false'")
+    raise "#{job} must fail open on a missing route: #{condition.inspect}"
+  end
+end
+
 sidecar = jobs.fetch("mission-sidecar")
 raise "mission-sidecar must depend on change-scope" unless sidecar.fetch("needs") == "change-scope"
 condition = sidecar.fetch("if")

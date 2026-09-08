@@ -51,7 +51,11 @@ jobs:
   ci:
     name: ${{ matrix.os }} - mise run ${{ matrix.task }}
     needs: change-scope
-    if: needs.change-scope.outputs.rust == 'true'
+    # `!= 'false'` and not `== 'true'`: the router failing open only helps if
+    # the workflow reads it that way too. An output that is empty - a step
+    # that died before writing, a key renamed - must run the matrix, not skip
+    # it silently on a green run.
+    if: needs.change-scope.outputs.rust != 'false'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -91,7 +95,8 @@ jobs:
   mission-sidecar:
     name: mission-sidecar-${{ matrix.target }}-${{ matrix.arch }}
     needs: change-scope
-    if: needs.change-scope.outputs.mission_sidecar == 'true'
+    # Same fail-open reading as the Rust matrix above.
+    if: needs.change-scope.outputs.mission_sidecar != 'false'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
