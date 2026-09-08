@@ -30,10 +30,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Constraint::Length(footer_height),
     ])
     .areas(frame.area());
-    draw_navigation(frame, app, navigation);
+    crate::navigation::draw(frame, app, navigation);
     draw_notification(frame, app, notification);
     app.page_size = body.height.saturating_sub(3).max(1) as usize;
-    if app.page == Page::PullRequests && app.pane != Pane::Help {
+    if app.page == Page::Inbox && app.pane != Pane::Help {
+        crate::inbox::draw(frame, app, body);
+    } else if app.page == Page::PullRequests && app.pane != Pane::Help {
         crate::pr_view::draw(frame, app, body);
     } else {
         match app.pane {
@@ -82,35 +84,6 @@ fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
         message_area,
     );
     frame.render_widget(Paragraph::new(hint).style(style), hint_area);
-}
-
-fn draw_navigation(frame: &mut Frame, app: &App, area: Rect) {
-    let theme = &app.config.theme;
-    let labels = [
-        (Page::Tasks, "Tasks"),
-        (Page::PullRequests, "Pull Requests"),
-    ];
-    let mut spans = Vec::with_capacity(3);
-    for (page, label) in labels {
-        let active = page == app.page;
-        let text = if active {
-            format!(" [{label}] ")
-        } else {
-            format!("  {label}  ")
-        };
-        spans.push(Span::styled(
-            text,
-            theme.style(if active { Surface::Chip } else { Surface::Hint }),
-        ));
-    }
-    spans.push(Span::styled(
-        format!(
-            " {} switch page",
-            app.config.bindings_for(&Action::Page).join("/")
-        ),
-        theme.style(Surface::Keys),
-    ));
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -236,8 +209,8 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                         style = style.patch(band);
                     }
                     if let Some(glow) = glow {
-                        // The text breathes with the band: brighter than its
-                        // rest colour at the peak, dimmer in the trough.
+                        // The text breathes with the band: lifted toward
+                        // white at the peak, its rest colour in the trough.
                         style = style.fg(theme.working_fg(style.fg, glow));
                     }
                     frame.render_widget(
@@ -367,10 +340,24 @@ fn claimed_clock(session: &switchbard_core::WorkSession, task_id: &str) -> Strin
 }
 
 fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
+    if app.page == Page::Inbox {
+        crate::inbox::draw_help(frame, app, area);
+        return;
+    }
     let theme = &app.config.theme;
     let entries: Vec<(String, String)> = Action::all()
         .filter(|action| app.page.allows(action))
         .map(|action| (app.config.bindings_for(&action).join(" "), action.name()))
+        .chain((app.page == Page::Tasks).then(|| {
+            let keys = app
+                .config
+                .bindings_for(&Action::Rank)
+                .iter()
+                .map(|key| format!("{key} a"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            (keys, "link parent task".to_string())
+        }))
         .chain(std::iter::once((
             "1-9".to_string(),
             "column actions".to_string(),
@@ -515,7 +502,9 @@ fn draw_new_task(frame: &mut Frame, app: &App, area: Rect) {
 /// The footer while browsing: what is in effect as a chip, the situation, then
 /// the keys with their letters on the `keys` surface.
 fn browse_footer(app: &App) -> Line<'static> {
-    let actions = if app.page == Page::Tasks {
+    let actions = if app.page == Page::Inbox {
+        vec![(Action::Page, "page"), (Action::Help, "keys")]
+    } else if app.page == Page::Tasks {
         vec![
             (Action::Rank, "tasks"),
             (Action::View, "views"),
@@ -581,6 +570,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                     | PickerPurpose::PaintTarget,
                     Payload::Column(column),
                 ) => app.state.columns.contains(column),
+                (PickerPurpose::TaskParent(id), Payload::Parent(parent)) => app.tasks().iter().any(|task| task.id == *id && task.parent == *parent),
                 (PickerPurpose::TaskProject(id), Payload::Project(project)) => app.tasks().iter().any(|task| task.id == *id && task.project == *project),
                 (PickerPurpose::TaskStatus(id), Payload::Text(status)) => app.tasks().iter().any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
                 (PickerPurpose::MoveColumns(placed), _) => placed.contains(&(index + 1)),
@@ -633,7 +623,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
             let mark = if shown { "✓" } else { " " };
             Line::from(vec![
                 Span::styled(
-                    format!("{:<2}", keys.get(index).cloned().unwrap_or_default()),
+                    format!("{:<2}", if matches!(picker.purpose, PickerPurpose::TaskParent(_)) { String::new() } else { keys.get(index).cloned().unwrap_or_default() }),
                     theme.style(Surface::Accent),
                 ),
                 Span::styled(
@@ -651,6 +641,9 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
             ])
         })
         .collect();
+    if rows.is_empty() && matches!(picker.purpose, PickerPurpose::TaskParent(_)) {
+        lines.push(Line::from("No matching parent tasks"));
+    }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         format!(" {hint}"),
@@ -677,7 +670,9 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
     let block = if picker.purpose != PickerPurpose::Merge
         && rows.len().saturating_add(4) > height as usize
     {
-        let navigation = if width >= 28 {
+        let navigation = if matches!(picker.purpose, PickerPurpose::TaskParent(_)) && width >= 28 {
+            "↑↓ Enter saves Esc"
+        } else if width >= 28 {
             "↑↓ →open ←back Esc"
         } else {
             "↑↓ Esc"
@@ -746,6 +741,7 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::Merge => "Confirm PR merge".to_string(),
         PickerPurpose::Task => "task".to_string(),
         PickerPurpose::TopList => "task · top list".to_string(),
+        PickerPurpose::TaskParent(id) => format!("{id} · parent"),
         PickerPurpose::TaskProject(id) => format!("{id} · project"),
         PickerPurpose::TaskStatus(id) => format!("{id} · status"),
         PickerPurpose::Views => "views".to_string(),

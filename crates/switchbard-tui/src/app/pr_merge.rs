@@ -50,21 +50,37 @@ impl MergeFlow {
         let Some(prepared) = &self.prepared else {
             return Vec::new();
         };
-        vec![
+        let mut lines = vec![
             format!("{} #{}", prepared.repository(), prepared.number()),
             prepared.title().to_string(),
             format!("Head: {}", prepared.head_oid()),
             format!("Base: {} ({})", prepared.base_ref(), prepared.base_oid()),
             format!("Signed in as: {}", prepared.viewer()),
             prepared.url().to_string(),
-            "Choose a method to confirm this merge. Task status stays unchanged.".into(),
-        ]
+        ];
+        // A merge GitHub allows but does not call green is confirmed with the
+        // reason in front of the choice, never behind it (TASK-171).
+        lines.extend(prepared.readiness_caveat());
+        lines.push("Choose a method to confirm this merge. Task status stays unchanged.".into());
+        lines
     }
 }
 
 impl App {
     pub(super) fn open_pr_merge(&mut self) {
-        if self.pr_merge.is_pending() || self.pr_merge.prepared.is_some() {
+        // Say so rather than swallowing the key. Preparation can take a
+        // while when GitHub is slow, and Esc dismisses the confirmation
+        // without ending the request behind it - so a silent no-op here
+        // reads as `m` being broken for as long as that request runs.
+        if self.pr_merge.is_submitting() {
+            self.status = "Merge submitting; wait for the result".into();
+            return;
+        }
+        if self.pr_merge.is_pending() {
+            self.status = "Still checking the last merge; try again in a moment".into();
+            return;
+        }
+        if self.pr_merge.prepared.is_some() {
             return;
         }
         let Some(row) = self.pull_requests.row().cloned() else {

@@ -4,7 +4,7 @@ use crossterm::event::KeyCode;
 use harness::*;
 
 #[test]
-fn toggles_pages_without_losing_task_context() {
+fn cycles_pages_without_losing_task_context() {
     let mut h = Harness::new();
     h.type_text("/theme");
     h.press(KeyCode::Enter);
@@ -15,11 +15,31 @@ fn toggles_pages_without_losing_task_context() {
     assert!(!screen.contains("Add dark theme"), "{screen}");
     h.type_text("td");
     h.press(KeyCode::Esc);
+    assert!(h.press(KeyCode::Tab).contains("[Inbox]"));
     let screen = h.press(KeyCode::Tab);
     assert!(screen.contains("[Tasks]"), "{screen}");
     assert_eq!(h.selected_title(), selected);
     assert_eq!(h.app.state.filter, "theme");
     assert_ne!(h.app.selected_task().unwrap().status, "Done");
+}
+
+/// TASK-172: the Pull Requests tab has to be on the very first frame, in any
+/// repo, before anything is fetched and whether or not the repo has a GitHub
+/// remote at all - it is how the page is discovered.
+#[test]
+fn the_pull_requests_tab_is_on_the_first_frame_of_a_repo_with_no_remote() {
+    let mut h = Harness::new();
+    let first = h.render();
+    assert!(first.contains("[Tasks]"), "{first}");
+    assert!(first.contains("Pull Requests"), "{first}");
+    assert!(first.contains("tab switch page"), "{first}");
+    let screen = h.press(KeyCode::Tab);
+    assert!(screen.contains("[Pull Requests]"), "{screen}");
+    assert!(
+        !h.app.status.contains("not bound"),
+        "tab is bound out of the box: {}",
+        h.app.status
+    );
 }
 
 #[test]
@@ -39,7 +59,10 @@ fn page_binding_is_configurable_and_help_is_available_on_both_pages() {
     assert!(screen.contains(" keys "));
     h.press(KeyCode::Esc);
     let screen = h.press(KeyCode::Char('x'));
-    assert!(screen.contains("[Tasks]"));
+    assert!(screen.contains("[Inbox]"));
+    assert!(h.press(KeyCode::Tab).contains("Inbox keys"));
+    h.press(KeyCode::Esc);
+    assert!(h.press(KeyCode::Char('x')).contains("[Tasks]"));
 }
 
 #[test]
@@ -48,18 +71,18 @@ fn page_survives_self_restart_and_hidden_task_commands_do_nothing() {
     h.press(KeyCode::Char('j'));
     let selected = h.selected_title();
     let before = h.app.state.clone();
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     h.type_text(":group status");
     h.press(KeyCode::Enter);
     h.type_text("bw");
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert_eq!(h.app.state, before);
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     let resume = h.app.resume_state();
     h.app = open_app(&h.root, &h.config_path);
     h.app.resume_from(Some(&resume));
     assert!(h.render().contains("[Pull Requests]"));
-    assert!(h.press(KeyCode::Tab).contains("[Tasks]"));
+    assert!(h.next_list_page().contains("[Tasks]"));
     assert_eq!(h.selected_title(), selected);
 }
 
@@ -77,11 +100,14 @@ fn pages_render_at_small_and_large_terminal_sizes_with_no_tasks() {
         if width > 0 {
             assert!(screen.contains("[Tasks]"), "{screen}");
         }
-        let screen = h.press(KeyCode::Tab);
+        let screen = h.next_list_page();
         if width > 0 {
-            assert!(screen.contains("[Pull Requests]"), "{screen}");
+            assert!(
+                screen.contains("[Pull Requests]") || screen.contains("[PRs]"),
+                "{screen}"
+            );
             assert!(screen.contains("Loading pull requests"), "{screen}");
         }
-        h.press(KeyCode::Tab);
+        h.next_list_page();
     }
 }

@@ -6,13 +6,15 @@ pub enum Page {
     #[default]
     Tasks,
     PullRequests,
+    Inbox,
 }
 
 impl Page {
     pub fn toggle(self) -> Self {
         match self {
             Self::Tasks => Self::PullRequests,
-            Self::PullRequests => Self::Tasks,
+            Self::PullRequests => Self::Inbox,
+            Self::Inbox => Self::Tasks,
         }
     }
 

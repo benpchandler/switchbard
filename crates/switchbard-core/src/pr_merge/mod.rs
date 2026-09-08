@@ -11,6 +11,40 @@ mod tests;
 use crate::{PrListRow, PrSnapshot};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+/// How hard to press GitHub for a mergeability answer it has not computed
+/// yet. `mergeable` is computed lazily: the first read of a PR GitHub has
+/// not looked at recently answers `UNKNOWN` and *starts* the computation, so
+/// one look is not an answer - reporting it as "not mergeable" is how
+/// TASK-171 refused a PR that merged fine seconds later.
+///
+/// Both bounds matter, and the budget is the one that keeps this from being
+/// annoying. A single `gh` call is already bounded at 30 seconds, so
+/// attempts alone would let a slow network turn `m` into 91 seconds of
+/// "Preparing merge" ending in the same refusal. The retry is only for the
+/// case GitHub answers `UNKNOWN` *fast*, which is what it does while the
+/// computation runs; once this much time is spent, the slow thing is the
+/// request itself and asking again buys nothing.
+#[derive(Debug, Clone, Copy)]
+struct MergeabilityRetry {
+    attempts: usize,
+    settle: Duration,
+    budget: Duration,
+}
+
+impl MergeabilityRetry {
+    const LIVE: MergeabilityRetry = MergeabilityRetry {
+        attempts: 3,
+        settle: Duration::from_millis(700),
+        budget: Duration::from_secs(5),
+    };
+
+    /// True while another look is both useful and affordable.
+    fn may_retry(&self, attempt: usize, started: Instant) -> bool {
+        attempt < self.attempts && started.elapsed() < self.budget
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum PrMergeMethod {
@@ -76,6 +110,12 @@ impl PreparedPrMerge {
     pub fn methods(&self) -> Vec<PrMergeMethod> {
         self.observation.methods()
     }
+    /// What to tell the human about this merge's readiness beyond "green", so
+    /// a merge GitHub allows but does not love is confirmed with that fact in
+    /// view rather than behind it.
+    pub fn readiness_caveat(&self) -> Option<String> {
+        self.observation.readiness_caveat()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -97,16 +137,29 @@ pub fn prepare_pr_merge(
     snapshot: &PrSnapshot,
     row: &PrListRow,
 ) -> Result<PrMergePreparation, String> {
-    prepare(&mut observe::Github { repo }, snapshot, row)
+    prepare(
+        &mut observe::Github { repo },
+        snapshot,
+        row,
+        MergeabilityRetry::LIVE,
+    )
 }
 
 fn prepare(
     transport: &mut impl observe::Transport,
     snapshot: &PrSnapshot,
     row: &PrListRow,
+    retry: MergeabilityRetry,
 ) -> Result<PrMergePreparation, String> {
     let host = observe::validate_selection(snapshot, row)?;
-    let observation = transport.observe(&host, &snapshot.repository, row.number)?;
+    let started = Instant::now();
+    let mut observation = transport.observe(&host, &snapshot.repository, row.number)?;
+    let mut attempt = 1;
+    while observation.mergeability_pending() && retry.may_retry(attempt, started) {
+        std::thread::sleep(retry.settle);
+        observation = transport.observe(&host, &snapshot.repository, row.number)?;
+        attempt += 1;
+    }
     let pr = observation.pr();
     if observation.repository.name_with_owner != snapshot.repository
         || pr.id != row.id

@@ -181,6 +181,55 @@ fn w_passes_the_task_ending_every_claim_and_dropping_the_ball() {
     assert!(screen.contains("no session is working it"), "{screen}");
 }
 
+/// TASK-155: the pulse used to push the row's text toward black in the
+/// trough, and a darkened amber is brown. The band carries the dark half; the
+/// text only ever brightens, so no frame of the pulse is muddier than a row
+/// sitting at rest.
+#[test]
+fn the_pulse_never_darkens_a_working_rows_text_below_its_rest_colour() {
+    let mut h = Harness::new();
+    std::fs::write(
+        &h.config_path,
+        "return { work = { period_ms = 40, frames = 40 } }",
+    )
+    .unwrap();
+    h.app.tick();
+    let id = h.app.selected_task().unwrap().id.clone();
+    let title = h.selected_title();
+    claim_work(
+        &h.root.join("work"),
+        &session("aaaa1111-1", std::process::id()),
+        &h.root,
+        &id,
+    )
+    .unwrap();
+    h.app.tick();
+    let channels = |color: ratatui::style::Color| match color {
+        ratatui::style::Color::Rgb(r, g, b) => (u32::from(r), u32::from(g), u32::from(b)),
+        other => panic!("expected an rgb colour, got {other:?}"),
+    };
+    let rest = channels(cell_fg(&h, "Write onboarding guide").unwrap());
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..200 {
+        h.render();
+        let lit = channels(cell_fg(&h, &title).unwrap());
+        assert!(
+            lit.0 >= rest.0 && lit.1 >= rest.1 && lit.2 >= rest.2,
+            "no frame of the pulse is dimmer than rest: {lit:?} vs {rest:?}"
+        );
+        seen.insert(lit);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(
+        seen.len() >= 4,
+        "the text still breathes through several levels: {seen:?}"
+    );
+    assert!(
+        seen.contains(&rest),
+        "the trough is the rest colour itself: {seen:?}"
+    );
+}
+
 #[test]
 fn the_band_pulses_through_brightness_levels_and_help_lists_pass() {
     let mut h = Harness::new();

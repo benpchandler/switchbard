@@ -57,6 +57,7 @@ pub enum PickerPurpose {
     Task,
     TaskStatus(String),
     TaskProject(String),
+    TaskParent(String),
     TopList,
     Views,
     SaveView,
@@ -118,6 +119,7 @@ pub enum TaskAction {
     Append,
     Status,
     Project,
+    Parent,
     TopList,
     Drop,
     Pin,
@@ -168,6 +170,7 @@ pub enum Payload {
     GlobalView,
     GlobalSettings,
     Project(Option<String>),
+    Parent(Option<String>),
     CancelMerge,
     Merge(switchbard_core::PrMergeMethod),
 }
@@ -349,6 +352,7 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         | PickerPurpose::SaveView
         | PickerPurpose::GlobalView
         | PickerPurpose::ChooseColumnAction(_) => "↑↓/jk select · →/l open · ←/h back · Esc closes",
+        PickerPurpose::TaskParent(_) => "type ID/title · ↑↓ select · Enter saves · ← back · Esc",
         PickerPurpose::Ball => "number or name picks · new person opens entry · esc",
     }
 }

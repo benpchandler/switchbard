@@ -5,7 +5,9 @@ mod new_task;
 mod paint_flow;
 mod pickers;
 pub mod pr_merge;
+pub mod resume;
 mod slots;
+mod task_parent;
 mod task_project;
 mod task_status;
 
@@ -274,7 +276,7 @@ impl App {
 
     /// Preserve the page and task view across a self-restart; old task-only records still read.
     pub fn resume_state(&self) -> String {
-        let (tasks, task_slot, prs, pr_slot) = if self.page == Page::Tasks {
+        let (tasks, task_slot, prs, pr_slot) = if self.page != Page::PullRequests {
             (
                 &self.state,
                 self.view,
@@ -289,33 +291,54 @@ impl App {
                 self.view,
             )
         };
-        format!(
-            "pages={}",
-            serde_json::to_string(&(
-                self.page == Page::PullRequests,
-                task_slot,
-                self.selected,
-                tasks.to_lua(),
-                pr_slot,
-                prs.to_lua(),
-                self.pull_requests.selected,
-                self.pull_requests.selection_identity()
-            ))
-            .expect("page state serialization")
-        )
+        resume::ResumeRecord {
+            pr_page: self.page == Page::PullRequests,
+            inbox_page: self.page == Page::Inbox,
+            task_slot,
+            task_view: tasks.to_lua(),
+            task_selected: self.selected,
+            pr_slot,
+            pr_view: prs.to_lua(),
+            pr_selected: self.pull_requests.selected,
+            pr_id: self.pull_requests.selection_identity(),
+        }
+        .encode()
     }
 
     pub fn resume_from(&mut self, state: Option<&str>) {
-        let Some(state) = state else {
+        if state.is_none() {
             return;
-        };
+        }
+        let state = state.unwrap_or_default();
+        if let resume::Restored::Record(record) = resume::decode(Some(state)) {
+            self.restore_resume(&record);
+            return;
+        }
+        if matches!(resume::decode(Some(state)), resume::Restored::Unreadable)
+            && !state.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        {
+            self.telemetry.record("error", "unreadable resume record");
+            self.status = "the new build could not read the previous view; opened your saved view"
+                .to_string();
+            return;
+        }
+        if let Some((page, record)) = state
+            .strip_prefix("pages3=")
+            .and_then(|s| s.split_once('\t'))
+        {
+            self.resume_pages(record);
+            self.switch_page(match page {
+                "prs" => Page::PullRequests,
+                "inbox" => Page::Inbox,
+                _ => Page::Tasks,
+            });
+            return;
+        }
         if let Some(record) = state.strip_prefix("pages=") {
             self.resume_pages(record);
             return;
         }
-        if self.page == Page::PullRequests {
-            self.toggle_page_state();
-        }
+        self.switch_page(Page::Tasks);
         let state = if let Some(rest) = state.strip_prefix("prfilter=") {
             if let Some((filter, record)) = rest.split_once('\t') {
                 self.pull_requests.filter = serde_json::from_str(filter).unwrap_or_default();
@@ -354,6 +377,28 @@ impl App {
         self.status = "updated to the new build".to_string();
     }
 
+    fn restore_resume(&mut self, record: &resume::ResumeRecord) {
+        self.switch_page(Page::Tasks);
+        self.view = record.task_slot;
+        self.state = ViewState::from_lua(&record.task_view);
+        self.state.sanitize(Page::Tasks);
+        self.inactive_view = record.pr_slot;
+        self.inactive_state = ViewState::from_lua(&record.pr_view);
+        self.inactive_state.sanitize(Page::PullRequests);
+        self.refilter();
+        self.select(record.task_selected);
+        self.pull_requests.selected = record.pr_selected;
+        self.pull_requests.restore_selection(record.pr_id.clone());
+        self.switch_page(if record.inbox_page {
+            Page::Inbox
+        } else if record.pr_page {
+            Page::PullRequests
+        } else {
+            Page::Tasks
+        });
+        self.status = "updated to the new build".to_string();
+    }
+
     fn resume_pages(&mut self, record: &str) {
         type Resume = (
             bool,
@@ -376,9 +421,7 @@ impl App {
         else {
             return;
         };
-        if self.page == Page::PullRequests {
-            self.toggle_page_state();
-        }
+        self.switch_page(Page::Tasks);
         self.view = task_slot;
         self.state = ViewState::from_lua(&tasks);
         self.state.sanitize(Page::Tasks);
@@ -791,14 +834,24 @@ impl App {
         if self.input.contains(' ') {
             return Vec::new();
         }
-        let mut names: Vec<String> = ["bug", "idea", "group", "palette", "theme", "reload", "q"]
-            .iter()
-            .map(|name| name.to_string())
-            .collect();
+        let mut names: Vec<String> = [
+            "bug", "idea", "group", "palette", "theme", "reload", "page", "help", "q",
+        ]
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
         if self.page == Page::PullRequests {
             names.push("more".to_string());
         }
-        names.retain(|name| name.starts_with(typed) && name != typed);
+        names.retain(|name| {
+            (self.page != Page::Inbox
+                || matches!(
+                    name.as_str(),
+                    "bug" | "idea" | "reload" | "page" | "help" | "q"
+                ))
+                && name.starts_with(typed)
+                && name != typed
+        });
         names
     }
 
@@ -808,7 +861,7 @@ impl App {
             return;
         }
         let chord = KeyChord::from_event(&event);
-        {
+        if self.page != Page::Inbox {
             if let (KeyCode::Char(digit), false) = (event.code, chord.ctrl) {
                 if let Some(position) = digit.to_digit(10).filter(|n| *n > 0) {
                     self.open_column_actions(position as usize);
@@ -892,7 +945,6 @@ impl App {
         let before = self.pull_requests.row().map(|row| row.id.clone());
         if self.pull_requests.tick(
             &self.repo_root,
-            self.page == Page::PullRequests,
             self.config.pr_refresh_seconds,
             Instant::now(),
         ) {
@@ -990,7 +1042,7 @@ impl App {
             return;
         }
         if !self.page.allows(action) {
-            self.status = "Switch to Tasks to use task controls".to_string();
+            self.status = "Switch to Tasks or Pull Requests to use list controls".to_string();
             return;
         }
         if self.page == Page::PullRequests && self.apply_pr_action(action) {
@@ -1002,7 +1054,7 @@ impl App {
             Action::DismissNotifications => self.pull_requests.dismiss_notifications(),
             Action::Page => {
                 self.cancel_pr_merge();
-                self.toggle_page_state();
+                self.switch_page(self.page.toggle());
                 if self.page == Page::PullRequests {
                     self.refresh_pr_state();
                 }
@@ -1026,7 +1078,7 @@ impl App {
                 self.cancel_pr_merge();
                 if self.pane != Pane::None {
                     self.pane = Pane::None;
-                } else if !self.filter_text().is_empty() {
+                } else if self.page != Page::Inbox && !self.filter_text().is_empty() {
                     self.set_filter(String::new());
                 }
                 self.status.clear();
@@ -1059,7 +1111,7 @@ impl App {
                 self.status = if self.page == Page::Tasks {
                     format!("reloaded {} tasks", self.tasks.len())
                 } else {
-                    "PR data is not connected yet".to_string()
+                    "reloaded".to_string()
                 };
             }
             Action::Help => {
@@ -1076,6 +1128,15 @@ impl App {
 
     fn run_command(&mut self, command: &str) {
         let (verb, rest) = command.split_once(' ').unwrap_or((command, ""));
+        if self.page == Page::Inbox
+            && !matches!(
+                verb,
+                "q" | "quit" | "reload" | "page" | "help" | "bug" | "idea" | "dismiss" | ""
+            )
+        {
+            self.status = "Switch to Tasks or Pull Requests to use list controls".into();
+            return;
+        }
         if self.page == Page::PullRequests && matches!(verb, "group" | "goal") {
             self.status = "Switch to Tasks to use task controls".to_string();
             return;
@@ -1084,6 +1145,8 @@ impl App {
             "more" if self.page == Page::PullRequests => {
                 self.pull_requests.load_more(&self.repo_root)
             }
+            "page" => self.apply(&Action::Page),
+            "help" => self.apply(&Action::Help),
             "q" | "quit" => self.request_quit(),
             "reload" => self.apply(&Action::Reload),
             "open" => self.apply(&Action::OpenBrowser),
@@ -1207,16 +1270,24 @@ impl App {
     }
 
     fn toggle_page_state(&mut self) {
-        std::mem::swap(&mut self.state, &mut self.inactive_state);
-        std::mem::swap(&mut self.views, &mut self.inactive_views);
-        std::mem::swap(&mut self.view, &mut self.inactive_view);
-        self.page = self.page.toggle();
-        self.state.sanitize(self.page);
+        self.switch_page(self.page.toggle());
+    }
+
+    fn switch_page(&mut self, page: Page) {
+        if (self.page == Page::PullRequests) != (page == Page::PullRequests) {
+            std::mem::swap(&mut self.state, &mut self.inactive_state);
+            std::mem::swap(&mut self.views, &mut self.inactive_views);
+            std::mem::swap(&mut self.view, &mut self.inactive_view);
+        }
+        self.page = page;
+        if page != Page::Inbox {
+            self.state.sanitize(page);
+        }
         self.refilter();
     }
 
     pub fn page_columns(&self) -> &'static [Column] {
-        crate::list_settings::ListSettings(self.page).catalog()
+        crate::list_settings::ListSettings::for_page(self.page).map_or(&[], |scope| scope.catalog())
     }
 
     pub fn filter_text(&self) -> &str {
@@ -1249,7 +1320,7 @@ impl App {
     }
 
     fn refilter_tasks(&mut self) {
-        let state = if self.page == Page::Tasks {
+        let state = if self.page != Page::PullRequests {
             &self.state
         } else {
             &self.inactive_state
@@ -1428,6 +1499,7 @@ impl App {
                         PickerPurpose::Task
                             | PickerPurpose::TaskStatus(_)
                             | PickerPurpose::TaskProject(_)
+                            | PickerPurpose::TaskParent(_)
                             | PickerPurpose::TopList
                             | PickerPurpose::Ball
                             | PickerPurpose::Goals(_)

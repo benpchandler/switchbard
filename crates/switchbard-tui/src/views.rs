@@ -239,7 +239,9 @@ impl ViewStore {
         repo: Option<PathBuf>,
         page: crate::page::Page,
     ) -> (Self, Vec<String>) {
-        let scope = ListSettings(page);
+        let Some(scope) = ListSettings::for_page(page) else {
+            return Self::load_with_defaults(None, None, Vec::new());
+        };
         let (mut store, warnings) = Self::load_with_defaults(
             global.map(|p| scope.path(&p)),
             repo.map(|p| scope.path(&p)),
@@ -444,7 +446,9 @@ impl ViewState {
 
 impl ViewState {
     pub fn sanitize(&mut self, page: crate::page::Page) {
-        let scope = ListSettings(page);
+        let Some(scope) = ListSettings::for_page(page) else {
+            return;
+        };
         let catalog = scope.catalog();
         let canonical = |column| scope.canonical(column);
         self.columns = self

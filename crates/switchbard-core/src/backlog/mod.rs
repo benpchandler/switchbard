@@ -11,6 +11,7 @@ mod ball;
 mod goals;
 mod hierarchy;
 mod mutations;
+mod parent;
 mod parse;
 mod ranking;
 pub mod status_config;
@@ -38,6 +39,7 @@ pub use mutations::{
     set_backlog_acceptance_checked, set_backlog_ball, set_backlog_dod_checked,
     set_backlog_final_summary, set_backlog_label, swap_backlog_label,
 };
+pub use parent::eligible_backlog_parents;
 pub use parse::{
     body_round_trips, is_backlog_repo, load_backlog_repo, parse_backlog_day, task_file_round_trips,
 };

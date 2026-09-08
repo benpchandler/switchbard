@@ -592,6 +592,8 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 
 - **Terminal task capture (owner-directed 2026-09-08).** `sbt` provides a `t n` task/new chord (the task prefix is configurable; `new_task` also remains bindable) to enter an ordinary task title. Enter writes through the same core task creation facade as `sb create`; Esc cancels. Validation and write failures retain the draft for correction or retry. Success selects the new task when visible and explicitly reports when existing filters hide it. Capture does not infer metadata from filters or attach bug-report context.
 
+- **Terminal parent linking (owner-directed 2026-09-08; TASK-182/183).** The Tasks menu offers `t a` to choose an existing eligible parent by ID and title. Search accepts IDs and titles without committing; Enter saves, and No parent promotes to top level. The picker discloses that the existing native move operation assigns a new ID. Core owns candidate eligibility and fresh write validation; loading resolves legacy shorthand parent references to existing canonical IDs without rewriting documents. Self-parenting and nested sub-issues are rejected.
+
 - **Terminal UI grouping (owner-directed 2026-09-02).** `sbt` sections the task
   list by a groupable column (`o`, `:group <column>`, the header-digit menu; view
   records carry `group = "<column>"`). Grouping is a projection over the already
@@ -738,3 +740,7 @@ After the first Pull Requests visit, sbt continues its bounded refresh cadence w
 ## Terminal direct PR merge (TASK-141.5, owner requested 2026-09-08)
 
 The Pull Requests page offers configurable m to prepare a fresh direct-merge confirmation. The existing picker defaults to Cancel and shows the exact repository, PR, head, base and account before an explicit enabled merge-method choice. Core owns fresh eligibility, head/base/account revalidation, the GitHub expected-head guard, an exclusive durable operation receipt and result readback. Submission is off-thread and single-flight; page switching stays responsive, and quit/self-reexec waits for the result. Small terminals must show the full confirmation before submission is enabled. Task completion never follows automatically from a PR merge. Queue-required PRs direct users to GitHub; queue/auto-merge and other TASK-119 operations remain separate. GitHub atomically guards the head, while base/policy/account observations can still race after revalidation.
+
+## TUI Inbox and navigation counts (owner-directed 2026-09-08)
+
+TASK-193 establishes the Inbox destination before its content or collapsible bottom preview. The first-row Pull Requests badge counts all open repository PRs, independently of loaded history, filters, and attention state. Positive badges use the shared Lua `attention_badge` theme surface; known zero hides the badge. Unknown and stale remote observations remain explicit. The blank Inbox does not infer actions or show a fabricated count. Later, its badge will count actions requiring the owner, while agent follow-ups remain separately visible. Review handoff semantics and the collapsible pane are later slices, not implied by this navigation foundation.

@@ -26,6 +26,7 @@ impl App {
                 ('b', "Assign ball", TaskAction::Ball),
                 ('s', "Status", TaskAction::Status),
                 ('p', "Link project", TaskAction::Project),
+                ('a', "Link parent task", TaskAction::Parent),
                 ('r', "Top list", TaskAction::TopList),
                 ('g', "Link goals", TaskAction::Goals),
             ] {
@@ -64,6 +65,7 @@ impl App {
             TaskAction::Append => self.set_rank(self.top.len() + 1),
             TaskAction::Status => self.open_task_status_picker(),
             TaskAction::Project => self.open_task_project_picker(),
+            TaskAction::Parent => self.open_task_parent_picker(),
             TaskAction::TopList => self.open_top_list_picker(),
             TaskAction::Drop => self.drop_rank(),
             TaskAction::Goals => self.open_goal_picker(),
@@ -444,6 +446,9 @@ impl App {
             self.handle_merge_picker_key(event);
             return;
         }
+        if self.handle_parent_search_key(event) {
+            return;
+        }
         let task_rank_room = self
             .selected_task()
             .map(|_| self.top.len().saturating_add(1))
@@ -801,6 +806,15 @@ impl App {
     }
 
     pub(super) fn apply_picked_value(&mut self) {
+        if let Some(picker) = self.picker.as_ref().filter(|picker| {
+            matches!(picker.purpose, PickerPurpose::TaskParent(_)) && picker.highlighted().is_none()
+        }) {
+            self.status = format!(
+                "nothing matches '{}'; edit search or Esc cancels",
+                picker.typed
+            );
+            return;
+        }
         let Some(picker) = self.picker.take() else {
             return;
         };
@@ -828,6 +842,9 @@ impl App {
                 PickerPurpose::Task | PickerPurpose::TopList | PickerPurpose::Views,
                 Payload::TaskAction(action),
             ) => self.run_task_action(action),
+            (PickerPurpose::TaskParent(id), Payload::Parent(parent)) => {
+                self.change_task_parent(&id, parent.as_deref())
+            }
             (PickerPurpose::TaskProject(id), Payload::Project(project)) => {
                 self.change_task_project(&id, project.as_deref())
             }

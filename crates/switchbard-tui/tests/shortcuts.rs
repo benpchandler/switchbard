@@ -17,6 +17,10 @@ fn canonical_and_legacy_task_prefixes_create_tasks_and_advertise_the_same_action
         h.app.tick();
         let screen = h.press(KeyCode::Char('?'));
         assert!(screen.contains("x n"), "{screen}");
+        assert!(
+            screen.contains("x a"),
+            "parent chord must follow remapping: {screen}"
+        );
         assert!(screen.contains("new_task"), "{screen}");
         h.press(KeyCode::Esc);
         h.type_text("xn");
@@ -66,6 +70,7 @@ fn help_catalog_obeys_page_availability_and_survives_page_return() {
     assert!(!screen.contains("settings"), "{screen}");
     h.press(KeyCode::Esc);
     h.press(KeyCode::Tab);
+    h.press(KeyCode::Tab);
     assert!(h.press(KeyCode::Char('?')).contains("new_task"));
 }
 
@@ -96,4 +101,68 @@ fn narrow_help_keeps_report_instructions_accessible_without_moving_tasks() {
         h.press(KeyCode::Esc);
         assert!(h.press(KeyCode::Char('?')).contains("new_task"));
     }
+}
+
+#[test]
+fn remapped_list_actions_cannot_mutate_hidden_lists_from_inbox() {
+    let mut h = Harness::new();
+    h.type_text("/theme");
+    h.press(KeyCode::Enter);
+    let tasks = h.app.state.clone();
+    h.press(KeyCode::Tab);
+    h.type_text("/title:example");
+    h.press(KeyCode::Enter);
+    let prs = h.app.state.clone();
+    h.press(KeyCode::Tab);
+    for action in [
+        "new_task",
+        "down",
+        "up",
+        "top",
+        "bottom",
+        "page_down",
+        "page_up",
+        "open",
+        "filter",
+        "filter_column",
+        "sort_column",
+        "columns",
+        "paint",
+        "ball",
+        "pass",
+        "group",
+        "settings",
+        "task",
+        "open_browser",
+        "merge",
+        "view",
+    ] {
+        std::fs::write(
+            &h.config_path,
+            format!("return {{ keys = {{ x = '{action}' }} }}"),
+        )
+        .expect("write remapped action");
+        h.app.tick();
+        let before = h
+            .app
+            .tasks()
+            .iter()
+            .map(|t| (t.id.clone(), t.title.clone(), t.status.clone()))
+            .collect::<Vec<_>>();
+        h.press(KeyCode::Char('x'));
+        assert!(h.app.picker.is_none(), "Inbox opened {action}");
+        assert_eq!(h.app.state, tasks, "{action} changed task view");
+        assert_eq!(
+            h.app
+                .tasks()
+                .iter()
+                .map(|t| (t.id.clone(), t.title.clone(), t.status.clone()))
+                .collect::<Vec<_>>(),
+            before
+        );
+    }
+    assert!(h.app.page_columns().is_empty(), "Inbox has no list columns");
+    h.press(KeyCode::Tab);
+    h.press(KeyCode::Tab);
+    assert_eq!(h.app.state, prs, "hidden PR view is preserved");
 }

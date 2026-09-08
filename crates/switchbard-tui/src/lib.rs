@@ -5,6 +5,8 @@ pub mod config;
 mod date_fields;
 mod detail_pane;
 pub mod group;
+pub mod inbox;
+mod navigation;
 pub mod page;
 pub mod paint;
 mod paint_eval;

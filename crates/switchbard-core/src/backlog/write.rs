@@ -487,7 +487,7 @@ pub fn write_new_task_file(
 /// new file is created with `create_new` before the old one is removed, so
 /// a crash between the two leaves a duplicate to resolve, never a lost task.
 ///
-/// `new_parent` is the parent's bare id; `None` promotes to top level. The
+/// `new_parent` is the resolved parent's actual id; `None` promotes to top level. The
 /// parent is stored as `parent_task_id:` (the key the `backlog` CLI writes);
 /// a legacy `parent:` line is rewritten in place, the same courtesy
 /// [`set_task_project`] extends to `milestone:`.
@@ -508,8 +508,8 @@ pub fn rehome_task_file(
     set_scalar(&mut fm, "id", &format!("{prefix}-{new_id}"), None);
     match new_parent {
         Some(parent) => {
-            validate_task_id(parent)?;
-            let rendered = yaml_scalar(&format!("{prefix}-{parent}"));
+            validate_task_id(super::parent::normalized_id(parent, prefix))?;
+            let rendered = yaml_scalar(parent);
             if key_span(&fm, "parent_task_id").is_some() {
                 set_scalar(&mut fm, "parent_task_id", &rendered, None);
                 remove_key(&mut fm, "parent");

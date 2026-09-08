@@ -10,8 +10,9 @@ mkdir -p "$test_repo/scripts"
 git -C "$test_repo" init -q
 git -C "$test_repo" config user.name "Switchbard CI Test"
 git -C "$test_repo" config user.email "ci@example.invalid"
-cp "$repo_root/scripts/ci-mission-sidecar-diff.sh" "$test_repo/scripts/"
+cp "$repo_root/scripts/ci-change-scope.sh" "$test_repo/scripts/"
 cp "$repo_root/scripts/ci-mission-sidecar-scope.sh" "$test_repo/scripts/"
+cp "$repo_root/scripts/ci-rust-scope.sh" "$test_repo/scripts/"
 printf 'baseline\n' > "$test_repo/README.md"
 git -C "$test_repo" add .
 git -C "$test_repo" commit -q -m baseline
@@ -22,10 +23,11 @@ printf 'ui only\n' > "$test_repo/crates/switchbard-gui/src/ui/backlog/board.rs"
 git -C "$test_repo" add .
 git -C "$test_repo" commit -q -m "ui only"
 ui_sha="$(git -C "$test_repo" rev-parse HEAD)"
-actual="$($repo_root/scripts/ci-mission-sidecar-diff.sh \
+actual="$($repo_root/scripts/ci-change-scope.sh \
   --repo "$test_repo" "$base_sha" "$ui_sha")"
-if [[ "$actual" != "false" ]]; then
-  echo "UI-only Git diff unexpectedly selected mission-sidecar CI" >&2
+if [[ "$actual" != "rust=true
+mission_sidecar=false" ]]; then
+  echo "UI-only Git diff routed wrongly: $actual" >&2
   exit 1
 fi
 
@@ -34,26 +36,44 @@ printf 'mission change\n' > "$test_repo/crates/switchbard-core/src/mission_super
 git -C "$test_repo" add .
 git -C "$test_repo" commit -q -m mission
 mission_sha="$(git -C "$test_repo" rev-parse HEAD)"
-actual="$($repo_root/scripts/ci-mission-sidecar-diff.sh \
+actual="$($repo_root/scripts/ci-change-scope.sh \
   --repo "$test_repo" "$ui_sha" "$mission_sha")"
-if [[ "$actual" != "true" ]]; then
-  echo "mission Git diff did not select mission-sidecar CI" >&2
+if [[ "$actual" != "rust=true
+mission_sidecar=true" ]]; then
+  echo "mission Git diff routed wrongly: $actual" >&2
   exit 1
 fi
 
-actual="$($repo_root/scripts/ci-mission-sidecar-diff.sh \
+actual="$($repo_root/scripts/ci-change-scope.sh \
   --repo "$test_repo" 0000000000000000000000000000000000000000 "$mission_sha")"
-if [[ "$actual" != "true" ]]; then
-  echo "missing base did not fail open" >&2
+if [[ "$actual" != "rust=true
+mission_sidecar=true" ]]; then
+  echo "missing base did not fail open for every scope: $actual" >&2
   exit 1
 fi
 
 output_file="$scratch/github-output"
-$repo_root/scripts/ci-mission-sidecar-diff.sh \
+$repo_root/scripts/ci-change-scope.sh \
   --repo "$test_repo" --github-output "$output_file" "$base_sha" "$ui_sha"
-if [[ "$(<"$output_file")" != "mission_sidecar=false" ]]; then
+if [[ "$(<"$output_file")" != "rust=true
+mission_sidecar=false" ]]; then
   echo "Git diff GitHub output contract failed" >&2
   exit 1
 fi
 
-echo "mission-sidecar Git diff routing: PASS"
+# TASK-180: a backlog-only commit must route away from the Rust matrix
+# through the real Git plumbing, not just the pure scope script.
+mkdir -p "$test_repo/backlog/tasks"
+printf 'task record\n' > "$test_repo/backlog/tasks/task-1 - a task.md"
+git -C "$test_repo" add .
+git -C "$test_repo" commit -q -m "backlog only"
+backlog_sha="$(git -C "$test_repo" rev-parse HEAD)"
+actual="$($repo_root/scripts/ci-change-scope.sh \
+  --repo "$test_repo" "$mission_sha" "$backlog_sha")"
+if [[ "$actual" != "rust=false
+mission_sidecar=false" ]]; then
+  echo "backlog-only Git diff still routed to the Rust matrix: $actual" >&2
+  exit 1
+fi
+
+echo "CI Git diff routing: PASS"

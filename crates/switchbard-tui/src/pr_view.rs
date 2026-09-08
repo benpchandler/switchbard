@@ -49,8 +49,10 @@ fn draw_observation(frame: &mut Frame, app: &App, area: Rect) {
         );
         return;
     };
-    let age = snapshot.observed_at.elapsed().map_or(0, |d| d.as_secs());
-    let health = if app.pull_requests.error.is_some() || age >= app.config.pr_refresh_seconds * 2 {
+    let health = if app
+        .pull_requests
+        .observation_stale(app.config.pr_refresh_seconds)
+    {
         "STALE"
     } else {
         "Observed"

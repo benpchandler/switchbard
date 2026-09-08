@@ -20,7 +20,7 @@ fn settle(h: &mut Harness) {
 fn pr_column_menu_and_saved_layout_are_isolated_from_tasks() {
     let mut h = Harness::new();
     let tasks = h.app.state.clone();
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     let menu = h.press(KeyCode::Char('1'));
     assert!(
         menu.contains("hide it"),
@@ -35,11 +35,11 @@ fn pr_column_menu_and_saved_layout_are_isolated_from_tasks() {
     let saved = h.render();
     assert!(saved.contains("saved v1"), "{saved}");
     let resume = h.app.resume_state();
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert_eq!(h.app.state, tasks, "PR columns must not alter Tasks");
     h.app = open_app(&h.root, &h.config_path);
     assert_eq!(h.app.state, tasks, "PR save must not replace Tasks slot 1");
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     let restored = h.press(KeyCode::Char('1'));
     assert!(
         !restored.contains("┌ id ─"),
@@ -47,7 +47,7 @@ fn pr_column_menu_and_saved_layout_are_isolated_from_tasks() {
     );
     h.press(KeyCode::Esc);
     h.app.resume_from(Some(&resume));
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert_eq!(
         h.app.state, tasks,
         "self restart must preserve both page states"
@@ -61,7 +61,7 @@ fn empty_pr_controls_use_shared_pickers_and_preserve_task_settings() {
     h.type_text("/theme");
     h.press(KeyCode::Enter);
     let tasks = h.app.state.clone();
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     for (key, heading) in [('f', "filter"), ('s', "sort"), ('p', "paint")] {
         let screen = h.press(KeyCode::Char(key));
         assert!(screen.contains(heading), "{screen}");
@@ -72,7 +72,7 @@ fn empty_pr_controls_use_shared_pickers_and_preserve_task_settings() {
         );
         h.press(KeyCode::Esc);
     }
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert_eq!(h.app.state, tasks);
     settle(&mut h);
 }
@@ -115,7 +115,7 @@ fn live() -> Harness {
             .unwrap()
             .success());
     }
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     settle(&mut h);
     assert!(
         h.app.pull_requests.error.is_none(),
@@ -204,7 +204,7 @@ fn live_pr_sort_filter_and_refresh_preserve_identity_and_task_state() {
         "{empty}"
     );
     set_filter(&mut h, "");
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert_eq!(h.app.state.filter, "");
     assert!(h.app.state.sort.is_none());
 }
@@ -217,15 +217,15 @@ fn task_reload_while_pr_page_is_active_keeps_task_filter_sort_and_selection() {
     h.type_text("s41");
     let task_state = h.app.state.clone();
     let selected = h.selected_title();
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     set_filter(&mut h, "status:merged");
     seed(&h.root, "Another theme task", "To Do", &["ui"]);
     h.app.tick();
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert_eq!(h.app.state, task_state);
     assert_eq!(h.selected_title(), selected);
     assert!(h.render().contains("Another theme task"));
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert_eq!(h.app.pull_requests.filter, "status:merged");
     settle(&mut h);
 }
@@ -293,11 +293,11 @@ fn live_pr_paint_links_and_saved_view_survive_page_switch_and_restart() {
     );
     assert_eq!(pr_state.paint.len(), 2);
     h.type_text("vsd");
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert!(h.app.state.paint.is_empty());
     assert_eq!(h.app.state.filter, "");
     h.app = open_app(&h.root, &h.config_path);
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     settle(&mut h);
     assert_eq!(
         h.app.state, pr_state,
@@ -367,7 +367,7 @@ fn live_pr_selected_identity_survives_self_restart() {
 fn pr_columns_reorder_and_global_save_do_not_change_tasks() {
     let mut h = Harness::new();
     let tasks = h.app.state.clone();
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     h.type_text("cm21");
     h.press(KeyCode::Enter);
     h.press(KeyCode::Esc);
@@ -383,7 +383,7 @@ fn pr_columns_reorder_and_global_save_do_not_change_tasks() {
     assert!(h.render().contains("global"));
     h.app = open_app(&h.root, &h.config_path);
     assert_eq!(h.app.state, tasks);
-    h.press(KeyCode::Tab);
+    h.next_list_page();
     assert_eq!(h.app.state.columns[0].name(), "lifecycle");
     let mut other = Harness::new();
     other.app = switchbard_tui::app::App::open(
@@ -397,7 +397,7 @@ fn pr_columns_reorder_and_global_save_do_not_change_tasks() {
         switchbard_tui::telemetry::Telemetry::in_memory(),
     );
     assert_eq!(other.app.state, tasks);
-    other.press(KeyCode::Tab);
+    other.next_list_page();
     assert_eq!(
         other.app.state.columns[0].name(),
         "lifecycle",
