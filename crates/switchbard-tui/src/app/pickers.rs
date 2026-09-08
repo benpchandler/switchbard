@@ -8,12 +8,93 @@ use crate::app::{App, Mode};
 use crate::ball::Ball;
 use crate::columns::Column;
 use crate::picker::{
-    ColumnAction, ColumnPurpose, PaintPick, Payload, PickOption, PickerPurpose, ValuePicker,
+    ColumnAction, ColumnPurpose, PaintPick, Payload, PickOption, PickerPurpose, TaskAction,
+    ValuePicker,
 };
 use crate::sort::{self, Sort};
 use crate::tasks::{self, Filter, FilterField};
 
 impl App {
+    pub(super) fn open_task_picker(&mut self) {
+        let mut options = vec![PickOption::keyed(
+            'n',
+            "New task",
+            Payload::TaskAction(TaskAction::New),
+        )];
+        if self.selected_task().is_some() {
+            for (key, label, action) in [
+                ('b', "Assign ball", TaskAction::Ball),
+                ('t', "Append to top list", TaskAction::Append),
+                ('d', "Mark Done", TaskAction::Done),
+                ('x', "Drop from top list (Delete)", TaskAction::Drop),
+                ('g', "Link goals", TaskAction::Goals),
+            ] {
+                options.push(PickOption::keyed(key, label, Payload::TaskAction(action)));
+            }
+        }
+        options.push(PickOption::keyed(
+            'p',
+            if self.state.pin_top {
+                "Unpin top list"
+            } else {
+                "Pin top list first"
+            },
+            Payload::TaskAction(TaskAction::Pin),
+        ));
+        if self.selected_task().is_some() {
+            options.extend(
+                (1..=self.top.len().saturating_add(1).min(10000))
+                    .map(|rank| PickOption::numbered(format!("Rank {rank}"), Payload::Rank(rank))),
+            );
+        }
+        self.open_picker(PickerPurpose::Task, options);
+        self.status.clear();
+    }
+
+    fn run_task_action(&mut self, action: TaskAction) {
+        match action {
+            TaskAction::New => self.open_new_task(),
+            TaskAction::Ball => self.open_ball_picker(),
+            TaskAction::Append => self.set_rank(self.top.len() + 1),
+            TaskAction::Done => self.mark_done(),
+            TaskAction::Drop => self.drop_rank(),
+            TaskAction::Goals => self.open_goal_picker(),
+            TaskAction::Pin => {
+                self.state.pin_top = !self.state.pin_top;
+                self.refilter();
+                self.status = if self.state.pin_top {
+                    "top list pinned first"
+                } else {
+                    "top list unpinned"
+                }
+                .to_string();
+                self.telemetry
+                    .record("action", format!("pin_top {}", self.state.pin_top));
+            }
+        }
+    }
+
+    fn columns_menu_options(&self) -> Vec<PickOption> {
+        let mut options = self.column_picker_options();
+        options.extend(
+            [
+                ColumnAction::Move,
+                ColumnAction::Glyphs,
+                ColumnAction::Abbreviate,
+                ColumnAction::Earlier,
+                ColumnAction::Later,
+            ]
+            .into_iter()
+            .filter(|action| {
+                self.page == crate::page::Page::Tasks || *action != ColumnAction::Abbreviate
+            })
+            .map(|action| {
+                PickOption::keyed(action.key(), action.label(), Payload::ColumnAction(action))
+            }),
+        );
+        options
+    }
+
     /// After `f`/`s`: shown columns first, numbered as in the header, then hidden ones.
     pub(super) fn open_column_chooser(&mut self, purpose: ColumnPurpose) {
         self.column_purpose = purpose;
@@ -75,6 +156,8 @@ impl App {
             ColumnAction::Glyphs => self.toggle_glyph_column(column),
             ColumnAction::Abbreviate => self.toggle_abbreviated(column),
             ColumnAction::Hide => self.toggle_column(column),
+            ColumnAction::Earlier => self.move_column(column, -1),
+            ColumnAction::Later => self.move_column(column, 1),
             ColumnAction::Move => {
                 self.move_origin = Some(self.state.columns.clone());
                 let options = self.shown_column_options();
@@ -89,7 +172,7 @@ impl App {
     }
 
     pub(super) fn open_columns_picker(&mut self) {
-        let options = self.column_picker_options();
+        let options = self.columns_menu_options();
         self.open_picker(PickerPurpose::Columns, options);
         self.telemetry.record("action", "columns");
     }
@@ -305,6 +388,10 @@ impl App {
             self.handle_merge_picker_key(event);
             return;
         }
+        let task_rank_room = self
+            .selected_task()
+            .map(|_| self.top.len().saturating_add(1))
+            .unwrap_or(0);
         let Some(picker) = self.picker.as_mut() else {
             self.mode = Mode::Browse;
             return;
@@ -347,15 +434,39 @@ impl App {
             KeyCode::Char(digit) if digit.is_ascii_digit() && typed_empty => {
                 picker.number.push(digit);
                 let index: usize = picker.number.parse().unwrap_or(0);
-                let count = picker.numbered_count();
-                let could_extend = index * 10 <= count;
+                let count = if purpose == PickerPurpose::Task {
+                    task_rank_room
+                } else {
+                    picker.numbered_count()
+                };
+                let index = if purpose == PickerPurpose::Task && count > 0 {
+                    index.min(count)
+                } else {
+                    index
+                };
+                let could_extend = index.saturating_mul(10) <= count;
                 if index == 0 || index > count {
                     picker.number.clear();
+                    self.status = match purpose {
+                        PickerPurpose::Views | PickerPurpose::GlobalView => {
+                            format!("no view in slot {index}")
+                        }
+                        PickerPurpose::SaveView => format!("slot {index} is out of reach"),
+                        PickerPurpose::Task if index == 0 => "rank: 1 is the top".to_string(),
+                        _ => format!("no choice {index}"),
+                    };
                 } else if could_extend {
                     // Wait: a second digit may still follow (1 when there are 10+).
+                    if purpose == PickerPurpose::Task {
+                        self.status = format!("rank: {index}▏ (another digit, or enter)");
+                    }
                 } else {
                     picker.number.clear();
-                    if let Some(position) = picker.position_of_number(index) {
+                    if purpose == PickerPurpose::Task {
+                        self.picker = None;
+                        self.mode = Mode::Browse;
+                        self.set_rank(index);
+                    } else if let Some(position) = picker.position_of_number(index) {
                         picker.selected = position;
                         self.apply_picked_value();
                     }
@@ -364,17 +475,28 @@ impl App {
             KeyCode::Enter if !picker.number.is_empty() => {
                 let index: usize = picker.number.parse().unwrap_or(0);
                 picker.number.clear();
-                if let Some(position) = picker.position_of_number(index) {
+                if purpose == PickerPurpose::Task && task_rank_room > 0 {
+                    self.picker = None;
+                    self.mode = Mode::Browse;
+                    self.set_rank(index.max(1).min(task_rank_room));
+                } else if let Some(position) = picker.position_of_number(index) {
                     picker.selected = position;
                     self.apply_picked_value();
                 }
             }
             KeyCode::Enter if matches!(purpose, PickerPurpose::MoveColumns(_)) => {
                 self.move_origin = None;
-                let options = self.column_picker_options();
+                let options = self.columns_menu_options();
                 self.open_picker(PickerPurpose::Columns, options);
             }
             KeyCode::Enter => self.apply_picked_value(),
+            KeyCode::Delete | KeyCode::Backspace
+                if purpose == PickerPurpose::Task && typed_empty =>
+            {
+                self.picker = None;
+                self.mode = Mode::Browse;
+                self.drop_rank();
+            }
             KeyCode::Delete | KeyCode::Backspace
                 if purpose == PickerPurpose::PaintTarget && typed_empty =>
             {
@@ -383,9 +505,16 @@ impl App {
                 self.clear_all_paint();
             }
             KeyCode::Delete | KeyCode::Backspace
-                if purpose == PickerPurpose::PaintRules && typed_empty =>
+                if purpose == PickerPurpose::PaintRules
+                    && typed_empty
+                    && matches!(
+                        picker.highlighted().map(|o| o.payload),
+                        Some(Payload::Rule(_))
+                    ) =>
             {
-                let index = picker.selected;
+                let Some(Payload::Rule(index)) = picker.highlighted().map(|o| o.payload) else {
+                    return;
+                };
                 if index < self.state.paint.len() {
                     self.state.paint.remove(index);
                     self.telemetry.record("action", "paint_rule_delete");
@@ -397,9 +526,17 @@ impl App {
                     self.mode = Mode::Browse;
                 }
             }
-            KeyCode::Char(direction @ ('J' | 'K')) if purpose == PickerPurpose::PaintRules => {
+            KeyCode::Char(direction @ ('J' | 'K'))
+                if purpose == PickerPurpose::PaintRules
+                    && matches!(
+                        picker.highlighted().map(|o| o.payload),
+                        Some(Payload::Rule(_))
+                    ) =>
+            {
                 let delta = if direction == 'J' { 1 } else { -1 };
-                let selected = picker.selected;
+                let Some(Payload::Rule(selected)) = picker.highlighted().map(|o| o.payload) else {
+                    return;
+                };
                 let moved_to = self.move_paint_rule(selected, delta);
                 self.open_paint_rules_picker();
                 if let Some(picker) = self.picker.as_mut() {
@@ -414,6 +551,7 @@ impl App {
                             | PickerPurpose::PaintColor(_)
                             | PickerPurpose::PaintColumn
                             | PickerPurpose::PaintRules
+                            | PickerPurpose::ChoosePaintRule(_)
                     ) =>
             {
                 self.paint_back();
@@ -432,25 +570,42 @@ impl App {
                 let options = self.shown_column_options();
                 self.open_picker(PickerPurpose::MoveColumns(Vec::new()), options);
             }
-            KeyCode::Char('g') if purpose == PickerPurpose::Columns && typed_empty => {
+            KeyCode::Char('g')
+                if purpose == PickerPurpose::Columns
+                    && typed_empty
+                    && matches!(
+                        picker.highlighted().map(|o| o.payload),
+                        Some(Payload::Column(_))
+                    ) =>
+            {
                 if let Some(Payload::Column(column)) = picker.highlighted().map(|o| o.payload) {
                     self.toggle_glyph_column(column);
                 }
             }
-            KeyCode::Char('g') if purpose == PickerPurpose::Settings && typed_empty => {
-                self.promote_settings();
-            }
-            KeyCode::Char('a') if purpose == PickerPurpose::Columns && typed_empty => {
+            KeyCode::Char('a')
+                if purpose == PickerPurpose::Columns
+                    && typed_empty
+                    && matches!(
+                        picker.highlighted().map(|o| o.payload),
+                        Some(Payload::Column(_))
+                    ) =>
+            {
                 if let Some(Payload::Column(column)) = picker.highlighted().map(|o| o.payload) {
                     self.toggle_abbreviated(column);
                 }
             }
-            KeyCode::Char(direction @ ('J' | 'K')) if purpose == PickerPurpose::Columns => {
+            KeyCode::Char(direction @ ('J' | 'K'))
+                if purpose == PickerPurpose::Columns
+                    && matches!(
+                        picker.highlighted().map(|o| o.payload),
+                        Some(Payload::Column(_))
+                    ) =>
+            {
                 if let Some(Payload::Column(column)) = picker.highlighted().map(|o| o.payload) {
                     let delta = if direction == 'J' { 1 } else { -1 };
                     let moved_to = picker.selected as isize + delta;
                     self.move_column(column, delta);
-                    let options = self.column_picker_options();
+                    let options = self.columns_menu_options();
                     if let Some(picker) = self.picker.as_mut() {
                         picker.options = options;
                         picker.selected =
@@ -467,12 +622,32 @@ impl App {
                 picker.selected = 0;
             }
             KeyCode::Char(c) => {
+                if picker.typed.chars().count() >= 256 {
+                    return;
+                }
                 picker.typed.push(c);
                 picker.selected = 0;
                 // A toggle panel must not flip on a unique match: typing the
                 // rest of the word would flip it back. Enter or a number commits.
-                let toggles = matches!(purpose, PickerPurpose::Settings | PickerPurpose::Goals(_));
-                if !toggles && picker.matching().len() == 1 {
+                let toggles = matches!(
+                    purpose,
+                    PickerPurpose::Settings
+                        | PickerPurpose::Goals(_)
+                        | PickerPurpose::Task
+                        | PickerPurpose::Views
+                        | PickerPurpose::SaveView
+                        | PickerPurpose::GlobalView
+                        | PickerPurpose::Columns
+                        | PickerPurpose::ChooseColumnAction(_)
+                        | PickerPurpose::PaintRules
+                        | PickerPurpose::ChoosePaintRule(_)
+                );
+                let matches = picker.matching();
+                let legacy_column_pick = purpose == PickerPurpose::Columns
+                    && matches
+                        .first()
+                        .is_some_and(|option| matches!(option.payload, Payload::Column(_)));
+                if matches.len() == 1 && (!toggles || legacy_column_pick) {
                     self.apply_picked_value();
                 }
             }
@@ -493,7 +668,7 @@ impl App {
             }
             (PickerPurpose::Columns, Payload::Column(column)) => {
                 self.toggle_column(column);
-                let options = self.column_picker_options();
+                let options = self.columns_menu_options();
                 if let Some(picker) = self.picker.as_mut() {
                     picker.options = options;
                 }
@@ -547,6 +722,44 @@ impl App {
             return;
         };
         match (picker.purpose, picked.payload) {
+            (PickerPurpose::PaintRules, Payload::PaintRuleAction(action)) => {
+                self.open_paint_rule_action(action)
+            }
+            (PickerPurpose::ChoosePaintRule(action), Payload::Rule(index)) => {
+                self.run_paint_rule_action(index, action)
+            }
+            (PickerPurpose::Task, Payload::TaskAction(action)) => self.run_task_action(action),
+            (PickerPurpose::Task, Payload::Rank(rank)) => self.set_rank(rank),
+            (PickerPurpose::Views, Payload::ViewSlot(slot)) => {
+                self.switch_view(slot);
+                self.telemetry
+                    .record("action", format!("view_open {}", slot + 1));
+            }
+            (PickerPurpose::Views, Payload::SaveView) => {
+                self.open_view_picker(PickerPurpose::SaveView)
+            }
+            (PickerPurpose::Views, Payload::GlobalView) => {
+                self.open_view_picker(PickerPurpose::GlobalView)
+            }
+            (PickerPurpose::SaveView, Payload::ViewSlot(slot)) => self.save_view(slot),
+            (PickerPurpose::GlobalView, Payload::ViewSlot(slot)) => self.promote_view(slot),
+            (PickerPurpose::Settings, Payload::GlobalSettings) => self.promote_settings(),
+            (PickerPurpose::Columns, Payload::ColumnAction(ColumnAction::Move)) => {
+                self.move_origin = Some(self.state.columns.clone());
+                self.open_picker(
+                    PickerPurpose::MoveColumns(Vec::new()),
+                    self.shown_column_options(),
+                );
+            }
+            (PickerPurpose::Columns, Payload::ColumnAction(action)) => {
+                let options = self.column_picker_options();
+                self.open_picker(PickerPurpose::ChooseColumnAction(action), options);
+            }
+            (PickerPurpose::ChooseColumnAction(action), Payload::Column(column)) => {
+                self.run_column_action(column, action);
+                self.open_columns_picker();
+            }
+
             (PickerPurpose::Merge, Payload::CancelMerge) => self.cancel_pr_merge(),
             (PickerPurpose::Merge, Payload::Merge(method)) => self.submit_pr_merge(method),
             (PickerPurpose::Filter(field), Payload::Text(value)) => {
@@ -576,14 +789,14 @@ impl App {
                 self.toggle_column(column);
                 if adding {
                     // Stay open with the new column highlighted so it can be placed.
-                    let options = self.column_picker_options();
+                    let options = self.columns_menu_options();
                     let highlight = self.state.columns.len().saturating_sub(1);
                     self.open_picker(PickerPurpose::Columns, options);
                     if let Some(picker) = self.picker.as_mut() {
                         picker.selected = highlight;
                     }
                     self.status = format!(
-                        "{} added as column {} · m then numbers to reorder · esc",
+                        "{} added as column {}",
                         column.name(),
                         self.state.columns.len()
                     );

@@ -26,13 +26,19 @@ fn grouped_harness() -> Harness {
 }
 
 #[test]
-fn flat_view_hints_at_grouping_only_when_there_are_projects_to_group() {
+fn grouping_choices_are_in_the_picker_instead_of_the_footer() {
     let mut h = Harness::new();
     assert!(!h.render().contains("o organizes by project or goal"));
     let mut h = grouped_harness();
     let screen = h.render();
     assert!(
-        screen.contains("2 projects · o organizes by project or goal"),
+        !screen.contains("o organizes by project or goal"),
+        "{screen}"
+    );
+    let screen = h.press(KeyCode::Char('o'));
+    assert!(h.app.picker.is_some());
+    assert!(
+        screen.contains("project") && screen.contains("goal"),
         "{screen}"
     );
 }

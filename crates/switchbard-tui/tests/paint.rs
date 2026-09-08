@@ -31,8 +31,12 @@ fn p_lists_columns_first_then_row_filtered_column_and_hidden_fields() {
         title.contains("┌ paint ─") && !title.contains("r row"),
         "{title}"
     );
-    let footer = screen.lines().last().unwrap_or_default();
-    assert!(footer.contains("number or letter picks · esc"), "{footer}");
+    assert!(screen.contains("number or letter picks · esc"), "{screen}");
+    assert!(!screen
+        .lines()
+        .last()
+        .unwrap_or_default()
+        .contains("number or letter"));
 }
 
 #[test]

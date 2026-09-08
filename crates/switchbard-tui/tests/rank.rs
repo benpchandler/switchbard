@@ -10,13 +10,8 @@ fn t_digit_ranks_the_selected_task_shows_the_rank_column_and_pins_a_top_section(
     let mut h = grouped();
     goto(&mut h, "Add dark theme");
     h.press(KeyCode::Char('t'));
-    assert!(
-        h.app
-            .status
-            .starts_with("task: n New · a number ranks it (1 is top, 1 last)"),
-        "{}",
-        h.app.status
-    );
+    assert!(h.app.picker.is_some(), "task actions are a picker");
+    assert!(h.render().contains("Rank 1"));
     let screen = h.press(KeyCode::Char('1'));
     assert_eq!(h.app.status, "TASK-2 is #1 of 1");
     assert!(screen.contains("▸ top · 1"), "{screen}");

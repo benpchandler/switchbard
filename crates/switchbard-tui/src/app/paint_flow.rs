@@ -3,7 +3,7 @@
 use crate::app::App;
 use crate::columns::Column;
 use crate::paint::{self, PaintRule, NAMED_COLORS};
-use crate::picker::{PaintPick, Payload, PickOption, PickerPurpose};
+use crate::picker::{PaintPick, PaintRuleAction, Payload, PickOption, PickerPurpose};
 
 impl App {
     /// Mirrors the header: shown columns first (so `p2` is column 2), then the
@@ -118,7 +118,59 @@ impl App {
             self.status = "no paint rules".to_string();
             return;
         }
+        let mut options = options;
+        options.extend([
+            PickOption::keyed(
+                'K',
+                "Move a rule earlier",
+                Payload::PaintRuleAction(PaintRuleAction::Earlier),
+            ),
+            PickOption::keyed(
+                'J',
+                "Move a rule later",
+                Payload::PaintRuleAction(PaintRuleAction::Later),
+            ),
+            PickOption::keyed(
+                'x',
+                "Delete a rule",
+                Payload::PaintRuleAction(PaintRuleAction::Delete),
+            ),
+        ]);
         self.open_picker(PickerPurpose::PaintRules, options);
+    }
+
+    pub(super) fn open_paint_rule_action(&mut self, action: PaintRuleAction) {
+        let options = self
+            .state
+            .paint
+            .iter()
+            .enumerate()
+            .map(|(index, rule)| PickOption::numbered(rule.label(), Payload::Rule(index)))
+            .collect();
+        self.open_picker(PickerPurpose::ChoosePaintRule(action), options);
+    }
+
+    pub(super) fn run_paint_rule_action(&mut self, index: usize, action: PaintRuleAction) {
+        match action {
+            PaintRuleAction::Earlier => {
+                self.move_paint_rule(index, -1);
+            }
+            PaintRuleAction::Later => {
+                self.move_paint_rule(index, 1);
+            }
+            PaintRuleAction::Delete if index < self.state.paint.len() => {
+                self.state.paint.remove(index);
+                self.telemetry.record("action", "paint_rule_delete");
+            }
+            PaintRuleAction::Delete => {}
+        }
+        if self.state.paint.is_empty() {
+            self.picker = None;
+            self.mode = crate::app::Mode::Browse;
+            self.status = "no paint rules left".to_string();
+        } else {
+            self.open_paint_rules_picker();
+        }
     }
 
     pub(super) fn paint_auto(&mut self, column: Column) {

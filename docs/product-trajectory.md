@@ -586,6 +586,8 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   so an agent-worked task is visible to someone reading the board rather than the
   dispatch pill.
 
+- **Terminal menu consolidation (owner-directed 2026-09-08).** Choices that previously appeared as footer sentences use the shared typed picker: task actions and rank positions, view open/save/global destinations, and actions embedded in column/settings panels. Existing direct chords remain valid. Footer copy is limited to concise navigation, text-entry prompts and results; menus share keyboard selection, filtering and viewport behavior. This changes access to existing actions, without adding new task mutation types.
+
 - **Terminal task capture (owner-directed 2026-09-08).** `sbt` provides a `t n` task/new chord (the task prefix is configurable; `new_task` also remains bindable) to enter an ordinary task title. Enter writes through the same core task creation facade as `sb create`; Esc cancels. Validation and write failures retain the draft for correction or retry. Success selects the new task when visible and explicitly reports when existing filters hide it. Capture does not infer metadata from filters or attach bug-report context.
 
 - **Terminal UI grouping (owner-directed 2026-09-02).** `sbt` sections the task

@@ -43,10 +43,7 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('s'));
     let screen = h.press(KeyCode::Char('d'));
-    assert!(
-        screen.contains("saved v1 for this repo · vg1 makes it global"),
-        "{screen}"
-    );
+    assert!(screen.contains("saved v1 for this repo"), "{screen}");
     assert!(
         screen.contains("v1 · status:!done · ≈pri · 3/3"),
         "{screen}"
@@ -91,10 +88,7 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('g'));
     let screen = h.press(KeyCode::Char('d'));
-    assert!(
-        screen.contains("slot 1 is now global: every repo opens it with v1"),
-        "{screen}"
-    );
+    assert!(screen.contains("slot 1 is now global"), "{screen}");
     let global_file = std::fs::read_to_string(h.root.join("views.lua")).unwrap();
     assert!(
         global_file.contains("filter = \"status:!done\""),
@@ -137,10 +131,8 @@ fn vs_with_the_next_free_slot_appends_without_asking_and_escape_abandons() {
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('s'));
     let screen = h.press(KeyCode::Char('9'));
-    assert!(
-        screen.contains("slot 9 is out of reach; use 1-7"),
-        "{screen}"
-    );
+    assert!(screen.contains("slot 9 is out of reach"), "{screen}");
+    h.press(KeyCode::Esc);
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('s'));
     let screen = h.press(KeyCode::Esc);

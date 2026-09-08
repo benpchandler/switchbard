@@ -200,7 +200,7 @@ fn task_new_chord_is_discoverable_and_old_a_is_unbound() {
     assert!(screen.contains("t n"), "{screen}");
     h.press(KeyCode::Esc);
     let screen = h.press(KeyCode::Char('t'));
-    assert!(screen.contains("n New"), "{screen}");
+    assert!(screen.contains("New task"), "{screen}");
     h.press(KeyCode::Esc);
     assert_eq!(h.app.total_tasks(), 3);
     std::fs::write(&h.config_path, "return { keys = { x = 'task' } }").unwrap();
