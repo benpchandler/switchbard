@@ -16,7 +16,7 @@ All retain medium priority from their recorded user/developer impact. Ordering f
 
 ## Acceptance and authority
 
-Each issue's acceptance criteria remain authoritative. No human confirmation is inferred for TASK-144. Root owns integration, tracker closeout, verification, installation coordination and final claims. Teammates own disjoint source leases. No GitHub merge, PR write, or remote publication is required by this request. Runtime sbt interaction and the documented local install loop are in scope; shared GUI restart is excluded.
+Each issue's acceptance criteria remain authoritative. No human confirmation is inferred for TASK-144. Root owns integration, tracker closeout, verification, installation coordination and final claims. Teammates own disjoint source leases. The agent owes a concrete PR handoff for the seven-task implementation. The earlier interpretation that remote delivery was outside scope was mistaken and is superseded by the owner's explicit delivery correction. Runtime sbt interaction and the documented local install loop are in scope; shared GUI restart is excluded. Opening a PR does not imply permission to merge this abstraction work or satisfy human acceptance.
 
 ## State and stress evidence plan
 
@@ -41,13 +41,17 @@ Evidence and remaining gaps are updated here and in the task-specific evidence d
 
 The installed sbt launched successfully in an agent-owned PTY at 80x24 and rendered Abstraction in the requested rank order with TASK-162's live claim. Existing primary changes were recorded outside the repository under /tmp/switchbard-abstractions-evidence. Shared target provenance risk is already tracked as TASK-179; this mission uses an isolated Cargo target for authoritative verification.
 
-## Verified closeout
+## Current delivery handoff
 
-Implementation code is committed as `815bcf01` on `feat/tui-abstractions`. The six tasks TASK-162, 163, 164, 167, 165 and 166 are Done in the canonical primary-checkout tracker. TASK-144's engineering criteria pass and its code is implemented; it remains In Review solely because its original AC1 requires the human reporter's confirmation. All mission claims were released through `sb work release`; that remaining criterion was explicitly recorded, never checked on the reporter's behalf.
+Implementation code is committed as `815bcf01`, with historical verification recorded in `b1d7e29b`, on `feat/tui-abstractions`. The earlier tracker closeout confused local implementation with delivered work. It is superseded: all seven tasks TASK-162, 163, 164, 167, 165, 166 and 144 are In Progress with ball:agent because the agent still owes the PR. TASK-144 also retains its unchecked human reporter confirmation criterion; no confirmation is inferred. Earlier runtime claims were released through `sb work release`; that does not settle the delivery obligation.
+
+Parent-picker PR #143 is now merged as `b5661281af1803aca12f02242419726433f54d68`. The owner prioritized Inbox and navigation badges first; that work is pending in PR #144 ahead of abstraction delivery. This branch still starts from `f5c5f61c` and has not been integrated with either change. Preserve the untracked `.lavish/switchbard-review-handoff.html` proposal. Next: finish the higher-priority Inbox handoff, reconcile overlapping TUI navigation/help/PR state changes, correct any integration failures, run the delivery pipeline with heavy local suites serialized, and provide the abstraction PR plus exact checks and outstanding acceptance. No abstraction PR or merge currently exists.
 
 The tracker rank remains 162, 163, 164, 167, 165, 166, 144, all medium priority based on their recorded impacts. Tracker edits remain in the user's existing checkout alongside its pre-existing dirty state, rather than sweeping unrelated work into a commit. Seven unrelated pre-existing tracked diffs were compared against the captured baseline and remained byte-identical; concurrent unrelated additions were preserved. The implementation worktree is independently committed.
 
-### Final verification
+### Historical verification of the original implementation
+
+The following evidence applies to original implementation `815bcf01` and its recorded isolated build. It does not validate a future integration with parent-picker PR #143 or Inbox PR #144.
 
 - `CARGO_TARGET_DIR=/tmp/switchbard-abstractions-target cargo test -p switchbard-core`: 582 passed, one existing opt-in test ignored; all-target core clippy passed.
 - `CARGO_TARGET_DIR=/tmp/switchbard-abstractions-target CARGO_INSTALL_ROOT=/Users/bpc/.local/share/switchbard-builds/abstractions mise run tui-install`: exit 0; formatting and all-target TUI clippy passed; 141 TUI tests passed, 19 opt-in tests ignored in the ordinary gate; optimized binary installed.
@@ -70,4 +74,4 @@ All five issues are Done with checkable criteria and evidence recorded through s
 
 ### Remaining boundary
 
-No implementation or automated verification gap remains for the seven requested engineering outcomes. Human reporter confirmation for TASK-144 remains open. The default installation and remote delivery are intentionally separate from this verified isolated build. Date projections refresh at the next app tick after midnight; no strict across-every-operation single-frame clock snapshot is claimed.
+The seven engineering outcomes have historical implementation evidence, but integrated validation and a reviewable PR handoff remain outstanding. Human reporter confirmation for TASK-144 also remains open. The existing isolated build is not proof of current default-installation or remote-delivery state. Date projections refresh at the next app tick after midnight; no strict across-every-operation single-frame clock snapshot is claimed.
