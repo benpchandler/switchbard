@@ -269,6 +269,19 @@ fn live_all_states_can_be_filtered_without_refetching() {
     println!("{}", h.render());
 }
 
+/// The row the detail pane's frame starts on, found by looking for its top
+/// border rather than assumed to be row 1. The PR page carries an alert line
+/// the Tasks page does not - a failed background refresh, which in a test
+/// repo with no git remote is the normal case and lands at an unpredictable
+/// moment - and that line shifts everything below it down by one. Pinning
+/// the row number made this test fail on whichever side of the render the
+/// alert happened to arrive.
+fn pane_frame_row(buffer: &ratatui::buffer::Buffer, width: u16) -> u16 {
+    (0..buffer.area.height)
+        .find(|&y| (width / 2..width).any(|x| buffer[(x, y)].symbol() == "┌"))
+        .expect("the detail pane draws a top border")
+}
+
 #[test]
 fn pr_detail_matches_task_pane_frame_and_empty_state() {
     let mut h = Harness::new();
@@ -277,12 +290,18 @@ fn pr_detail_matches_task_pane_frame_and_empty_state() {
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
         h.press(KeyCode::Enter);
         let task = h.terminal.backend().buffer().clone();
+        let task_row = pane_frame_row(&task, width);
         h.press(KeyCode::Tab);
         h.press(KeyCode::Enter);
         let screen = h.render();
         let pr = h.terminal.backend().buffer();
+        let pr_row = pane_frame_row(pr, width);
         for x in width / 2..width {
-            assert_eq!(pr[(x, 1)], task[(x, 1)], "pane top border: {screen}");
+            assert_eq!(
+                pr[(x, pr_row)],
+                task[(x, task_row)],
+                "pane top border: {screen}"
+            );
         }
         assert!(screen.contains("nothing selected"), "{screen}");
         h.press(KeyCode::Enter);

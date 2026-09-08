@@ -157,3 +157,59 @@ pub fn harness(app: HiveApp) -> Harness<'static, HiveApp> {
             app,
         )
 }
+
+// ─── Waiting on a spawned worker ─────────────────────────────────────────
+//
+// `Harness::run` settles to quiescence: it steps until the UI asks for no
+// further repaint, and panics once it has taken `max_steps` (4) without
+// getting there. A `HiveApp` action that spawns a background thread — save,
+// create, cleanup, refine, dispatch — has that thread call
+// `ctx.request_repaint()` as it works, which zeroes the repaint delay
+// without registering an in-frame cause, so `run()` can never settle while
+// the worker is alive. That is the TASK-56 race; it surfaced again as
+// TASK-108 (backlog_controls.rs) and TASK-181 (a cleanup over enough Done
+// tasks that the worker outlives the whole step budget every time).
+//
+// The rule these two helpers exist to make unmissable: after an action that
+// spawns a worker, never call `run()`. Step a fixed number of frames, then
+// poll for the outcome you are actually asserting.
+
+/// Frames to step after an action that spawns a background worker. Enough to
+/// paint the post-click UI, bounded so a live worker's repaints cannot spin
+/// it. `Harness::run`'s own `max_steps`, deliberately: this is the same
+/// budget, spent without the settle condition that the worker defeats.
+pub const SPAWN_FRAMES: usize = 4;
+
+/// How long a spawned worker gets to report its outcome before the test
+/// calls it a failure rather than hanging.
+pub const SPAWN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Paint the frames right after an action that spawned a background worker.
+/// Use instead of `Harness::run` at any such step.
+pub fn step_past_spawn(harness: &mut Harness<'_, HiveApp>) {
+    harness.run_steps(SPAWN_FRAMES);
+}
+
+/// Step until `ready` reads true of the app state, or fail after
+/// [`SPAWN_DEADLINE`] naming `what` was awaited and what the status line said
+/// instead. Never calls `run()`, so a worker still repainting cannot trip
+/// `max_steps`.
+pub fn settle_until(
+    harness: &mut Harness<'_, HiveApp>,
+    what: &str,
+    ready: impl Fn(&HiveApp) -> bool,
+) {
+    let deadline = std::time::Instant::now() + SPAWN_DEADLINE;
+    loop {
+        step_past_spawn(harness);
+        if ready(harness.state()) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}; last status: {:?}",
+            harness.state().backlog_status.snapshot()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}

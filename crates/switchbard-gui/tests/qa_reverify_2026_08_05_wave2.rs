@@ -22,7 +22,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{harness, isolated_config_save_path};
+use common::{harness, isolated_config_save_path, settle_until, step_past_spawn};
 use egui_kittest::kittest::Queryable;
 use switchbard_core::config::Config;
 use switchbard_core::{BacklogTaskSource, Repo, WorktreeRef};
@@ -339,23 +339,13 @@ fn clean_up_old_tasks_completes_multiple_done_tasks_per_repo_across_two_real_rep
     h.run();
     assert!(h.query_by_label("Complete 4 Done tasks?").is_some());
     h.get_by_label("Confirm cleanup").click();
-    h.run();
+    // `step_past_spawn`, not `run`: same cleanup worker, same race as the
+    // wave-1 test above (TASK-181).
+    step_past_spawn(&mut h);
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        h.run();
-        if h.state().backlog_status.snapshot().as_deref()
-            == Some("cleaned up 4/4 Done tasks across 2 repos")
-        {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "cleanup's background thread did not report completion in time; last status: {:?}",
-            h.state().backlog_status.snapshot()
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    settle_until(&mut h, "the cleanup worker to finish", |app| {
+        app.backlog_status.snapshot().as_deref() == Some("cleaned up 4/4 Done tasks across 2 repos")
+    });
 
     let project_a = switchbard_core::load_backlog_repo(repo_a.path()).unwrap();
     for id in ["TASK-1", "TASK-2", "TASK-3"] {

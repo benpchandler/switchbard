@@ -24,6 +24,7 @@ jobs:
     name: Validate developer gates and route expensive CI
     runs-on: ubuntu-latest
     outputs:
+      rust: ${{ steps.scope.outputs.rust }}
       mission_sidecar: ${{ steps.scope.outputs.mission_sidecar }}
     steps:
       - uses: actions/checkout@v4
@@ -33,18 +34,24 @@ jobs:
       - name: Exercise hooks and workflow routing contracts
         run: scripts/test-developer-gates.sh
 
-      - name: Determine whether mission-sidecar proofs are required
+      - name: Determine which expensive CI this change requires
         id: scope
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          scripts/ci-mission-sidecar-diff.sh \
+          scripts/ci-change-scope.sh \
             --github-output "$GITHUB_OUTPUT" "$BASE_SHA" "$HEAD_SHA"
 
+  # The Rust matrix is the expensive half of CI and cannot be affected by a
+  # change that only touches backlog records or prose, so it is routed the
+  # same way the mission-sidecar matrix already is (TASK-180). The router
+  # fails open: anything it cannot classify runs the matrix.
   ci:
     name: ${{ matrix.os }} - mise run ${{ matrix.task }}
+    needs: change-scope
+    if: needs.change-scope.outputs.rust == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

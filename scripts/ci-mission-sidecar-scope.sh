@@ -20,9 +20,9 @@ while IFS= read -r -d '' path; do
       scripts/acquire-xplan-mission-sidecar.sh | \
       scripts/bundle-mac.sh | \
       scripts/checkout-pinned-xplan.sh | \
-      scripts/ci-mission-sidecar-diff.sh | \
+      scripts/ci-change-scope.sh | \
       scripts/ci-mission-sidecar-scope.sh | \
-      scripts/test-ci-mission-sidecar-diff.sh | \
+      scripts/test-ci-change-scope.sh | \
       scripts/test-ci-mission-sidecar-scope.sh | \
       crates/switchbard-core/examples/mission_* | \
       crates/switchbard-core/src/mission_* | \

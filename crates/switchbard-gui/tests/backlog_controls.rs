@@ -23,7 +23,10 @@ mod common;
 use egui_kittest::kittest::NodeT;
 use std::path::PathBuf;
 
-use common::{harness, isolated_config_save_path, seeded_app, REPO_NAME, REPO_PATH};
+use common::{
+    harness, isolated_config_save_path, seeded_app, settle_until, step_past_spawn, REPO_NAME,
+    REPO_PATH,
+};
 use egui_kittest::kittest::{self, Queryable};
 use egui_kittest::Harness;
 use switchbard_core::config::Config;
@@ -580,7 +583,10 @@ fn create_modal_create_button_queues_a_create_and_closes_the_modal() {
     harness.run();
 
     harness.get_by_label("Create").click();
-    harness.run();
+    // `step_past_spawn`, not `run`: Create spawns the create worker, whose
+    // repaints keep `run()` from settling (TASK-56/TASK-108). The buffer
+    // reset under assertion is synchronous on the click.
+    step_past_spawn(&mut harness);
 
     assert!(
         !harness.state().backlog_view.new_task.open,
@@ -633,7 +639,10 @@ fn create_modal_labels_assignee_milestone_and_dependencies_fields_reset_after_cr
     assert!(harness.query_all_by_value("v1").next().is_some());
 
     harness.get_by_label("Create").click();
-    harness.run();
+    // `step_past_spawn`, not `run`: Create spawns the create worker, whose
+    // repaints keep `run()` from settling (TASK-56/TASK-108). The buffer
+    // reset under assertion is synchronous on the click.
+    step_past_spawn(&mut harness);
 
     let new_task = &harness.state().backlog_view.new_task;
     assert_eq!(
@@ -3283,21 +3292,10 @@ fn save_button_completes_a_real_write_round_trip_against_a_real_fixture_repo() {
     // scroll-area animation) can land inside `run()`'s settle window and
     // spin it past max_steps — the TASK-56 race.
     harness.get_all_by_label("Save").next().unwrap().click();
-    harness.run_steps(4);
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        harness.run_steps(4);
-        if harness.state().backlog_status.snapshot().as_deref() == Some("saved TASK-1") {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "Save's background thread did not report completion in time; last status: {:?}",
-            harness.state().backlog_status.snapshot()
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    step_past_spawn(&mut harness);
+    settle_until(&mut harness, "Save's background thread", |app| {
+        app.backlog_status.snapshot().as_deref() == Some("saved TASK-1")
+    });
 
     let repo = switchbard_core::load_backlog_repo(root).expect("reload the real fixture repo");
     let saved_task = repo
@@ -3362,36 +3360,23 @@ fn create_modal_reports_a_compact_created_message_against_a_real_fixture_repo() 
     title_field.type_text("Real create status message task");
     harness.run();
 
-    // `run_steps`, not `run`, from here on: the click spawns the create's
-    // background thread, whose repaints can land inside `run()`'s settle
-    // window and spin it past max_steps — the TASK-56 race (seen on CI with
-    // a scroll-area animation as the recorded repaint cause).
     harness.get_by_label("Create").click();
-    harness.run_steps(4);
+    step_past_spawn(&mut harness);
+    settle_until(&mut harness, "create's background thread", |app| {
+        app.backlog_status
+            .snapshot()
+            .is_some_and(|msg| msg.starts_with("Created "))
+    });
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        harness.run_steps(4);
-        if let Some(msg) = harness.state().backlog_status.snapshot() {
-            if msg.starts_with("Created ") {
-                assert_eq!(
-                    msg, "Created MusicProduction:TASK-1",
-                    "expected the compact repo:id form, not raw CLI stdout"
-                );
-                assert!(
-                    !msg.contains('\n'),
-                    "the status message must be a single line, got {msg:?}"
-                );
-                return;
-            }
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "create's background thread did not report completion in time; last status: {:?}",
-            harness.state().backlog_status.snapshot()
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    let msg = harness.state().backlog_status.snapshot().expect("a status");
+    assert_eq!(
+        msg, "Created MusicProduction:TASK-1",
+        "expected the compact repo:id form, not raw CLI stdout"
+    );
+    assert!(
+        !msg.contains('\n'),
+        "the status message must be a single line, got {msg:?}"
+    );
 }
 
 /// Owner report (2026-08-05): a task created through the Create modal
