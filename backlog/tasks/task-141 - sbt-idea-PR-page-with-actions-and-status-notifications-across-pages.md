@@ -4,13 +4,15 @@ title: 'sbt idea: PR page with actions and status notifications across pages'
 status: In Review
 assignee: []
 created_date: '2026-09-03 21:33'
-updated_date: '2026-09-07 13:29'
+updated_date: '2026-09-08 12:20'
 labels:
   - tui
   - idea
   - ball:agent
 dependencies: []
 priority: medium
+references:
+  - https://github.com/benpchandler/switchbard/pull/138
 ---
 
 ## Description
