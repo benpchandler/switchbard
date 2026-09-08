@@ -6,7 +6,7 @@ Baseline: recreated clean at6666334 for owner review follow-ups after the initia
 
 ## Inventory and decisions
 
-- Task chord: new, ball, status, project, Top list membership/ranks and goals move into shared picker rows.
+- Task chord: new, ball, status, project, parent linking, Top list membership/ranks and goals move into shared picker rows.
 - View chord and save/global destination chords: named slots and actions become shared picker rows.
 - Existing Columns and Settings pickers: actions previously hidden in hints become selectable rows.
 - Paint controls: inventory all hidden actions, expose operations as rows where applicable, keep movement/back/input hints concise.
@@ -20,6 +20,7 @@ Baseline: recreated clean at6666334 for owner review follow-ups after the initia
 | Dirty draft / cancel / repeated actions | Existing creation E2Es plus menu escape and repeat-key cases; no accidental write |
 | Saving / failure / retry | Existing view persistence E2Es; failure status remains visible after picker closes |
 | Stale, conflict | Core remains authority for mutations; refreshed datasets use existing snapshots; no new async writes |
+| Parent selection / unlink / ID reallocation | `t a` searches eligible parent IDs and titles without writing; Enter saves, No parent promotes, and the picker discloses the native move's new-ID behavior |
 | Loading / unavailable PRs | Page and PR suites preserve independent page state and merge safeguards |
 | Zero/one/many values and slots | Real-key tests cover empty tasks, maximum 9 view slots, rank positions above9 |
 | Long / Unicode / unbroken text | Picker content uses existing bounded viewport and width-aware rendering; fixture labels exercise clipping |
@@ -55,6 +56,6 @@ Annotation annotation-a1ff9ce162c4441eb6697f76fe5bb5b8 requests replacing Mark D
 
 ## Owner review: navigation, projects and Top list
 
-Additional annotations request arrow/Vim back navigation, project links, and clearer Top-list control separation. New navigation is Left/h parent, Right/l choose, Up/Down/j/k select; merge authorization remains restricted to its guarded explicit gestures. Task p assigns a project (or Unassigned). Task r contains rank/add/remove membership; Views p controls whether the top-list section is shown. Hiding that section does not alter ranked membership. Existing numeric ranking and append shortcuts remain where non-conflicting. The parent stack is bounded to 16, clears on Esc or stale cancellation, and retains guarded merge input. Legacy filter-value typeahead takes priority when h/l starts a matching label; Left/Right remain navigation keys.
+Additional annotations request arrow/Vim back navigation, project links, and clearer Top-list control separation. New navigation is Left/h parent, Right/l choose, Up/Down/j/k select; merge authorization remains restricted to its guarded explicit gestures. Task p assigns a project (or Unassigned), and task t a searches existing eligible parents by ID or title, requiring Enter to save; No parent promotes to top level. Core rejects self-parenting and nested sub-issues, and loading canonicalizes legacy shorthand in memory without rewriting task files. Task r contains rank/add/remove membership; Views p controls whether the top-list section is shown. Hiding that section does not alter ranked membership. Existing numeric ranking and append shortcuts remain where non-conflicting. The parent stack is bounded to 16, clears on Esc or stale cancellation, and retains guarded merge input. Legacy filter-value typeahead takes priority when h/l starts a matching label; Left/Right remain navigation keys.
 
 Final gate: isolated `mise run tui-install` passed fmt, clippy, 117 tests and rustdoc, then replaced `/Users/bpc/.cargo/bin/sbt` from this PR-enabled worktree. The explicit render exporter also passed. Full-suite regressions in legacy filter typeahead and paint back-navigation were repaired before this gate. Nine fixture renders are retained. No push, merge, or remote mutation was performed.
