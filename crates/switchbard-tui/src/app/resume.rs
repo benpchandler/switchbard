@@ -198,6 +198,7 @@ mod tests {
             decode(Some(eight)),
             Restored::Record(ResumeRecord {
                 pr_page: true,
+                inbox_page: false,
                 task_slot: 2,
                 task_view: "{}".into(),
                 task_selected: 7,

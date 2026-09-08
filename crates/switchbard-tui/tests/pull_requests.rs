@@ -290,6 +290,7 @@ fn pr_detail_matches_task_pane_frame_and_empty_state() {
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
         h.press(KeyCode::Enter);
         let task = h.terminal.backend().buffer().clone();
+        let task_row = pane_frame_row(&task, width);
         h.next_list_page();
         h.press(KeyCode::Enter);
         let screen = h.render();
