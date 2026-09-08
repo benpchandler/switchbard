@@ -52,6 +52,7 @@ pub enum PickerPurpose {
     Organize,
     /// `t b`: who should act next on the selected task.
     Ball,
+    Merge,
 }
 
 /// What a column's menu offers; each row is one of these on a letter.
@@ -124,6 +125,8 @@ pub enum Payload {
     ColumnAction(ColumnAction),
     Ball(Option<Ball>),
     NewBallHolder,
+    CancelMerge,
+    Merge(switchbard_core::PrMergeMethod),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -284,6 +287,7 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::Organize => {
             "number or name organizes · the current one again flattens · x off · esc"
         }
+        PickerPurpose::Merge => "number confirms · j/k select · Enter confirms · Esc cancels",
         PickerPurpose::Ball => "number or name picks · new person opens entry · esc",
     }
 }

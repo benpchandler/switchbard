@@ -7,8 +7,10 @@ firm floor; this file records only what is *repo-specific*.
 ## Threat tier
 
 **LOW** — local-first desktop app: no network service, no telemetry, no account, no
-multi-tenant data, no irreversible money/PII operations. The one destructive action
-(`git worktree remove`) is behind an enumerated confirmation dialog.
+multi-tenant data, no irreversible money/PII operations. Destructive actions are worktree removal and owner-confirmed GitHub PR merging.
+PR merging names the wrong-revision/identity threat: core revalidation plus the
+server expected-head guard, a durable intent receipt, and post-write readback are
+required. GitHub does not provide an atomic base/policy/account guard.
 
 But this is a **public, open-source repo**, so the *legibility / craftsmanship* bar is
 HIGH: the code is the project's public face. Treat naming, module size, doc-comments,

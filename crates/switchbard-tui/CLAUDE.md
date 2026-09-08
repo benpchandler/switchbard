@@ -1,5 +1,4 @@
 # sbt - switchbard terminal UI
-
 Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths`. Install: `cargo install --path crates/switchbard-tui`.
 ## Standing commitments (owner-set, 2026-09-02)
 1. Everything the user might tune lives in Lua (`~/.switchbard/tui.lua`, hot reload).
@@ -14,6 +13,7 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
 8. Telemetry (`~/.switchbard/tui-events.jsonl`) records key, action, timing, error.
    `sbt stats` is how we learn what is used, slow, or unbound.
 ## Module map
+- `app/pr_merge.rs` - m prepares merge off-thread; shared confirmation picker defaults to Cancel, digits explicitly confirm a method. Full repo/PR/head/base/viewer must fit before confirming. Pending submits block duplicates, quit and reexec; page switches retain result alerts and core receipt links.
 - `pr_notifications.rs` - bounded session PR change/availability alerts across pages; n dismisses latest. After first PR visit, refresh continues on Tasks. O opens selected PR in the browser.
 - `page.rs` - Tasks / Pull Requests identity and allowed actions; Tab (`page` in Lua) toggles, the header marks the active page. `pull_requests.rs` caches bounded repo reads off-thread; `pr_view.rs` renders the list/detail. PR refresh uses `pr_refresh_seconds` (default 60): the first observation row counts down, shows refreshing in flight, and restarts on completion (including failure); r retries immediately. The source includes Open/Closed/Merged, initially 100 rows; `:more` expands by 100 up to 1000 with explicit partial coverage. `/`, `f`, `s`, `p`, `c`, numbered headers and `v` reuse shared controls with independent PR state; `status:`/`lifecycle:`, `tasks:`, `checks:`, `review:`, `merge:`, `draft:` and `title:` read cached PR fields. Sorting retains selected identity; painting never writes PRs; Enter toggles the right detail pane, j/k select rows, Ctrl-d/u scroll details. Metadata survives optional active-check enrichment failures. State/Tasks/Checks use compact widths; Tasks shows an ID or link count, absent links a dash. Checks shows only check observations (closed/merged: NF, expanded to Not fetched in details); review and merge observations remain separately labeled in details.
 - `app/` - `mod.rs` state, loop, browse keys, commands; `pickers.rs` column/filter/sort

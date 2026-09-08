@@ -3,6 +3,7 @@
 
 mod paint_flow;
 mod pickers;
+pub mod pr_merge;
 mod slots;
 
 use crate::page::Page;
@@ -111,6 +112,7 @@ pub struct App {
     pub page: Page,
     pub pull_requests: crate::pull_requests::PullRequests,
     pub picker: Option<ValuePicker>,
+    pub pr_merge: pr_merge::MergeFlow,
     pub column_purpose: ColumnPurpose,
     pub status: String,
     pub last_screen: String,
@@ -179,6 +181,7 @@ impl App {
             page_size: 20,
             telemetry,
             should_quit: false,
+            pr_merge: pr_merge::MergeFlow::default(),
         };
         app.reload_tasks();
         app.reload_work();
@@ -396,6 +399,7 @@ impl App {
     /// Cheap per-tick work: pick up edits to the config file or the task files.
     pub fn tick(&mut self) {
         self.refresh_pr_state();
+        self.tick_pr_merge();
         if let Some(path) = self.config_path.as_deref() {
             let now = config::modified_at(path);
             if now != self.config_seen {
@@ -515,6 +519,15 @@ impl App {
             Mode::ViewGlobalSlot => self.handle_view_global_slot_key(event),
             Mode::RankChord => self.handle_rank_chord_key(event),
             Mode::BallName => self.handle_ball_name_key(event),
+        }
+        if !self.merge_target_current()
+            || (self.mode != Mode::Browse
+                && !self
+                    .picker
+                    .as_ref()
+                    .is_some_and(|p| p.purpose == PickerPurpose::Merge))
+        {
+            self.cancel_pr_merge();
         }
     }
 
@@ -959,6 +972,17 @@ impl App {
     }
 
     fn apply_pr_action(&mut self, action: &Action) -> bool {
+        if matches!(
+            action,
+            Action::Down
+                | Action::Up
+                | Action::Top
+                | Action::Bottom
+                | Action::PageDown
+                | Action::PageUp
+        ) {
+            self.cancel_pr_merge();
+        }
         if self.pane == Pane::Detail {
             let delta = match action {
                 Action::PageDown => Some(self.page_size as i32),
@@ -973,6 +997,7 @@ impl App {
         }
         match action {
             Action::OpenBrowser => self.open_pr_browser(),
+            Action::Merge => self.open_pr_merge(),
             Action::Down => self.pull_requests.step(1),
             Action::Up => self.pull_requests.step(-1),
             Action::Top => self.pull_requests.step(isize::MIN),
@@ -1017,9 +1042,11 @@ impl App {
             return;
         }
         match action {
+            Action::Merge => self.status = "Switch to Pull Requests to merge a PR".into(),
             Action::OpenBrowser => self.status = "Switch to Pull Requests to open a PR".into(),
             Action::DismissNotifications => self.pull_requests.dismiss_notifications(),
             Action::Page => {
+                self.cancel_pr_merge();
                 self.toggle_page_state();
                 if self.page == Page::PullRequests {
                     self.refresh_pr_state();
@@ -1040,6 +1067,7 @@ impl App {
                 }
             }
             Action::Back => {
+                self.cancel_pr_merge();
                 if self.pane != Pane::None {
                     self.pane = Pane::None;
                 } else if !self.filter_text().is_empty() {
@@ -1092,7 +1120,7 @@ impl App {
                     _ => Pane::Help,
                 }
             }
-            Action::Quit => self.should_quit = true,
+            Action::Quit => self.request_quit(),
             Action::View => {
                 self.mode = Mode::ViewChord;
                 self.status = format!(
@@ -1141,7 +1169,7 @@ impl App {
             "more" if self.page == Page::PullRequests => {
                 self.pull_requests.load_more(&self.repo_root)
             }
-            "q" | "quit" => self.should_quit = true,
+            "q" | "quit" => self.request_quit(),
             "reload" => self.apply(&Action::Reload),
             "open" => self.apply(&Action::OpenBrowser),
             "dismiss" => self.apply(&Action::DismissNotifications),

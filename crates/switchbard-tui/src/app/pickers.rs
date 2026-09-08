@@ -297,6 +297,14 @@ impl App {
     }
 
     pub(super) fn handle_pick_value_key(&mut self, event: KeyEvent) {
+        if self
+            .picker
+            .as_ref()
+            .is_some_and(|p| p.purpose == PickerPurpose::Merge)
+        {
+            self.handle_merge_picker_key(event);
+            return;
+        }
         let Some(picker) = self.picker.as_mut() else {
             self.mode = Mode::Browse;
             return;
@@ -539,6 +547,8 @@ impl App {
             return;
         };
         match (picker.purpose, picked.payload) {
+            (PickerPurpose::Merge, Payload::CancelMerge) => self.cancel_pr_merge(),
+            (PickerPurpose::Merge, Payload::Merge(method)) => self.submit_pr_merge(method),
             (PickerPurpose::Filter(field), Payload::Text(value)) => {
                 let text = Filter::with_only(self.filter_text(), field, &value);
                 self.set_filter(text);

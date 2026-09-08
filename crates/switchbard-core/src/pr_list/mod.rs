@@ -2,7 +2,7 @@
 //! Local task associations belong to generic reference matching, never title guessing.
 mod enrich;
 mod parse;
-mod process;
+pub(crate) mod process;
 
 use std::path::Path;
 use std::time::SystemTime;
