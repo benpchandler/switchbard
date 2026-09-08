@@ -24,31 +24,37 @@ impl App {
         if self.selected_task().is_some() {
             for (key, label, action) in [
                 ('b', "Assign ball", TaskAction::Ball),
-                ('t', "Append to top list", TaskAction::Append),
-                ('d', "Mark Done", TaskAction::Done),
-                ('x', "Drop from top list (Delete)", TaskAction::Drop),
+                ('s', "Status", TaskAction::Status),
+                ('p', "Link project", TaskAction::Project),
+                ('r', "Top list", TaskAction::TopList),
                 ('g', "Link goals", TaskAction::Goals),
             ] {
                 options.push(PickOption::keyed(key, label, Payload::TaskAction(action)));
             }
         }
-        options.push(PickOption::keyed(
-            'p',
-            if self.state.pin_top {
-                "Unpin top list"
-            } else {
-                "Pin top list first"
-            },
-            Payload::TaskAction(TaskAction::Pin),
-        ));
-        if self.selected_task().is_some() {
-            options.extend(
-                (1..=self.top.len().saturating_add(1).min(10000))
-                    .map(|rank| PickOption::numbered(format!("Rank {rank}"), Payload::Rank(rank))),
-            );
-        }
         self.open_picker(PickerPurpose::Task, options);
         self.status.clear();
+    }
+
+    fn open_top_list_picker(&mut self) {
+        let mut options = vec![
+            PickOption::keyed(
+                'a',
+                "Add or move task to end",
+                Payload::TaskAction(TaskAction::Append),
+            ),
+            PickOption::keyed(
+                'x',
+                "Remove task from top list",
+                Payload::TaskAction(TaskAction::Drop),
+            ),
+        ];
+        options.extend(
+            (1..=self.top.len().saturating_add(1).min(10000)).map(|rank| {
+                PickOption::numbered(format!("Move task to position {rank}"), Payload::Rank(rank))
+            }),
+        );
+        self.open_picker(PickerPurpose::TopList, options);
     }
 
     fn run_task_action(&mut self, action: TaskAction) {
@@ -56,12 +62,18 @@ impl App {
             TaskAction::New => self.open_new_task(),
             TaskAction::Ball => self.open_ball_picker(),
             TaskAction::Append => self.set_rank(self.top.len() + 1),
-            TaskAction::Done => self.mark_done(),
+            TaskAction::Status => self.open_task_status_picker(),
+            TaskAction::Project => self.open_task_project_picker(),
+            TaskAction::TopList => self.open_top_list_picker(),
             TaskAction::Drop => self.drop_rank(),
             TaskAction::Goals => self.open_goal_picker(),
             TaskAction::Pin => {
+                let selected = self.selected_task().map(|task| task.id.clone());
                 self.state.pin_top = !self.state.pin_top;
                 self.refilter();
+                if let Some(id) = selected {
+                    self.select_task(&id);
+                }
                 self.status = if self.state.pin_top {
                     "top list pinned first"
                 } else {
@@ -167,8 +179,43 @@ impl App {
     }
 
     pub(super) fn open_picker(&mut self, purpose: PickerPurpose, options: Vec<PickOption>) {
+        if let Some(parent) = self.picker.take() {
+            self.remember_picker_parent(parent, &purpose);
+        }
         self.picker = Some(ValuePicker::new(purpose, options));
         self.mode = Mode::PickValue;
+    }
+
+    fn remember_picker_parent(&mut self, parent: ValuePicker, next: &PickerPurpose) {
+        if parent.purpose == *next {
+            return;
+        }
+        if let Some(index) = self
+            .picker_parents
+            .iter()
+            .position(|picker| picker.purpose == *next)
+        {
+            self.picker_parents.truncate(index);
+        } else {
+            if self.picker_parents.len() == 16 {
+                self.picker_parents.remove(0);
+            }
+            self.picker_parents.push(parent);
+        }
+    }
+
+    fn picker_back(&mut self) {
+        self.picker = self.picker_parents.pop();
+        self.paint_return = match self.picker.as_ref().map(|picker| &picker.purpose) {
+            Some(PickerPurpose::PaintValues(column)) => Some(*column),
+            _ => None,
+        };
+        self.mode = if self.picker.is_some() {
+            Mode::PickValue
+        } else {
+            Mode::Browse
+        };
+        self.status.clear();
     }
 
     pub(super) fn open_columns_picker(&mut self) {
@@ -396,12 +443,37 @@ impl App {
             self.mode = Mode::Browse;
             return;
         };
+        let mut event = event;
+        let legacy_value_initial = matches!(picker.purpose, PickerPurpose::Filter(_))
+            && matches!(event.code, KeyCode::Char('h' | 'l'))
+            && picker.options.iter().any(|option| {
+                let KeyCode::Char(letter) = event.code else {
+                    return false;
+                };
+                Filter::loose_starts_with(&option.label, &letter.to_string())
+            });
+        if event.code == KeyCode::Left
+            || (event.code == KeyCode::Char('h')
+                && picker.typed.is_empty()
+                && !legacy_value_initial)
+        {
+            self.picker_back();
+            return;
+        }
+        if event.code == KeyCode::Right
+            || (event.code == KeyCode::Char('l')
+                && picker.typed.is_empty()
+                && !legacy_value_initial)
+        {
+            event.code = KeyCode::Enter;
+        }
         let last = picker.matching().len().saturating_sub(1);
         let purpose = picker.purpose.clone();
         let typed_empty = picker.typed.is_empty();
         match event.code {
             KeyCode::Esc => {
                 self.picker = None;
+                self.picker_parents.clear();
                 self.mode = Mode::Browse;
                 self.paint_return = None;
                 self.move_origin = None;
@@ -411,6 +483,11 @@ impl App {
             KeyCode::Char('j') if typed_empty => picker.selected = (picker.selected + 1).min(last),
             KeyCode::Char('k') if typed_empty => {
                 picker.selected = picker.selected.saturating_sub(1)
+            }
+            KeyCode::Char('t') if purpose == PickerPurpose::Task && typed_empty => {
+                self.picker = None;
+                self.mode = Mode::Browse;
+                self.run_task_action(TaskAction::Append);
             }
             KeyCode::Char(digit)
                 if digit.is_ascii_digit() && matches!(purpose, PickerPurpose::MoveColumns(_)) =>
@@ -434,12 +511,14 @@ impl App {
             KeyCode::Char(digit) if digit.is_ascii_digit() && typed_empty => {
                 picker.number.push(digit);
                 let index: usize = picker.number.parse().unwrap_or(0);
-                let count = if purpose == PickerPurpose::Task {
+                let count = if matches!(purpose, PickerPurpose::Task | PickerPurpose::TopList) {
                     task_rank_room
                 } else {
                     picker.numbered_count()
                 };
-                let index = if purpose == PickerPurpose::Task && count > 0 {
+                let index = if matches!(purpose, PickerPurpose::Task | PickerPurpose::TopList)
+                    && count > 0
+                {
                     index.min(count)
                 } else {
                     index
@@ -457,12 +536,12 @@ impl App {
                     };
                 } else if could_extend {
                     // Wait: a second digit may still follow (1 when there are 10+).
-                    if purpose == PickerPurpose::Task {
+                    if matches!(purpose, PickerPurpose::Task | PickerPurpose::TopList) {
                         self.status = format!("rank: {index}▏ (another digit, or enter)");
                     }
                 } else {
                     picker.number.clear();
-                    if purpose == PickerPurpose::Task {
+                    if matches!(purpose, PickerPurpose::Task | PickerPurpose::TopList) {
                         self.picker = None;
                         self.mode = Mode::Browse;
                         self.set_rank(index);
@@ -475,7 +554,9 @@ impl App {
             KeyCode::Enter if !picker.number.is_empty() => {
                 let index: usize = picker.number.parse().unwrap_or(0);
                 picker.number.clear();
-                if purpose == PickerPurpose::Task && task_rank_room > 0 {
+                if matches!(purpose, PickerPurpose::Task | PickerPurpose::TopList)
+                    && task_rank_room > 0
+                {
                     self.picker = None;
                     self.mode = Mode::Browse;
                     self.set_rank(index.max(1).min(task_rank_room));
@@ -491,7 +572,8 @@ impl App {
             }
             KeyCode::Enter => self.apply_picked_value(),
             KeyCode::Delete | KeyCode::Backspace
-                if purpose == PickerPurpose::Task && typed_empty =>
+                if matches!(purpose, PickerPurpose::Task | PickerPurpose::TopList)
+                    && typed_empty =>
             {
                 self.picker = None;
                 self.mode = Mode::Browse;
@@ -542,19 +624,6 @@ impl App {
                 if let Some(picker) = self.picker.as_mut() {
                     picker.selected = moved_to;
                 }
-            }
-            KeyCode::Left | KeyCode::Char('h')
-                if typed_empty
-                    && matches!(
-                        purpose,
-                        PickerPurpose::PaintValues(_)
-                            | PickerPurpose::PaintColor(_)
-                            | PickerPurpose::PaintColumn
-                            | PickerPurpose::PaintRules
-                            | PickerPurpose::ChoosePaintRule(_)
-                    ) =>
-            {
-                self.paint_back();
             }
             KeyCode::Char(' ') if matches!(purpose, PickerPurpose::PaintColor(_)) => {
                 let PickerPurpose::PaintColor(pick) = purpose else {
@@ -634,6 +703,9 @@ impl App {
                     PickerPurpose::Settings
                         | PickerPurpose::Goals(_)
                         | PickerPurpose::Task
+                        | PickerPurpose::TaskStatus(_)
+                        | PickerPurpose::TaskProject(_)
+                        | PickerPurpose::TopList
                         | PickerPurpose::Views
                         | PickerPurpose::SaveView
                         | PickerPurpose::GlobalView
@@ -721,6 +793,7 @@ impl App {
             self.status = format!("nothing matches '{typed}'");
             return;
         };
+        let parent = picker.clone();
         match (picker.purpose, picked.payload) {
             (PickerPurpose::PaintRules, Payload::PaintRuleAction(action)) => {
                 self.open_paint_rule_action(action)
@@ -728,8 +801,19 @@ impl App {
             (PickerPurpose::ChoosePaintRule(action), Payload::Rule(index)) => {
                 self.run_paint_rule_action(index, action)
             }
-            (PickerPurpose::Task, Payload::TaskAction(action)) => self.run_task_action(action),
-            (PickerPurpose::Task, Payload::Rank(rank)) => self.set_rank(rank),
+            (
+                PickerPurpose::Task | PickerPurpose::TopList | PickerPurpose::Views,
+                Payload::TaskAction(action),
+            ) => self.run_task_action(action),
+            (PickerPurpose::TaskProject(id), Payload::Project(project)) => {
+                self.change_task_project(&id, project.as_deref())
+            }
+            (PickerPurpose::TaskStatus(id), Payload::Text(status)) => {
+                self.change_task_status(&id, &status)
+            }
+            (PickerPurpose::Task | PickerPurpose::TopList, Payload::Rank(rank)) => {
+                self.set_rank(rank)
+            }
             (PickerPurpose::Views, Payload::ViewSlot(slot)) => {
                 self.switch_view(slot);
                 self.telemetry
@@ -862,6 +946,9 @@ impl App {
             (purpose, payload) => {
                 self.fail(format!("{purpose:?} cannot take {payload:?}"));
             }
+        }
+        if let Some(next) = self.picker.as_ref().map(|picker| picker.purpose.clone()) {
+            self.remember_picker_parent(parent, &next);
         }
     }
 }

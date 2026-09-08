@@ -52,7 +52,7 @@ pub enum Action {
     Page,
     Group,
     Settings,
-    /// The task chord: rank digits, Ball, top-list, completion, and goals actions.
+    /// The task chord: rank digits, Ball, top-list, status, and goals actions.
     Rank,
 }
 

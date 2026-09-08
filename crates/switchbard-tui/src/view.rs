@@ -612,6 +612,8 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                     | PickerPurpose::PaintTarget,
                     Payload::Column(column),
                 ) => app.state.columns.contains(column),
+                (PickerPurpose::TaskProject(id), Payload::Project(project)) => app.tasks().iter().any(|task| task.id == *id && task.project == *project),
+                (PickerPurpose::TaskStatus(id), Payload::Text(status)) => app.tasks().iter().any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
                 (PickerPurpose::MoveColumns(placed), _) => placed.contains(&(index + 1)),
                 (PickerPurpose::PaintRules, Payload::Rule(rule)) => *rule == 0,
                 (PickerPurpose::PaintValues(column), Payload::Text(value)) => {
@@ -707,7 +709,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         && rows.len().saturating_add(4) > height as usize
     {
         let navigation = if width >= 28 {
-            "↑↓ Enter Esc"
+            "↑↓ →open ←back Esc"
         } else {
             "↑↓ Esc"
         };
@@ -792,6 +794,9 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::Ball => "ball".to_string(),
         PickerPurpose::Merge => "Confirm PR merge".to_string(),
         PickerPurpose::Task => "task".to_string(),
+        PickerPurpose::TopList => "task · top list".to_string(),
+        PickerPurpose::TaskProject(id) => format!("{id} · project"),
+        PickerPurpose::TaskStatus(id) => format!("{id} · status"),
         PickerPurpose::Views => "views".to_string(),
         PickerPurpose::SaveView => "save view".to_string(),
         PickerPurpose::GlobalView => "make view global".to_string(),

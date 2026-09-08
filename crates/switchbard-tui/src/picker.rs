@@ -55,6 +55,9 @@ pub enum PickerPurpose {
     Ball,
     Merge,
     Task,
+    TaskStatus(String),
+    TaskProject(String),
+    TopList,
     Views,
     SaveView,
     GlobalView,
@@ -113,7 +116,9 @@ pub enum TaskAction {
     New,
     Ball,
     Append,
-    Done,
+    Status,
+    Project,
+    TopList,
     Drop,
     Pin,
     Goals,
@@ -162,6 +167,7 @@ pub enum Payload {
     SaveView,
     GlobalView,
     GlobalSettings,
+    Project(Option<String>),
     CancelMerge,
     Merge(switchbard_core::PrMergeMethod),
 }
@@ -309,7 +315,7 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::Filter(_) => "number or name picks one · space toggles · esc",
         PickerPurpose::Sort(_) => "number or name picks · esc",
         PickerPurpose::ChooseColumn(_) => "number or name · hidden columns listed last · esc",
-        PickerPurpose::Columns => "↑/↓ select · key or Enter picks · Esc closes",
+        PickerPurpose::Columns => "↑↓/jk select · →/l open · ←/h back · Esc closes",
         PickerPurpose::MoveColumns(_) => "type column numbers in the order you want · enter done",
         PickerPurpose::PaintValues(_) => "value then color · repeats · h back · esc done",
         PickerPurpose::PaintColumn => "number or name · h back · esc",
@@ -319,17 +325,20 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
             "↑/↓ select · key or Enter picks · h back · Esc closes"
         }
         PickerPurpose::ColumnActions(_) => "letter picks · esc",
-        PickerPurpose::Settings => "↑/↓ select · key or Enter picks · Esc closes",
+        PickerPurpose::Settings => "↑↓/jk select · →/l open · ←/h back · Esc closes",
         PickerPurpose::Goals(_) => "number or name attaches or detaches · esc",
         PickerPurpose::Organize => {
             "number or name organizes · the current one again flattens · x off · esc"
         }
         PickerPurpose::Merge => "number confirms · j/k select · Enter confirms · Esc cancels",
         PickerPurpose::Task
+        | PickerPurpose::TaskStatus(_)
+        | PickerPurpose::TaskProject(_)
+        | PickerPurpose::TopList
         | PickerPurpose::Views
         | PickerPurpose::SaveView
         | PickerPurpose::GlobalView
-        | PickerPurpose::ChooseColumnAction(_) => "↑/↓ select · key or Enter picks · Esc closes",
+        | PickerPurpose::ChooseColumnAction(_) => "↑↓/jk select · →/l open · ←/h back · Esc closes",
         PickerPurpose::Ball => "number or name picks · new person opens entry · esc",
     }
 }

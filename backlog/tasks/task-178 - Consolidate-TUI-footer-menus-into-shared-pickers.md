@@ -4,7 +4,7 @@ title: Consolidate TUI footer menus into shared pickers
 status: Done
 assignee: []
 created_date: '2026-09-08 11:58'
-updated_date: '2026-09-08 12:15'
+updated_date: '2026-09-08 12:33'
 labels:
   - tui
   - ux
@@ -27,8 +27,16 @@ Impact: TUI users cannot see or navigate choices that are packed into clipped fo
 - [x] #4 TUI gate passes and corrected installed build preserves PR-enabled revision
 <!-- AC:END -->
 
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Owner visual annotation requests replacing Mark Done with s Status and a subsequent status picker. Implementing before closing the review.
+
+Addressed all five owner annotations: configured Status picker, project linking, arrow/Vim parent navigation, and separate Top list membership from view display. Fixed full-suite filter/paint navigation regressions before installation.
+<!-- SECTION:NOTES:END -->
+
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Installed shared pickers for Task/rank, Views/save/global, column/settings actions and paint-rule actions. Preserved keyboard chords and PR features, shortened footers, added clipped-menu navigation and stale-task cancellation. Isolated tui-install passed fmt, clippy, 112 tests and rustdoc. Nine new behavioral menu tests and six fixture renders; independent review clear. Evidence docs/verification/tui-menu-pickers.md. Branch feat/tui-menu-pickers; no push or primary merge.
+Installed consolidated task/view/column/settings/paint pickers, including tn New, ts Status, tp Project, tr Top list, vp top-list display. Left/Right and Vim navigation supported with documented legacy filter typeahead precedence. Isolated tui-install passed fmt, clippy, 117 tests and rustdoc; nine fixture renders refreshed; all five Visual Review annotations resolved. Evidence docs/verification/tui-menu-pickers.md. Branch feat/tui-menu-pickers; no push or primary merge.
 <!-- SECTION:FINAL_SUMMARY:END -->

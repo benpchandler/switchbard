@@ -1,7 +1,7 @@
 //! The `v` chords: open a slot, save into one, promote one to global.
 
 use crate::app::App;
-use crate::picker::{Payload, PickOption, PickerPurpose};
+use crate::picker::{Payload, PickOption, PickerPurpose, TaskAction};
 use crate::views;
 
 impl App {
@@ -15,6 +15,17 @@ impl App {
             .collect();
         match purpose {
             PickerPurpose::Views => {
+                if self.page == crate::page::Page::Tasks {
+                    options.push(PickOption::keyed(
+                        'p',
+                        if self.state.pin_top {
+                            "Hide top list section"
+                        } else {
+                            "Show top list section"
+                        },
+                        Payload::TaskAction(TaskAction::Pin),
+                    ));
+                }
                 options.push(PickOption::keyed(
                     's',
                     "Save current view",

@@ -30,7 +30,7 @@ fn task_menu_choices_render_and_arrow_selection_creates() {
     assert!(screen.to_lowercase().contains("new"), "{screen}");
     assert!(!screen.contains("a number ranks it"), "{screen}");
     let picker = h.app.picker.as_ref().unwrap();
-    for key in ['n', 'b', 'd', 't', 'p', 'g'] {
+    for key in ['n', 'b', 's', 'r', 'p', 'g'] {
         assert!(
             picker.options.iter().any(|o| o.key == Some(key)),
             "missing {key}"
@@ -195,10 +195,20 @@ fn menu_render_evidence() {
         ("save-view", "vs", 100, 20),
         ("columns", "c", 100, 20),
         ("settings", ",", 100, 20),
+        ("status", "ts", 100, 20),
+        ("project", "tp", 100, 20),
+        ("top-list", "tr", 100, 20),
         ("tasks-narrow", "t", 40, 8),
     ] {
         let mut h = Harness::new();
         h.terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        if keys == "tp" {
+            seed_project(&h.root, "Delivery", "In Progress", None);
+            h.app.tick();
+        }
+        if keys == "tr" {
+            h.type_text("t1");
+        }
         h.type_text(keys);
         let buffer = h.terminal.backend().buffer();
         let cells: Vec<_> = buffer.content.iter().map(|cell| serde_json::json!({
@@ -221,7 +231,8 @@ fn task_menu_keeps_its_target_when_external_tasks_reorder_the_list() {
     h.press(KeyCode::Char('t'));
     seed(&h.root, "A new first task", "To Do", &[]);
     h.app.tick();
-    h.press(KeyCode::Char('d'));
+    h.type_text("sDone");
+    h.press(KeyCode::Enter);
     assert_eq!(
         h.app
             .tasks()
@@ -255,4 +266,65 @@ fn vanished_task_cancels_its_menu_instead_of_retargeting() {
     assert!(!h.app.status.is_empty(), "{screen}");
     h.press(KeyCode::Char('d'));
     assert!(h.app.tasks().iter().all(|task| task.status != "Done"));
+}
+
+#[test]
+fn left_and_vim_back_return_to_parent_and_right_opens_a_choice() {
+    let mut h = Harness::new();
+    h.type_text("ts");
+    h.press(KeyCode::Left);
+    assert!(h.render().contains("New task"));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('h'));
+    assert!(h.render().contains("New task"));
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('v'));
+    let save = h
+        .app
+        .picker
+        .as_ref()
+        .unwrap()
+        .options
+        .iter()
+        .position(|o| o.key == Some('s'))
+        .unwrap();
+    for _ in 0..save {
+        h.press(KeyCode::Char('j'));
+    }
+    h.press(KeyCode::Right);
+    assert!(h.render().contains("save view"));
+    h.press(KeyCode::Char('h'));
+    assert!(h
+        .app
+        .picker
+        .as_ref()
+        .unwrap()
+        .options
+        .iter()
+        .any(|o| o.key == Some('g')));
+    h.press(KeyCode::Esc);
+    assert_eq!(h.app.mode, Mode::Browse);
+}
+
+#[test]
+fn top_list_membership_and_view_display_are_separate_menus() {
+    let mut h = Harness::new();
+    let id = h.app.selected_task().unwrap().id.clone();
+    h.type_text("tr");
+    assert!(h.render().to_lowercase().contains("top list"));
+    let picker = h.app.picker.as_ref().unwrap();
+    assert!(picker
+        .options
+        .iter()
+        .any(|o| o.label.to_lowercase().contains("end")));
+    h.press(KeyCode::Char('a'));
+    assert!(h.app.top.contains(&id));
+    h.type_text("vp");
+    assert!(!h.app.state.pin_top);
+    assert!(
+        h.app.top.contains(&id),
+        "hiding the section must retain membership"
+    );
+    h.type_text("trx");
+    assert!(!h.app.top.contains(&id));
 }

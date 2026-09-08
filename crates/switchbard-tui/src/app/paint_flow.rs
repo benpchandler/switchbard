@@ -234,12 +234,6 @@ impl App {
         }
     }
 
-    /// `h`/Left inside a paint flow: one level up, back to the target list.
-    pub(super) fn paint_back(&mut self) {
-        self.paint_return = None;
-        self.open_paint_target_picker();
-    }
-
     pub(super) fn move_paint_rule(&mut self, index: usize, delta: isize) -> usize {
         let target = index as isize + delta;
         if index < self.state.paint.len()

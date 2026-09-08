@@ -6,6 +6,8 @@ mod paint_flow;
 mod pickers;
 pub mod pr_merge;
 mod slots;
+mod task_project;
+mod task_status;
 
 use crate::page::Page;
 
@@ -106,6 +108,7 @@ pub struct App {
     pub page: Page,
     pub pull_requests: crate::pull_requests::PullRequests,
     pub picker: Option<ValuePicker>,
+    picker_parents: Vec<ValuePicker>,
     pub pr_merge: pr_merge::MergeFlow,
     pub column_purpose: ColumnPurpose,
     pub status: String,
@@ -169,6 +172,7 @@ impl App {
             page: Page::Tasks,
             pull_requests: Default::default(),
             picker: None,
+            picker_parents: Vec::new(),
             column_purpose: ColumnPurpose::Filter,
             status: String::new(),
             last_screen: String::new(),
@@ -787,6 +791,7 @@ impl App {
     }
 
     fn handle_browse_key(&mut self, event: KeyEvent) {
+        self.picker_parents.clear();
         if event.code == KeyCode::Enter && event.kind == KeyEventKind::Repeat {
             return;
         }
@@ -1033,34 +1038,6 @@ impl App {
             }
             Action::Quit => self.request_quit(),
             Action::View => self.open_view_picker(PickerPurpose::Views),
-        }
-    }
-
-    /// `d`: mark the selected task Done. This is deliberately an ordinary
-    /// native status edit, not archival: completed-task retention stays a
-    /// separate, explicit lifecycle decision.
-    fn mark_done(&mut self) {
-        let Some(task) = self.selected_task() else {
-            self.status = "no task selected".to_string();
-            return;
-        };
-        let id = task.id.clone();
-        if task.status.eq_ignore_ascii_case("Done") {
-            self.status = format!("{id} is already Done");
-            return;
-        }
-        let patch = switchbard_core::BacklogTaskPatch {
-            status: Some("Done".to_string()),
-            ..Default::default()
-        };
-        match switchbard_core::edit_backlog_task(&self.repo_root, &id, &patch) {
-            Ok(_) => {
-                self.reload_tasks();
-                self.select_task(&id);
-                self.status = format!("{id} is Done");
-                self.telemetry.record("action", format!("done {id}"));
-            }
-            Err(error) => self.fail(format!("{id}: {error}")),
         }
     }
 
@@ -1419,13 +1396,19 @@ impl App {
                 || self.picker.as_ref().is_some_and(|picker| {
                     matches!(
                         picker.purpose,
-                        PickerPurpose::Task | PickerPurpose::Ball | PickerPurpose::Goals(_)
+                        PickerPurpose::Task
+                            | PickerPurpose::TaskStatus(_)
+                            | PickerPurpose::TaskProject(_)
+                            | PickerPurpose::TopList
+                            | PickerPurpose::Ball
+                            | PickerPurpose::Goals(_)
                     )
                 })
             {
                 self.picker = None;
                 self.mode = Mode::Browse;
                 self.input.clear();
+                self.picker_parents.clear();
                 self.status = format!("{id} is no longer visible; task action canceled");
             }
         }
