@@ -19,7 +19,7 @@ Evidence paths below are relative to `crates/switchbard-tui/tests/`. All tests u
 | --- | --- |
 | Default, active selection, keyboard focus, repeated navigation | `browse.rs`, `menu_pickers.rs`, `list_presentation.rs` |
 | Empty/filter-to-zero, unavailable PR source, retry | `list_presentation.rs`, `pr_controls.rs`, `pull_requests.rs::non_repository_is_unavailable_not_a_successful_empty_list` |
-| Loading | Existing real PR worker journeys; latency-dependent loading render remains a gap for deterministic capture |
+| Loading and cached unavailable state | `pages.rs::pages_render_at_small_and_large_terminal_sizes_with_no_tasks` compares the body against the same cached App error/loading state while retaining the viewport and heading assertions |
 | Group headings, selection through sections | `group.rs` |
 | Many rows (253), viewport-bounded drawing, resize 48x8 / 100x20 / 160x30 | `list_presentation.rs::large_list_keeps_last_selection_visible_after_resize_and_filter` |
 | Long unbroken labels and Japanese script, short/narrow picker, focus return | `list_presentation.rs::long_unicode_picker_labels_are_clipped_and_navigation_retains_focus` |
