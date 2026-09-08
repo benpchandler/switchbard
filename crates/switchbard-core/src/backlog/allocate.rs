@@ -132,8 +132,17 @@ pub fn create_task_allocating_id(
     let tasks_dir = repo_root.join("backlog/tasks");
     fs::create_dir_all(&tasks_dir).with_context(|| format!("creating {}", tasks_dir.display()))?;
     let prefix = configured_task_prefix(repo_root);
+    let mut task = task.clone();
+    if let Some(wanted) = task.parent.as_deref() {
+        let repo = super::parse::load_backlog_repo(repo_root)?;
+        task.parent = Some(
+            super::parent::resolve_parent(&repo.tasks, None, wanted, &prefix)?
+                .id
+                .clone(),
+        );
+    }
     let claimed = claim_task_id(repo_root, task.parent.as_deref())?;
-    let path = write_new_task_file(&tasks_dir, &prefix, &claimed.id, task)?;
+    let path = write_new_task_file(&tasks_dir, &prefix, &claimed.id, &task)?;
     Ok((claimed.id, path))
 }
 
@@ -499,8 +508,17 @@ mod tests {
         for (rel_dir, name) in files {
             let d = dir.join("backlog").join(rel_dir);
             fs::create_dir_all(&d).expect("fixture dirs");
-            fs::write(d.join(name), "---\nid: TASK-0\ntitle: fixture\n---\n")
-                .expect("fixture file");
+            fs::write(
+                d.join(name),
+                format!(
+                    "---\nid: {}\ntitle: fixture\n---\n",
+                    name.split_whitespace()
+                        .next()
+                        .expect("fixture id")
+                        .to_uppercase()
+                ),
+            )
+            .expect("fixture file");
         }
     }
 
@@ -518,7 +536,17 @@ mod tests {
         for (rel_dir, name) in files {
             let d = dir.join("backlog").join(rel_dir);
             fs::create_dir_all(&d).expect("fixture dirs");
-            fs::write(d.join(name), "---\nid: LED-0\ntitle: fixture\n---\n").expect("fixture file");
+            fs::write(
+                d.join(name),
+                format!(
+                    "---\nid: {}\ntitle: fixture\n---\n",
+                    name.split_whitespace()
+                        .next()
+                        .expect("fixture id")
+                        .to_uppercase()
+                ),
+            )
+            .expect("fixture file");
         }
     }
 

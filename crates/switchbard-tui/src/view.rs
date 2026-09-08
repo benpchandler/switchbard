@@ -404,6 +404,9 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         .iter()
         .filter(|action| app.page.allows(action))
         .map(|action| (app.config.bindings_for(action).join(" "), action.name()))
+        .chain(
+            (app.page == Page::Tasks).then(|| ("t a".to_string(), "link parent task".to_string())),
+        )
         .chain(std::iter::once((
             "1-9".to_string(),
             "column actions".to_string(),
@@ -612,6 +615,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                     | PickerPurpose::PaintTarget,
                     Payload::Column(column),
                 ) => app.state.columns.contains(column),
+                (PickerPurpose::TaskParent(id), Payload::Parent(parent)) => app.tasks().iter().any(|task| task.id == *id && task.parent == *parent),
                 (PickerPurpose::TaskProject(id), Payload::Project(project)) => app.tasks().iter().any(|task| task.id == *id && task.project == *project),
                 (PickerPurpose::TaskStatus(id), Payload::Text(status)) => app.tasks().iter().any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
                 (PickerPurpose::MoveColumns(placed), _) => placed.contains(&(index + 1)),
@@ -664,7 +668,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
             let mark = if shown { "✓" } else { " " };
             Line::from(vec![
                 Span::styled(
-                    format!("{:<2}", keys.get(index).cloned().unwrap_or_default()),
+                    format!("{:<2}", if matches!(picker.purpose, PickerPurpose::TaskParent(_)) { String::new() } else { keys.get(index).cloned().unwrap_or_default() }),
                     theme.style(Surface::Accent),
                 ),
                 Span::styled(
@@ -682,6 +686,9 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
             ])
         })
         .collect();
+    if rows.is_empty() && matches!(picker.purpose, PickerPurpose::TaskParent(_)) {
+        lines.push(Line::from("No matching parent tasks"));
+    }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         format!(" {hint}"),
@@ -708,7 +715,9 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
     let block = if picker.purpose != PickerPurpose::Merge
         && rows.len().saturating_add(4) > height as usize
     {
-        let navigation = if width >= 28 {
+        let navigation = if matches!(picker.purpose, PickerPurpose::TaskParent(_)) && width >= 28 {
+            "↑↓ Enter saves Esc"
+        } else if width >= 28 {
             "↑↓ →open ←back Esc"
         } else {
             "↑↓ Esc"
@@ -795,6 +804,7 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::Merge => "Confirm PR merge".to_string(),
         PickerPurpose::Task => "task".to_string(),
         PickerPurpose::TopList => "task · top list".to_string(),
+        PickerPurpose::TaskParent(id) => format!("{id} · parent"),
         PickerPurpose::TaskProject(id) => format!("{id} · project"),
         PickerPurpose::TaskStatus(id) => format!("{id} · status"),
         PickerPurpose::Views => "views".to_string(),

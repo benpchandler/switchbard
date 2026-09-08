@@ -34,12 +34,13 @@
 use super::allocate::{claim_task_id, create_task_allocating_id, strip_id_prefix};
 use super::ball::{Ball, BALL_LABEL_PREFIX};
 use super::goals::rename_task_in_goals;
+use super::parent::{normalized_id, resolve_parent, same_id, task_in_repo, validate_move_source};
 use super::parse::{
     configured_task_prefix, load_backlog_repo, parse_config_statuses, parse_task_file,
     DEFAULT_TASK_PREFIX,
 };
 use super::ranking::rename_task_in_ranking;
-use super::types::{BacklogTask, BacklogTaskPatch, BacklogTaskSource, NewBacklogTask};
+use super::types::{BacklogTaskPatch, BacklogTaskSource, NewBacklogTask};
 use super::write::{
     append_task_acceptance_criteria, append_task_notes, rehome_task_file, replace_task_section,
     revise_task_checklist, set_task_checklist_item, set_task_label, set_task_list_field,
@@ -300,40 +301,10 @@ pub fn move_backlog_task(
     let repo = load_backlog_repo(project_root)?;
     let prefix = configured_task_prefix(project_root);
     let task = task_in_repo(&repo.tasks, task_id, &prefix)?;
-    if task.source != BacklogTaskSource::Active {
-        bail!(
-            "{} is {} - only active tasks (backlog/tasks) can be moved",
-            task.id,
-            task.source.label()
-        );
-    }
-    if repo.tasks.iter().any(|other| {
-        other
-            .parent
-            .as_deref()
-            .is_some_and(|p| same_id(p, &task.id, &prefix))
-    }) {
-        bail!(
-            "{} has sub-issues - move or promote them first (sub-issues nest one level)",
-            task.id
-        );
-    }
-    let parent = match new_parent {
-        Some(wanted) => {
-            let parent = task_in_repo(&repo.tasks, wanted, &prefix)?;
-            if same_id(&parent.id, &task.id, &prefix) {
-                bail!("{} cannot be its own parent", task.id);
-            }
-            if normalized_id(&parent.id, &prefix).contains('.') {
-                bail!(
-                    "{} is itself a sub-issue - sub-issues nest one level, pick a top-level parent",
-                    parent.id
-                );
-            }
-            Some(parent)
-        }
-        None => None,
-    };
+    validate_move_source(&repo.tasks, task, &prefix)?;
+    let parent = new_parent
+        .map(|wanted| resolve_parent(&repo.tasks, Some(task), wanted, &prefix))
+        .transpose()?;
     let current = task.parent.as_deref();
     let unchanged = match (current, parent) {
         (None, None) => true,
@@ -347,8 +318,13 @@ pub fn move_backlog_task(
     let parent_bare = parent.map(|p| normalized_id(&p.id, &prefix).to_string());
     let claimed = claim_task_id(project_root, parent_bare.as_deref())?;
     let new_full_id = format!("{prefix}-{}", claimed.id);
-    rehome_task_file(&task.path, &prefix, &claimed.id, parent_bare.as_deref())
-        .with_context(|| format!("moving {} to {new_full_id}", task.id))?;
+    rehome_task_file(
+        &task.path,
+        &prefix,
+        &claimed.id,
+        parent.map(|p| p.id.as_str()),
+    )
+    .with_context(|| format!("moving {} to {new_full_id}", task.id))?;
 
     for other in &repo.tasks {
         if !other
@@ -386,25 +362,6 @@ pub fn move_backlog_task(
     let _goals = rename_task_in_goals(project_root, &task.id, &new_full_id)
         .context("updating backlog/goals.yml")?;
     Ok(Some(new_full_id))
-}
-
-/// The loaded task whose id matches `wanted` (`TASK-7`, `task-7`, `7`,
-/// `7.2` - the same tolerance every `<ID>` argument gets).
-fn task_in_repo<'r>(
-    tasks: &'r [BacklogTask],
-    wanted: &str,
-    prefix: &str,
-) -> Result<&'r BacklogTask> {
-    tasks
-        .iter()
-        .find(|task| same_id(&task.id, wanted, prefix))
-        .with_context(|| format!("no task {wanted} in this repo"))
-}
-
-/// Two ids name the same task when their bare parts match, ignoring prefix
-/// case (`TASK-7`, `task-7`, and `7` are one task).
-fn same_id(a: &str, b: &str, prefix: &str) -> bool {
-    normalized_id(a, prefix).eq_ignore_ascii_case(normalized_id(b, prefix))
 }
 
 pub fn create_backlog_task(project_root: &Path, task: &NewBacklogTask) -> Result<String> {
@@ -464,13 +421,6 @@ fn resolve_task_file(project_root: &Path, task_id: &str) -> Result<PathBuf> {
     }
 }
 
-fn normalized_id<'a>(task_id: &'a str, prefix: &str) -> &'a str {
-    let trimmed = task_id.trim();
-    strip_id_prefix(trimmed, prefix)
-        .or_else(|| strip_id_prefix(trimmed, DEFAULT_TASK_PREFIX))
-        .unwrap_or(trimmed)
-}
-
 fn filename_matches_id(path: &Path, key: &str, prefix: &str) -> bool {
     let Some(stem) = path.file_stem().and_then(OsStr::to_str) else {
         return false;
@@ -514,6 +464,7 @@ fn move_task_file(from: &Path, dest_dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backlog::BacklogTask;
 
     fn project_with_task(filename: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tempdir");
