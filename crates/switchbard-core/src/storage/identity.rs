@@ -45,11 +45,9 @@ impl Store {
                     {
                         use std::os::unix::fs::MetadataExt;
                         let metadata = std::fs::metadata(root)?;
-                        ensure!(
-                            metadata.dev() == expected_dev && metadata.ino() == expected_ino,
-                            "repository binding was replaced: {}",
-                            root
-                        );
+                        if metadata.dev() != expected_dev || metadata.ino() != expected_ino {
+                            continue;
+                        }
                     }
                 }
                 let identity = super::RepositoryLock::identity(Path::new(root))?;

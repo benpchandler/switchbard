@@ -441,6 +441,7 @@ fn missing_registered_root_keeps_its_repository_and_documents() {
     store
         .mutate(&repo, "task", "1", None, |_| Ok(Some(b"retained".to_vec())))
         .unwrap();
+    std::fs::remove_file(checkout.join(".switchbard-storage.lock")).unwrap();
     std::fs::remove_dir(&checkout).unwrap();
     assert_eq!(store.repository(&checkout).unwrap(), Some(repo.clone()));
     assert_eq!(
