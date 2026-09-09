@@ -10,20 +10,30 @@ impl Store {
         let bindings: Vec<String> = self.connection.prepare(
             "SELECT binding FROM bindings WHERE repo_id=?1 AND (binding LIKE 'git:%' OR binding LIKE 'path:%') ORDER BY binding",
         )?.query_map([&repo.0], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
+        let mut live = Vec::new();
         for binding in bindings {
             let root = binding
                 .strip_prefix("git:")
                 .or_else(|| binding.strip_prefix("path:"))
                 .context("repository has no lockable path binding")?
-                .split_once("#instance:")
+                .rsplit_once("#instance:")
                 .map_or_else(|| binding.as_str(), |(path, _)| path);
             if Path::new(root).exists() {
-                return super::RepositoryLock::acquire(Path::new(root));
+                let identity = super::RepositoryLock::identity(Path::new(root))?;
+                if !live.contains(&identity) {
+                    live.push(identity);
+                }
             }
         }
-        Err(anyhow::anyhow!(
+        ensure!(
+            !live.is_empty(),
             "repository has no live lockable path binding"
-        ))
+        );
+        ensure!(
+            live.len() == 1,
+            "repository has multiple live lock identities; rebind explicitly"
+        );
+        super::RepositoryLock::acquire(&live[0])
     }
 
     pub fn repository(&self, root: &Path) -> Result<Option<RepositoryId>> {

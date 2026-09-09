@@ -118,7 +118,9 @@ pub(super) fn edit<T>(
     transform: impl FnOnce(&str) -> Result<(String, T)>,
 ) -> Result<T> {
     let _repository_lock = RepositoryLock::acquire(
-        root_for_path(path).as_deref().context("task path is outside a repository")?,
+        root_for_path(path)
+            .as_deref()
+            .context("task path is outside a repository")?,
     )?;
     if let Some(root) = root_for_path(path) {
         if let Some((mut store, repo)) = active(&root)? {

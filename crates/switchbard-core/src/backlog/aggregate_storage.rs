@@ -38,7 +38,9 @@ pub(super) fn read(
     if document.deleted {
         return Ok(Some(None));
     }
-    Ok(Some(Some(String::from_utf8(document.content).context("stored aggregate is not UTF-8")?)))
+    Ok(Some(Some(
+        String::from_utf8(document.content).context("stored aggregate is not UTF-8")?,
+    )))
 }
 
 pub(super) fn with_edit<T>(
