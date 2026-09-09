@@ -7,16 +7,23 @@ use uuid::Uuid;
 
 impl Store {
     pub(crate) fn repository_lock_for(&self, repo: &RepositoryId) -> Result<super::RepositoryLock> {
-        let binding: String = self.connection.query_row(
-            "SELECT binding FROM bindings WHERE repo_id=?1 ORDER BY binding LIMIT 1",
-            [&repo.0],
-            |row| row.get(0),
-        )?;
-        let root = binding
-            .strip_prefix("git:")
-            .or_else(|| binding.strip_prefix("path:"))
-            .context("repository has no lockable path binding")?;
-        super::RepositoryLock::acquire(Path::new(root))
+        let bindings: Vec<String> = self.connection.prepare(
+            "SELECT binding FROM bindings WHERE repo_id=?1 AND (binding LIKE 'git:%' OR binding LIKE 'path:%') ORDER BY binding",
+        )?.query_map([&repo.0], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
+        for binding in bindings {
+            let root = binding
+                .strip_prefix("git:")
+                .or_else(|| binding.strip_prefix("path:"))
+                .context("repository has no lockable path binding")?
+                .split_once("#instance:")
+                .map_or_else(|| binding.as_str(), |(path, _)| path);
+            if Path::new(root).exists() {
+                return super::RepositoryLock::acquire(Path::new(root));
+            }
+        }
+        Err(anyhow::anyhow!(
+            "repository has no live lockable path binding"
+        ))
     }
 
     pub fn repository(&self, root: &Path) -> Result<Option<RepositoryId>> {

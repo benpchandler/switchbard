@@ -225,6 +225,12 @@ impl Store {
             plan.sources.first().map(|source| source.source.path.as_path())
         });
         let lock_root = lock_root.context("migration requires repository lock identity")?;
+        if plan.lock_root.is_some() {
+            ensure!(
+                self.repository(lock_root)?.as_ref() == Some(&plan.repo),
+                "migration lock root does not belong to the planned repository"
+            );
+        }
         let _repository_lock = super::RepositoryLock::acquire(lock_root)?;
         let tx = self
             .connection

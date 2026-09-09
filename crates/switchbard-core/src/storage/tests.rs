@@ -5,7 +5,7 @@ fn empty_authority(store: &mut Store, root: &Path, kind: &str) -> RepositoryId {
     let repo = store.bind_repository(root).unwrap();
     let plan = MigrationPlan::capture(repo.clone(), vec![kind.into()], vec![])
         .unwrap()
-        .with_lock_root(root.path());
+        .with_lock_root(root);
     store.apply_migration(&plan).unwrap();
     repo
 }

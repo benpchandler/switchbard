@@ -569,9 +569,9 @@ pub fn write_new_task_file(
     id: &str,
     task: &NewBacklogTask,
 ) -> Result<PathBuf> {
-    let root = tasks_dir.parent().and_then(Path::parent).context("task directory is outside a repository")?;
-    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
     let (path, text) = new_task_document(tasks_dir, prefix, id, task)?;
+    let root = super::task_storage::root_for_path(&path).context("task path is outside a repository")?;
+    let _repository_lock = crate::storage::RepositoryLock::acquire(&root)?;
     if super::task_storage::create(&path, &text)? {
         return Ok(path);
     }
