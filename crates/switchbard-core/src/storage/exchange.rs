@@ -219,6 +219,7 @@ impl Store {
         expected_sequence: u64,
         validate: impl FnOnce(&ExchangeSnapshot) -> Result<()>,
     ) -> Result<RepositoryId> {
+        let _repository_lock = super::RepositoryLock::acquire(root)?;
         incoming.validate()?;
         let binding = repository_binding(root)?;
         let tx = self

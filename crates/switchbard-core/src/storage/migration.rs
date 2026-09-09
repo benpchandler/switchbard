@@ -224,7 +224,8 @@ impl Store {
         let lock_root = plan.lock_root.as_deref().or_else(|| {
             plan.sources.first().map(|source| source.source.path.as_path())
         });
-        let _repository_lock = lock_root.map(super::RepositoryLock::acquire).transpose()?;
+        let lock_root = lock_root.context("migration requires repository lock identity")?;
+        let _repository_lock = super::RepositoryLock::acquire(lock_root)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;

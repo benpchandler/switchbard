@@ -3,7 +3,9 @@ use tempfile::tempdir;
 
 fn empty_authority(store: &mut Store, root: &Path, kind: &str) -> RepositoryId {
     let repo = store.bind_repository(root).unwrap();
-    let plan = MigrationPlan::capture(repo.clone(), vec![kind.into()], vec![]).unwrap();
+    let plan = MigrationPlan::capture(repo.clone(), vec![kind.into()], vec![])
+        .unwrap()
+        .with_lock_root(root.path());
     store.apply_migration(&plan).unwrap();
     repo
 }
@@ -376,7 +378,9 @@ fn multi_kind_edit_is_atomic_and_rehome_retains_locator_history() {
     let repo = empty_authority(&mut store, root.path(), "task");
     store
         .apply_migration(
-            &MigrationPlan::capture(repo.clone(), vec!["goals".into()], vec![]).unwrap(),
+            &MigrationPlan::capture(repo.clone(), vec!["goals".into()], vec![])
+                .unwrap()
+                .with_lock_root(root.path()),
         )
         .unwrap();
     let task = store
