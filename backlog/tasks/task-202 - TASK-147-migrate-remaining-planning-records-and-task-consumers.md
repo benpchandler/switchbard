@@ -4,7 +4,7 @@ title: 'TASK-147: migrate remaining planning records and task consumers'
 status: In Progress
 assignee: []
 created_date: '2026-09-08 19:06'
-updated_date: '2026-09-09 02:44'
+updated_date: '2026-09-09 02:51'
 labels:
   - task-147
   - storage
@@ -37,4 +37,6 @@ Follow-up committed 3bbda583: stale central Refine and legacy-capture/cutover ov
 Owner approved shared per-repository cross-process writer enforcement, plus brief external-editor pause. Resumed managed run01M21XJB3MRP2WB3CJ3V8C9AKX. First lock patch56ed8b66 failed independent audit (source-file Git path, nested aggregate locks, task/hierarchy bypass, absent-kind scope, crash recovery); correction requested through pipeline. This is implementation repair under existing authorization, not a new owner decision. No live activation.
 
 LIVE remaining-planning slice: goals/config/ranking migrated where unambiguous; combined hierarchy plus planning is33verified phases76records across7repositories. Matterline config and Switchbard ranking explicitly held. after-planning.sqlite3 is a verified whole-DB backup. Task cutover preparation refreshed Cambridge inventory44records; originals will remain retained. Concrete legacy public standalone writer regression fixed at8b5d4bb with35focused tests passing. Refine/dispatch custom-context repair underway before central task activation. Owner direction explicitly removes speculative concurrency proof as a rollout prerequisite.
+
+LIVE task slice complete for three unambiguous repos:CambridgeKitchens44, visual-review8, hub22. Total rollout36phases150records; all344retained source variants matched. Cambridge linked task/hierarchy views now identical. Installed46008c2 includes full custom-context consumer fix proven by public fake Refine/dispatch subprocesses after fixture Markdown retirement; small custom values inline and300KiB raw values byte-exact via private Read snapshot. Full local preflight green. Remaining four task backlogs held for reconciliation; no full-mission completion claim.
 <!-- SECTION:NOTES:END -->

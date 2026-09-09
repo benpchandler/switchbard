@@ -4,11 +4,11 @@ title: Central database across repositories with optional single-file Git sync
 status: In Progress
 assignee: []
 created_date: '2026-09-03 22:32'
-updated_date: '2026-09-09 02:42'
+updated_date: '2026-09-09 02:51'
 labels:
   - tui
   - idea
-  - ball:agent
+  - ball:me
 dependencies: []
 priority: medium
 ---
@@ -68,4 +68,6 @@ Migration status: seven-repository disposable shadow rehearsal preserved task/pr
 Owner changed rollout direction: begin live lower-impact migrations now without waiting for speculative concurrency test completion. Preserved all pipeline commits via guarded recovery at 6c484a49; validation ended with full preflight still red (32 standalone legacy write tests), not claimed green. Installed database-capable sb, sbt and signed Switchbard app with original binaries/bundle backed up privately under ~/.switchbard/migration-reviews/task147-20260909-live/installed-before. First LIVE cutover completed: CambridgeKitchens initiative 1 + projects 11, exact ordinary view parity, retained sources unchanged, default ~/.switchbard/switchbard.sqlite3 authoritative for those kinds. Continuing initiative/project phases across other rehearsed repos. Task records remain legacy pending concrete Refine custom-context fix and semantic conflict decisions.
 
 LIVE update: all eligible lower-impact planning phases finished. 33 verified live kind cutovers across seven repositories, 76 central records. Initiatives/projects/goals centrally authoritative in all seven; configuration in six (Matterline held); ranking in six (Switchbard held). Every phase ordinary task/project/initiative/goal views identical and retained sources unchanged. SQLite quick_check ok and after-planning.sqlite3 backup fingerprint verified. Evidence ~/.switchbard/migration-reviews/task147-20260909-live/live-summary.json. The 32 concrete standalone write failures are now fixed in commit8b5d4bb, all35focused tests passing, pending refreshed installed build. Refine/dispatch custom-context repair is in progress; task authority remains on files until that concrete consumer issue is addressed.
+
+Released unfinished by session codex-ta: LIVE migration slice delivered:36verified kind cutovers150central records across7repos; tasks central in CambridgeKitchens44, visual-review8, hub22. All344retained source variants matched; Cambridge linked task/project/initiative views byte-identical after task cutover. Installed sb/sbt/app46008c2; standalone write bug and Refine/dispatch custom-context defect fixed; full mise run preflight passed. Source locally integrated into primary feat/tui-live-work796a04cd, no push/PR. Final consistent backup ~/.switchbard/migration-reviews/task147-20260909-live/after-task-cutovers.sqlite3 and live-summary.json. Mission remains unfinished: task source disagreements in budget/matterline/MusicProduction/switchbard, plus Matterline config and Switchbard ranking. Awaiting owner reconciliation choice; no primary-over-alternate values silently selected. Concurrency proof is not a rollout gate per owner instruction.
 <!-- SECTION:NOTES:END -->
