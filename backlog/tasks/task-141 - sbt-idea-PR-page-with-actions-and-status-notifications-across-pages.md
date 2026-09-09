@@ -4,9 +4,11 @@ title: 'sbt idea: PR page with actions and status notifications across pages'
 status: To Do
 assignee: []
 created_date: '2026-09-03 21:33'
+updated_date: '2026-09-08 12:46'
 labels:
   - tui
   - idea
+  - ball:me
 dependencies: []
 priority: medium
 ---
