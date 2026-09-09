@@ -33,5 +33,5 @@ Evidence: owner request 2026-09-07. At origin/main be9428d, PR observation in cr
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Implemented and installed via mise run tui-install. Full TUI tests, fmt and clippy passed; eight targeted tests including authenticated read-only GitHub tests passed. Countdown displays zero before refreshing and resets on completion; narrow headers retain timer visibility. Independent review has no unresolved findings. Evidence and scoped gaps: docs/tui-pr-refresh-countdown.md and docs/tui-pr-refresh-terminal-evidence.md. Source retained on fix/pr-refresh-countdown; not pushed or merged.
+Implemented at commit 5005d98 on fix/pr-refresh-countdown, retained in /Users/bpc/Dev/.worktrees/switchbard-pr-refresh-countdown and installed to ~/.cargo/bin/sbt. mise run tui-install passed full TUI tests, fmt and clippy; eight targeted tests including live GitHub reads passed. Independent review is clear. Countdown reaches visible zero, shows refreshing in its first-row slot, and resets on completion. No separate refreshing note. QA matrix and terminal evidence live in docs/tui-pr-refresh-countdown.md and docs/tui-pr-refresh-terminal-evidence.md on that branch. No push, PR or merge performed.
 <!-- SECTION:FINAL_SUMMARY:END -->

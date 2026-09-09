@@ -1,0 +1,97 @@
+---
+id: TASK-174
+title: 'sbt idea: create the full task interaction menu under the t key -- create, edit, status change, delete, archive, etc.'
+status: To Do
+assignee: []
+created_date: '2026-09-08 11:34'
+labels:
+  - tui
+  - idea
+dependencies: []
+priority: medium
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Filed from sbt 0.4.0 while at view=v1 filter="status:!done" sort= selected=TASK-173 pane=None.
+
+Impact: create the full task interaction menu under the t key -- create, edit, status change, delete, archive, etc.
+Evidence: screen and action trail below, captured at filing time.
+
+## Screen
+
+```text
+┌ switchbard  v1 · status:!done · hide:done · group:project · 72/136 ────────────────────────────────────┐
+│1 id  2 status    3 pri 4 title                                                                         │
+│80.1  To Do       H     Prove the Task Queue with the Lucella delivery ledger                           │
+│39    To Do       M     Reap dispatch runs orphaned by an app restart                                   │
+│81    To Do       M     RemovalAuthorization: make the force gate a domain type, not a caller-supplied b│
+│38    To Do       M     Unify List/Milestones row selection with Board's stroke-based indicator         │
+│13    To Do       L     Virtualize Backlog task list rows for large repo/task counts                    │
+│61    To Do       L     Landing worker: gh probe has no subprocess timeout                              │
+│31    To Do       L     Tombstone filename collides on same-second consecutive wipes                    │
+│36    To Do       L     Remove-repo confirmation can silently retarget between surfaces                 │
+│68    To Do       L     Format fork: diverge on named wins                                              │
+│87    To Do       H     Digest Tab: Clickable tasks                                                     │
+│110   To Do       H     Goal check-in drafts survive week rollover with stale values                    │
+│137   To Do       H     Owner cannot discover what is waiting on them without being told in chat        │
+│139   To Do       H     Owner cannot see at a glance which tasks an agent session is actively working   │
+│93    To Do       M     Give SB ability to detect refactoring candidates                                │
+│94    To Do       M     Enable "integrations' vs hardcoded / config.                                    │
+│95    To Do       M     sb add <title>: quick capture that falls back to the hub repo outside a Backlog │
+│104   To Do       M     Create sprint from tasks / goals / projects                                     │
+│108   To Do       M     TASK-56's cross-thread repaint race recurs in other backlog_controls.rs tests   │
+│109   To Do       M     Retire the unreachable legacy Backlog lenses                                    │
+│113   To Do       M     Support-request store for Command (NEEDS_DECISION/SITREP)                       │
+│136   To Do       M     sbt: prior text on screen shows after terminal app quit and reload              │
+│140   To Do       M     Id column truncation makes distinct ids look identical; the repeated repo prefix│
+│143   To Do       M     sbt idea: when an idea comes in just start building it                          │
+│144   To Do       M     sbt idea: refactor keyboard shortcuts                                           │
+│145   To Do       M     sbt idea: rename group to outline app wide to match o                           │
+│146   To Do       M     sbt idea: make evidence visisble                                                │
+│147   To Do       M     sbt idea: switchbard persists all data rather than in repo; maybe writes some ki│
+│148   To Do       M     sbt idea: when ranking a task, keep the cursor where the task was rather than mo│
+│149   To Do       M     sbt idea: add a PR column ties to the tasks so u can see what's going on with th│
+│151   To Do       M     sbt idea: migrate agents to graph                                               │
+│155   To Do       M     sbt bug: in progress row 3 fading to brown / flashing brown during loop         │
+│156   To Do       M     sbt idea: improve onboarding                                                    │
+│169   To Do       M     Sent review feedback does not resume Codex after its turn ends                  │
+│171   To Do       M     sbt bug: on PR 481, the app incorrectly reported that the PR wasn't mergeable ev│
+│172   To Do       M     sbt bug: can't see PR tab in musicproduction repo on sbt load?                  │
+│173   To Do       M     sbt bug: when build gets updated, active view gets reset                        │
+│111   To Do       L     Goal page history card recomputes statuses per week per frame                   │
+│112   To Do       L     Digest sections disagree on repo scope when a single repo is drilled in         │
+│114   To Do       L     Perf-doc staleness sweep from IA V2                                             │
+│86    Icebox      M     On Agent Context tab, enable quick actions like delete for commands, hooks, skil│
+│141.1 In Review   M     Share PR column controls and saved view settings with Tasks                     │
+│141.2 In Review   M     Bring PR filters to parity with Tasks                                           │
+│141.3 In Review   M     Bring PR sorting to parity with Tasks                                           │
+│141.4 In Review   M     Bring PR paint to parity with Tasks                                             │
+│                                                                                                        │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+:idea create the full task interaction menu under the t key -- create, edit, status change, delete, archiv
+```
+
+## Action trail
+
+```text
+session_start 0.4.0
+action new_task (0.0ms)
+action new_task_cancel
+action new_task (0.0ms)
+action new_task_cancel
+action task (0.0ms)
+unbound W
+unbound h
+action command (0.0ms)
+report Bug TASK-173
+action command bug (283.7ms)
+action command (0.0ms)
+```
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 Reporter confirms the behaviour in sbt matches what they were trying to do
+<!-- AC:END -->

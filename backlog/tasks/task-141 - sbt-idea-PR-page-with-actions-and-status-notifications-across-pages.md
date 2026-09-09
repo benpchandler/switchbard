@@ -1,18 +1,16 @@
 ---
 id: TASK-141
 title: 'sbt idea: PR page with actions and status notifications across pages'
-status: In Review
+status: To Do
 assignee: []
 created_date: '2026-09-03 21:33'
-updated_date: '2026-09-08 12:20'
+updated_date: '2026-09-08 12:46'
 labels:
   - tui
   - idea
-  - ball:agent
+  - ball:me
 dependencies: []
 priority: medium
-references:
-  - https://github.com/benpchandler/switchbard/pull/138
 ---
 
 ## Description
@@ -111,11 +109,3 @@ action command (0.0ms)
 <!-- AC:BEGIN -->
 - [ ] #1 Reporter confirms the behaviour in sbt matches what they were trying to do
 <!-- AC:END -->
-
-## Implementation Notes
-
-<!-- SECTION:NOTES:BEGIN -->
-Completion resumed from merged PR #136 on isolated feat/finish-task-141. Remaining work: browser action and cross-page bounded PR status alerts. Contract and state matrix: docs/task-141-completion-ledger.md. Reporter confirmation stays unchecked.
-
-Implemented and installed browser O action and cross-page PR status alerts, preserving installed refresh countdown. Full TUI gate and seven real-process/live GitHub journeys passed. All four parity children are merged via PR #136. Original reporter-confirmation AC remains unchecked. Delivery validation follows; see docs/task-141-completion-ledger.md.
-<!-- SECTION:NOTES:END -->

@@ -1,14 +1,20 @@
 ---
 id: TASK-144
 title: 'sbt idea: refactor keyboard shortcuts'
-status: To Do
+status: In Review
 assignee: []
 created_date: '2026-09-03 21:37'
+updated_date: '2026-09-08 18:12'
 labels:
   - tui
   - idea
+  - ball:me
 dependencies: []
 priority: medium
+project: Abstraction
+references:
+  - https://github.com/benpchandler/switchbard/pull/145
+  - https://github.com/benpchandler/switchbard/pull/144
 ---
 
 ## Description
@@ -103,4 +109,38 @@ action command (0.0ms)
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Reporter confirms the behaviour in sbt matches what they were trying to do
+- [x] #2 One shortcut catalog owns Lua action names, help ordering, and page availability; task and legacy rank aliases remain compatible.
+- [x] #3 Real-key E2E tests prove remapped task/new shortcuts create disk tasks and appear in rendered help; PR help excludes task-only actions.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Behavior-preserving extraction of Action metadata into shortcuts.rs; retain config Action export and all key dispatch workflows. Verify current/remapped keys, legacy alias, page-scoped help, and existing task creation tests. Reporter confirmation remains a separate human criterion. State matrix: default/remapped/legacy shortcuts and Tasks/PR help via E2E; empty/narrow/reload via existing pages coverage. Network, write permissions, loading and outcome-unknown are unchanged and N/A to catalog extraction.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented shortcuts.rs catalog: canonical Lua action names, legacy rank alias, ordered help entries and PR availability now share metadata. Config retains Action reexport. Verification: CARGO_TARGET_DIR=/tmp/switchbard-abstractions-shortcuts cargo test -p switchbard-tui --test shortcuts --test create --test pages passed 19 E2E tests (3 new). Covers remapped and direct creation disk writes, legacy rank alias, Tasks/PR help, two-key task capture, empty and tiny/large terminals, restart, failure/retry and Unicode via existing suites. Reporter AC #1 remains unchecked; no human confirmation inferred.
+
+Followup live 80x24 help clipping reproduced with failing real-key E2E: full idea guidance never appeared after 40 j keys. Fixed wrapped separate guidance rows, inner-width columns and bounded help scrolling using configured navigation actions; reopening resets position and scrolling preserves hidden selection. Updated shortcut/create/pages suites pass 20 E2E tests, including 80x24 and 40x8 full guidance access. Root owns filing association and installed live verification.
+
+Released unfinished by session codex-ab: Engineering implementation, checks and isolated installed-binary interaction are complete. Original AC1 requires the human reporter to confirm the refactored shortcut behavior; no confirmation was inferred. Task remains In Review with the ball to the owner.
+
+Delivery correction: local implementation and checks are complete on feat/tui-abstractions, but the agent still owes a PR. Keep visible as In Progress / ball:agent until a concrete review handoff exists. TASK-193 (Inbox and navigation badges) is the owner-prioritized first slice currently being delivered; it does not complete this abstraction task.
+
+PR145 now exists, stacked on Inbox PR144. Agent still owns TASK199 correction and final validation before review handoff; keep In Progress / ball:agent and live delivery claim.
+
+Released unfinished by session codex-ab: Review handoff: PR145 final head6c97bd50 passed6 CI checks with1 expected sidecar scope skip, then was externally merged into Inbox branch, mergeabd06558. Review combined PR144, which remains open against main; its new combined-head CI is tracked separately. Default sbt installation passed170 TUI tests/21 opt-in ignored; native navigation, orange count and linked task/PR checks passed. Human acceptance remains outstanding; TASK144 reporter criterion is not inferred.
+
+Next action: owner reviews combined PR144 and confirms intended behavior; PR145 is merged into its branch, not main.
+
+Latest delivery state: PR144 was externally merged into main at 2026-09-08T22:09:45Z, merge6d0fa5bf50ace83d27bf337a00fc277033761e73. PR145 and combined PR144 each passed6 CI checks plus1 expected scope skip. The combined abd06558 tree exactly matches6c97bd50; default installedd418 runtime differs only in documentation. Next action: owner verifies intended behavior in installed sbt and confirms acceptance; remain In Review / ball:me. TASK144 human reporter criterion remains unchecked. Main push CI is a separate check.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented at code commit 815bcf01 on feat/tui-abstractions in /Users/bpc/Dev/.worktrees/switchbard-abstractions. Final isolated tui-install gate passed formatting, all-target clippy and 141 TUI tests; core suite passed 582 tests and core clippy. Seven opted-in live journeys passed, including authoritative GitHub date painting and a real live work claim. Installed and exercised /Users/bpc/.local/share/switchbard-builds/abstractions/bin/sbt in a real PTY. Existing default installation preserved because it contains an unmerged parent-picker feature. No push, PR or merge. Evidence: docs/tui-abstraction-mission.md and linked task-specific evidence documents. Engineering complete; original reporter-confirmation AC1 remains unchecked.
+<!-- SECTION:FINAL_SUMMARY:END -->
