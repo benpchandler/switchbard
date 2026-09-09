@@ -77,7 +77,7 @@ struct DispatchRow {
 
 impl DispatchRow {
     fn key(&self) -> BacklogTaskKey {
-        (self.repo_root.clone(), self.task.id.clone())
+        BacklogTaskKey::for_task(&self.repo_root, &self.task)
     }
 
     /// Section ordering: things needing attention first. Orphans lead
@@ -435,9 +435,7 @@ fn collect_rows(app: &HiveApp) -> Vec<DispatchRow> {
             if matches!(state, DispatchState::NotFlagged) {
                 continue;
             }
-            let run = runs
-                .get(&(root.clone(), task.id.clone()) as &BacklogTaskKey)
-                .cloned();
+            let run = runs.get(&BacklogTaskKey::for_task(root, task)).cloned();
             let row = DispatchRow {
                 repo_root: root.clone(),
                 repo_name: repo_name.clone(),
@@ -786,6 +784,7 @@ mod tests {
 
     fn task_with_acs(done: usize, total: usize) -> BacklogTask {
         BacklogTask {
+            storage_identity: None,
             id: "TASK-1".to_string(),
             title: "Example".to_string(),
             status: "In Progress".to_string(),

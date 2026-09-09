@@ -676,7 +676,7 @@ fn render_section(
 }
 
 fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &DigestRow<'_>) {
-    let key = (row.repo.key.clone(), row.task.id.clone());
+    let key = crate::runtime::BacklogTaskKey::for_task(&row.repo.key, row.task);
     // `theme::card_bg()`, not `ui.visuals().extreme_bg_color` — the owner UX
     // pass repointed that egui slot to input fields (see theme.rs's doc).
     let frame = egui::Frame::default()

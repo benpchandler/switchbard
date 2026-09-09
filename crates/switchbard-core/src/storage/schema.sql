@@ -1,0 +1,11 @@
+BEGIN IMMEDIATE;
+CREATE TABLE IF NOT EXISTS bindings(binding TEXT PRIMARY KEY, repo_id TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS authority(repo_id TEXT NOT NULL REFERENCES bindings(repo_id), kind TEXT NOT NULL, PRIMARY KEY(repo_id,kind));
+CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY, repo_id TEXT NOT NULL REFERENCES bindings(repo_id), kind TEXT NOT NULL, locator TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), content BLOB NOT NULL, deleted INTEGER NOT NULL CHECK(deleted IN (0,1)), UNIQUE(repo_id,kind,locator));
+CREATE TABLE IF NOT EXISTS revisions(record_id TEXT NOT NULL REFERENCES documents(id), revision INTEGER NOT NULL, content BLOB NOT NULL, deleted INTEGER NOT NULL, PRIMARY KEY(record_id,revision));
+CREATE TABLE IF NOT EXISTS migration_sources(repo_id TEXT NOT NULL REFERENCES bindings(repo_id), kind TEXT NOT NULL, locator TEXT NOT NULL, source_path TEXT NOT NULL, digest TEXT NOT NULL, content BLOB NOT NULL, PRIMARY KEY(repo_id,kind,locator,source_path));
+CREATE TABLE IF NOT EXISTS metadata(sequence INTEGER NOT NULL);
+INSERT INTO metadata SELECT 0 WHERE NOT EXISTS(SELECT 1 FROM metadata);
+PRAGMA application_id=1396855364;
+PRAGMA user_version=1;
+COMMIT;

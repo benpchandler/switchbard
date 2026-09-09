@@ -1,4 +1,6 @@
-# Switchbard repository exchange v1
+# Historical Switchbard repository exchange v1
+
+RETIRED PROPOSAL: this specification is historical, not a production implementation target. See phased-contract.md and historical-evidence.md.
 
 Owner clarification (2026-09-08): [schema flexibility](schema-flexibility.md) is a governing requirement. Use a stable envelope with extensible content, preserve unknown fields and kinds, and avoid schema migrations for custom fields. It extends MUST-004 and MUST-017. Earlier wire/schema/model details require revision where inconsistent; implementation readiness remains open.
 

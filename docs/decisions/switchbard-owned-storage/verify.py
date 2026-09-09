@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decision-stage RED and future product acceptance. Never treats the model as product."""
+"""Current product acceptance: actual named tests plus explicit unmet outcome gates."""
 import datetime
 import hashlib
 import json
@@ -13,50 +13,238 @@ import tempfile
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-# id, kind, label, product suite, exact Rust test name, exercised CLI prerequisite
+# Stable criterion identities; actual current test bindings are in BINDINGS below.
 CHECKS = [
-    ('001', 'behavior', 'All native domain records and workspace ordering persist across two repositories without backlog files', 'core', 'all_domain_records_reload', 'storage'),  # MUST-001
-    ('002', 'behavior', 'Linked worktrees share one scope while independent repos and forks remain separate', 'core', 'repository_identity_and_explicit_binding', 'storage'),  # MUST-002
-    ('003', 'behavior', 'Public locators remain compatible and RecordId survives hierarchy changes', 'core', 'stable_identity_and_locators', 'storage'),  # MUST-003
-    ('004', 'behavior', 'Raw legacy bytes and unresolved optional memberships survive migration and edits', 'core', 'lossless_raw_records_and_optional_memberships', 'migration'),  # MUST-004
-    ('005', 'behavior', 'Whole multi-record command commits or rolls back across processes', 'core', 'multiprocess_atomic_commands', 'storage'),  # MUST-005
-    ('006', 'behavior', 'Stale revisions reject and exact replay is idempotent while mismatched replay rejects', 'core', 'revision_and_command_receipts', 'storage'),  # MUST-006
-    ('007', 'contract', 'Illegal scoped record graphs reject without side effects', 'core', 'graph_constraints', 'storage'),  # MUST-007
-    ('008', 'quality', 'Busy handling terminates within five seconds with retry feedback', 'core', 'busy_timeout_five_seconds', 'storage'),  # MUST-008
-    ('009', 'behavior', 'Migration inventories lifecycle, sibling and branch sources with explicit reconciliation', 'core', 'migration_inventory_and_divergence', 'migration'),  # MUST-009
-    ('010', 'behavior', 'Backup precedes atomic migration activation and source changes abort safely', 'core', 'migration_cutover_and_source_recheck', 'migration'),  # MUST-010
-    ('011', 'behavior', 'Updated clients never write legacy files and report later legacy divergence', 'journey', 'legacy_cutover_no_fallback', 'migration'),  # MUST-011
-    ('012', 'behavior', 'Normal domain edits change no repo files in clean or already dirty worktrees', 'journey', 'normal_edits_no_git_churn', 'storage'),  # MUST-012
-    ('013', 'behavior', 'All consumers and headless queue agree after worktree removal', 'journey', 'consumer_and_queue_conservation', 'storage'),  # MUST-013
-    ('014', 'behavior', 'Refine applies versioned raw content centrally and rejects stale results', 'core', 'refine_versioned_raw_apply', 'storage'),  # MUST-014
-    ('015', 'quality', 'Active GUI and TUI see commits within two seconds with at most one poll per second', 'gui', 'storage_acceptance::active_client_visibility', 'storage'),  # MUST-015
-    ('016', 'behavior', 'Refocus refreshes before writes and concurrent-edit conflicts retain drafts', 'gui', 'storage_acceptance::refocus_and_drafts', 'storage'),  # MUST-016
-    ('017', 'contract', 'One deterministic v1 file round-trips every native record and excludes machine authorities', 'exchange', 'single_file_lossless_envelope', 'export'),  # MUST-017
-    ('018', 'behavior', 'Export uses a consistent snapshot and atomic replacement with recoverable checkpoint ordering', 'exchange', 'atomic_export_and_checkpoint_recovery', 'export'),  # MUST-018
-    ('019', 'behavior', 'Independent target edits are protected and unchanged repeat export is byte-identical', 'exchange', 'export_protection_and_idempotence', 'export'),  # MUST-019
-    ('020', 'behavior', 'Explicit empty bound scope bootstraps while populated scope requires trusted ancestry', 'exchange', 'bootstrap_and_known_base', 'import'),  # MUST-020
-    ('021', 'behavior', 'Three-way merge preserves omissions and detects same-record, locator and tombstone conflicts', 'exchange', 'three_way_merge_and_tombstones', 'import'),  # MUST-021
-    ('022', 'behavior', 'Preview apply rechecks file digest and repository revision before atomic import', 'exchange', 'stale_preview_and_atomic_apply', 'import'),  # MUST-022
-    ('023', 'behavior', 'Explicit resolution preserves originals and validates the complete resulting graph', 'exchange', 'resolution_graph_validation', 'import'),  # MUST-023
-    ('024', 'contract', 'Input boundary limits and malformed or untrusted documents reject without live effects', 'exchange', 'untrusted_input_limits', 'import'),  # MUST-024
-    ('025', 'behavior', 'Canonicalization repairs format without importing or trusting unknown ancestry', 'exchange', 'canonicalize_not_import', 'import'),  # MUST-025
-    ('026', 'behavior', 'Unavailable or corrupt database reports failure without empty success or Markdown fallback', 'journey', 'database_failure_is_explicit', 'storage'),  # MUST-026
-    ('027', 'behavior', 'Database-consistent restore retains post-cutover writes and reverse migration reconciles newer data', 'core', 'backup_restore_and_reverse_migration', 'storage'),  # MUST-027
-    ('028', 'behavior', 'TUI real-key state journeys preserve drafts and existing legacy fixture behavior', 'tui', 'storage_state_and_keyboard_journey', 'storage'),  # MUST-028
-    ('029', 'visual', 'GUI storage states render in narrow current and wide containers against an approved canonical', 'gui', 'storage_acceptance::visual_state_matrix', 'storage'),  # MUST-029
-    ('030', 'visual', 'TUI storage states render at 80x24 and current size against an approved canonical', 'tui', 'storage_visual_state_matrix', 'storage'),  # MUST-030
-    ('031', 'quality', 'Integrated implementation passes platform gates and render performance comparison', 'evidence', 'integration_gates', 'storage'),  # MUST-031
-    ('032', 'behavior', 'Reporter confirms two-client no-PR workflow and independent-clone single-file exchange', 'evidence', 'reporter_journey', 'import'),  # MUST-032
-    ('033', 'contract', 'Authority and compatibility documentation matches tested behavior and preserves independent authorities', 'evidence', 'documentation_review', 'storage'),  # MUST-033
-    ('034', 'contract', 'Storage files and backups preserve private ownership and permissions under permissive umask', 'core', 'storage_privacy_and_path_substitution', 'storage'),  # MUST-034
+    ('001', 'behavior', 'All native domain records and workspace ordering persist across two repositories without backlog files'),  # MUST-001
+    ('002', 'behavior', 'Linked worktrees share one scope while independent repos and forks remain separate'),  # MUST-002
+    ('003', 'behavior', 'Public locators remain compatible and RecordId survives hierarchy changes'),  # MUST-003
+    ('004', 'behavior', 'Raw legacy bytes and custom content survive migration, live edits and projection rebuild'),  # MUST-004
+    ('005', 'behavior', 'Whole multi-record command commits or rolls back across processes'),  # MUST-005
+    ('006', 'behavior', 'Stale revisions reject and exact replay is idempotent while mismatched replay rejects'),  # MUST-006
+    ('007', 'contract', 'Illegal scoped record graphs reject without side effects'),  # MUST-007
+    ('008', 'quality', 'Busy handling terminates within five seconds with retry feedback'),  # MUST-008
+    ('009', 'behavior', 'Migration inventories lifecycle, sibling and branch sources with explicit reconciliation'),  # MUST-009
+    ('010', 'behavior', 'Backup precedes atomic migration activation and source changes abort safely'),  # MUST-010
+    ('011', 'behavior', 'Updated clients never write legacy files and report later legacy divergence'),  # MUST-011
+    ('012', 'behavior', 'Normal domain edits change no repo files in clean or already dirty worktrees'),  # MUST-012
+    ('013', 'behavior', 'All consumers and headless queue agree after worktree removal'),  # MUST-013
+    ('014', 'behavior', 'Refine applies versioned raw content centrally and rejects stale results'),  # MUST-014
+    ('015', 'quality', 'Active GUI and TUI see commits within two seconds with at most one poll per second'),  # MUST-015
+    ('016', 'behavior', 'Refocus refreshes before writes and concurrent-edit conflicts retain drafts'),  # MUST-016
+    ('017', 'contract', 'One deterministic current-state file preserves native/custom/opaque records and excludes machine authorities'),  # MUST-017
+    ('018', 'behavior', 'Export uses a consistent snapshot and atomic replacement with recoverable checkpoint ordering'),  # MUST-018
+    ('019', 'behavior', 'Independent target edits are protected and unchanged repeat export is byte-identical'),  # MUST-019
+    ('020', 'behavior', 'Explicit bound bootstrap and causal peer exchange preserve newer work'),  # MUST-020
+    ('021', 'behavior', 'Causal merge preserves omissions and detects document, locator and tombstone conflicts'),  # MUST-021
+    ('022', 'behavior', 'Preview apply rechecks file digest and repository revision before atomic import'),  # MUST-022
+    ('023', 'behavior', 'Explicit resolution preserves originals and validates the complete resulting graph'),  # MUST-023
+    ('024', 'contract', 'Input boundary limits and malformed or untrusted documents reject without live effects'),  # MUST-024
+    ('025', 'behavior', 'Canonicalization repairs format without importing or trusting unknown ancestry'),  # MUST-025
+    ('026', 'behavior', 'Unavailable or corrupt database reports failure without empty success or Markdown fallback'),  # MUST-026
+    ('027', 'behavior', 'Database-consistent restore retains post-cutover writes and reverse migration reconciles newer data'),  # MUST-027
+    ('028', 'behavior', 'TUI real-key state journeys preserve drafts and existing legacy fixture behavior'),  # MUST-028
+    ('029', 'visual', 'GUI storage states render in narrow current and wide containers against an approved canonical'),  # MUST-029
+    ('030', 'visual', 'TUI storage states render at 80x24 and current size against an approved canonical'),  # MUST-030
+    ('031', 'quality', 'Integrated implementation passes platform gates and render performance comparison'),  # MUST-031
+    ('032', 'behavior', 'Reporter confirms two-client no-PR workflow and independent-clone single-file exchange'),  # MUST-032
+    ('033', 'contract', 'Authority and compatibility documentation matches tested behavior and preserves independent authorities'),  # MUST-033
+    ('034', 'contract', 'Storage files and backups preserve private ownership and permissions under permissive umask'),  # MUST-034
 ]
+
 SUITES = {
-    'core': ['cargo', 'test', '-p', 'switchbard-core', '--test', 'central_storage', '--', '--color', 'never'],
-    'exchange': ['cargo', 'test', '-p', 'switchbard-core', '--test', 'storage_exchange', '--', '--color', 'never'],
-    'journey': ['cargo', 'test', '-p', 'switchbard-task', '--test', 'storage_journey', '--', '--color', 'never'],
-    'tui': ['cargo', 'test', '-p', 'switchbard-tui', '--test', 'central_storage', '--', '--color', 'never'],
-    'gui': ['cargo', 'test', '-p', 'switchbard-gui', 'storage_acceptance::', '--', '--color', 'never'],
+    'core': ['cargo', 'test', '-p', 'switchbard-core', '--lib', '--', 'storage::',
+             'backlog::task_storage::', 'backlog::hierarchy::storage_tests::',
+             'backlog::aggregate_storage::', 'backlog::migration::', 'backlog::storage_validation::', '--color', 'never'],
+    'journey': ['cargo', 'test', '-p', 'switchbard-task', '--test', 'storage', '--test', 'storage_recovery', '--', '--color', 'never'],
+    'file': ['cargo', 'test', '-p', 'switchbard-task', '--bin', 'sb', '--', 'storage_exchange_file::tests::', '--color', 'never'],
 }
+
+# Every actual supporting test is parsed independently; residual gaps prevent aggregate PASS.
+BINDINGS = {'001': [('core', 'storage::tests::per_kind_authority_and_flexible_bytes_survive_reopen'),
+         ('core',
+          'backlog::task_storage::tests::task_cutover_all_lifecycles_read_and_edit_after_source_files_disappear'),
+         ('core',
+          'backlog::hierarchy::storage_tests::hierarchy_empty_cutover_creates_without_legacy_directories_and_renames_stably'),
+         ('core',
+          'backlog::aggregate_storage::tests::aggregate_empty_authority_creates_without_backlog_files'),
+         ('core',
+          'storage::workspace_order::tests::workspace_ordering_stays_local_and_follows_stable_targets_after_rehome_and_rebind')],
+ '002': [('core', 'storage::tests::linked_worktrees_share_identity'),
+         ('core', 'storage::tests::moved_repository_explicit_rebind_retains_old_alias_and_epoch'),
+         ('core', 'storage::tests::reused_git_path_never_silently_joins_old_identity'),
+         ('core', 'storage::tests::rebind_cannot_take_another_repository_binding'),
+         ('core',
+          'storage::exchange::tests::separate_local_bindings_can_explicitly_share_repository_identity'),
+         ('journey', 'rebind_cli_preserves_repository_content_at_new_checkout')],
+ '003': [('core', 'backlog::task_storage::tests::task_cutover_lifecycle_moves_keep_identity_and_sources'),
+         ('core',
+          'backlog::task_storage::tests::task_cutover_reparent_commits_dependencies_and_aggregates_together'),
+         ('core',
+          'backlog::hierarchy::storage_tests::hierarchy_empty_cutover_creates_without_legacy_directories_and_renames_stably'),
+         ('core',
+          'storage::workspace_order::tests::workspace_ordering_stays_local_and_follows_stable_targets_after_rehome_and_rebind')],
+ '004': [('core', 'storage::tests::per_kind_authority_and_flexible_bytes_survive_reopen'),
+         ('core',
+          'backlog::task_storage::tests::task_cutover_preserves_custom_content_and_projection_and_multi_field_atomicity'),
+         ('core',
+          'backlog::hierarchy::storage_tests::hierarchy_cutover_preserves_projection_and_custom_content_without_file_writes'),
+         ('core',
+          'backlog::aggregate_storage::tests::aggregate_cutover_preserves_raw_extensions_and_reads_changed_values'),
+         ('core', 'storage::exchange::tests::readable_unknown_content_and_binary_round_trip'),
+         ('journey', 'custom_document_edit_is_lossless_revision_checked_and_requires_no_schema_change')],
+ '005': [('core', 'storage::tests::independent_connections_do_not_lose_read_modify_writes'),
+         ('core', 'storage::tests::multi_kind_edit_is_atomic_and_rehome_retains_locator_history'),
+         ('core',
+          'backlog::hierarchy::storage_tests::hierarchy_central_project_rename_late_failure_rolls_back_every_kind'),
+         ('core',
+          'backlog::task_storage::tests::task_cutover_concurrent_creates_are_distinct_without_markdown_writes')],
+ '006': [('core', 'storage::tests::stale_revision_and_closure_failure_have_no_effect'),
+         ('core', 'storage::exchange::tests::concurrent_equal_content_coalesces_and_replay_is_idempotent')],
+ '007': [('core',
+          'backlog::storage_validation::tests::duplicate_task_ids_across_lifecycles_and_definition_names_reject'),
+         ('core',
+          'backlog::storage_validation::tests::resolved_cycles_reject_but_optional_missing_targets_remain_raw'),
+         ('core', 'backlog::storage_validation::tests::checked_bind_rolls_back_malformed_native_documents'),
+         ('core', 'storage::exchange::tests::domain_validator_failure_rolls_back_import_and_binding')],
+ '008': [],
+ '009': [('core', 'backlog::migration::tests::inventory_preserves_custom_bytes_and_rejects_divergence'),
+         ('core', 'backlog::migration::tests::unmerged_branch_only_definition_refuses_cutover'),
+         ('core', 'backlog::migration::tests::identical_branch_source_passes_and_ref_change_changes_digest'),
+         ('core', 'backlog::migration::tests::obsolete_ancestor_and_unchanged_branch_content_do_not_block'),
+         ('core', 'storage::tests::duplicate_sources_require_equal_bytes'),
+         ('core',
+          'backlog::task_storage::tests::task_cutover_all_lifecycles_read_and_edit_after_source_files_disappear')],
+ '010': [('core', 'storage::tests::migration_rechecks_sources_and_preserves_original_bytes'),
+         ('core', 'storage::tests::migration_failure_rolls_back_documents_provenance_and_authority'),
+         ('journey', 'stale_migration_preview_rejects_without_database_or_source_effects')],
+ '011': [('journey', 'initiative_cutover_preserves_reads_custom_content_and_legacy_files'),
+         ('journey', 'corrupt_database_cannot_silently_write_legacy_definition'),
+         ('core',
+          'backlog::task_storage::tests::task_cutover_all_lifecycles_read_and_edit_after_source_files_disappear')],
+ '012': [('journey', 'initiative_cutover_preserves_reads_custom_content_and_legacy_files'),
+         ('core',
+          'backlog::task_storage::tests::task_cutover_concurrent_creates_are_distinct_without_markdown_writes'),
+         ('core',
+          'backlog::hierarchy::storage_tests::hierarchy_cutover_preserves_projection_and_custom_content_without_file_writes'),
+         ('core',
+          'backlog::aggregate_storage::tests::aggregate_cutover_preserves_raw_extensions_and_reads_changed_values')],
+ '013': [('core',
+          'backlog::task_storage::tests::task_cutover_all_lifecycles_read_and_edit_after_source_files_disappear')],
+ '014': [],
+ '015': [],
+ '016': [],
+ '017': [('core', 'storage::exchange::tests::readable_unknown_content_and_binary_round_trip'),
+         ('core',
+          'storage::exchange::tests::utf8_lines_preserve_final_newline_crlf_and_reject_ambiguous_fragments'),
+         ('journey', 'two_cli_peers_bootstrap_edit_and_skip_exports_without_replaying_history'),
+         ('core',
+          'backlog::storage_validation::tests::custom_nested_content_and_custom_status_survive_validation_exactly')],
+ '018': [('file',
+          'storage_exchange_file::tests::competing_export_and_independent_file_change_are_preserved')],
+ '019': [('file', 'storage_exchange_file::tests::competing_export_and_independent_file_change_are_preserved'),
+         ('journey', 'two_cli_peers_bootstrap_edit_and_skip_exports_without_replaying_history')],
+ '020': [('core', 'storage::exchange::tests::bootstrap_edit_export_back_and_empty_kind'),
+         ('core', 'storage::exchange::tests::skipped_exports_and_alternating_imports'),
+         ('core', 'storage::exchange::tests::stale_snapshot_and_omission_never_roll_back_or_delete'),
+         ('core',
+          'storage::exchange::tests::restored_database_rotates_replica_and_divergent_changes_conflict'),
+         ('core', 'storage::exchange::tests::equal_clock_different_content_and_wrong_epoch_reject'),
+         ('journey', 'two_cli_peers_bootstrap_edit_and_skip_exports_without_replaying_history')],
+ '021': [('core', 'storage::exchange::tests::offline_disjoint_edits_converge'),
+         ('core',
+          'storage::exchange::tests::same_record_conflict_is_atomic_and_explicit_resolution_converges'),
+         ('core', 'storage::exchange::tests::stale_snapshot_and_omission_never_roll_back_or_delete'),
+         ('core', 'storage::exchange::tests::edit_tombstone_conflicts_and_tombstone_dominates_stale_replay'),
+         ('core', 'storage::exchange::tests::equal_clock_different_content_and_wrong_epoch_reject'),
+         ('core', 'storage::exchange::tests::concurrent_equal_content_coalesces_and_replay_is_idempotent'),
+         ('core',
+          'storage::exchange::tests::offline_creation_collision_requires_explicit_relocation_and_preserves_both'),
+         ('core',
+          'backlog::storage_validation::tests::duplicate_task_ids_across_lifecycles_and_definition_names_reject')],
+ '022': [('core', 'storage::exchange::tests::stale_preview_and_record_locator_collision_have_no_effect'),
+         ('core', 'storage::exchange::tests::bind_preview_sequence_is_rechecked_under_writer_lock'),
+         ('journey', 'stale_migration_preview_rejects_without_database_or_source_effects')],
+ '023': [('core',
+          'storage::exchange::tests::same_record_conflict_is_atomic_and_explicit_resolution_converges'),
+         ('core', 'storage::exchange::tests::domain_validator_failure_rolls_back_import_and_binding'),
+         ('core', 'backlog::storage_validation::tests::checked_bind_rolls_back_malformed_native_documents')],
+ '024': [('core', 'storage::exchange::tests::duplicate_outer_and_clock_keys_and_counter_exhaustion_reject'),
+         ('core',
+          'backlog::storage_validation::tests::native_paths_are_confined_and_unknown_kind_stays_opaque'),
+         ('core',
+          'backlog::storage_validation::tests::malformed_known_yaml_rejects_instead_of_falling_back_to_empty'),
+         ('core', 'backlog::storage_validation::tests::config_and_aggregate_singleton_semantics_are_checked'),
+         ('core', 'storage::exchange::tests::json_nesting_has_an_explicit_32_level_boundary')],
+ '025': [],
+ '026': [('core', 'storage::tests::malformed_database_never_falls_back_to_legacy'),
+         ('core', 'storage::tests::lost_established_database_never_restores_legacy_authority'),
+         ('core', 'storage::tests::unknown_schema_and_foreign_database_are_rejected'),
+         ('core',
+          'backlog::hierarchy::storage_tests::hierarchy_database_failure_never_reads_or_writes_legacy_fallback'),
+         ('journey', 'corrupt_database_cannot_silently_write_legacy_definition')],
+ '027': [('core', 'storage::tests::backup_restores_authority_documents_and_provenance'),
+         ('core',
+          'storage::exchange::tests::restored_database_rotates_replica_and_divergent_changes_conflict'),
+         ('journey', 'backup_restore_preserves_all_table_fingerprint_and_original_backup_bytes'),
+         ('journey', 'recovery_refuses_existing_files_and_missing_database_with_marker'),
+         ('journey', 'empty_or_non_sqlite_restore_source_is_not_treated_as_a_fresh_database')],
+ '028': [],
+ '029': [],
+ '030': [],
+ '031': [],
+ '032': [],
+ '033': [],
+ '034': [('core', 'storage::tests::private_database_and_symlink_rejection'),
+         ('core', 'backlog::migration::tests::symlinked_parent_directory_is_rejected')]}
+GAPS = {'001': 'Need one combined two-repo full-domain reload/config/workspace-order journey and actual phased '
+        'migration evidence; current tests establish slices.',
+ '002': 'Need explicit fork-not-autobound journey and independent-clone scope decision coverage.',
+ '003': 'GUI selection/draft/lock/cache rebind and reparent identity journey not yet mapped.',
+ '004': 'Projection rebuild, newer payload-version handling and built-in/custom name promotion are unproved; '
+        'schema-unchanged test name does not assert actual schema version.',
+ '005': 'Current independent connections use threads; independent-process full-command rollback and receipt '
+        'effects not proved.',
+ '006': 'No command_id receipts or mismatched-ID replay test; causal import replay is a different contract.',
+ '007': 'Known native graphs validate; explicitly required dangling-link/deletion-plan semantics and '
+        'immutable kind/lifecycle transitions need complete tests.',
+ '008': 'No real competing-lock wall-clock measurement <=5s and retry-feedback test.',
+ '009': '',
+ '010': 'Need protected backup-before-activation failure injection and migration CLI branch-ref preview '
+        'invalidation assertion.',
+ '011': 'Later legacy-file divergence reporting without auto-import not proved.',
+ '012': 'Need clean and already-dirty Git status/bytes comparisons for every native command family; current '
+        'source preservation is narrower.',
+ '013': 'Need native GUI/TUI/headless queue/refine/dispatch same-record journey after execution-worktree '
+        'deletion and cross-repo RunId artifact isolation.',
+ '014': 'No central versioned refine result/apply/stale-result journey bound.',
+ '015': 'No measured two-running-native-client <=2000ms visibility and <=1Hz poll evidence.',
+ '016': 'No actual GUI/TUI refocus-before-write and retained dirty-draft conflict journey bound.',
+ '017': 'Need independent fixed v2 wire golden comparison, all-native-domain roundtrip and reviewed '
+        'independent-edit PR diffs; newer content-version behavior unproved.',
+ '018': 'Need concurrent consistent-snapshot export and write/rename/ambiguous-outcome fault-injection '
+        'recovery proof.',
+ '019': 'Need exact unchanged repeated CLI export bytes and edited-target reconcile/replace journeys.',
+ '020': 'Epoch mismatch rejects, but explicit epoch compaction/reconciliation and full native-domain peer '
+        'journeys remain unproved.',
+ '021': '',
+ '022': 'Need changed exact source bytes between import preview/apply rejection (semantic snapshot digest is '
+        'not exact file-byte digest).',
+ '023': 'Need explicit custom-resolution complete native graph rejection and retained conflicting originals '
+        'recovery evidence.',
+ '024': 'Explicit depth32 and counter exhaustion have tests; inclusive/one-over 64MiB,100k,4MiB,128-clock '
+        'and full malformed-form corpus with zero live effects remain unproved.',
+ '025': 'No public canonicalize workflow implemented or tested.',
+ '026': '',
+ '027': 'Backup/reopen and supported CLI restore now have product tests; lossless reverse migration of '
+        'post-cutover data remains unproved.',
+ '028': 'No real-key TUI storage state/retained draft/legacy fixture journey bound.',
+ '029': 'No approved canonical plus complete real GUI state/container renders.',
+ '030': 'No approved canonical plus complete real TUI state/container renders.',
+ '031': '',
+ '032': '',
+ '033': '',
+ '034': 'Need permissive-umask, sidecar/backup/new-directory modes, foreign-owner substitution and '
+        'existing-directory non-chmod evidence.'}
 
 
 def run(command, env, timeout=180):
@@ -200,6 +388,7 @@ def traceability_check(contract, checks):
     return bool(expected) and len(set(expected)) == len(expected) and len({c[0] for c in actual}) == len(actual) and expected == actual
 
 
+
 def main():
     if not traceability_check((HERE / 'acceptance.md').read_text(), CHECKS):
         print('FAIL: missing, duplicate or mismatched acceptance traceability', file=sys.stderr)
@@ -217,84 +406,54 @@ def main():
     # Retain a config path (or inherited GH_TOKEN); never read or print credentials.
     env.setdefault('GH_CONFIG_DIR', str(Path(env.get('XDG_CONFIG_HOME', str(original_home / '.config'))) / 'gh'))
     env['CARGO_TARGET_DIR'] = str(Path(tempfile.gettempdir()) / ('switchbard-storage-contract-' + hashlib.sha256(str(ROOT).encode()).hexdigest()[:16]))
-    probes = {}
     runners = {}
     with tempfile.TemporaryDirectory(prefix='switchbard-storage-acceptance-') as temp:
         sandbox = Path(temp)
-        for name in ('home', 'config', 'data', 'cache', 'repo'):
+        for name in ('home', 'config', 'data', 'cache'):
             (sandbox / name).mkdir()
         env.update(HOME=str(sandbox / 'home'), XDG_CONFIG_HOME=str(sandbox / 'config'),
-                   XDG_DATA_HOME=str(sandbox / 'data'), XDG_CACHE_HOME=str(sandbox / 'cache'))
-        for seam, args in {
-            'storage': ['storage', '--help'],
-            'migration': ['storage', 'migrate', '--help'],
-            'export': ['storage', 'export', '--help'],
-            'import': ['storage', 'import', '--help'],
-        }.items():
-            command = ['cargo', 'run', '-q', '-p', 'switchbard-task', '--', '--repo',
-                       str(sandbox / 'repo'), *args]
-            probes[seam] = run(command, env)
-        # Prerequisite RED avoids expensive future suites when the real CLI rejects the seam.
-        if all(p['returncode'] == 0 for p in probes.values()):
-            for suite, command in SUITES.items():
-                runners[suite] = run(command, env, timeout=600)
+                   XDG_DATA_HOME=str(sandbox / 'data'), XDG_CACHE_HOME=str(sandbox / 'cache'),
+                   SWITCHBARD_DATABASE=str(sandbox / 'isolated.sqlite3'))
+        for suite, command in SUITES.items():
+            runners[suite] = run(command, env, timeout=900)
         criteria = []
-        for number, kind, label, suite, test, seam in CHECKS:
-            probe = probes[seam]
-            ok = False
+        for number, kind, label in CHECKS:
+            support = []
+            for suite, name in BINDINGS[number]:
+                passed, matches = named_test_check(runners[suite], name)
+                support.append({'suite': suite, 'test': name, 'status': 'pass' if passed else 'fail',
+                                'runner_exit': runners[suite]['returncode'], 'named_results': matches})
             metric = None
-            if probe['returncode'] != 0:
-                evidence = ('Observed workspace CLI prerequisite failure; full outcome remains unproved. '
-                            + probe['output'].strip())
-                check_type = 'api-roundtrip'
-            elif test == 'integration_gates':
+            gap = GAPS[number]
+            ok = bool(support) and all(item['status'] == 'pass' for item in support) and not gap
+            evidence = gap or 'All bound actual named tests passed with no declared residual gap.'
+            if number == '031':
                 ok, evidence, metric = quality_check(commit, env, runners)
-                check_type = 'measurement'
-            elif suite == 'evidence':
-                ok, evidence = evidence_check(test, commit)
-                check_type = 'measurement' if kind == 'quality' else 'named-test'
-            else:
-                runner = runners.get(suite, {'returncode': -1, 'output': 'prerequisite failure'})
-                ok, matches = named_test_check(runner, test)
-                evidence = f'{suite}::{test}: exit={runner["returncode"]}, named_results={matches}'
-                check_type = 'named-test'
-                if kind == 'visual':
-                    visual_ok, visual_evidence = evidence_check(test, commit)
-                    ok = ok and visual_ok
-                    evidence += '; ' + visual_evidence
+            elif number in ('032', '033'):
+                ok, evidence = evidence_check('reporter_journey' if number == '032' else 'documentation_review', commit)
+            elif kind == 'visual':
+                _, evidence = evidence_check('storage_acceptance::visual_state_matrix' if number == '029' else 'storage_visual_state_matrix', commit)
+                evidence = gap + '; ' + evidence
+                ok = False  # No real native visual test currently bound; artifacts alone cannot pass.
+            if any(item['status'] == 'fail' for item in support):
+                evidence += '; missing/failed actual named tests listed in supporting_tests'
             criteria.append({'id': 'MUST-' + number, 'kind': kind, 'label': label,
-                             'status': 'pass' if ok else 'fail', 'check_type': check_type,
-                             'evidence': evidence, 'metric': metric, 'named_test': test})
+                'status': 'pass' if ok else 'fail',
+                'check_type': 'measurement' if kind == 'quality' else 'named-test',
+                'evidence': evidence, 'metric': metric, 'supporting_tests': support,
+                'residual_gap': gap})
     failures = [c['id'] for c in criteria if c['status'] != 'pass']
     # No fake all_flipped claim: first behavior GREEN needs production mutation validation.
     deferred = [c['id'] for c in criteria if c['kind'] in ('behavior', 'contract')]
     mutation_gate = {'all_flipped': False, 'mutations': [], 'deferred': deferred,
                      'reason': 'Production mutations deferred to first GREEN; each behavior and distinct schema target must flip.'}
-    if not failures:
-        try:
-            proof = json.loads((HERE / 'mutation-evidence.json').read_text())
-            assert proof['commit'] == commit
-            entries = {entry['criterion_id']: entry for entry in proof['mutations']}
-            assert len(entries) == len(proof['mutations'])
-            for criterion in deferred:
-                entry = entries[criterion]
-                assert entry['flipped'] is True and entry['restored'] is True
-                assert entry['mutation_file'].startswith('crates/') and entry['mutation_diff']
-                for phase, expected in (('before', 'pass'), ('mutated', 'fail'), ('restored', 'pass')):
-                    artifact = entry['runs'][phase]
-                    target = (ROOT / artifact['path']).resolve()
-                    assert target.is_relative_to(ROOT)
-                    assert hashlib.sha256(target.read_bytes()).hexdigest() == artifact['sha256']
-                    run_result = json.loads(target.read_text())
-                    matched = [c for c in run_result['criteria'] if c['id'] == criterion]
-                    assert len(matched) == 1 and matched[0]['status'] == expected
-            mutation_gate = {'all_flipped': True, 'mutations': proof['mutations'], 'deferred': []}
-        except (OSError, ValueError, KeyError, TypeError, AssertionError) as error:
-            mutation_gate['reason'] = 'Missing/invalid production mutation evidence: ' + str(error)
+    # Earlier artifact-only proof accepted asserted statuses without actual mutation execution.
+    # Fail closed: no supplied JSON can self-certify this independent production-proof gate.
+    mutation_gate['reason'] = 'Actual production mutation execution and independent revision-bound review remain unproved; artifact-only status assertions cannot pass.'
     result = {'plan': 'switchbard-owned-storage', 'result': 'FAIL' if failures else ('PASS' if mutation_gate['all_flipped'] else 'PARTIAL'),
               'commit': commit, 'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-              'criteria': criteria, 'metrics': {}, 'artifacts': ['acceptance.md', 'verify.py'],
-              'skipped': [], 'failures': failures, 'probes': probes, 'runners': runners,
+              'criteria': criteria, 'metrics': {}, 'scope_note': 'Whole-mission catalog; partial kind slices cannot satisfy aggregate criteria. Historical model/wire artifacts are not current coverage. Actual named tests are bound; residual coverage gaps and independent mutation proof remain before final GREEN.', 'artifacts': ['acceptance.md', 'verify.py', 'phased-contract.md', 'historical-evidence.md'],
+              'skipped': [], 'failures': failures, 'runners': runners,
               'mutation_gate': mutation_gate}
     (HERE / 'verifier-results.json').write_text(json.dumps(result, indent=2) + '\n')
     for c in criteria:

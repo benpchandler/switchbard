@@ -71,6 +71,12 @@ cd orchestrator && uv run python -m switchbard_orchestrator drain \
     --repo ~/Dev/yourrepo --gate "mise run ci"
 ```
 
+## Central task storage
+
+Switchbard can own task data in one local database at `~/.switchbard/switchbard.sqlite3`, shared by repositories and their linked worktrees. Migration is explicit and gradual: initiatives, projects, config, ranking, goals, then tasks. Full document content stays extensible, including custom fields and sections. Source files remain preserved after their kind switches to database authority; ordinary edits no longer modify them.
+
+Use `sb --repo /path/to/repo storage status` to inspect authority. `storage migrate --kind project` previews all linked worktrees and relevant local branches; apply requires the exact preview digest and creates a verified private backup. Divergent copies refuse cutover until reconciled. See [the migration guide](docs/central-storage.md) for commands, collaboration, and recovery.
+
 ## Install
 
 ### macOS

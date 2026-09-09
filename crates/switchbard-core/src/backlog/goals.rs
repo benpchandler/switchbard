@@ -17,6 +17,8 @@
 //! file this module cannot confidently locate its edit point in fails
 //! closed with an error naming the fix, never a rewrite.
 
+use super::aggregate_storage::{self, AggregateEdit};
+
 use super::write::{atomic_write, validated_single_line, yaml_scalar, WriteOutcome};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
@@ -180,19 +182,27 @@ struct GoalCheckInSer {
     value: i64,
 }
 
-/// Load `backlog/goals.yml`. Never fails the repo load: missing file is an
+/// Load `backlog/goals.yml`. Legacy malformed content warns; database failures propagate: missing file is an
 /// empty list; a malformed file (or an entry with an unknown `measure:`)
 /// warns and is dropped.
-pub(super) fn load_goals(root: &Path, warnings: &mut Vec<String>) -> Vec<GoalDef> {
+pub(super) fn load_goals(root: &Path, warnings: &mut Vec<String>) -> Result<Vec<GoalDef>> {
     let path = root.join(GOALS_REL);
-    let Ok(text) = fs::read_to_string(&path) else {
-        return Vec::new();
+    let source = match aggregate_storage::read(root, "goals", GOALS_REL)? {
+        Some(text) => text,
+        None => fs::read_to_string(&path).ok(),
     };
-    let parsed: GoalsFileSer = match serde_yaml::from_str(&text) {
+    let Some(text) = source else {
+        return Ok(Vec::new());
+    };
+    parse_goals_text(&text, &path, warnings)
+}
+
+fn parse_goals_text(text: &str, path: &Path, warnings: &mut Vec<String>) -> Result<Vec<GoalDef>> {
+    let parsed: GoalsFileSer = match serde_yaml::from_str(text) {
         Ok(parsed) => parsed,
         Err(err) => {
             warnings.push(format!("{}: {err}", path.display()));
-            return Vec::new();
+            return Ok(Vec::new());
         }
     };
     let mut goals = Vec::with_capacity(parsed.goals.len());
@@ -242,7 +252,7 @@ pub(super) fn load_goals(root: &Path, warnings: &mut Vec<String>) -> Vec<GoalDef
                 .collect(),
         });
     }
-    goals
+    Ok(goals)
 }
 
 // ---- writing ----
@@ -275,17 +285,20 @@ fn goals_path(root: &Path) -> PathBuf {
     root.join(GOALS_REL)
 }
 
-fn read_lines(path: &Path) -> Result<Vec<String>> {
-    let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+fn read_lines(edit: &mut AggregateEdit, path: &Path) -> Result<Vec<String>> {
+    let text = edit.text(path)?;
     if text.contains('\r') {
         bail!("{} has CR line endings; refusing to edit", path.display());
     }
     Ok(text.lines().map(str::to_string).collect())
 }
 
-fn write_lines(path: &Path, lines: &[String]) -> Result<()> {
+fn write_lines(edit: &mut AggregateEdit, path: &Path, lines: &[String]) -> Result<()> {
     let text = format!("{}\n", lines.join("\n"));
-    if path.is_file() {
+    if edit.stage(&text) {
+        return Ok(());
+    }
+    if edit.exists(path) {
         return atomic_write(path, &text);
     }
     // First write: `atomic_write` preserves an existing file's permissions,
@@ -323,101 +336,110 @@ fn goal_week_block(week: &str, target: i64) -> Vec<String> {
 /// Append a goal (with its first week) to `backlog/goals.yml`, creating the
 /// file when absent. Refuses a duplicate name.
 pub fn create_goal(root: &Path, goal: &NewGoal) -> Result<()> {
-    let name = validated_single_line("name", &goal.name)?;
-    let unit = validated_single_line("unit", &goal.unit)?;
-    let week = validated_week(&goal.week)?;
-    // A tasks-measured goal may start with neither scope nor inputs — its
-    // actual is 0 until `attach_goal_inputs` (or a later scope) gives it
-    // something to count. The CLI surfaces that hint.
+    aggregate_storage::with_edit(root, "goals", GOALS_REL, |edit| {
+        let name = validated_single_line("name", &goal.name)?;
+        let unit = validated_single_line("unit", &goal.unit)?;
+        let week = validated_week(&goal.week)?;
+        // A tasks-measured goal may start with neither scope nor inputs — its
+        // actual is 0 until `attach_goal_inputs` (or a later scope) gives it
+        // something to count. The CLI surfaces that hint.
 
-    let mut warnings = Vec::new();
-    if load_goals(root, &mut warnings)
-        .iter()
-        .any(|existing| existing.name == name)
-    {
-        bail!("goal '{name}' already exists — check in with `goal check-in`, or extend it with `goal roll`");
-    }
+        let mut warnings = Vec::new();
+        if load_goals(root, &mut warnings)?
+            .iter()
+            .any(|existing| existing.name == name)
+        {
+            bail!("goal '{name}' already exists — check in with `goal check-in`, or extend it with `goal roll`");
+        }
 
-    let path = goals_path(root);
-    let mut lines = if path.is_file() {
-        read_lines(&path)?
-    } else {
-        fs::create_dir_all(path.parent().expect("goals.yml has a parent"))
-            .with_context(|| format!("creating {}", root.join("backlog").display()))?;
-        vec![
-            "# Weekly goals — written by switchbard (`goal` commands); one record per goal,"
-                .to_string(),
-            "# targets and dated check-ins per week. See docs/product-trajectory.md.".to_string(),
-            "goals:".to_string(),
-        ]
-    };
-    if !lines.iter().any(|l| l.trim_end() == "goals:") {
-        bail!(
-            "{} has no `goals:` key — fix the file (or remove it to start fresh)",
-            path.display()
-        );
-    }
+        let path = goals_path(root);
+        let mut lines = if edit.exists(&path) {
+            read_lines(edit, &path)?
+        } else {
+            if !edit.is_central() {
+                fs::create_dir_all(path.parent().expect("goals.yml has a parent"))
+                    .with_context(|| format!("creating {}", root.join("backlog").display()))?;
+            }
+            vec![
+                "# Weekly goals — written by switchbard (`goal` commands); one record per goal,"
+                    .to_string(),
+                "# targets and dated check-ins per week. See docs/product-trajectory.md."
+                    .to_string(),
+                "goals:".to_string(),
+            ]
+        };
+        if !lines.iter().any(|l| l.trim_end() == "goals:") {
+            bail!(
+                "{} has no `goals:` key — fix the file (or remove it to start fresh)",
+                path.display()
+            );
+        }
 
-    lines.push(format!("{GOAL_ITEM_INDENT}- name: {}", yaml_scalar(name)));
-    lines.push(format!("{GOAL_FIELD_INDENT}unit: {}", yaml_scalar(unit)));
-    lines.push(format!(
-        "{GOAL_FIELD_INDENT}measure: {}",
-        goal.measure.label()
-    ));
-    if let Some(scope) = &goal.scope {
+        lines.push(format!("{GOAL_ITEM_INDENT}- name: {}", yaml_scalar(name)));
+        lines.push(format!("{GOAL_FIELD_INDENT}unit: {}", yaml_scalar(unit)));
         lines.push(format!(
-            "{GOAL_FIELD_INDENT}scope: {}",
-            yaml_scalar(validated_single_line("scope", scope)?)
+            "{GOAL_FIELD_INDENT}measure: {}",
+            goal.measure.label()
         ));
-    }
-    lines.push(format!("{GOAL_FIELD_INDENT}weeks:"));
-    lines.extend(goal_week_block(week, goal.target));
-    write_lines(&path, &lines)
+        if let Some(scope) = &goal.scope {
+            lines.push(format!(
+                "{GOAL_FIELD_INDENT}scope: {}",
+                yaml_scalar(validated_single_line("scope", scope)?)
+            ));
+        }
+        lines.push(format!("{GOAL_FIELD_INDENT}weeks:"));
+        lines.extend(goal_week_block(week, goal.target));
+        write_lines(edit, &path, &lines)
+    })
 }
 
 /// Append one dated observation to a goal's week. Fails closed when the
 /// file's structure isn't one this module emitted (it never rewrites what
 /// it cannot confidently locate).
 pub fn check_in_goal(root: &Path, name: &str, week: &str, date: &str, value: i64) -> Result<()> {
-    let name = validated_single_line("name", name)?;
-    let week = validated_week(week)?;
-    let date = validated_date(date)?;
+    aggregate_storage::with_edit(root, "goals", GOALS_REL, |edit| {
+        let name = validated_single_line("name", name)?;
+        let week = validated_week(week)?;
+        let date = validated_date(date)?;
 
-    let path = goals_path(root);
-    if !path.is_file() {
-        bail!("no goals defined yet — run `goal create` first");
-    }
-    let mut lines = read_lines(&path)?;
-    let (goal_start, goal_end) = goal_span(&lines, name)?;
-    let Some(week_line) = (goal_start..goal_end)
-        .find(|&i| lines[i].trim_end() == format!("{WEEK_KEY_INDENT}{week}:"))
-    else {
-        bail!("goal '{name}' has no week {week} — add it with `goal roll --week {week}`");
-    };
-    // The week block ends at the next line at week-key indent or shallower.
-    let week_end = ((week_line + 1)..goal_end)
-        .find(|&i| indent_of(&lines[i]) <= WEEK_KEY_INDENT.len())
-        .unwrap_or(goal_end);
+        let path = goals_path(root);
+        if !edit.exists(&path) {
+            bail!("no goals defined yet — run `goal create` first");
+        }
+        let mut lines = read_lines(edit, &path)?;
+        let (goal_start, goal_end) = goal_span(&lines, name)?;
+        let Some(week_line) = (goal_start..goal_end)
+            .find(|&i| lines[i].trim_end() == format!("{WEEK_KEY_INDENT}{week}:"))
+        else {
+            bail!("goal '{name}' has no week {week} — add it with `goal roll --week {week}`");
+        };
+        // The week block ends at the next line at week-key indent or shallower.
+        let week_end = ((week_line + 1)..goal_end)
+            .find(|&i| indent_of(&lines[i]) <= WEEK_KEY_INDENT.len())
+            .unwrap_or(goal_end);
 
-    let item = format!("{CHECKIN_ITEM_INDENT}- {{ date: {date}, value: {value} }}");
-    let empty_marker = format!("{WEEK_FIELD_INDENT}checkins: []");
-    let header = format!("{WEEK_FIELD_INDENT}checkins:");
-    if let Some(i) = ((week_line + 1)..week_end).find(|&i| lines[i].trim_end() == empty_marker) {
-        lines.splice(i..=i, [header, item]);
-    } else if let Some(i) = ((week_line + 1)..week_end).find(|&i| lines[i].trim_end() == header) {
-        // Append after the last existing check-in line.
-        let insert_at = ((i + 1)..week_end)
-            .take_while(|&j| indent_of(&lines[j]) > WEEK_FIELD_INDENT.len())
-            .last()
-            .map_or(i + 1, |j| j + 1);
-        lines.insert(insert_at, item);
-    } else {
-        bail!(
+        let item = format!("{CHECKIN_ITEM_INDENT}- {{ date: {date}, value: {value} }}");
+        let empty_marker = format!("{WEEK_FIELD_INDENT}checkins: []");
+        let header = format!("{WEEK_FIELD_INDENT}checkins:");
+        if let Some(i) = ((week_line + 1)..week_end).find(|&i| lines[i].trim_end() == empty_marker)
+        {
+            lines.splice(i..=i, [header, item]);
+        } else if let Some(i) = ((week_line + 1)..week_end).find(|&i| lines[i].trim_end() == header)
+        {
+            // Append after the last existing check-in line.
+            let insert_at = ((i + 1)..week_end)
+                .take_while(|&j| indent_of(&lines[j]) > WEEK_FIELD_INDENT.len())
+                .last()
+                .map_or(i + 1, |j| j + 1);
+            lines.insert(insert_at, item);
+        } else {
+            bail!(
             "{}: week {week} of goal '{name}' has no recognizable `checkins:` — restore the emitted structure before checking in",
             path.display()
         );
-    }
-    write_lines(&path, &lines)
+        }
+        write_lines(edit, &path, &lines)
+    })
 }
 
 /// Change a goal's target for one week — the pencil "Edit target" affordance
@@ -426,37 +448,39 @@ pub fn check_in_goal(root: &Path, name: &str, week: &str, date: &str, value: i64
 /// creates one), and a target line this module didn't emit fails closed
 /// rather than guessing where to write.
 pub fn edit_goal_target(root: &Path, name: &str, week: &str, new_target: i64) -> Result<()> {
-    let name = validated_single_line("name", name)?;
-    let week = validated_week(week)?;
-    if new_target < 0 {
-        bail!("target must be zero or greater, got {new_target}");
-    }
+    aggregate_storage::with_edit(root, "goals", GOALS_REL, |edit| {
+        let name = validated_single_line("name", name)?;
+        let week = validated_week(week)?;
+        if new_target < 0 {
+            bail!("target must be zero or greater, got {new_target}");
+        }
 
-    let path = goals_path(root);
-    if !path.is_file() {
-        bail!("no goals defined yet — run `goal create` first");
-    }
-    let mut lines = read_lines(&path)?;
-    let (goal_start, goal_end) = goal_span(&lines, name)?;
-    let Some(week_line) = (goal_start..goal_end)
-        .find(|&i| lines[i].trim_end() == format!("{WEEK_KEY_INDENT}{week}:"))
-    else {
-        bail!("goal '{name}' has no week {week} — add it with `goal roll --week {week}`");
-    };
-    let target_line = week_line + 1;
-    let expected_prefix = format!("{WEEK_FIELD_INDENT}target: ");
-    if target_line >= goal_end || !lines[target_line].starts_with(&expected_prefix) {
-        bail!(
+        let path = goals_path(root);
+        if !edit.exists(&path) {
+            bail!("no goals defined yet — run `goal create` first");
+        }
+        let mut lines = read_lines(edit, &path)?;
+        let (goal_start, goal_end) = goal_span(&lines, name)?;
+        let Some(week_line) = (goal_start..goal_end)
+            .find(|&i| lines[i].trim_end() == format!("{WEEK_KEY_INDENT}{week}:"))
+        else {
+            bail!("goal '{name}' has no week {week} — add it with `goal roll --week {week}`");
+        };
+        let target_line = week_line + 1;
+        let expected_prefix = format!("{WEEK_FIELD_INDENT}target: ");
+        if target_line >= goal_end || !lines[target_line].starts_with(&expected_prefix) {
+            bail!(
             "{}: week {week} of goal '{name}' has no recognizable `target:` — restore the emitted structure before editing",
             path.display()
         );
-    }
-    let new_line = format!("{WEEK_FIELD_INDENT}target: {new_target}");
-    if lines[target_line] == new_line {
-        return Ok(()); // already this value — nothing to write
-    }
-    lines[target_line] = new_line;
-    write_lines(&path, &lines)
+        }
+        let new_line = format!("{WEEK_FIELD_INDENT}target: {new_target}");
+        if lines[target_line] == new_line {
+            return Ok(()); // already this value — nothing to write
+        }
+        lines[target_line] = new_line;
+        write_lines(edit, &path, &lines)
+    })
 }
 
 fn inputs_block(inputs: &GoalInputs) -> Vec<String> {
@@ -480,9 +504,14 @@ fn inputs_block(inputs: &GoalInputs) -> Vec<String> {
 /// Replace (or remove, when `new_inputs` is empty) the goal's `inputs:`
 /// block, inserting before `weeks:` when absent. Line-surgical like every
 /// other write here: fails closed on a structure this module didn't emit.
-fn write_goal_inputs(root: &Path, name: &str, new_inputs: &GoalInputs) -> Result<()> {
+fn write_goal_inputs(
+    edit: &mut AggregateEdit,
+    root: &Path,
+    name: &str,
+    new_inputs: &GoalInputs,
+) -> Result<()> {
     let path = goals_path(root);
-    let mut lines = read_lines(&path)?;
+    let mut lines = read_lines(edit, &path)?;
     let (goal_start, goal_end) = goal_span(&lines, name)?;
     let block = if new_inputs.is_empty() {
         Vec::new()
@@ -494,7 +523,8 @@ fn write_goal_inputs(root: &Path, name: &str, new_inputs: &GoalInputs) -> Result
         let end = ((start + 1)..goal_end)
             .find(|&i| indent_of(&lines[i]) <= GOAL_FIELD_INDENT.len())
             .unwrap_or(goal_end);
-        lines.splice(start..end, block);
+        let replacement = patched_inputs_block(&lines[start..end], new_inputs)?;
+        lines.splice(start..end, replacement);
     } else if block.is_empty() {
         return Ok(()); // nothing attached, nothing stored — nothing to write
     } else {
@@ -508,7 +538,39 @@ fn write_goal_inputs(root: &Path, name: &str, new_inputs: &GoalInputs) -> Result
         };
         lines.splice(weeks_line..weeks_line, block);
     }
-    write_lines(&path, &lines)
+    write_lines(edit, &path, &lines)
+}
+
+fn patched_inputs_block(existing: &[String], inputs: &GoalInputs) -> Result<Vec<String>> {
+    let rendered = inputs_block(inputs);
+    let mut result = existing.to_vec();
+    let mut known_lines = 0;
+    for (key, replacement) in [("tasks", &rendered[1]), ("projects", &rendered[2])] {
+        let prefix = format!("{WEEK_KEY_INDENT}{key}:");
+        let matching: Vec<_> = result
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.starts_with(&prefix))
+            .map(|(index, _)| index)
+            .collect();
+        if matching.len() > 1 {
+            bail!("duplicate goal input field {key}; refusing to edit")
+        }
+        if let Some(&index) = matching.first() {
+            let value = result[index][prefix.len()..].trim();
+            if !value.starts_with('[') || !value.ends_with(']') {
+                bail!("goal input {key} must use a flow list for surgical edits");
+            }
+            result[index] = replacement.clone();
+            known_lines += 1;
+        } else {
+            result.push(replacement.clone());
+        }
+    }
+    if inputs.is_empty() && existing.len() == known_lines + 1 {
+        return Ok(Vec::new());
+    }
+    Ok(result)
 }
 
 /// Follow a task move into `goals.yml`: every `inputs.tasks` entry naming
@@ -516,12 +578,23 @@ fn write_goal_inputs(root: &Path, name: &str, new_inputs: &GoalInputs) -> Result
 /// names `new`. A missing file, or one that never mentions `old`, is
 /// `Unchanged`.
 pub(super) fn rename_task_in_goals(root: &Path, old: &str, new: &str) -> Result<WriteOutcome> {
+    aggregate_storage::with_edit(root, "goals", GOALS_REL, |edit| {
+        rename_task_in_goals_draft(edit, root, old, new)
+    })
+}
+
+fn rename_task_in_goals_draft(
+    edit: &mut AggregateEdit,
+    root: &Path,
+    old: &str,
+    new: &str,
+) -> Result<WriteOutcome> {
     let path = goals_path(root);
-    if !path.is_file() {
+    if !edit.exists(&path) {
         return Ok(WriteOutcome::Unchanged);
     }
     let mut warnings = Vec::new();
-    let goals = load_goals(root, &mut warnings);
+    let goals = parse_goals_text(&edit.text(&path)?, &path, &mut warnings)?;
     if !warnings.is_empty() {
         bail!(
             "{} does not parse cleanly - fix it before moving tasks: {}",
@@ -552,7 +625,7 @@ pub(super) fn rename_task_in_goals(root: &Path, old: &str, new: &str) -> Result<
             }
         }
         inputs.tasks = renamed;
-        write_goal_inputs(root, &goal.name, &inputs)?;
+        write_goal_inputs(edit, root, &goal.name, &inputs)?;
         changed = true;
     }
     Ok(if changed {
@@ -562,17 +635,38 @@ pub(super) fn rename_task_in_goals(root: &Path, old: &str, new: &str) -> Result<
     })
 }
 
+pub(super) fn rename_task_document(
+    original: Option<&[u8]>,
+    old: &str,
+    new: &str,
+) -> Result<Option<Vec<u8>>> {
+    let mut edit = AggregateEdit::from_document(original);
+    let _outcome = rename_task_in_goals_draft(&mut edit, Path::new(""), old, new)?;
+    Ok(edit.into_document())
+}
+
 /// Follow a project rename into `goals.yml`: a goal's `scope:` equal to
 /// `old` (a scope is a project name or a label; a label spelled exactly like
 /// the project is read as the project here) and any `inputs.projects` entry.
 /// A missing file, or one that never mentions `old`, is `Unchanged`.
 pub(super) fn rename_project_in_goals(root: &Path, old: &str, new: &str) -> Result<WriteOutcome> {
+    aggregate_storage::with_edit(root, "goals", GOALS_REL, |edit| {
+        rename_project_in_goals_draft(edit, root, old, new)
+    })
+}
+
+fn rename_project_in_goals_draft(
+    edit: &mut AggregateEdit,
+    root: &Path,
+    old: &str,
+    new: &str,
+) -> Result<WriteOutcome> {
     let path = goals_path(root);
-    if !path.is_file() {
+    if !edit.exists(&path) {
         return Ok(WriteOutcome::Unchanged);
     }
     let mut warnings = Vec::new();
-    let goals = load_goals(root, &mut warnings);
+    let goals = parse_goals_text(&edit.text(&path)?, &path, &mut warnings)?;
     if !warnings.is_empty() {
         bail!(
             "{} does not parse cleanly - fix it before renaming: {}",
@@ -583,7 +677,7 @@ pub(super) fn rename_project_in_goals(root: &Path, old: &str, new: &str) -> Resu
     let mut changed = false;
     for goal in goals {
         if goal.scope.as_deref() == Some(old) {
-            let mut lines = read_lines(&path)?;
+            let mut lines = read_lines(edit, &path)?;
             let (start, end) = goal_span(&lines, &goal.name)?;
             let needle = format!("{GOAL_FIELD_INDENT}scope: {}", yaml_scalar(old));
             let Some(at) = (start..end).find(|&i| lines[i].trim_end() == needle) else {
@@ -594,7 +688,7 @@ pub(super) fn rename_project_in_goals(root: &Path, old: &str, new: &str) -> Resu
                 );
             };
             lines[at] = format!("{GOAL_FIELD_INDENT}scope: {}", yaml_scalar(new));
-            write_lines(&path, &lines)?;
+            write_lines(edit, &path, &lines)?;
             changed = true;
         }
         if goal.inputs.projects.iter().any(|p| p == old) {
@@ -611,7 +705,7 @@ pub(super) fn rename_project_in_goals(root: &Path, old: &str, new: &str) -> Resu
                 }
             }
             inputs.projects = renamed;
-            write_goal_inputs(root, &goal.name, &inputs)?;
+            write_goal_inputs(edit, root, &goal.name, &inputs)?;
             changed = true;
         }
     }
@@ -622,15 +716,25 @@ pub(super) fn rename_project_in_goals(root: &Path, old: &str, new: &str) -> Resu
     })
 }
 
+pub(super) fn rename_project_document(
+    original: Option<&[u8]>,
+    old: &str,
+    new: &str,
+) -> Result<Option<Vec<u8>>> {
+    let mut edit = AggregateEdit::from_document(original);
+    let _outcome = rename_project_in_goals_draft(&mut edit, Path::new(""), old, new)?;
+    Ok(edit.into_document())
+}
+
 /// Look up a goal by name, insisting the file parses cleanly first (an
 /// inputs edit rewrites the block, so a half-understood file is unsafe).
-fn parsed_goal(root: &Path, name: &str) -> Result<GoalDef> {
+fn parsed_goal(edit: &mut AggregateEdit, root: &Path, name: &str) -> Result<GoalDef> {
     let path = goals_path(root);
-    if !path.is_file() {
+    if !edit.exists(&path) {
         bail!("no goals defined yet — run `goal create` first");
     }
     let mut warnings = Vec::new();
-    let goals = load_goals(root, &mut warnings);
+    let goals = load_goals(root, &mut warnings)?;
     if !warnings.is_empty() {
         bail!(
             "{} does not parse cleanly — fix it first: {}",
@@ -654,31 +758,33 @@ pub fn attach_goal_inputs(
     tasks: &[String],
     projects: &[String],
 ) -> Result<usize> {
-    let name = validated_single_line("name", name)?;
-    if tasks.is_empty() && projects.is_empty() {
-        bail!("nothing to attach — pass --task <ID> and/or --in-project <NAME>");
-    }
-    let goal = parsed_goal(root, name)?;
-    let mut inputs = goal.inputs.clone();
-    let mut added = 0usize;
-    for task in tasks {
-        let task = validated_single_line("task id", task)?;
-        if !inputs.tasks.iter().any(|t| t.eq_ignore_ascii_case(task)) {
-            inputs.tasks.push(task.to_string());
-            added += 1;
+    aggregate_storage::with_edit(root, "goals", GOALS_REL, |edit| {
+        let name = validated_single_line("name", name)?;
+        if tasks.is_empty() && projects.is_empty() {
+            bail!("nothing to attach — pass --task <ID> and/or --in-project <NAME>");
         }
-    }
-    for project in projects {
-        let project = validated_single_line("project", project)?;
-        if !inputs.projects.iter().any(|p| p == project) {
-            inputs.projects.push(project.to_string());
-            added += 1;
+        let goal = parsed_goal(edit, root, name)?;
+        let mut inputs = goal.inputs.clone();
+        let mut added = 0usize;
+        for task in tasks {
+            let task = validated_single_line("task id", task)?;
+            if !inputs.tasks.iter().any(|t| t.eq_ignore_ascii_case(task)) {
+                inputs.tasks.push(task.to_string());
+                added += 1;
+            }
         }
-    }
-    if added > 0 {
-        write_goal_inputs(root, name, &inputs)?;
-    }
-    Ok(added)
+        for project in projects {
+            let project = validated_single_line("project", project)?;
+            if !inputs.projects.iter().any(|p| p == project) {
+                inputs.projects.push(project.to_string());
+                added += 1;
+            }
+        }
+        if added > 0 {
+            write_goal_inputs(edit, root, name, &inputs)?;
+        }
+        Ok(added)
+    })
 }
 
 /// Detach previously attached inputs. Errors when none of the named inputs
@@ -690,89 +796,93 @@ pub fn detach_goal_inputs(
     tasks: &[String],
     projects: &[String],
 ) -> Result<usize> {
-    let name = validated_single_line("name", name)?;
-    if tasks.is_empty() && projects.is_empty() {
-        bail!("nothing to detach — pass --task <ID> and/or --in-project <NAME>");
-    }
-    let goal = parsed_goal(root, name)?;
-    let mut inputs = goal.inputs.clone();
-    let before = inputs.tasks.len() + inputs.projects.len();
-    inputs
-        .tasks
-        .retain(|t| !tasks.iter().any(|arg| arg.trim().eq_ignore_ascii_case(t)));
-    inputs
-        .projects
-        .retain(|p| !projects.iter().any(|arg| arg.trim() == p));
-    let removed = before - (inputs.tasks.len() + inputs.projects.len());
-    if removed == 0 {
-        bail!("none of those inputs are attached to '{name}' — see `goal view` for what is");
-    }
-    write_goal_inputs(root, name, &inputs)?;
-    Ok(removed)
+    aggregate_storage::with_edit(root, "goals", GOALS_REL, |edit| {
+        let name = validated_single_line("name", name)?;
+        if tasks.is_empty() && projects.is_empty() {
+            bail!("nothing to detach — pass --task <ID> and/or --in-project <NAME>");
+        }
+        let goal = parsed_goal(edit, root, name)?;
+        let mut inputs = goal.inputs.clone();
+        let before = inputs.tasks.len() + inputs.projects.len();
+        inputs
+            .tasks
+            .retain(|t| !tasks.iter().any(|arg| arg.trim().eq_ignore_ascii_case(t)));
+        inputs
+            .projects
+            .retain(|p| !projects.iter().any(|arg| arg.trim() == p));
+        let removed = before - (inputs.tasks.len() + inputs.projects.len());
+        if removed == 0 {
+            bail!("none of those inputs are attached to '{name}' — see `goal view` for what is");
+        }
+        write_goal_inputs(edit, root, name, &inputs)?;
+        Ok(removed)
+    })
 }
 
 /// Give every goal that lacks `to_week` a new week block carrying its most
 /// recent earlier target. Returns how many goals were rolled; rolling when
 /// every goal already has the week is a no-op that writes nothing.
 pub fn roll_goals(root: &Path, to_week: &str) -> Result<usize> {
-    let to_week = validated_week(to_week)?;
-    let path = goals_path(root);
-    if !path.is_file() {
-        bail!("no goals defined yet — run `goal create` first");
-    }
-    let mut warnings = Vec::new();
-    let goals = load_goals(root, &mut warnings);
-    if !warnings.is_empty() {
-        bail!(
-            "{} does not parse cleanly — fix it before rolling: {}",
-            path.display(),
-            warnings.join("; ")
-        );
-    }
-
-    let mut lines = read_lines(&path)?;
-    let mut rolled = 0usize;
-    for goal in &goals {
-        if goal.weeks.contains_key(to_week) {
-            continue;
+    aggregate_storage::with_edit(root, "goals", GOALS_REL, |edit| {
+        let to_week = validated_week(to_week)?;
+        let path = goals_path(root);
+        if !edit.exists(&path) {
+            bail!("no goals defined yet — run `goal create` first");
         }
-        // The most recent week before `to_week` (ISO keys sort correctly).
-        let Some((_, source)) = goal
-            .weeks
-            .range::<str, _>((
-                std::ops::Bound::Unbounded,
-                std::ops::Bound::Excluded(to_week),
-            ))
-            .next_back()
-        else {
-            continue; // only future weeks exist; nothing to carry forward
-        };
-        let (goal_start, goal_end) = goal_span(&lines, &goal.name)?;
-        let Some(weeks_line) = (goal_start..goal_end)
-            .find(|&i| lines[i].trim_end() == format!("{GOAL_FIELD_INDENT}weeks:"))
-        else {
+        let mut warnings = Vec::new();
+        let goals = load_goals(root, &mut warnings)?;
+        if !warnings.is_empty() {
             bail!(
+                "{} does not parse cleanly — fix it before rolling: {}",
+                path.display(),
+                warnings.join("; ")
+            );
+        }
+
+        let mut lines = read_lines(edit, &path)?;
+        let mut rolled = 0usize;
+        for goal in &goals {
+            if goal.weeks.contains_key(to_week) {
+                continue;
+            }
+            // The most recent week before `to_week` (ISO keys sort correctly).
+            let Some((_, source)) = goal
+                .weeks
+                .range::<str, _>((
+                    std::ops::Bound::Unbounded,
+                    std::ops::Bound::Excluded(to_week),
+                ))
+                .next_back()
+            else {
+                continue; // only future weeks exist; nothing to carry forward
+            };
+            let (goal_start, goal_end) = goal_span(&lines, &goal.name)?;
+            let Some(weeks_line) = (goal_start..goal_end)
+                .find(|&i| lines[i].trim_end() == format!("{GOAL_FIELD_INDENT}weeks:"))
+            else {
+                bail!(
                 "{}: goal '{}' has no recognizable `weeks:` — restore the emitted structure before rolling",
                 path.display(),
                 goal.name
             );
-        };
-        // Insert at the end of the weeks section (chronology holds because
-        // rolls only ever add the newest week).
-        let insert_at = ((weeks_line + 1)..goal_end)
-            .take_while(|&i| indent_of(&lines[i]) > GOAL_FIELD_INDENT.len())
-            .last()
-            .map_or(weeks_line + 1, |i| i + 1);
-        lines.splice(
-            insert_at..insert_at,
-            goal_week_block(to_week, source.target),
-        );
-        rolled += 1;
-    }
-    if rolled > 0 {
-        write_lines(&path, &lines)?;
-    }
-    Ok(rolled)
+            };
+            // Insert at the end of the weeks section (chronology holds because
+            // rolls only ever add the newest week).
+            let insert_at = ((weeks_line + 1)..goal_end)
+                .take_while(|&i| indent_of(&lines[i]) > GOAL_FIELD_INDENT.len())
+                .last()
+                .map_or(weeks_line + 1, |i| i + 1);
+            lines.splice(
+                insert_at..insert_at,
+                goal_week_block(to_week, source.target),
+            );
+            rolled += 1;
+        }
+        if rolled > 0 {
+            write_lines(edit, &path, &lines)?;
+        }
+        Ok(rolled)
+    })
 }
 
 /// `[start, end)` of the goal item whose `name:` matches. Matching is
@@ -823,7 +933,7 @@ mod tests {
 
     fn load(root: &Path) -> (Vec<GoalDef>, Vec<String>) {
         let mut warnings = Vec::new();
-        let goals = load_goals(root, &mut warnings);
+        let goals = load_goals(root, &mut warnings).expect("load aggregate");
         (goals, warnings)
     }
 
@@ -959,7 +1069,12 @@ mod tests {
             .expect("manual goals accept links");
         assert_eq!(added, 1);
         assert_eq!(
-            parsed_goal(&root, "Manual").expect("reload").inputs.tasks,
+            aggregate_storage::with_edit(&root, "goals", GOALS_REL, |edit| parsed_goal(
+                edit, &root, "Manual"
+            ))
+            .expect("reload")
+            .inputs
+            .tasks,
             vec!["TASK-1".to_string()]
         );
 

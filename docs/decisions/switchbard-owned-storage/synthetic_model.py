@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Decision-only synthetic algorithm, NOT product storage or implementation proof.
+"""HISTORICAL SUPERSEDED PROPOSAL. Not normative for phased flexible storage.
+Decision-only synthetic algorithm, NOT product storage or implementation proof.
 
 Run from any cwd. Only a temporary SQLite database and synthetic-results.json
 are written. Fixture action counts, record counts, and envelope bytes are bounded.

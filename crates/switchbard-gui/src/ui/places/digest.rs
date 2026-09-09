@@ -177,7 +177,11 @@ fn deep_link_to_task(app: &mut HiveApp, repo_root: PathBuf, task_id: String) {
     // regardless of the current scope, so selecting it needs the rail to
     // actually find it.
     app.backlog_view.selected_repo = None;
-    app.backlog_view.selected_task = Some((repo_root, task_id));
+    app.backlog_view.selected_task = Some(crate::app::task_key(
+        &app.backlog_repos,
+        &repo_root,
+        &task_id,
+    ));
     app.backlog_view.editor.loaded_key = None;
 }
 
@@ -290,7 +294,7 @@ fn collect_task_rows(app: &HiveApp) -> (Vec<InFlightRow>, Vec<RunFeedRow>) {
                     continue;
                 }
                 pending_runs.push(PendingRun {
-                    key: (root.clone(), task.id.clone()),
+                    key: crate::runtime::BacklogTaskKey::for_task(root, task),
                     repo_name: repo_name.clone(),
                     task_title: task.title.clone(),
                     category,
@@ -492,7 +496,7 @@ fn render_run_row(app: &mut HiveApp, ui: &mut egui::Ui, row: &RunFeedRow) {
 }
 
 fn feed_text(row: &RunFeedRow) -> String {
-    let (_, task_id) = &row.key;
+    let (_, task_id) = &row.key.address;
     let detail = match &row.kind {
         RunKind::Failed { reason } => {
             let reason = reason.as_deref().unwrap_or("no reason recorded");

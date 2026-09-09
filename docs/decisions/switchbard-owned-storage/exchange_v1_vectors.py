@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Proposed wire-format vectors only; not product import or database proof."""
+"""HISTORICAL SUPERSEDED PROPOSAL. Not normative for phased flexible storage.
+Proposed wire-format vectors only; not product import or database proof."""
 import base64
 import binascii
 import hashlib

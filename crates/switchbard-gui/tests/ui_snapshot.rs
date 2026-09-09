@@ -132,6 +132,7 @@ fn agents_hooks_active_filters_narrow_snapshot() {
 
 fn task_in_flight() -> BacklogTask {
     BacklogTask {
+        storage_identity: None,
         id: "TASK-83".to_string(),
         title: "rank / expedite verbs".to_string(),
         status: "In Progress".to_string(),
@@ -157,6 +158,7 @@ fn task_in_flight() -> BacklogTask {
 
 fn task_failed() -> BacklogTask {
     BacklogTask {
+        storage_identity: None,
         id: "TASK-61".to_string(),
         title: "gh timeout retry".to_string(),
         status: "In Progress".to_string(),
@@ -209,7 +211,7 @@ fn seed_two_dispatch_tasks(app: &HiveApp) {
     );
     let mut runs = app.dispatch_runs.lock().unwrap();
     runs.insert(
-        (PathBuf::from(REPO_PATH), "TASK-83".to_string()),
+        (PathBuf::from(REPO_PATH), "TASK-83".to_string()).into(),
         DispatchRun {
             task_id: "TASK-83".to_string(),
             branch: "dispatch/task-83-rank-verbs".to_string(),
@@ -228,7 +230,7 @@ fn seed_two_dispatch_tasks(app: &HiveApp) {
         },
     );
     runs.insert(
-        (PathBuf::from(REPO_PATH), "TASK-61".to_string()),
+        (PathBuf::from(REPO_PATH), "TASK-61".to_string()).into(),
         DispatchRun {
             task_id: "TASK-61".to_string(),
             branch: "dispatch/task-61-gh-timeout".to_string(),
@@ -251,7 +253,7 @@ fn dispatches_running_app(theme: ThemeChoice) -> HiveApp {
     app.place = Place::Tasks;
     app.tasks_view = TasksView::Dispatches;
     seed_two_dispatch_tasks(&app);
-    app.dispatches_view.selected = Some((PathBuf::from(REPO_PATH), "TASK-83".to_string()));
+    app.dispatches_view.selected = Some((PathBuf::from(REPO_PATH), "TASK-83".to_string()).into());
     app
 }
 
@@ -287,10 +289,9 @@ fn command_fleet_mixed_app(theme: ThemeChoice) -> HiveApp {
         started_unix: Some(now_unix() - 900),
         pgid: Some(5150),
     }];
-    app.command_view.selected = Some(CommandRowKey::Dispatch((
-        PathBuf::from(REPO_PATH),
-        "TASK-61".to_string(),
-    )));
+    app.command_view.selected = Some(CommandRowKey::Dispatch(
+        (PathBuf::from(REPO_PATH), "TASK-61".to_string()).into(),
+    ));
     app
 }
 
@@ -321,7 +322,7 @@ fn command_fleet_mixed_snapshot_dark() {
 #[ignore = "wgpu image snapshot: machine-specific, run explicitly with `-- --ignored` (see module docs)"]
 fn dispatches_kill_confirm_armed_snapshot() {
     let mut app = dispatches_running_app(ThemeChoice::Light);
-    app.dispatch_kill_confirm = Some((PathBuf::from(REPO_PATH), "TASK-83".to_string()));
+    app.dispatch_kill_confirm = Some((PathBuf::from(REPO_PATH), "TASK-83".to_string()).into());
     let mut harness = harness(app);
     harness.run();
     harness.snapshot("dispatches_kill_confirm_armed");

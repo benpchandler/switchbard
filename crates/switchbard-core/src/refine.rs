@@ -757,6 +757,7 @@ mod tests {
 
     fn task() -> BacklogTask {
         BacklogTask {
+            storage_identity: None,
             id: "TASK-44".to_string(),
             title: "Refine task".to_string(),
             status: "To Do".to_string(),

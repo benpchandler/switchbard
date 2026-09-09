@@ -7,18 +7,34 @@ use anyhow::{bail, Context, Result};
 use serde_yaml::{Mapping, Value};
 use std::cmp::Ordering;
 use std::ffi::OsStr;
+#[cfg(test)]
 use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Compatibility candidate probe. On storage errors callers must attempt the fallible loader.
 pub fn is_backlog_repo(root: &Path) -> bool {
-    root.join("backlog/config.yml").is_file()
+    backlog_repo_available(root).unwrap_or(true)
+}
+
+/// Distinguish an absent task scope from a failed central store.
+pub fn backlog_repo_available(root: &Path) -> Result<bool> {
+    Ok(centrally_registered(root)?
+        || root.join("backlog/config.yml").is_file()
         || root.join("backlog/tasks").is_dir()
-        || root.join("backlog/drafts").is_dir()
+        || root.join("backlog/drafts").is_dir())
+}
+
+fn centrally_registered(root: &Path) -> Result<bool> {
+    let Some(store) = crate::storage::Store::open_existing_default()? else {
+        return Ok(false);
+    };
+    Ok(store.repository(root)?.is_some())
 }
 
 pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
-    if !is_backlog_repo(root) {
+    let central = centrally_registered(root)?;
+    if !central && !is_backlog_repo(root) {
         bail!("{} is not a Backlog project", root.display());
     }
 
@@ -30,20 +46,12 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
         ("drafts", BacklogTaskSource::Draft),
         ("archive/tasks", BacklogTaskSource::Archived),
     ] {
-        let dir = root.join("backlog").join(rel);
-        if !dir.is_dir() {
-            continue;
-        }
-        let mut entries = fs::read_dir(&dir)
-            .with_context(|| format!("cannot read {}", dir.display()))?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().and_then(OsStr::to_str) == Some("md"))
-            .collect::<Vec<_>>();
-        entries.sort();
-        for path in entries {
-            match parse_task_file(&path, source) {
-                Ok((task, task_warnings)) => {
+        let relative = format!("backlog/{rel}");
+        for (path, text, identity) in super::task_storage::sources(root, &relative, &mut warnings)?
+        {
+            match text.and_then(|text| parse_task_text(&path, source, &text)) {
+                Ok((mut task, task_warnings)) => {
+                    task.storage_identity = identity;
                     warnings.extend(
                         task_warnings
                             .into_iter()
@@ -56,11 +64,11 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
         }
     }
 
-    let ranking = super::ranking::load_ranking(root, &mut warnings);
+    let ranking = super::ranking::load_ranking(root, &mut warnings)?;
     super::ranking::sort_tasks(&mut tasks, &ranking);
-    let project_defs = super::hierarchy::load_project_defs(root, &mut warnings);
-    let initiative_defs = super::hierarchy::load_initiative_defs(root, &mut warnings);
-    let goals = super::goals::load_goals(root, &mut warnings);
+    let project_defs = super::hierarchy::load_project_defs(root, &mut warnings)?;
+    let initiative_defs = super::hierarchy::load_initiative_defs(root, &mut warnings)?;
+    let goals = super::goals::load_goals(root, &mut warnings)?;
     Ok(BacklogRepo {
         root: root.to_path_buf(),
         tasks,
@@ -70,7 +78,7 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
         goals,
         ranking,
         loaded_at_unix: unix_now(),
-        configured_statuses: parse_config_statuses(root),
+        configured_statuses: parse_config_statuses(root)?,
     })
 }
 
@@ -79,18 +87,17 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
 /// the task files themselves. Never fails the whole project load: a
 /// missing/unreadable/malformed config just yields an empty list, same as
 /// if this function didn't exist.
-pub(super) fn parse_config_statuses(root: &Path) -> Vec<String> {
-    let path = root.join("backlog/config.yml");
-    let Ok(text) = fs::read_to_string(&path) else {
-        return Vec::new();
+pub(super) fn parse_config_statuses(root: &Path) -> Result<Vec<String>> {
+    let Some(text) = super::status_config::read_config(root)? else {
+        return Ok(Vec::new());
     };
     let Ok(value) = serde_yaml::from_str::<Value>(&text) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    let Some(mapping) = value.as_mapping() else {
-        return Vec::new();
-    };
-    yaml_string_list(mapping, "statuses")
+    Ok(value
+        .as_mapping()
+        .map(|mapping| yaml_string_list(mapping, "statuses"))
+        .unwrap_or_default())
 }
 
 /// The `backlog` CLI's own default task-id prefix, used whenever a project's
@@ -110,24 +117,22 @@ pub(super) const DEFAULT_TASK_PREFIX: &str = "TASK";
 /// Never fails the whole project load: a missing/unreadable/malformed
 /// config, or a project that simply doesn't declare the key, yields
 /// [`DEFAULT_TASK_PREFIX`] — same fallback as `parse_config_statuses`.
-pub(super) fn configured_task_prefix(root: &Path) -> String {
-    let path = root.join("backlog/config.yml");
-    let Ok(text) = fs::read_to_string(&path) else {
-        return DEFAULT_TASK_PREFIX.to_string();
+pub(super) fn configured_task_prefix(root: &Path) -> Result<String> {
+    let fallback = || DEFAULT_TASK_PREFIX.to_string();
+    let Some(text) = super::status_config::read_config(root)? else {
+        return Ok(fallback());
     };
     let Ok(value) = serde_yaml::from_str::<Value>(&text) else {
-        return DEFAULT_TASK_PREFIX.to_string();
+        return Ok(fallback());
     };
-    let Some(mapping) = value.as_mapping() else {
-        return DEFAULT_TASK_PREFIX.to_string();
-    };
-    mapping
-        .get(Value::String("task_prefix".to_string()))
+    Ok(value
+        .as_mapping()
+        .and_then(|mapping| mapping.get(Value::String("task_prefix".to_string())))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_uppercase)
-        .unwrap_or_else(|| DEFAULT_TASK_PREFIX.to_string())
+        .unwrap_or_else(fallback))
 }
 
 /// [`body_round_trips`] for one task file on disk — what `crate::refine`
@@ -137,7 +142,7 @@ pub(super) fn configured_task_prefix(root: &Path) -> String {
 /// call this is to decide whether a destructive replace-write is safe, and
 /// "I could not check" must mean "do not write", never "assume it's fine".
 pub fn task_file_round_trips(path: &Path) -> bool {
-    let Ok(text) = fs::read_to_string(path) else {
+    let Ok(text) = super::task_storage::read(path) else {
         return false;
     };
     let (_, body) = split_frontmatter(&text);
@@ -152,8 +157,16 @@ pub(super) fn parse_task_file(
     path: &Path,
     source: BacklogTaskSource,
 ) -> Result<(BacklogTask, Vec<String>)> {
-    let text = fs::read_to_string(path).with_context(|| "cannot read task markdown")?;
-    let (frontmatter, body) = split_frontmatter(&text);
+    let text = super::task_storage::read(path).context("cannot read task document")?;
+    parse_task_text(path, source, &text)
+}
+
+pub(crate) fn parse_task_text(
+    path: &Path,
+    source: BacklogTaskSource,
+    text: &str,
+) -> Result<(BacklogTask, Vec<String>)> {
+    let (frontmatter, body) = split_frontmatter(text);
     let mut warnings = Vec::new();
     let id = yaml_string(&frontmatter, "id").unwrap_or_else(|| id_from_filename(path));
     let title = yaml_string(&frontmatter, "title").unwrap_or_else(|| id.clone());
@@ -188,6 +201,7 @@ pub(super) fn parse_task_file(
     }
 
     let task = BacklogTask {
+        storage_identity: None,
         id,
         title,
         status,
@@ -749,7 +763,7 @@ mod tests {
         )
         .unwrap();
 
-        let statuses = parse_config_statuses(dir.path());
+        let statuses = parse_config_statuses(dir.path()).expect("config read");
         assert_eq!(
             statuses,
             vec!["Icebox", "To Do", "In Progress", "In Review", "Done"]
@@ -762,7 +776,10 @@ mod tests {
     #[test]
     fn missing_or_statusless_config_yields_an_empty_list() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(parse_config_statuses(dir.path()), Vec::<String>::new());
+        assert_eq!(
+            parse_config_statuses(dir.path()).expect("config read"),
+            Vec::<String>::new()
+        );
 
         fs::create_dir_all(dir.path().join("backlog")).unwrap();
         fs::write(
@@ -770,7 +787,10 @@ mod tests {
             "project_name: \"No statuses key\"\n",
         )
         .unwrap();
-        assert_eq!(parse_config_statuses(dir.path()), Vec::<String>::new());
+        assert_eq!(
+            parse_config_statuses(dir.path()).expect("config read"),
+            Vec::<String>::new()
+        );
     }
 
     /// The bug this exists to fix: budget's `backlog/config.yml` declares
@@ -786,7 +806,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(configured_task_prefix(dir.path()), "LED");
+        assert_eq!(
+            configured_task_prefix(dir.path()).expect("config read"),
+            "LED"
+        );
     }
 
     /// Missing config, a config with no `task_prefix` key, and a config with
@@ -796,7 +819,10 @@ mod tests {
     #[test]
     fn missing_task_prefix_falls_back_to_the_cli_default() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(configured_task_prefix(dir.path()), DEFAULT_TASK_PREFIX);
+        assert_eq!(
+            configured_task_prefix(dir.path()).expect("config read"),
+            DEFAULT_TASK_PREFIX
+        );
 
         fs::create_dir_all(dir.path().join("backlog")).unwrap();
         fs::write(
@@ -804,7 +830,10 @@ mod tests {
             "project_name: \"No prefix key\"\n",
         )
         .unwrap();
-        assert_eq!(configured_task_prefix(dir.path()), DEFAULT_TASK_PREFIX);
+        assert_eq!(
+            configured_task_prefix(dir.path()).expect("config read"),
+            DEFAULT_TASK_PREFIX
+        );
     }
 
     /// TASK-44 audit finding F1 (HIGH). `extract_section` used to end a

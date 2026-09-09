@@ -1,16 +1,16 @@
 {
   "plan": "switchbard-owned-storage",
   "result": "FAIL",
-  "commit": "b85bd2fc593e79ffdc8fdd2ae7470d18834661cb",
-  "timestamp": "2026-09-08T20:59:32.117082+00:00",
+  "commit": "7e1265fc8db573147efd5b19fd2956e395fefe3a",
+  "timestamp": "2026-09-08T23:11:01.359418+00:00",
   "criteria": [
     {
       "id": "MUST-001",
       "kind": "behavior",
       "label": "All native domain records and workspace ordering persist across two repositories without backlog files",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "core::all_domain_records_reload: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "all_domain_records_reload"
     },
@@ -19,8 +19,8 @@
       "kind": "behavior",
       "label": "Linked worktrees share one scope while independent repos and forks remain separate",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "core::repository_identity_and_explicit_binding: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "repository_identity_and_explicit_binding"
     },
@@ -29,18 +29,18 @@
       "kind": "behavior",
       "label": "Public locators remain compatible and RecordId survives hierarchy changes",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "core::stable_identity_and_locators: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "stable_identity_and_locators"
     },
     {
       "id": "MUST-004",
       "kind": "behavior",
-      "label": "Raw legacy bytes and unresolved optional memberships survive migration and edits",
+      "label": "Raw legacy bytes and custom content survive migration, live edits and projection rebuild",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "core::lossless_raw_records_and_optional_memberships: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "lossless_raw_records_and_optional_memberships"
     },
@@ -49,8 +49,8 @@
       "kind": "behavior",
       "label": "Whole multi-record command commits or rolls back across processes",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "core::multiprocess_atomic_commands: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "multiprocess_atomic_commands"
     },
@@ -59,8 +59,8 @@
       "kind": "behavior",
       "label": "Stale revisions reject and exact replay is idempotent while mismatched replay rejects",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "core::revision_and_command_receipts: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "revision_and_command_receipts"
     },
@@ -69,8 +69,8 @@
       "kind": "contract",
       "label": "Illegal scoped record graphs reject without side effects",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "core::graph_constraints: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "graph_constraints"
     },
@@ -79,8 +79,8 @@
       "kind": "quality",
       "label": "Busy handling terminates within five seconds with retry feedback",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "core::busy_timeout_five_seconds: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "busy_timeout_five_seconds"
     },
@@ -89,8 +89,8 @@
       "kind": "behavior",
       "label": "Migration inventories lifecycle, sibling and branch sources with explicit reconciliation",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "core::migration_inventory_and_divergence: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "migration_inventory_and_divergence"
     },
@@ -99,8 +99,8 @@
       "kind": "behavior",
       "label": "Backup precedes atomic migration activation and source changes abort safely",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "core::migration_cutover_and_source_recheck: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "migration_cutover_and_source_recheck"
     },
@@ -109,8 +109,8 @@
       "kind": "behavior",
       "label": "Updated clients never write legacy files and report later legacy divergence",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "journey::legacy_cutover_no_fallback: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "legacy_cutover_no_fallback"
     },
@@ -119,8 +119,8 @@
       "kind": "behavior",
       "label": "Normal domain edits change no repo files in clean or already dirty worktrees",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "journey::normal_edits_no_git_churn: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "normal_edits_no_git_churn"
     },
@@ -129,8 +129,8 @@
       "kind": "behavior",
       "label": "All consumers and headless queue agree after worktree removal",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "journey::consumer_and_queue_conservation: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "consumer_and_queue_conservation"
     },
@@ -139,8 +139,8 @@
       "kind": "behavior",
       "label": "Refine applies versioned raw content centrally and rejects stale results",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "core::refine_versioned_raw_apply: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "refine_versioned_raw_apply"
     },
@@ -149,8 +149,8 @@
       "kind": "quality",
       "label": "Active GUI and TUI see commits within two seconds with at most one poll per second",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "gui::storage_acceptance::active_client_visibility: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "storage_acceptance::active_client_visibility"
     },
@@ -159,18 +159,18 @@
       "kind": "behavior",
       "label": "Refocus refreshes before writes and concurrent-edit conflicts retain drafts",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "gui::storage_acceptance::refocus_and_drafts: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "storage_acceptance::refocus_and_drafts"
     },
     {
       "id": "MUST-017",
       "kind": "contract",
-      "label": "One deterministic v1 file round-trips every native record and excludes machine authorities",
+      "label": "One deterministic current-state file preserves native/custom/opaque records and excludes machine authorities",
       "status": "fail",
       "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'export'\n\nUsage: sb storage [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
       "metric": null,
       "named_test": "single_file_lossless_envelope"
     },
@@ -180,7 +180,7 @@
       "label": "Export uses a consistent snapshot and atomic replacement with recoverable checkpoint ordering",
       "status": "fail",
       "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'export'\n\nUsage: sb storage [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
       "metric": null,
       "named_test": "atomic_export_and_checkpoint_recovery"
     },
@@ -190,7 +190,7 @@
       "label": "Independent target edits are protected and unchanged repeat export is byte-identical",
       "status": "fail",
       "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'export'\n\nUsage: sb storage [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
       "metric": null,
       "named_test": "export_protection_and_idempotence"
     },
@@ -200,7 +200,7 @@
       "label": "Explicit empty bound scope bootstraps while populated scope requires trusted ancestry",
       "status": "fail",
       "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'import'\n\nUsage: sb storage [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
       "metric": null,
       "named_test": "bootstrap_and_known_base"
     },
@@ -210,7 +210,7 @@
       "label": "Three-way merge preserves omissions and detects same-record, locator and tombstone conflicts",
       "status": "fail",
       "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'import'\n\nUsage: sb storage [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
       "metric": null,
       "named_test": "three_way_merge_and_tombstones"
     },
@@ -220,7 +220,7 @@
       "label": "Preview apply rechecks file digest and repository revision before atomic import",
       "status": "fail",
       "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'import'\n\nUsage: sb storage [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
       "metric": null,
       "named_test": "stale_preview_and_atomic_apply"
     },
@@ -230,7 +230,7 @@
       "label": "Explicit resolution preserves originals and validates the complete resulting graph",
       "status": "fail",
       "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'import'\n\nUsage: sb storage [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
       "metric": null,
       "named_test": "resolution_graph_validation"
     },
@@ -240,7 +240,7 @@
       "label": "Input boundary limits and malformed or untrusted documents reject without live effects",
       "status": "fail",
       "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'import'\n\nUsage: sb storage [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
       "metric": null,
       "named_test": "untrusted_input_limits"
     },
@@ -250,7 +250,7 @@
       "label": "Canonicalization repairs format without importing or trusting unknown ancestry",
       "status": "fail",
       "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'import'\n\nUsage: sb storage [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
       "metric": null,
       "named_test": "canonicalize_not_import"
     },
@@ -259,8 +259,8 @@
       "kind": "behavior",
       "label": "Unavailable or corrupt database reports failure without empty success or Markdown fallback",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "journey::database_failure_is_explicit: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "database_failure_is_explicit"
     },
@@ -269,8 +269,8 @@
       "kind": "behavior",
       "label": "Database-consistent restore retains post-cutover writes and reverse migration reconciles newer data",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "core::backup_restore_and_reverse_migration: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "backup_restore_and_reverse_migration"
     },
@@ -279,8 +279,8 @@
       "kind": "behavior",
       "label": "TUI real-key state journeys preserve drafts and existing legacy fixture behavior",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "tui::storage_state_and_keyboard_journey: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "storage_state_and_keyboard_journey"
     },
@@ -289,8 +289,8 @@
       "kind": "visual",
       "label": "GUI storage states render in narrow current and wide containers against an approved canonical",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "gui::storage_acceptance::visual_state_matrix: exit=-1, named_results=[]; missing/invalid product evidence: [Errno 2] No such file or directory: '/Users/bpc/Dev/.worktrees/switchbard-task-147-storage-contract/docs/decisions/switchbard-owned-storage/product-evidence.json'",
       "metric": null,
       "named_test": "storage_acceptance::visual_state_matrix"
     },
@@ -299,8 +299,8 @@
       "kind": "visual",
       "label": "TUI storage states render at 80x24 and current size against an approved canonical",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "tui::storage_visual_state_matrix: exit=-1, named_results=[]; missing/invalid product evidence: [Errno 2] No such file or directory: '/Users/bpc/Dev/.worktrees/switchbard-task-147-storage-contract/docs/decisions/switchbard-owned-storage/product-evidence.json'",
       "metric": null,
       "named_test": "storage_visual_state_matrix"
     },
@@ -309,8 +309,8 @@
       "kind": "quality",
       "label": "Integrated implementation passes platform gates and render performance comparison",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "measurement",
+      "evidence": "Local quality command failed: preflight",
       "metric": null,
       "named_test": "integration_gates"
     },
@@ -320,7 +320,7 @@
       "label": "Reporter confirms two-client no-PR workflow and independent-clone single-file exchange",
       "status": "fail",
       "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'import'\n\nUsage: sb storage [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
       "metric": null,
       "named_test": "reporter_journey"
     },
@@ -329,8 +329,8 @@
       "kind": "contract",
       "label": "Authority and compatibility documentation matches tested behavior and preserves independent authorities",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "missing/invalid product evidence: [Errno 2] No such file or directory: '/Users/bpc/Dev/.worktrees/switchbard-task-147-storage-contract/docs/decisions/switchbard-owned-storage/product-evidence.json'",
       "metric": null,
       "named_test": "documentation_review"
     },
@@ -339,16 +339,19 @@
       "kind": "contract",
       "label": "Storage files and backups preserve private ownership and permissions under permissive umask",
       "status": "fail",
-      "check_type": "api-roundtrip",
-      "evidence": "Observed workspace CLI prerequisite failure; full outcome remains unproved. error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.",
+      "check_type": "named-test",
+      "evidence": "core::storage_privacy_and_path_substitution: exit=-1, named_results=[]",
       "metric": null,
       "named_test": "storage_privacy_and_path_substitution"
     }
   ],
   "metrics": {},
+  "scope_note": "Whole-mission catalog; partial kind slices cannot satisfy aggregate criteria. Historical model/wire artifacts are not current coverage. Actual API/test binding and mutation-runner revision remain required before final GREEN.",
   "artifacts": [
     "acceptance.md",
-    "verify.py"
+    "verify.py",
+    "phased-contract.md",
+    "historical-evidence.md"
   ],
   "skipped": [],
   "failures": [
@@ -397,12 +400,12 @@
         "switchbard-task",
         "--",
         "--repo",
-        "/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-storage-acceptance-66ruy3wm/repo",
+        "/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-storage-acceptance-i_fd6urd/repo",
         "storage",
         "--help"
       ],
-      "returncode": 2,
-      "output": "error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.\n"
+      "returncode": 0,
+      "output": "Inspect or explicitly migrate central planning storage\n\nUsage: sb storage [OPTIONS] <COMMAND>\n\nCommands:\n  status   Show per-kind authority and record counts. Never creates a database\n  migrate  Preview one kind across linked worktrees; --apply switches authority, preserving\n           originals\n  help     Print this message or the help of the given subcommand(s)\n\nOptions:\n      --database <DATABASE>  Alternate database for isolated migration/verification (normal commands\n                             use SWITCHBARD_DATABASE)\n      --repo <DIR>           Repo root to act on (default: nearest ancestor of the current directory\n                             containing a backlog/ directory)\n  -h, --help                 Print help\n"
     },
     "migration": {
       "command": [
@@ -413,13 +416,13 @@
         "switchbard-task",
         "--",
         "--repo",
-        "/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-storage-acceptance-66ruy3wm/repo",
+        "/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-storage-acceptance-i_fd6urd/repo",
         "storage",
         "migrate",
         "--help"
       ],
-      "returncode": 2,
-      "output": "error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.\n"
+      "returncode": 0,
+      "output": "Preview one kind across linked worktrees; --apply switches authority, preserving originals\n\nUsage: sb storage migrate [OPTIONS] --kind <KIND>\n\nOptions:\n      --kind <KIND>  [possible values: initiative, project]\n      --repo <DIR>   Repo root to act on (default: nearest ancestor of the current directory\n                     containing a backlog/ directory)\n      --apply        Commit the verified inventory. Without this flag, only print the preview\n  -h, --help         Print help\n"
     },
     "export": {
       "command": [
@@ -430,13 +433,13 @@
         "switchbard-task",
         "--",
         "--repo",
-        "/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-storage-acceptance-66ruy3wm/repo",
+        "/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-storage-acceptance-i_fd6urd/repo",
         "storage",
         "export",
         "--help"
       ],
       "returncode": 2,
-      "output": "error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.\n"
+      "output": "error: unrecognized subcommand 'export'\n\nUsage: sb storage [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.\n"
     },
     "import": {
       "command": [
@@ -447,16 +450,37 @@
         "switchbard-task",
         "--",
         "--repo",
-        "/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-storage-acceptance-66ruy3wm/repo",
+        "/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-storage-acceptance-i_fd6urd/repo",
         "storage",
         "import",
         "--help"
       ],
       "returncode": 2,
-      "output": "error: unrecognized subcommand 'storage'\n\nUsage: sb [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.\n"
+      "output": "error: unrecognized subcommand 'import'\n\nUsage: sb storage [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.\n"
     }
   },
-  "runners": {},
+  "runners": {
+    "preflight": {
+      "command": [
+        "mise",
+        "run",
+        "preflight"
+      ],
+      "returncode": 1,
+      "output": "mise golangci-lint@2.12.2 [1/3] install\nmise node@24.14.0    [1/3] install\nmise node@24.14.0    [1/3] download node-v24.14.0-darwin-arm64.tar.gz\nmise poetry@2.1.3    [1/3] install\nmise bun@1.4.2       [1/3] install\nmise go@1.25.1       [1/3] install\nmise bun@1.4.2       [1/3] download bun-darwin-aarch64.zip\nmise go@1.25.1       [1/3] download go1.25.1.darwin-arm64.tar.gz\nmise rust@1.95.0     [1/3] install\ninfo: syncing channel updates for 1.95.0-aarch64-apple-darwin\nmise rust@1.95.0     [1/3]   1.95.0-aarch64-apple-darwin unchanged - rustc 1.95.0 (59807616e 2026-04-14)\ninfo: checking for self-update (current version: 1.29.0)\ninfo: downloading self-update (new version: 1.29.1)\nmise python@3.12.11  [1/3] install\nmise python@3.12.11  [1/3] download cpython-3.12.11+20251007-aarch64-apple-darwin-install_only_stripped.tar.gz\nmise aqua:pnpm@12.3.4 [1/3] install\nmise golangci-lint@2.12.2 [1/3] download golangci-lint-2.12.2-darwin-arm64.tar.gz\nmise aqua:pnpm@12.3.4 [1/3] download pnpm-darwin-arm64.tar.gz\nmise node@24.14.0    [2/3] checksum node-v24.14.0-darwin-arm64.tar.gz\nmise node@24.14.0    [3/3] extract node-v24.14.0-darwin-arm64.tar.gz\nmise rust@1.95.0     [1/3] rustc -V\nmise rust@1.95.0     [1/3] rustc 1.95.0 (59807616e 2026-04-14)\nmise rust@1.95.0   \u2713 installed\nmise node@24.14.0    [3/3] node -v\nmise node@24.14.0    [3/3] v24.14.0\nmise node@24.14.0    [3/3] npm -v\nmise node@24.14.0    [3/3] 11.9.0\nmise node@24.14.0  \u2713 installed\nmise npm:gh-axi@0.1.34 [1/3] install\nmise npm:chrome-devtools-axi@0.1.30 [1/3] install\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving\nmise npm:gh-axi@0.1.34 [1/3] resolving\nmise npm:gh-axi@0.1.34 [1/3] resolving 1/1 pkgs\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 1/1 pkgs\nmise npm:gh-axi@0.1.34 [1/3] resolving 2/2 pkgs\nmise npm:gh-axi@0.1.34 [1/3] resolving 2/4 pkgs\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 2/2 pkgs\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 2/5 pkgs\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 3/5 pkgs\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 3/39 pkgs\nmise npm:gh-axi@0.1.34 [1/3] resolving 3/4 pkgs\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 4/39 pkgs\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 4/39 pkgs \u00b7 70.7 KiB\nmise npm:gh-axi@0.1.34 [1/3] resolving 3/4 pkgs \u00b7 124.9 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 4/39 pkgs \u00b7 100.1 KiB\nmise npm:gh-axi@0.1.34 [1/3] resolving 3/4 pkgs \u00b7 154.3 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 4/39 pkgs \u00b7 122.9 KiB\nmise npm:gh-axi@0.1.34 [1/3] resolving 3/4 pkgs \u00b7 177.1 KiB\nmise npm:gh-axi@0.1.34 [1/3] fetching 3/3 pkgs \u00b7 177.1 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 5/39 pkgs \u00b7 122.9 KiB\nmise npm:gh-axi@0.1.34 [1/3] linking 3/3 pkgs \u00b7 177.1 KiB\nmise npm:gh-axi@0.1.34 [1/3] installing 3/3 pkgs \u00b7 177.1 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 6/39 pkgs \u00b7 122.9 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 7/39 pkgs \u00b7 122.9 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 8/39 pkgs \u00b7 122.9 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 9/39 pkgs \u00b7 122.9 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 10/39 pkgs \u00b7 122.9 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 10/41 pkgs \u00b7 122.9 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 11/41 pkgs \u00b7 122.9 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 11/47 pkgs \u00b7 122.9 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 12/47 pkgs \u00b7 122.9 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 12/48 pkgs \u00b7 122.9 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 13/48 pkgs \u00b7 122.9 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 14/48 pkgs \u00b7 122.9 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 14/100 pkgs \u00b7 122.9 KiB\nmise npm:gh-axi@0.1.34 \u2713 installed\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 14/100 pkgs \u00b7 692.1 KiB\nmise npm:lavish-axi@0.1.62 [1/3] install\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 14/100 pkgs \u00b7 728.0 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 14/100 pkgs \u00b7 731.8 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 14/100 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 15/100 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 15/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 16/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 17/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 18/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 19/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 20/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 21/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 22/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 23/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 24/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 25/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 26/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 27/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 28/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 29/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 30/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 31/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 32/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 33/102 pkgs \u00b7 747.4 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 33/102 pkgs \u00b7 753.7 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 34/102 pkgs \u00b7 753.7 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 35/102 pkgs \u00b7 753.7 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 36/102 pkgs \u00b7 753.7 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 37/102 pkgs \u00b7 753.7 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 38/102 pkgs \u00b7 753.7 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 39/102 pkgs \u00b7 753.7 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 40/102 pkgs \u00b7 753.7 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 41/102 pkgs \u00b7 753.7 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 42/102 pkgs \u00b7 753.7 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 43/102 pkgs \u00b7 753.7 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 44/102 pkgs \u00b7 753.7 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 44/103 pkgs \u00b7 753.7 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 44/103 pkgs \u00b7 777.7 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 44/103 pkgs \u00b7 783.8 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 44/103 pkgs \u00b7 805.8 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 45/103 pkgs \u00b7 805.8 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 46/103 pkgs \u00b7 805.8 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 47/103 pkgs \u00b7 805.8 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 48/103 pkgs \u00b7 805.8 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 48/104 pkgs \u00b7 805.8 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 49/104 pkgs \u00b7 805.8 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 49/104 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 50/104 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 50/107 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 51/107 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 51/111 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 52/111 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 53/111 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 53/118 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 54/118 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 54/129 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 55/129 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 55/133 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 56/133 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 57/133 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 57/135 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 58/135 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 59/135 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 60/135 pkgs \u00b7 828.6 KiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 60/135 pkgs \u00b7 1.0 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 60/135 pkgs \u00b7 1.1 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 61/135 pkgs \u00b7 1.1 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 62/135 pkgs \u00b7 1.1 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 63/135 pkgs \u00b7 1.1 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 64/135 pkgs \u00b7 1.1 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 65/135 pkgs \u00b7 1.1 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 66/135 pkgs \u00b7 1.1 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 67/135 pkgs \u00b7 1.1 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 68/135 pkgs \u00b7 1.1 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 68/135 pkgs \u00b7 1.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 69/135 pkgs \u00b7 1.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 70/135 pkgs \u00b7 1.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 71/135 pkgs \u00b7 1.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 72/135 pkgs \u00b7 1.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 73/135 pkgs \u00b7 1.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 74/135 pkgs \u00b7 1.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 75/135 pkgs \u00b7 1.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 76/135 pkgs \u00b7 1.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 77/135 pkgs \u00b7 1.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 78/135 pkgs \u00b7 1.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 79/135 pkgs \u00b7 1.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 79/135 pkgs \u00b7 1.3 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 80/135 pkgs \u00b7 1.3 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 81/135 pkgs \u00b7 1.3 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 82/135 pkgs \u00b7 1.3 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 83/135 pkgs \u00b7 1.3 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 84/135 pkgs \u00b7 1.3 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 84/135 pkgs \u00b7 1.4 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 84/135 pkgs \u00b7 1.6 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 84/135 pkgs \u00b7 1.7 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 85/135 pkgs \u00b7 1.7 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 86/135 pkgs \u00b7 1.7 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 86/135 pkgs \u00b7 1.8 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 86/135 pkgs \u00b7 1.9 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 87/135 pkgs \u00b7 1.9 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 88/135 pkgs \u00b7 1.9 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 89/135 pkgs \u00b7 1.9 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 90/135 pkgs \u00b7 1.9 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 91/135 pkgs \u00b7 1.9 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 92/135 pkgs \u00b7 1.9 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 93/135 pkgs \u00b7 1.9 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 94/135 pkgs \u00b7 1.9 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 94/135 pkgs \u00b7 2.0 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 94/135 pkgs \u00b7 2.1 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 95/135 pkgs \u00b7 2.1 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 95/135 pkgs \u00b7 2.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] resolving 95/135 pkgs \u00b7 3.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] fetching 95/95 pkgs \u00b7 3.2 MiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving\nmise npm:lavish-axi@0.1.62 [1/3] resolving 1/1 pkgs\nmise npm:chrome-devtools-axi@0.1.30 [1/3] linking 95/95 pkgs \u00b7 3.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 [1/3] installing 95/95 pkgs \u00b7 3.2 MiB\nmise npm:chrome-devtools-axi@0.1.30 \u2713 installed\nmise npm:quota-axi@0.1.31 [1/3] install\nmise npm:lavish-axi@0.1.62 [1/3] resolving 2/2 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 2/10 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 3/10 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 4/10 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 4/12 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 5/12 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 5/14 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 6/14 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 6/16 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 7/16 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 8/16 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 8/72 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 9/72 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 9/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 10/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 11/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 12/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 13/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 14/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 15/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 16/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 17/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 18/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 19/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 20/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 21/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 22/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 23/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 24/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 25/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 26/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 27/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 28/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 29/80 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 29/82 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 30/82 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 31/82 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 31/84 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 32/84 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 32/86 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 33/86 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 33/88 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 34/88 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 35/88 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 35/92 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 36/92 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 36/96 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 37/96 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 38/96 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 38/103 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 39/103 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 39/114 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 40/114 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 40/118 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 41/118 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 42/118 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 42/122 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 43/122 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 44/122 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 44/126 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 45/126 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 46/126 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 46/128 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 47/128 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 47/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 48/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 49/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 50/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 51/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 52/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 53/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 54/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 55/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 56/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 57/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 58/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 59/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 60/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 61/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 62/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 63/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 64/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 65/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 66/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 67/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 68/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 69/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 70/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 71/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 72/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 73/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 74/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 75/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 76/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 77/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 78/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 79/130 pkgs\nmise npm:lavish-axi@0.1.62 [1/3] resolving 79/130 pkgs \u00b7 15.1 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 79/130 pkgs \u00b7 39.7 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 80/130 pkgs \u00b7 39.7 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 81/130 pkgs \u00b7 39.7 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 82/130 pkgs \u00b7 39.7 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 83/130 pkgs \u00b7 39.7 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 84/130 pkgs \u00b7 39.7 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 85/130 pkgs \u00b7 39.7 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 86/130 pkgs \u00b7 39.7 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 87/130 pkgs \u00b7 39.7 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 88/130 pkgs \u00b7 39.7 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 89/130 pkgs \u00b7 39.7 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 90/130 pkgs \u00b7 39.7 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 39.7 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 41.7 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 49.5 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 51.2 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 53.4 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 55.2 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 57.0 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 58.8 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 60.5 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 63.6 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 118.5 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 380.0 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 382.1 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 480.2 KiB\nmise npm:lavish-axi@0.1.62 [1/3] resolving 91/130 pkgs \u00b7 551.4 KiB\nmise npm:lavish-axi@0.1.62 [1/3] fetching 90/91 pkgs \u00b7 551.4 KiB\nmise npm:quota-axi@0.1.31 [1/3] resolving\nmise npm:quota-axi@0.1.31 [1/3] resolving 1/1 pkgs\nmise npm:quota-axi@0.1.31 [1/3] resolving 2/2 pkgs\nmise npm:quota-axi@0.1.31 [1/3] resolving 2/3 pkgs\nmise npm:quota-axi@0.1.31 [1/3] resolving 3/3 pkgs\nmise npm:quota-axi@0.1.31 [1/3] resolving 3/3 pkgs \u00b7 27.8 KiB\nmise npm:quota-axi@0.1.31 [1/3] resolving 3/3 pkgs \u00b7 205.8 KiB\nmise npm:quota-axi@0.1.31 [1/3] fetching 3/3 pkgs \u00b7 205.8 KiB\nmise npm:quota-axi@0.1.31 [1/3] linking 3/3 pkgs \u00b7 205.8 KiB\nmise npm:quota-axi@0.1.31 [1/3] installing 3/3 pkgs \u00b7 205.8 KiB\nmise npm:quota-axi@0.1.31 \u2713 installed\nmise npm:tasks-axi@0.2.5 [1/3] install\nmise npm:lavish-axi@0.1.62 [1/3] fetching 90/91 pkgs \u00b7 8.1 MiB\nmise npm:lavish-axi@0.1.62 [1/3] fetching 91/91 pkgs \u00b7 8.1 MiB\nmise npm:lavish-axi@0.1.62 [1/3] linking 91/91 pkgs \u00b7 8.1 MiB\nmise npm:lavish-axi@0.1.62 [1/3] installing 91/91 pkgs \u00b7 8.1 MiB\nmise npm:lavish-axi@0.1.62 \u2713 installed\nmise npm:tasks-axi@0.2.5 [1/3] resolving\nmise npm:tasks-axi@0.2.5 [1/3] resolving 1/1 pkgs\nmise npm:tasks-axi@0.2.5 [1/3] resolving 2/2 pkgs\nmise npm:tasks-axi@0.2.5 [1/3] resolving 2/3 pkgs\nmise npm:tasks-axi@0.2.5 [1/3] resolving 3/3 pkgs\nmise npm:tasks-axi@0.2.5 [1/3] resolving 3/3 pkgs \u00b7 63.6 KiB\nmise npm:tasks-axi@0.2.5 [1/3] fetching 3/3 pkgs \u00b7 63.6 KiB\nmise npm:tasks-axi@0.2.5 [1/3] linking 3/3 pkgs \u00b7 63.6 KiB\nmise npm:tasks-axi@0.2.5 [1/3] installing 3/3 pkgs \u00b7 63.6 KiB\nmise npm:tasks-axi@0.2.5 \u2713 installed\nmise go@1.25.1       [2/3] checksum go1.25.1.darwin-arm64.tar.gz\nmise go@1.25.1       [3/3] extract go1.25.1.darwin-arm64.tar.gz\nmise go@1.25.1       [3/3] go version\nmise go@1.25.1       [3/3] go version go1.25.1 darwin/arm64\nmise go@1.25.1     \u2713 installed\nmise golangci-lint@2.12.2 [2/3] verify GitHub artifact attestations\nmise python@3.12.11  [1/3] generate checksum cpython-3.12.11+20251007-aarch64-apple-darwin-install_only_stripped.tar.gz\nmise python@3.12.11  [1/3] verify GitHub artifact attestations\nmise aqua:pnpm@12.3.4 [2/3] verify GitHub artifact attestations\nmise bun@1.4.2       [2/3] generate checksum bun-darwin-aarch64.zip\nmise bun@1.4.2       [3/3] extract bun-darwin-aarch64.zip\nmise bun@1.4.2       [3/3] bun -v\nmise python@3.12.11  [1/3] \u2713 GitHub artifact attestations verified\nmise python@3.12.11  [1/3] extract cpython-3.12.11+20251007-aarch64-apple-darwin-install_only_stripped.tar.gz\nmise golangci-lint@2.12.2 [2/3] \u2713 GitHub artifact attestations verified\nmise golangci-lint@2.12.2 [2/3] checksum golangci-lint-2.12.2-darwin-arm64.tar.gz\nmise aqua:pnpm@12.3.4 [2/3] \u2713 GitHub artifact attestations verified\nmise aqua:pnpm@12.3.4 [2/3] checksum pnpm-darwin-arm64.tar.gz\nmise golangci-lint@2.12.2 [3/3] extract golangci-lint-2.12.2-darwin-arm64.tar.gz\nmise aqua:pnpm@12.3.4 [3/3] extract pnpm-darwin-arm64.tar.gz\nmise golangci-lint@2.12.2 \u2713 installed\nmise aqua:pnpm@12.3.4 \u2713 installed\nmise python@3.12.11  [1/3] python --version\nmise bun@1.4.2       [3/3] 1.4.2\nmise bun@1.4.2     \u2713 installed\nmise python@3.12.11  [1/3] Python 3.12.11\nmise python@3.12.11 \u2713 installed\nRetrieving Poetry metadata\n\n# Welcome to Poetry!\n\nThis will download and install the latest version of Poetry,\na dependency and package manager for Python.\n\nIt will add the `poetry` command to Poetry's bin directory, located at:\n\n/var/folders/zf/kpj__cf52gs85rf46m8gghw00000gn/T/switchbard-storage-acceptance-i_fd6urd/data/mise/installs/poetry/2.1.3/bin\n\nYou can uninstall at any time by executing this script with the --uninstall option,\nand these changes will be reverted.\n\nInstalling Poetry (2.1.3)\nInstalling Poetry (2.1.3): Creating environment\nInstalling Poetry (2.1.3): An error occurred. Removing partial environment.\nPoetry installation failed.\nSee /Users/bpc/Dev/.worktrees/switchbard-task-147-storage-contract/poetry-installer-error-jj3a4vbt.log for error logs.\nmise ERROR Failed to install vfox:mise-plugins/vfox-poetry@2.1.3: runtime error: crates/vfox/src/lua_mod/hooks.rs:62:50: Poetry installation failed\nstack traceback:\n\t[C]: in function 'error'\n\tcrates/vfox/src/lua_mod/hooks.rs:62:50: in function 'PLUGIN.PostInstall'\n\tcrates/vfox/src/plugin.rs:227:2: in main chunk\nmise ERROR Version: 2026.8.14 macos-arm64 (2026-08-25)\nmise ERROR Run with --verbose or MISE_VERBOSE=1 for more information\n"
+    },
+    "orchestrator": {
+      "command": [
+        "uv",
+        "run",
+        "--directory",
+        "orchestrator",
+        "pytest"
+      ],
+      "returncode": 0,
+      "output": "Using CPython 3.12.11 interpreter at: /Users/bpc/.local/share/mise/installs/python/3.12.11/bin/python3\nCreating virtual environment at: .venv\n   Building switchbard-orchestrator @ file:///Users/bpc/Dev/.worktrees/switchbard-task-147-storage-contract/orchestrator\nDownloading pygments (1.2MiB)\nDownloading pydantic-core (1.8MiB)\n Downloaded pydantic-core\n Downloaded pygments\n      Built switchbard-orchestrator @ file:///Users/bpc/Dev/.worktrees/switchbard-task-147-storage-contract/orchestrator\nInstalled 43 packages in 28ms\n============================= test session starts ==============================\nplatform darwin -- Python 3.12.11, pytest-9.1.1, pluggy-1.6.0\nrootdir: /Users/bpc/Dev/.worktrees/switchbard-task-147-storage-contract/orchestrator\nconfigfile: pyproject.toml\ntestpaths: tests\nplugins: anyio-4.14.2, langsmith-0.11.2\ncollected 7 items\n\ntests/test_drain_e2e.py ss                                               [ 28%]\ntests/test_graph.py .....                                                [100%]\n\n========================= 5 passed, 2 skipped in 0.94s =========================\n"
+    }
+  },
   "mutation_gate": {
     "all_flipped": false,
     "mutations": [],

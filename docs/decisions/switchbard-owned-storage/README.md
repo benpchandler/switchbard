@@ -2,7 +2,7 @@
 
 Owner clarification (2026-09-08): [schema flexibility](schema-flexibility.md) is a governing requirement. Use a stable envelope with extensible content, preserve unknown fields and kinds, and avoid schema migrations for custom fields. It extends MUST-004 and MUST-017. Earlier wire/schema/model details require revision where inconsistent; implementation readiness remains open.
 
-Status: revision required following the fresh [second opinion](second-opinion.md). Central SQLite authority is supported; exchange ancestry, record granularity, PR readability, and verification require revision before implementation. The earlier audit remains historical evidence of its narrower finding closure. Implementation, migration and reporter acceptance remain open.
+Status: owner-authorized strangler implementation in progress. The [phased contract](phased-contract.md) governs per-kind cutover and the [migration ledger](migration-ledger.md) tracks the complete outcome. Core storage, all native kinds, exchange, recovery, workspace ordering, and frontend identity/refresh paths are implemented with isolated tests. Real-data rehearsals preserve ordinary task-list output and original source bytes in six repositories. Live cutover and conflicting worktree reconciliation remain open. Earlier wire/model results are historical evidence, not implementation approval.
 
 ## Objective ledger
 
@@ -16,7 +16,7 @@ Preserve all original records, including unknown frontmatter and custom Markdown
 
 ## Authorization and boundaries
 
-Authorized now: discovery, repository audit, reversible planning, task tracking. No production persistence changes, data imports, cutover, removal of backlog files, or shared process restarts have occurred. The first storage migration or authority cutover must follow an explicit, reviewable contract and owner authorization.
+Authorized now: contract revision, implementation, verification and gradual strangler migration, lower-impact records first, by owner instruction on 2026-09-08. Preserve original files and compare behavior at each stage. No live data cutover or shared process restart has yet occurred; test migrations use disposable databases.
 
 ## Sequence
 
@@ -36,23 +36,21 @@ Use a machine-local SQLite database for native task-domain records across all re
 
 ## Current evidence
 
-- `backlog/tasks/task-147 - sbt-idea-switchbard-persists-all-data-rather-than-in-repo;-maybe-writes-some-kind-of-summary-file-in-repo.md`: original owner idea and reporter-confirmation criterion.
-- `crates/switchbard-core/src/backlog/mod.rs`: shared native task read/write facade.
-- `crates/switchbard-core/src/backlog/types.rs:151` and `:243`: repo and task models carry filesystem paths.
-- `crates/switchbard-core/src/backlog/allocate.rs`: task allocation scans worktrees and active branches, with shared Git-directory reservations.
-- `crates/switchbard-task/src/main.rs:365`: CLI rejects scopes without a backlog directory.
-- `crates/switchbard-tui/src/main.rs:82`: TUI startup also requires a backlog directory.
-- `docs/decisions/task-queue-authority-model/decision.md`: existing contract defines task identity by repo root and task ID and promises migration-free repo files. A new contract must explicitly supersede affected clauses.
+- [Current product coverage and residual gaps](coverage-current.md) maps tests to each acceptance criterion without converting supporting passes into full acceptance.
+- Private read-only repository previews identify eligible kinds and conflicting source copies. Operational reports are retained outside the source tree in the owner's `~/.switchbard/migration-reviews/task147-20260908/` folder.
+- Private phased shadow reports record temporary shared-database migrations, ordinary view comparisons, and preserved originals; source-specific reconciliation evidence stays outside the code deliverable.
+- [Current exchange contract](exchange-v2.md) supersedes the historical v1 wire/model proposal.
+- [Operator guide](../../central-storage.md) explains preview, activation, exchange, ordering, and recovery commands.
 
 ## Validation state
 
-Synthetic model: 34/34 scenarios pass; 22 invalid cases reject without modeled durable effects. Fixed wire vectors pass 30/30 and verifier selftests pass 11/11. Limits and omissions are explicit in their result files. Plan lint, Rust formatting, Git-hook and CI-routing contract checks pass. All 34 product criteria remain RED because storage commands do not exist. No production migration behavior or GUI/TUI storage journey is proved. Existing primary-checkout changes are preserved; decision artifacts are isolated on codex/task-147-storage-contract.
+Focused storage, native adapters, real CLI exchange/recovery/ordering journeys, and frontend stale-draft/identity tests have passed during implementation. Final integrated workspace validation and independent review remain pending. The executable verifier deliberately leaves criteria with missing live or contract evidence unproved. No default database has been migrated yet.
 
 ## Package map
 
 - [Decision](decision.md), [architecture](architecture.md), [source inventory](discovery.md), and [blast radius](blast-radius.json).
 - [Implementation plan](plan.md), [acceptance](acceptance.md), and [state/evidence matrix](testing-matrix.md).
-- [Wire specification](exchange-v1.md), [closed schema](exchange-v1.schema.json), and [fixed vectors](exchange-v1-vectors.json).
+- [Current wire specification](exchange-v2.md), [schema](exchange-v2.schema.json), and [historical evidence boundary](historical-evidence.md).
 - [Initial independent audit and scope limits](audit.md), superseded readiness verdict in the [fresh second opinion](second-opinion.md).
 
 Run the single product acceptance command with `python3 docs/decisions/switchbard-owned-storage/verify.py`. A failure is expected until the actual product behavior is implemented; the synthetic scripts are separate decision evidence and cannot turn it green.

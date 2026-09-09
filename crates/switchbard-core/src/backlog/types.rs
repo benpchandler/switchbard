@@ -239,8 +239,17 @@ impl BacklogTaskSource {
     }
 }
 
+/// Stable central identity and the revision represented by this read snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BacklogStorageIdentity {
+    pub repository_id: String,
+    pub record_id: String,
+    pub revision: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BacklogTask {
+    pub storage_identity: Option<BacklogStorageIdentity>,
     pub id: String,
     pub title: String,
     pub status: String,
@@ -386,6 +395,7 @@ mod tests {
     fn project_names_unions_task_refs_and_defs_sorted() {
         fn task_in(project: Option<&str>) -> BacklogTask {
             BacklogTask {
+                storage_identity: None,
                 id: "TASK-1".to_string(),
                 title: "Example".to_string(),
                 status: "To Do".to_string(),
@@ -475,6 +485,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(i, status)| BacklogTask {
+                    storage_identity: None,
                     id: format!("TASK-{}", i + 1),
                     title: "fixture".to_string(),
                     status: (*status).to_string(),

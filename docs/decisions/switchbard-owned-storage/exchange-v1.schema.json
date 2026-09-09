@@ -251,7 +251,7 @@
       ]
     }
   },
-  "$comment": "Also apply exchange-v1.md algorithmic rules. Schema alone cannot detect duplicate JSON keys, combined counts, raw decoded size, digests, sorted arrays, cross-scope links, domain consistency, or local base trust.",
+  "$comment": "HISTORICAL SUPERSEDED PROPOSAL. Not normative for phased flexible storage; see phased-contract.md and historical-evidence.md.",
   "allOf": [
     {
       "if": {

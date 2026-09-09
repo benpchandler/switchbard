@@ -1,5 +1,7 @@
 # Required evidence and state coverage
 
+Current implementation mapping: [exchange-v2.md](exchange-v2.md), [current schema](exchange-v2.schema.json) and [actual tests/residual outcomes](coverage-current.md). Current wire uses version 2, readable UTF8-lines, at most 128 replica entries and JSON-safe counters; historical v1 results do not apply.
+Governing update: [phased-contract.md](phased-contract.md) authorizes validated gradual per-kind migration and flexible lossless document content. It supersedes earlier all-at-once cutover and closed wire details. [Historical evidence](historical-evidence.md) does not establish current product behavior.
 Owner clarification (2026-09-08): [schema flexibility](schema-flexibility.md) is a governing requirement. Use a stable envelope with extensible content, preserve unknown fields and kinds, and avoid schema migrations for custom fields. It extends MUST-004 and MUST-017. Earlier wire/schema/model details require revision where inconsistent; implementation readiness remains open.
 
 Synthetic checks pressure-test decisions only. Product acceptance must execute the real core/CLI/UI seams; a green model is not implementation evidence.
@@ -29,3 +31,7 @@ Synthetic checks pressure-test decisions only. Product acceptance must execute t
 | Authority | Repo bind/fork/cross-scope rejection, explicit import apply, explicit conflict resolution. Network authentication/roles N/A: local database and user-mediated Git transport; no hosted service. |
 
 No new UI states have been rendered in this decision pass. Those states are future acceptance gates, not approved designs. Performance evidence must use the actual supported app containers; a synthetic SQLite timing does not prove GUI responsiveness.
+
+## Phased and Flexible Additions
+
+For each (repo,kind) slice, compare existing command behavior before/after, migration failure and source-digest races, composite legacy/central reads, and no cross-adapter partial writes. Execute initiatives, projects, config/rank/goals, then all task lifecycle fixtures before atomic task-kind cutover. Unknown content must survive live writes, projection rebuild, reopen/restore and exchange; backups alone do not establish preservation. Whole aggregate YAML documents initially conflict conservatively on concurrent edits. Add bootstrap/edit/export-back, skipped-export latest catch-up and stale-peer no-rollback product journeys. Historical model/vector results cover none of this amendment.

@@ -1047,6 +1047,7 @@ mod tests {
 
     fn task(id: &str, labels: &[&str]) -> BacklogTask {
         BacklogTask {
+            storage_identity: None,
             id: id.to_string(),
             title: "Example".to_string(),
             status: "To Do".to_string(),

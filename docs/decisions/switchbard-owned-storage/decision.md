@@ -1,8 +1,9 @@
 # Decision: one database, optional repository exchange
 
+Governing update: [phased-contract.md](phased-contract.md) authorizes validated gradual per-kind migration and flexible lossless document content. It supersedes earlier all-at-once cutover and closed wire details. [Historical evidence](historical-evidence.md) does not establish current product behavior.
 Owner clarification (2026-09-08): [schema flexibility](schema-flexibility.md) is a governing requirement. Use a stable envelope with extensible content, preserve unknown fields and kinds, and avoid schema migrations for custom fields. It extends MUST-004 and MUST-017. Earlier wire/schema/model details require revision where inconsistent; implementation readiness remains open.
 
-Status: the owner confirmed the central-database and optional single-file direction. This detailed implementation proposal still needs review. No production migration has occurred.
+Status: the owner authorized gradual implementation and migration after validation. Follow phased-contract.md; per-record vector clocks govern the later exchange seam in exchange-current.md. Completion still requires all native task-domain records and real product evidence.
 
 ## Owner outcome
 
@@ -18,7 +19,7 @@ Use one optional .switchbard/tasks.json file per repo: deterministic, versioned,
 
 ## Invariants
 
-1. Database records are live authority after per-repo cutover. Repo files become legacy inputs or explicit exchange artifacts.
+1. Database records are live authority after per-repository/per-kind cutover. Repo files become legacy inputs or explicit exchange artifacts.
 2. Linked worktrees resolve to one stable repository identity. Paths, names, remotes, and task display numbers are mutable locators or labels.
 3. Same-number tasks in different repos stay distinct. Forks are never linked automatically by name or remote.
 4. One core command commits canonical records, indices, related changes, change sequence, and retry receipts together or not at all.
@@ -33,8 +34,8 @@ Use one optional .switchbard/tasks.json file per repo: deterministic, versioned,
 
 A central cache retains file authority and fails the owner outcome. A shared Markdown directory removes some duplication but needs a new multi-record transaction protocol. SQLite fits the required atomic boundary. A hosted service adds accounts and network operations unnecessary for Git-based exchange. A committed binary database makes review and compatibility depend on database internals. Automatic export recreates Git churn; automatic import makes historical checkouts mutate current planning state.
 
-Use whole-record three-way merge initially: disjoint record changes merge, identical edits replay, and divergent edits to the same record need explicit resolution. Field-level merging is deferred because custom Markdown, ordered lists, goals, and rank have different semantics. This is a proposed engineering default, not a previously expressed owner preference.
+Use per-record version-vector dominance with whole-document conflict granularity: disjoint records merge, stale versions remain preserved, concurrent identical content joins clocks, and divergent edits to the same document require explicit joined-clock resolution. Field-level merging is deferred because custom Markdown, ordered lists, goals, and rank have different semantics. This is a proposed engineering default, not a previously expressed owner preference.
 
-## Approval boundary
+## Execution boundary
 
-The first production schema/dependency change, real database import, authority cutover, and legacy-file removal follow review of the complete contract. Synthetic temporary databases are decision evidence only. A one-time legacy cleanup may need a PR; normal future edits do not.
+Implementation and gradual actual migration are authorized after each slice is validated. Follow phased-contract.md and record evidence and intentional behavior changes in the root migration ledger. Preserve originals and protected recovery data; no new owner approval gate is introduced. A one-time legacy cleanup may need a PR; normal future edits of migrated kinds do not. Whole-domain no-PR completion is claimed only after all kinds migrate.

@@ -24,6 +24,12 @@ mod hierarchy_cmd;
 mod queue_cmd;
 mod rank_cmd;
 mod render;
+mod storage_cmd;
+mod storage_document;
+mod storage_exchange;
+mod storage_exchange_file;
+mod storage_ordering;
+mod storage_recovery;
 mod work_cmd;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -45,8 +51,12 @@ const MAX_ROOT_WALK: usize = 64;
                   layer — the same implementation the Switchbard GUI and switchbard-dispatch \
                   use, and the replacement for the external `backlog` CLI's write path.\n\n\
                   REPO RESOLUTION: commands act on the Backlog repo containing the \
-                  current directory (the nearest ancestor with a backlog/ directory), or the \
+                  current directory (a registered repository or nearest backlog/ directory), or the \
                   one named by --repo (--project <DIR> is a deprecated alias).\n\n\
+                  STORAGE: after explicit per-kind migration, the central Switchbard database \
+                  owns reads and writes across worktrees. Legacy source files remain preserved. \
+                  Use `storage status` and `storage migrate --help`; ordinary edits never export. \
+                  `storage export` writes the optional .switchbard/tasks.json collaboration file.\n\n\
                   TASK IDS: every <ID> accepts `TASK-7`, `task-7`, or bare `7`, plus decimal \
                   subtask ids like `7.2`.\n\n\
                   OUTPUT CONTRACT: stdout carries only the payload — `create` prints the new \
@@ -60,10 +70,10 @@ const MAX_ROOT_WALK: usize = 64;
                   `project` and `initiative` subcommand families manage the optional \
                   definition files (backlog/projects/, backlog/initiatives/) that give a \
                   name lifecycle, and their `list`/`view` roll up member done/total counts.\n\n\
-                  GOALS: weekly numeric goals live in backlog/goals.yml (records, not \
+                  GOALS: weekly numeric goals use central storage after migration, otherwise backlog/goals.yml (records, not \
                   markdown) - `goal create/list/view/check-in/roll`. Pace compares \
                   actual/target against the elapsed week: on-track, behind, met, missed.\n\n\
-                  RANKING: manual stack rank lives in backlog/ranking.yml (records, not \
+                  RANKING: manual stack rank uses central storage after migration, otherwise backlog/ranking.yml (records, not \
                   markdown). `rank project/task <X> --top|--before|--after <sibling>` ranks \
                   within the sibling scope; `unrank` removes; `expedite <ID>` jumps a task \
                   over the whole computed order (true interrupts only - a new task that \
@@ -110,6 +120,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Inspect or explicitly migrate central planning storage.
+    Storage(storage_cmd::StorageArgs),
     /// List tasks, one tab-separated row per task: id, status, priority,
     /// labels (comma-joined), project, title
     List {
@@ -323,8 +335,19 @@ fn run(cli: &Cli) -> Result<()> {
     if cli.project.is_some() {
         eprintln!("sb: warning: --project is deprecated; use --repo");
     }
+    if let Command::Storage(args) = &cli.command {
+        let root = cli
+            .repo
+            .clone()
+            .or_else(|| cli.project.clone())
+            .unwrap_or(std::env::current_dir()?);
+        return storage_cmd::run(&root, args);
+    }
     let root = resolve_repo(cli.repo.as_deref().or(cli.project.as_deref()))?;
     match &cli.command {
+        Command::Storage(_) => {
+            unreachable!("storage commands handled before legacy scope resolution")
+        }
         Command::List {
             status,
             in_project,
@@ -358,7 +381,7 @@ fn run(cli: &Cli) -> Result<()> {
 /// a Backlog repo.
 fn resolve_repo(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(root) = explicit {
-        if switchbard_core::is_backlog_repo(root) {
+        if switchbard_core::backlog_repo_available(root)? {
             return Ok(root.to_path_buf());
         }
         bail!(
@@ -367,7 +390,7 @@ fn resolve_repo(explicit: Option<&Path>) -> Result<PathBuf> {
         );
     }
     let cwd = std::env::current_dir().context("cannot read the current directory")?;
-    find_repo_root(&cwd).ok_or_else(|| {
+    find_repo_root(&cwd)?.ok_or_else(|| {
         anyhow!(
             "no Backlog repo found at or above {} — run inside one, or pass --repo <repo-root>",
             cwd.display()
@@ -375,12 +398,13 @@ fn resolve_repo(explicit: Option<&Path>) -> Result<PathBuf> {
     })
 }
 
-pub(crate) fn find_repo_root(start: &Path) -> Option<PathBuf> {
-    start
-        .ancestors()
-        .take(MAX_ROOT_WALK)
-        .find(|dir| switchbard_core::is_backlog_repo(dir))
-        .map(Path::to_path_buf)
+pub(crate) fn find_repo_root(start: &Path) -> Result<Option<PathBuf>> {
+    for dir in start.ancestors().take(MAX_ROOT_WALK) {
+        if switchbard_core::backlog_repo_available(dir)? {
+            return Ok(Some(dir.to_path_buf()));
+        }
+    }
+    Ok(None)
 }
 
 fn list(root: &Path, status: Option<&str>, in_project: Option<&str>, all: bool) -> Result<()> {
@@ -452,69 +476,51 @@ fn create(root: &Path, args: &CreateArgs) -> Result<()> {
     Ok(())
 }
 
-/// Apply the edit in a fixed order: the patch-shaped fields in one
-/// `edit_backlog_task`, then label add/removes, checklist toggles, the note
-/// append, and the final summary — each through the same facade the GUI and
-/// dispatch use. Prints `Edited <ID>` if anything changed, else
-/// `no changes`.
+/// Translate flags into the shared atomic edit command, preserving their order.
 fn edit(root: &Path, args: &EditArgs) -> Result<()> {
-    let mut changed = revise_acceptance_criteria(root, args)?;
-    let patch = patch_from(args);
-    if !patch.is_empty() {
-        changed |= switchbard_core::edit_backlog_task(root, &args.id, &patch)? != "no changes";
+    use switchbard_core::{TaskChecklist, TaskEditRequest};
+    let mut checklists = Vec::new();
+    for (indices, checked, list) in [
+        (&args.check_ac, true, TaskChecklist::AcceptanceCriteria),
+        (&args.uncheck_ac, false, TaskChecklist::AcceptanceCriteria),
+        (&args.check_dod, true, TaskChecklist::DefinitionOfDone),
+        (&args.uncheck_dod, false, TaskChecklist::DefinitionOfDone),
+    ] {
+        checklists.extend(indices.iter().map(|index| (list, *index, checked)));
     }
-    if let Some(word) = &args.ball {
-        let holder = switchbard_core::Ball::parse(word)?;
-        changed |= switchbard_core::set_backlog_ball(root, &args.id, holder)? != "no changes";
-    }
-    for label in &args.add_label {
-        changed |= switchbard_core::set_backlog_label(root, &args.id, label, true)? != "no changes";
-    }
-    for label in &args.remove_label {
-        changed |=
-            switchbard_core::set_backlog_label(root, &args.id, label, false)? != "no changes";
-    }
-    changed |= toggle_checklists(root, args)?;
-    if let Some(note) = &args.append_notes {
-        changed |= switchbard_core::append_backlog_notes(root, &args.id, note)? != "no changes";
-    }
-    if let Some(summary) = &args.final_summary {
-        changed |=
-            switchbard_core::set_backlog_final_summary(root, &args.id, summary)? != "no changes";
-    }
-    let moved = match &args.parent {
-        Some(word) => {
-            let target = (!word.eq_ignore_ascii_case("none")).then_some(word.as_str());
-            switchbard_core::move_backlog_task(root, &args.id, target)?
-        }
-        None => None,
+    let request = TaskEditRequest {
+        patch: patch_from(args),
+        acceptance_edits: acceptance_edits(&args.edit_ac)?,
+        acceptance_removals: args.remove_ac.clone(),
+        ball: args
+            .ball
+            .as_deref()
+            .map(switchbard_core::Ball::parse)
+            .transpose()?,
+        labels: args
+            .add_label
+            .iter()
+            .map(|label| (label.clone(), true))
+            .chain(args.remove_label.iter().map(|label| (label.clone(), false)))
+            .collect(),
+        checklists,
+        append_notes: args.append_notes.clone(),
+        final_summary: args.final_summary.clone(),
+        parent: args
+            .parent
+            .as_ref()
+            .map(|parent| (!parent.eq_ignore_ascii_case("none")).then(|| parent.clone())),
     };
-    if changed {
+    let result = switchbard_core::edit_backlog_task_command(root, &args.id, &request)?;
+    if result.changed {
         println!("Edited {}", args.id);
     }
-    match moved {
+    match result.moved {
         Some(new_id) => println!("Moved {} -> {new_id}", args.id),
-        None if !changed => println!("no changes"),
+        None if !result.changed => println!("no changes"),
         None => {}
     }
     Ok(())
-}
-
-/// `--edit-ac` then `--remove-ac`, in one write, ahead of the patch's `--ac`
-/// appends - so every N names the criterion `sb view` showed before this
-/// command ran, and an unknown N leaves the file exactly as it was.
-fn revise_acceptance_criteria(root: &Path, args: &EditArgs) -> Result<bool> {
-    let edits = acceptance_edits(&args.edit_ac)?;
-    if edits.is_empty() && args.remove_ac.is_empty() {
-        return Ok(false);
-    }
-    let message = switchbard_core::revise_backlog_acceptance_criteria(
-        root,
-        &args.id,
-        &edits,
-        &args.remove_ac,
-    )?;
-    Ok(message != "no changes")
 }
 
 /// clap hands `--edit-ac N TEXT` over as flat `[N, TEXT, N, TEXT, …]` pairs;
@@ -535,24 +541,6 @@ fn acceptance_edits(raw: &[String]) -> Result<Vec<ChecklistTextEdit>> {
             })
         })
         .collect()
-}
-
-fn toggle_checklists(root: &Path, args: &EditArgs) -> Result<bool> {
-    let mut changed = false;
-    for (indices, checked) in [(&args.check_ac, true), (&args.uncheck_ac, false)] {
-        for &index in indices {
-            changed |=
-                switchbard_core::set_backlog_acceptance_checked(root, &args.id, index, checked)?
-                    != "no changes";
-        }
-    }
-    for (indices, checked) in [(&args.check_dod, true), (&args.uncheck_dod, false)] {
-        for &index in indices {
-            changed |= switchbard_core::set_backlog_dod_checked(root, &args.id, index, checked)?
-                != "no changes";
-        }
-    }
-    Ok(changed)
 }
 
 fn patch_from(args: &EditArgs) -> BacklogTaskPatch {
@@ -601,9 +589,12 @@ mod tests {
         std::fs::create_dir_all(root.join("backlog/tasks")).expect("fixture");
         std::fs::create_dir_all(&deep).expect("fixture");
 
-        assert_eq!(find_repo_root(&deep), Some(root.clone()));
         assert_eq!(
-            find_repo_root(dir.path()),
+            find_repo_root(&deep).expect("scope lookup"),
+            Some(root.clone())
+        );
+        assert_eq!(
+            find_repo_root(dir.path()).expect("scope lookup"),
             None,
             "a dir with no backlog/ above it resolves to nothing"
         );

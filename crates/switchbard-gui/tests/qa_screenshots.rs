@@ -50,6 +50,7 @@ fn snapshot(harness: &mut Harness<'_, HiveApp>, name: &str) {
 
 fn sample_task(id: &str, title: &str, status: &str) -> BacklogTask {
     BacklogTask {
+        storage_identity: None,
         id: id.to_string(),
         title: title.to_string(),
         status: status.to_string(),
@@ -140,6 +141,7 @@ fn digest_place_app(theme: ThemeChoice) -> HiveApp {
 /// task-by-task, and `BacklogTask` has no builder methods of its own.
 fn task_with(task: BacklogTask, labels: &[&str], notes: &str) -> BacklogTask {
     BacklogTask {
+        storage_identity: None,
         labels: labels.iter().map(|l| l.to_string()).collect(),
         implementation_notes: notes.to_string(),
         ..task
@@ -251,7 +253,7 @@ fn shots_for_theme(theme: ThemeChoice) {
             },
         );
         app.dispatch_runs.lock().unwrap().insert(
-            (repo_root.clone(), "TASK-90".to_string()),
+            (repo_root.clone(), "TASK-90".to_string()).into(),
             switchbard_core::dispatch_inspect::DispatchRun {
                 task_id: "TASK-90".to_string(),
                 branch: "dispatch/task-90".to_string(),
@@ -333,7 +335,8 @@ fn shots_for_theme(theme: ThemeChoice) {
             BacklogLens::List,
             vec![sample_task("TASK-1", "Full detail task", "In Progress")],
         );
-        app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+        app.backlog_view.selected_task =
+            Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
         let mut h = harness(app);
         h.run();
         snapshot(&mut h, &format!("backlog_list_and_detail{suffix}"));
@@ -347,7 +350,8 @@ fn shots_for_theme(theme: ThemeChoice) {
             BacklogLens::List,
             vec![sample_task("TASK-1", "Narrow detail task", "In Progress")],
         );
-        app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+        app.backlog_view.selected_task =
+            Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
         let mut h = harness(app);
         h.set_size(egui::vec2(900.0, 700.0));
         // Panel heights change after the harness's initial 1280px build;
@@ -457,7 +461,8 @@ fn shots_for_theme(theme: ThemeChoice) {
         // reconciles away and the detail pane shows nothing (the exact
         // gotcha the fix wave's own tests document).
         app.backlog_view.show_completed = true;
-        app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+        app.backlog_view.selected_task =
+            Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
         app.backlog_view.archive_confirm = true;
         let mut h = harness(app);
         h.run();
@@ -589,7 +594,8 @@ fn shots_for_theme(theme: ThemeChoice) {
         task.labels = labels;
         task.implementation_notes = notes;
         let mut app = app_with(theme, BacklogLens::List, vec![task]);
-        app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+        app.backlog_view.selected_task =
+            Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
         let mut h = harness(app);
         h.run();
         snapshot(&mut h, &format!("backlog_dispatch_{state_name}{suffix}"));
@@ -958,7 +964,7 @@ fn ops_screenshot_app(theme: ThemeChoice) -> HiveApp {
     // The linked worktree's live dispatch run — the Agent cell's "claude ·
     // active …" attribution (TASK-100; see `ui::places::ops::agent`).
     app.dispatch_runs.lock().unwrap().insert(
-        (PathBuf::from(REPO_PATH), "TASK-1".to_string()),
+        (PathBuf::from(REPO_PATH), "TASK-1".to_string()).into(),
         DispatchRun {
             task_id: "TASK-1".to_string(),
             branch: "feature/stack-ranking-core".to_string(),
