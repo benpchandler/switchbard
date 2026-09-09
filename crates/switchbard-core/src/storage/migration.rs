@@ -44,6 +44,7 @@ pub(crate) struct SelectedDocument {
 pub(crate) struct AllowedTransform {
     pub task_id: String,
     pub source_digest: String,
+    pub repair_fused_fence: bool,
 }
 
 impl MigrationPlan {
@@ -183,6 +184,19 @@ impl MigrationPlan {
                                 &source.bytes,
                                 &transform.task_id,
                             )
+                            .and_then(|repaired| {
+                                if transform.repair_fused_fence {
+                                    crate::backlog::migration_repairs::repair_selected(
+                                        &document.kind,
+                                        &document.locator,
+                                        &repaired,
+                                    )?
+                                    .map(|(bytes, _)| bytes)
+                                    .context("selected source has no fused-fence repair")
+                                } else {
+                                    Ok(repaired)
+                                }
+                            })
                             .is_ok_and(|repaired| repaired == document.bytes)
                     })
                 });

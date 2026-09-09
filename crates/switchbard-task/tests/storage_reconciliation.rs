@@ -325,7 +325,8 @@ fn cli_collapses_lifecycle_aliases_and_reissues_unrelated_duplicate_id() {
     let canonical = "---\nid: LED-576\ntitle: Canonical\nstatus: Done\n---\nBody\n";
     let alias = "---\nid: LED-576\ntitle: Canonical\nstatus: Done\n---\nOlder body\n";
     let plaid = "---\nid: LED-504\ntitle: Plaid\nstatus: Archived\n---\n";
-    let aggregator = "---\nid: LED-504\ntitle: Aggregator\nstatus: Archived\n---\n";
+    let aggregator =
+        "---\nid: LED-504\ntitle: Aggregator\nstatus: Archived\n---## Description\nExact body.\n";
     for (locator, bytes) in [
         (completed, canonical),
         (archived, alias),
@@ -374,6 +375,16 @@ fn cli_collapses_lifecycle_aliases_and_reissues_unrelated_duplicate_id() {
     let preview: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();
     assert_eq!(preview["records"], 3);
     assert_eq!(preview["resolutions"].as_array().unwrap().len(), 3);
+    let reissued_preview = preview["resolutions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["repair_task_id"] == "LED-675")
+        .unwrap();
+    assert!(preview["repairs"].as_array().unwrap().iter().any(|row| {
+        row["locator"] == reissued_target
+            && row["repair"]["target_digest"] == reissued_preview["target_digest"]
+    }));
     let applied = run(&[
         "--apply",
         "--preview-digest",
@@ -390,9 +401,9 @@ fn cli_collapses_lifecycle_aliases_and_reissues_unrelated_duplicate_id() {
     assert_eq!(store.list(&repo, "task").unwrap().len(), 3);
     assert!(store.read(&repo, "task", archived).unwrap().is_none());
     let repaired = store.read(&repo, "task", reissued_target).unwrap().unwrap();
-    assert!(String::from_utf8(repaired.content)
-        .unwrap()
-        .contains("id: LED-675"));
+    let repaired = String::from_utf8(repaired.content).unwrap();
+    assert!(repaired.contains("id: LED-675"));
+    assert!(repaired.contains("---\n## Description"));
     assert_eq!(
         std::fs::read_to_string(root.join(reissued_source)).unwrap(),
         aggregator
