@@ -18,7 +18,21 @@ impl Store {
         super::RepositoryLock::acquire_identities(live)
     }
 
-    fn live_lock_identities(&self, repo: &RepositoryId) -> Result<Vec<PathBuf>> {
+    pub(crate) fn repository_lock_for_root(
+        &self,
+        repo: &RepositoryId,
+        root: &Path,
+    ) -> Result<(super::RepositoryLockSet, Vec<PathBuf>)> {
+        let existing = self.live_lock_identities(repo)?;
+        let mut identities = existing.clone();
+        identities.push(super::RepositoryLock::identity(root)?);
+        Ok((
+            super::RepositoryLock::acquire_identities(identities)?,
+            existing,
+        ))
+    }
+
+    pub(crate) fn live_lock_identities(&self, repo: &RepositoryId) -> Result<Vec<PathBuf>> {
         let bindings: Vec<String> = self.connection.prepare(
             "SELECT binding FROM bindings WHERE repo_id=?1 AND (binding LIKE 'git:%' OR binding LIKE 'path:%') ORDER BY binding",
         )?.query_map([&repo.0], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;

@@ -221,7 +221,12 @@ impl Store {
         plan: &MigrationPlan,
         validate: impl FnOnce(&super::ExchangeSnapshot) -> Result<()>,
     ) -> Result<usize> {
+        let expected_identities = self.live_lock_identities(&plan.repo)?;
         let _repository_lock = self.repository_lock_for(&plan.repo)?;
+        ensure!(
+            self.live_lock_identities(&plan.repo)? == expected_identities,
+            "repository bindings changed while acquiring migration locks; retry"
+        );
         if let Some(lock_root) = plan.lock_root.as_deref() {
             self.validate_lock_root(&plan.repo, lock_root)?;
         }
