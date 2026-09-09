@@ -14,6 +14,10 @@ pub struct RepositoryLock {
     _not_send: PhantomData<Rc<()>>,
 }
 
+pub(crate) struct RepositoryLockSet {
+    _locks: Vec<RepositoryLock>,
+}
+
 struct LockState {
     path: PathBuf,
     _file: File,
@@ -79,6 +83,16 @@ impl RepositoryLock {
             state,
             _not_send: PhantomData,
         })
+    }
+
+    pub(crate) fn acquire_identities(mut identities: Vec<PathBuf>) -> Result<RepositoryLockSet> {
+        identities.sort();
+        identities.dedup();
+        let locks = identities
+            .iter()
+            .map(|identity| Self::acquire(identity))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(RepositoryLockSet { _locks: locks })
     }
 }
 

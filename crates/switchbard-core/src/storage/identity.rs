@@ -6,17 +6,13 @@ use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
 impl Store {
-    pub(crate) fn repository_lock_for(&self, repo: &RepositoryId) -> Result<super::RepositoryLock> {
+    pub(crate) fn repository_lock_for(&self, repo: &RepositoryId) -> Result<super::RepositoryLockSet> {
         let live = self.live_lock_identities(repo)?;
         ensure!(
             !live.is_empty(),
             "repository has no live lockable path binding"
         );
-        ensure!(
-            live.len() == 1,
-            "repository has multiple live lock identities; rebind explicitly"
-        );
-        super::RepositoryLock::acquire(&live[0])
+        super::RepositoryLock::acquire_identities(live)
     }
 
     fn live_lock_identities(&self, repo: &RepositoryId) -> Result<Vec<PathBuf>> {
@@ -62,9 +58,21 @@ impl Store {
     }
 
     pub fn bind_repository(&mut self, root: &Path) -> Result<RepositoryId> {
-        let _repository_lock = super::RepositoryLock::acquire(root)?;
         let binding = repository_binding(root)?;
         self.repository(root)?;
+        let existing = lookup(&self.connection, &binding)?;
+        let existing_identities = existing
+            .as_ref()
+            .map(|repo| self.live_lock_identities(repo))
+            .transpose()?
+            .unwrap_or_default();
+        let mut identities = existing_identities.clone();
+        identities.push(super::RepositoryLock::identity(root)?);
+        let _repository_lock = super::RepositoryLock::acquire_identities(identities)?;
+        ensure!(lookup(&self.connection, &binding)? == existing, "repository binding changed; retry");
+        if let Some(repo) = &existing {
+            ensure!(self.live_lock_identities(repo)? == existing_identities, "repository bindings changed; retry");
+        }
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -85,7 +93,6 @@ impl Store {
 
     /// Explicit continuity decision after a move. Previous aliases remain readable.
     pub fn rebind_repository(&mut self, repo: &RepositoryId, new_root: &Path) -> Result<()> {
-        let _repository_lock = super::RepositoryLock::acquire(new_root)?;
         let binding = repository_binding(new_root)?;
         let known: bool = self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM repositories WHERE repo_id=?1)",
@@ -95,10 +102,10 @@ impl Store {
         ensure!(known, "unknown repository ID");
         let existing = self.live_lock_identities(repo)?;
         let new_identity = super::RepositoryLock::identity(new_root)?;
-        ensure!(
-            existing.is_empty() || existing.iter().all(|identity| identity == &new_identity),
-            "repository has another live lock identity; rebind explicitly"
-        );
+        let mut identities = existing.clone();
+        identities.push(new_identity);
+        let _repository_lock = super::RepositoryLock::acquire_identities(identities)?;
+        ensure!(self.live_lock_identities(repo)? == existing, "repository bindings changed; retry");
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
