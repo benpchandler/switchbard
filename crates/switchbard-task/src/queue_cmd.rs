@@ -107,7 +107,10 @@ pub fn run_queue(root: &Path, cmd: &QueueCmd) -> Result<()> {
         QueueCmd::Prompt { id } => {
             let repo = load(root)?;
             let task = resolve(&repo, id)?;
-            print!("{}", switchbard_core::build_dispatch_prompt(task));
+            print!(
+                "{}",
+                switchbard_core::build_dispatch_prompt_with_context(root, task)?
+            );
             Ok(())
         }
     }

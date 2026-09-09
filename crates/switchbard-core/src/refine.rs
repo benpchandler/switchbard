@@ -575,11 +575,10 @@ pub fn refine_task(
 ) -> Result<RefineOutcome> {
     let log_dir = dispatch_log_dir();
     std::fs::create_dir_all(&log_dir).context("failed to create switchbard-logs dir")?;
-    let stem = refine_log_stem(&task.id, unix_now());
-    let log_path = log_dir.join(format!("{stem}.log"));
-    let prompt_path = log_dir.join(format!("{stem}-prompt.md"));
-    std::fs::write(&prompt_path, build_refine_prompt(task))
-        .context("failed writing refine prompt")?;
+    let context = crate::task_model_context::TaskModelContext::capture(repo_root, task)?;
+    let (prompt_path, _) = context.prepare_prompt(&log_dir, "refine", task, build_refine_prompt)?;
+    let log_path =
+        prompt_path.with_file_name(format!("{}.log", refine_log_stem(&task.id, unix_now())));
 
     let exit = run_claude_read_only(repo_root, &prompt_path, &log_path, opts)?;
     let result = match exit {
