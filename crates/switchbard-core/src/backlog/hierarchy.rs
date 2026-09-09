@@ -1,4 +1,4 @@
-//! Project and initiative **definition files** — the two Linear-hierarchy
+//! Project and initiative **definitions** — the two Linear-hierarchy
 //! tiers above tasks (trajectory: *Linear-vocabulary hierarchy*,
 //! divergence 2).
 //!
@@ -17,6 +17,13 @@
 //! one frontmatter engine, not two. They deliberately do **not** carry
 //! `created_date`/`updated_date`: a def is a description of intent, not an
 //! activity log, and the roll-up derives freshness from member tasks.
+//! After per-kind cutover, SQLite owns these same raw documents. Their paths
+//! are logical compatibility locators and need not exist on the filesystem.
+
+#[path = "hierarchy_rename.rs"]
+mod central_rename;
+#[path = "hierarchy_storage.rs"]
+mod storage;
 
 use super::goals::rename_project_in_goals;
 use super::parse::{load_backlog_repo, split_frontmatter, task_file_round_trips, yaml_string};
@@ -59,6 +66,7 @@ pub struct ProjectDef {
     pub lead: Option<String>,
     /// The markdown body below the frontmatter, trimmed.
     pub description: String,
+    /// Logical definition locator; a migrated definition need not have a file.
     pub path: PathBuf,
 }
 
@@ -69,6 +77,7 @@ pub struct InitiativeDef {
     pub status: String,
     pub target_date: Option<String>,
     pub description: String,
+    /// Logical definition locator; a migrated definition need not have a file.
     pub path: PathBuf,
 }
 
@@ -137,10 +146,12 @@ impl InitiativeDefPatch {
 
 // ---- loading ----
 
-/// Load every `backlog/projects/*.md` def. Never fails the repo load:
-/// unreadable or fence-less files become warnings, same posture as task
-/// parsing.
-pub(super) fn load_project_defs(root: &Path, warnings: &mut Vec<String>) -> Vec<ProjectDef> {
+/// Load project definitions from the selected authority. Legacy unreadable
+/// files become warnings; central-store failures propagate without fallback.
+pub(super) fn load_project_defs(
+    root: &Path,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<ProjectDef>> {
     load_defs(
         root,
         PROJECTS_DIR,
@@ -158,7 +169,10 @@ pub(super) fn load_project_defs(root: &Path, warnings: &mut Vec<String>) -> Vec<
 }
 
 /// Load every `backlog/initiatives/*.md` def.
-pub(super) fn load_initiative_defs(root: &Path, warnings: &mut Vec<String>) -> Vec<InitiativeDef> {
+pub(super) fn load_initiative_defs(
+    root: &Path,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<InitiativeDef>> {
     load_defs(
         root,
         INITIATIVES_DIR,
@@ -181,27 +195,19 @@ fn load_defs<T>(
     rel: &str,
     warnings: &mut Vec<String>,
     build: impl Fn(String, String, &serde_yaml::Mapping, String, PathBuf) -> T,
-) -> Vec<T> {
-    let dir = root.join(rel);
-    if !dir.is_dir() {
-        return Vec::new();
-    }
-    let Ok(entries) = fs::read_dir(&dir) else {
-        warnings.push(format!("cannot read {}", dir.display()));
-        return Vec::new();
-    };
-    let mut paths: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(OsStr::to_str) == Some("md"))
-        .collect();
-    paths.sort();
-
-    let mut defs = Vec::with_capacity(paths.len());
-    for path in paths {
-        let Ok(text) = fs::read_to_string(&path) else {
-            warnings.push(format!("{}: cannot read definition", path.display()));
-            continue;
+) -> Result<Vec<T>> {
+    let sources = storage::sources(root, rel, warnings)?;
+    let mut defs = Vec::with_capacity(sources.len());
+    for (path, source) in sources {
+        let text = match source {
+            Ok(text) => text,
+            Err(error) => {
+                warnings.push(format!(
+                    "{}: cannot read definition: {error}",
+                    path.display()
+                ));
+                continue;
+            }
         };
         let (mapping, body) = split_frontmatter(&text);
         let name = match yaml_string(&mapping, "name") {
@@ -223,7 +229,7 @@ fn load_defs<T>(
             yaml_string(&mapping, "status").unwrap_or_else(|| DEFAULT_PROJECT_STATUS.to_string());
         defs.push(build(name, status, &mapping, body.trim().to_string(), path));
     }
-    defs
+    Ok(defs)
 }
 
 // ---- writing ----
@@ -245,6 +251,7 @@ struct DefSpec<'a> {
 /// the repo already claims (whatever its slug), and refuses a slug collision
 /// — including a case-variant one — before touching the filesystem.
 pub fn create_project_def(root: &Path, def: &NewProjectDef) -> Result<PathBuf> {
+    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
     let mut fields: Vec<(&str, Option<&str>)> = vec![
         ("initiative", def.initiative.as_deref()),
         ("lead", def.lead.as_deref()),
@@ -265,6 +272,7 @@ pub fn create_project_def(root: &Path, def: &NewProjectDef) -> Result<PathBuf> {
 }
 
 pub fn create_initiative_def(root: &Path, def: &NewInitiativeDef) -> Result<PathBuf> {
+    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
     create_def(
         root,
         DefSpec {
@@ -319,6 +327,9 @@ fn create_def(root: &Path, spec: DefSpec<'_>) -> Result<PathBuf> {
     };
     let text = format!("---\n{}\n---\n{body}", fm.join("\n"));
 
+    if let Some(path) = storage::create(root, spec.rel, name, &text)? {
+        return Ok(path);
+    }
     let dir = root.join(spec.rel);
     fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     let slug = filename_slug(name);
@@ -362,8 +373,9 @@ fn slug_collision(dir: &Path, slug: &str) -> Option<PathBuf> {
 }
 
 pub fn edit_project_def(root: &Path, name: &str, patch: &ProjectDefPatch) -> Result<WriteOutcome> {
+    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
     let path = resolve_def_file(root, PROJECTS_DIR, "project", name)?;
-    apply_def_edit(&path, |fm, body| {
+    apply_def_edit(root, &path, |fm, body| {
         if let Some(status) = &patch.status {
             set_scalar(
                 fm,
@@ -409,8 +421,9 @@ pub fn edit_initiative_def(
     name: &str,
     patch: &InitiativeDefPatch,
 ) -> Result<WriteOutcome> {
+    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
     let path = resolve_def_file(root, INITIATIVES_DIR, "initiative", name)?;
-    apply_def_edit(&path, |fm, body| {
+    apply_def_edit(root, &path, |fm, body| {
         if let Some(status) = &patch.status {
             set_scalar(
                 fm,
@@ -459,14 +472,21 @@ pub struct ProjectRename {
 /// be defined or referenced (else there is nothing to rename), the new def
 /// slug must be free, and every member task file must round-trip so the
 /// pass cannot stop halfway on a file the write layer would reject. The
-/// steps themselves are each atomic but not jointly transactional; an error
+/// legacy steps are each atomic but not jointly transactional; an error
 /// mid-way names the step, and re-running the same rename is safe (files
-/// already renamed are simply no longer members of `old`).
+/// already renamed are simply no longer members of `old`). Centrally owned
+/// kinds commit the complete rename in one SQLite transaction; mixed authority
+/// refuses before any effect.
 pub fn rename_project(root: &Path, old: &str, new: &str) -> Result<ProjectRename> {
+    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
+    storage::require_complete_rename_authority(root)?;
     let old = validated_single_line("project", old)?;
     let new = validated_single_line("project", new)?;
     if old == new {
         bail!("project '{old}' already has that name");
+    }
+    if let Some(report) = central_rename::project(root, old, new)? {
+        return Ok(report);
     }
     let repo = load_backlog_repo(root)?;
     let members: Vec<&super::types::BacklogTask> = repo
@@ -523,7 +543,7 @@ pub fn rename_project(root: &Path, old: &str, new: &str) -> Result<ProjectRename
         }
     }
     if let (Some((_, old_path)), Some(new_path)) = (old_def, new_def_path) {
-        let renamed = apply_def_edit(&old_path, |fm, _| {
+        let renamed = apply_def_edit(root, &old_path, |fm, _| {
             set_scalar(fm, "name", &yaml_scalar(new), None);
             Ok(())
         })
@@ -554,6 +574,11 @@ pub fn rename_project(root: &Path, old: &str, new: &str) -> Result<ProjectRename
 /// only file already carrying that slug (case-insensitively) is the old
 /// def itself, in which case the path is kept.
 fn planned_def_path(root: &Path, old_path: &Path, new: &str) -> Result<PathBuf> {
+    if storage::is_active(root, PROJECTS_DIR)? {
+        storage::validate_rename(root, old_path, new)?;
+        // The locator is a stable compatibility handle, not a required file.
+        return Ok(old_path.to_path_buf());
+    }
     let dir = root.join(PROJECTS_DIR);
     let slug = filename_slug(new);
     if let Some(colliding) = slug_collision(&dir, &slug) {
@@ -614,12 +639,12 @@ fn validated_def_status(status: &str) -> Result<&str> {
 fn find_def_file(root: &Path, rel: &str, name: &str) -> Result<Option<(String, PathBuf)>> {
     let mut warnings = Vec::new();
     let matches: Vec<(String, PathBuf)> = match rel {
-        PROJECTS_DIR => load_project_defs(root, &mut warnings)
+        PROJECTS_DIR => load_project_defs(root, &mut warnings)?
             .into_iter()
             .filter(|def| def.name == name)
             .map(|def| (def.name, def.path))
             .collect(),
-        _ => load_initiative_defs(root, &mut warnings)
+        _ => load_initiative_defs(root, &mut warnings)?
             .into_iter()
             .filter(|def| def.name == name)
             .map(|def| (def.name, def.path))
@@ -645,20 +670,35 @@ fn resolve_def_file(root: &Path, rel: &str, kind: &str, name: &str) -> Result<Pa
 /// don't carry dates. Same guarantees otherwise: byte no-ops write nothing,
 /// real changes replace atomically.
 fn apply_def_edit(
+    root: &Path,
     path: &Path,
     edit: impl FnOnce(&mut Vec<String>, &mut String) -> Result<()>,
 ) -> Result<WriteOutcome> {
+    if storage::is_active(root, storage::rel_for_path(root, path)?)? {
+        return storage::edit(root, path, |original| transform_def(original, edit));
+    }
     let original =
         fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let mut raw = split_raw(&original)?;
-    edit(&mut raw.fm, &mut raw.rest)?;
-    let next = join_raw(&raw.fm, &raw.rest);
+    let next = transform_def(&original, edit)?;
     if next == original {
         return Ok(WriteOutcome::Unchanged);
     }
     atomic_write(path, &next)?;
     Ok(WriteOutcome::Changed)
 }
+
+fn transform_def(
+    original: &str,
+    edit: impl FnOnce(&mut Vec<String>, &mut String) -> Result<()>,
+) -> Result<String> {
+    let mut raw = split_raw(original)?;
+    edit(&mut raw.fm, &mut raw.rest)?;
+    Ok(join_raw(&raw.fm, &raw.rest))
+}
+
+#[cfg(test)]
+#[path = "hierarchy_storage_tests.rs"]
+mod storage_tests;
 
 #[cfg(test)]
 mod tests {
@@ -690,7 +730,7 @@ mod tests {
         assert!(path.ends_with("backlog/projects/Lucella-cutover.md"));
 
         let mut warnings = Vec::new();
-        let defs = load_project_defs(&root, &mut warnings);
+        let defs = load_project_defs(&root, &mut warnings).expect("load definitions");
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(defs.len(), 1);
         let def = &defs[0];
@@ -744,7 +784,7 @@ mod tests {
         )
         .expect("case-insensitive input accepted");
         let mut warnings = Vec::new();
-        let defs = load_project_defs(&root, &mut warnings);
+        let defs = load_project_defs(&root, &mut warnings).expect("load definitions");
         assert_eq!(defs[0].status, "In Progress", "canonical casing stored");
     }
 
@@ -760,7 +800,7 @@ mod tests {
         .expect("fixture");
 
         let mut warnings = Vec::new();
-        let defs = load_project_defs(&root, &mut warnings);
+        let defs = load_project_defs(&root, &mut warnings).expect("load definitions");
         assert_eq!(defs[0].name, "orphan");
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("no `name:`"), "{warnings:?}");
@@ -792,7 +832,7 @@ mod tests {
         assert_eq!(outcome, WriteOutcome::Changed);
 
         let mut warnings = Vec::new();
-        let defs = load_project_defs(&root, &mut warnings);
+        let defs = load_project_defs(&root, &mut warnings).expect("load definitions");
         assert_eq!(defs[0].status, "Completed");
         assert_eq!(
             defs[0].description, "Original body.",
@@ -836,7 +876,7 @@ mod tests {
         .expect("assign succeeds");
         assert_eq!(outcome, WriteOutcome::Changed);
         let mut warnings = Vec::new();
-        let defs = load_project_defs(&root, &mut warnings);
+        let defs = load_project_defs(&root, &mut warnings).expect("load definitions");
         assert_eq!(defs[0].target_date.as_deref(), Some("2026-12-01"));
         assert_eq!(defs[0].initiative.as_deref(), Some("Rebrand"));
 
@@ -851,7 +891,7 @@ mod tests {
         )
         .expect("clear succeeds");
         assert_eq!(outcome, WriteOutcome::Changed);
-        let defs = load_project_defs(&root, &mut warnings);
+        let defs = load_project_defs(&root, &mut warnings).expect("load definitions");
         assert_eq!(defs[0].target_date, None);
         assert_eq!(defs[0].initiative, None);
     }
@@ -884,7 +924,7 @@ mod tests {
         .expect("create succeeds");
 
         let mut warnings = Vec::new();
-        let defs = load_initiative_defs(&root, &mut warnings);
+        let defs = load_initiative_defs(&root, &mut warnings).expect("load definitions");
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0].name, "Rebrand");
         assert_eq!(defs[0].status, "In Progress");
@@ -900,7 +940,7 @@ mod tests {
         )
         .expect("edit succeeds");
         assert_eq!(outcome, WriteOutcome::Changed);
-        let defs = load_initiative_defs(&root, &mut warnings);
+        let defs = load_initiative_defs(&root, &mut warnings).expect("load definitions");
         assert_eq!(defs[0].status, "Completed");
     }
 
@@ -1024,7 +1064,7 @@ mod tests {
         );
 
         let mut warnings = Vec::new();
-        let defs = load_project_defs(&root, &mut warnings);
+        let defs = load_project_defs(&root, &mut warnings).expect("load definitions");
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0].name, "Lender package");
         assert_eq!(defs[0].initiative.as_deref(), Some("Acquisition"));

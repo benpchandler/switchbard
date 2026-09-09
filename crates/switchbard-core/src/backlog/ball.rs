@@ -111,6 +111,7 @@ mod tests {
 
     fn task_with_labels(labels: &[&str]) -> BacklogTask {
         BacklogTask {
+            storage_identity: None,
             id: "TASK-1".to_string(),
             title: "Fixture".to_string(),
             status: "To Do".to_string(),

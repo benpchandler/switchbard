@@ -30,6 +30,7 @@ use switchbard_gui::runtime::{Place, TasksView, WorktreeMeta};
 
 fn task(id: &str, title: &str, status: &str, labels: &[&str], notes: &str) -> BacklogTask {
     BacklogTask {
+        storage_identity: None,
         id: id.to_string(),
         title: title.to_string(),
         status: status.to_string(),
@@ -150,7 +151,7 @@ fn app_with(tasks: Vec<BacklogTask>, goals: Vec<GoalDef>, runs: Vec<DispatchRun>
     );
     let mut cached = app.dispatch_runs.lock().unwrap();
     for run in runs {
-        cached.insert((PathBuf::from(REPO_PATH), run.task_id.clone()), run);
+        cached.insert((PathBuf::from(REPO_PATH), run.task_id.clone()).into(), run);
     }
     drop(cached);
     app
@@ -378,7 +379,10 @@ fn in_flight_lists_dispatching_and_in_progress_tasks_and_deep_links_to_tasks() {
     assert_eq!(harness.state().tasks_view, TasksView::All);
     assert_eq!(
         harness.state().backlog_view.selected_task,
-        Some((PathBuf::from(REPO_PATH), "TASK-2".to_string())),
+        Some(switchbard_gui::runtime::BacklogTaskKey::from((
+            PathBuf::from(REPO_PATH),
+            "TASK-2".to_string()
+        ))),
         "the deep link selects the exact task that was clicked"
     );
 }
@@ -586,7 +590,10 @@ fn stalled_run_feed_row_kill_arms_the_shared_dispatch_kill_confirm() {
 
     assert_eq!(
         harness.state().dispatch_kill_confirm,
-        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string())),
+        Some(switchbard_gui::runtime::BacklogTaskKey::from((
+            PathBuf::from(REPO_PATH),
+            "TASK-1".to_string()
+        ))),
         "Digest arms the exact same HiveApp::dispatch_kill_confirm field the \
          Dispatches view's own Kill button arms — one confirm state, not two"
     );

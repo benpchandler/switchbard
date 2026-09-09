@@ -26,7 +26,8 @@ pub(super) fn render_task_detail(
     pending: &mut Pending,
 ) {
     let selected = app.backlog_view.selected_task.clone();
-    let found = selected.as_ref().and_then(|(project_key, task_id)| {
+    let found = selected.as_ref().and_then(|key| {
+        let (project_key, task_id) = &key.address;
         let repo = snap.repo(project_key)?;
         let task = repo.repo.tasks.iter().find(|task| &task.id == task_id)?;
         Some((repo, task))
@@ -300,9 +301,9 @@ fn render_editor(
     });
 
     let mut patch = patch_from_editor(task, &app.backlog_view.editor);
-    if let Some(new_status) =
-        status_save.filter(|status| !status.eq_ignore_ascii_case(task.status.trim()))
-    {
+    if let Some(new_status) = status_save.filter(|status| {
+        !app.backlog_view.editor.conflict && !status.eq_ignore_ascii_case(task.status.trim())
+    }) {
         pending.save = Some((
             project_root.to_path_buf(),
             task.id.clone(),
@@ -315,7 +316,16 @@ fn render_editor(
         app.backlog_status
             .set(format!("updating {} status", task.id));
     }
-    let can_save = editable && !patch.is_empty();
+    if app.backlog_view.editor.conflict {
+        ui.label(
+            egui::RichText::new("This task changed elsewhere. Your draft is retained.")
+                .color(theme::warn_orange()),
+        );
+        if ui.button("Discard draft and reload latest").clicked() {
+            app.backlog_view.editor.loaded_key = None;
+        }
+    }
+    let can_save = editable && !patch.is_empty() && !app.backlog_view.editor.conflict;
     ui.horizontal(|ui| {
         if ui
             .add_enabled(can_save, egui::Button::new("Save"))
@@ -323,6 +333,13 @@ fn render_editor(
             .clicked()
         {
             pending.save = Some((project_root.to_path_buf(), task.id.clone(), patch));
+            pending.save_identity = app
+                .backlog_view
+                .editor
+                .base_task
+                .as_ref()
+                .and_then(|base| base.storage_identity.clone());
+            app.backlog_view.editor.submitted = true;
         }
         if !editable {
             ui.label(
@@ -368,15 +385,26 @@ fn render_description_editor(app: &mut HiveApp, ui: &mut egui::Ui) {
 }
 
 fn sync_editor(app: &mut HiveApp, project_root: &Path, task: &BacklogTask) {
-    let key = format!(
-        "{}::{}::{}",
-        project_root.display(),
-        task.id,
-        task.updated_date.as_deref().unwrap_or("")
-    );
+    let key = crate::runtime::BacklogTaskKey::for_task(project_root, task).draft_key();
     if app.backlog_view.editor.loaded_key.as_deref() == Some(key.as_str()) {
-        return;
+        let editor = &app.backlog_view.editor;
+        if let Some(base) = &editor.base_task {
+            if base == task {
+                return;
+            }
+            let extra_draft = !editor.note.trim().is_empty() || !editor.new_reference.is_empty();
+            let dirty = !patch_from_editor(base, editor).is_empty() || extra_draft;
+            let own_save_visible =
+                editor.submitted && !extra_draft && patch_from_editor(task, editor).is_empty();
+            if dirty && !own_save_visible {
+                app.backlog_view.editor.conflict = true;
+                return;
+            }
+        }
     }
+    app.backlog_view.editor.base_task = Some(task.clone());
+    app.backlog_view.editor.conflict = false;
+    app.backlog_view.editor.submitted = false;
     app.backlog_view.editor.loaded_key = Some(key);
     app.backlog_view.editor.title = task.title.clone();
     app.backlog_view.editor.description = task.description.clone();
@@ -440,4 +468,101 @@ fn patch_from_editor(task: &BacklogTask, editor: &BacklogEditorState) -> Backlog
         }
     }
     patch
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    fn task() -> BacklogTask {
+        let dir = tempfile::tempdir().expect("fixture");
+        std::fs::create_dir_all(dir.path().join("backlog/tasks")).expect("layout");
+        std::fs::write(
+            dir.path().join("backlog/tasks/task-1.md"),
+            "---\nid: TASK-1\ntitle: Original\nstatus: To Do\n---\n\nDescription.\n",
+        )
+        .expect("fixture");
+        let mut task = switchbard_core::load_backlog_repo(dir.path())
+            .expect("load")
+            .tasks
+            .remove(0);
+        task.storage_identity = Some(switchbard_core::BacklogStorageIdentity {
+            repository_id: "repo".into(),
+            record_id: "record".into(),
+            revision: 1,
+        });
+        task
+    }
+
+    #[test]
+    fn dirty_editor_survives_reparent_and_rebind_with_explicit_conflict() {
+        let mut app = HiveApp::new_headless(Default::default(), Vec::new(), Vec::new());
+        let original = task();
+        sync_editor(&mut app, Path::new("/old"), &original);
+        app.backlog_view.editor.title = "My unsaved title".into();
+        app.backlog_view.editor.note = "My unsaved note".into();
+        let old_key = app.backlog_view.editor.loaded_key.clone();
+        let mut current = original.clone();
+        current.id = "TASK-2.1".into();
+        current.path = "/new/backlog/tasks/task-2.1.md".into();
+        current
+            .storage_identity
+            .as_mut()
+            .expect("identity")
+            .revision = 2;
+        sync_editor(&mut app, Path::new("/new"), &current);
+        assert_eq!(app.backlog_view.editor.loaded_key, old_key);
+        assert_eq!(app.backlog_view.editor.title, "My unsaved title");
+        assert_eq!(app.backlog_view.editor.note, "My unsaved note");
+        assert!(app.backlog_view.editor.conflict);
+        assert_eq!(
+            app.backlog_view
+                .editor
+                .base_task
+                .as_ref()
+                .expect("base")
+                .storage_identity
+                .as_ref()
+                .expect("identity")
+                .revision,
+            1
+        );
+    }
+
+    #[test]
+    fn clean_editor_refreshes_and_acknowledged_own_save_clears_draft_state() {
+        let mut app = HiveApp::new_headless(Default::default(), Vec::new(), Vec::new());
+        let mut current = task();
+        sync_editor(&mut app, Path::new("/repo"), &current);
+        current.title = "External title".into();
+        current
+            .storage_identity
+            .as_mut()
+            .expect("identity")
+            .revision = 2;
+        sync_editor(&mut app, Path::new("/repo"), &current);
+        assert_eq!(app.backlog_view.editor.title, "External title");
+        assert!(!app.backlog_view.editor.conflict);
+        app.backlog_view.editor.title = "Saved title".into();
+        app.backlog_view.editor.submitted = true;
+        current.title = "Saved title".into();
+        current
+            .storage_identity
+            .as_mut()
+            .expect("identity")
+            .revision = 3;
+        sync_editor(&mut app, Path::new("/repo"), &current);
+        assert!(!app.backlog_view.editor.conflict);
+        assert!(!app.backlog_view.editor.submitted);
+        assert_eq!(
+            app.backlog_view
+                .editor
+                .base_task
+                .expect("base")
+                .storage_identity
+                .expect("identity")
+                .revision,
+            3
+        );
+    }
 }

@@ -69,6 +69,9 @@ pub struct App {
     pub settings: SettingsStore,
     config_seen: Option<SystemTime>,
     tasks_seen: Option<SystemTime>,
+    storage_seen: Option<u64>,
+    storage_checked: Option<Instant>,
+    storage_retry: bool,
     tasks: Vec<BacklogTask>,
     /// Project headings' facts, by stack rank; refreshed with the tasks.
     pub projects: Vec<ProjectSummary>,
@@ -131,6 +134,9 @@ impl App {
             config_path,
             settings,
             tasks_seen: None,
+            storage_seen: None,
+            storage_checked: None,
+            storage_retry: false,
             tasks: Vec::new(),
             projects: Vec::new(),
             goals: Vec::new(),
@@ -279,9 +285,25 @@ impl App {
                 self.reload_config();
             }
         }
-        let now = config::modified_at(&self.repo_root.join("backlog/tasks"));
-        if now != self.tasks_seen {
-            self.reload_tasks();
+        if self
+            .storage_checked
+            .is_none_or(|last| last.elapsed() >= Duration::from_secs(1))
+        {
+            self.storage_checked = Some(Instant::now());
+            match switchbard_core::storage::current_change_sequence() {
+                Ok(sequence) => {
+                    let now = config::modified_at(&self.repo_root.join("backlog/tasks"));
+                    if self.storage_retry || sequence != self.storage_seen || now != self.tasks_seen
+                    {
+                        self.storage_seen = sequence;
+                        self.reload_tasks();
+                    }
+                }
+                Err(error) => {
+                    self.storage_retry = true;
+                    self.fail(format!("task storage: {error}"));
+                }
+            }
         }
         self.reload_work();
     }
@@ -1184,18 +1206,45 @@ impl App {
     }
 
     fn reload_tasks(&mut self) {
+        let kept = self
+            .selected_task()
+            .map(|task| (task.storage_identity.clone(), task.id.clone()));
         self.tasks_seen = config::modified_at(&self.repo_root.join("backlog/tasks"));
         match tasks::load(&self.repo_root) {
             Ok(backlog) => {
+                if self.storage_retry {
+                    self.status = "task storage reconnected".into();
+                }
+                self.storage_retry = false;
                 self.tasks = backlog.tasks;
                 self.projects = backlog.projects;
                 self.goals = backlog.goals;
                 self.goal_summaries = backlog.goal_summaries;
                 self.top = backlog.top;
             }
-            Err(error) => self.fail(error.to_string()),
+            Err(error) => {
+                self.storage_retry = true;
+                self.fail(error.to_string());
+            }
         }
         self.refilter();
+        if let Some((identity, id)) = kept {
+            if let Some(row) = self.rows.iter().position(|row| match row {
+                Row::Task(index) => {
+                    let task = &self.tasks[*index];
+                    match (&identity, &task.storage_identity) {
+                        (Some(old), Some(new)) => {
+                            old.repository_id == new.repository_id && old.record_id == new.record_id
+                        }
+                        (None, _) => task.id == id,
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }) {
+                self.select(row);
+            }
+        }
     }
 
     fn reload_config(&mut self) {

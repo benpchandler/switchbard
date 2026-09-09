@@ -191,6 +191,7 @@ mod tests {
 
     fn task(id: &str, project: Option<&str>, status: &str) -> BacklogTask {
         BacklogTask {
+            storage_identity: None,
             id: id.to_string(),
             title: id.to_string(),
             status: status.to_string(),

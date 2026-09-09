@@ -414,6 +414,45 @@ fn cached_agent_contexts(worktrees: &[WorktreeRef]) -> HashMap<PathBuf, AgentCon
 }
 
 impl HiveApp {
+    fn refresh_task_identity_addresses(&mut self) {
+        let repos = self.backlog_repos.lock().unwrap();
+        let mut stamp: Vec<_> = repos
+            .iter()
+            .map(|(root, repo)| (root.clone(), repo.loaded_at_unix))
+            .collect();
+        stamp.sort();
+        if stamp == self.backlog_view.identity_seen {
+            return;
+        }
+        self.backlog_view.identity_seen = stamp;
+        let index = crate::runtime::TaskKeyIndex::new(&repos);
+        let previous_task_root = self
+            .backlog_view
+            .selected_task
+            .as_ref()
+            .map(|key| key.0.clone());
+        index.option(&mut self.backlog_view.selected_task);
+        if self.backlog_view.selected_repo == previous_task_root && previous_task_root.is_some() {
+            if let Some(key) = &self.backlog_view.selected_task {
+                self.backlog_view.selected_repo = Some(key.0.clone());
+            }
+        }
+        index.option(&mut self.backlog_view.bulk_selection_anchor);
+        index.set(&mut self.backlog_view.bulk_selected_tasks);
+        index.set(&mut self.backlog_view.expanded_parents);
+        index.map(&mut self.backlog_view.pending_moves);
+        index.map(&mut self.backlog_view.landing_flash);
+        index.option(&mut self.dispatches_view.selected);
+        if let Some(crate::runtime::CommandRowKey::Dispatch(key)) = &mut self.command_view.selected
+        {
+            *key = index.refresh(key.clone());
+        }
+        index.map(&mut self.task_write_locks.lock().unwrap());
+        index.map(&mut self.board_move_outcomes.lock().unwrap());
+        index.map(&mut self.board_move_started.lock().unwrap());
+        index.set(&mut self.refining_tasks.lock().unwrap());
+    }
+
     /// `instance_lock` is acquired by `main` (via
     /// [`acquire_instance_lock_or_warn`]) *before* eframe opens the window,
     /// so a refused second instance exits without a window flash. `new` just
@@ -890,7 +929,11 @@ impl HiveApp {
             config::FavoriteKind::Task => {
                 self.place = Place::Tasks;
                 self.tasks_view = TasksView::All;
-                self.backlog_view.selected_task = Some((PathBuf::from(&fav.repo), fav.key.clone()));
+                self.backlog_view.selected_task = Some(task_key(
+                    &self.backlog_repos,
+                    Path::new(&fav.repo),
+                    &fav.key,
+                ));
             }
             config::FavoriteKind::Goal => {
                 self.place = Place::Goals;
@@ -1579,16 +1622,39 @@ impl HiveApp {
         patch: BacklogTaskPatch,
         ctx: &egui::Context,
     ) {
+        let expected = task_key(&self.backlog_repos, &project_root, &task_id).storage_identity;
+        self.spawn_backlog_save_expected(project_root, task_id, patch, expected, ctx);
+    }
+
+    pub fn spawn_backlog_save_expected(
+        &self,
+        project_root: PathBuf,
+        task_id: String,
+        patch: BacklogTaskPatch,
+        expected: Option<switchbard_core::BacklogStorageIdentity>,
+        ctx: &egui::Context,
+    ) {
         let status = self.backlog_status.clone();
         let repos = self.backlog_repos.clone();
         let kick = self.backlog_kick.clone();
         let locks = self.task_write_locks.clone();
         let ctx = ctx.clone();
+        let mut key = task_key(&repos, &project_root, &task_id);
+        if expected.is_some() {
+            key.storage_identity = expected.clone();
+        }
         thread::spawn(move || {
-            let key = (project_root.clone(), task_id.clone());
             let task_lock = task_write_lock(&locks, &key);
             let _guard = lock_task(&task_lock);
-            save_one_task(&project_root, &task_id, &patch, &repos, &status, &kick);
+            save_one_task(
+                &project_root,
+                &task_id,
+                &patch,
+                expected.as_ref(),
+                &repos,
+                &status,
+                &kick,
+            );
             ctx.request_repaint();
         });
     }
@@ -1636,7 +1702,15 @@ impl HiveApp {
             // acquired, about to write) — see `board_move_started`'s doc on
             // `HiveApp`.
             started.lock().unwrap().insert(key.clone(), generation);
-            let success = save_one_task(&project_root, &task_id, &patch, &repos, &status, &kick);
+            let success = save_one_task(
+                &project_root,
+                &task_id,
+                &patch,
+                key.storage_identity.as_ref(),
+                &repos,
+                &status,
+                &kick,
+            );
             // N8: record the outcome *before* releasing the lock — closes
             // the window where a second, newer same-task save (already
             // queued behind this lock) could acquire it, finish, and report
@@ -1688,10 +1762,15 @@ impl HiveApp {
             let mut saved = 0usize;
             let mut first_error: Option<String> = None;
             for task_id in &task_ids {
-                let key = (project_root.clone(), task_id.clone());
+                let key = task_key(&repos, &project_root, task_id);
                 let task_lock = task_write_lock(&locks, &key);
                 let _guard = lock_task(&task_lock);
-                match switchbard_core::edit_backlog_task(&project_root, task_id, &patch) {
+                match switchbard_core::edit_backlog_task_expected(
+                    &project_root,
+                    task_id,
+                    &patch,
+                    key.storage_identity.as_ref(),
+                ) {
                     Ok(_) => saved += 1,
                     Err(e) => {
                         if first_error.is_none() {
@@ -1814,7 +1893,7 @@ impl HiveApp {
         task_id: String,
         ctx: &egui::Context,
     ) {
-        let key: BacklogTaskKey = (project_root.clone(), task_id.clone());
+        let key = task_key(&self.backlog_repos, &project_root, &task_id);
         {
             let mut in_flight = self.refining_tasks.lock().unwrap();
             if !in_flight.insert(key.clone()) {
@@ -2647,6 +2726,7 @@ impl HiveApp {
     /// (picker draining, config persistence) that has no place in a test, and
     /// the egui_kittest UI harness calls it directly against seeded state.
     pub fn render_ui(&mut self, ui: &mut egui::Ui) {
+        self.refresh_task_identity_addresses();
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
         let frame_start = Instant::now();
@@ -2799,6 +2879,20 @@ fn render_perf_overlay(ctx: &egui::Context, summary: &PerfSummary) {
 /// written to in this run, not by anything unbounded — acceptable, the same
 /// trade-off `HiveApp::dispatch_runs`/`sizes` already make for other
 /// per-task maps in this app).
+pub(crate) fn task_key(
+    repos: &Arc<Mutex<HashMap<PathBuf, BacklogRepo>>>,
+    root: &Path,
+    id: &str,
+) -> BacklogTaskKey {
+    repos
+        .lock()
+        .unwrap()
+        .get(root)
+        .and_then(|repo| repo.tasks.iter().find(|task| task.id == id))
+        .map(|task| BacklogTaskKey::for_task(root, task))
+        .unwrap_or_else(|| (root.to_path_buf(), id.to_string()).into())
+}
+
 fn task_write_lock(locks: &TaskWriteLocks, key: &BacklogTaskKey) -> Arc<Mutex<()>> {
     locks
         .lock()
@@ -2838,11 +2932,12 @@ fn save_one_task(
     project_root: &Path,
     task_id: &str,
     patch: &BacklogTaskPatch,
+    expected: Option<&switchbard_core::BacklogStorageIdentity>,
     repos: &Arc<Mutex<HashMap<PathBuf, BacklogRepo>>>,
     status: &Status,
     kick: &Kick,
 ) -> bool {
-    match switchbard_core::edit_backlog_task(project_root, task_id, patch) {
+    match switchbard_core::edit_backlog_task_expected(project_root, task_id, patch, expected) {
         Ok(_) => {
             let reload = refresh_backlog_repo_cache(repos, project_root);
             status.set(with_stale_warning(reload, format!("saved {task_id}")));

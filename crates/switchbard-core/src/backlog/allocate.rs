@@ -107,7 +107,7 @@ const TASK_DIRS: [&str; 4] = ["tasks", "completed", "drafts", "archive/tasks"];
 /// The next unclaimed top-level task id for this repo. See the module doc
 /// for exactly what "claimed" covers (and doesn't).
 pub fn next_task_id(repo_root: &Path) -> Result<u32> {
-    let prefix = configured_task_prefix(repo_root);
+    let prefix = configured_task_prefix(repo_root)?;
     next_top_level_id(repo_root, &prefix)
 }
 
@@ -115,6 +115,11 @@ pub fn next_task_id(repo_root: &Path) -> Result<u32> {
 /// [`create_task_allocating_id`] doesn't re-read `backlog/config.yml` a
 /// second time for the same allocation.
 fn next_top_level_id(repo_root: &Path, prefix: &str) -> Result<u32> {
+    if let Some((store, repo)) = super::task_storage::active(repo_root)? {
+        return central_candidate(&store.used_locators(&repo, "task")?, None, prefix)?
+            .parse()
+            .context("invalid allocated task ID");
+    }
     Ok(max_visible_id(repo_root, &|name| filename_task_id(name, prefix))? + 1)
 }
 
@@ -129,12 +134,65 @@ pub fn create_task_allocating_id(
     repo_root: &Path,
     task: &NewBacklogTask,
 ) -> Result<(String, PathBuf)> {
+    let _repository_lock = crate::storage::RepositoryLock::acquire(repo_root)?;
+    if let Some((mut store, repo)) = super::task_storage::active(repo_root)? {
+        let prefix = configured_task_prefix(repo_root)?;
+        return store.mutate_kind_with_history(&repo, "task", None, |documents, history| {
+            for document in documents.iter() {
+                document.ensure_understood()?;
+            }
+            let id = central_candidate(history, task.parent.as_deref(), &prefix)?;
+            let (path, text) = super::write::new_task_document(
+                &repo_root.join("backlog/tasks"),
+                &prefix,
+                &id,
+                task,
+            )?;
+            let locator = path
+                .strip_prefix(repo_root)?
+                .to_str()
+                .context("non-UTF-8 task locator")?
+                .to_string();
+            documents.push(crate::storage::Document {
+                content_version: 1,
+                id: String::new(),
+                repo_id: repo.clone(),
+                kind: "task".into(),
+                locator,
+                revision: 0,
+                content: text.into_bytes(),
+                deleted: false,
+            });
+            Ok((id, path))
+        });
+    }
     let tasks_dir = repo_root.join("backlog/tasks");
     fs::create_dir_all(&tasks_dir).with_context(|| format!("creating {}", tasks_dir.display()))?;
-    let prefix = configured_task_prefix(repo_root);
+    let prefix = configured_task_prefix(repo_root)?;
     let claimed = claim_task_id(repo_root, task.parent.as_deref())?;
     let path = write_new_task_file(&tasks_dir, &prefix, &claimed.id, task)?;
     Ok((claimed.id, path))
+}
+
+pub(super) fn central_candidate(
+    locators: &[String],
+    parent: Option<&str>,
+    prefix: &str,
+) -> Result<String> {
+    let parent = parent
+        .map(|parent| parse_parent_number(parent, prefix))
+        .transpose()?;
+    let max = locators
+        .iter()
+        .filter_map(|locator| Path::new(locator).file_name()?.to_str())
+        .filter_map(|name| match parent {
+            Some(parent) => child_ordinal(name, parent, prefix),
+            None => filename_task_id(name, prefix),
+        })
+        .max()
+        .unwrap_or(0);
+    let next = max.checked_add(1).context("task ID space exhausted")?;
+    Ok(parent.map_or_else(|| next.to_string(), |parent| format!("{parent}.{next}")))
 }
 
 /// A claimed-but-unused id: the bare id plus the reservation that keeps
@@ -151,7 +209,7 @@ pub(super) struct ClaimedId {
 /// which needs an id before it can rename an existing file.
 pub(super) fn claim_task_id(repo_root: &Path, parent: Option<&str>) -> Result<ClaimedId> {
     let tasks_dir = repo_root.join("backlog/tasks");
-    let prefix = configured_task_prefix(repo_root);
+    let prefix = configured_task_prefix(repo_root)?;
     let reservations = reservation_dir(repo_root);
     let mut candidate = first_candidate(repo_root, parent, &prefix)?;
     for _attempt in 0..MAX_CREATE_ATTEMPTS {

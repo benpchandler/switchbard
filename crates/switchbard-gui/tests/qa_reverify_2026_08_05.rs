@@ -29,6 +29,7 @@ use switchbard_gui::ui::places::tasks::state::{FilterPredicate, TasksViewMode};
 
 fn task(id: &str, title: &str, status: &str) -> BacklogTask {
     BacklogTask {
+        storage_identity: None,
         id: id.to_string(),
         title: title.to_string(),
         status: status.to_string(),

@@ -88,6 +88,7 @@ fn label_for(i: usize) -> Option<&'static str> {
 fn task(repo: usize, i: usize) -> BacklogTask {
     let id = format!("TASK-{repo}-{i}");
     BacklogTask {
+        storage_identity: None,
         title: format!("Task {i} in repo {repo}"),
         status: "To Do".to_string(),
         priority: "medium".to_string(),
@@ -171,7 +172,7 @@ fn build_fixture() -> HiveApp {
                     continue;
                 }
                 cached_runs.insert(
-                    (root.clone(), task.id.clone()),
+                    (root.clone(), task.id.clone()).into(),
                     DispatchRun {
                         task_id: task.id.clone(),
                         branch: format!("dispatch/{}", task.id.to_lowercase()),

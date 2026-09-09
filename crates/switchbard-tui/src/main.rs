@@ -78,7 +78,7 @@ fn main() -> Result<()> {
 }
 
 fn run(repo_root: PathBuf) -> Result<()> {
-    if !switchbard_core::is_backlog_repo(&repo_root) {
+    if !switchbard_core::backlog_repo_available(&repo_root)? {
         bail!("{} has no backlog/ directory", repo_root.display());
     }
     let telemetry = match telemetry::default_log_path() {
@@ -128,13 +128,14 @@ fn drive(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Exit>
                 app.handle_key(key);
             }
         } else {
-            app.tick();
             if binary.was_replaced() {
                 app.telemetry
                     .record("self_restart", binary.path.display().to_string());
                 return Ok(Exit::Restart);
             }
         }
+        // Polling must not starve while keyboard input remains active.
+        app.tick();
     }
     Ok(Exit::Quit)
 }

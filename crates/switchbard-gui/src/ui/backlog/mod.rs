@@ -159,7 +159,7 @@ pub(crate) struct TaskRow<'a> {
 
 impl TaskRow<'_> {
     pub fn key(&self) -> BacklogTaskKey {
-        (self.repo.key.clone(), self.task.id.clone())
+        BacklogTaskKey::for_task(&self.repo.key, self.task)
     }
 }
 
@@ -458,6 +458,7 @@ fn render_empty(ui: &mut egui::Ui) {
 #[derive(Default)]
 pub(crate) struct Pending {
     pub save: Option<(PathBuf, String, BacklogTaskPatch)>,
+    pub save_identity: Option<switchbard_core::BacklogStorageIdentity>,
     /// One entry per repo a bulk action touches — a cross-repo bulk
     /// selection needs one `backlog` CLI invocation per repo root.
     pub bulk_save: Vec<(PathBuf, Vec<String>, BacklogTaskPatch, String)>,
@@ -572,7 +573,11 @@ pub(crate) fn apply_pending(app: &mut HiveApp, ui: &mut egui::Ui, mut pending: P
     let ctx = &ui.ctx().clone();
     pending.retain_writable(app);
     if let Some((project_root, task_id, patch)) = pending.save {
-        app.spawn_backlog_save(project_root, task_id, patch, ctx);
+        if let Some(identity) = pending.save_identity {
+            app.spawn_backlog_save_expected(project_root, task_id, patch, Some(identity), ctx);
+        } else {
+            app.spawn_backlog_save(project_root, task_id, patch, ctx);
+        }
     }
     for (project_root, task_ids, patch, action_label) in pending.bulk_save {
         app.spawn_backlog_bulk_save(project_root, task_ids, patch, action_label, ctx);

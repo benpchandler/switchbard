@@ -61,6 +61,7 @@ const FRAME_P95_BUDGET_MS: f64 = 40.0;
 fn task(repo: usize, project: usize, i: usize) -> BacklogTask {
     let id = format!("TASK-{repo}{project}{i:02}");
     BacklogTask {
+        storage_identity: None,
         title: format!("Task {i} of project {project} in repo {repo}"),
         status: "To Do".to_string(),
         priority: "medium".to_string(),

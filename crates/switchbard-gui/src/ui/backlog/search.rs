@@ -104,7 +104,8 @@ fn render_contents(app: &mut HiveApp, ui: &mut egui::Ui, snap: &Snapshot) {
                     // persistent detail rail shows it regardless of lens,
                     // so this no longer needs to jump to List.
                     app.backlog_view.selected_repo = None;
-                    app.backlog_view.selected_task = Some((repo.key.clone(), task.id.clone()));
+                    app.backlog_view.selected_task =
+                        Some(crate::runtime::BacklogTaskKey::for_task(&repo.key, task));
                     app.backlog_view.editor.loaded_key = None;
                     app.backlog_view.search.open = false;
                 }
