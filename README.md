@@ -160,17 +160,19 @@ Switchbard is a four-crate Cargo workspace with no webview — a single native
 mise install           # pins Rust 1.95.0 from mise.toml (mise is optional)
 mise run hooks-install # install fast pre-commit and complete pre-push gates
 mise run preflight     # fmt + clippy + tests, including developer-gate tests
-mise run bundle        # macOS: Switchbard.app in the shared Cargo target
-mise run package       # macOS: DMG + sha256 in the shared Cargo target
+mise run bundle        # macOS: Switchbard.app in this worktree's Cargo target
+mise run package       # macOS: DMG + sha256 in this worktree's Cargo target
 ```
 
 Prefer plain Cargo? Every task above maps to the obvious `cargo fmt` / `cargo clippy` / `cargo test` / `cargo build --release` invocation. The tracked pre-commit hook checks formatting, while pre-push runs the complete `mise run preflight` gate. Both hooks scrub Git's exported worktree variables before starting nested tools, and the installer uses a worktree-relative hook path. A push to the local `no-mistakes` gate does not duplicate preflight because that delivery pipeline runs the same trusted command before its upstream push. A hook can still be bypassed with `--no-verify`, so GitHub Actions remains the merge authority.
 
 CI runs formatting once on Linux and runs Clippy plus the full Rust tests on both macOS and Linux. The expensive live mission-sidecar proofs run only when mission code, its pinned helper, dependencies, or the CI routing contract changes. Because `main` is not branch-protected, CI also verifies the actual post-merge commit on every push to `main`.
-Mise shares rebuildable artifacts across linked worktrees through
-`CARGO_TARGET_DIR`; print the resolved location with
-`mise exec -- printenv CARGO_TARGET_DIR`. Set the variable explicitly to
-override it. Plain Cargo without the mise environment still uses `target/`.
+Mise gives each worktree its own `CARGO_TARGET_DIR` under the platform cache, so
+a build or test run always links that worktree's sources; print the resolved
+location with `mise exec -- printenv CARGO_TARGET_DIR`, and reclaim the ones no
+live worktree owns with `mise run target-prune` (it lists them; `-- --yes`
+removes them). Set the variable explicitly to override it. Plain
+Cargo without the mise environment still uses `target/`.
 
 ## Contributing
 
