@@ -26,6 +26,7 @@ mise run ci                           # same complete local gate
 mise run bundle                       # macOS: Switchbard.app in the shared Cargo target
 mise run package                      # macOS: DMG + sha256 in the shared Cargo target
 mise run test                         # full test suite (~0.1s)
+mise run install                      # install sb + sbt from this worktree (refuses a downgrade)
 cargo test -p switchbard-core <pat>   # single test by name substring
 ```
 
@@ -37,6 +38,20 @@ override it; CI keeps using its workspace-local `target/` cache.
 
 `mise run bundle` and `mise run package` require `XPLAN_SIDECAR_SOURCE` (a clean checkout of the pinned xplan revision from `xplan-sidecar-pin.json`) and `XPLAN_SIDECAR_ARCHIVE` (the sidecar archive built from it with `scripts/build_mission_sidecar.py`); the sidecar is packaged from those exact local inputs, never downloaded. Run `mise run bundle` without them for the full recipe.
 CI and Linux release builds materialize that same pinned revision from the sub-megabyte Git bundle in `vendor/xplan`, then build it with the pinned CPython 3.12.11 interpreter and verify the helper locally. This keeps Switchbard's build independent of cross-repository credentials while preserving xplan's exact Git identity and sole-writer authority.
+
+## Installing `sb` and `sbt`
+
+Install through `mise run install` (or `scripts/install-switchbard.sh`), never a
+bare `cargo install --path`. Both binaries are installed from whatever worktree
+someone is standing in, and a running `sbt` re-execs itself the moment the file
+on disk changes - so an install from a worktree that predates a feature deletes
+that feature from every live session at once. That is TASK-172, and it happened
+twice. The guard refuses any install whose target tree does not contain the
+commit the installed binary was built from; `--force` overrides and prints what
+is being dropped. Every binary stamps its own commit and branch at compile time
+(`switchbard-core/build.rs` -> `switchbard_core::build_identity`), surfaced by
+`--version`, by the `build-id` subcommand, and in sbt's `session_start` event -
+so "which build am I on" is always answerable.
 
 ## Live app ownership
 

@@ -39,7 +39,7 @@ const MAX_ROOT_WALK: usize = 64;
 #[derive(Parser)]
 #[command(
     name = "sb",
-    version,
+    version = switchbard_core::VERSION_LINE,
     about = "Read and write Backlog-format tasks (switchbard's native task layer)",
     long_about = "Read and write Backlog-format tasks through switchbard's native write \
                   layer — the same implementation the Switchbard GUI and switchbard-dispatch \
@@ -110,6 +110,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Print the git identity of this build as `key=value` lines. The
+    /// install guard reads this to refuse a downgrade; see
+    /// `switchbard_core::build_identity`.
+    BuildId,
     /// List tasks, one tab-separated row per task: id, status, priority,
     /// labels (comma-joined), project, title
     List {
@@ -323,8 +327,16 @@ fn run(cli: &Cli) -> Result<()> {
     if cli.project.is_some() {
         eprintln!("sb: warning: --project is deprecated; use --repo");
     }
+    // Answerable anywhere: the install guard asks an installed binary what
+    // it is, from whatever directory it happens to be run in, and a missing
+    // backlog/ directory must not turn that into an error.
+    if matches!(cli.command, Command::BuildId) {
+        print!("{}", switchbard_core::build_id_report());
+        return Ok(());
+    }
     let root = resolve_repo(cli.repo.as_deref().or(cli.project.as_deref()))?;
     match &cli.command {
+        Command::BuildId => unreachable!("handled before repo resolution"),
         Command::List {
             status,
             in_project,
