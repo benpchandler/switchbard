@@ -221,17 +221,10 @@ impl Store {
         plan: &MigrationPlan,
         validate: impl FnOnce(&super::ExchangeSnapshot) -> Result<()>,
     ) -> Result<usize> {
-        if let Some(lock_root) = plan.lock_root.as_deref() {
-            ensure!(
-                lock_root.is_dir(),
-                "migration lock root must be an existing directory"
-            );
-            ensure!(
-                self.repository(lock_root)?.as_ref() == Some(&plan.repo),
-                "migration lock root does not belong to the planned repository"
-            );
-        }
         let _repository_lock = self.repository_lock_for(&plan.repo)?;
+        if let Some(lock_root) = plan.lock_root.as_deref() {
+            self.validate_lock_root(&plan.repo, lock_root)?;
+        }
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;

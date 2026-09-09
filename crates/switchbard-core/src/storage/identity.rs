@@ -6,7 +6,10 @@ use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
 impl Store {
-    pub(crate) fn repository_lock_for(&self, repo: &RepositoryId) -> Result<super::RepositoryLockSet> {
+    pub(crate) fn repository_lock_for(
+        &self,
+        repo: &RepositoryId,
+    ) -> Result<super::RepositoryLockSet> {
         let live = self.live_lock_identities(repo)?;
         ensure!(
             !live.is_empty(),
@@ -35,6 +38,23 @@ impl Store {
             }
         }
         Ok(live)
+    }
+
+    pub(crate) fn validate_lock_root(&self, repo: &RepositoryId, root: &Path) -> Result<()> {
+        ensure!(
+            root.is_dir(),
+            "migration lock root must be an existing directory"
+        );
+        ensure!(
+            self.repository(root)?.as_ref() == Some(repo),
+            "migration lock root does not belong to the planned repository"
+        );
+        let identity = super::RepositoryLock::identity(root)?;
+        ensure!(
+            self.live_lock_identities(repo)?.contains(&identity),
+            "migration lock root is not a live repository binding"
+        );
+        Ok(())
     }
 
     pub fn repository(&self, root: &Path) -> Result<Option<RepositoryId>> {
@@ -69,9 +89,15 @@ impl Store {
         let mut identities = existing_identities.clone();
         identities.push(super::RepositoryLock::identity(root)?);
         let _repository_lock = super::RepositoryLock::acquire_identities(identities)?;
-        ensure!(lookup(&self.connection, &binding)? == existing, "repository binding changed; retry");
+        ensure!(
+            lookup(&self.connection, &binding)? == existing,
+            "repository binding changed; retry"
+        );
         if let Some(repo) = &existing {
-            ensure!(self.live_lock_identities(repo)? == existing_identities, "repository bindings changed; retry");
+            ensure!(
+                self.live_lock_identities(repo)? == existing_identities,
+                "repository bindings changed; retry"
+            );
         }
         let tx = self
             .connection
@@ -105,7 +131,10 @@ impl Store {
         let mut identities = existing.clone();
         identities.push(new_identity);
         let _repository_lock = super::RepositoryLock::acquire_identities(identities)?;
-        ensure!(self.live_lock_identities(repo)? == existing, "repository bindings changed; retry");
+        ensure!(
+            self.live_lock_identities(repo)? == existing,
+            "repository bindings changed; retry"
+        );
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;

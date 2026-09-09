@@ -31,6 +31,7 @@ use identity::repository_binding;
 pub(crate) use migration::SelectedDocument;
 pub use migration::{MigrationPlan, SourceDocument};
 pub use repository_lock::RepositoryLock;
+pub(crate) use repository_lock::RepositoryLockSet;
 
 pub const MAX_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_DOCUMENTS: usize = 100_000;

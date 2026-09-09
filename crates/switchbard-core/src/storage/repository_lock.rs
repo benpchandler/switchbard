@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use std::cell::RefCell;
 use std::fs::File;
 use std::marker::PhantomData;
@@ -55,7 +55,20 @@ impl RepositoryLock {
                 _not_send: PhantomData,
             });
         }
-        let file = File::create(&path).with_context(|| format!("create {}", path.display()))?;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW);
+        }
+        let file = options
+            .open(&path)
+            .with_context(|| format!("open {}", path.display()))?;
+        ensure!(
+            file.metadata()?.is_file(),
+            "repository lock is not a regular file"
+        );
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             #[cfg(unix)]
