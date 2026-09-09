@@ -14,6 +14,98 @@ const MAX_DOCUMENT_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 const MAX_BRANCHES: usize = 256;
 const MAX_GIT_LIST_BYTES: usize = 16 * 1024 * 1024;
+const MAX_RESOLUTION_BYTES: u64 = 4 * 1024 * 1024;
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MigrationResolutionFile {
+    pub version: u8,
+    pub kind: String,
+    pub resolutions: Vec<MigrationResolution>,
+    #[serde(skip)]
+    digest: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MigrationResolution {
+    pub source_locators: Vec<String>,
+    pub target_locator: String,
+    pub sources: Vec<ResolutionSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_task_id: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolutionSource {
+    pub path: PathBuf,
+    pub digest: String,
+    pub decision: ResolutionDecision,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolutionDecision {
+    Select,
+    Reject,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AppliedResolution {
+    pub source_locators: Vec<String>,
+    pub target_locator: String,
+    pub selected_source: PathBuf,
+    pub selected_source_digest: String,
+    pub rejected_sources: Vec<ResolutionSource>,
+    pub target_digest: String,
+    pub repair_task_id: Option<String>,
+    pub reviewed_deletions: Vec<ReviewedSourceDeletion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ReviewedSourceDeletion {
+    pub source_locator: String,
+    pub deleted_at: String,
+    pub merge_base: String,
+    pub deleted_source_digest: String,
+    pub preserved_by: Vec<PathBuf>,
+}
+
+impl MigrationResolutionFile {
+    pub fn read(path: &Path, expected_kind: &str) -> Result<Self> {
+        let mut bytes = Vec::new();
+        fs::File::open(path)
+            .with_context(|| format!("reading migration resolution file {}", path.display()))?
+            .take(MAX_RESOLUTION_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        anyhow::ensure!(
+            bytes.len() as u64 <= MAX_RESOLUTION_BYTES,
+            "migration resolution file exceeds byte limit"
+        );
+        let digest = sha256(&bytes);
+        let mut plan: Self = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parsing migration resolution file {}", path.display()))?;
+        anyhow::ensure!(
+            plan.version == 1,
+            "unsupported migration resolution version"
+        );
+        anyhow::ensure!(
+            plan.kind == expected_kind,
+            "migration resolution kind mismatch"
+        );
+        anyhow::ensure!(
+            !plan.resolutions.is_empty() && plan.resolutions.len() <= MAX_DOCUMENTS,
+            "invalid migration resolution count"
+        );
+        plan.digest = digest;
+        Ok(plan)
+    }
+
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+}
 
 #[derive(Default)]
 struct InventoryBudget {
@@ -43,12 +135,14 @@ pub struct InventoryDocument {
     /// Every original source, including stale variants, retained byte-for-byte.
     pub sources: Vec<InventorySource>,
     pub repair: Option<super::migration_repairs::MigrationRepair>,
+    pub resolution: Option<AppliedResolution>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct InventorySource {
     pub path: PathBuf,
     pub bytes: Vec<u8>,
+    pub digest: String,
     pub stale_proof: Option<StaleSourceProof>,
     pub addition_proof: Option<NewSourceProof>,
 }
@@ -76,6 +170,8 @@ pub struct KindInventory {
     pub worktrees: Vec<PathBuf>,
     /// Sorted local ref/tip pairs, including current and primary HEAD anchors.
     pub branch_refs: Vec<(String, String)>,
+    pub resolution_file_digest: Option<String>,
+    pub resolutions: Vec<AppliedResolution>,
 }
 
 impl KindInventory {
@@ -113,7 +209,7 @@ impl KindInventory {
         &self,
         repo: crate::storage::RepositoryId,
     ) -> Result<crate::storage::MigrationPlan> {
-        use crate::storage::{MigrationPlan, SelectedDocument, SourceDocument};
+        use crate::storage::{AllowedTransform, MigrationPlan, SelectedDocument, SourceDocument};
         let sources = self
             .documents
             .iter()
@@ -137,6 +233,16 @@ impl KindInventory {
                 kind: self.kind.clone(),
                 locator: document.locator.clone(),
                 bytes: document.bytes.clone(),
+                allowed_transform: document.resolution.as_ref().and_then(|resolution| {
+                    resolution
+                        .repair_task_id
+                        .as_ref()
+                        .map(|task_id| AllowedTransform {
+                            task_id: task_id.clone(),
+                            source_digest: resolution.selected_source_digest.clone(),
+                            repair_fused_fence: document.repair.is_some(),
+                        })
+                }),
             })
             .collect();
         MigrationPlan::capture_selected(repo, vec![self.kind.clone()], sources, selected)
@@ -187,6 +293,12 @@ impl KindInventory {
                 }
             }
         }
+        if let Some(digest) = &self.resolution_file_digest {
+            field(&mut hash, b"explicit resolution file");
+            field(&mut hash, digest.as_bytes());
+        } else {
+            field(&mut hash, b"no explicit resolution file");
+        }
         format!("{hash:x}", hash = hash.finalize())
     }
 }
@@ -194,6 +306,14 @@ impl KindInventory {
 /// Inventory every checked-out copy. Only a clean, committed common-base
 /// secondary can yield to the primary source; all other divergence refuses cutover.
 pub fn inventory_kind(root: &Path, kind: &str) -> Result<KindInventory> {
+    inventory_kind_with_resolutions(root, kind, None)
+}
+
+pub fn inventory_kind_with_resolutions(
+    root: &Path,
+    kind: &str,
+    resolutions: Option<&MigrationResolutionFile>,
+) -> Result<KindInventory> {
     let relatives = source_paths(kind)?;
     let worktrees = sibling_worktrees(root)?;
     let mut documents = BTreeMap::new();
@@ -218,11 +338,14 @@ pub fn inventory_kind(root: &Path, kind: &str) -> Result<KindInventory> {
             }
         }
     }
+    if let Some(resolutions) = resolutions {
+        apply_explicit_resolutions(kind, &mut documents, resolutions)?;
+    }
     reconcile_task_locators(kind, &worktrees, &mut documents)?;
     reconcile_sources(&worktrees, &mut documents)?;
     prove_secondary_additions(kind, &worktrees, &mut documents)?;
-    verify_missing_copies(&worktrees, &documents)?;
-    let mut branch_refs = inventory_branches(root, kind, relatives, &documents, &mut budget)?;
+    verify_missing_copies(&worktrees, &mut documents)?;
+    let mut branch_refs = inventory_branches(root, kind, relatives, &mut documents, &mut budget)?;
     if !branch_refs.is_empty() {
         for tree in &worktrees {
             let head =
@@ -241,14 +364,160 @@ pub fn inventory_kind(root: &Path, kind: &str) -> Result<KindInventory> {
         {
             document.bytes = bytes;
             document.repair = Some(repair);
+            if let Some(resolution) = &mut document.resolution {
+                resolution.target_digest = sha256(&document.bytes);
+            }
         }
     }
+    let applied_resolutions = documents
+        .values()
+        .filter_map(|document| document.resolution.clone())
+        .collect();
     Ok(KindInventory {
         kind: kind.into(),
         documents: documents.into_values().collect(),
         worktrees,
         branch_refs,
+        resolution_file_digest: resolutions.map(|plan| plan.digest().to_owned()),
+        resolutions: applied_resolutions,
     })
+}
+
+fn apply_explicit_resolutions(
+    kind: &str,
+    documents: &mut BTreeMap<String, InventoryDocument>,
+    file: &MigrationResolutionFile,
+) -> Result<()> {
+    let mut claimed_locators = BTreeSet::new();
+    let mut claimed_targets = BTreeSet::new();
+    for resolution in &file.resolutions {
+        anyhow::ensure!(
+            !resolution.source_locators.is_empty()
+                && resolution.source_locators.len() <= MAX_DOCUMENTS
+                && !resolution.sources.is_empty()
+                && resolution.sources.len() <= MAX_DOCUMENTS,
+            "invalid explicit resolution size"
+        );
+        anyhow::ensure!(
+            claimed_targets.insert(resolution.target_locator.clone()),
+            "duplicate explicit resolution target {}",
+            resolution.target_locator
+        );
+        let mut originals = Vec::new();
+        for locator in &resolution.source_locators {
+            anyhow::ensure!(
+                claimed_locators.insert(locator.clone()),
+                "source locator appears in more than one resolution: {locator}"
+            );
+            let document = documents.get(locator).with_context(|| {
+                format!("resolution source locator is not inventoried: {locator}")
+            })?;
+            originals.extend(document.sources.iter().cloned());
+        }
+        anyhow::ensure!(
+            resolution
+                .source_locators
+                .contains(&resolution.target_locator)
+                || !documents.contains_key(&resolution.target_locator),
+            "resolution target collides with an unlisted inventoried locator: {}",
+            resolution.target_locator
+        );
+        let actual = originals
+            .iter()
+            .map(|source| (source.path.clone(), source.digest.clone()))
+            .collect::<BTreeSet<_>>();
+        let declared = resolution
+            .sources
+            .iter()
+            .map(|source| {
+                Ok((
+                    source.path.canonicalize().with_context(|| {
+                        format!(
+                            "resolving explicit migration source {}",
+                            source.path.display()
+                        )
+                    })?,
+                    source.digest.clone(),
+                ))
+            })
+            .collect::<Result<BTreeSet<_>>>()?;
+        anyhow::ensure!(
+            declared.len() == resolution.sources.len(),
+            "duplicate physical source in explicit resolution for {}",
+            resolution.target_locator
+        );
+        anyhow::ensure!(
+            actual == declared,
+            "explicit resolution physical sources or digests do not match inventory for {}",
+            resolution.target_locator
+        );
+        let selected = resolution
+            .sources
+            .iter()
+            .filter(|source| source.decision == ResolutionDecision::Select)
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            selected.len() == 1,
+            "explicit resolution must select exactly one physical source for {}",
+            resolution.target_locator
+        );
+        let selected = selected[0];
+        let selected_path = selected.path.canonicalize()?;
+        let source = originals
+            .iter()
+            .find(|source| source.path == selected_path && source.digest == selected.digest)
+            .context("selected migration source disappeared")?;
+        let mut target = source.bytes.clone();
+        if let Some(task_id) = resolution.repair_task_id.as_deref() {
+            target = super::migration_repairs::repair_task_identity(
+                kind,
+                &source.path,
+                &resolution.target_locator,
+                &target,
+                task_id,
+            )?;
+        }
+        let rejected_sources = resolution
+            .sources
+            .iter()
+            .filter(|source| source.decision == ResolutionDecision::Reject)
+            .map(|source| {
+                Ok(ResolutionSource {
+                    path: source.path.canonicalize()?,
+                    digest: source.digest.clone(),
+                    decision: source.decision,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        anyhow::ensure!(
+            rejected_sources.len() + 1 == resolution.sources.len(),
+            "every non-selected physical source must be explicitly rejected"
+        );
+        let applied = AppliedResolution {
+            source_locators: resolution.source_locators.clone(),
+            target_locator: resolution.target_locator.clone(),
+            selected_source: selected_path,
+            selected_source_digest: selected.digest.clone(),
+            rejected_sources,
+            target_digest: sha256(&target),
+            repair_task_id: resolution.repair_task_id.clone(),
+            reviewed_deletions: Vec::new(),
+        };
+        for locator in &resolution.source_locators {
+            documents.remove(locator);
+        }
+        documents.insert(
+            resolution.target_locator.clone(),
+            InventoryDocument {
+                locator: resolution.target_locator.clone(),
+                bytes: target,
+                sources: originals,
+                repair: None,
+                resolution: Some(applied),
+            },
+        );
+    }
+    Ok(())
 }
 
 fn source_paths(kind: &str) -> Result<&'static [&'static str]> {
@@ -464,7 +733,7 @@ fn inventory_branches(
     root: &Path,
     kind: &str,
     relatives: &[&str],
-    documents: &BTreeMap<String, InventoryDocument>,
+    documents: &mut BTreeMap<String, InventoryDocument>,
     budget: &mut InventoryBudget,
 ) -> Result<Vec<(String, String)>> {
     // `worktree list` succeeds for a Git repo even with an unborn HEAD. Non-Git is supported.
@@ -527,10 +796,18 @@ fn inventory_branches(
         // Inspect all unmerged refs, including old tips. This includes allocator's 30-day
         // active window without letting an older branch-only record disappear at cutover.
         // Merged ancestors are obsolete history, not divergent current sources.
-        if ancestor(root, tip, &current_head)? || ancestor(root, tip, &primary_head)? {
+        if ancestor(root, tip, &primary_head)? {
             continue;
         }
-        inspect_branch(root, branch, tip, kind, relatives, documents, budget)?;
+        inspect_branch(
+            root,
+            (primary, &primary_head),
+            (branch, tip),
+            kind,
+            relatives,
+            documents,
+            budget,
+        )?;
     }
     refs.push(("HEAD".into(), current_head));
     refs.push(("PRIMARY_HEAD".into(), primary_head));
@@ -540,16 +817,18 @@ fn inventory_branches(
 
 fn inspect_branch(
     root: &Path,
-    branch: &str,
-    tip: &str,
+    primary: (&Path, &str),
+    branch_ref: (&str, &str),
     kind: &str,
     relatives: &[&str],
-    documents: &BTreeMap<String, InventoryDocument>,
+    documents: &mut BTreeMap<String, InventoryDocument>,
     budget: &mut InventoryBudget,
 ) -> Result<()> {
+    let (primary_root, primary_head) = primary;
+    let (branch, tip) = branch_ref;
     // Only branch-changed paths are candidates. An unchanged file inherited from
     // a common ancestor is obsolete history when the checked-out copy was edited.
-    let base = String::from_utf8(git_bytes(root, &["merge-base", "HEAD", tip], 128)?)?;
+    let base = String::from_utf8(git_bytes(root, &["merge-base", primary_head, tip], 128)?)?;
     let mut deleted_args = vec![
         "diff",
         "--name-only",
@@ -567,8 +846,39 @@ fn inspect_branch(
         .filter(|path| !path.is_empty())
     {
         let path = std::str::from_utf8(path).context("non-UTF8 deleted branch source")?;
-        if branch_locator(kind, path, relatives).is_some() {
-            bail!("unmerged branch deletion {branch}:{path}; reconcile explicitly before cutover");
+        if let Some(locator) = branch_locator(kind, path, relatives) {
+            let document_key = documents
+                .get_key_value(&locator)
+                .map(|(key, _)| key.clone())
+                .or_else(|| {
+                    documents.iter().find_map(|(key, document)| {
+                        document.resolution.as_ref().and_then(|resolution| {
+                            resolution
+                                .source_locators
+                                .iter()
+                                .any(|source| source == &locator)
+                                .then(|| key.clone())
+                        })
+                    })
+                });
+            let document = document_key.and_then(|key| documents.get_mut(&key));
+            let base_bytes = git_blob_if_exists(root, base.trim(), path)?;
+            let reviewed = match (document, base_bytes) {
+                (Some(document), Some(base_bytes)) => bind_reviewed_branch_move(
+                    root,
+                    document,
+                    &locator,
+                    branch,
+                    tip,
+                    base.trim(),
+                    &base_bytes,
+                )?,
+                _ => false,
+            };
+            anyhow::ensure!(
+                reviewed,
+                "unmerged branch deletion {branch}:{path}; reconcile explicitly before cutover"
+            );
         }
     }
     let mut changed_args = vec!["diff", "--name-only", "-z", base.trim(), tip, "--"];
@@ -608,14 +918,99 @@ fn inspect_branch(
             MAX_DOCUMENT_BYTES as usize,
         )?;
         budget.account(bytes.len())?;
-        if documents
-            .get(&locator)
-            .is_none_or(|document| document.bytes != bytes)
-        {
+        let document = documents.get(&locator).or_else(|| {
+            documents.values().find(|document| {
+                document.resolution.as_ref().is_some_and(|resolution| {
+                    resolution
+                        .source_locators
+                        .iter()
+                        .any(|source| source == &locator)
+                })
+            })
+        });
+        let preserved =
+            document.is_some_and(|document| {
+                document.sources.iter().any(|source| {
+                    source.path == primary_root.join(&locator) && source.bytes == bytes
+                }) || (document.resolution.is_some()
+                    && document.sources.iter().any(|source| source.bytes == bytes))
+            });
+        if !preserved {
             bail!("unmerged branch source {branch}:{path} is absent from or differs from checked-out inventory; reconcile explicitly before cutover");
         }
     }
     Ok(())
+}
+
+fn bind_reviewed_branch_move(
+    root: &Path,
+    document: &mut InventoryDocument,
+    deleted_locator: &str,
+    branch: &str,
+    tip: &str,
+    merge_base: &str,
+    deleted_bytes: &[u8],
+) -> Result<bool> {
+    let Some(resolution) = &document.resolution else {
+        return Ok(false);
+    };
+    if resolution.source_locators.len() < 2
+        || !resolution
+            .source_locators
+            .iter()
+            .any(|locator| locator == deleted_locator)
+    {
+        return Ok(false);
+    }
+    let deleted_source_digest = sha256(deleted_bytes);
+    let mut preserved_by = document
+        .sources
+        .iter()
+        .filter(|source| source.digest == deleted_source_digest)
+        .map(|source| source.path.clone())
+        .collect::<Vec<_>>();
+    if preserved_by.is_empty() {
+        return Ok(false);
+    }
+    let mut surviving_variant_is_bound = false;
+    for locator in resolution
+        .source_locators
+        .iter()
+        .filter(|locator| locator.as_str() != deleted_locator)
+    {
+        if let Some(bytes) = git_blob_if_exists(root, tip, locator)? {
+            let digest = sha256(&bytes);
+            if document
+                .sources
+                .iter()
+                .any(|source| source.digest == digest)
+            {
+                surviving_variant_is_bound = true;
+                break;
+            }
+        }
+    }
+    if !surviving_variant_is_bound {
+        return Ok(false);
+    }
+    preserved_by.sort();
+    preserved_by.dedup();
+    let deletion = ReviewedSourceDeletion {
+        source_locator: deleted_locator.to_owned(),
+        deleted_at: format!("{branch}@{tip}"),
+        merge_base: merge_base.to_owned(),
+        deleted_source_digest,
+        preserved_by,
+    };
+    if !resolution.reviewed_deletions.contains(&deletion) {
+        document
+            .resolution
+            .as_mut()
+            .context("reviewed resolution disappeared")?
+            .reviewed_deletions
+            .push(deletion);
+    }
+    Ok(true)
 }
 
 fn merge_source(
@@ -627,6 +1022,7 @@ fn merge_source(
     let source = InventorySource {
         path,
         bytes: bytes.clone(),
+        digest: sha256(&bytes),
         stale_proof: None,
         addition_proof: None,
     };
@@ -640,6 +1036,7 @@ fn merge_source(
                 bytes,
                 sources: vec![source],
                 repair: None,
+                resolution: None,
             },
         );
     }
@@ -665,6 +1062,9 @@ fn reconcile_task_locators(
     let primary = &worktrees[0];
     let mut by_id = BTreeMap::<String, Vec<String>>::new();
     for (locator, document) in documents.iter() {
+        if document.resolution.is_some() {
+            continue;
+        }
         if let Some(source) = document
             .sources
             .iter()
@@ -685,10 +1085,11 @@ fn reconcile_task_locators(
     let absent = documents
         .iter()
         .filter(|(_, document)| {
-            !document
-                .sources
-                .iter()
-                .any(|source| source_tree(&source.path, worktrees).ok() == Some(primary))
+            document.resolution.is_none()
+                && !document
+                    .sources
+                    .iter()
+                    .any(|source| source_tree(&source.path, worktrees).ok() == Some(primary))
         })
         .map(|(locator, _)| locator.clone())
         .collect::<Vec<_>>();
@@ -759,6 +1160,9 @@ fn prove_secondary_additions(
             .to_owned();
     let mut task_ids = BTreeMap::<String, BTreeSet<String>>::new();
     for document in documents.values_mut() {
+        if document.resolution.is_some() {
+            continue;
+        }
         if document
             .sources
             .iter()
@@ -882,13 +1286,63 @@ fn task_ids_at_revision(root: &Path, revision: &str) -> Result<BTreeSet<String>>
 
 fn verify_missing_copies(
     worktrees: &[PathBuf],
-    documents: &BTreeMap<String, InventoryDocument>,
+    documents: &mut BTreeMap<String, InventoryDocument>,
 ) -> Result<()> {
-    if worktrees.len() < 2 {
+    if worktrees.is_empty()
+        || (worktrees.len() == 1
+            && !documents.values().any(|document| {
+                document.locator == "backlog/config.yml" && document.resolution.is_some()
+            }))
+    {
         return Ok(());
     }
     let primary = &worktrees[0];
-    for document in documents.values() {
+    for document in documents.values_mut() {
+        if let Some(resolution) = &document.resolution {
+            let mut physical_locators = document
+                .sources
+                .iter()
+                .map(|source| {
+                    let tree = source_tree(&source.path, worktrees)?;
+                    Ok(source
+                        .path
+                        .strip_prefix(tree)?
+                        .to_str()
+                        .context("non-UTF8 resolved source path")?
+                        .to_owned())
+                })
+                .collect::<Result<BTreeSet<_>>>()?;
+            for locator in &resolution.source_locators {
+                if document.sources.iter().any(|source| {
+                    worktrees
+                        .iter()
+                        .any(|tree| source.path == tree.join(locator))
+                }) {
+                    physical_locators.insert(locator.clone());
+                } else {
+                    anyhow::ensure!(
+                        document.locator == "backlog/config.yml",
+                        "resolved locator has no physical source: {locator}"
+                    );
+                }
+            }
+            if document.locator == "backlog/config.yml" {
+                physical_locators
+                    .extend(source_paths("config")?.iter().map(|path| path.to_string()));
+            }
+            for locator in &physical_locators {
+                if document.sources.iter().any(|source| {
+                    worktrees
+                        .iter()
+                        .any(|tree| source.path == tree.join(locator))
+                }) {
+                    verify_resolved_locator_copies(primary, worktrees, document, locator)?;
+                } else {
+                    verify_resolved_locator_never_existed(worktrees, locator)?;
+                }
+            }
+            continue;
+        }
         let anchor = document
             .sources
             .iter()
@@ -962,6 +1416,198 @@ fn verify_missing_copies(
     Ok(())
 }
 
+fn verify_resolved_locator_never_existed(worktrees: &[PathBuf], locator: &str) -> Result<()> {
+    for tree in worktrees {
+        let probe = git_cmd()
+            .arg("-C")
+            .arg(tree)
+            .args(["rev-parse", "--git-dir"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()?;
+        if !probe.success() {
+            anyhow::ensure!(
+                !tree.join(locator).exists(),
+                "resolved config source is missing from inventory: {}",
+                tree.join(locator).display()
+            );
+            continue;
+        }
+        let status = git_bytes(
+            tree,
+            &[
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+                "--",
+                locator,
+            ],
+            MAX_GIT_LIST_BYTES,
+        )?;
+        anyhow::ensure!(
+            status.is_empty(),
+            "resolved config source has uncommitted/staged deletion: {}",
+            tree.join(locator).display()
+        );
+        let head = String::from_utf8(git_bytes(tree, &["rev-parse", "--verify", "HEAD"], 128)?)?
+            .trim()
+            .to_owned();
+        anyhow::ensure!(
+            git_blob_if_exists(tree, &head, locator)?.is_none(),
+            "resolved config source is missing from inventory: {}",
+            tree.join(locator).display()
+        );
+        let history = git_bytes(
+            tree,
+            &["log", "-1", "--format=%H", &head, "--", locator],
+            128,
+        )?;
+        anyhow::ensure!(
+            history.is_empty(),
+            "resolved config source deletion of {locator}; reconcile source state before cutover"
+        );
+    }
+    Ok(())
+}
+
+fn verify_resolved_locator_copies(
+    primary: &Path,
+    worktrees: &[PathBuf],
+    document: &mut InventoryDocument,
+    locator: &str,
+) -> Result<()> {
+    let source_paths = document
+        .sources
+        .iter()
+        .filter(|source| {
+            source_tree(&source.path, worktrees).is_ok_and(|tree| source.path == tree.join(locator))
+        })
+        .map(|source| source.path.clone())
+        .collect::<BTreeSet<_>>();
+    let anchor_path = source_paths
+        .iter()
+        .find(|path| **path == primary.join(locator))
+        .cloned()
+        .or_else(|| source_paths.first().cloned())
+        .with_context(|| format!("resolved locator has no physical source: {locator}"))?;
+    if worktrees.len() == 1 {
+        return Ok(());
+    }
+    let anchor_tree = source_tree(&anchor_path, worktrees)?;
+    let anchor_head = String::from_utf8(git_bytes(
+        anchor_tree,
+        &["rev-parse", "--verify", "HEAD"],
+        128,
+    )?)?
+    .trim()
+    .to_owned();
+    for tree in worktrees.iter().filter(|tree| *tree != anchor_tree) {
+        if source_paths.contains(&tree.join(locator)) {
+            continue;
+        }
+        let status = git_bytes(
+            tree,
+            &[
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+                "--",
+                locator,
+            ],
+            MAX_GIT_LIST_BYTES,
+        )?;
+        anyhow::ensure!(
+            status.is_empty(),
+            "resolved source has uncommitted/staged deletion: {}",
+            tree.join(locator).display()
+        );
+        let head = String::from_utf8(git_bytes(tree, &["rev-parse", "--verify", "HEAD"], 128)?)?
+            .trim()
+            .to_owned();
+        anyhow::ensure!(
+            git_blob_if_exists(tree, &head, locator)?.is_none(),
+            "resolved tracked source is missing: {}",
+            tree.join(locator).display()
+        );
+        let bases = String::from_utf8(git_bytes(
+            primary,
+            &["merge-base", "--all", &anchor_head, &head],
+            1024,
+        )?)?;
+        let bases = bases.lines().collect::<Vec<_>>();
+        anyhow::ensure!(
+            bases.len() == 1,
+            "resolved missing source has no unique common base"
+        );
+        if let Some(base_bytes) = git_blob_if_exists(anchor_tree, bases[0], locator)? {
+            anyhow::ensure!(
+                bind_reviewed_worktree_move(tree, document, locator, &head, bases[0], &base_bytes,)?,
+                "resolved source deletion of {locator}; reconcile source state before cutover"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn bind_reviewed_worktree_move(
+    tree: &Path,
+    document: &mut InventoryDocument,
+    deleted_locator: &str,
+    head: &str,
+    merge_base: &str,
+    deleted_bytes: &[u8],
+) -> Result<bool> {
+    let Some(resolution) = &document.resolution else {
+        return Ok(false);
+    };
+    if resolution.source_locators.len() < 2
+        || !resolution
+            .source_locators
+            .iter()
+            .any(|locator| locator == deleted_locator)
+        || !resolution
+            .source_locators
+            .iter()
+            .filter(|locator| locator.as_str() != deleted_locator)
+            .any(|locator| {
+                document
+                    .sources
+                    .iter()
+                    .any(|source| source.path == tree.join(locator))
+            })
+    {
+        return Ok(false);
+    }
+    let deleted_source_digest = sha256(deleted_bytes);
+    let mut preserved_by = document
+        .sources
+        .iter()
+        .filter(|source| source.digest == deleted_source_digest)
+        .map(|source| source.path.clone())
+        .collect::<Vec<_>>();
+    if preserved_by.is_empty() {
+        return Ok(false);
+    }
+    preserved_by.sort();
+    preserved_by.dedup();
+    let deletion = ReviewedSourceDeletion {
+        source_locator: deleted_locator.to_owned(),
+        deleted_at: format!("WORKTREE_HEAD:{}@{head}", tree.display()),
+        merge_base: merge_base.to_owned(),
+        deleted_source_digest,
+        preserved_by,
+    };
+    if !resolution.reviewed_deletions.contains(&deletion) {
+        document
+            .resolution
+            .as_mut()
+            .context("reviewed resolution disappeared")?
+            .reviewed_deletions
+            .push(deletion);
+    }
+    Ok(true)
+}
+
 fn git_blob_if_exists(root: &Path, revision: &str, relative: &str) -> Result<Option<Vec<u8>>> {
     let listing = git_bytes(
         root,
@@ -997,6 +1643,9 @@ fn reconcile_sources(
         .first()
         .context("migration has no primary source root")?;
     for document in documents.values_mut() {
+        if document.resolution.is_some() {
+            continue;
+        }
         if document
             .sources
             .iter()
@@ -1129,6 +1778,14 @@ fn stale_source_proof(
     })
 }
 
+pub fn content_digest(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    content_digest(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1206,7 +1863,7 @@ mod tests {
     }
 
     #[test]
-    fn identical_branch_source_passes_and_ref_change_changes_digest() {
+    fn branch_change_identical_to_primary_physical_source_is_not_a_variant() {
         let root = git_fixture();
         git(root.path(), &["checkout", "-qb", "unmerged"]);
         fs::write(
@@ -1222,7 +1879,8 @@ mod tests {
             b"preserve me",
         )
         .expect("matching uncommitted copy");
-        let before = inventory_kind(root.path(), "initiative").expect("matching branch data");
+        let before = inventory_kind(root.path(), "initiative")
+            .expect("branch bytes equal the primary physical source");
         assert_eq!(before.documents.len(), 2);
         let tree = git(root.path(), &["rev-parse", "unmerged^{tree}"]);
         let parent = git(root.path(), &["rev-parse", "unmerged"]);
@@ -1238,7 +1896,8 @@ mod tests {
             ],
         );
         git(root.path(), &["update-ref", "refs/heads/unmerged", &next]);
-        let after = inventory_kind(root.path(), "initiative").expect("same bytes still accepted");
+        let after =
+            inventory_kind(root.path(), "initiative").expect("same primary bytes still accepted");
         assert_ne!(before.branch_refs, after.branch_refs);
         assert_ne!(before.digest(), after.digest());
         assert_eq!(
@@ -1305,6 +1964,43 @@ mod tests {
                 secondary.to_str().unwrap(),
             ],
         );
+    }
+
+    fn explicit_resolution(
+        kind: &str,
+        source_locators: &[&str],
+        target_locator: &str,
+        physical_sources: &[PathBuf],
+    ) -> MigrationResolutionFile {
+        MigrationResolutionFile {
+            version: 1,
+            kind: kind.into(),
+            resolutions: vec![MigrationResolution {
+                source_locators: source_locators
+                    .iter()
+                    .map(|locator| (*locator).to_owned())
+                    .collect(),
+                target_locator: target_locator.into(),
+                sources: physical_sources
+                    .iter()
+                    .enumerate()
+                    .map(|(index, path)| {
+                        let path = path.canonicalize().unwrap();
+                        ResolutionSource {
+                            digest: content_digest(&fs::read(&path).unwrap()),
+                            path,
+                            decision: if index == 0 {
+                                ResolutionDecision::Select
+                            } else {
+                                ResolutionDecision::Reject
+                            },
+                        }
+                    })
+                    .collect(),
+                repair_task_id: None,
+            }],
+            digest: "reviewed-test-resolution".into(),
+        }
     }
 
     #[test]
@@ -1480,6 +2176,251 @@ mod tests {
         let error = inventory_kind(&secondary, "initiative").unwrap_err();
         assert!(error.to_string().contains("no primary source"), "{error}");
     }
+
+    #[test]
+    fn explicit_absent_primary_selection_captures_and_applies_retained_source() {
+        let parent = tempfile::tempdir().unwrap();
+        let primary = parent.path().join("primary");
+        let secondary = parent.path().join("secondary");
+        fs::create_dir_all(&primary).unwrap();
+        git(&primary, &["init", "-q", "-b", "main"]);
+        fs::write(primary.join("README.md"), "baseline").unwrap();
+        git(&primary, &["add", "."]);
+        git(&primary, &["commit", "-qm", "baseline"]);
+        linked_fixture(&primary, &secondary);
+        let locator = "backlog/initiatives/shared.md";
+        fs::create_dir_all(secondary.join("backlog/initiatives")).unwrap();
+        fs::write(secondary.join(locator), b"shared").unwrap();
+        let selected_path = secondary.join(locator).canonicalize().unwrap();
+        let plan = MigrationResolutionFile {
+            version: 1,
+            kind: "initiative".into(),
+            resolutions: vec![MigrationResolution {
+                source_locators: vec![locator.into()],
+                target_locator: locator.into(),
+                sources: vec![ResolutionSource {
+                    path: selected_path.clone(),
+                    digest: content_digest(b"shared"),
+                    decision: ResolutionDecision::Select,
+                }],
+                repair_task_id: None,
+            }],
+            digest: "reviewed-absence".into(),
+        };
+        let inventory =
+            inventory_kind_with_resolutions(&primary, "initiative", Some(&plan)).unwrap();
+        inventory.validate_native().unwrap();
+        let mut store = crate::storage::Store::open(parent.path().join("state.sqlite3")).unwrap();
+        let repo = store.bind_repository(&primary).unwrap();
+        let captured = inventory.capture_plan(repo.clone()).unwrap();
+        assert_eq!(store.apply_migration(&captured).unwrap(), 1);
+        assert_eq!(
+            store
+                .read(&repo, "initiative", locator)
+                .unwrap()
+                .unwrap()
+                .content,
+            b"shared"
+        );
+        assert_eq!(fs::read(selected_path).unwrap(), b"shared");
+        assert!(!primary.join(locator).exists());
+    }
+
+    #[test]
+    fn explicit_resolution_does_not_hide_linked_worktree_deletion() {
+        for committed in [false, true] {
+            let primary = git_fixture();
+            let parent = tempfile::tempdir().unwrap();
+            let secondary = parent.path().join("secondary");
+            linked_fixture(primary.path(), &secondary);
+            let locator = "backlog/initiatives/shared.md";
+            fs::remove_file(secondary.join(locator)).unwrap();
+            if committed {
+                git(&secondary, &["add", "-u"]);
+                git(&secondary, &["commit", "-qm", "delete source"]);
+            }
+            let selected_path = primary.path().join(locator).canonicalize().unwrap();
+            let plan = MigrationResolutionFile {
+                version: 1,
+                kind: "initiative".into(),
+                resolutions: vec![MigrationResolution {
+                    source_locators: vec![locator.into()],
+                    target_locator: locator.into(),
+                    sources: vec![ResolutionSource {
+                        path: selected_path,
+                        digest: content_digest(b"shared"),
+                        decision: ResolutionDecision::Select,
+                    }],
+                    repair_task_id: None,
+                }],
+                digest: "reviewed-but-incomplete".into(),
+            };
+            let error = inventory_kind_with_resolutions(primary.path(), "initiative", Some(&plan))
+                .expect_err("undeclared deletion must remain blocking");
+            let message = error.to_string();
+            assert!(message.contains("deletion"), "{message}");
+        }
+    }
+
+    #[test]
+    fn config_alias_resolution_does_not_hide_canonical_deletion() {
+        for committed in [false, true] {
+            let parent = tempfile::tempdir().unwrap();
+            let primary = parent.path().join("primary");
+            let secondary = parent.path().join("secondary");
+            fs::create_dir_all(primary.join("backlog")).unwrap();
+            fs::create_dir_all(primary.join(".backlog")).unwrap();
+            git(&primary, &["init", "-q", "-b", "main"]);
+            let bytes = b"statuses: [To Do, Done]\n";
+            fs::write(primary.join("backlog/config.yml"), bytes).unwrap();
+            fs::write(primary.join(".backlog/config.yml"), bytes).unwrap();
+            git(&primary, &["add", "."]);
+            git(&primary, &["commit", "-qm", "config aliases"]);
+            linked_fixture(&primary, &secondary);
+            fs::remove_file(secondary.join("backlog/config.yml")).unwrap();
+            if committed {
+                git(&secondary, &["add", "-u"]);
+                git(&secondary, &["commit", "-qm", "delete canonical config"]);
+            }
+            let physical_sources = [
+                primary.join("backlog/config.yml"),
+                primary.join(".backlog/config.yml"),
+                secondary.join(".backlog/config.yml"),
+            ];
+            let plan = explicit_resolution(
+                "config",
+                &["backlog/config.yml"],
+                "backlog/config.yml",
+                &physical_sources,
+            );
+            let error = inventory_kind_with_resolutions(&primary, "config", Some(&plan))
+                .expect_err("canonical config deletion must remain blocking");
+            assert!(error.to_string().contains("deletion"), "{error}");
+        }
+    }
+
+    #[test]
+    fn config_alias_only_layouts_are_valid_when_canonical_never_existed() {
+        for alias in [".backlog/config.yml", "backlog.config.yml"] {
+            let parent = tempfile::tempdir().unwrap();
+            let primary = parent.path().join("primary");
+            let secondary = parent.path().join("secondary");
+            fs::create_dir_all(&primary).unwrap();
+            git(&primary, &["init", "-q", "-b", "main"]);
+            let path = primary.join(alias);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, b"statuses: [To Do, Done]\n").unwrap();
+            git(&primary, &["add", "."]);
+            git(&primary, &["commit", "-qm", "alias-only config"]);
+            linked_fixture(&primary, &secondary);
+            let plan = explicit_resolution(
+                "config",
+                &["backlog/config.yml"],
+                "backlog/config.yml",
+                &[primary.join(alias), secondary.join(alias)],
+            );
+            let inventory = inventory_kind_with_resolutions(&primary, "config", Some(&plan))
+                .expect("a never-used canonical path is not a deletion");
+            inventory.validate_native().unwrap();
+            assert_eq!(inventory.documents.len(), 1);
+            assert!(inventory.resolutions[0].reviewed_deletions.is_empty());
+        }
+    }
+
+    #[test]
+    fn explicit_lifecycle_move_binds_deleted_blob_and_surviving_variant() {
+        let parent = tempfile::tempdir().unwrap();
+        let primary = parent.path().join("primary");
+        let secondary = parent.path().join("secondary");
+        let active = "backlog/tasks/task-447 - Mix.md";
+        let completed = "backlog/completed/task-447 - Mix.md";
+        let active_bytes = b"---\nid: TASK-447\ntitle: Mix\nstatus: To Do\n---\n";
+        let completed_bytes = b"---\nid: TASK-447\ntitle: Mix\nstatus: Done\n---\n";
+        fs::create_dir_all(primary.join("backlog/tasks")).unwrap();
+        git(&primary, &["init", "-q", "-b", "main"]);
+        fs::write(primary.join(active), active_bytes).unwrap();
+        git(&primary, &["add", "."]);
+        git(&primary, &["commit", "-qm", "active task"]);
+        linked_fixture(&primary, &secondary);
+        fs::create_dir_all(secondary.join("backlog/completed")).unwrap();
+        fs::remove_file(secondary.join(active)).unwrap();
+        fs::write(secondary.join(completed), completed_bytes).unwrap();
+        git(&secondary, &["add", "-A"]);
+        git(&secondary, &["commit", "-qm", "complete task on branch"]);
+        let plan = explicit_resolution(
+            "task",
+            &[active, completed],
+            active,
+            &[primary.join(active), secondary.join(completed)],
+        );
+        let inventory = inventory_kind_with_resolutions(&primary, "task", Some(&plan))
+            .expect("an exhaustive reviewed lifecycle move is preserved");
+        inventory.validate_native().unwrap();
+        let deletion = &inventory.resolutions[0].reviewed_deletions[0];
+        assert_eq!(deletion.source_locator, active);
+        assert_eq!(deletion.deleted_source_digest, content_digest(active_bytes));
+        assert_eq!(
+            deletion.preserved_by,
+            vec![primary.join(active).canonicalize().unwrap()]
+        );
+        assert_eq!(inventory.documents[0].bytes, active_bytes);
+        let mut store = crate::storage::Store::open(parent.path().join("state.sqlite3")).unwrap();
+        let repo = store.bind_repository(&primary).unwrap();
+        let captured = inventory.capture_plan(repo.clone()).unwrap();
+        assert_eq!(store.apply_migration(&captured).unwrap(), 1);
+        assert_eq!(
+            store.read(&repo, "task", active).unwrap().unwrap().content,
+            active_bytes
+        );
+        assert_eq!(
+            fs::read(secondary.join(completed)).unwrap(),
+            completed_bytes
+        );
+    }
+
+    #[test]
+    fn explicit_lifecycle_group_rejects_an_unpreserved_deleted_blob() {
+        let parent = tempfile::tempdir().unwrap();
+        let primary = parent.path().join("primary");
+        let secondary = parent.path().join("secondary");
+        let active = "backlog/tasks/task-447 - Mix.md";
+        let completed = "backlog/completed/task-447 - Mix.md";
+        fs::create_dir_all(primary.join("backlog/tasks")).unwrap();
+        git(&primary, &["init", "-q", "-b", "main"]);
+        fs::write(
+            primary.join(active),
+            b"---\nid: TASK-447\ntitle: Old\nstatus: To Do\n---\n",
+        )
+        .unwrap();
+        git(&primary, &["add", "."]);
+        git(&primary, &["commit", "-qm", "old active task"]);
+        linked_fixture(&primary, &secondary);
+        fs::write(
+            primary.join(active),
+            b"---\nid: TASK-447\ntitle: Current\nstatus: To Do\n---\n",
+        )
+        .unwrap();
+        git(&primary, &["add", "."]);
+        git(&primary, &["commit", "-qm", "replace active payload"]);
+        fs::create_dir_all(secondary.join("backlog/completed")).unwrap();
+        fs::remove_file(secondary.join(active)).unwrap();
+        fs::write(
+            secondary.join(completed),
+            b"---\nid: TASK-447\ntitle: Done\nstatus: Done\n---\n",
+        )
+        .unwrap();
+        git(&secondary, &["add", "-A"]);
+        git(&secondary, &["commit", "-qm", "replace task while moving"]);
+        let plan = explicit_resolution(
+            "task",
+            &[active, completed],
+            active,
+            &[primary.join(active), secondary.join(completed)],
+        );
+        let error = inventory_kind_with_resolutions(&primary, "task", Some(&plan))
+            .expect_err("grouping locators cannot erase an unbound historical payload");
+        assert!(error.to_string().contains("deletion"), "{error}");
+    }
     #[test]
     fn new_native_domain_only_in_secondary_is_reviewed_union_with_addition_proof() {
         for committed in [false, true] {
@@ -1522,7 +2463,16 @@ mod tests {
                 crate::storage::Store::open(parent.path().join("isolated.sqlite3")).unwrap();
             let repo = store.bind_repository(&primary).unwrap();
             for (kind, locator, bytes) in &originals {
-                let inventory = inventory_kind(&secondary, kind).unwrap();
+                let inventory = inventory_kind(&secondary, kind);
+                if committed {
+                    let error = inventory.expect_err("unmerged branch additions need resolution");
+                    assert!(
+                        error.to_string().contains("reconcile explicitly"),
+                        "{error}"
+                    );
+                    continue;
+                }
+                let inventory = inventory.unwrap();
                 inventory.validate_native().unwrap();
                 assert_eq!(inventory.documents.len(), 1);
                 assert_eq!(inventory.documents[0].bytes, bytes.as_bytes());

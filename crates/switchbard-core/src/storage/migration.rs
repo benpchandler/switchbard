@@ -37,6 +37,14 @@ pub(crate) struct SelectedDocument {
     pub kind: String,
     pub locator: String,
     pub bytes: Vec<u8>,
+    pub allowed_transform: Option<AllowedTransform>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AllowedTransform {
+    pub task_id: String,
+    pub source_digest: String,
+    pub repair_fused_fence: bool,
 }
 
 impl MigrationPlan {
@@ -83,6 +91,7 @@ impl MigrationPlan {
                     kind: source.source.kind.clone(),
                     locator: source.source.locator.clone(),
                     bytes: source.bytes.clone(),
+                    allowed_transform: None,
                 });
         }
         Ok(Self {
@@ -156,10 +165,43 @@ impl MigrationPlan {
                 keys.insert((&document.kind, &document.locator)),
                 "duplicate selected migration document"
             );
+            let selected_digest = digest(&document.bytes);
+            let direct = available
+                .get(&(document.kind.as_str(), document.locator.as_str()))
+                .is_some_and(|digests| digests.contains(selected_digest.as_str()));
+            let verified_transform = document
+                .allowed_transform
+                .as_ref()
+                .is_some_and(|transform| {
+                    captured.iter().any(|source| {
+                        source.source.kind == document.kind
+                            && source.source.locator == document.locator
+                            && source.digest == transform.source_digest
+                            && crate::backlog::migration_repairs::repair_task_identity(
+                                &document.kind,
+                                &source.source.path,
+                                &document.locator,
+                                &source.bytes,
+                                &transform.task_id,
+                            )
+                            .and_then(|repaired| {
+                                if transform.repair_fused_fence {
+                                    crate::backlog::migration_repairs::repair_selected(
+                                        &document.kind,
+                                        &document.locator,
+                                        &repaired,
+                                    )?
+                                    .map(|(bytes, _)| bytes)
+                                    .context("selected source has no fused-fence repair")
+                                } else {
+                                    Ok(repaired)
+                                }
+                            })
+                            .is_ok_and(|repaired| repaired == document.bytes)
+                    })
+                });
             ensure!(
-                available
-                    .get(&(document.kind.as_str(), document.locator.as_str()))
-                    .is_some_and(|digests| digests.contains(digest(&document.bytes).as_str())),
+                direct || verified_transform,
                 "selected migration bytes do not match a preserved source"
             );
         }
