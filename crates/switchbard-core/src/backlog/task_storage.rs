@@ -113,15 +113,25 @@ pub(super) fn read(path: &Path) -> Result<String> {
     std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
 }
 
+/// Native task locators share the repository fence with migration. Standalone
+/// public file operations retain their legacy contract and fence the containing
+/// directory (or its Git common directory, when it belongs to a repository).
+pub(super) fn lock_for_path(path: &Path) -> Result<RepositoryLock> {
+    let root = root_for_path(path);
+    let parent = path.parent().context("task path has no parent")?;
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    RepositoryLock::acquire(root.as_deref().unwrap_or(parent))
+}
+
 pub(super) fn edit<T>(
     path: &Path,
     transform: impl FnOnce(&str) -> Result<(String, T)>,
 ) -> Result<T> {
-    let _repository_lock = RepositoryLock::acquire(
-        root_for_path(path)
-            .as_deref()
-            .context("task path is outside a repository")?,
-    )?;
+    let _repository_lock = lock_for_path(path)?;
     if let Some(root) = root_for_path(path) {
         if let Some((mut store, repo)) = active(&root)? {
             let locator = path

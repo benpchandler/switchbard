@@ -570,9 +570,7 @@ pub fn write_new_task_file(
     task: &NewBacklogTask,
 ) -> Result<PathBuf> {
     let (path, text) = new_task_document(tasks_dir, prefix, id, task)?;
-    let root =
-        super::task_storage::root_for_path(&path).context("task path is outside a repository")?;
-    let _repository_lock = crate::storage::RepositoryLock::acquire(&root)?;
+    let _repository_lock = super::task_storage::lock_for_path(&path)?;
     if super::task_storage::create(&path, &text)? {
         return Ok(path);
     }
@@ -624,9 +622,7 @@ pub fn rehome_task_file(
     new_id: &str,
     new_parent: Option<&str>,
 ) -> Result<PathBuf> {
-    let root =
-        super::task_storage::root_for_path(path).context("task path is outside a repository")?;
-    let _repository_lock = crate::storage::RepositoryLock::acquire(&root)?;
+    let _repository_lock = super::task_storage::lock_for_path(path)?;
     let original = super::task_storage::read(path)?;
     let (new_path, text) = rehome_document(path, &original, prefix, new_id, new_parent)?;
     if super::task_storage::rehome(path, &new_path, Some((&original, &text)))? {
@@ -1542,6 +1538,36 @@ mod tests {
             filtered(after),
             "an edit touched lines outside {except:?}"
         );
+    }
+
+    #[test]
+    fn standalone_rehome_preserves_body_and_refuses_existing_destination() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = fixture_file(&dir);
+        let destination = dir.path().join("task-10 - Fixture.md");
+        fs::write(&destination, "existing").unwrap();
+        assert!(rehome_task_file(&path, "TASK", "10", None).is_err());
+        assert_eq!(read(&path), FIXTURE);
+        assert_eq!(read(&destination), "existing");
+        fs::remove_file(&destination).unwrap();
+        assert_eq!(
+            rehome_task_file(&path, "TASK", "10", None).unwrap(),
+            destination
+        );
+        assert!(!path.exists());
+        let after = read(&destination);
+        assert!(after.contains("id: TASK-10"));
+        assert_only_lines_touched(FIXTURE, &after, &["id:", "updated_date:"]);
+    }
+
+    #[test]
+    fn standalone_edit_refuses_missing_parent_without_creating_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let parent = dir.path().join("missing");
+        let path = parent.join("task-9.md");
+        let error = set_task_status(&path, "Done").unwrap_err();
+        assert!(error.to_string().contains("resolve repository lock root"));
+        assert!(!parent.exists());
     }
 
     #[test]
