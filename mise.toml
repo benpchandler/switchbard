@@ -2,9 +2,19 @@
 rust = "1.95.0"
 
 [env]
-# Reuse rebuildable Cargo artifacts across linked worktrees. Callers such as CI
-# can keep a workspace-local target by setting CARGO_TARGET_DIR explicitly.
-CARGO_TARGET_DIR = { default = "{{ xdg_cache_home }}/switchbard/cargo-target" }
+# One Cargo target directory per worktree, keyed by that worktree's own path.
+#
+# The cache lives outside the checkout (nothing to gitignore, survives worktree
+# churn at the same path), but worktrees never share artifacts. They must not:
+# Cargo hashes path packages relative to the workspace root so builds stay
+# relocatable, which means two worktrees of this repo produce byte-identical
+# artifact filenames. In a shared directory the only thing left to tell them
+# apart is mtime, and a fresh `git worktree add` writes sources older than a
+# sibling's newer build -- so Cargo calls the sibling's artifact fresh and links
+# it. The gate then answers for code that is not in front of it, in either
+# direction (TASK-179). Callers such as CI can still set CARGO_TARGET_DIR
+# explicitly to keep a workspace-local target.
+CARGO_TARGET_DIR = { default = "{{ xdg_cache_home }}/switchbard/cargo-target/{{ config_root | basename }}-{{ config_root | hash(len=8) }}" }
 
 [tasks.fmt]
 description = "Check Rust formatting"
@@ -36,6 +46,10 @@ run = "bash scripts/test-developer-gates.sh"
 [tasks.preflight]
 description = "Run the complete local gate before a push"
 run = { task = "ci" }
+
+[tasks.target-prune]
+description = "List Cargo target directories no live worktree owns (--yes removes them)"
+run = "bash scripts/prune-cargo-targets.sh"
 
 [tasks.hooks-install]
 description = "Install the tracked pre-commit and pre-push hooks"

@@ -23,17 +23,28 @@ mise install                          # install pinned Rust (1.95.0) from mise.t
 mise run hooks-install                # install tracked local Git gates
 mise run preflight                    # complete local gate before push
 mise run ci                           # same complete local gate
-mise run bundle                       # macOS: Switchbard.app in the shared Cargo target
-mise run package                      # macOS: DMG + sha256 in the shared Cargo target
+mise run bundle                       # macOS: Switchbard.app in this worktree's Cargo target
+mise run package                      # macOS: DMG + sha256 in this worktree's Cargo target
 mise run test                         # full test suite (~0.1s)
+mise run target-prune                 # list Cargo target dirs no live worktree owns (--yes removes)
 cargo test -p switchbard-core <pat>   # single test by name substring
 ```
 
 Prefer plain Cargo? Each `mise` task maps to the obvious `cargo fmt` / `cargo clippy` / `cargo test` / `cargo build --release`.
 
-`mise.toml` defaults `CARGO_TARGET_DIR` to the platform cache directory so linked
-worktrees reuse rebuildable Cargo artifacts. Set `CARGO_TARGET_DIR` explicitly to
-override it; CI keeps using its workspace-local `target/` cache.
+`mise.toml` defaults `CARGO_TARGET_DIR` to **one directory per worktree** under the
+platform cache (`<cache>/switchbard/cargo-target/<worktree-name>-<path-hash>`). The
+guarantee you have is that a build or test run links this worktree's sources and no
+other's, at the cost of a full first build per worktree. Do not point two worktrees at
+one target directory: Cargo hashes path packages relative to the workspace root, so
+worktrees of this repo produce byte-identical artifact filenames and the only thing
+left to separate them is mtime - a fresh `git worktree add` writes sources older than
+a sibling's newer build, and Cargo then links the sibling's artifact and the gate
+answers for code that is not in front of it (TASK-179). Print the resolved location
+with `mise exec -- printenv CARGO_TARGET_DIR`; a directory whose worktree is gone is
+safe to delete. Set `CARGO_TARGET_DIR` explicitly to override it; CI keeps using its
+workspace-local `target/` cache, and plain Cargo without the mise environment uses the
+worktree's own `target/`.
 
 `mise run bundle` and `mise run package` require `XPLAN_SIDECAR_SOURCE` (a clean checkout of the pinned xplan revision from `xplan-sidecar-pin.json`) and `XPLAN_SIDECAR_ARCHIVE` (the sidecar archive built from it with `scripts/build_mission_sidecar.py`); the sidecar is packaged from those exact local inputs, never downloaded. Run `mise run bundle` without them for the full recipe.
 CI and Linux release builds materialize that same pinned revision from the sub-megabyte Git bundle in `vendor/xplan`, then build it with the pinned CPython 3.12.11 interpreter and verify the helper locally. This keeps Switchbard's build independent of cross-repository credentials while preserving xplan's exact Git identity and sole-writer authority.
@@ -49,7 +60,7 @@ verification when they can establish the same fact without disturbing the app.
 
 ## Gates (firm - CI fails on any)
 
-Run `mise run hooks-install` once per clone. The tracked pre-commit hook runs the fast formatting check and the pre-push hook runs `mise run preflight`; both scrub Git's exported worktree variables before invoking nested tools. A push to the local `no-mistakes` remote skips the hook's duplicate preflight because that trusted delivery pipeline runs the same command before its upstream push. CI (`.github/workflows/ci.yml`) runs `fmt` once on Ubuntu and runs `clippy` plus `test` on both **macos-latest and ubuntu-latest** on every PR. The live mission-sidecar matrix runs only for mission-sensitive paths. The `clippy` and `test` tasks set `RUSTFLAGS=-D warnings`, so **any compiler warning fails the build - fix it, don't `#[allow]` it.** Hooks are a fast local feedback layer, not merge authority: CI remains required and also runs on pushes to unprotected `main` to verify the actual merge commit.
+Run `mise run hooks-install` once per clone. The tracked pre-commit hook runs the fast formatting check and the pre-push hook runs `mise run preflight`; both scrub Git's exported worktree variables before invoking nested tools. A push to the local `no-mistakes` remote skips the hook's duplicate preflight because that trusted delivery pipeline runs the same command before its upstream push. CI (`.github/workflows/ci.yml`) runs `fmt` once on Ubuntu and runs `clippy` plus `test` on both **macos-latest and ubuntu-latest**. Both expensive matrices are routed by `scripts/ci-change-scope.sh`, which diffs the change once and asks one scope script per matrix: the Rust matrix is skipped only when *every* changed path is a backlog record or a Markdown file (`scripts/ci-rust-scope.sh`; note `docs/**` is *not* inert wholesale - the canonical screenshots under it are baselines gated tests read), and the live mission-sidecar matrix runs only for mission-sensitive paths (`scripts/ci-mission-sidecar-scope.sh`). Routing fails open - anything unclassifiable runs everything - and `scripts/test-developer-gates.sh` guards it on every PR. The `clippy` and `test` tasks set `RUSTFLAGS=-D warnings`, so **any compiler warning fails the build - fix it, don't `#[allow]` it.** Hooks are a fast local feedback layer, not merge authority: CI remains required and also runs on pushes to unprotected `main` to verify the actual merge commit.
 
 ## Render-path perf
 
@@ -92,6 +103,7 @@ Re-exports are **explicit in `src/lib.rs`** (no glob re-exports). Module map:
 - `mission_supervisor` - verifies and runs the bundled xplan one-shot helper: manifest-pinned payload digests, one process per request, bounded stdio reads/joins, process-group reaping.
 - `git_probe` — read-only `git status` / ahead-behind / fetch age / recent commits.
 - `work_sessions` - the live-work store (`~/.switchbard/work/<session>.json`): which tasks a running agent session has claimed, live while its pid is. `sb work claim/release/pass/list/hook` and `sbt`'s `w` write only through it; `.claude/settings.json` hooks call `sb work hook` to enforce claim-before-edit and no-stop-while-claimed (TASK-150).
+- `pr_merge` - guarded direct GitHub merge: core eligibility, exact-head confirmation, bounded command/readback and exclusive durable operation receipts. Call blocking APIs off the input thread.
 - `git_env` — `git_cmd()`: every git call goes through it; see Git safety below.
 - `spawn` / `kill` — `spawn_in_session()` (own session/process group) + `kill_pgid()` → `KillOutcome`.
 - `config` — `~/.switchbard/config.toml` load/save; persisted form is `Vec<Repo>` + UI defaults.

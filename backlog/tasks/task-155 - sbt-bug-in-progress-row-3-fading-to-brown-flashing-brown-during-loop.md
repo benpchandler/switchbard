@@ -1,14 +1,16 @@
 ---
 id: TASK-155
 title: 'sbt bug: in progress row 3 fading to brown / flashing brown during loop'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-04 12:31'
+updated_date: '2026-09-08 12:40'
 labels:
   - tui
   - bug
 dependencies: []
 priority: medium
+project: Bugs
 ---
 
 ## Description
@@ -115,5 +117,23 @@ action command (0.0ms)
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Reporter confirms the behaviour in sbt matches what they were trying to do
+- [x] #1 Reporter confirms the behaviour in sbt matches what they were trying to do
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Reproduced end-to-end in the sbt harness: with a live work claim and a 40ms pulse, the row's text sampled (202,132,41) at the trough against a (244,159,49) rest colour - a darkened amber is brown, which is exactly what was reported.
+
+Cause: Theme::working_fg swung the text symmetrically, toward white at the peak and toward BLACK in the trough (WORKING_TEXT_SWING). Darkening a warm foreground is what makes it brown; there is no way to dim berg's #f49f31 without browning it.
+
+Fix: the band already carries the dark half of the pulse (its RGB fades to black and disappears below 4% glow), so the text now only ever lifts toward white and sits at its own rest colour in the trough. Constant renamed WORKING_TEXT_LIFT.
+
+Evidence: crates/switchbard-tui/tests/work.rs::the_pulse_never_darkens_a_working_rows_text_below_its_rest_colour asserts no frame of a 200-sample pulse is dimmer than a resting row's text, and that the trough is the rest colour exactly. Verified failing before the fix with the message 'no frame of the pulse is dimmer than rest: (202, 132, 41) vs (244, 159, 49)'.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The working-row pulse dimmed the row's text toward black, and a darkened amber reads as brown. The band carries the dark half of the pulse on its own, so the text now only brightens - it rests at its own colour in the trough and lifts toward white at the peak. Fixed on fix/tui-bug-sweep (370c2d1).
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -14,7 +14,7 @@ mkdir -p "$fake_bin" "$test_repo" "$bare_repo"
 cat > "$fake_bin/mise" <<'FAKE_MISE'
 #!/usr/bin/env bash
 set -euo pipefail
-for name in GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_NAMESPACE; do
+for name in GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_NAMESPACE CARGO_TARGET_DIR; do
   if [[ -n "${!name-}" ]]; then
     echo "$name leaked into mise" >&2
     exit 91
@@ -42,10 +42,13 @@ if [[ "$(git -C "$test_repo" config --local --get core.hooksPath)" != ".githooks
   exit 1
 fi
 
-# Direct execution proves every Git variable is scrubbed before mise starts.
+# Direct execution proves every Git variable, and the inherited Cargo target
+# directory that would let another worktree's artifacts answer this gate, is
+# scrubbed before mise starts.
 env PATH="$fake_bin:$PATH" HOOK_TEST_LOG="$hook_log" \
   GIT_DIR=sentinel GIT_WORK_TREE=sentinel GIT_COMMON_DIR=sentinel \
   GIT_INDEX_FILE=sentinel GIT_OBJECT_DIRECTORY=sentinel GIT_NAMESPACE=sentinel \
+  CARGO_TARGET_DIR=sentinel \
   "$test_repo/.githooks/pre-commit"
 before_no_mistakes="$(wc -l < "$hook_log" | tr -d ' ')"
 PATH="$fake_bin:$PATH" HOOK_TEST_LOG="$hook_log" \

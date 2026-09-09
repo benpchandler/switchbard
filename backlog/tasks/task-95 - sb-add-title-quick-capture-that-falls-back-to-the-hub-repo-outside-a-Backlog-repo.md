@@ -4,11 +4,12 @@ title: 'sb add <title>: quick capture that falls back to the hub repo outside a 
 status: To Do
 assignee: []
 created_date: '2026-09-01 02:20'
+updated_date: '2026-09-08 20:29'
 labels:
   - cli
   - dx
 dependencies: []
-priority: medium
+priority: low
 ---
 
 ## Description
