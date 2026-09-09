@@ -88,6 +88,7 @@ impl Store {
         resolutions: &BTreeMap<String, ConflictResolution>,
         validate: impl FnOnce(&ExchangeSnapshot) -> Result<()>,
     ) -> Result<ImportResult> {
+        let _repository_lock = self.repository_lock_for(repo)?;
         incoming.validate()?;
         let tx = self
             .connection

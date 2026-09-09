@@ -6,6 +6,19 @@ use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
 impl Store {
+    pub(crate) fn repository_lock_for(&self, repo: &RepositoryId) -> Result<super::RepositoryLock> {
+        let binding: String = self.connection.query_row(
+            "SELECT binding FROM bindings WHERE repo_id=?1 ORDER BY binding LIMIT 1",
+            [&repo.0],
+            |row| row.get(0),
+        )?;
+        let root = binding
+            .strip_prefix("git:")
+            .or_else(|| binding.strip_prefix("path:"))
+            .context("repository has no lockable path binding")?;
+        super::RepositoryLock::acquire(Path::new(root))
+    }
+
     pub fn repository(&self, root: &Path) -> Result<Option<RepositoryId>> {
         let alias = path_alias(root)?;
         let retained = lookup(&self.connection, &alias)?;
@@ -27,6 +40,7 @@ impl Store {
     }
 
     pub fn bind_repository(&mut self, root: &Path) -> Result<RepositoryId> {
+        let _repository_lock = super::RepositoryLock::acquire(root)?;
         let binding = repository_binding(root)?;
         self.repository(root)?;
         let tx = self
@@ -49,6 +63,7 @@ impl Store {
 
     /// Explicit continuity decision after a move. Previous aliases remain readable.
     pub fn rebind_repository(&mut self, repo: &RepositoryId, new_root: &Path) -> Result<()> {
+        let _repository_lock = super::RepositoryLock::acquire(new_root)?;
         let binding = repository_binding(new_root)?;
         let tx = self
             .connection

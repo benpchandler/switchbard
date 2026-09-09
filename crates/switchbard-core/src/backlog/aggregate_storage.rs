@@ -25,8 +25,20 @@ pub(super) fn read(
     kind: &'static str,
     locator: &'static str,
 ) -> Result<Option<Option<String>>> {
-    let edit = AggregateEdit::begin(root, kind, locator)?;
-    edit.central_text()
+    let Some(store) = Store::open_existing_default()? else {
+        return Ok(None);
+    };
+    let Some(repo) = store.authority_for_root(root, kind)? else {
+        return Ok(None);
+    };
+    let Some(document) = store.read(&repo, kind, locator)? else {
+        return Ok(Some(None));
+    };
+    document.ensure_understood()?;
+    if document.deleted {
+        return Ok(Some(None));
+    }
+    Ok(Some(Some(String::from_utf8(document.content).context("stored aggregate is not UTF-8")?)))
 }
 
 pub(super) fn with_edit<T>(

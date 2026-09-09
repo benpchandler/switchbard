@@ -343,6 +343,7 @@ pub fn move_backlog_task(
     task_id: &str,
     new_parent: Option<&str>,
 ) -> Result<Option<String>> {
+    let _repository_lock = crate::storage::RepositoryLock::acquire(project_root)?;
     if let Some(result) = super::central_commands::move_task(project_root, task_id, new_parent)? {
         return Ok(result);
     }
