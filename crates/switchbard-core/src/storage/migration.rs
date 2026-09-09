@@ -223,6 +223,10 @@ impl Store {
     ) -> Result<usize> {
         if let Some(lock_root) = plan.lock_root.as_deref() {
             ensure!(
+                lock_root.is_dir(),
+                "migration lock root must be an existing directory"
+            );
+            ensure!(
                 self.repository(lock_root)?.as_ref() == Some(&plan.repo),
                 "migration lock root does not belong to the planned repository"
             );

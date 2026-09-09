@@ -7,6 +7,19 @@ use uuid::Uuid;
 
 impl Store {
     pub(crate) fn repository_lock_for(&self, repo: &RepositoryId) -> Result<super::RepositoryLock> {
+        let live = self.live_lock_identities(repo)?;
+        ensure!(
+            !live.is_empty(),
+            "repository has no live lockable path binding"
+        );
+        ensure!(
+            live.len() == 1,
+            "repository has multiple live lock identities; rebind explicitly"
+        );
+        super::RepositoryLock::acquire(&live[0])
+    }
+
+    fn live_lock_identities(&self, repo: &RepositoryId) -> Result<Vec<PathBuf>> {
         let bindings: Vec<String> = self.connection.prepare(
             "SELECT binding FROM bindings WHERE repo_id=?1 AND (binding LIKE 'git:%' OR binding LIKE 'path:%') ORDER BY binding",
         )?.query_map([&repo.0], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
@@ -25,15 +38,7 @@ impl Store {
                 }
             }
         }
-        ensure!(
-            !live.is_empty(),
-            "repository has no live lockable path binding"
-        );
-        ensure!(
-            live.len() == 1,
-            "repository has multiple live lock identities; rebind explicitly"
-        );
-        super::RepositoryLock::acquire(&live[0])
+        Ok(live)
     }
 
     pub fn repository(&self, root: &Path) -> Result<Option<RepositoryId>> {
@@ -82,15 +87,21 @@ impl Store {
     pub fn rebind_repository(&mut self, repo: &RepositoryId, new_root: &Path) -> Result<()> {
         let _repository_lock = super::RepositoryLock::acquire(new_root)?;
         let binding = repository_binding(new_root)?;
-        let tx = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let known: bool = tx.query_row(
+        let known: bool = self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM repositories WHERE repo_id=?1)",
             [&repo.0],
             |row| row.get(0),
         )?;
         ensure!(known, "unknown repository ID");
+        let existing = self.live_lock_identities(repo)?;
+        let new_identity = super::RepositoryLock::identity(new_root)?;
+        ensure!(
+            existing.is_empty() || existing.iter().all(|identity| identity == &new_identity),
+            "repository has another live lock identity; rebind explicitly"
+        );
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         register(&tx, repo, &binding, new_root)?;
         tx.commit()?;
         Ok(())

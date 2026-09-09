@@ -108,15 +108,33 @@ fn git_common_dir(root: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::RepositoryLock;
+    use std::process::Command;
+    use std::time::Duration;
 
     #[test]
     fn nested_guards_keep_the_stable_lock_until_last_drop() {
+        if let Ok(root) = std::env::var("SWITCHBARD_LOCK_CHILD") {
+            let _guard = RepositoryLock::acquire(std::path::Path::new(&root)).unwrap();
+            return;
+        }
         let root = tempfile::tempdir().unwrap();
         let outer = RepositoryLock::acquire(root.path()).unwrap();
         let inner = RepositoryLock::acquire(root.path()).unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "storage::repository_lock::tests::nested_guards_keep_the_stable_lock_until_last_drop",
+                "--exact",
+                "--nocapture",
+            ])
+            .env("SWITCHBARD_LOCK_CHILD", root.path())
+            .spawn()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(child.try_wait().unwrap().is_none());
         drop(outer);
-        assert!(root.path().join(".switchbard-storage.lock").exists());
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(child.try_wait().unwrap().is_none());
         drop(inner);
-        assert!(root.path().join(".switchbard-storage.lock").exists());
+        assert!(child.wait().unwrap().success());
     }
 }
