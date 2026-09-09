@@ -48,8 +48,8 @@ pub use agent_sessions::{
 pub use attribution::attribute;
 pub use backlog::{
     append_backlog_notes, append_task_acceptance_criteria, append_task_notes, archive_backlog_task,
-    assignable_statuses, attach_goal_inputs, body_round_trips, check_in_goal,
-    complete_backlog_task, create_backlog_task, create_goal, create_initiative_def,
+    assignable_statuses, attach_goal_inputs, backlog_day_of, backlog_today, body_round_trips,
+    check_in_goal, complete_backlog_task, create_backlog_task, create_goal, create_initiative_def,
     create_project_def, create_task_allocating_id, detach_goal_inputs, edit_backlog_task,
     edit_goal_target, edit_initiative_def, edit_project_def, eligible_backlog_parents,
     expedite_task, expedite_task_at, goals_feeding, is_backlog_repo, load_backlog_repo,

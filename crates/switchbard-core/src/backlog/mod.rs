@@ -41,7 +41,8 @@ pub use mutations::{
 };
 pub use parent::eligible_backlog_parents;
 pub use parse::{
-    body_round_trips, is_backlog_repo, load_backlog_repo, parse_backlog_day, task_file_round_trips,
+    backlog_day_of, backlog_today, body_round_trips, is_backlog_repo, load_backlog_repo,
+    parse_backlog_day, task_file_round_trips,
 };
 pub use ranking::{
     expedite_task, expedite_task_at, rank_project, rank_project_move, rank_task, rank_task_move,

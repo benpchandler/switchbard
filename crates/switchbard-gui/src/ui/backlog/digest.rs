@@ -232,7 +232,7 @@ pub(super) fn render_digest(
     pending: &mut Pending,
 ) {
     let scoped = scoped_repos(app, snap);
-    let today_day = chrono::Utc::now().timestamp().div_euclid(86_400);
+    let today_day = switchbard_core::backlog_today();
 
     let mut overdue = Vec::new();
     let mut newly_unblocked = Vec::new();

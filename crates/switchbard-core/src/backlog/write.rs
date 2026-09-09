@@ -1424,6 +1424,27 @@ mod tests {
         );
     }
 
+    /// The clock that stamps a task and the clock that answers "which backlog
+    /// day is today" must be one clock. They drifted once: `local_stamp` wrote
+    /// local wall time while the bucket clock read `Utc::now()`, so every task
+    /// filed after 20:00 EDT was already "yesterday" the moment it existed.
+    #[test]
+    fn a_freshly_stamped_task_falls_on_the_backlog_day_today_reports() {
+        use crate::backlog::{backlog_today, parse_backlog_day};
+        // Both sides read the local clock, so one retry covers the single
+        // minute at midnight where a real day change lands between the reads.
+        for _ in 0..2 {
+            if parse_backlog_day(&local_stamp()) == Some(backlog_today()) {
+                return;
+            }
+        }
+        panic!(
+            "stamp and today disagree: {:?} vs {}",
+            parse_backlog_day(&local_stamp()),
+            backlog_today()
+        );
+    }
+
     #[test]
     fn updated_date_is_inserted_after_created_date_when_absent() {
         let dir = tempfile::tempdir().expect("tempdir");
