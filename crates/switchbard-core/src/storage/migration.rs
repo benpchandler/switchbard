@@ -29,6 +29,7 @@ pub struct MigrationPlan {
     kinds: Vec<String>,
     sources: Vec<CapturedSource>,
     selected: Vec<SelectedDocument>,
+    lock_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +90,7 @@ impl MigrationPlan {
             kinds,
             sources,
             selected: selected.into_values().collect(),
+            lock_root: None,
         })
     }
 
@@ -172,6 +174,7 @@ impl MigrationPlan {
             kinds,
             sources: captured,
             selected,
+            lock_root: None,
         })
     }
 
@@ -185,6 +188,11 @@ impl MigrationPlan {
 
     pub fn source_count(&self) -> usize {
         self.sources.len()
+    }
+
+    pub fn with_lock_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.lock_root = Some(root.into());
+        self
     }
 
     pub fn verify_sources(&self) -> Result<()> {
@@ -213,11 +221,10 @@ impl Store {
         plan: &MigrationPlan,
         validate: impl FnOnce(&super::ExchangeSnapshot) -> Result<()>,
     ) -> Result<usize> {
-        let _repository_lock = plan
-            .sources
-            .first()
-            .map(|source| super::RepositoryLock::acquire(&source.source.path))
-            .transpose()?;
+        let lock_root = plan.lock_root.as_deref().or_else(|| {
+            plan.sources.first().map(|source| source.source.path.as_path())
+        });
+        let _repository_lock = lock_root.map(super::RepositoryLock::acquire).transpose()?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;

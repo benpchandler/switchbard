@@ -140,6 +140,7 @@ impl KindInventory {
             })
             .collect();
         MigrationPlan::capture_selected(repo, vec![self.kind.clone()], sources, selected)
+            .map(|plan| plan.with_lock_root(self.worktrees.first().cloned().unwrap_or_default()))
     }
 
     pub fn digest(&self) -> String {

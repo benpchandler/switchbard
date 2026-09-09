@@ -80,6 +80,7 @@ pub fn export(root: &Path, database: &Path, args: &ExportArgs) -> Result<()> {
 }
 
 pub fn import(root: &Path, database: &Path, args: &ImportArgs) -> Result<()> {
+    let _repository_lock = switchbard_core::storage::RepositoryLock::acquire(root)?;
     let incoming = read_snapshot(&file_path(root, &args.file))?;
     switchbard_core::backlog::validate_storage_snapshot(&incoming)?;
     let existing = Store::open_existing(database)?;

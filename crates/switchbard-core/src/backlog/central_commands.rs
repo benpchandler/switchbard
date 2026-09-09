@@ -44,6 +44,7 @@ pub(super) fn move_task_with_edit(
     new_parent: Option<&str>,
     edit: impl FnOnce(&str) -> Result<(String, bool)>,
 ) -> Result<Option<(Option<String>, bool)>> {
+    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
     let kinds = ["task", "goals", "ranking"];
     let Some((mut store, repo)) = command_store(root, &kinds)? else {
         return Ok(None);

@@ -134,6 +134,7 @@ pub fn create_task_allocating_id(
     repo_root: &Path,
     task: &NewBacklogTask,
 ) -> Result<(String, PathBuf)> {
+    let _repository_lock = crate::storage::RepositoryLock::acquire(repo_root)?;
     if let Some((mut store, repo)) = super::task_storage::active(repo_root)? {
         let prefix = configured_task_prefix(repo_root)?;
         return store.mutate_kind_with_history(&repo, "task", None, |documents, history| {

@@ -13,7 +13,7 @@ struct CentralEdit {
 }
 
 pub(super) struct AggregateEdit {
-    repository_lock: Option<RepositoryLock>,
+    _repository_lock: Option<RepositoryLock>,
     central: Option<CentralEdit>,
     detached: Option<Option<Vec<u8>>>,
     kind: &'static str,
@@ -44,7 +44,7 @@ pub(super) fn with_edit<T>(
 impl AggregateEdit {
     pub(super) fn from_document(content: Option<&[u8]>) -> Self {
         Self {
-            repository_lock: None,
+            _repository_lock: None,
             central: None,
             detached: Some(content.map(<[u8]>::to_vec)),
             kind: "",
@@ -82,7 +82,7 @@ impl AggregateEdit {
             None
         };
         Ok(Self {
-            repository_lock,
+            _repository_lock: repository_lock,
             central,
             detached: None,
             kind,

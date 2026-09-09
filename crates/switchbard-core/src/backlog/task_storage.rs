@@ -1,6 +1,6 @@
 //! Task documents retain their raw extensible content. Paths are compatibility
 //! locators only; central writes never update the retained migration sources.
-use crate::storage::{RepositoryId, Store, MAX_DOCUMENTS};
+use crate::storage::{RepositoryId, RepositoryLock, Store, MAX_DOCUMENTS};
 use anyhow::{ensure, Context, Result};
 use std::path::{Path, PathBuf};
 
@@ -117,6 +117,9 @@ pub(super) fn edit<T>(
     path: &Path,
     transform: impl FnOnce(&str) -> Result<(String, T)>,
 ) -> Result<T> {
+    let _repository_lock = RepositoryLock::acquire(
+        root_for_path(path).as_deref().context("task path is outside a repository")?,
+    )?;
     if let Some(root) = root_for_path(path) {
         if let Some((mut store, repo)) = active(&root)? {
             let locator = path
@@ -150,6 +153,7 @@ pub(super) fn create(path: &Path, text: &str) -> Result<bool> {
     let Some(root) = root_for_path(path) else {
         return Ok(false);
     };
+    let _repository_lock = RepositoryLock::acquire(&root)?;
     let Some((mut store, repo)) = active(&root)? else {
         return Ok(false);
     };
@@ -211,6 +215,7 @@ pub(super) fn rehome(
     let Some(root) = root_for_path(path) else {
         return Ok(false);
     };
+    let _repository_lock = RepositoryLock::acquire(&root)?;
     let Some((mut store, repo)) = active(&root)? else {
         return Ok(false);
     };
