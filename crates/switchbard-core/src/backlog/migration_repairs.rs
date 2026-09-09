@@ -1,6 +1,6 @@
 //! Narrow, projection-verified repairs to selected migration bytes only.
 use super::{parse::parse_task_text, BacklogTaskSource};
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
@@ -57,6 +57,100 @@ pub(crate) fn repair_selected(
         target_digest: format!("{:x}", Sha256::digest(repaired.as_bytes())),
     };
     Ok(Some((repaired.into_bytes(), repair)))
+}
+
+/// Reissue one selected historical task identity without modifying any retained source.
+/// Only the top-level frontmatter `id:` scalar changes; the target locator must carry
+/// the same new ID and the complete parsed task projection is checked after normalization.
+pub(crate) fn repair_task_identity(
+    kind: &str,
+    source_path: &Path,
+    target_locator: &str,
+    bytes: &[u8],
+    task_id: &str,
+) -> Result<Vec<u8>> {
+    ensure!(
+        kind == "task",
+        "task ID repair is valid only for task migration"
+    );
+    ensure!(
+        !task_id.is_empty()
+            && task_id.len() <= 128
+            && task_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_')),
+        "invalid repaired task ID"
+    );
+    let file_name = Path::new(target_locator)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .context("repaired task locator has no UTF-8 filename")?;
+    let file_name = file_name.to_ascii_lowercase();
+    let task_id_lower = task_id.to_ascii_lowercase();
+    let suffix = file_name.strip_prefix(&task_id_lower);
+    ensure!(
+        suffix.is_some_and(|suffix| suffix == ".md" || suffix.starts_with(" -")),
+        "repaired task locator does not begin with repaired task ID"
+    );
+    let text = std::str::from_utf8(bytes).context("task repair source is not UTF-8")?;
+    ensure!(
+        text.starts_with("---\n"),
+        "task repair requires YAML frontmatter"
+    );
+    let fence = text[4..]
+        .find("\n---")
+        .map(|offset| offset + 4)
+        .context("task repair requires closing frontmatter fence")?;
+    let frontmatter = &text[4..fence];
+    let id_lines = frontmatter
+        .split_inclusive('\n')
+        .scan(4usize, |offset, line| {
+            let start = *offset;
+            *offset += line.len();
+            Some((start, line))
+        })
+        .filter(|(_, line)| line.starts_with("id:"))
+        .collect::<Vec<_>>();
+    ensure!(
+        id_lines.len() == 1,
+        "task repair requires exactly one top-level id field"
+    );
+    let (start, line) = id_lines[0];
+    ensure!(
+        line.starts_with("id: ") && !line.trim_end_matches('\n').contains(['#', '\r']),
+        "task repair requires a plain one-line id scalar"
+    );
+    let end = start + line.trim_end_matches('\n').len();
+    let mut repaired = String::with_capacity(text.len() + task_id.len());
+    repaired.push_str(&text[..start]);
+    repaired.push_str("id: ");
+    repaired.push_str(task_id);
+    repaired.push_str(&text[end..]);
+    let source = task_source(target_locator)?;
+    let mut before = parse_task_text(source_path, source, text)?.0;
+    let after = parse_task_text(Path::new(target_locator), source, &repaired)?.0;
+    before.id = task_id.to_owned();
+    before.path = Path::new(target_locator).to_path_buf();
+    before.source = source;
+    ensure!(
+        before == after,
+        "task ID repair changes fields beyond identity and locator"
+    );
+    Ok(repaired.into_bytes())
+}
+
+fn task_source(locator: &str) -> Result<BacklogTaskSource> {
+    if locator.starts_with("backlog/completed/") {
+        Ok(BacklogTaskSource::Completed)
+    } else if locator.starts_with("backlog/drafts/") {
+        Ok(BacklogTaskSource::Draft)
+    } else if locator.starts_with("backlog/archive/tasks/") {
+        Ok(BacklogTaskSource::Archived)
+    } else if locator.starts_with("backlog/tasks/") {
+        Ok(BacklogTaskSource::Active)
+    } else {
+        anyhow::bail!("invalid repaired task locator")
+    }
 }
 
 #[cfg(test)]

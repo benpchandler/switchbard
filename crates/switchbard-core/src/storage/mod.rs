@@ -28,7 +28,7 @@ pub use exchange::{
     ImportResult, MAX_EXCHANGE_BYTES,
 };
 use identity::repository_binding;
-pub(crate) use migration::SelectedDocument;
+pub(crate) use migration::{AllowedTransform, SelectedDocument};
 pub use migration::{MigrationPlan, SourceDocument};
 pub use repository_lock::RepositoryLock;
 pub(crate) use repository_lock::RepositoryLockSet;

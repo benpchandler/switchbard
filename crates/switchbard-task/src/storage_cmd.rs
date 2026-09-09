@@ -3,7 +3,10 @@ use anyhow::{ensure, Context, Result};
 use clap::{Args, Subcommand};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use switchbard_core::backlog::migration::{inventory_kind, KindInventory};
+use switchbard_core::backlog::migration::{
+    content_digest, inventory_kind, inventory_kind_with_resolutions, KindInventory,
+    MigrationResolutionFile,
+};
 use switchbard_core::storage::{default_database_path, Store};
 
 #[derive(Args)]
@@ -43,6 +46,9 @@ enum StorageCommand {
         /// Exact digest printed by the reviewed preview; required with --apply.
         #[arg(long, requires = "apply")]
         preview_digest: Option<String>,
+        /// Reviewed exhaustive source-selection JSON for otherwise ambiguous records.
+        #[arg(long)]
+        resolution_file: Option<PathBuf>,
     },
 }
 
@@ -71,7 +77,15 @@ pub fn run(root: &Path, args: &StorageArgs) -> Result<()> {
             kind,
             apply,
             preview_digest,
-        } => migrate(root, &database, kind, *apply, preview_digest.as_deref()),
+            resolution_file,
+        } => migrate(
+            root,
+            &database,
+            kind,
+            *apply,
+            preview_digest.as_deref(),
+            resolution_file.as_deref(),
+        ),
     }
 }
 
@@ -124,16 +138,19 @@ fn migrate(
     kind: &str,
     apply: bool,
     preview_digest: Option<&str>,
+    resolution_file: Option<&Path>,
 ) -> Result<()> {
-    let inventory = inventory_kind(root, kind)?;
+    let inventory = migration_inventory(root, kind, resolution_file)?;
     inventory.validate_native()?;
     if !apply {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
             "kind": kind, "records": inventory.documents.len(), "worktrees": inventory.worktrees,
-            "sources": inventory.documents.iter().flat_map(|document| document.sources.iter().map(|source| serde_json::json!({"path":source.path,"selected_locator":document.locator,"stale_proof":source.stale_proof,"addition_proof":source.addition_proof}))).collect::<Vec<_>>(),
+            "sources": inventory.documents.iter().flat_map(|document| document.sources.iter().map(|source| serde_json::json!({"path":source.path,"source_digest":source.digest,"selected_locator":document.locator,"selected_content_digest":content_digest(&document.bytes),"stale_proof":source.stale_proof,"addition_proof":source.addition_proof}))).collect::<Vec<_>>(),
             "repairs": inventory.documents.iter().filter_map(|d| d.repair.as_ref().map(|repair| serde_json::json!({"locator":d.locator,"repair":repair}))).collect::<Vec<_>>(),
+            "resolution_file_digest": inventory.resolution_file_digest,
+            "resolutions": inventory.resolutions,
             "status": "preview", "digest": inventory.digest(), "next_step": "rerun with --apply --preview-digest <digest> after checking the inventory" }))?
         );
         return Ok(());
@@ -155,7 +172,7 @@ fn migrate(
         "{kind} already uses the database; use storage status"
     );
     let plan = inventory.capture_plan(repo.clone())?;
-    let fresh = inventory_kind(root, kind)?;
+    let fresh = migration_inventory(root, kind, resolution_file)?;
     ensure!(
         inventory.digest() == fresh.digest(),
         "migration inventory changed; preview again"
@@ -163,7 +180,7 @@ fn migrate(
     let recovery = prepare_recovery(&store, &repo, &inventory)?;
     let count = store.apply_migration_checked(&plan, |candidate| {
         ensure!(
-            inventory_kind(root, kind)?.digest() == inventory.digest(),
+            migration_inventory(root, kind, resolution_file)?.digest() == inventory.digest(),
             "source or branch tips changed during recovery preparation; preview again"
         );
         switchbard_core::backlog::validate_storage_snapshot(candidate)
@@ -176,6 +193,20 @@ fn migrate(
         )?
     );
     Ok(())
+}
+
+fn migration_inventory(
+    root: &Path,
+    kind: &str,
+    resolution_file: Option<&Path>,
+) -> Result<KindInventory> {
+    let resolutions = resolution_file
+        .map(|path| MigrationResolutionFile::read(path, kind))
+        .transpose()?;
+    match resolutions.as_ref() {
+        Some(resolutions) => inventory_kind_with_resolutions(root, kind, Some(resolutions)),
+        None => inventory_kind(root, kind),
+    }
 }
 
 fn verify_import(
@@ -224,7 +255,7 @@ pub(super) fn prepare_recovery(
         restored.recovery_fingerprint()? == store.recovery_fingerprint()?,
         "backup restore fingerprint mismatch; migration refused"
     );
-    let manifest = serde_json::json!({"kind":inventory.kind,"repo_id":repo,"preview_digest":inventory.digest(),"worktrees":inventory.worktrees,"branch_refs":inventory.branch_refs,"sources":inventory.documents.iter().map(|d|serde_json::json!({"locator":d.locator,"original_sources":d.sources,"selected_content_bytes":d.bytes,"repair":d.repair})).collect::<Vec<_>>(),"restore_verified":true});
+    let manifest = serde_json::json!({"kind":inventory.kind,"repo_id":repo,"preview_digest":inventory.digest(),"resolution_file_digest":inventory.resolution_file_digest,"resolutions":inventory.resolutions,"worktrees":inventory.worktrees,"branch_refs":inventory.branch_refs,"sources":inventory.documents.iter().map(|d|serde_json::json!({"locator":d.locator,"selected_content_digest":content_digest(&d.bytes),"original_sources":d.sources,"selected_content_bytes":d.bytes,"repair":d.repair,"resolution":d.resolution})).collect::<Vec<_>>(),"restore_verified":true});
     write_private_new(
         &dir.join("sources.json"),
         &serde_json::to_vec_pretty(&manifest)?,
