@@ -248,6 +248,16 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
      no longer owed, but every divergence must still name its win and land in this
      doc.
 
+- **Central task storage (owner-authorized 2026-09-08; TASK-147).** The
+  [central-storage operator guide](central-storage.md) and the
+  [phased contract](decisions/switchbard-owned-storage/phased-contract.md)
+  supersede the file-only storage statements below where they describe the
+  current authority. Each kind remains file-backed until explicitly migrated;
+  after cutover, the machine-local SQLite database is authoritative and the
+  original files are retained as provenance. The older hierarchy, goal, rank,
+  and status sections remain the historical domain decisions and describe the
+  legacy adapter's file formats, not a requirement for new central writes.
+
 - **Linear-vocabulary hierarchy (owner-approved 2026-08-31; named win per TASK-68).**
   Four tiers, Linear's model and language: Initiative - Project - Issue (task) -
   Sub-issue (decimal child). The win: one vocabulary from disk to UI - the
@@ -296,8 +306,10 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   the goal's attached inputs) and
   *manual-metric* (actual reported as dated, append-only check-in
   observations; "current" derives from the latest entry).
-  - *Storage is `backlog/goals.yml`, one structured file per repo - NOT
-    markdown def files* (owner decision after review of the markdown design):
+  - *Legacy storage is `backlog/goals.yml`, one structured file per repo - NOT
+    markdown def files* (owner decision after review of the markdown design).
+    For migrated repositories, the database owns this aggregate and retains
+    the original YAML as provenance; see the central-storage operator guide.
     goals are records, not documents. A goal's shape is name/unit/measure/
     scope plus a `weeks` map of `{target, checkins: [{date, value}]}`, so
     cross-week history is one read and `goal roll` adds a week key rather
@@ -345,9 +357,11 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
     before / after a sibling) and a newly discovered task lands properly
     ranked among its siblings instead of reflexively expedited. When the
     interrupt ships, it leaves the lane and the hierarchy is untouched.
-  - *Storage is `backlog/ranking.yml`*, one records file per repo owned by
+  - *Legacy storage is `backlog/ranking.yml`*, one records file per repo owned by
     `backlog/ranking.rs` (goals.yml precedent: records, not documents;
-    never hand-edit). Named `ranking`, not `ordering`, because the hub
+    never hand-edit). After this kind is migrated, central storage owns the
+    record and the YAML remains retained source provenance. Named `ranking`,
+    not `ordering`, because the hub
     repo's root-level `ordering.yml` (the cross-repo triage overlay,
     `OrderingOverlay`) already exists as a different authority - two files
     sharing one name would be a findability trap. Line-surgical writes
@@ -572,10 +586,11 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
     opposite.
   - The one non-conforming task (a single MusicProduction task on `Backlog`) is
     intentionally left alone; `CANONICAL_STATUS_ORDER` still sorts it sensibly.
-  - **Not yet done:** the other repos' `backlog/config.yml` files are unchanged.
-    Switchbard offers the standard set regardless, so this is cosmetic — but until
-    those are rewritten, `backlog` CLI users outside Switchbard still see each
-    repo's old declared list.
+  - **Legacy-only note:** unmigrated repos' `backlog/config.yml` files remain
+    unchanged, and `backlog` CLI users outside Switchbard still see each repo's
+    old declared list. For a migrated config kind, the central database owns the
+    effective vocabulary and the retained YAML is provenance; see the
+    central-storage operator guide.
 
 - **Dispatch lifecycle status transitions (owner decision 2026-08-06).** Claiming a
   task sets its status to `In Progress`; opening its PR sets `In Review`. A failed
