@@ -169,6 +169,7 @@ fn colon_bug_files_a_task_carrying_screen_and_trail() {
         .unwrap();
     assert!(filed.contains("- tui\n"), "{filed}");
     assert!(filed.contains("- bug\n"), "{filed}");
+    assert!(filed.contains("project: Bugs\n"), "{filed}");
     assert!(
         filed.contains(&format!("selected={selected_id}")),
         "{filed}"
@@ -178,6 +179,26 @@ fn colon_bug_files_a_task_carrying_screen_and_trail() {
         "screen dump missing: {filed}"
     );
     assert!(filed.contains("action down"), "trail missing: {filed}");
+}
+
+#[test]
+fn colon_idea_files_without_a_project() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char(':'));
+    h.type_text("idea group by assignee");
+    h.press(KeyCode::Enter);
+    assert_eq!(h.selected_title(), "sbt idea: group by assignee");
+    let filed = std::fs::read_dir(h.root.join("backlog/tasks"))
+        .unwrap()
+        .flatten()
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+        .find(|text| text.contains("sbt idea"))
+        .unwrap();
+    assert!(filed.contains("- idea\n"), "{filed}");
+    assert!(
+        !filed.contains("project:"),
+        "an idea has no home yet: {filed}"
+    );
 }
 
 #[test]
