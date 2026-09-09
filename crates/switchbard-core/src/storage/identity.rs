@@ -174,16 +174,23 @@ fn parse_physical_binding(binding: &str) -> Result<(&str, Option<(u64, u64)>)> {
         return Ok((path, None));
     };
     let mut fields = instance.split(':');
-    let dev = fields
-        .next()
-        .context("malformed repository instance")?
-        .parse()?;
-    let ino = fields
-        .next()
-        .context("malformed repository instance")?
-        .parse()?;
-    ensure!(fields.next().is_none(), "malformed repository instance");
+    let Some(dev) = fields.next().and_then(|value| value.parse().ok()) else {
+        return Ok((binding_path(binding)?, None));
+    };
+    let Some(ino) = fields.next().and_then(|value| value.parse().ok()) else {
+        return Ok((binding_path(binding)?, None));
+    };
+    if fields.next().is_some() {
+        return Ok((binding_path(binding)?, None));
+    }
     Ok((path, Some((dev, ino))))
+}
+
+fn binding_path(binding: &str) -> Result<&str> {
+    binding
+        .strip_prefix("git:")
+        .or_else(|| binding.strip_prefix("path:"))
+        .context("repository has no lockable path binding")
 }
 
 pub(super) fn register(
