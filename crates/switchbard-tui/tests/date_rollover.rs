@@ -1,10 +1,11 @@
 //! Calendar invalidation uses real task files, keyboard filters and the normal tick.
+//! The day that rolls over is the viewer's, not UTC's - see `switchbard_core::backlog_today`.
 mod harness;
 use crossterm::event::KeyCode;
 use harness::*;
 
 #[test]
-fn utc_day_change_rebuilds_a_cached_date_filter_without_disk_edits() {
+fn day_change_rebuilds_a_cached_date_filter_without_disk_edits() {
     let mut h = Harness::new();
     h.type_text("/filed:today");
     h.press(KeyCode::Enter);
@@ -21,7 +22,7 @@ fn utc_day_change_rebuilds_a_cached_date_filter_without_disk_edits() {
 }
 
 #[test]
-fn utc_day_change_rebuilds_tasks_while_pull_requests_is_active() {
+fn day_change_rebuilds_tasks_while_pull_requests_is_active() {
     let mut h = Harness::new();
     h.type_text("/filed:today");
     h.press(KeyCode::Enter);
@@ -42,7 +43,7 @@ fn utc_day_change_rebuilds_tasks_while_pull_requests_is_active() {
 }
 
 #[test]
-fn utc_day_change_rebuilds_tasks_while_inbox_is_active() {
+fn day_change_rebuilds_tasks_while_inbox_is_active() {
     let mut h = Harness::new();
     h.type_text("/filed:today");
     h.press(KeyCode::Enter);
@@ -86,7 +87,7 @@ fn recent_merge() -> switchbard_core::PrSnapshot {
 }
 
 #[test]
-fn utc_day_change_rebuilds_cached_pr_dates_while_inbox_is_active() {
+fn day_change_rebuilds_cached_pr_dates_while_inbox_is_active() {
     let mut h = Harness::new();
     h.press(KeyCode::Tab);
     h.type_text("/merged:today");

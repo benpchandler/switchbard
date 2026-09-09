@@ -85,8 +85,10 @@ fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
     app
 }
 
+/// A `created_date` the way the app writes one: local wall clock, which is the
+/// clock `switchbard_core::backlog_today` compares against.
 fn now_minus_days(days: i64) -> String {
-    (chrono::Utc::now() - chrono::Duration::days(days))
+    (chrono::Local::now() - chrono::Duration::days(days))
         .format("%Y-%m-%d %H:%M")
         .to_string()
 }
