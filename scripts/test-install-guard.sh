@@ -14,7 +14,9 @@ trap 'rm -rf "$WORK"' EXIT
 
 # A repo with `main` carrying a feature commit and `stale` branching before it.
 REPO="$WORK/repo"
-git init -q "$REPO"
+# `-b main` explicitly: the default branch name is a per-machine git setting,
+# and CI's default (master) silently broke the merge case below.
+git init -q -b main "$REPO"
 git -C "$REPO" config user.email test@example.com
 git -C "$REPO" config user.name Test
 echo base > "$REPO/f"
