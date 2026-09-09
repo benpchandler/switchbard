@@ -1,5 +1,5 @@
-//! Stack ranking - `backlog/ranking.yml`, one records file per repo
-//! (trajectory: *Stack ranking*, owner-approved 2026-08-31).
+//! Stack ranking - legacy `backlog/ranking.yml`, or the central database after
+//! per-kind migration (trajectory: *Stack ranking*, owner-approved 2026-08-31).
 //!
 //! Manual rank is **hierarchy-shaped with a named exception lane**: siblings
 //! rank within their parent scope (projects against projects in the repo,

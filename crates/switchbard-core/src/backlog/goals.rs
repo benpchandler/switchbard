@@ -1,5 +1,5 @@
-//! Weekly goals — `backlog/goals.yml`, one structured file per repo
-//! (trajectory: *Weekly goals*, owner-approved 2026-08-31).
+//! Weekly goals — legacy `backlog/goals.yml`, or the central database after
+//! per-kind migration (trajectory: *Weekly goals*, owner-approved 2026-08-31).
 //!
 //! Goals are **records, not documents** (the owner's storage decision):
 //! a goal is a name, a unit, a measure, and a `weeks` map of
