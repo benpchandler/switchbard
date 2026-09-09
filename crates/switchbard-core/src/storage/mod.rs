@@ -8,6 +8,7 @@ mod kind_transaction;
 mod migration;
 mod permissions;
 mod recovery;
+mod repository_lock;
 mod schema_v2;
 mod workspace_order;
 pub use workspace_order::{
@@ -29,6 +30,7 @@ pub use exchange::{
 use identity::repository_binding;
 pub(crate) use migration::SelectedDocument;
 pub use migration::{MigrationPlan, SourceDocument};
+pub(crate) use repository_lock::RepositoryLock;
 
 pub const MAX_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_DOCUMENTS: usize = 100_000;

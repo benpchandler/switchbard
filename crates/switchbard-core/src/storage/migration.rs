@@ -213,6 +213,11 @@ impl Store {
         plan: &MigrationPlan,
         validate: impl FnOnce(&super::ExchangeSnapshot) -> Result<()>,
     ) -> Result<usize> {
+        let _repository_lock = plan
+            .sources
+            .first()
+            .map(|source| super::RepositoryLock::acquire(&source.source.path))
+            .transpose()?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;

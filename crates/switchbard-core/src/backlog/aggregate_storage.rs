@@ -1,10 +1,11 @@
 //! Explicit command-scoped snapshot for the legacy YAML aggregate cutover.
 //! Commands stage raw text and commit once, rejecting concurrent edits even on no-ops.
-use crate::storage::{Document, RepositoryId, Store};
+use crate::storage::{Document, RepositoryId, RepositoryLock, Store};
 use anyhow::{ensure, Context, Result};
 use std::path::Path;
 
 struct CentralEdit {
+    _repository_lock: RepositoryLock,
     store: Store,
     repo: RepositoryId,
     original: Option<Document>,
@@ -12,6 +13,7 @@ struct CentralEdit {
 }
 
 pub(super) struct AggregateEdit {
+    repository_lock: Option<RepositoryLock>,
     central: Option<CentralEdit>,
     detached: Option<Option<Vec<u8>>>,
     kind: &'static str,
@@ -42,6 +44,7 @@ pub(super) fn with_edit<T>(
 impl AggregateEdit {
     pub(super) fn from_document(content: Option<&[u8]>) -> Self {
         Self {
+            repository_lock: None,
             central: None,
             detached: Some(content.map(<[u8]>::to_vec)),
             kind: "",
@@ -54,6 +57,7 @@ impl AggregateEdit {
     }
 
     fn begin(root: &Path, kind: &'static str, locator: &'static str) -> Result<Self> {
+        let mut repository_lock = Some(RepositoryLock::acquire(root)?);
         let central = if let Some(store) = Store::open_existing_default()? {
             if let Some(repo) = store.authority_for_root(root, kind)? {
                 let original = store.read(&repo, kind, locator)?;
@@ -65,6 +69,7 @@ impl AggregateEdit {
                     .filter(|doc| !doc.deleted)
                     .map(|doc| doc.content.clone());
                 Some(CentralEdit {
+                    _repository_lock: repository_lock.take().expect("repository lock present"),
                     store,
                     repo,
                     original,
@@ -77,6 +82,7 @@ impl AggregateEdit {
             None
         };
         Ok(Self {
+            repository_lock,
             central,
             detached: None,
             kind,
