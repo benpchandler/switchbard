@@ -38,13 +38,20 @@ impl Store {
         )?.query_map([&repo.0], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
         let mut live = Vec::new();
         for binding in bindings {
-            let root = binding
-                .strip_prefix("git:")
-                .or_else(|| binding.strip_prefix("path:"))
-                .context("repository has no lockable path binding")?
-                .rsplit_once("#instance:")
-                .map_or_else(|| binding.as_str(), |(path, _)| path);
+            let (root, expected_instance) = parse_physical_binding(&binding)?;
             if Path::new(root).exists() {
+                if let Some((expected_dev, expected_ino)) = expected_instance {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::MetadataExt;
+                        let metadata = std::fs::metadata(root)?;
+                        ensure!(
+                            metadata.dev() == expected_dev && metadata.ino() == expected_ino,
+                            "repository binding was replaced: {}",
+                            root
+                        );
+                    }
+                }
                 let identity = super::RepositoryLock::identity(Path::new(root))?;
                 if !live.contains(&identity) {
                     live.push(identity);
@@ -156,6 +163,27 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+}
+
+fn parse_physical_binding(binding: &str) -> Result<(&str, Option<(u64, u64)>)> {
+    let path = binding
+        .strip_prefix("git:")
+        .or_else(|| binding.strip_prefix("path:"))
+        .context("repository has no lockable path binding")?;
+    let Some((path, instance)) = path.rsplit_once("#instance:") else {
+        return Ok((path, None));
+    };
+    let mut fields = instance.split(':');
+    let dev = fields
+        .next()
+        .context("malformed repository instance")?
+        .parse()?;
+    let ino = fields
+        .next()
+        .context("malformed repository instance")?
+        .parse()?;
+    ensure!(fields.next().is_none(), "malformed repository instance");
+    Ok((path, Some((dev, ino))))
 }
 
 pub(super) fn register(

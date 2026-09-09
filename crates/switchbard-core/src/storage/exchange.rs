@@ -219,9 +219,14 @@ impl Store {
         expected_sequence: u64,
         validate: impl FnOnce(&ExchangeSnapshot) -> Result<()>,
     ) -> Result<RepositoryId> {
+        let initial_binding = repository_binding(root)?;
         let (lock_set, expected_identities) =
             self.repository_lock_for_root(&incoming.repo_id, root)?;
         let _repository_lock = lock_set;
+        ensure!(
+            repository_binding(root)? == initial_binding,
+            "exchange root changed while acquiring storage locks; retry"
+        );
         ensure!(
             self.live_lock_identities(&incoming.repo_id)? == expected_identities,
             "repository bindings changed while acquiring exchange locks; retry"
