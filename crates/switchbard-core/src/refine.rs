@@ -125,7 +125,9 @@
 //! and `demote_section_headings` pushes any unfenced `## ` the model itself
 //! wrote down to `### ` for the same reason.
 
-use crate::backlog::{edit_backlog_task, task_file_round_trips, BacklogTask, BacklogTaskPatch};
+use crate::backlog::{
+    edit_backlog_task_expected, task_file_round_trips, BacklogTask, BacklogTaskPatch,
+};
 use crate::dispatch::{dispatch_log_dir, shell_quote, unix_now};
 use crate::kill::kill_pgid;
 use crate::spawn::{spawn_in_session, wait_for_exit, WaitOutcome};
@@ -663,7 +665,15 @@ fn apply_refine(repo_root: &Path, task: &BacklogTask, raw: &str) -> RefineResult
             RefineResult::NothingToApply
         };
     }
-    match edit_backlog_task(repo_root, &task.id, &plan.patch) {
+    // The merge is based on the snapshot captured before the model ran.
+    // Preserve intervening edits by comparing that snapshot's stable identity
+    // and revision at the single durable write boundary.
+    match edit_backlog_task_expected(
+        repo_root,
+        &task.id,
+        &plan.patch,
+        task.storage_identity.as_ref(),
+    ) {
         Ok(_) => RefineResult::Applied {
             description_extended: plan.description_extended,
             criteria_added: plan.criteria_added,
@@ -752,6 +762,93 @@ pub fn describe_refine_outcome(outcome: &RefineOutcome) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stale_central_refine_preserves_intervening_prose_and_revision() {
+        assert_stale_refine_preserves_intervening_edit(false);
+    }
+
+    #[test]
+    fn legacy_refine_captured_before_cutover_preserves_central_edits() {
+        assert_stale_refine_preserves_intervening_edit(true);
+    }
+
+    fn assert_stale_refine_preserves_intervening_edit(capture_before_cutover: bool) {
+        use crate::storage::{with_test_database, MigrationPlan, SourceDocument, Store};
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("repo");
+        std::fs::create_dir_all(root.join("backlog/tasks")).unwrap();
+        let path = root.join("backlog/tasks/task-1.md");
+        let raw = "---\nid: TASK-1\ntitle: Refine conflict\nstatus: To Do\n---\n\n## Description\n\nCaptured description\n\n## Implementation Plan\n\nCaptured plan\n";
+        std::fs::write(&path, raw).unwrap();
+        let database = fixture.path().join("state.sqlite3");
+        with_test_database(&database, || {
+            let mut store = Store::open(&database).unwrap();
+            let repo = store.bind_repository(&root).unwrap();
+            let migration = MigrationPlan::capture(
+                repo.clone(),
+                vec!["task".into()],
+                vec![SourceDocument {
+                    kind: "task".into(),
+                    locator: "backlog/tasks/task-1.md".into(),
+                    path: path.clone(),
+                }],
+            )
+            .unwrap();
+            let legacy = crate::load_backlog_repo(&root).unwrap().tasks.remove(0);
+            assert!(legacy.storage_identity.is_none());
+            store.apply_migration(&migration).unwrap();
+            let captured = if capture_before_cutover {
+                legacy
+            } else {
+                crate::load_backlog_repo(&root).unwrap().tasks.remove(0)
+            };
+            crate::edit_backlog_task(
+                &root,
+                &captured.id,
+                &BacklogTaskPatch {
+                    description: Some("Intervening description".into()),
+                    implementation_plan: Some("Intervening plan".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let before = store
+                .read(&repo, "task", "backlog/tasks/task-1.md")
+                .unwrap()
+                .unwrap();
+            let sequence = store.change_sequence().unwrap();
+            let suggestion = r#"{"description":"Proposed refinement","acceptance_criteria":["New criterion"],"implementation_plan":"Proposed plan"}"#;
+            let result = apply_refine(&root, &captured, suggestion);
+            assert!(
+                matches!(result, RefineResult::EditFailed { .. }),
+                "{result:?}"
+            );
+            assert_eq!(
+                store
+                    .read(&repo, "task", "backlog/tasks/task-1.md")
+                    .unwrap()
+                    .unwrap(),
+                before
+            );
+            assert_eq!(store.change_sequence().unwrap(), sequence);
+            let current = crate::load_backlog_repo(&root).unwrap().tasks.remove(0);
+            assert_eq!(current.description, "Intervening description");
+            assert_eq!(current.implementation_plan, "Intervening plan");
+            assert!(current.acceptance_criteria.is_empty());
+            let result = apply_refine(&root, &current, suggestion);
+            assert!(matches!(result, RefineResult::Applied { .. }), "{result:?}");
+            assert_eq!(
+                store
+                    .read(&repo, "task", "backlog/tasks/task-1.md")
+                    .unwrap()
+                    .unwrap()
+                    .revision,
+                before.revision + 1
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), raw);
+        });
+    }
+
     use super::*;
     use crate::backlog::{BacklogChecklistItem, BacklogTaskSource};
 

@@ -70,7 +70,8 @@ pub fn edit_backlog_task(
     }
 }
 
-/// Save a captured central draft only if that exact stable record revision remains current.
+/// Save a captured draft only while its storage authority remains unchanged.
+/// Central drafts additionally require the exact stable record revision.
 pub fn edit_backlog_task_expected(
     project_root: &Path,
     task_id: &str,
@@ -78,6 +79,10 @@ pub fn edit_backlog_task_expected(
     expected: Option<&super::BacklogStorageIdentity>,
 ) -> Result<String> {
     let Some(expected) = expected else {
+        anyhow::ensure!(
+            super::task_storage::active(project_root)?.is_none(),
+            "task storage authority changed; reload draft"
+        );
         return edit_backlog_task(project_root, task_id, patch);
     };
     if let Some(status) = &patch.status {
