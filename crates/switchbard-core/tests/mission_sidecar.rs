@@ -26,7 +26,21 @@ fn request(command: MissionCommand, command_id: &str, payload: Value) -> Mission
     }
 }
 
+/// What a helper that is *going* to answer gets. Generous on purpose: no
+/// passing test ever waits this long, it only has to be longer than a shell
+/// needs to start under a loaded full-suite run. The old shared 2s budget
+/// served this and the deliberate-timeout case at once, and lost the race on
+/// CI (TASK-181's sibling: `strict helper invocation: Timeout`).
+const ANSWERING_HELPER_TIMEOUT: Duration = Duration::from_secs(20);
+/// What a helper that is deliberately hanging gets: short, because the test
+/// is waiting for this to expire.
+const HANGING_HELPER_TIMEOUT: Duration = Duration::from_secs(1);
+
 fn fixture(helper: &str) -> (TempDir, MissionSupervisor) {
+    fixture_with_timeout(helper, ANSWERING_HELPER_TIMEOUT)
+}
+
+fn fixture_with_timeout(helper: &str, timeout: Duration) -> (TempDir, MissionSupervisor) {
     let root = tempfile::tempdir().expect("temporary supervisor fixture");
     let contents = root.path().join("Contents");
     let helper_path = contents.join("Helpers/xplan-mission-sidecar-launcher");
@@ -45,7 +59,7 @@ fn fixture(helper: &str) -> (TempDir, MissionSupervisor) {
         helper_path: PathBuf::from("Helpers/xplan-mission-sidecar-launcher"),
         manifest_path,
         state_root: root.path().join("state"),
-        timeout: Duration::from_secs(2),
+        timeout,
         stdout_limit: 1_048_576,
         stderr_limit: 65_536,
     };
@@ -131,7 +145,15 @@ fn strict_identity_failures() -> [(&'static str, &'static str); 4] {
 fn mission_supervisor_bounds_kills_reaps_and_reuses_command_id() {
     let command = request(MissionCommand::QueueMission, "fixture:ambiguous", json!({}));
     for (name, script) in supervisor_failure_cases() {
-        let (_root, supervisor) = fixture(script);
+        // Only the hang case is waiting on the budget; the rest answer.
+        let (_root, supervisor) = fixture_with_timeout(
+            script,
+            if name == "timeout" {
+                HANGING_HELPER_TIMEOUT
+            } else {
+                ANSWERING_HELPER_TIMEOUT
+            },
+        );
         let error = supervisor.invoke(command.clone()).expect_err(name);
         assert!(supervisor.last_process_group_reaped(), "child leak: {name}");
         assert!(error.is_bounded_failure(), "unclassified failure: {name}");
@@ -145,14 +167,19 @@ fn mission_supervisor_bounds_kills_reaps_and_reuses_command_id() {
 
 #[test]
 fn mission_supervisor_bounds_reader_joins_when_a_descendant_escapes_the_group() {
-    let (_root, supervisor) = fixture(concat!(
+    // Its own budget, not the generous answering one: this test asserts the
+    // whole thing comes back inside 10s, and the helper waits on a `python3`
+    // start that a loaded runner can drag out. A 20s budget behind a 10s
+    // assertion is a flake waiting to happen; 5s leaves room for the 2s
+    // reader-join grace on top and still proves the join is bounded.
+    let (_root, supervisor) = fixture_with_timeout(concat!(
         "#!/bin/sh\n",
         "read x\n",
         "marker=\"${0%/*}/escaped\"\n",
         "python3 -c \"import os,time; os.setsid(); open('$marker','w').close(); time.sleep(30)\" &\n",
         "while [ ! -e \"$marker\" ]; do sleep 0.05; done\n",
         "echo '{\"protocol_version\":\"xplan-mission-sidecar-v1\",\"request_id\":\"request-fixture:escapee\",\"command_id\":\"fixture:escapee\",\"result\":{}}'\n",
-    ));
+    ), Duration::from_secs(5));
     let started = std::time::Instant::now();
     let error = supervisor
         .invoke(request(MissionCommand::Hello, "fixture:escapee", json!({})))

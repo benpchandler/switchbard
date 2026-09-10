@@ -16,99 +16,15 @@ const DEFAULT_LUA: &str = include_str!("default.lua");
 /// redrawn `frames` times per period.
 const DEFAULT_WORK_PERIOD_MS: u64 = 3000;
 const DEFAULT_WORK_FRAMES: u64 = 30;
-/// How far the text on a working row swings from its rest colour: 1 would
-/// reach pure white at the peak and pure black at the trough.
-const WORKING_TEXT_SWING: f64 = 0.55;
+/// How far the text on a working row is lifted toward white at the peak of the
+/// pulse: 1 would reach pure white. The trough is the text's own rest colour.
+/// It is never pushed the other way: darkening a warm foreground is what makes
+/// a colour brown, and a row that browns reads as broken, not as breathing.
+const WORKING_TEXT_LIFT: f64 = 0.55;
 /// How hard the pulse is clipped: 0 is a pure sine, larger holds the peak and the dark longer.
 const DEFAULT_WORK_FLATTEN: f64 = 2.0;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Action {
-    Down,
-    Up,
-    Top,
-    Bottom,
-    PageDown,
-    PageUp,
-    Open,
-    Back,
-    Filter,
-    FilterColumn,
-    SortColumn,
-    Columns,
-    Paint,
-    Ball,
-    /// Release every session's claim on the selected task: the owner's word.
-    Pass,
-    Command,
-    Reload,
-    Help,
-    Quit,
-    View,
-    Group,
-    Settings,
-    /// The task chord: rank digits, Ball, top-list, completion, and goals actions.
-    Rank,
-}
-
-impl Action {
-    fn parse(text: &str) -> Option<Action> {
-        Some(match text {
-            "down" => Action::Down,
-            "up" => Action::Up,
-            "top" => Action::Top,
-            "bottom" => Action::Bottom,
-            "page_down" => Action::PageDown,
-            "page_up" => Action::PageUp,
-            "open" => Action::Open,
-            "back" => Action::Back,
-            "filter" => Action::Filter,
-            "filter_column" => Action::FilterColumn,
-            "sort_column" => Action::SortColumn,
-            "columns" => Action::Columns,
-            "paint" => Action::Paint,
-            "ball" => Action::Ball,
-            "pass" => Action::Pass,
-            "command" => Action::Command,
-            "reload" => Action::Reload,
-            "help" => Action::Help,
-            "quit" => Action::Quit,
-            "view" => Action::View,
-            "group" => Action::Group,
-            "settings" => Action::Settings,
-            "task" | "rank" => Action::Rank,
-            _ => return None,
-        })
-    }
-
-    pub fn name(&self) -> String {
-        match self {
-            Action::Down => "down".to_string(),
-            Action::Up => "up".to_string(),
-            Action::Top => "top".to_string(),
-            Action::Bottom => "bottom".to_string(),
-            Action::PageDown => "page_down".to_string(),
-            Action::PageUp => "page_up".to_string(),
-            Action::Open => "open".to_string(),
-            Action::Back => "back".to_string(),
-            Action::Filter => "filter".to_string(),
-            Action::FilterColumn => "filter_column".to_string(),
-            Action::SortColumn => "sort_column".to_string(),
-            Action::Columns => "columns".to_string(),
-            Action::Paint => "paint".to_string(),
-            Action::Ball => "ball".to_string(),
-            Action::Pass => "pass".to_string(),
-            Action::Command => "command".to_string(),
-            Action::Reload => "reload".to_string(),
-            Action::Help => "help".to_string(),
-            Action::Quit => "quit".to_string(),
-            Action::View => "view".to_string(),
-            Action::Group => "group".to_string(),
-            Action::Settings => "settings".to_string(),
-            Action::Rank => "task".to_string(),
-        }
-    }
-}
+pub use crate::shortcuts::Action;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyChord {
@@ -186,6 +102,8 @@ pub enum Surface {
     Link,
     /// The active filter in the footer, and other "in effect" chips.
     Chip,
+    /// Persistent navigation counts that call attention to a destination.
+    AttentionBadge,
     /// Key letters in footer hints and in `?`.
     Keys,
     /// Explanatory text: hints, counts, secondary lines.
@@ -211,6 +129,7 @@ impl Surface {
             "text" => Surface::Text,
             "link" => Surface::Link,
             "chip" => Surface::Chip,
+            "attention_badge" => Surface::AttentionBadge,
             "keys" => Surface::Keys,
             "hint" | "dim" => Surface::Hint,
             "status" => Surface::Status,
@@ -246,27 +165,35 @@ impl Theme {
         }
     }
 
-    /// The text colour on a working row at `glow`: an RGB colour is pushed
-    /// toward white at full glow and toward black at dark, its rest colour at
-    /// half; anything else is left alone. `None` (terminal default) is taken
-    /// as a mid gray so the breathing still shows.
+    /// The text colour on a working row at `glow`: an RGB colour is lifted
+    /// toward white as the band brightens and sits at its own rest colour in
+    /// the trough; anything else is left alone. `None` (terminal default) is
+    /// taken as a mid gray so the breathing still shows. The band carries the
+    /// dark half of the pulse on its own, so the text never goes below rest.
     pub fn working_fg(&self, rest: Option<Color>, glow: f64) -> Color {
         let (r, g, b) = match rest {
             Some(Color::Rgb(r, g, b)) => (r, g, b),
             Some(other) => return other,
             None => (0xb0, 0xb0, 0xb0),
         };
-        let shift = (glow - 0.5) * 2.0 * WORKING_TEXT_SWING;
+        let lift = glow.clamp(0.0, 1.0) * WORKING_TEXT_LIFT;
         let channel = |value: u8| {
             let value = f64::from(value);
-            let target = if shift >= 0.0 { 255.0 } else { 0.0 };
-            (value + (target - value) * shift.abs()).round() as u8
+            (value + (255.0 - value) * lift).round() as u8
         };
         Color::Rgb(channel(r), channel(g), channel(b))
     }
 
     pub fn style(&self, surface: Surface) -> Style {
-        self.styles.get(&surface).copied().unwrap_or_default()
+        self.styles
+            .get(&surface)
+            .or_else(|| {
+                (surface == Surface::AttentionBadge)
+                    .then(|| self.styles.get(&Surface::Chip))
+                    .flatten()
+            })
+            .copied()
+            .unwrap_or_default()
     }
 
     /// The surface a column's cells wear before paint: label, link, or text.
@@ -367,6 +294,7 @@ pub struct Config {
     pub work_period_ms: u64,
     /// Redraws per period: how smooth the fade is.
     pub work_frames: u64,
+    pub pr_refresh_seconds: u64,
     /// Soft-clip strength of the pulse: 0 is a pure sine, 2 flattens the tops and bottoms.
     pub work_flatten: f64,
     pub warnings: Vec<String>,
@@ -397,6 +325,14 @@ impl Config {
             .filter(|(_, bound)| *bound == action)
             .map(|(chord, _)| chord.label())
             .collect();
+        if *action == Action::NewTask {
+            keys.extend(
+                self.keys
+                    .iter()
+                    .filter(|(_, bound)| **bound == Action::Rank)
+                    .map(|(key, _)| format!("{} n", key.label())),
+            );
+        }
         keys.sort();
         keys
     }
@@ -461,6 +397,7 @@ struct RawConfig {
     report_repo: Option<String>,
     work_period_ms: Option<u64>,
     work_frames: Option<u64>,
+    pr_refresh_seconds: Option<u64>,
     work_flatten: Option<f64>,
     palettes: Vec<(String, Vec<String>)>,
 }
@@ -481,6 +418,10 @@ impl RawConfig {
             report_repo: table.get::<Option<String>>("report_repo").ok().flatten(),
             work_period_ms: work_setting(&table, "period_ms"),
             work_frames: work_setting(&table, "frames"),
+            pr_refresh_seconds: table
+                .get::<Option<u64>>("pr_refresh_seconds")
+                .ok()
+                .flatten(),
             work_flatten: work_setting_f64(&table, "flatten"),
             palettes: named_string_lists(&table, "palettes")?,
         })
@@ -511,6 +452,9 @@ impl RawConfig {
         }
         if over.work_period_ms.is_some() {
             self.work_period_ms = over.work_period_ms;
+        }
+        if over.pr_refresh_seconds.is_some() {
+            self.pr_refresh_seconds = over.pr_refresh_seconds;
         }
         if over.work_frames.is_some() {
             self.work_frames = over.work_frames;
@@ -631,6 +575,7 @@ impl RawConfig {
             report_repo,
             work_period_ms: self.work_period_ms.unwrap_or(DEFAULT_WORK_PERIOD_MS),
             work_frames: self.work_frames.unwrap_or(DEFAULT_WORK_FRAMES).max(1),
+            pr_refresh_seconds: self.pr_refresh_seconds.unwrap_or(60).clamp(30, 3600),
             work_flatten: self.work_flatten.unwrap_or(DEFAULT_WORK_FLATTEN).max(0.0),
             warnings,
         }

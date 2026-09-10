@@ -6,38 +6,84 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::{App, Mode, Pane};
 use crate::columns::Column;
 use crate::config::{Action, Surface};
 use crate::group::Row;
+use crate::page::Page;
 use crate::paint::{self, PaintRule};
 use crate::picker::{self, ColumnPurpose, PaintPick, Payload, PickerPurpose, ValuePicker};
 use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let [body, footer] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
+    let footer_height = if app.mode == Mode::NewTask { 3 } else { 1 };
+    let [navigation, notification, body, footer] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(u16::from(
+            !app.pull_requests.notifications.is_empty() || app.pr_merge.ongoing().is_some(),
+        )),
+        Constraint::Min(0),
+        Constraint::Length(footer_height),
+    ])
+    .areas(frame.area());
+    crate::navigation::draw(frame, app, navigation);
+    draw_notification(frame, app, notification);
     app.page_size = body.height.saturating_sub(3).max(1) as usize;
-    match app.pane {
-        Pane::None => draw_table(frame, app, body),
-        Pane::Help => draw_help(frame, app, body),
-        Pane::Detail => {
-            let [left, right] =
-                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .areas(body);
-            draw_table(frame, app, left);
-            draw_detail(frame, app, right);
+    if app.page == Page::Inbox && app.pane != Pane::Help {
+        crate::inbox::draw(frame, app, body);
+    } else if app.page == Page::PullRequests && app.pane != Pane::Help {
+        crate::pr_view::draw(frame, app, body);
+    } else {
+        match app.pane {
+            Pane::None => draw_table(frame, app, body),
+            Pane::Help => draw_help(frame, app, body),
+            Pane::Detail => {
+                let [left, right] = crate::detail_pane::split(body);
+                draw_table(frame, app, left);
+                draw_detail(frame, app, right);
+            }
         }
     }
     draw_footer(frame, app, footer);
-    if let Some(picker) = &app.picker {
-        draw_picker(frame, app, picker, body);
+    app.pr_merge.confirmation_visible = false;
+    if let Some(picker) = app.picker.clone() {
+        draw_picker(frame, app, &picker, body);
     }
     app.last_screen = buffer_text(frame.buffer_mut());
+}
+
+fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
+    let alerts = &app.pull_requests.notifications;
+    let Some(message) = app.pr_merge.ongoing().or_else(|| alerts.latest()) else {
+        return;
+    };
+    let dismiss = app
+        .config
+        .bindings_for(&Action::DismissNotifications)
+        .join("/");
+    let hint = if app.pr_merge.is_submitting() {
+        " pending".to_string()
+    } else if app.pr_merge.ongoing().is_some() {
+        " Esc cancels".to_string()
+    } else {
+        format!(" {} · {dismiss} dismiss", alerts.len())
+    };
+    let hint_width = u16::try_from(hint.chars().count()).unwrap_or(u16::MAX);
+    let [message_area, hint_area] = Layout::horizontal([
+        Constraint::Min(1),
+        Constraint::Length(hint_width.min(area.width / 2)),
+    ])
+    .areas(area);
+    let style = app.config.theme.style(Surface::Status);
+    frame.render_widget(
+        Paragraph::new(format!("PR {message}")).style(style),
+        message_area,
+    );
+    frame.render_widget(Paragraph::new(hint).style(style), hint_area);
 }
 
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -75,24 +121,39 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
     let header_area = Rect { height: 1, ..inner };
-    let cells = Layout::horizontal(widths).spacing(1).split(header_area);
-    frame.render_widget(
-        Paragraph::new("").style(theme.style(Surface::Header)),
+    let cells = crate::list_presentation::cells(header_area, &widths);
+    let headers: Vec<String> = app
+        .state
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            let label = if app.state.glyph_columns.contains(column) {
+                app.glyph_legend(*column)
+            } else {
+                column.header().to_string()
+            };
+            format!("{} {}", index + 1, label)
+        })
+        .collect();
+    crate::list_presentation::header(
+        frame,
         header_area,
+        &cells,
+        &headers,
+        theme.style(Surface::Header),
     );
-    for (index, (column, cell)) in app.state.columns.iter().zip(cells.iter()).enumerate() {
-        let text = if app.state.glyph_columns.contains(column) {
-            format!("{} {}", index + 1, app.glyph_legend(*column))
-        } else {
-            format!("{} {}", index + 1, column.header())
-        };
-        frame.render_widget(
-            Paragraph::new(text).style(theme.style(Surface::Header)),
-            *cell,
-        );
-    }
-    let window = inner.height.saturating_sub(1) as usize;
-    app.scroll = scroll_to_show(app.scroll, app.selected, window, &app.rows);
+    let heading =
+        app.selected > 0 && matches!(app.rows.get(app.selected - 1), Some(Row::Heading { .. }));
+    let viewport = crate::list_presentation::ListViewport::new(
+        app.scroll,
+        app.selected,
+        app.rows.len(),
+        inner.height.saturating_sub(1) as usize,
+        heading,
+    );
+    app.scroll = viewport.scroll;
+    let window = viewport.slots;
     let body = Rect {
         y: inner.y + 1,
         height: inner.height - 1,
@@ -148,8 +209,8 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                         style = style.patch(band);
                     }
                     if let Some(glow) = glow {
-                        // The text breathes with the band: brighter than its
-                        // rest colour at the peak, dimmer in the trough.
+                        // The text breathes with the band: lifted toward
+                        // white at the peak, its rest colour in the trough.
                         style = style.fg(theme.working_fg(style.fg, glow));
                     }
                     frame.render_widget(
@@ -180,23 +241,6 @@ fn fitted_width(app: &App, column: Column, max: u16) -> u16 {
         .max()
         .unwrap_or(0);
     (header.max(widest) as u16).min(max.max(header as u16))
-}
-
-/// The first row on screen: keeps `selected` in the window, and shows the
-/// heading above it when the selected task opens its section.
-fn scroll_to_show(scroll: usize, selected: usize, window: usize, rows: &[Row]) -> usize {
-    if window == 0 {
-        return scroll;
-    }
-    let mut scroll = scroll.min(selected);
-    if selected >= scroll + window {
-        scroll = selected + 1 - window;
-    }
-    let heading_above = selected > 0 && matches!(rows.get(selected - 1), Some(Row::Heading { .. }));
-    if heading_above && scroll == selected {
-        scroll -= 1;
-    }
-    scroll
 }
 
 fn table_title(app: &App) -> String {
@@ -243,11 +287,8 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.config.theme;
     let mut lines: Vec<Line> = Vec::new();
     if let Some(task) = app.selected_task() {
-        lines.push(Line::from(Span::styled(
-            task.title.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(Span::styled(
+        lines.push(crate::detail_pane::title(task.title.clone()));
+        lines.push(crate::detail_pane::metadata(
             format!(
                 "{} · {} · {} · {}",
                 task.id,
@@ -255,8 +296,8 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                 task.priority,
                 task.labels.join(",")
             ),
-            theme.style(Surface::Hint),
-        )));
+            theme,
+        ));
         for session in app.working(task) {
             lines.push(Line::from(Span::styled(
                 format!(
@@ -275,10 +316,7 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
         }
         if !task.acceptance_criteria.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "acceptance",
-                theme.style(Surface::Accent),
-            )));
+            lines.push(crate::detail_pane::section("acceptance", theme));
             for item in &task.acceptance_criteria {
                 let mark = if item.checked { "x" } else { " " };
                 lines.push(Line::from(format!("[{mark}] {}", item.text)));
@@ -287,15 +325,7 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         lines.push(Line::from("nothing selected"));
     }
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme.style(Surface::Border));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(block),
-        area,
-    );
+    crate::detail_pane::draw(frame, theme, area, lines, 0);
 }
 
 /// `HH:MM` of the claim on `task_id`, from its RFC 3339 stamp.
@@ -309,58 +339,41 @@ fn claimed_clock(session: &switchbard_core::WorkSession, task_id: &str) -> Strin
         .unwrap_or_default()
 }
 
-fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
+    if app.page == Page::Inbox {
+        crate::inbox::draw_help(frame, app, area);
+        return;
+    }
     let theme = &app.config.theme;
-    let actions = [
-        Action::Down,
-        Action::Up,
-        Action::Top,
-        Action::Bottom,
-        Action::PageDown,
-        Action::PageUp,
-        Action::Open,
-        Action::Back,
-        Action::Filter,
-        Action::FilterColumn,
-        Action::SortColumn,
-        Action::Columns,
-        Action::Paint,
-        Action::Ball,
-        Action::Pass,
-        Action::Group,
-        Action::Settings,
-        Action::Rank,
-        Action::Command,
-        Action::Reload,
-        Action::Help,
-        Action::View,
-        Action::Quit,
-    ];
-    let entries: Vec<(String, String)> = actions
-        .iter()
-        .map(|action| (app.config.bindings_for(action).join(" "), action.name()))
+    let entries: Vec<(String, String)> = Action::all()
+        .filter(|action| app.page.allows(action))
+        .map(|action| (app.config.bindings_for(&action).join(" "), action.name()))
+        .chain((app.page == Page::Tasks).then(|| {
+            let keys = app
+                .config
+                .bindings_for(&Action::Rank)
+                .iter()
+                .map(|key| format!("{key} a"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            (keys, "link parent task".to_string())
+        }))
         .chain(std::iter::once((
             "1-9".to_string(),
             "column actions".to_string(),
         )))
-        .chain(
-            app.views
-                .slots()
-                .into_iter()
-                .enumerate()
-                .map(|(index, (saved, scope))| {
-                    let scope = match scope {
-                        Scope::Global => "",
-                        Scope::Repo => " [repo]",
-                    };
-                    (
-                        format!("v{}", index + 1),
-                        format!("{}{scope}", saved.name()),
-                    )
-                }),
-        )
+        .chain(app.views.slots().into_iter().map(|(index, saved, scope)| {
+            let scope = match scope {
+                Scope::Global => "",
+                Scope::Repo => " [repo]",
+            };
+            (
+                format!("v{}", index + 1),
+                format!("{}{scope}", saved.name()),
+            )
+        }))
         .collect();
-    let per_line = (area.width as usize / 32).max(1);
+    let per_line = (area.width.saturating_sub(2) as usize / 32).max(1);
     let mut lines: Vec<Line> = entries
         .chunks(per_line)
         .map(|chunk| {
@@ -374,41 +387,56 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
     lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled(":bug <doing>  ", theme.style(Surface::Accent)),
-        Span::raw("file a bug with this screen    "),
-        Span::styled(":idea <want>  ", theme.style(Surface::Accent)),
-        Span::raw("file an idea with this screen"),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled(":theme <name>  ", theme.style(Surface::Accent)),
-        Span::raw("how sbt itself looks           "),
-        Span::styled(":palette <name>  ", theme.style(Surface::Accent)),
-        Span::raw("colors `auto` paints with"),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled(":view <name>  :reload  :q", theme.style(Surface::Accent)),
-        Span::raw(
-            "    f/s <col#> filter/sort by column; v<n> open view, vs<n> save it (vsd = default)",
-        ),
-    ]));
+    for (command, description) in [
+        (":bug <doing>", "file a bug with this screen"),
+        (":idea <want>", "file an idea with this screen"),
+        (":theme <name>", "how sbt itself looks"),
+        (":palette <name>", "colors `auto` paints with"),
+        (":view <name>  :reload  :q", ""),
+        ("f/s <col#>", "filter/sort by column"),
+        ("v<n>", "open view; vs<n> save it (vsd = default)"),
+    ] {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{command}  "), theme.style(Surface::Accent)),
+            Span::raw(description),
+        ]));
+    }
+    if app.page == Page::PullRequests {
+        lines.push(Line::from("PR fields: status/lifecycle, id, title, tasks, checks, review, merge, draft; PR views use .prs.lua files."));
+    }
     lines.push(Line::from(Span::styled(
         "config ~/.switchbard/tui.lua (hot reload) · views ~/.switchbard/views.lua + views/<repo>.lua · events ~/.switchbard/tui-events.jsonl",
         theme.style(Surface::Hint),
     )));
+    let up = app.config.bindings_for(&Action::Up).join("/");
+    let down = app.config.bindings_for(&Action::Down).join("/");
+    let back = app.config.bindings_for(&Action::Back).join("/");
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme.style(Surface::Border))
-        .title(" keys ");
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+        .title(" keys ")
+        .title_bottom(format!(" {up}/{down} scroll · {back} close "));
+    let inner = block.inner(area);
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    let max_scroll = paragraph
+        .line_count(inner.width)
+        .saturating_sub(inner.height as usize);
+    app.help_scroll = app
+        .help_scroll
+        .min(max_scroll.min(u16::MAX as usize) as u16);
+    frame.render_widget(paragraph.scroll((app.help_scroll, 0)).block(block), area);
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
+    if app.mode == Mode::NewTask {
+        draw_new_task(frame, app, area);
+        return;
+    }
     let theme = &app.config.theme;
     let line = match app.mode {
         Mode::Filter => Line::from(vec![
             Span::styled("/", theme.style(Surface::Accent)),
-            Span::raw(app.state.filter.clone()),
+            Span::raw(app.filter_text().to_string()),
             Span::styled("▏", theme.style(Surface::Accent)),
         ]),
         Mode::Command => Line::from(vec![
@@ -420,15 +448,10 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 theme.style(Surface::Hint),
             ),
         ]),
-        Mode::PickValue if app.picker.is_some() => Line::from(Span::styled(
-            format!(" {}", picker::hint(app.picker.as_ref().expect("checked"))),
-            theme.style(Surface::Hint),
-        )),
-        Mode::PickValue
-        | Mode::ViewChord
-        | Mode::ViewSaveSlot
-        | Mode::ViewGlobalSlot
-        | Mode::RankChord => Line::from(Span::styled(
+        Mode::PickValue if app.picker.is_some() => {
+            Line::from(Span::styled(app.status.clone(), theme.style(Surface::Hint)))
+        }
+        Mode::NewTask | Mode::PickValue => Line::from(Span::styled(
             app.status.clone(),
             theme.style(Surface::Status),
         )),
@@ -446,54 +469,59 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
+/// Keep the end of the bounded UTF-8 draft and its cursor visible while typing.
+fn draw_new_task(frame: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.config.theme;
+    let prefix = if area.width >= 20 { "new task: " } else { ":" };
+    let room = usize::from(area.width).saturating_sub(prefix.len() + 1);
+    let mut start = app.input.len();
+    let mut width = 0;
+    let draft = Span::raw(app.input.as_str());
+    let graphemes: Vec<_> = draft.styled_graphemes(Style::default()).collect();
+    for grapheme in graphemes.iter().rev() {
+        let character_width = Span::raw(grapheme.symbol).width();
+        if width + character_width > room {
+            break;
+        }
+        width += character_width;
+        start -= grapheme.symbol.len();
+    }
+    let input = Line::from(vec![
+        Span::styled(prefix, theme.style(Surface::Accent)),
+        Span::raw(app.input[start..].to_string()),
+        Span::styled("▏", theme.style(Surface::Accent)),
+    ]);
+    let lines = vec![
+        input,
+        Line::styled(app.status.clone(), theme.style(Surface::Status)),
+        Line::styled("Enter create · Esc cancel", theme.style(Surface::Hint)),
+    ];
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
 /// The footer while browsing: what is in effect as a chip, the situation, then
 /// the keys with their letters on the `keys` surface.
 fn browse_footer(app: &App) -> Line<'static> {
-    let theme = &app.config.theme;
-    let mut spans: Vec<Span> = vec![Span::raw(" ")];
-    if !app.state.filter.is_empty() {
-        spans.push(Span::styled(
-            format!(" {} ", app.state.filter),
-            theme.style(Surface::Chip),
-        ));
-        spans.push(Span::raw("  "));
-    }
-    if app.state.group.is_flat() && app.grouping_is_useful() {
-        spans.push(Span::styled(
-            format!("{} projects · ", app.projects.len()),
-            theme.style(Surface::Hint),
-        ));
-        spans.push(Span::styled("o", theme.style(Surface::Keys)));
-        spans.push(Span::styled(
-            " organizes by project or goal  ",
-            theme.style(Surface::Hint),
-        ));
-    }
-    for (key, name) in [
-        ("/", "filter"),
-        ("f", "filter-by"),
-        ("s", "sort"),
-        ("o", "group"),
-        ("c", "columns"),
-        ("p", "paint"),
-        ("b", "ball"),
-        ("t", "rank"),
-        ("v", "views"),
-        (",", "settings"),
-        (":", "command"),
-        ("?", "keys"),
-        ("q", "quit"),
-    ] {
-        spans.push(Span::styled(key.to_string(), theme.style(Surface::Keys)));
-        spans.push(Span::styled(
-            format!(" {name}  "),
-            theme.style(Surface::Hint),
-        ));
-    }
-    Line::from(spans)
+    let actions = if app.page == Page::Inbox {
+        vec![(Action::Page, "page"), (Action::Help, "keys")]
+    } else if app.page == Page::Tasks {
+        vec![
+            (Action::Rank, "tasks"),
+            (Action::View, "views"),
+            (Action::Help, "keys"),
+        ]
+    } else {
+        vec![(Action::View, "views"), (Action::Help, "keys")]
+    };
+    let text = actions
+        .iter()
+        .map(|(action, label)| format!("{} {label}", app.config.bindings_for(action).join("/")))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    Line::from(Span::styled(text, app.config.theme.style(Surface::Hint)))
 }
 
-fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
+fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rect) {
     let theme = &app.config.theme;
     let hint = picker::hint(picker);
     let width = picker
@@ -505,8 +533,16 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         .unwrap_or(20)
         .max(60)
         .min(body.width.saturating_sub(4) as usize) as u16;
+    let width = if picker.purpose == PickerPurpose::Merge {
+        body.width.saturating_sub(4)
+    } else {
+        width
+    };
     let rows = picker.matching();
-    let height = (rows.len() as u16 + 4).min(body.height.saturating_sub(2));
+    let height = rows
+        .len()
+        .saturating_add(4)
+        .min(body.height.saturating_sub(2) as usize) as u16;
     let area = Rect {
         x: body.x + 2,
         y: body.y + 2,
@@ -521,7 +557,7 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             let value = &option.label;
             let shown = match (&picker.purpose, &option.payload) {
                 (PickerPurpose::Filter(field), Payload::Text(value)) => {
-                    Filter::field_allows(&app.state.filter, *field, value)
+                    Filter::field_allows(app.filter_text(), *field, value)
                 }
                 (PickerPurpose::Sort(_), Payload::Order(order)) => {
                     app.state.sort.is_some_and(|sort| sort.order == *order)
@@ -534,6 +570,9 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
                     | PickerPurpose::PaintTarget,
                     Payload::Column(column),
                 ) => app.state.columns.contains(column),
+                (PickerPurpose::TaskParent(id), Payload::Parent(parent)) => app.tasks().iter().any(|task| task.id == *id && task.parent == *parent),
+                (PickerPurpose::TaskProject(id), Payload::Project(project)) => app.tasks().iter().any(|task| task.id == *id && task.project == *project),
+                (PickerPurpose::TaskStatus(id), Payload::Text(status)) => app.tasks().iter().any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
                 (PickerPurpose::MoveColumns(placed), _) => placed.contains(&(index + 1)),
                 (PickerPurpose::PaintRules, Payload::Rule(rule)) => *rule == 0,
                 (PickerPurpose::PaintValues(column), Payload::Text(value)) => {
@@ -584,11 +623,11 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             let mark = if shown { "✓" } else { " " };
             Line::from(vec![
                 Span::styled(
-                    format!("{:<2}", keys.get(index).cloned().unwrap_or_default()),
+                    format!("{:<2}", if matches!(picker.purpose, PickerPurpose::TaskParent(_)) { String::new() } else { keys.get(index).cloned().unwrap_or_default() }),
                     theme.style(Surface::Accent),
                 ),
                 Span::styled(
-                    format!("{mark}{value:<width$}", width = width as usize - 9),
+                    format!("{mark}{value:<width$}", width = (width as usize).saturating_sub(9)),
                     style,
                 ),
                 Span::styled(
@@ -602,6 +641,9 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
             ])
         })
         .collect();
+    if rows.is_empty() && matches!(picker.purpose, PickerPurpose::TaskParent(_)) {
+        lines.push(Line::from("No matching parent tasks"));
+    }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         format!(" {hint}"),
@@ -625,8 +667,48 @@ fn draw_picker(frame: &mut Frame, app: &App, picker: &ValuePicker, body: Rect) {
         .border_style(theme.style(Surface::Accent))
         .title_style(title_style)
         .title(pending + &picker_title(picker, preview.is_some()));
-    frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    let block = if picker.purpose != PickerPurpose::Merge
+        && rows.len().saturating_add(4) > height as usize
+    {
+        let navigation = if matches!(picker.purpose, PickerPurpose::TaskParent(_)) && width >= 28 {
+            "↑↓ Enter saves Esc"
+        } else if width >= 28 {
+            "↑↓ →open ←back Esc"
+        } else {
+            "↑↓ Esc"
+        };
+        block.title_bottom(Line::from(format!(
+            " {navigation} · {}/{} ",
+            picker.selected.saturating_add(1).min(rows.len()),
+            rows.len()
+        )))
+    } else {
+        block
+    };
+    if picker.purpose == PickerPurpose::Merge {
+        let mut confirmation: Vec<Line> = app
+            .pr_merge
+            .confirmation_lines()
+            .into_iter()
+            .map(Line::from)
+            .collect();
+        confirmation.push(Line::from(""));
+        confirmation.extend(lines);
+        let area = Rect {
+            height: body.height.saturating_sub(2),
+            ..area
+        };
+        app.pr_merge.confirmation_visible = crate::list_presentation::picker(
+            frame,
+            area,
+            block,
+            confirmation,
+            picker.selected,
+            true,
+        );
+    } else {
+        crate::list_presentation::picker(frame, area, block, lines, picker.selected, false);
+    }
 }
 
 /// What is being picked, plus any typed text. Key hints live in the footer.
@@ -650,11 +732,22 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::PaintTarget => "paint".to_string(),
         PickerPurpose::PaintColor(_) => "color".to_string(),
         PickerPurpose::PaintRules => "paint rules · top is the base".to_string(),
+        PickerPurpose::ChoosePaintRule(action) => format!("{action:?} paint rule"),
         PickerPurpose::ColumnActions(column) => column.name().to_string(),
         PickerPurpose::Settings => "settings".to_string(),
         PickerPurpose::Goals(id) => format!("{id} · goals"),
         PickerPurpose::Organize => "organize by".to_string(),
         PickerPurpose::Ball => "ball".to_string(),
+        PickerPurpose::Merge => "Confirm PR merge".to_string(),
+        PickerPurpose::Task => "task".to_string(),
+        PickerPurpose::TopList => "task · top list".to_string(),
+        PickerPurpose::TaskParent(id) => format!("{id} · parent"),
+        PickerPurpose::TaskProject(id) => format!("{id} · project"),
+        PickerPurpose::TaskStatus(id) => format!("{id} · status"),
+        PickerPurpose::Views => "views".to_string(),
+        PickerPurpose::SaveView => "save view".to_string(),
+        PickerPurpose::GlobalView => "make view global".to_string(),
+        PickerPurpose::ChooseColumnAction(action) => action.label().to_string(),
     };
     if picker.typed.is_empty() {
         format!(" {subject} ")

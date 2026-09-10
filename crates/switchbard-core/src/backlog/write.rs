@@ -597,11 +597,12 @@ pub(super) fn new_task_document(
     }
     let title = validated_single_line("title", &task.title)?;
     let text = new_task_text(prefix, id, title, task, &local_stamp())?;
-    let path = tasks_dir.join(format!(
-        "{}-{id} - {}.md",
-        prefix.to_ascii_lowercase(),
-        filename_slug(title)
-    ));
+    let stem = format!("{}-{id} - ", prefix.to_ascii_lowercase());
+    let slug_budget = 255usize
+        .checked_sub(stem.len() + ".md".len())
+        .context("task prefix and id exceed the filename byte limit")?;
+    let slug = filename_slug(title);
+    let path = tasks_dir.join(format!("{stem}{}.md", utf8_prefix(&slug, slug_budget)));
     Ok((path, text))
 }
 
@@ -612,7 +613,7 @@ pub(super) fn new_task_document(
 /// new file is created with `create_new` before the old one is removed, so
 /// a crash between the two leaves a duplicate to resolve, never a lost task.
 ///
-/// `new_parent` is the parent's bare id; `None` promotes to top level. The
+/// `new_parent` is the resolved parent's actual id; `None` promotes to top level. The
 /// parent is stored as `parent_task_id:` (the key the `backlog` CLI writes);
 /// a legacy `parent:` line is rewritten in place, the same courtesy
 /// [`set_task_project`] extends to `milestone:`.
@@ -662,8 +663,8 @@ pub(super) fn rehome_document(
     set_scalar(&mut fm, "id", &format!("{prefix}-{new_id}"), None);
     match new_parent {
         Some(parent) => {
-            validate_task_id(parent)?;
-            let rendered = yaml_scalar(&format!("{prefix}-{parent}"));
+            validate_task_id(super::parent::normalized_id(parent, prefix))?;
+            let rendered = yaml_scalar(parent);
             if key_span(&fm, "parent_task_id").is_some() {
                 set_scalar(&mut fm, "parent_task_id", &rendered, None);
                 remove_key(&mut fm, "parent");
@@ -1408,9 +1409,18 @@ fn new_task_body(task: &NewBacklogTask) -> Result<String> {
     Ok(format!("\n\n{}\n", chunks.join("\n\n")))
 }
 
+/// At most three bytes are removed to preserve a UTF-8 character boundary.
+fn utf8_prefix(text: &str, max_bytes: usize) -> &str {
+    let mut end = text.len().min(max_bytes);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
 /// The observed CLI filename convention: whitespace becomes `-`, characters
 /// that are shell- or filesystem-hostile are dropped, runs of `-` collapse.
-/// Capped at 180 chars so a long title can't overflow a 255-byte filename.
+/// Capped at 180 UTF-8 bytes, leaving room for the task ID and extension.
 /// Only a convention, not an identity: the id lives in the frontmatter.
 pub(super) fn filename_slug(title: &str) -> String {
     const DROPPED: &[char] = &[
@@ -1427,7 +1437,7 @@ pub(super) fn filename_slug(title: &str) -> String {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("-");
-    let capped: String = joined.chars().take(180).collect();
+    let capped = utf8_prefix(&joined, 180).to_string();
     if capped.is_empty() {
         "task".to_string()
     } else {
@@ -2365,6 +2375,41 @@ mod tests {
             .expect("reparses")
             .0;
         assert_eq!(parsed.id, "LED-11");
+    }
+
+    #[test]
+    fn unicode_task_filename_is_byte_bounded_and_preserves_full_title() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for (prefix, title) in [
+            ("TASK".to_string(), format!("{}e\u{301}終", "界".repeat(80))),
+            ("TASK".to_string(), format!("{}界", "a".repeat(179))),
+            ("LONG".repeat(25), "界".repeat(80)),
+        ] {
+            let task = NewBacklogTask {
+                title: title.clone(),
+                description: String::new(),
+                status: String::new(),
+                priority: String::new(),
+                acceptance_criteria: vec![],
+                parent: None,
+                labels: vec![],
+                assignees: vec![],
+                project: None,
+                dependencies: vec![],
+            };
+            let path =
+                write_new_task_file(dir.path(), &prefix, "4", &task).expect("create Unicode task");
+            let basename = path.file_name().unwrap().to_str().unwrap();
+            assert!(
+                basename.len() <= 255,
+                "Linux filename byte limit: {}",
+                basename.len()
+            );
+            let parsed = parse_task_file(&path, BacklogTaskSource::Active)
+                .expect("reparse")
+                .0;
+            assert_eq!(parsed.title, title);
+        }
     }
 
     #[test]

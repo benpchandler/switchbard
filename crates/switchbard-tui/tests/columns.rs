@@ -20,10 +20,7 @@ fn c_toggles_columns_by_position_and_numbers_follow_what_is_shown() {
         screen.contains("┌ columns ─"),
         "adding keeps the picker open so the column can be placed: {screen}"
     );
-    assert_eq!(
-        h.app.status,
-        "labels added as column 5 · m then numbers to reorder · esc"
-    );
+    assert_eq!(h.app.status, "labels added as column 5");
     h.press(KeyCode::Char('m'));
     h.press(KeyCode::Char('1'));
     h.press(KeyCode::Char('2'));

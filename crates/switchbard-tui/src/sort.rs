@@ -73,7 +73,7 @@ impl Sort {
 /// Orders offered for a column; semantic only where the vocabulary has one.
 pub fn orders_for(column: Column) -> Vec<Order> {
     match column {
-        Column::Priority | Column::Status => {
+        _ if !column.spec().vocabulary.is_empty() => {
             vec![Order::Semantic, Order::Ascending, Order::Descending]
         }
         _ => vec![Order::Ascending, Order::Descending],
@@ -97,54 +97,50 @@ fn compare(
     top: &[String],
     goals: &[GoalDef],
 ) -> Ordering {
-    let ordering = match sort.order {
-        Order::Semantic => {
-            semantic_rank(a, sort.column, goals).cmp(&semantic_rank(b, sort.column, goals))
-        }
-        Order::Ascending => {
-            plain_key(a, sort.column, top, goals).cmp(&plain_key(b, sort.column, top, goals))
-        }
-        Order::Descending => {
-            plain_key(b, sort.column, top, goals).cmp(&plain_key(a, sort.column, top, goals))
+    compare_values(
+        &crate::column_values::TaskValues {
+            task: a,
+            top,
+            goals,
+        },
+        &crate::column_values::TaskValues {
+            task: b,
+            top,
+            goals,
+        },
+        sort,
+    )
+}
+
+pub fn compare_values(
+    a: &impl crate::column_values::ColumnValues,
+    b: &impl crate::column_values::ColumnValues,
+    sort: Sort,
+) -> Ordering {
+    let plain = || {
+        if sort.column.spec().numeric {
+            a.numeric_key(sort.column).cmp(&b.numeric_key(sort.column))
+        } else {
+            a.values(sort.column)
+                .join(",")
+                .to_lowercase()
+                .cmp(&b.values(sort.column).join(",").to_lowercase())
         }
     };
-    ordering.then_with(|| id_number(&a.id).cmp(&id_number(&b.id)))
-}
-
-fn plain_key(
-    task: &BacklogTask,
-    column: Column,
-    top: &[String],
-    goals: &[GoalDef],
-) -> (u64, String) {
-    match column {
-        Column::Id => (id_number(&task.id), String::new()),
-        Column::Rank => (
-            top.iter()
-                .position(|id| *id == task.id)
-                .map(|p| p as u64)
-                .unwrap_or(u64::MAX),
-            String::new(),
-        ),
-        other => (0, other.cell_text(task, goals).to_lowercase()),
-    }
-}
-
-fn semantic_rank(task: &BacklogTask, column: Column, goals: &[GoalDef]) -> usize {
-    match column.values(task, goals).first() {
-        Some(value) => column.vocabulary_rank(value),
-        None => usize::MAX,
-    }
-}
-
-/// `TASK-12.3` sorts by 12 then 3; unparseable ids sort last.
-fn id_number(id: &str) -> u64 {
-    let digits = id.rsplit('-').next().unwrap_or(id);
-    let mut parts = digits.split('.');
-    let major: u64 = parts
-        .next()
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(u64::MAX / 1000);
-    let minor: u64 = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
-    major * 1000 + minor
+    let ordering = match sort.order {
+        Order::Semantic => {
+            let rank = |values: Vec<String>| {
+                values
+                    .first()
+                    .map(|value| sort.column.vocabulary_rank(value))
+                    .unwrap_or(usize::MAX)
+            };
+            rank(a.values(sort.column)).cmp(&rank(b.values(sort.column)))
+        }
+        Order::Ascending => plain(),
+        Order::Descending => plain().reverse(),
+    };
+    ordering
+        .then_with(|| a.numeric_key(Column::Id).cmp(&b.numeric_key(Column::Id)))
+        .then_with(|| a.identity().cmp(b.identity()))
 }

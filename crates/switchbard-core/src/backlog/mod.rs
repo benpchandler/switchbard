@@ -17,6 +17,7 @@ mod hierarchy;
 pub mod migration;
 pub(crate) mod migration_repairs;
 mod mutations;
+mod parent;
 mod parse;
 mod ranking;
 pub mod status_config;
@@ -48,6 +49,7 @@ pub use mutations::{
     revise_backlog_acceptance_criteria, set_backlog_acceptance_checked, set_backlog_ball,
     set_backlog_dod_checked, set_backlog_final_summary, set_backlog_label, swap_backlog_label,
 };
+pub use parent::eligible_backlog_parents;
 pub use parse::{
     backlog_repo_available, body_round_trips, is_backlog_repo, load_backlog_repo,
     parse_backlog_day, task_file_round_trips,

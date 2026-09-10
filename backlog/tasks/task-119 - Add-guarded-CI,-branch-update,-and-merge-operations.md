@@ -4,6 +4,7 @@ title: Add guarded CI, branch-update, and merge operations
 status: To Do
 assignee: []
 created_date: '2026-09-01 17:12'
+updated_date: '2026-09-08 12:20'
 labels:
   - github
   - ops
@@ -13,6 +14,8 @@ dependencies:
   - TASK-118
 priority: high
 project: GitHub Operations
+references:
+  - https://github.com/benpchandler/switchbard/pull/138
 ---
 
 ## Description

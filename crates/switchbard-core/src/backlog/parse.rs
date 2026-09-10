@@ -64,6 +64,7 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
         }
     }
 
+    super::parent::normalize_parent_links(&mut tasks, &configured_task_prefix(root)?);
     let ranking = super::ranking::load_ranking(root, &mut warnings)?;
     super::ranking::sort_tasks(&mut tasks, &ranking);
     let project_defs = super::hierarchy::load_project_defs(root, &mut warnings)?;

@@ -45,6 +45,8 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 
 ## Planned
 
+- **Reusable terminal list contracts (owner-directed 2026-09-08, TASK-144/162-167).** Tasks and Pull Requests share explicit column capabilities and entity adapters, one deterministic sorter and filter matcher, semantic paint precedence, bounded terminal presentation inputs, feature-scoped view settings and one configurable keyboard action catalog. This is a frontend-local boundary because the two concrete consumers are terminal lists; core retains domain facts and no UI dependencies. Existing GUI table/filter/badge primitives stay separate. `p` offers When task filed and When merged using authoritative timestamps and UTC calendar-day categories; no task completion or file modification surrogate is used. Existing view file names and Lua records remain the persistence authority, with explicit non-destructive handling of unreadable/unsupported records and external edits. See `docs/tui-abstraction-boundaries.md`, `docs/tui-date-paint-evidence.md`, `docs/tui-list-state-evidence.md` and `docs/tui-view-scope-evidence.md` for rationale, compatibility and state evidence.
+
 - Cross-platform parity (macOS + Linux) stays a first-class, shipped invariant — keep
   `#[cfg(target_os = …)]` scanner branches in lock-step; don't regress to macOS-only.
 - Worktree-first model (one repo → many worktrees) remains foundational; never collapse.
@@ -601,6 +603,12 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   so an agent-worked task is visible to someone reading the board rather than the
   dispatch pill.
 
+- **Terminal menu consolidation (owner-directed 2026-09-08).** Choices previously packed into footer sentences use shared pickers. Task actions include New (`t n`), configured Status (`t s`), Project (`t p`), and a Top list submenu (`t r`) for rank and membership. Views (`v p`) separately shows or hides the top-list section without changing membership. View save/global destinations and column/settings/paint actions are selectable rows. Left/Right navigate back/open; h/l do the same except where legacy value typeahead needs the initial letter. Footer copy is limited to concise navigation, input prompts and results. Status and project changes use the native task editor.
+
+- **Terminal task capture (owner-directed 2026-09-08).** `sbt` provides a `t n` task/new chord (the task prefix is configurable; `new_task` also remains bindable) to enter an ordinary task title. Enter writes through the same core task creation facade as `sb create`; Esc cancels. Validation and write failures retain the draft for correction or retry. Success selects the new task when visible and explicitly reports when existing filters hide it. Capture does not infer metadata from filters or attach bug-report context.
+
+- **Terminal parent linking (owner-directed 2026-09-08; TASK-182/183).** The Tasks menu offers `t a` to choose an existing eligible parent by ID and title. Search accepts IDs and titles without committing; Enter saves, and No parent promotes to top level. The picker discloses that the existing native move operation assigns a new ID. Core owns candidate eligibility and fresh write validation; loading resolves legacy shorthand parent references to existing canonical IDs without rewriting documents. Self-parenting and nested sub-issues are rejected.
+
 - **Terminal UI grouping (owner-directed 2026-09-02).** `sbt` sections the task
   list by a groupable column (`o`, `:group <column>`, the header-digit menu; view
   records carry `group = "<column>"`). Grouping is a projection over the already
@@ -719,3 +727,35 @@ The control and projection health indicators are independent. Queue drafts and d
   mission-sidecar matrix to mission-sensitive changes.
   The push-to-main trigger remains because `main` is not branch-protected, so it is the only
   independent verification of the actual merge commit.
+
+## TUI page navigation (owner-directed 2026-09-06)
+
+The first PR slice established navigation: Tasks and Pull Requests are separate pages, Tab toggles through the configurable `page` action, and a persistent header marks the active page with brackets and the theme chip. Saved task views remain task views. Switching pages preserves task filters and selection, closes transient detail/help, and cannot operate on hidden tasks. Self-restart retains the page. Later repository PR and controls slices supersede the original unconnected PR-page placeholder.
+
+State/stress evidence: `crates/switchbard-tui/tests/pages.rs` exercises real keys and rendered screens for toggle/return, filtered selection, hidden-task controls, key remapping, help, self-restart, empty backlog, and 80x24 / 120x40 / 180x50 / 40x8 / zero-sized terminals. Loading, remote errors, stale delivery and writes are N/A to this unconnected page shell. Native owner visual review follows installation and is not implied by passing tests.
+
+## TUI repository PR list (owner-directed 2026-09-07)
+
+The next incremental slice reads repository PRs across Open, Closed and Merged for the repository selected by GitHub CLI from the sbt working repo, then pins that resolved github.com repository explicitly for the list read. This is a repository PR surface, not a replacement for the TASK-80 GitHub Project queue/binding model. No source bindings, persistent cache, task writes or GitHub mutations are introduced. It shows up to 100 PRs with an explicit partial flag beyond that bound, and matches only exact canonical recorded task references to observed PR URLs. No title/branch inference or task completion inference is permitted. References in task prose and archived tasks are outside this first association view, which labels scope as loaded task references.
+
+One bounded worker runs off the event/render path. Last-success data stays visible and becomes stale on refresh failure; reads refresh while the page is visible at Lua pr_refresh_seconds (60 by default, bounded 30-3600). The first observation row counts down to the next refresh, shows refreshing while the worker runs, and restarts the interval on completion, including failure. Errors remain visible during the retry countdown; r retries immediately. There is no separate refreshing note. Snapshots older than twice the interval also show stale. Observation time is distinct from progress. Attention ordering favors observed failures, then unknowns, then pending observations. No required-check completeness or workflow-progress claim is made. Enter opens full-width PR details; Tab returns to preserved Tasks state. Workflow jobs/attempts, linking controls, task-row PR signals and GitHub operations remain subsequent owner-directed slices. Shared filters, sorting, painting, numbered column controls, and independent saved PR settings are implemented in the current parity slice; see `docs/tui-pr-controls-ledger.md`.
+
+## PR lifecycle filters and shared detail interaction (owner correction)
+
+The PR page starts with the repository list across Open, Closed and Merged. Active PRs are a status filter over that list. Fetch bounded metadata first, then enrich loaded active PRs with read-only delivery observations; failed enrichment must not hide the list. Reuse task search/filter grammar and picker interactions, retain independent filters across page switches and self-restart, and disclose incomplete history. Enter opens the selected PR in a right-hand detail pane with the list still visible; row navigation updates that pane and page-scroll keys scroll its contents. This supersedes the earlier open-only source choice. Shared sorting, painting, numbered column controls, and independent saved PR views are now covered by the parity slice; grouping, workflow operations, linking controls and task-row PR signals remain later slices.
+
+## TUI PR controls parity (owner-directed 2026-09-07)
+
+The PR page now reuses the Tasks filter, sort, paint, numbered column, and saved-view controls while retaining isolated PR state and `.prs.lua` persistence. Filters cover cached lifecycle, linked-task, checks, review and merge observations; sorts preserve selected PR identity through refresh; paint supports categorical, row, column and palette rules. The controls remain read-only with respect to GitHub and do not mutate task data. Implementation and E2E evidence are recorded in `docs/tui-pr-controls-ledger.md` and `docs/tui-pr-controls-evidence.md`; delivery, CI, human visual approval and merge remain separate gates.
+
+## Terminal PR actions and cross-page status (TASK-141)
+
+After the first Pull Requests visit, sbt continues its bounded refresh cadence while Tasks is visible. O opens the selected PR in the default browser; Enter retains its existing detail action. Changes to previously observed lifecycle, checks, review, merge, or draft status and refresh availability produce at most 32 session alerts across pages. The first snapshot is a baseline; n dismisses the latest alert. Restart resets session alerts and establishes a new baseline. Guarded review/merge writes remain owned by the GitHub Operations contracts.
+
+## Terminal direct PR merge (TASK-141.5, owner requested 2026-09-08)
+
+The Pull Requests page offers configurable m to prepare a fresh direct-merge confirmation. The existing picker defaults to Cancel and shows the exact repository, PR, head, base and account before an explicit enabled merge-method choice. Core owns fresh eligibility, head/base/account revalidation, the GitHub expected-head guard, an exclusive durable operation receipt and result readback. Submission is off-thread and single-flight; page switching stays responsive, and quit/self-reexec waits for the result. Small terminals must show the full confirmation before submission is enabled. Task completion never follows automatically from a PR merge. Queue-required PRs direct users to GitHub; queue/auto-merge and other TASK-119 operations remain separate. GitHub atomically guards the head, while base/policy/account observations can still race after revalidation.
+
+## TUI Inbox and navigation counts (owner-directed 2026-09-08)
+
+TASK-193 establishes the Inbox destination before its content or collapsible bottom preview. The first-row Pull Requests badge counts all open repository PRs, independently of loaded history, filters, and attention state. Positive badges use the shared Lua `attention_badge` theme surface; known zero hides the badge. Unknown and stale remote observations remain explicit. The blank Inbox does not infer actions or show a fabricated count. Later, its badge will count actions requiring the owner, while agent follow-ups remain separately visible. Review handoff semantics and the collapsible pane are later slices, not implied by this navigation foundation.

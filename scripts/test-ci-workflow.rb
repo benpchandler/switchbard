@@ -25,6 +25,28 @@ raise "unexpected Rust CI matrix: #{actual.inspect}" unless actual == expected
 
 scope = jobs.fetch("change-scope")
 raise "change-scope must expose mission_sidecar" unless scope.dig("outputs", "mission_sidecar")
+raise "change-scope must expose rust" unless scope.dig("outputs", "rust")
+raise "change-scope must itself always run" if scope.key?("if")
+
+# TASK-180: the Rust matrix is routed, and only by the router. A gate that
+# reads anything else -- or that goes missing -- either burns the matrix on
+# every prose change again or, worse, skips it on a change that needs it.
+rust = jobs.fetch("ci")
+raise "Rust matrix must depend on change-scope" unless rust.fetch("needs") == "change-scope"
+rust_condition = rust["if"]
+unless rust_condition.to_s.include?("needs.change-scope.outputs.rust")
+  raise "Rust matrix routing condition lost: #{rust_condition.inspect}"
+end
+
+# Both matrices must read their route as "run unless explicitly told not to".
+# `== 'true'` would turn a missing or empty output into a silent skip on a
+# green run, which is the one failure mode routing must not have.
+{ "ci" => "rust", "mission-sidecar" => "mission_sidecar" }.each do |job, output|
+  condition = jobs.fetch(job)["if"].to_s
+  unless condition.include?("needs.change-scope.outputs.#{output} != 'false'")
+    raise "#{job} must fail open on a missing route: #{condition.inspect}"
+  end
+end
 
 sidecar = jobs.fetch("mission-sidecar")
 raise "mission-sidecar must depend on change-scope" unless sidecar.fetch("needs") == "change-scope"

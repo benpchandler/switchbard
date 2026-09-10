@@ -42,6 +42,7 @@ pub enum PickerPurpose {
     PaintColumn,
     /// `p o`: the rule hierarchy, top is the base.
     PaintRules,
+    ChoosePaintRule(PaintRuleAction),
     /// After a digit in browse: everything that can be done with that column.
     ColumnActions(Column),
     /// `,`: standing preferences under every view.
@@ -52,6 +53,16 @@ pub enum PickerPurpose {
     Organize,
     /// `t b`: who should act next on the selected task.
     Ball,
+    Merge,
+    Task,
+    TaskStatus(String),
+    TaskProject(String),
+    TaskParent(String),
+    TopList,
+    Views,
+    SaveView,
+    GlobalView,
+    ChooseColumnAction(ColumnAction),
 }
 
 /// What a column's menu offers; each row is one of these on a letter.
@@ -65,6 +76,8 @@ pub enum ColumnAction {
     Abbreviate,
     Hide,
     Move,
+    Earlier,
+    Later,
 }
 
 impl ColumnAction {
@@ -78,6 +91,8 @@ impl ColumnAction {
             ColumnAction::Abbreviate => 'a',
             ColumnAction::Hide => 'x',
             ColumnAction::Move => 'm',
+            ColumnAction::Earlier => 'K',
+            ColumnAction::Later => 'J',
         }
     }
 
@@ -91,8 +106,34 @@ impl ColumnAction {
             ColumnAction::Abbreviate => "abbreviate on/off",
             ColumnAction::Hide => "hide it",
             ColumnAction::Move => "move columns",
+            ColumnAction::Earlier => "move column earlier",
+            ColumnAction::Later => "move column later",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskAction {
+    New,
+    Ball,
+    Append,
+    Status,
+    Project,
+    Parent,
+    TopList,
+    Drop,
+    Pin,
+    Goals,
+    /// The `d` fast path: mark the selected task Done without opening the
+    /// full status picker.
+    Done,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaintRuleAction {
+    Earlier,
+    Later,
+    Delete,
 }
 
 /// What a row means when picked.
@@ -121,9 +162,20 @@ pub enum Payload {
     DeleteAllPaint,
     /// Paint rules list: the rule at this position.
     Rule(usize),
+    PaintRuleAction(PaintRuleAction),
     ColumnAction(ColumnAction),
     Ball(Option<Ball>),
     NewBallHolder,
+    TaskAction(TaskAction),
+    Rank(usize),
+    ViewSlot(usize),
+    SaveView,
+    GlobalView,
+    GlobalSettings,
+    Project(Option<String>),
+    Parent(Option<String>),
+    CancelMerge,
+    Merge(switchbard_core::PrMergeMethod),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +196,16 @@ impl PickOption {
             count,
             key: None,
         }
+    }
+
+    pub fn paint_column(column: Column, hidden: bool) -> PickOption {
+        let mut option = Self::column(column, hidden);
+        option.label = if hidden {
+            format!("{}{}", column.label(), Column::HIDDEN_TAG)
+        } else {
+            column.label().to_string()
+        };
+        option
     }
 
     pub fn column(column: Column, hidden: bool) -> PickOption {
@@ -269,21 +331,31 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::Filter(_) => "number or name picks one · space toggles · esc",
         PickerPurpose::Sort(_) => "number or name picks · esc",
         PickerPurpose::ChooseColumn(_) => "number or name · hidden columns listed last · esc",
-        PickerPurpose::Columns => {
-            "number or name toggles · m reorder · g glyphs · a abbreviate · K/J nudge · esc"
-        }
+        PickerPurpose::Columns => "↑↓/jk select · →/l open · ←/h back · Esc closes",
         PickerPurpose::MoveColumns(_) => "type column numbers in the order you want · enter done",
         PickerPurpose::PaintValues(_) => "value then color · repeats · h back · esc done",
         PickerPurpose::PaintColumn => "number or name · h back · esc",
         PickerPurpose::PaintTarget => "number or letter picks · esc",
         PickerPurpose::PaintColor(_) => "name or #hex · space clears · h back · esc",
-        PickerPurpose::PaintRules => "K/J reorder · del removes · h back · esc",
+        PickerPurpose::PaintRules | PickerPurpose::ChoosePaintRule(_) => {
+            "↑/↓ select · key or Enter picks · h back · Esc closes"
+        }
         PickerPurpose::ColumnActions(_) => "letter picks · esc",
-        PickerPurpose::Settings => "number or name toggles for this repo · g every repo · esc",
+        PickerPurpose::Settings => "↑↓/jk select · →/l open · ←/h back · Esc closes",
         PickerPurpose::Goals(_) => "number or name attaches or detaches · esc",
         PickerPurpose::Organize => {
             "number or name organizes · the current one again flattens · x off · esc"
         }
+        PickerPurpose::Merge => "number confirms · j/k select · Enter confirms · Esc cancels",
+        PickerPurpose::Task
+        | PickerPurpose::TaskStatus(_)
+        | PickerPurpose::TaskProject(_)
+        | PickerPurpose::TopList
+        | PickerPurpose::Views
+        | PickerPurpose::SaveView
+        | PickerPurpose::GlobalView
+        | PickerPurpose::ChooseColumnAction(_) => "↑↓/jk select · →/l open · ←/h back · Esc closes",
+        PickerPurpose::TaskParent(_) => "type ID/title · ↑↓ select · Enter saves · ← back · Esc",
         PickerPurpose::Ball => "number or name picks · new person opens entry · esc",
     }
 }

@@ -8,7 +8,7 @@ use ratatui::style::Color;
 use switchbard_core::{BacklogTask, GoalDef};
 
 use crate::columns::Column;
-use crate::tasks::{Filter, FilterField};
+use crate::tasks::Filter;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaintRule {
@@ -130,46 +130,6 @@ impl PaintRule {
             }
         }
     }
-
-    /// The color this rule gives a cell, honoring `is_base` for by-column rules.
-    fn claim(
-        &self,
-        task: &BacklogTask,
-        column: Column,
-        is_base: bool,
-        goals: &[GoalDef],
-    ) -> Option<Color> {
-        match self {
-            PaintRule::ByColumn {
-                column: painted,
-                colors,
-            } => {
-                if *painted != column && !is_base {
-                    return None;
-                }
-                let field = painted.filter_field()?;
-                let value = field_value(task, field, goals)?;
-                colors
-                    .iter()
-                    .find(|(known, _)| *known == Filter::loose_key(&value))
-                    .and_then(|(_, color)| Color::from_str(color).ok())
-            }
-            PaintRule::Rows { filter, color } => Filter::parse(filter)
-                .matches(task, goals)
-                .then(|| Color::from_str(color).ok())
-                .flatten(),
-            PaintRule::Column {
-                column: painted,
-                color,
-            } => (*painted == column)
-                .then(|| Color::from_str(color).ok())
-                .flatten(),
-        }
-    }
-}
-
-fn field_value(task: &BacklogTask, field: FilterField, goals: &[GoalDef]) -> Option<String> {
-    field.column().values(task, goals).into_iter().next()
 }
 
 /// The color for one cell: the lowest (most specific) rule that claims it wins;
@@ -180,11 +140,29 @@ pub fn cell_color(
     column: Column,
     goals: &[GoalDef],
 ) -> Option<Color> {
-    rules
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(index, rule)| rule.claim(task, column, index == 0, goals))
+    cell_color_with(
+        rules,
+        column,
+        |column| {
+            let values = column.values(task, goals);
+            if column.is_date() {
+                values
+            } else {
+                values.into_iter().take(1).collect()
+            }
+        },
+        |filter| filter.matches(task, goals),
+    )
+}
+
+pub fn cell_color_with(
+    rules: &[PaintRule],
+    column: Column,
+    values: impl Fn(Column) -> Vec<String>,
+    matches: impl Fn(&Filter) -> bool,
+) -> Option<Color> {
+    crate::paint_eval::cell_token(rules, column, values, matches)
+        .and_then(|token| Color::from_str(token).ok())
 }
 
 /// The color a by-column rule assigns `value`, if any.

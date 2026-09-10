@@ -1,9 +1,17 @@
 //! Application state and the single place key events turn into state changes.
 //! Submodules extend `App` by concept: `pickers`, `paint_flow`, `slots`.
 
+mod new_task;
 mod paint_flow;
 mod pickers;
+pub mod pr_merge;
+pub mod resume;
 mod slots;
+mod task_parent;
+mod task_project;
+mod task_status;
+
+use crate::page::Page;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -29,15 +37,8 @@ pub enum Mode {
     Browse,
     Filter,
     Command,
+    NewTask,
     PickValue,
-    /// After `v`: a digit opens that slot, `s` starts a save.
-    ViewChord,
-    /// After `v s`: a digit or `d` (slot 1) picks the slot to save into.
-    ViewSaveSlot,
-    /// After `v g`: a digit or `d` picks the slot to promote to the global file.
-    ViewGlobalSlot,
-    /// After `t`: rank, assign the ball, complete, pin, or link goals.
-    RankChord,
     /// After `t b`: type a new named ball holder, then Enter assigns it.
     BallName,
 }
@@ -94,6 +95,9 @@ pub struct App {
     pub selected: usize,
     /// First row on screen; the renderer keeps `selected` inside the window.
     pub scroll: usize,
+    pub help_scroll: u16,
+    /// UTC epoch day used to invalidate relative date projections on the next tick.
+    pub calendar_day: i64,
     /// Column order when `c m` began, so typed numbers keep meaning what the header showed.
     move_origin: Option<Vec<Column>>,
     /// Which values list to return to after a color is picked.
@@ -103,10 +107,17 @@ pub struct App {
     pub view: usize,
     /// Filter, sort, columns, glyphs, paint: what a slot saves and a restart resumes.
     pub state: ViewState,
+    inactive_state: ViewState,
+    inactive_views: ViewStore,
+    inactive_view: usize,
     pub mode: Mode,
     pub input: String,
     pub pane: Pane,
+    pub page: Page,
+    pub pull_requests: crate::pull_requests::PullRequests,
     pub picker: Option<ValuePicker>,
+    picker_parents: Vec<ValuePicker>,
+    pub pr_merge: pr_merge::MergeFlow,
     pub column_purpose: ColumnPurpose,
     pub status: String,
     pub last_screen: String,
@@ -127,7 +138,11 @@ impl App {
         } = paths;
         let config = config::load(config_path.as_deref());
         let (settings, settings_warnings) = SettingsStore::load(global_settings, repo_settings);
-        let (views, view_warnings) = ViewStore::load(global_views, repo_views);
+        let (pr_views, pr_warnings) =
+            ViewStore::load_for_page(global_views.clone(), repo_views.clone(), Page::PullRequests);
+        let pr_state = pr_views.get(0).unwrap_or_else(ViewState::pull_requests);
+        let (views, view_warnings) =
+            ViewStore::load_for_page(global_views, repo_views, Page::Tasks);
         let mut app = App {
             repo_root: repo_root.to_path_buf(),
             config_seen: config_path.as_deref().and_then(config::modified_at),
@@ -149,22 +164,31 @@ impl App {
             rows: Vec::new(),
             selected: 0,
             scroll: 0,
+            help_scroll: 0,
+            calendar_day: crate::date_fields::today(),
             move_origin: None,
             paint_return: None,
             views,
             view: 0,
             state: ViewState::default(),
+            inactive_state: pr_state,
+            inactive_views: pr_views,
+            inactive_view: 0,
             config,
             mode: Mode::Browse,
             input: String::new(),
             pane: Pane::None,
+            page: Page::Tasks,
+            pull_requests: Default::default(),
             picker: None,
+            picker_parents: Vec::new(),
             column_purpose: ColumnPurpose::Filter,
             status: String::new(),
             last_screen: String::new(),
             page_size: 20,
             telemetry,
             should_quit: false,
+            pr_merge: pr_merge::MergeFlow::default(),
         };
         app.reload_tasks();
         app.reload_work();
@@ -172,6 +196,9 @@ impl App {
         app.report_config_warnings();
         if let Some(warning) = view_warnings.first() {
             app.fail(format!("views: {warning}"));
+        }
+        if let Some(warning) = pr_warnings.first() {
+            app.fail(format!("PR views: {warning}"));
         }
         if let Some(warning) = settings_warnings.first() {
             app.fail(format!("settings: {warning}"));
@@ -241,7 +268,8 @@ impl App {
             .map(|task| task.id.clone())
             .unwrap_or_else(|| "nothing".to_string());
         format!(
-            "view={} filter=\"{}\" sort={} selected={selected} pane={:?}",
+            "page={:?} view={} filter=\"{}\" sort={} selected={selected} pane={:?}",
+            self.page,
             self.view_label(),
             self.state.filter,
             self.state
@@ -252,14 +280,88 @@ impl App {
         )
     }
 
-    /// `slot\tfilter\tsort\tselected`, enough to land where the user was after a self-restart.
+    /// Preserve the page and task view across a self-restart; old task-only records still read.
     pub fn resume_state(&self) -> String {
-        format!("{}\t{}\t{}", self.view, self.selected, self.state.to_lua())
+        let (tasks, task_slot, prs, pr_slot) = if self.page != Page::PullRequests {
+            (
+                &self.state,
+                self.view,
+                &self.inactive_state,
+                self.inactive_view,
+            )
+        } else {
+            (
+                &self.inactive_state,
+                self.inactive_view,
+                &self.state,
+                self.view,
+            )
+        };
+        resume::ResumeRecord {
+            pr_page: self.page == Page::PullRequests,
+            inbox_page: self.page == Page::Inbox,
+            task_slot,
+            task_view: tasks.to_lua(),
+            task_selected: self.selected,
+            pr_slot,
+            pr_view: prs.to_lua(),
+            pr_selected: self.pull_requests.selected,
+            pr_id: self.pull_requests.selection_identity(),
+        }
+        .encode()
     }
 
     pub fn resume_from(&mut self, state: Option<&str>) {
-        let Some(state) = state else {
+        if state.is_none() {
             return;
+        }
+        let state = state.unwrap_or_default();
+        if let Some((page, record)) = state
+            .strip_prefix("pages3=")
+            .and_then(|s| s.split_once('\t'))
+        {
+            self.resume_pages(record);
+            self.switch_page(match page {
+                "prs" => Page::PullRequests,
+                "inbox" => Page::Inbox,
+                _ => Page::Tasks,
+            });
+            return;
+        }
+        if let resume::Restored::Record(record) = resume::decode(Some(state)) {
+            self.restore_resume(&record);
+            return;
+        }
+        if matches!(resume::decode(Some(state)), resume::Restored::Unreadable)
+            && !state.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        {
+            self.telemetry.record("error", "unreadable resume record");
+            self.status = "the new build could not read the previous view; opened your saved view"
+                .to_string();
+            return;
+        }
+        if let Some(record) = state.strip_prefix("pages=") {
+            self.resume_pages(record);
+            return;
+        }
+        self.switch_page(Page::Tasks);
+        let state = if let Some(rest) = state.strip_prefix("prfilter=") {
+            if let Some((filter, record)) = rest.split_once('\t') {
+                self.pull_requests.filter = serde_json::from_str(filter).unwrap_or_default();
+                record
+            } else {
+                state
+            }
+        } else {
+            state
+        };
+        let was_pr = state.starts_with("prs\t");
+        let state = if let Some(record) = state.strip_prefix("prs\t") {
+            self.page = Page::Tasks;
+            record
+        } else {
+            self.page = Page::Tasks;
+            state
         };
         let mut parts = state.splitn(3, '\t');
         if let Some(slot) = parts.next().and_then(|n| n.parse().ok()) {
@@ -268,16 +370,85 @@ impl App {
         let selected = parts.next().and_then(|n| n.parse().ok());
         if let Some(record) = parts.next() {
             self.state = ViewState::from_lua(record);
+            self.state.sanitize(Page::Tasks);
         }
         self.refilter();
         if let Some(selected) = selected {
             self.select(selected);
+        }
+        self.inactive_state.filter = self.pull_requests.filter.clone();
+        if was_pr {
+            self.toggle_page_state();
+        }
+        self.status = "updated to the new build".to_string();
+    }
+
+    fn restore_resume(&mut self, record: &resume::ResumeRecord) {
+        self.switch_page(Page::Tasks);
+        self.view = record.task_slot;
+        self.state = ViewState::from_lua(&record.task_view);
+        self.state.sanitize(Page::Tasks);
+        self.inactive_view = record.pr_slot;
+        self.inactive_state = ViewState::from_lua(&record.pr_view);
+        self.inactive_state.sanitize(Page::PullRequests);
+        self.refilter();
+        self.select(record.task_selected);
+        self.pull_requests.selected = record.pr_selected;
+        self.pull_requests.restore_selection(record.pr_id.clone());
+        self.switch_page(if record.inbox_page {
+            Page::Inbox
+        } else if record.pr_page {
+            Page::PullRequests
+        } else {
+            Page::Tasks
+        });
+        self.status = "updated to the new build".to_string();
+    }
+
+    fn resume_pages(&mut self, record: &str) {
+        type Resume = (
+            bool,
+            usize,
+            usize,
+            String,
+            usize,
+            String,
+            usize,
+            Option<String>,
+        );
+        let parsed = serde_json::from_str::<Resume>(record).or_else(|_| {
+            serde_json::from_str::<(bool, usize, usize, String, usize, String, usize)>(record).map(
+                |(page, slot, selected, tasks, pr_slot, prs, pr_selected)| {
+                    (page, slot, selected, tasks, pr_slot, prs, pr_selected, None)
+                },
+            )
+        });
+        let Ok((pr_page, task_slot, selected, tasks, pr_slot, prs, pr_selected, pr_id)) = parsed
+        else {
+            return;
+        };
+        self.switch_page(Page::Tasks);
+        self.view = task_slot;
+        self.state = ViewState::from_lua(&tasks);
+        self.state.sanitize(Page::Tasks);
+        self.inactive_view = pr_slot;
+        self.inactive_state = ViewState::from_lua(&prs);
+        self.inactive_state.sanitize(Page::PullRequests);
+        self.refilter();
+        self.select(selected);
+        self.pull_requests.selected = pr_selected;
+        self.pull_requests.restore_selection(pr_id);
+        if pr_page {
+            self.toggle_page_state();
         }
         self.status = "updated to the new build".to_string();
     }
 
     /// Cheap per-tick work: pick up edits to the config file or the task files.
     pub fn tick(&mut self) {
+        self.refresh_calendar_day();
+        self.refresh_pr_state();
+        self.tick_pr_merge();
         if let Some(path) = self.config_path.as_deref() {
             let now = config::modified_at(path);
             if now != self.config_seen {
@@ -399,6 +570,16 @@ impl App {
         }
     }
 
+    fn refresh_calendar_day(&mut self) {
+        let today = crate::date_fields::today();
+        if self.calendar_day == today {
+            return;
+        }
+        self.calendar_day = today;
+        self.refilter_tasks();
+        self.pull_requests.refilter();
+    }
+
     pub fn handle_key(&mut self, event: KeyEvent) {
         if event.kind == KeyEventKind::Release {
             return;
@@ -407,93 +588,23 @@ impl App {
             Mode::Browse => self.handle_browse_key(event),
             Mode::Filter => self.handle_filter_key(event),
             Mode::Command => self.handle_command_key(event),
+            Mode::NewTask => self.handle_new_task_key(event),
             Mode::PickValue => self.handle_pick_value_key(event),
-            Mode::ViewChord => self.handle_view_chord_key(event),
-            Mode::ViewSaveSlot => self.handle_view_save_slot_key(event),
-            Mode::ViewGlobalSlot => self.handle_view_global_slot_key(event),
-            Mode::RankChord => self.handle_rank_chord_key(event),
             Mode::BallName => self.handle_ball_name_key(event),
+        }
+        if !self.merge_target_current()
+            || (self.mode != Mode::Browse
+                && !self
+                    .picker
+                    .as_ref()
+                    .is_some_and(|p| p.purpose == PickerPurpose::Merge))
+        {
+            self.cancel_pr_merge();
         }
     }
 
     /// After `t`: digits rank, `b` assigns the ball, `d` marks Done, `p` pins,
-    /// and `g` opens goals.
-    fn handle_rank_chord_key(&mut self, event: KeyEvent) {
-        match event.code {
-            KeyCode::Char('b') => {
-                self.input.clear();
-                self.open_ball_picker();
-            }
-            KeyCode::Char(digit) if digit.is_ascii_digit() => {
-                self.input.push(digit);
-                let place: usize = self.input.parse().unwrap_or(0);
-                let room = self.top.len() + 1;
-                if place == 0 {
-                    self.input.clear();
-                    self.status = "rank: 1 is the top".to_string();
-                    return;
-                }
-                if place * 10 <= room {
-                    self.status = format!("rank: {place}▏ (another digit, or enter)");
-                    return;
-                }
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.set_rank(place.min(room));
-            }
-            KeyCode::Enter if !self.input.is_empty() => {
-                let place: usize = self.input.parse().unwrap_or(1);
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.set_rank(place.max(1).min(self.top.len() + 1));
-            }
-            KeyCode::Char('t') => {
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.set_rank(self.top.len() + 1);
-            }
-            KeyCode::Char('d') => {
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.mark_done()
-            }
-            KeyCode::Delete | KeyCode::Backspace => {
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.drop_rank()
-            }
-            KeyCode::Char('g') => {
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.open_goal_picker();
-            }
-            KeyCode::Char('p') => {
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.state.pin_top = !self.state.pin_top;
-                self.refilter();
-                self.status = if self.state.pin_top {
-                    "top list pinned first".to_string()
-                } else {
-                    "top list unpinned: ranked tasks sit in their sections".to_string()
-                };
-                self.telemetry
-                    .record("action", format!("pin_top {}", self.state.pin_top));
-            }
-            KeyCode::Esc => {
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.status.clear();
-            }
-            other => {
-                self.input.clear();
-                self.mode = Mode::Browse;
-                self.status =
-                    format!("{other:?} is not a task action; digits, t, d, delete, p, or g");
-            }
-        }
-    }
-
+    /// `n` creates a task, and `g` opens goals.
     /// `t<n>`: the selected task takes place `n` in the top list; the rest shift down.
     fn set_rank(&mut self, place: usize) {
         let Some(task) = self.selected_task() else {
@@ -745,20 +856,39 @@ impl App {
         if self.input.contains(' ') {
             return Vec::new();
         }
-        let mut names: Vec<String> = ["bug", "idea", "group", "palette", "theme", "reload", "q"]
-            .iter()
-            .map(|name| name.to_string())
-            .collect();
-        names.retain(|name| name.starts_with(typed) && name != typed);
+        let mut names: Vec<String> = [
+            "bug", "idea", "group", "palette", "theme", "reload", "page", "help", "q",
+        ]
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+        if self.page == Page::PullRequests {
+            names.push("more".to_string());
+        }
+        names.retain(|name| {
+            (self.page != Page::Inbox
+                || matches!(
+                    name.as_str(),
+                    "bug" | "idea" | "reload" | "page" | "help" | "q"
+                ))
+                && name.starts_with(typed)
+                && name != typed
+        });
         names
     }
 
     fn handle_browse_key(&mut self, event: KeyEvent) {
+        self.picker_parents.clear();
+        if event.code == KeyCode::Enter && event.kind == KeyEventKind::Repeat {
+            return;
+        }
         let chord = KeyChord::from_event(&event);
-        if let (KeyCode::Char(digit), false) = (event.code, chord.ctrl) {
-            if let Some(position) = digit.to_digit(10).filter(|n| *n > 0) {
-                self.open_column_actions(position as usize);
-                return;
+        if self.page != Page::Inbox {
+            if let (KeyCode::Char(digit), false) = (event.code, chord.ctrl) {
+                if let Some(position) = digit.to_digit(10).filter(|n| *n > 0) {
+                    self.open_column_actions(position as usize);
+                    return;
+                }
             }
         }
         match self.config.keys.get(&chord).cloned() {
@@ -784,15 +914,17 @@ impl App {
             KeyCode::Enter => {
                 self.mode = Mode::Browse;
                 self.telemetry
-                    .record("action", format!("filter_apply {}", self.state.filter));
+                    .record("action", format!("filter_apply {}", self.filter_text()));
             }
             KeyCode::Backspace => {
-                self.state.filter.pop();
-                self.refilter();
+                let mut text = self.filter_text().to_string();
+                text.pop();
+                self.set_filter(text);
             }
             KeyCode::Char(c) => {
-                self.state.filter.push(c);
-                self.refilter();
+                let mut text = self.filter_text().to_string();
+                text.push(c);
+                self.set_filter(text);
             }
             _ => {}
         }
@@ -831,8 +963,127 @@ impl App {
         }
     }
 
-    fn apply(&mut self, action: &Action) {
+    fn refresh_pr_state(&mut self) {
+        let before = self.pull_requests.row().map(|row| row.id.clone());
+        if self.pull_requests.tick(
+            &self.repo_root,
+            self.config.pr_refresh_seconds,
+            Instant::now(),
+        ) {
+            self.pull_requests.refresh_links(&self.tasks);
+            self.pull_requests.refilter();
+            let after = self.pull_requests.row().map(|row| row.id.clone());
+            if self.page == Page::PullRequests && self.pane == Pane::Detail && before != after {
+                self.pane = Pane::None;
+                self.status = "Selected PR is no longer in the filtered list".into();
+            }
+        }
+    }
+
+    fn apply_pr_action(&mut self, action: &Action) -> bool {
+        if matches!(
+            action,
+            Action::Down
+                | Action::Up
+                | Action::Top
+                | Action::Bottom
+                | Action::PageDown
+                | Action::PageUp
+        ) {
+            self.cancel_pr_merge();
+        }
+        if self.pane == Pane::Detail {
+            let delta = match action {
+                Action::PageDown => Some(self.page_size as i32),
+                Action::PageUp => Some(-(self.page_size as i32)),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                self.pull_requests.detail_scroll =
+                    (i32::from(self.pull_requests.detail_scroll) + delta).clamp(0, 65535) as u16;
+                return true;
+            }
+        }
         match action {
+            Action::OpenBrowser => self.open_pr_browser(),
+            Action::Merge => self.open_pr_merge(),
+            Action::Down => self.pull_requests.step(1),
+            Action::Up => self.pull_requests.step(-1),
+            Action::Top => self.pull_requests.step(isize::MIN),
+            Action::Bottom => self.pull_requests.step(isize::MAX),
+            Action::PageDown => self.pull_requests.step(self.page_size as isize),
+            Action::PageUp => self.pull_requests.step(-(self.page_size as isize)),
+            Action::Open => {
+                self.pull_requests.detail_scroll = 0;
+                self.pane = if self.pane == Pane::Detail {
+                    Pane::None
+                } else {
+                    Pane::Detail
+                }
+            }
+            Action::Reload => {
+                self.pull_requests.refresh(&self.repo_root);
+                self.status.clear();
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn open_pr_browser(&mut self) {
+        let Some(row) = self.pull_requests.row() else {
+            self.status = "No PR selected".into();
+            return;
+        };
+        let url = row.url.clone();
+        match switchbard_core::open_url(&url, None) {
+            Ok(()) => self.status = format!("Opened {url}"),
+            Err(error) => self.fail(format!("Could not open PR: {error}")),
+        }
+    }
+
+    fn scroll_help(&mut self, action: &Action) -> bool {
+        if self.pane != Pane::Help {
+            return false;
+        }
+        let page = self.page_size.min(u16::MAX as usize) as u16;
+        self.help_scroll = match action {
+            Action::Down => self.help_scroll.saturating_add(1),
+            Action::Up => self.help_scroll.saturating_sub(1),
+            Action::PageDown => self.help_scroll.saturating_add(page),
+            Action::PageUp => self.help_scroll.saturating_sub(page),
+            Action::Top => 0,
+            Action::Bottom => u16::MAX,
+            _ => return false,
+        };
+        true
+    }
+
+    fn apply(&mut self, action: &Action) {
+        if self.scroll_help(action) {
+            return;
+        }
+        if !self.page.allows(action) {
+            self.status = "Switch to Tasks or Pull Requests to use list controls".to_string();
+            return;
+        }
+        if self.page == Page::PullRequests && self.apply_pr_action(action) {
+            return;
+        }
+        match action {
+            Action::Merge => self.status = "Switch to Pull Requests to merge a PR".into(),
+            Action::OpenBrowser => self.status = "Switch to Pull Requests to open a PR".into(),
+            Action::DismissNotifications => self.pull_requests.dismiss_notifications(),
+            Action::Page => {
+                self.cancel_pr_merge();
+                self.switch_page(self.page.toggle());
+                if self.page == Page::PullRequests {
+                    self.refresh_pr_state();
+                }
+                self.pane = Pane::None;
+                self.status.clear();
+            }
+            Action::NewTask => self.open_new_task(),
             Action::Down => self.step(1),
             Action::Up => self.step(-1),
             Action::Top => self.select(0),
@@ -846,9 +1097,10 @@ impl App {
                 }
             }
             Action::Back => {
+                self.cancel_pr_merge();
                 if self.pane != Pane::None {
                     self.pane = Pane::None;
-                } else if !self.state.filter.is_empty() {
+                } else if self.page != Page::Inbox && !self.filter_text().is_empty() {
                     self.set_filter(String::new());
                 }
                 self.status.clear();
@@ -856,8 +1108,9 @@ impl App {
             Action::Filter => {
                 self.mode = Mode::Filter;
                 self.status.clear();
-                if !self.state.filter.is_empty() && !self.state.filter.ends_with(' ') {
-                    self.state.filter.push(' ');
+                let text = self.filter_text();
+                if !text.is_empty() && !text.ends_with(' ') {
+                    self.set_filter(format!("{text} "));
                 }
             }
             Action::FilterColumn => self.open_column_chooser(ColumnPurpose::Filter),
@@ -867,15 +1120,7 @@ impl App {
             Action::Ball => self.pass_ball(),
             Action::Pass => self.pass_work(),
             Action::Settings => self.open_settings(),
-            Action::Rank => {
-                self.mode = Mode::RankChord;
-                self.input.clear();
-                self.status = format!(
-                    "task: a number ranks it (1 is top, {} last) · b Ball · t appends · d Done · delete drops · p {} · g goals",
-                    self.top.len() + 1,
-                    if self.state.pin_top { "unpins" } else { "pins" }
-                );
-            }
+            Action::Rank => self.open_task_picker(),
             Action::Group => self.open_organize_picker(),
             Action::Command => {
                 self.mode = Mode::Command;
@@ -885,22 +1130,21 @@ impl App {
             Action::Reload => {
                 self.reload_config();
                 self.reload_tasks();
-                self.status = format!("reloaded {} tasks", self.tasks.len());
+                self.status = if self.page == Page::Tasks {
+                    format!("reloaded {} tasks", self.tasks.len())
+                } else {
+                    "reloaded".to_string()
+                };
             }
             Action::Help => {
+                self.help_scroll = 0;
                 self.pane = match self.pane {
                     Pane::Help => Pane::None,
                     _ => Pane::Help,
                 }
             }
-            Action::Quit => self.should_quit = true,
-            Action::View => {
-                self.mode = Mode::ViewChord;
-                self.status = format!(
-                    "view: 1-{} opens a slot · s saves · g makes global",
-                    self.views.len()
-                );
-            }
+            Action::Quit => self.request_quit(),
+            Action::View => self.open_view_picker(PickerPurpose::Views),
         }
     }
 
@@ -934,9 +1178,29 @@ impl App {
 
     fn run_command(&mut self, command: &str) {
         let (verb, rest) = command.split_once(' ').unwrap_or((command, ""));
+        if self.page == Page::Inbox
+            && !matches!(
+                verb,
+                "q" | "quit" | "reload" | "page" | "help" | "bug" | "idea" | "dismiss" | ""
+            )
+        {
+            self.status = "Switch to Tasks or Pull Requests to use list controls".into();
+            return;
+        }
+        if self.page == Page::PullRequests && matches!(verb, "group" | "goal") {
+            self.status = "Switch to Tasks to use task controls".to_string();
+            return;
+        }
         match verb {
-            "q" | "quit" => self.should_quit = true,
+            "more" if self.page == Page::PullRequests => {
+                self.pull_requests.load_more(&self.repo_root)
+            }
+            "page" => self.apply(&Action::Page),
+            "help" => self.apply(&Action::Help),
+            "q" | "quit" => self.request_quit(),
             "reload" => self.apply(&Action::Reload),
+            "open" => self.apply(&Action::OpenBrowser),
+            "dismiss" => self.apply(&Action::DismissNotifications),
             "palette" => self.choose_palette(rest.trim()),
             "theme" => self.choose_theme(rest.trim()),
             "group" => match Grouping::parse(rest) {
@@ -1055,33 +1319,77 @@ impl App {
         }
     }
 
+    fn toggle_page_state(&mut self) {
+        self.switch_page(self.page.toggle());
+    }
+
+    fn switch_page(&mut self, page: Page) {
+        if (self.page == Page::PullRequests) != (page == Page::PullRequests) {
+            std::mem::swap(&mut self.state, &mut self.inactive_state);
+            std::mem::swap(&mut self.views, &mut self.inactive_views);
+            std::mem::swap(&mut self.view, &mut self.inactive_view);
+        }
+        self.page = page;
+        if page != Page::Inbox {
+            self.state.sanitize(page);
+        }
+        self.refilter();
+    }
+
+    pub fn page_columns(&self) -> &'static [Column] {
+        crate::list_settings::ListSettings::for_page(self.page).map_or(&[], |scope| scope.catalog())
+    }
+
+    pub fn filter_text(&self) -> &str {
+        if self.page == Page::PullRequests {
+            &self.pull_requests.filter
+        } else {
+            &self.state.filter
+        }
+    }
+
     fn set_filter(&mut self, text: String) {
+        if self.page == Page::PullRequests {
+            self.state.filter = text.clone();
+            self.pull_requests.filter = text;
+            self.pull_requests.refilter();
+            return;
+        }
         self.state.filter = text;
         self.refilter();
     }
 
     fn refilter(&mut self) {
-        let base = self.settings.effective().base_filter(&self.state.filter);
-        let filter = Filter::parse(&format!("{base} {}", self.state.filter));
+        if self.page == Page::PullRequests {
+            self.pull_requests.filter = self.state.filter.clone();
+            self.pull_requests.sort = self.state.sort;
+            self.pull_requests.refilter();
+            return;
+        }
+        self.refilter_tasks();
+    }
+
+    fn refilter_tasks(&mut self) {
+        let state = if self.page != Page::PullRequests {
+            &self.state
+        } else {
+            &self.inactive_state
+        };
+        let base = self.settings.effective().base_filter(&state.filter);
+        let filter = Filter::parse(&format!("{base} {}", state.filter));
         self.visible = (0..self.tasks.len())
             .filter(|&index| filter.matches(&self.tasks[index], &self.goals))
             .collect();
-        if let Some(sort) = self.state.sort {
+        if let Some(sort) = state.sort {
             sort::apply(&self.tasks, &mut self.visible, sort, &self.top, &self.goals);
         }
-        let pinned: &[String] = if self.state.pin_top { &self.top } else { &[] };
+        let pinned: &[String] = if state.pin_top { &self.top } else { &[] };
         let headings = group::Headings {
             projects: &self.projects,
             goals: &self.goals,
             goal_summaries: &self.goal_summaries,
         };
-        self.rows = group::rows(
-            &self.tasks,
-            &self.visible,
-            &self.state.group,
-            &headings,
-            pinned,
-        );
+        self.rows = group::rows(&self.tasks, &self.visible, &state.group, &headings, pinned);
         self.select(self.selected);
     }
 
@@ -1110,22 +1418,28 @@ impl App {
 
     /// `,`: the standing preferences, one row per status that can be hidden.
     pub(super) fn open_settings(&mut self) {
-        let options = tasks::field_values(&self.tasks, tasks::FilterField::Status, &self.goals)
-            .into_iter()
-            .map(|(status, count)| {
-                let mark = if self.settings.effective().is_hidden(&status) {
-                    "✓"
-                } else {
-                    " "
-                };
-                PickOption {
-                    label: format!("{mark}hide {status}"),
-                    count,
-                    key: None,
-                    payload: Payload::Text(status),
-                }
-            })
-            .collect();
+        let mut options: Vec<PickOption> =
+            tasks::field_values(&self.tasks, tasks::FilterField::Status, &self.goals)
+                .into_iter()
+                .map(|(status, count)| {
+                    let mark = if self.settings.effective().is_hidden(&status) {
+                        "✓"
+                    } else {
+                        " "
+                    };
+                    PickOption {
+                        label: format!("{mark}hide {status}"),
+                        count,
+                        key: None,
+                        payload: Payload::Text(status),
+                    }
+                })
+                .collect();
+        options.push(PickOption::keyed(
+            'g',
+            "Use these settings in every repo",
+            Payload::GlobalSettings,
+        ));
         self.open_picker(PickerPurpose::Settings, options);
         self.status = match self.settings.scope() {
             SettingsScope::Repo => "this repo's settings".to_string(),
@@ -1140,7 +1454,9 @@ impl App {
             .settings
             .edit_repo(|settings| settings.toggle_hidden(status))
         {
+            self.open_settings();
             self.fail(error);
+            return;
         }
         self.refilter();
         let highlighted = self.picker.as_ref().map(|p| p.selected).unwrap_or(0);
@@ -1149,7 +1465,7 @@ impl App {
             picker.selected = highlighted;
         }
         self.status = match self.settings.effective().label() {
-            Some(label) => format!("{label} · this repo · g makes it every repo"),
+            Some(label) => format!("{label} · this repo"),
             None => "nothing hidden · this repo".to_string(),
         };
         self.telemetry
@@ -1227,7 +1543,7 @@ impl App {
                 self.fail(error.to_string());
             }
         }
-        self.refilter();
+        self.refilter_tasks();
         if let Some((identity, id)) = kept {
             if let Some(row) = self.rows.iter().position(|row| match row {
                 Row::Task(index) => {
@@ -1243,7 +1559,30 @@ impl App {
                 _ => false,
             }) {
                 self.select(row);
+            } else if self.mode == Mode::BallName
+                || self.picker.as_ref().is_some_and(|picker| {
+                    matches!(
+                        picker.purpose,
+                        PickerPurpose::Task
+                            | PickerPurpose::TaskStatus(_)
+                            | PickerPurpose::TaskProject(_)
+                            | PickerPurpose::TaskParent(_)
+                            | PickerPurpose::TopList
+                            | PickerPurpose::Ball
+                            | PickerPurpose::Goals(_)
+                    )
+                })
+            {
+                self.picker = None;
+                self.mode = Mode::Browse;
+                self.input.clear();
+                self.picker_parents.clear();
+                self.status = format!("{id} is no longer visible; task action canceled");
             }
+        }
+        self.pull_requests.refresh_links(&self.tasks);
+        if self.page == Page::PullRequests {
+            self.refilter();
         }
     }
 

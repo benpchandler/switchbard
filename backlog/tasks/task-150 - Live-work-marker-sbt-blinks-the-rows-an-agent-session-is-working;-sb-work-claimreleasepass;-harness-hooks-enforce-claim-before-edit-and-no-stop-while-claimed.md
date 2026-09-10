@@ -1,10 +1,10 @@
 ---
 id: TASK-150
 title: 'Live work marker: sbt blinks the rows an agent session is working; sb work claim/release/pass; harness hooks enforce claim-before-edit and no-stop-while-claimed'
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-09-04 10:22'
-updated_date: '2026-09-04 15:06'
+updated_date: '2026-09-04 11:01'
 labels:
   - tui
   - agent-protocol

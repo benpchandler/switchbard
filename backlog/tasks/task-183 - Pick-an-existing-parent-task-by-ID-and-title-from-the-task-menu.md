@@ -4,7 +4,7 @@ title: Pick an existing parent task by ID and title from the task menu
 status: In Review
 assignee: []
 created_date: '2026-09-08 13:30'
-updated_date: '2026-09-08 16:51'
+updated_date: '2026-09-08 13:57'
 labels:
   - tui
   - hierarchy
@@ -12,8 +12,6 @@ labels:
 dependencies:
   - TASK-182
 priority: medium
-references:
-  - https://github.com/benpchandler/switchbard/pull/143
 ---
 
 ## Description
@@ -37,6 +35,4 @@ Parent linking added to the current task picker under t a, with existing task ID
 Eight new disk-backed parent-picker E2E journeys pass, and the full TUI suite is green. Covers ID/title search, explicit commit, canonical persistence, unlink, cancel/back, empty search, stale parent/source, unsupported nesting and narrow/Unicode/many-choice layouts. Final mixed-prefix integration check and installation remain.
 
 Installed from b73cb28b with mise run tui-install: formatting, TUI clippy, 125 TUI tests passed (18 existing opt-in tests ignored), then release install succeeded. Installed sbt SHA256 7e358fee8d039743403e21bb17e0ccc852cb45be790a3491f3b754c7a186cfc5 matches isolated release artifact. Use t a, search ID/title, arrows and Enter; No parent promotes. Eight new parent journeys passed. State/stress evidence: docs/task-parent-picker/ledger.md. Human native appearance approval and PR/merge not claimed. TASK-185 records the existing active-claim renaming gap.
-
-Delivered and merged PR143 on 2026-09-08 at20:50:56Z, merge b5661281af1803aca12f02242419726433f54d68. All8 PR checks passed;8 real-key picker journeys passed. This supersedes prior no-PR/no-merge notes. No shared app restart or new install during merge. Native appearance approval is not inferred from merge; task remains In Review with ball:me for that confirmation.
 <!-- SECTION:NOTES:END -->

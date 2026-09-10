@@ -3,8 +3,7 @@
 use crate::app::App;
 use crate::columns::Column;
 use crate::paint::{self, PaintRule, NAMED_COLORS};
-use crate::picker::{PaintPick, Payload, PickOption, PickerPurpose};
-use crate::tasks;
+use crate::picker::{PaintPick, PaintRuleAction, Payload, PickOption, PickerPurpose};
 
 impl App {
     /// Mirrors the header: shown columns first (so `p2` is column 2), then the
@@ -14,13 +13,18 @@ impl App {
             .state
             .columns
             .iter()
-            .map(|column| PickOption::column(*column, false))
+            .map(|column| PickOption::paint_column(*column, false))
             .collect();
-        if let Some(task) = self.selected_task() {
+        let selected_id = if self.page == crate::page::Page::PullRequests {
+            self.pull_requests.row().map(|row| row.number.to_string())
+        } else {
+            self.selected_task().map(|task| task.id.clone())
+        };
+        if let Some(id) = selected_id {
             options.push(PickOption::keyed(
                 'r',
-                format!("row {}", task.id),
-                Payload::ThisRow(task.id.clone()),
+                format!("row {id}"),
+                Payload::ThisRow(id),
             ));
         }
         let filter = self.state.filter.trim().to_string();
@@ -48,9 +52,9 @@ impl App {
                 Payload::DeleteAllPaint,
             ));
         }
-        for column in Column::ALL {
+        for &column in self.page_columns() {
             if !self.state.columns.contains(&column) && column.filter_field().is_some() {
-                options.push(PickOption::column(column, true));
+                options.push(PickOption::paint_column(column, true));
             }
         }
         self.paint_return = None;
@@ -59,9 +63,7 @@ impl App {
     }
 
     pub(super) fn is_categorical(&self, column: Column) -> bool {
-        column
-            .filter_field()
-            .is_some_and(|field| !tasks::field_values(&self.tasks, field, &self.goals).is_empty())
+        column.filter_field().is_some() && !self.column_values(column).is_empty()
     }
 
     /// A column entry paints by its values when it has categories, else the whole column.
@@ -74,7 +76,7 @@ impl App {
     }
 
     pub(super) fn open_paint_values_picker(&mut self, column: Column) {
-        let Some(field) = column.filter_field() else {
+        let Some(_) = column.filter_field() else {
             return;
         };
         let mut options = vec![PickOption::numbered(
@@ -82,7 +84,7 @@ impl App {
             Payload::Auto,
         )];
         options.extend(
-            tasks::field_values(&self.tasks, field, &self.goals)
+            self.column_values(column)
                 .into_iter()
                 .map(|(value, count)| PickOption::text(value, count)),
         );
@@ -116,11 +118,63 @@ impl App {
             self.status = "no paint rules".to_string();
             return;
         }
+        let mut options = options;
+        options.extend([
+            PickOption::keyed(
+                'K',
+                "Move a rule earlier",
+                Payload::PaintRuleAction(PaintRuleAction::Earlier),
+            ),
+            PickOption::keyed(
+                'J',
+                "Move a rule later",
+                Payload::PaintRuleAction(PaintRuleAction::Later),
+            ),
+            PickOption::keyed(
+                'x',
+                "Delete a rule",
+                Payload::PaintRuleAction(PaintRuleAction::Delete),
+            ),
+        ]);
         self.open_picker(PickerPurpose::PaintRules, options);
     }
 
+    pub(super) fn open_paint_rule_action(&mut self, action: PaintRuleAction) {
+        let options = self
+            .state
+            .paint
+            .iter()
+            .enumerate()
+            .map(|(index, rule)| PickOption::numbered(rule.label(), Payload::Rule(index)))
+            .collect();
+        self.open_picker(PickerPurpose::ChoosePaintRule(action), options);
+    }
+
+    pub(super) fn run_paint_rule_action(&mut self, index: usize, action: PaintRuleAction) {
+        match action {
+            PaintRuleAction::Earlier => {
+                self.move_paint_rule(index, -1);
+            }
+            PaintRuleAction::Later => {
+                self.move_paint_rule(index, 1);
+            }
+            PaintRuleAction::Delete if index < self.state.paint.len() => {
+                self.state.paint.remove(index);
+                self.telemetry.record("action", "paint_rule_delete");
+            }
+            PaintRuleAction::Delete => {}
+        }
+        if self.state.paint.is_empty() {
+            self.picker = None;
+            self.mode = crate::app::Mode::Browse;
+            self.status = "no paint rules left".to_string();
+        } else {
+            self.open_paint_rules_picker();
+        }
+    }
+
     pub(super) fn paint_auto(&mut self, column: Column) {
-        let Some(field) = column.filter_field() else {
+        let Some(_) = column.filter_field() else {
             return;
         };
         let palette = if self.config.palette.is_empty() {
@@ -128,10 +182,7 @@ impl App {
         } else {
             self.config.palette.clone()
         };
-        for (index, (value, _)) in tasks::field_values(&self.tasks, field, &self.goals)
-            .iter()
-            .enumerate()
-        {
+        for (index, (value, _)) in self.column_values(column).iter().enumerate() {
             let color = &palette[index % palette.len()];
             paint::set_value_color(&mut self.state.paint, column, value, Some(color));
         }
@@ -181,12 +232,6 @@ impl App {
         if let Some(column) = self.paint_return {
             self.open_paint_values_picker(column);
         }
-    }
-
-    /// `h`/Left inside a paint flow: one level up, back to the target list.
-    pub(super) fn paint_back(&mut self) {
-        self.paint_return = None;
-        self.open_paint_target_picker();
     }
 
     pub(super) fn move_paint_rule(&mut self, index: usize, delta: isize) -> usize {

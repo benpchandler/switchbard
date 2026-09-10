@@ -6,6 +6,7 @@ pub mod backlog_relations;
 pub mod backlog_stats;
 pub mod backlog_triage;
 pub mod boot_time;
+pub mod build_identity;
 pub mod classify;
 pub mod config;
 pub mod discover;
@@ -22,6 +23,7 @@ pub mod mission_projection;
 pub mod mission_sidecar_protocol;
 pub mod mission_supervisor;
 pub mod open_url;
+pub mod pr_list;
 pub mod refine;
 pub mod removal_safety;
 pub mod resolve;
@@ -53,8 +55,8 @@ pub use backlog::{
     check_in_goal, complete_backlog_task, create_backlog_task, create_goal, create_initiative_def,
     create_project_def, create_task_allocating_id, detach_goal_inputs, edit_backlog_task,
     edit_backlog_task_command, edit_backlog_task_expected, edit_goal_target, edit_initiative_def,
-    edit_project_def, expedite_task, expedite_task_at, goals_feeding, is_backlog_repo,
-    load_backlog_repo, missing_standard_statuses, move_backlog_task, next_task_id,
+    edit_project_def, eligible_backlog_parents, expedite_task, expedite_task_at, goals_feeding,
+    is_backlog_repo, load_backlog_repo, missing_standard_statuses, move_backlog_task, next_task_id,
     ordered_status_vocabulary, parse_backlog_day, rank_project, rank_project_move, rank_task,
     rank_task_move, rehome_task_file, rename_project, replace_task_section,
     revise_backlog_acceptance_criteria, revise_task_checklist, roll_goals,
@@ -83,6 +85,10 @@ pub use backlog_stats::{
 pub use backlog_triage::{
     find_hub_repo, load_ordering_overlay, parse_backlog_datetime_unix, triage_entry_from_task,
     triage_rank, OrderingOverlay, TriageDue, TriageEntry, TriagePriority,
+};
+pub use build_identity::{
+    build_commit_is_known, build_id_report, build_is_dirty, version_line, BUILD_BRANCH,
+    BUILD_COMMIT, CRATE_VERSION, VERSION_LINE,
 };
 pub use classify::{classify_command, classify_script_body, ServerLikelihood};
 pub use discover::{auto_scan_roots, discover_repos, DiscoveredRepo};
@@ -151,3 +157,14 @@ pub use worktree_remove::{
     BranchDeleteAssessment, DirtyFile,
 };
 pub use worktree_size::{humanize_size, probe_worktree_size};
+
+pub use pr_list::{
+    fetch_pull_requests, fetch_pull_requests_with_limit, PrChecks, PrLifecycle, PrListRow, PrMerge,
+    PrReview, PrSnapshot, DEFAULT_PULL_REQUEST_LIMIT, MAX_PULL_REQUESTS,
+};
+
+pub mod pr_merge;
+pub use pr_merge::{
+    execute_pr_merge, prepare_pr_merge, PrMergeMethod, PrMergeOutcome, PrMergePreparation,
+    PrMergeResult, PreparedPrMerge,
+};

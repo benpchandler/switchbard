@@ -1,15 +1,14 @@
 ---
 id: TASK-141.1
 title: Share PR column controls and saved view settings with Tasks
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-09-07 01:32'
-updated_date: '2026-09-07 02:20'
+updated_date: '2026-09-07 13:27'
 labels:
   - tui
   - github
   - parity
-  - ball:me
 dependencies: []
 priority: medium
 parent_task_id: '141'
@@ -39,11 +38,5 @@ Owner requested these as tracked tasks before live claiming and implementation. 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented in feat/tui-pr-pane (source ea277a1). Full TUI fmt/clippy/tests/install passed. All 20 page/PR/control E2E journeys passed with actual GitHub reads; title/check sorts and review/merge facets also passed on budget PR observations. Evidence: docs/tui-pr-controls-ledger.md and docs/tui-pr-controls-evidence.md. Independent source review has no remaining verified blocker. Delivery pipeline/PR/CI and human visual review remain pending; not merged.
 
-Delivery run 01M1X6S8BVE6H8F1BVR3A5H2CK: rebase onto current main completed and code review passed without findings; pipeline targeted tests passed. Pipeline is paused at ask-user finding missing-visual-evidence (native terminal screenshot/GIF). Installed build and all 20 originating live/page/control tests are proved; CUA refused WezTerm capture. Owner decision requested before proceeding. No PR or CI result yet. Live claim retained for resumption.
-
-Owner approved the missing-visual-evidence gate and instructed continue. Run 01M1X6S8BVE6H8F1BVR3A5H2CK resumed: test gate approved using the installed build and recorded real E2E evidence; documentation/lint/push/PR/CI pending. This is not a claim of a captured screenshot or human appearance approval.
-
-PR #136 is open at published commit 1e0af80e45b1c84cc241f41f9468e537bd1bbea3; CI is running. Full preflight passed on rerun after an intermittent mission-sidecar timeout; no source fix was made for that timeout. Original local feature history is preserved because guarded sync refused rewritten history; final install is being verified from a separate checkout of the published commit.
-
-Delivery verified: PR #136 at 1e0af80e45b1c84cc241f41f9468e537bd1bbea3 has all eight GitHub checks passing. Exact published revision passed mise run tui-install and eight live GitHub-data E2E tests, and is installed locally. Earlier 20-test suite also passed. Native screenshot gap was explicitly approved by the owner. Full workspace preflight passed on rerun after a mission-sidecar timeout; no timeout fix is claimed. Implementation is ready for review; PR remains open and unmerged.
+Verified 2026-09-07: PR #136 merged at be9428d, all eight GitHub checks passed. This child implementation contract is complete; parent TASK-141 still tracks actions, cross-page alerts, and reporter confirmation.
 <!-- SECTION:NOTES:END -->

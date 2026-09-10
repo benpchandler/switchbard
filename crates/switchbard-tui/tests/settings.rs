@@ -23,10 +23,7 @@ fn hiding_a_status_applies_under_every_view_and_a_view_that_names_status_wins() 
         "toggled and still open: {screen}"
     );
     assert!(screen.contains("hide:done"), "title says so: {screen}");
-    assert_eq!(
-        h.app.status,
-        "hide:done · this repo · g makes it every repo"
-    );
+    assert_eq!(h.app.status, "hide:done · this repo");
     h.press(KeyCode::Esc);
     assert_eq!(visible_titles(&h).len(), 3);
     h.press(KeyCode::Char('v'));

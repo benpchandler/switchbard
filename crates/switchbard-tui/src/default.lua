@@ -3,15 +3,15 @@
 -- Every key is optional; anything you leave out falls back to this file.
 return {
   -- key -> action. Keys: single chars, "enter", "esc", "tab", "up", "down",
-  -- "ctrl-<char>". Actions: down, up, top, bottom, page_down, page_up, open,
-  -- back, filter, filter_column, sort_column, columns, paint, ball, pass, group, task, settings, view, command, reload, help, quit.
+  -- "ctrl-<char>". Actions: down, up, top, bottom, page_down, page_up, open, new_task,
+  -- back, filter, filter_column, sort_column, columns, paint, ball, pass, group, task, settings, view, command, reload, help, quit, page, merge, open_browser, dismiss_notifications.
   keys = {
     j = "down", k = "up", down = "down", up = "up",
     g = "top", G = "bottom",
     ["ctrl-d"] = "page_down", ["ctrl-u"] = "page_up",
-    enter = "open", esc = "back",
+    enter = "open", esc = "back", tab = "page",
     ["/"] = "filter", f = "filter_column", s = "sort_column", [":"] = "command",
-    c = "columns", p = "paint", b = "ball", w = "pass", o = "group", t = "task", v = "view", [","] = "settings", r = "reload", ["?"] = "help", q = "quit",
+    c = "columns", p = "paint", b = "ball", w = "pass", o = "group", t = "task", v = "view", [","] = "settings", r = "reload", O = "open_browser", m = "merge", n = "dismiss_notifications", ["?"] = "help", q = "quit",
   },
 
   -- Colors: ANSI names (cyan, gray, darkgray, ...) follow your terminal palette;
@@ -41,6 +41,7 @@ return {
       text       = { fg = "#f49f31" },
       link       = { fg = "#75beff" },
       chip       = { fg = "black", bg = "#f49f31" },  -- amber fill = "you can change this" on the Terminal
+      attention_badge= { fg = "black", bg = "#f49f31" },
       keys       = { fg = "#4dc7f9" },
       hint       = { fg = "#9e9e9e" },
       status     = { fg = "#d7d7d7" },
@@ -60,6 +61,7 @@ return {
       text       = {},
       link       = { fg = "#58a6ff" },
       chip       = { fg = "black", bg = "#ffcc00" },
+      attention_badge= { fg = "black", bg = "#ffcc00" },
       keys       = { fg = "#ffcc00" },
       hint       = { fg = "#8b949e" },
       status     = { fg = "#ffcc00" },
@@ -87,6 +89,7 @@ return {
       text       = { fg = "#C3B7A6" },
       link       = { fg = "#9FB6D2" },
       chip       = { fg = "#D0C7BB", bg = "#634921" },
+      attention_badge= { fg = "#D0C7BB", bg = "#634921" },
       keys       = { fg = "#77B5B5" },
       hint       = { fg = "#837667" },
       status     = { fg = "#B0A394" },
@@ -102,6 +105,7 @@ return {
       selected   = { reverse = true },
       hint       = { fg = "gray" },
       chip       = { reverse = true },
+      attention_badge= { reverse = true },
       keys       = { bold = true },
       working    = { bold = true, underline = true },
     },
@@ -113,6 +117,9 @@ return {
   -- holds full and dark longer), redrawn frames times per period. period_ms
   -- = 0 keeps them lit. The `work` column (`c`) shows one ● per session; `w`
   -- passes the task.
+  -- PR reads refresh while the page is visible (30-3600 seconds); failures require r.
+  pr_refresh_seconds = 60,
+
   work = { period_ms = 3000, frames = 30, flatten = 2 },
 
   -- What painting a column "auto" hands out, most common value first: keep the
@@ -149,9 +156,16 @@ return {
     priority = { high = "↑", medium = "·", low = "↓" },
     status = { icebox = "❄", todo = "○", inprogress = "◐", inreview = "◑", done = "●" },
     ball = { me = "●", agent = "◌" },
+    lifecycle = { open = "○", closed = "×", merged = "●" },
+    checks = { failed = "!", unknown = "?", pending = "~", passed = "+", noneobserved = "?", notfetched = "·" },
+    review = { changesrequested = "!", reviewunknown = "?", reviewrequired = "○", approved = "+" },
+    merge = { mergeconflict = "!", mergeabilityunknown = "?", nomergeconflict = "+" },
+    draft = { draft = "D", ready = "R" },
   },
 
   -- Columns are picked and ordered inside sbt (`c`) and saved with each view,
   -- together with the filter and sort, in ~/.switchbard/views.lua (global) and
   -- ~/.switchbard/views/<repo>.lua (per repo). Slot 1 opens by default.
+  -- PR views use views.prs.lua and views/<repo>.prs.lua, independently.
+  -- PR column names for theme/glyphs: id, lifecycle, tasks, checks, title, review, merge, draft.
 }

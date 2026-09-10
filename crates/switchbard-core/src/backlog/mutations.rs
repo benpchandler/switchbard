@@ -34,6 +34,7 @@
 use super::allocate::{claim_task_id, create_task_allocating_id, strip_id_prefix};
 use super::ball::Ball;
 use super::goals::rename_task_in_goals;
+use super::parent::normalized_id;
 use super::parse::{
     configured_task_prefix, load_backlog_repo, parse_config_statuses, parse_task_file,
     DEFAULT_TASK_PREFIX,
@@ -414,6 +415,10 @@ pub(super) fn move_target<'a>(
             .parent
             .as_deref()
             .is_some_and(|p| same_id(p, &task.id, prefix))
+            || other
+                .id
+                .rsplit_once('.')
+                .is_some_and(|(p, _)| same_id(p, &task.id, prefix))
     }) {
         bail!(
             "{} has sub-issues - move or promote them first (sub-issues nest one level)",
@@ -426,7 +431,7 @@ pub(super) fn move_target<'a>(
             if same_id(&parent.id, &task.id, prefix) {
                 bail!("{} cannot be its own parent", task.id);
             }
-            if normalized_id(&parent.id, prefix).contains('.') {
+            if parent.parent.is_some() || normalized_id(&parent.id, prefix).contains('.') {
                 bail!(
                     "{} is itself a sub-issue - sub-issues nest one level, pick a top-level parent",
                     parent.id
@@ -446,8 +451,13 @@ pub(super) fn move_target<'a>(
         return Ok(None);
     }
 
-    let parent_bare = parent.map(|p| normalized_id(&p.id, prefix).to_string());
-    Ok(Some((task, parent_bare)))
+    // The parent's own literal id, not a re-normalized one: a legacy parent
+    // may carry a different prefix than the repo's configured one (see
+    // `parent::tests::moving_to_legacy_parent_stores_its_actual_identity`),
+    // and `claim_task_id`/`central_candidate` both strip whatever prefix a
+    // full id carries, so passing it through verbatim is safe either way.
+    let parent_id = parent.map(|p| p.id.clone());
+    Ok(Some((task, parent_id)))
 }
 
 /// The loaded task whose id matches `wanted` (`TASK-7`, `task-7`, `7`,
@@ -540,13 +550,6 @@ pub(super) fn resolve_task_file(project_root: &Path, task_id: &str) -> Result<Pa
     }
 }
 
-fn normalized_id<'a>(task_id: &'a str, prefix: &str) -> &'a str {
-    let trimmed = task_id.trim();
-    strip_id_prefix(trimmed, prefix)
-        .or_else(|| strip_id_prefix(trimmed, DEFAULT_TASK_PREFIX))
-        .unwrap_or(trimmed)
-}
-
 fn filename_matches_id(path: &Path, key: &str, prefix: &str) -> bool {
     let Some(stem) = path.file_stem().and_then(OsStr::to_str) else {
         return false;
@@ -597,6 +600,7 @@ fn move_task_file(from: &Path, dest_dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backlog::BacklogTask;
 
     fn project_with_task(filename: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tempdir");
