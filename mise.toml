@@ -76,6 +76,10 @@ run = [
   "cargo test -p switchbard-tui",
 ]
 
+[tasks.hooks-test]
+description = "Run the Claude hook regression tests (main-checkout-guard)"
+run = "python3 -m pytest -q tests/hooks"
+
 [tasks.tui-install]
 description = "Check the TUI crate, then install sbt; a running sbt re-execs itself"
 depends = ["tui"]
