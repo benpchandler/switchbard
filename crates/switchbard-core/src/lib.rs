@@ -6,6 +6,7 @@ pub mod backlog_relations;
 pub mod backlog_stats;
 pub mod backlog_triage;
 pub mod boot_time;
+pub mod build_identity;
 pub mod classify;
 pub mod config;
 pub mod discover;
@@ -80,6 +81,10 @@ pub use backlog_stats::{
 pub use backlog_triage::{
     find_hub_repo, load_ordering_overlay, parse_backlog_datetime_unix, triage_entry_from_task,
     triage_rank, OrderingOverlay, TriageDue, TriageEntry, TriagePriority,
+};
+pub use build_identity::{
+    build_commit_is_known, build_id_report, build_is_dirty, version_line, BUILD_BRANCH,
+    BUILD_COMMIT, CRATE_VERSION, VERSION_LINE,
 };
 pub use classify::{classify_command, classify_script_body, ServerLikelihood};
 pub use discover::{auto_scan_roots, discover_repos, DiscoveredRepo};

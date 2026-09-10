@@ -4,7 +4,7 @@ title: 'sbt bug: can''t see PR tab in musicproduction repo on sbt load?'
 status: Done
 assignee: []
 created_date: '2026-09-08 11:24'
-updated_date: '2026-09-08 12:41'
+updated_date: '2026-09-09 12:12'
 labels:
   - tui
   - bug
@@ -101,6 +101,15 @@ Nothing in the code gates the tab on the repo: draw_navigation always renders bo
 Evidence: crates/switchbard-tui/tests/pages.rs::the_pull_requests_tab_is_on_the_first_frame_of_a_repo_with_no_remote asserts both page chips, the 'tab switch page' hint and a working tab press on the very first frame of a repo that has no remote at all.
 
 The underlying hazard is real and outlives this task: sbt re-execs into whatever binary replaces it, including one built from an older branch, and reports version 0.4.0 either way - there is no way to tell which build you are on. That is also what caused TASK-173. Worth a follow-up if it bites again.
+
+Recurrence on 2026-09-09, and the follow-up this task's notes said was worth doing.
+
+The page vanished again by the same mechanism: the installed sbt had been built from /Users/bpc/Dev/.worktrees/switchbard-abstractions (a worktree since deleted), and cargo's install record was the only surviving trace of where it came from. The same install had also replaced sb with a build from the primary checkout parked on feat/tui-live-work.
+
+Fixed mechanically rather than by discipline (PR #149):
+- crates/switchbard-core/build.rs stamps commit/branch/dirty at compile time; switchbard_core::build_identity is the single reader, surfaced by --version, a build-id subcommand on both binaries, and sbt's session_start event. 'which build am I on' is now answerable, which it was not when this task was first investigated.
+- scripts/install-switchbard.sh refuses any install whose target tree does not contain the commit the installed binary was built from, and refuses an unverifiable stamp. --force overrides and names what is dropped. mise run install / tui-install route through it.
+- scripts/test-install-guard.sh covers five cases including this exact shape, confirmed to fail when the ancestry check is removed, and runs in test-developer-gates.sh.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
