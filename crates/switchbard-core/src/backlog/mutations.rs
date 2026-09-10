@@ -34,7 +34,7 @@
 use super::allocate::{claim_task_id, create_task_allocating_id, strip_id_prefix};
 use super::ball::Ball;
 use super::goals::rename_task_in_goals;
-use super::parent::normalized_id;
+use super::parent::{normalized_id, resolve_parent, validate_move_source};
 use super::parse::{
     configured_task_prefix, load_backlog_repo, parse_config_statuses, parse_task_file,
     DEFAULT_TASK_PREFIX,
@@ -403,44 +403,10 @@ pub(super) fn move_target<'a>(
     prefix: &str,
 ) -> Result<Option<(&'a BacklogTask, Option<String>)>> {
     let task = task_in_repo(tasks, task_id, prefix)?;
-    if task.source != BacklogTaskSource::Active {
-        bail!(
-            "{} is {} - only active tasks (backlog/tasks) can be moved",
-            task.id,
-            task.source.label()
-        );
-    }
-    if tasks.iter().any(|other| {
-        other
-            .parent
-            .as_deref()
-            .is_some_and(|p| same_id(p, &task.id, prefix))
-            || other
-                .id
-                .rsplit_once('.')
-                .is_some_and(|(p, _)| same_id(p, &task.id, prefix))
-    }) {
-        bail!(
-            "{} has sub-issues - move or promote them first (sub-issues nest one level)",
-            task.id
-        );
-    }
-    let parent = match new_parent {
-        Some(wanted) => {
-            let parent = task_in_repo(tasks, wanted, prefix)?;
-            if same_id(&parent.id, &task.id, prefix) {
-                bail!("{} cannot be its own parent", task.id);
-            }
-            if parent.parent.is_some() || normalized_id(&parent.id, prefix).contains('.') {
-                bail!(
-                    "{} is itself a sub-issue - sub-issues nest one level, pick a top-level parent",
-                    parent.id
-                );
-            }
-            Some(parent)
-        }
-        None => None,
-    };
+    validate_move_source(tasks, task, prefix)?;
+    let parent = new_parent
+        .map(|wanted| resolve_parent(tasks, Some(task), wanted, prefix))
+        .transpose()?;
     let current = task.parent.as_deref();
     let unchanged = match (current, parent) {
         (None, None) => true,
