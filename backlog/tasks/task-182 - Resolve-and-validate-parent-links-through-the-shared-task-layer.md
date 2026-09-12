@@ -4,13 +4,15 @@ title: Resolve and validate parent links through the shared task layer
 status: In Review
 assignee: []
 created_date: '2026-09-08 13:29'
-updated_date: '2026-09-08 13:57'
+updated_date: '2026-09-08 16:51'
 labels:
   - tui
   - hierarchy
   - ball:me
 dependencies: []
 priority: medium
+references:
+  - https://github.com/benpchandler/switchbard/pull/143
 ---
 
 ## Description
@@ -34,4 +36,6 @@ Shared parent resolution and eligibility implemented in feat/tui-parent-picker. 
 Final review found two mixed-prefix inconsistencies: candidate selection inferred the source prefix, and native move could rewrite a legacy parent with the configured prefix instead of its actual ID. Both are being covered by regression tests before installing. Existing user task relationships remain untouched.
 
 Implemented in b73cb28b on feat/tui-parent-picker, based on merged main f5c5f61c. Shared resolution, candidate eligibility, canonical create/move persistence, stale-write validation and mixed TASK/LED prefix regressions verified. 149 final backlog tests and core all-target clippy passed; prior full core suite passed 584 with 1 existing ignored test. Integrated into installed sbt via tui-install. No PR/merge for this feature yet. Existing runtime-claim rename gap tracked separately as TASK-185.
+
+Delivered and merged PR143 on 2026-09-08 at20:50:56Z, merge b5661281af1803aca12f02242419726433f54d68. All8 PR checks passed including macOS/Linux tests/clippy, formatting, developer gates and both sidecar checks. Pipeline head4163c7b1 includes documentation update; local full preflight passed. Earlier GUI cleanup and PR detail fixture failures were already fixed by merged PR141 and remain intact in the merge. This supersedes prior no-PR notes. No shared app restart or new install during merge.
 <!-- SECTION:NOTES:END -->

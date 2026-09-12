@@ -1,14 +1,22 @@
 # Stack ranking - written by switchbard (`rank` / `expedite` commands); records,
 # not documents - never hand-edit. See docs/product-trajectory.md ("Stack ranking").
 expedite:
-  - TASK-80
+  - TASK-147
   - TASK-141
-  - TASK-150
+  - TASK-80
 projects:
   - Task Queue
   - Information Architecture V2
   - EGUI Polish
 tasks:
+  Abstraction:
+    - TASK-162
+    - TASK-163
+    - TASK-164
+    - TASK-167
+    - TASK-165
+    - TASK-166
+    - TASK-144
   EGUI Polish:
     - TASK-78
     - TASK-79
@@ -28,7 +36,7 @@ tasks:
     - TASK-91
     - TASK-80
 root_tasks:
-  - TASK-127
+  - TASK-193
   - TASK-39
   - TASK-81
   - TASK-38
