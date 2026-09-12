@@ -64,6 +64,13 @@ is being dropped. Every binary stamps its own commit and branch at compile time
 `--version`, by the `build-id` subcommand, and in sbt's `session_start` event -
 so "which build am I on" is always answerable.
 
+`mise run auto-install-enable` (macOS) installs a launchd agent that, every five
+minutes, fetches origin/main into a private checkout under
+`~/.switchbard/auto-install` and runs the same guarded install when the installed
+build is not that commit. It never passes `--force`, so a deliberately installed
+feature branch stays put until main contains it. `--disable` removes the agent;
+the log is `~/.switchbard/auto-install/auto-install.log`.
+
 ## Live app ownership
 
 Treat `/Applications/Switchbard.app` as user-controlled shared state. Assume the

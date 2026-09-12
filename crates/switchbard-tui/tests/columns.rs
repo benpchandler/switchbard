@@ -103,7 +103,7 @@ fn shift_k_moves_a_column_up_and_the_order_saves_with_the_view() {
     assert_eq!(fresh.state.columns[0].name(fresh.registry()), "status");
     assert_eq!(fresh.view_label(), "v1");
     assert_eq!(
-        fresh.views.get(0).unwrap().name(fresh.registry()),
+        fresh.views.get(0).unwrap().label(fresh.registry()),
         "cols:status,id,priority,title"
     );
 }

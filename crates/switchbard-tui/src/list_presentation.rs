@@ -15,6 +15,35 @@ pub(crate) struct ListViewport {
 }
 
 impl ListViewport {
+    /// Row indices remain navigation identities; heights consume terminal lines.
+    /// Only a viewport-sized suffix before selection is measured.
+    pub fn variable(
+        scroll: usize,
+        selected: usize,
+        count: usize,
+        slots: usize,
+        heading: bool,
+        height: impl Fn(usize) -> usize,
+    ) -> Self {
+        let selected = selected.min(count.saturating_sub(1));
+        let mut scroll = scroll.min(selected).max(selected.saturating_sub(slots));
+        let mut used: usize = (scroll..=selected)
+            .map(|row| height(row).min(slots).max(1))
+            .sum();
+        let before_selected = scroll..selected;
+        for row in before_selected {
+            if used <= slots {
+                break;
+            }
+            used = used.saturating_sub(height(row).min(slots).max(1));
+            scroll = row + 1;
+        }
+        if heading && scroll == selected && scroll > 0 && used + height(scroll - 1) <= slots {
+            scroll -= 1;
+        }
+        Self { scroll, slots }
+    }
+
     pub fn new(scroll: usize, selected: usize, count: usize, slots: usize, heading: bool) -> Self {
         let selected = selected.min(count.saturating_sub(1));
         let mut scroll = scroll.min(selected);

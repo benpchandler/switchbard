@@ -1,4 +1,5 @@
-//! The `v` chords: open a slot, save into one, promote one to global.
+//! The `v` chords: open a slot, save into one, promote one to global, name one,
+//! delete one.
 
 use crate::app::App;
 use crate::picker::{Payload, PickOption, PickerPurpose, TaskAction};
@@ -13,7 +14,7 @@ impl App {
             .map(|(slot, view, _)| {
                 PickOption::keyed(
                     char::from_digit((slot + 1) as u32, 10).expect("slots are bounded to nine"),
-                    view.name(self.registry()),
+                    view.display_name(self.registry()),
                     Payload::ViewSlot(slot),
                 )
             })
@@ -41,6 +42,8 @@ impl App {
                     "Make a view global",
                     Payload::GlobalView,
                 ));
+                options.push(PickOption::keyed('n', "Name a view", Payload::RenameView));
+                options.push(PickOption::keyed('x', "Delete a view", Payload::DeleteView));
             }
             PickerPurpose::SaveView => {
                 if let Some(slot) =
@@ -63,6 +66,8 @@ impl App {
                 "Default (slot 1)",
                 Payload::ViewSlot(0),
             )),
+            // Naming and deletion only ever act on a slot that already holds a view.
+            PickerPurpose::RenameView | PickerPurpose::DeleteView => {}
             _ => return,
         }
         self.open_picker(purpose, options);
@@ -82,6 +87,14 @@ impl App {
 
     pub(super) fn save_view(&mut self, slot: usize) {
         self.state.filter = self.state.filter.trim().to_string();
+        // The name belongs to the target slot, not to whichever slot the live
+        // state was opened from; saving elsewhere must not clone a name.
+        let name = self
+            .views
+            .get(slot)
+            .map(|view| view.name)
+            .unwrap_or_default();
+        self.state.name = name;
         let saved = self.state.clone();
         match self.views.save_repo(slot, saved) {
             Ok(()) => {
@@ -89,6 +102,54 @@ impl App {
                 self.status = format!("saved v{} for this repo", slot + 1);
                 self.telemetry
                     .record("action", format!("view_save {}", slot + 1));
+            }
+            Err(error) => self.fail(error),
+        }
+    }
+
+    /// Opens the one-line name input for a slot, prefilled with its current name.
+    pub(super) fn open_rename_view(&mut self, slot: usize) {
+        let Some(view) = self.views.get(slot) else {
+            self.fail(format!("no view in slot {}", slot + 1));
+            return;
+        };
+        self.rename_slot = Some(slot);
+        self.input = view.name;
+        self.mode = crate::app::Mode::RenameView;
+        self.status.clear();
+    }
+
+    /// Commits the typed name to whichever file the slot's effective
+    /// definition lives in.
+    pub(super) fn save_view_name(&mut self, slot: usize, name: String) {
+        match self.views.set_name(slot, name.clone()) {
+            Ok(()) => {
+                // Naming the slot currently open must not itself count as a
+                // divergence from it (the header would misreport `custom`).
+                if self.view == slot {
+                    self.state.name = name.clone();
+                }
+                self.status = if name.is_empty() {
+                    format!("slot {} unnamed", slot + 1)
+                } else {
+                    format!("slot {} named \"{name}\"", slot + 1)
+                };
+                self.telemetry
+                    .record("action", format!("view_name {}", slot + 1));
+            }
+            Err(error) => self.fail(error),
+        }
+    }
+
+    pub(super) fn delete_view(&mut self, slot: usize) {
+        match self.views.delete(slot) {
+            Ok(()) => {
+                self.status = format!("deleted slot {}", slot + 1);
+                self.telemetry
+                    .record("action", format!("view_delete {}", slot + 1));
+                if self.view == slot {
+                    self.switch_view(0);
+                }
             }
             Err(error) => self.fail(error),
         }

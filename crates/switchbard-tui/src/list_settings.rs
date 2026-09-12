@@ -46,6 +46,10 @@ impl ListSettings {
         }
     }
 
+    pub fn supports_row_layout(self) -> bool {
+        matches!(self, Self::Tasks)
+    }
+
     pub fn supports_grouping(self) -> bool {
         matches!(self, Self::Tasks)
     }
