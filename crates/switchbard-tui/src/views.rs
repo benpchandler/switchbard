@@ -1,4 +1,5 @@
-//! Saved views: numbered slots of `ViewState` (filter, sort, columns, glyphs, paint).
+//! Saved views: numbered slots of `ViewState` (filter, sort, columns, glyphs, paint,
+//! grouping, row layout, and name).
 //! Slot 1 is what `sbt` opens on. The same Lua record serializes a slot on disk and
 //! the live state across a self-restart, so one place enumerates the fields.
 //! Global slots live in `~/.switchbard/views.lua`; each repo can override slots in
