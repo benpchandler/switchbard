@@ -39,6 +39,26 @@ fn p_lists_columns_first_then_row_filtered_column_and_hidden_fields() {
         .contains("number or letter"));
 }
 
+/// TASK-209 wave-1 finding: with both `blocked` and `due` added, the paint
+/// target picker lists 13 entries, which overflows the 100x20 test
+/// terminal's box — the in-box "number or letter picks · esc" hint line
+/// scrolls off with the option rows. The overflow footer (`↑↓ →open ←back
+/// Esc · pos/total`) must keep the hint reachable rather than silently
+/// dropping it.
+#[test]
+fn overflowing_paint_target_picker_keeps_the_purpose_hint_in_the_footer() {
+    let mut h = Harness::new();
+    let screen = h.press(KeyCode::Char('p'));
+    let footer = screen
+        .lines()
+        .find(|line| line.contains("1/13"))
+        .unwrap_or_else(|| panic!("overflow footer with a position counter: {screen}"));
+    assert!(
+        footer.contains("number or letter picks · esc"),
+        "footer keeps the hint reachable: {footer}"
+    );
+}
+
 #[test]
 fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
     use ratatui::style::Color;

@@ -773,9 +773,17 @@ pub fn parse_backlog_day(value: &str) -> Option<i64> {
 /// at the untrusted-input boundary (the `sb` CLI) run this once; everything
 /// downstream (`BacklogTask::due_date`, `sbt`'s Due column/filter) trusts an
 /// already-`Some` value without re-validating (Rule 5).
+///
+/// The year segment must be exactly four digits: `chrono`'s `%Y` reads
+/// digits greedily up to the next `-`, so it would otherwise silently accept
+/// `999-01-01` or `20260-01-01` as real dates.
 pub fn parse_due_date(value: &str) -> Result<String> {
     let trimmed = value.trim();
-    if chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d").is_err() {
+    let year_is_four_digits = trimmed
+        .split('-')
+        .next()
+        .is_some_and(|year| year.len() == 4 && year.bytes().all(|b| b.is_ascii_digit()));
+    if !year_is_four_digits || chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d").is_err() {
         bail!("due date must be YYYY-MM-DD, got `{trimmed}`");
     }
     Ok(trimmed.to_string())
@@ -1290,6 +1298,20 @@ Existing note.
             assert!(
                 parse_due_date(bad).is_err(),
                 "`{bad}` should not parse as a due date"
+            );
+        }
+    }
+
+    /// `chrono::NaiveDate::parse_from_str`'s `%Y` reads digits greedily up to
+    /// the next `-`, so it accepts a 3-digit or 5-digit year unless this
+    /// boundary check rejects it explicitly — a due date is only meaningful
+    /// as a real 4-digit calendar year.
+    #[test]
+    fn parse_due_date_rejects_a_year_that_is_not_exactly_four_digits() {
+        for bad in ["999-01-01", "20260-01-01"] {
+            assert!(
+                parse_due_date(bad).is_err(),
+                "`{bad}` should not parse as a due date (non-4-digit year)"
             );
         }
     }

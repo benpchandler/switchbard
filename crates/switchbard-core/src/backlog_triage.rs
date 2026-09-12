@@ -10,15 +10,12 @@
 //! ## Due dates
 //!
 //! The ranking contract is overlay-rank → overdue → due-today → priority →
-//! blocked → age → repo name. As of Backlog CLI v1.47 (`backlog task edit
-//! --help`), Backlog.md's task schema has **no due-date field** — nothing in
-//! a task's frontmatter or sections carries one. [`TriageDue`] and the
-//! overdue/due-today tiers are still implemented and unit-tested here
-//! because the ranking contract names them explicitly (task-10 AC #2); every
-//! entry built from a real [`BacklogTask`] via [`triage_entry_from_task`]
-//! currently passes [`TriageDue::None`], so those tiers are inert in
-//! production until the CLI/schema grows a due-date concept. Wiring real due
-//! dates is future work, not scope of this module.
+//! blocked → age → repo name. [`TriageDue`] is computed from a real task's
+//! `due_date` (validated `YYYY-MM-DD` at the `sb` CLI boundary, see
+//! `backlog::parse_due_date`) in [`triage_entry_from_task`], reusing
+//! `backlog::parse_backlog_day` and `backlog::backlog_today` — the same
+//! day-space clock `date_fields` (sbt) already reads — rather than adding a
+//! second date parser or clock here.
 //!
 //! ## Blocked (task-18)
 //!
@@ -92,8 +89,7 @@ impl TriagePriority {
     }
 }
 
-/// See the module doc's "Due dates" section — always `None` for entries
-/// built from real `BacklogTask` data today.
+/// See the module doc's "Due dates" section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TriageDue {
     Overdue,
@@ -128,13 +124,37 @@ pub fn triage_entry_from_task(
         repo: repo.to_string(),
         task_id: task.id.clone(),
         priority: TriagePriority::from_str_loose(&task.priority),
-        due: TriageDue::None,
+        due: triage_due_from(task.due_date.as_deref()),
         blocked: crate::backlog_relations::is_blocked(task, project),
         age_unix: task
             .created_date
             .as_deref()
             .and_then(parse_backlog_datetime_unix)
             .unwrap_or(u64::MAX),
+    }
+}
+
+/// `Overdue`/`DueToday`/`None` from a task's already-validated `due_date`
+/// (`YYYY-MM-DD`, see `backlog::parse_due_date`), reusing
+/// `backlog::parse_backlog_day` (via a synthetic midnight) and
+/// `backlog::backlog_today` — the one clock/parser this crate already
+/// defines. An absent or (defensively) unparseable value is
+/// `TriageDue::None`, matching the "inert unless a real due date is set"
+/// contract.
+fn triage_due_from(due_date: Option<&str>) -> TriageDue {
+    let Some(due_date) = due_date else {
+        return TriageDue::None;
+    };
+    // `due_date` is a plain `YYYY-MM-DD` with no time of day — append a
+    // synthetic midnight and reuse `parse_backlog_day` itself rather than
+    // hand-rolling a second day-space conversion.
+    let Some(day) = crate::backlog::parse_backlog_day(&format!("{due_date} 00:00")) else {
+        return TriageDue::None;
+    };
+    match day.cmp(&crate::backlog::backlog_today()) {
+        Ordering::Less => TriageDue::Overdue,
+        Ordering::Equal => TriageDue::DueToday,
+        Ordering::Greater => TriageDue::None,
     }
 }
 
@@ -559,5 +579,88 @@ mod tests {
         assert_eq!(triage.priority, TriagePriority::High);
         assert_eq!(triage.due, TriageDue::None);
         assert!(!triage.blocked);
+    }
+
+    /// `triage_due_from` reads the same day-space clock `backlog_today`
+    /// does, so it's tested against that clock's own output rather than a
+    /// literal date — a due date one day behind "today" is overdue, the
+    /// same day is due-today, one day ahead is neither, and an absent or
+    /// unparseable value never panics.
+    #[test]
+    fn triage_due_from_reads_the_same_clock_as_backlog_today() {
+        let today_day = crate::backlog::backlog_today();
+        let date_string = |day: i64| {
+            chrono::DateTime::from_timestamp(day * 86_400, 0)
+                .expect("in-range day count")
+                .format("%Y-%m-%d")
+                .to_string()
+        };
+
+        assert_eq!(triage_due_from(None), TriageDue::None);
+        assert_eq!(triage_due_from(Some("not-a-date")), TriageDue::None);
+        assert_eq!(
+            triage_due_from(Some(&date_string(today_day))),
+            TriageDue::DueToday
+        );
+        assert_eq!(
+            triage_due_from(Some(&date_string(today_day - 1))),
+            TriageDue::Overdue
+        );
+        assert_eq!(
+            triage_due_from(Some(&date_string(today_day + 1))),
+            TriageDue::None
+        );
+    }
+
+    /// End-to-end through the real builder: a task's `due_date` reaches
+    /// `TriageEntry.due`, not just the private helper.
+    #[test]
+    fn triage_entry_from_task_wires_a_real_due_date_into_the_due_tier() {
+        let today_day = crate::backlog::backlog_today();
+        let due_today = chrono::DateTime::from_timestamp(today_day * 86_400, 0)
+            .expect("in-range day count")
+            .format("%Y-%m-%d")
+            .to_string();
+        let task = BacklogTask {
+            storage_identity: None,
+            id: "TASK-2".to_string(),
+            title: "t".to_string(),
+            status: "To Do".to_string(),
+            priority: "medium".to_string(),
+            assignees: vec![],
+            labels: vec![],
+            dependencies: vec![],
+            references: vec![],
+            project: None,
+            parent: None,
+            created_date: None,
+            updated_date: None,
+            due_date: Some(due_today),
+            description: String::new(),
+            implementation_plan: String::new(),
+            implementation_notes: String::new(),
+            final_summary: String::new(),
+            acceptance_criteria: vec![],
+            definition_of_done: vec![],
+            source: crate::backlog::BacklogTaskSource::Active,
+            path: PathBuf::from("/repos/a/backlog/tasks/task-2.md"),
+            custom: std::collections::BTreeMap::new(),
+        };
+        let project = crate::backlog::BacklogRepo {
+            root: PathBuf::from("/repos/a"),
+            tasks: vec![task.clone()],
+            warnings: vec![],
+            project_defs: vec![],
+            initiative_defs: vec![],
+            goals: vec![],
+            ranking: crate::backlog::RepoRanking::default(),
+            loaded_at_unix: 0,
+            configured_statuses: vec![],
+            fields: Vec::new(),
+        };
+
+        let triage = triage_entry_from_task(PathBuf::from("/repos/a"), "a", &task, &project);
+
+        assert_eq!(triage.due, TriageDue::DueToday);
     }
 }

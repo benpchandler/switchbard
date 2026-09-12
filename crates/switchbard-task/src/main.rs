@@ -500,8 +500,9 @@ fn list(root: &Path, filters: &ListFilters) -> Result<()> {
         eprintln!("sb: warning: {warning}");
     }
     let field_filters = field_cmd::parse_pairs(filters.where_)?;
-    for (name, _) in &field_filters {
-        find_declared(&repo.fields, name)?;
+    for (name, value) in &field_filters {
+        let decl = find_declared(&repo.fields, name)?;
+        switchbard_core::validate_field_value(decl, value)?;
     }
     let mut rows: Vec<&BacklogTask> = repo
         .tasks
@@ -781,6 +782,50 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir_all(dir.path().join("backlog/tasks")).expect("project layout");
         dir
+    }
+
+    /// `sb list --where` must validate the value against the field's own
+    /// declaration the same way `--set` does (Rule 5, one boundary check) —
+    /// an impossible enum value errors instead of silently matching zero
+    /// rows, which would look like "no tasks match" rather than "you typoed
+    /// the filter".
+    #[test]
+    fn list_where_rejects_a_value_the_declared_field_does_not_allow() {
+        let fixture = fixture_repo();
+        let root = fixture.path();
+        std::fs::write(
+            root.join("backlog/config.yml"),
+            "project_name: fixture\nstatuses: [\"To Do\", \"In Progress\", \"Done\"]\n",
+        )
+        .expect("fixture config");
+        switchbard_core::add_field_decl(
+            root,
+            switchbard_core::FieldDecl {
+                name: "counterparty".to_string(),
+                kind: switchbard_core::FieldKind::Enum,
+                values: vec!["Nick".to_string(), "GoSBA Loans".to_string()],
+                groupable: false,
+            },
+        )
+        .expect("declare field");
+
+        let error = list(
+            root,
+            &ListFilters {
+                status: None,
+                in_project: None,
+                all: false,
+                blocked: false,
+                ready: false,
+                where_: &["counterparty=Bogus".to_string()],
+                sort: None,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("Nick"),
+            "names the allowed values: {error}"
+        );
     }
 
     /// AC #1: `sb create --due` writes `due_date` and `sb view` shows it.

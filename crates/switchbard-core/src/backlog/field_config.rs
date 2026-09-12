@@ -278,11 +278,15 @@ pub(super) fn extract_custom_fields(
     custom
 }
 
-/// Every active/completed task id currently setting `name` — the guard
-/// `sb field remove` (and any future caller) must check before deleting a
-/// declaration, so a removal can never orphan data a task still relies on.
-/// Draft/archived tasks are deliberately excluded: they are already outside
-/// active management, the same scope `BacklogTaskSource::editable` draws.
+/// Every task id whose source is `Active` or `Completed` and currently
+/// sets `name` — the guard `sb field remove` (and any future caller) must
+/// check before deleting a declaration, so a removal can never orphan data
+/// a task still relies on. Deliberately wider than
+/// `BacklogTaskSource::editable` (which is `Active`-only): a completed task
+/// still carries its recorded custom-field value and removing the
+/// declaration would silently drop it, so `Completed` must count as a
+/// holder even though it can no longer be edited. Draft/archived tasks are
+/// excluded — they're outside active management entirely.
 pub fn tasks_setting_field<'r>(repo: &'r BacklogRepo, name: &str) -> Vec<&'r str> {
     repo.tasks
         .iter()

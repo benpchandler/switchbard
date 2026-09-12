@@ -708,11 +708,22 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         } else {
             "↑↓ Esc"
         };
-        block.title_bottom(Line::from(format!(
-            " {navigation} · {}/{} ",
+        let position = format!(
+            "{navigation} · {}/{}",
             picker.selected.saturating_add(1).min(rows.len()),
             rows.len()
-        )))
+        );
+        // The in-box hint line (pushed after the option rows) scrolls off
+        // once there are more rows than fit, so the overflow footer is the
+        // only place left to say what the keys do — keep it there when it
+        // fits, rather than silently dropping the purpose hint.
+        let with_hint = format!(" {position} · {hint} ");
+        let footer = if with_hint.chars().count() as u16 <= width {
+            with_hint
+        } else {
+            format!(" {position} ")
+        };
+        block.title_bottom(Line::from(footer))
     } else {
         block
     };
