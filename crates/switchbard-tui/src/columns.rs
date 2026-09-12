@@ -531,6 +531,14 @@ impl ColumnRegistry {
     /// spell) or under [`FIELD_PREFIX`] (what a saved view writes). A name the
     /// repo no longer declares resolves to nothing, which is what drops it from
     /// a loaded view.
+    ///
+    /// Built-ins are resolved first, and a declared field can never lose that
+    /// race: `switchbard_core::RESERVED_FIELD_NAMES` refuses a declaration
+    /// named after any column, alias, filter keyword, or `:group` sentinel this
+    /// module answers to, on both the write and the read path. That list is the
+    /// reason this lookup order is safe rather than merely conventional, and
+    /// `tests::every_name_a_surface_answers_to_is_reserved_in_core` fails if a
+    /// new built-in is ever added without a line in it.
     pub fn parse(&self, text: &str) -> Option<Column> {
         let text = text.trim().trim_end_matches(HIDDEN_TAG);
         BUILTIN_COLUMNS
@@ -564,8 +572,9 @@ impl ColumnRegistry {
             return false;
         };
         // `self.parse`, not `parse_custom`: a declaration can never take a
-        // built-in key (`switchbard_core::BUILTIN_FIELD_KEYS`), so `field:status`
-        // is a malformed record to preserve, not a field to drop.
+        // built-in key or a reserved surface name (`BUILTIN_FIELD_KEYS`,
+        // `RESERVED_FIELD_NAMES`), so `field:status` is a malformed record to
+        // preserve, not a field to drop.
         switchbard_core::valid_field_name(bare) && self.parse(bare).is_none()
     }
 
@@ -966,6 +975,53 @@ mod tests {
             "status",
             "a built-in is never prefixed"
         );
+    }
+
+    /// The drift guard `ColumnRegistry::parse`'s doc names. A new built-in
+    /// column, alias, or filter keyword that core does not reserve would be
+    /// shadowable by a declared field of the same name — stored, and then
+    /// unreachable, because built-ins resolve first.
+    #[test]
+    fn every_name_a_surface_answers_to_is_reserved_in_core() {
+        let registry = ColumnRegistry::builtin_only();
+        let reserved = |name: &str| {
+            switchbard_core::RESERVED_FIELD_NAMES.contains(&name)
+                || switchbard_core::BUILTIN_FIELD_KEYS.contains(&name)
+        };
+        for spec in BUILTIN_COLUMNS.iter() {
+            assert!(
+                reserved(&spec.name),
+                "column `{}` is not reserved",
+                spec.name
+            );
+            if let Some(alias) = spec.alias {
+                assert!(reserved(alias), "alias `{alias}` is not reserved");
+            }
+            if let Some(field) = spec.field {
+                let keyword = field.keyword(&registry);
+                assert!(reserved(keyword), "keyword `{keyword}` is not reserved");
+            }
+        }
+        // `crate::group::Grouping::parse` reads these as "flat" before it ever
+        // looks a column up, so a field named for one could never be grouped by.
+        for sentinel in ["off", "none"] {
+            assert!(reserved(sentinel), "`{sentinel}` is not reserved");
+        }
+    }
+
+    /// The other half of the guard: a name core reserves must actually be one
+    /// this crate answers to, so the list cannot quietly grow into a blocklist
+    /// of words nothing uses.
+    #[test]
+    fn every_reserved_name_is_one_this_crate_answers_to() {
+        let registry = ColumnRegistry::builtin_only();
+        let sentinels = ["off", "none"];
+        for name in switchbard_core::RESERVED_FIELD_NAMES {
+            let answered = registry.parse(name).is_some()
+                || crate::filter::FilterField::parse(name, &registry).is_some()
+                || sentinels.contains(name);
+            assert!(answered, "`{name}` is reserved but nothing answers to it");
+        }
     }
 
     #[test]

@@ -16,7 +16,7 @@ mod field_config;
 pub use field_config::{
     add_field_decl, custom_field_sort_key, declared_fields, declared_value_rank, edit_field_decl,
     remove_field_decl, tasks_setting_field, valid_field_name, validate_field_value, FieldDecl,
-    FieldEditPatch, FieldKind, BUILTIN_FIELD_KEYS,
+    FieldEditPatch, FieldKind, BUILTIN_FIELD_KEYS, RESERVED_FIELD_NAMES,
 };
 mod goals;
 mod hierarchy;

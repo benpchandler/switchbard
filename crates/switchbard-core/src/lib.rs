@@ -75,7 +75,7 @@ pub use backlog::{
     RankPlacement, RepoRanking, TaskChecklist, TaskEditRequest, TaskEditResult, TaskListField,
     TaskSection, WriteOutcome, ACTIVE_BRANCH_DAYS, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
     BALL_AGENT_LABEL, BALL_ME_LABEL, BUILTIN_FIELD_KEYS, CANONICAL_STATUS_ORDER,
-    DEFAULT_PROJECT_STATUS, PROJECT_STATUSES, STANDARD_STATUSES,
+    DEFAULT_PROJECT_STATUS, PROJECT_STATUSES, RESERVED_FIELD_NAMES, STANDARD_STATUSES,
 };
 pub use backlog_relations::{
     ancestor_depth, blocking_dependencies, blocks, children, dependency_statuses,

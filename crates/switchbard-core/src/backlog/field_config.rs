@@ -49,6 +49,58 @@ pub const BUILTIN_FIELD_KEYS: &[&str] = &[
     "updated_date",
 ];
 
+/// Names a list surface already answers to. A field declared under one of these
+/// would be *stored* correctly and still be unreachable by its own name: sbt's
+/// column registry resolves a built-in column before a declared field, its
+/// filter grammar resolves a built-in keyword first, and `off`/`none` are
+/// `:group` sentinels rather than columns. The declaration is refused so the
+/// failure lands on the person choosing the name, not on whoever later cannot
+/// filter, sort, or group by it.
+///
+/// Distinct from [`BUILTIN_FIELD_KEYS`], which answers a different question —
+/// what frontmatter keys `super::parse::parse_task_text` already reads. A few
+/// names are genuinely both; each list stays complete for its own question.
+///
+/// Kept in core so `sb`, sbt, and any future GUI field editor refuse the same
+/// names. sbt guards the pairing from its side: `switchbard-tui`'s
+/// `columns::tests::every_name_a_surface_answers_to_is_reserved_in_core` fails
+/// if a built-in column, alias, or filter keyword is ever added without a line
+/// here.
+pub const RESERVED_FIELD_NAMES: &[&str] = &[
+    // Built-in column names.
+    "ball",
+    "blocked",
+    "checks",
+    "draft",
+    "due",
+    "filed",
+    "goal",
+    "id",
+    "labels",
+    "lifecycle",
+    "merge",
+    "merged",
+    "priority",
+    "project",
+    "rank",
+    "review",
+    "status",
+    "tasks",
+    "title",
+    "work",
+    // Column aliases a saved view or a typed name may use instead.
+    "created",
+    "merged_at",
+    "pri",
+    "top",
+    // Filter keywords that are not spelled like their column: `label:ui`
+    // filters the `labels` column.
+    "label",
+    // `:group` sentinels, which mean "flat" rather than naming a column.
+    "none",
+    "off",
+];
+
 /// A custom field's value type. Determines what [`validate_field_value`]
 /// accepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +167,13 @@ fn validate_decl_shape(decl: &FieldDecl) -> Result<()> {
     ensure!(
         !BUILTIN_FIELD_KEYS.contains(&decl.name.as_str()),
         "field name `{}` collides with a built-in task key",
+        decl.name
+    );
+    ensure!(
+        !RESERVED_FIELD_NAMES.contains(&decl.name.as_str()),
+        "field name `{}` is reserved: a list surface already answers to it as a \
+         column, a filter keyword, or a grouping word, so a field of that name \
+         could never be shown, filtered, sorted, or grouped by its own name",
         decl.name
     );
     if decl.kind == FieldKind::Enum {
@@ -264,7 +323,15 @@ fn field_decl_from_yaml(item: &Value) -> Option<FieldDecl> {
         .as_str()?
         .trim()
         .to_string();
-    if !valid_field_name(&name) {
+    // The same two refusals `validate_decl_shape` makes on the write path,
+    // applied on the read path: a hand-edited `fields:` entry under a name a
+    // surface already answers to would produce a column nothing could reach,
+    // so it is not a field. Consistent with how a malformed name is treated
+    // here — not a field, never fatal to the rest of the list.
+    if !valid_field_name(&name)
+        || BUILTIN_FIELD_KEYS.contains(&name.as_str())
+        || RESERVED_FIELD_NAMES.contains(&name.as_str())
+    {
         return None;
     }
     let kind = map
@@ -544,6 +611,50 @@ mod tests {
         assert!(after.contains("fields:\n  - name: counterparty\n    kind: enum\n"));
         assert!(after.contains("values: [\"GoSBA Loans\", \"Nick\"]"));
         assert!(after.contains("groupable: true"));
+    }
+
+    /// Every reserved name is refused, and the error says which word it was —
+    /// the whole point is that the person naming the field finds out now rather
+    /// than after the column turns out to be unfilterable.
+    #[test]
+    fn add_field_decl_rejects_a_name_a_list_surface_already_answers_to() {
+        let (_tmp, root) = repo_with_config(TRIO);
+        for name in RESERVED_FIELD_NAMES {
+            let error = add_field_decl(&root, enum_decl(name, &["x"]))
+                .expect_err("a reserved name is refused")
+                .to_string();
+            assert!(error.contains(name), "the error names the word: {error}");
+        }
+        assert_eq!(
+            parse_field_decls(&root).unwrap(),
+            Vec::new(),
+            "nothing was written"
+        );
+    }
+
+    /// The same refusal on the read path: a hand-edited `fields:` entry cannot
+    /// smuggle in a name the write path would have refused.
+    #[test]
+    fn a_hand_written_reserved_declaration_is_not_read_as_a_field() {
+        let (_tmp, root) = repo_with_config(
+            "project_name: \"Demo\"\n\
+             fields:\n\
+             \x20 - name: due\n\
+             \x20   kind: date\n\
+             \x20   groupable: false\n\
+             \x20 - name: status\n\
+             \x20   kind: text\n\
+             \x20   groupable: false\n\
+             \x20 - name: counterparty\n\
+             \x20   kind: text\n\
+             \x20   groupable: true\n",
+        );
+        let fields = parse_field_decls(&root).unwrap();
+        assert_eq!(
+            fields.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+            vec!["counterparty"],
+            "the reserved names are skipped, the ordinary one survives"
+        );
     }
 
     #[test]
