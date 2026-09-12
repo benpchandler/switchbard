@@ -248,6 +248,9 @@ fn live_pr_paint_links_and_saved_view_survive_page_switch_and_restart() {
         },
     )
     .unwrap();
+    // Task storage is re-read at most once per second; wait out the throttle so
+    // the tick below observes the reference just written (see central_storage.rs).
+    std::thread::sleep(std::time::Duration::from_millis(1050));
     h.app.tick();
     set_filter(&mut h, &format!("tasks:{task_id}"));
     assert_eq!(

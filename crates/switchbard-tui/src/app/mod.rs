@@ -1469,9 +1469,29 @@ impl App {
                     }
                 })
                 .collect();
+        if crate::list_settings::ListSettings::for_page(self.page)
+            .is_some_and(|scope| scope.supports_row_layout())
+        {
+            options.push(PickOption::keyed(
+                'w',
+                format!(
+                    "Title wrapping: {} (this view)",
+                    self.state.row_layout.wrap_label()
+                ),
+                Payload::TitleWrapping,
+            ));
+            options.push(PickOption::keyed(
+                's',
+                format!(
+                    "Row spacing: {} (this view)",
+                    self.state.row_layout.spacing_label()
+                ),
+                Payload::RowSpacing,
+            ));
+        }
         options.push(PickOption::keyed(
             'g',
-            "Use these settings in every repo",
+            "Use hidden-status settings in every repo",
             Payload::GlobalSettings,
         ));
         self.open_picker(PickerPurpose::Settings, options);
@@ -1480,6 +1500,22 @@ impl App {
             SettingsScope::Global => "settings shared by every repo".to_string(),
         };
         self.telemetry.record("action", "settings");
+    }
+
+    pub(super) fn cycle_row_layout(&mut self, wrapping: bool) {
+        if wrapping {
+            self.state.row_layout.cycle_wrapping();
+        } else {
+            self.state.row_layout.spaced = !self.state.row_layout.spaced;
+        }
+        self.open_settings();
+        if let Some(picker) = self.picker.as_mut() {
+            picker.selected = picker
+                .position_of_key(if wrapping { 'w' } else { 's' })
+                .unwrap_or(0);
+        }
+        self.status = "Row layout changed for this view · Esc previews · v s saves".into();
+        self.telemetry.record("action", "row_layout");
     }
 
     /// A settings row picked: flip it for this repo, write the file, keep the panel open.

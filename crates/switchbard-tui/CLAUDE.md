@@ -34,7 +34,7 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
   keys, hint...) each a Style (fg/bg/modifiers) and `theme.columns` maps columns to surfaces.
 - `tasks.rs` - task load + filter language (`status: pri: label: project:` + words,
   loose match: `status:todo` == "To Do"); `field_values` feeds the `f <n>` picker.
-- `views.rs` - `ViewState` (filter, sort, columns, glyphs, paint, group, name) is what a slot saves
+- `views.rs` - `ViewState` (filter, sort, columns, glyphs, paint, group, row layout, name) is what a slot saves
   and a restart resumes, one Lua record for both; global `~/.switchbard/views.lua`, per-repo overrides
   in `views/<repo path>.lua`; PRs use `.prs.lua` beside these files. `vs<n>` saves to repo, `vg<n>` promotes to global; slot 1 opens. `v n` names a slot (writes the repo override if one exists, else global), `v x` deletes one; an unnamed slot's label is derived from its contents (`ViewState::label()`). Both page states survive Tab/restart.
 - `date_fields.rs`: `p` offers When task filed / When merged in UTC buckets; authoritative creation/merge dates only. `paint_eval.rs` chooses semantic tokens; terminal conversion stays in `paint.rs`.

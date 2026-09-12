@@ -178,6 +178,8 @@ pub enum Payload {
     RenameView,
     DeleteView,
     GlobalSettings,
+    TitleWrapping,
+    RowSpacing,
     Project(Option<String>),
     Parent(Option<String>),
     CancelMerge,
