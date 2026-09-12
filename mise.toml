@@ -88,3 +88,7 @@ run = "bash scripts/install-switchbard.sh sbt"
 [tasks.install]
 description = "Install sb and sbt from this worktree, refusing a silent downgrade"
 run = "bash scripts/install-switchbard.sh"
+
+[tasks.auto-install-enable]
+description = "macOS: keep installed sb + sbt in step with origin/main via a launchd agent (--disable removes it)"
+run = "bash scripts/auto-install-enable.sh"
