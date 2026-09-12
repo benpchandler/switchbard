@@ -811,6 +811,7 @@ mod tests {
             definition_of_done: vec![],
             source: BacklogTaskSource::Active,
             path: std::path::PathBuf::from("/repo/backlog/tasks/task-1.md"),
+            custom: std::collections::BTreeMap::new(),
         }
     }
 

@@ -1520,6 +1520,7 @@ mod tests {
                     definition_of_done: vec![],
                     source: switchbard_core::BacklogTaskSource::Active,
                     path: root.join("backlog/tasks/fixture.md"),
+                    custom: std::collections::BTreeMap::new(),
                 })
                 .collect(),
             warnings: vec![],
@@ -1529,6 +1530,7 @@ mod tests {
             ranking: switchbard_core::RepoRanking::default(),
             loaded_at_unix,
             configured_statuses: vec![],
+            fields: Vec::new(),
         }
     }
 

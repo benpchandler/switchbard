@@ -132,6 +132,7 @@ mod tests {
             definition_of_done: vec![],
             source: BacklogTaskSource::Active,
             path: PathBuf::new(),
+            custom: std::collections::BTreeMap::new(),
         }
     }
 

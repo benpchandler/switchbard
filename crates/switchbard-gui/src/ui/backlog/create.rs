@@ -183,6 +183,7 @@ pub(crate) fn render_create_modal(
                             dependencies: detail_lists::split_csv(
                                 &app.backlog_view.new_task.dependencies,
                             ),
+                            custom: Vec::new(),
                         },
                     ));
                     app.backlog_view.new_task = Default::default();

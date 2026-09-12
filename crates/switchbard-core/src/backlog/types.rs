@@ -3,7 +3,7 @@
 //! `super::parse` for turning task markdown into these, and
 //! `super::mutations` for CLI calls that change them on disk.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 /// The three-status subset offered as one-click actions on a List row. This
@@ -184,6 +184,11 @@ pub struct BacklogRepo {
     /// existing behavior (BACKLOG_STATUSES + statuses actually present on a
     /// task) is unaffected either way.
     pub configured_statuses: Vec<String>,
+    /// This project's own declared custom fields (`backlog/config.yml`'s
+    /// `fields:` list, see `super::field_config`), in declared order. Empty
+    /// if the repo declares none — never fatal, same fallback shape as
+    /// `configured_statuses`.
+    pub fields: Vec<super::field_config::FieldDecl>,
 }
 
 impl BacklogRepo {
@@ -274,6 +279,12 @@ pub struct BacklogTask {
     pub definition_of_done: Vec<BacklogChecklistItem>,
     pub source: BacklogTaskSource,
     pub path: PathBuf,
+    /// Declared custom field values (`super::field_config::FieldDecl`),
+    /// keyed by field name. Populated only for names this repo's
+    /// `backlog/config.yml` declares at parse time — an undeclared
+    /// frontmatter key is never surfaced here and round-trips opaquely
+    /// instead (see `super::write`'s module doc).
+    pub custom: BTreeMap<String, String>,
 }
 
 impl BacklogTask {
@@ -342,6 +353,14 @@ pub struct BacklogTaskPatch {
     /// to police that; `edit_backlog_task` only ever receives one or the
     /// other from the UI layer.
     pub clear_project: bool,
+    /// `--set name=value` (repeatable). Validated once at the `sb` boundary
+    /// against the repo's declared fields (`super::field_config::
+    /// validate_field_value`) — this layer trusts the pairs it is given and
+    /// writes them through the same scalar path as any other frontmatter
+    /// key (Rule 5: one validation, trusted downstream).
+    pub set_custom: Vec<(String, String)>,
+    /// `--unset name` (repeatable): removes the frontmatter key entirely.
+    pub unset_custom: Vec<String>,
 }
 
 impl BacklogTaskPatch {
@@ -358,6 +377,8 @@ impl BacklogTaskPatch {
             && self.append_acceptance_criteria.is_empty()
             && self.project.is_none()
             && !self.clear_project
+            && self.set_custom.is_empty()
+            && self.unset_custom.is_empty()
     }
 }
 
@@ -383,6 +404,10 @@ pub struct NewBacklogTask {
     /// task create --help`; same flag `edit_backlog_task` uses for
     /// `BacklogTaskPatch::dependencies`).
     pub dependencies: Vec<String>,
+    /// Declared custom field values to set at creation time (`--set
+    /// name=value`, repeatable) — validated once at the `sb` boundary, same
+    /// contract as `BacklogTaskPatch::set_custom`.
+    pub custom: Vec<(String, String)>,
 }
 
 #[cfg(test)]
@@ -416,6 +441,7 @@ mod tests {
                 definition_of_done: vec![],
                 source: BacklogTaskSource::Active,
                 path: std::path::PathBuf::from("/repo/backlog/tasks/TASK-1.md"),
+                custom: std::collections::BTreeMap::new(),
             }
         }
         fn def(name: &str) -> crate::backlog::hierarchy::ProjectDef {
@@ -439,6 +465,7 @@ mod tests {
             ranking: crate::backlog::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![],
+            fields: Vec::new(),
         };
 
         assert_eq!(repo.project_names(), vec!["Alpha", "Defined Only", "Zeta"]);
@@ -506,6 +533,7 @@ mod tests {
                     definition_of_done: vec![],
                     source: BacklogTaskSource::Active,
                     path: PathBuf::from("/fixture/backlog/tasks/fixture.md"),
+                    custom: std::collections::BTreeMap::new(),
                 })
                 .collect(),
             warnings: vec![],
@@ -515,6 +543,7 @@ mod tests {
             ranking: crate::backlog::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: configured_statuses.iter().map(|s| s.to_string()).collect(),
+            fields: Vec::new(),
         }
     }
 

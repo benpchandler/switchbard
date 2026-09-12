@@ -49,6 +49,7 @@ fn task(id: &str, title: &str, status: &str) -> BacklogTask {
         definition_of_done: vec![],
         source: BacklogTaskSource::Active,
         path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/{id}.md")),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -68,6 +69,7 @@ fn repo_with(tasks: Vec<BacklogTask>) -> BacklogRepo {
             "In Review".into(),
             "Done".into(),
         ],
+        fields: Vec::new(),
     }
 }
 

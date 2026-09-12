@@ -139,6 +139,7 @@ fn new_task(title: &str) -> NewBacklogTask {
         assignees: vec![],
         project: None,
         dependencies: vec![],
+        custom: Vec::new(),
     }
 }
 

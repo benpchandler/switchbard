@@ -537,6 +537,7 @@ mod tests {
             definition_of_done: vec![],
             source: crate::backlog::BacklogTaskSource::Active,
             path: PathBuf::from("/repos/a/backlog/tasks/task-1.md"),
+            custom: std::collections::BTreeMap::new(),
         };
         let project = crate::backlog::BacklogRepo {
             root: PathBuf::from("/repos/a"),
@@ -548,6 +549,7 @@ mod tests {
             ranking: crate::backlog::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![],
+            fields: Vec::new(),
         };
 
         let triage = triage_entry_from_task(PathBuf::from("/repos/a"), "a", &task, &project);

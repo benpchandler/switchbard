@@ -115,6 +115,7 @@ fn task(repo: usize, i: usize) -> BacklogTask {
         source: BacklogTaskSource::Active,
         path: PathBuf::from(format!("/tmp/switchbard-dispatch-perf/{id}.md")),
         id,
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -153,6 +154,7 @@ fn build_fixture() -> HiveApp {
                     "In Review".into(),
                     "Done".into(),
                 ],
+                fields: Vec::new(),
             },
         ));
     }

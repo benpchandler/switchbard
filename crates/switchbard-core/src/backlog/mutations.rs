@@ -177,6 +177,12 @@ pub(super) fn apply_patch_draft(
     } else if patch.clear_project {
         changed |= super::write::set_task_project_draft(draft, None)?.changed();
     }
+    for (name, value) in &patch.set_custom {
+        changed |= super::write::set_custom_field_draft(draft, name, value)?.changed();
+    }
+    for name in &patch.unset_custom {
+        changed |= super::write::unset_custom_field_draft(draft, name)?.changed();
+    }
     Ok(changed)
 }
 
@@ -592,6 +598,7 @@ mod tests {
             assignees: vec![],
             project: None,
             dependencies: vec![],
+            custom: Vec::new(),
         }
     }
 

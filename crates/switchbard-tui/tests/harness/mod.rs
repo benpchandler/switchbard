@@ -121,6 +121,7 @@ pub fn seed_with_priority(root: &Path, title: &str, status: &str, labels: &[&str
         assignees: Vec::new(),
         project: None,
         dependencies: Vec::new(),
+        custom: Vec::new(),
     };
     create_task_allocating_id(root, &task).unwrap();
 }
@@ -144,6 +145,7 @@ pub fn seed_in_project(
         assignees: Vec::new(),
         project: Some(project.to_string()),
         dependencies: Vec::new(),
+        custom: Vec::new(),
     };
     create_task_allocating_id(root, &task).unwrap();
 }

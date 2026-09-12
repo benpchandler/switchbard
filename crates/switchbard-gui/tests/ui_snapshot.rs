@@ -153,6 +153,7 @@ fn task_in_flight() -> BacklogTask {
         definition_of_done: vec![],
         source: BacklogTaskSource::Active,
         path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-83.md")),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -179,6 +180,7 @@ fn task_failed() -> BacklogTask {
         definition_of_done: vec![],
         source: BacklogTaskSource::Active,
         path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-61.md")),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -201,6 +203,7 @@ fn seed_two_dispatch_tasks(app: &HiveApp) {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     let log_path = PathBuf::from(REPO_PATH).join("task-83-dispatch.log");

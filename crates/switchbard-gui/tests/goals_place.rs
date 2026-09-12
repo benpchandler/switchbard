@@ -61,6 +61,7 @@ fn backlog_task(id: &str, title: &str, status: &str, project: Option<&str>) -> B
         definition_of_done: vec![],
         source: BacklogTaskSource::Active,
         path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/{id}.md")),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -75,6 +76,7 @@ fn backlog_repo(goals: Vec<GoalDef>, tasks: Vec<BacklogTask>) -> BacklogRepo {
         ranking: RepoRanking::default(),
         loaded_at_unix: 0,
         configured_statuses: vec!["To Do".into(), "In Progress".into(), "Done".into()],
+        fields: Vec::new(),
     }
 }
 
@@ -549,6 +551,7 @@ fn inputs_card_attach_and_detach_wire_through_the_real_write_layer() {
             assignees: vec![],
             project: None,
             dependencies: vec![],
+            custom: Vec::new(),
         },
     )
     .expect("create task");

@@ -11,8 +11,13 @@ mod allocate;
 mod ball;
 mod central_commands;
 mod edit_command;
-mod goals;
 pub use edit_command::{edit_backlog_task_command, TaskEditRequest, TaskEditResult};
+mod field_config;
+pub use field_config::{
+    add_field_decl, declared_fields, edit_field_decl, remove_field_decl, tasks_setting_field,
+    validate_field_value, FieldDecl, FieldEditPatch, FieldKind, BUILTIN_FIELD_KEYS,
+};
+mod goals;
 mod hierarchy;
 pub mod migration;
 pub(crate) mod migration_repairs;

@@ -2,6 +2,7 @@
 //! inside it) into `super::types` structs. Read-only — writes live in
 //! `super::write` behind the `super::mutations` facade.
 
+use super::field_config::FieldDecl;
 use super::types::{BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource};
 use anyhow::{bail, Context, Result};
 use serde_yaml::{Mapping, Value};
@@ -38,6 +39,7 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
         bail!("{} is not a Backlog project", root.display());
     }
 
+    let field_decls = super::field_config::parse_field_decls(root)?;
     let mut warnings = Vec::new();
     let mut tasks = Vec::new();
     for (rel, source) in [
@@ -49,7 +51,9 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
         let relative = format!("backlog/{rel}");
         for (path, text, identity) in super::task_storage::sources(root, &relative, &mut warnings)?
         {
-            match text.and_then(|text| parse_task_text(&path, source, &text)) {
+            match text
+                .and_then(|text| parse_task_text_with_fields(&path, source, &text, &field_decls))
+            {
                 Ok((mut task, task_warnings)) => {
                     task.storage_identity = identity;
                     warnings.extend(
@@ -80,6 +84,7 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
         ranking,
         loaded_at_unix: unix_now(),
         configured_statuses: parse_config_statuses(root)?,
+        fields: field_decls,
     })
 }
 
@@ -162,10 +167,24 @@ pub(super) fn parse_task_file(
     parse_task_text(path, source, &text)
 }
 
+/// Parse with no repo field declarations in scope — every caller that only
+/// needs a task's built-in facts (id matching, dependency rewriting,
+/// migration comparisons) and never reads `custom`. `custom` on the
+/// returned task is always empty; see [`parse_task_text_with_fields`] for
+/// the one caller (`load_backlog_repo`) that populates it for real.
 pub(crate) fn parse_task_text(
     path: &Path,
     source: BacklogTaskSource,
     text: &str,
+) -> Result<(BacklogTask, Vec<String>)> {
+    parse_task_text_with_fields(path, source, text, &[])
+}
+
+pub(super) fn parse_task_text_with_fields(
+    path: &Path,
+    source: BacklogTaskSource,
+    text: &str,
+    field_decls: &[FieldDecl],
 ) -> Result<(BacklogTask, Vec<String>)> {
     let (frontmatter, body) = split_frontmatter(text);
     let mut warnings = Vec::new();
@@ -228,6 +247,7 @@ pub(crate) fn parse_task_text(
         definition_of_done,
         source,
         path: path.to_path_buf(),
+        custom: super::field_config::extract_custom_fields(&frontmatter, field_decls),
     };
     Ok((task, warnings))
 }

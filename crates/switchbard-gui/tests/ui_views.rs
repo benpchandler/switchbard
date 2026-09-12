@@ -51,6 +51,7 @@ fn seeded_backlog_task() -> BacklogTask {
         definition_of_done: vec![],
         source: BacklogTaskSource::Active,
         path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-1.md")),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -82,6 +83,7 @@ fn board_lens_renders_kanban_columns_with_the_seeded_task() {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     let mut harness = harness(app);
@@ -165,6 +167,7 @@ fn global_search_overlay_finds_the_matching_task_across_repos() {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     let mut harness = harness(app);
@@ -657,6 +660,7 @@ fn backlog_view_surfaces_seeded_task() {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     app.backlog_view
@@ -752,6 +756,7 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
                     definition_of_done: vec![],
                     source: BacklogTaskSource::Active,
                     path: repo_path(repo_name).join("backlog/tasks/task-1.md"),
+                    custom: std::collections::BTreeMap::new(),
                 }],
                 warnings: vec![],
                 project_defs: vec![],
@@ -766,6 +771,7 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
                     "In Review".into(),
                     "Done".into(),
                 ],
+                fields: Vec::new(),
             },
         );
     }
@@ -847,6 +853,7 @@ fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-2".to_string()).into());
@@ -916,6 +923,7 @@ fn parent_task_shows_rollup_and_expands_to_reveal_children() {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
@@ -989,6 +997,7 @@ fn harness_on_disk_task(labels: &[&str]) -> (tempfile::TempDir, Harness<'static,
             assignees: vec!["ben".to_string()],
             project: None,
             dependencies: vec![],
+            custom: Vec::new(),
         },
     )
     .expect("seed task file");
@@ -1050,6 +1059,7 @@ fn harness_on_task(task: BacklogTask) -> Harness<'static, HiveApp> {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     let mut harness = harness(app);
@@ -1250,6 +1260,7 @@ fn list_row_shows_the_dispatch_pill_for_a_queued_task() {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     let mut harness = harness(app);
@@ -1292,6 +1303,7 @@ fn tasks_place_grouped_by_project_renders_the_expedite_marker_and_lane_toggle() 
             ranking,
             loaded_at_unix: 0,
             configured_statuses: vec!["To Do".into(), "In Progress".into(), "Done".into()],
+            fields: Vec::new(),
         },
     );
     let mut harness = harness(app);

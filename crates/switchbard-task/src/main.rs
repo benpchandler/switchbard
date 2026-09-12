@@ -19,6 +19,7 @@
 //! - Nothing here blocks or waits, so the banner/heartbeat rules don't
 //!   apply; every command does its work and exits.
 
+mod field_cmd;
 mod goals_cmd;
 mod hierarchy_cmd;
 mod queue_cmd;
@@ -138,6 +139,15 @@ enum Command {
         /// Include completed, draft, and archived tasks (default: active only)
         #[arg(long)]
         all: bool,
+        /// Only rows where a declared custom field equals a value
+        /// (repeatable; every `--where` must match — AND, not OR)
+        #[arg(long = "where", value_name = "NAME=VALUE")]
+        where_: Vec<String>,
+        /// Sort by a declared custom field: enum fields sort in declared
+        /// value order, other kinds sort lexically; tasks not setting the
+        /// field sort last
+        #[arg(long, value_name = "NAME")]
+        sort: Option<String>,
     },
     /// Print one task in full: fields, then every section verbatim
     View {
@@ -180,6 +190,10 @@ enum Command {
     /// Live work: which tasks this session is working (claim/release/pass/list/hook)
     #[command(subcommand)]
     Work(work_cmd::WorkCmd),
+    /// Manage this repo's declared custom task fields (backlog/config.yml's
+    /// `fields:` list) — add/edit/remove/list
+    #[command(subcommand)]
+    Field(field_cmd::FieldCmd),
 }
 
 #[derive(Args)]
@@ -220,6 +234,10 @@ struct CreateArgs {
     /// Dependency task ids, comma-separated
     #[arg(long, value_delimiter = ',')]
     depends_on: Vec<String>,
+    /// Set a declared custom field's value at creation time (repeatable;
+    /// validated against backlog/config.yml's `fields:` list)
+    #[arg(long = "set", value_name = "NAME=VALUE")]
+    set: Vec<String>,
     #[command(flatten)]
     rank: rank_cmd::CreatePlacementArgs,
 }
@@ -325,6 +343,13 @@ struct EditArgs {
     /// the task is finished
     #[arg(long, value_name = "TEXT")]
     final_summary: Option<String>,
+    /// Set a declared custom field's value (repeatable; validated against
+    /// backlog/config.yml's `fields:` list — see `sb field list`)
+    #[arg(long = "set", value_name = "NAME=VALUE")]
+    set: Vec<String>,
+    /// Remove a declared custom field's value (repeatable)
+    #[arg(long = "unset", value_name = "NAME")]
+    unset: Vec<String>,
 }
 
 fn main() {
@@ -364,7 +389,16 @@ fn run(cli: &Cli) -> Result<()> {
             status,
             in_project,
             all,
-        } => list(&root, status.as_deref(), in_project.as_deref(), *all),
+            where_,
+            sort,
+        } => list(
+            &root,
+            status.as_deref(),
+            in_project.as_deref(),
+            *all,
+            where_,
+            sort.as_deref(),
+        ),
         Command::View { id } => view(&root, id),
         Command::Create(args) => create(&root, args),
         Command::Edit(args) => edit(&root, args),
@@ -385,6 +419,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Unexpedite { id } => rank_cmd::run_unexpedite(&root, id),
         Command::Queue(cmd) => queue_cmd::run_queue(&root, cmd),
         Command::Work(cmd) => work_cmd::run_work(&root, cmd),
+        Command::Field(cmd) => field_cmd::run_field(&root, cmd),
     }
 }
 
@@ -419,35 +454,82 @@ pub(crate) fn find_repo_root(start: &Path) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-fn list(root: &Path, status: Option<&str>, in_project: Option<&str>, all: bool) -> Result<()> {
+fn list(
+    root: &Path,
+    status: Option<&str>,
+    in_project: Option<&str>,
+    all: bool,
+    where_: &[String],
+    sort: Option<&str>,
+) -> Result<()> {
     let repo = switchbard_core::load_backlog_repo(root)?;
     for warning in &repo.warnings {
         eprintln!("sb: warning: {warning}");
     }
-    for task in &repo.tasks {
-        if !all && task.source != switchbard_core::BacklogTaskSource::Active {
-            continue;
-        }
-        if let Some(wanted) = status {
-            if !task.status.eq_ignore_ascii_case(wanted) {
-                continue;
-            }
-        }
-        if let Some(wanted) = in_project {
-            if task.project.as_deref() != Some(wanted) {
-                continue;
-            }
-        }
+    let filters = field_cmd::parse_pairs(where_)?;
+    for (name, _) in &filters {
+        find_declared(&repo.fields, name)?;
+    }
+    let mut rows: Vec<&BacklogTask> = repo
+        .tasks
+        .iter()
+        .filter(|task| all || task.source == switchbard_core::BacklogTaskSource::Active)
+        .filter(|task| status.is_none_or(|wanted| task.status.eq_ignore_ascii_case(wanted)))
+        .filter(|task| in_project.is_none_or(|wanted| task.project.as_deref() == Some(wanted)))
+        .filter(|task| {
+            filters
+                .iter()
+                .all(|(name, value)| task.custom.get(name).is_some_and(|v| v == value))
+        })
+        .collect();
+    if let Some(name) = sort {
+        let decl = find_declared(&repo.fields, name)?;
+        rows.sort_by(|a, b| custom_sort_key(a, decl).cmp(&custom_sort_key(b, decl)));
+    }
+    for task in rows {
         println!("{}", render::list_row(task));
     }
     Ok(())
+}
+
+/// `(absent, declared-value rank, raw value)` — absent sorts last; an enum
+/// field's rank is its position in the declaration's `values` (its
+/// sort/section order); every other kind ranks 0, so the tuple's third
+/// element (lexical) is what actually orders them.
+fn custom_sort_key<'t>(
+    task: &'t BacklogTask,
+    decl: &switchbard_core::FieldDecl,
+) -> (bool, usize, &'t str) {
+    match task.custom.get(&decl.name) {
+        None => (true, usize::MAX, ""),
+        Some(value) => {
+            let rank = if decl.kind == switchbard_core::FieldKind::Enum {
+                decl.values
+                    .iter()
+                    .position(|v| v == value)
+                    .unwrap_or(usize::MAX)
+            } else {
+                0
+            };
+            (false, rank, value.as_str())
+        }
+    }
+}
+
+fn find_declared<'f>(
+    fields: &'f [switchbard_core::FieldDecl],
+    name: &str,
+) -> Result<&'f switchbard_core::FieldDecl> {
+    fields.iter().find(|f| f.name == name).ok_or_else(|| {
+        anyhow!("unknown field `{name}` — see `sb field list` for what this repo declares")
+    })
 }
 
 fn view(root: &Path, id: &str) -> Result<()> {
     let project = switchbard_core::load_backlog_repo(root)?;
     let task = find_task(&project.tasks, id)
         .ok_or_else(|| anyhow!("no task {id} in {} — try `sb list --all`", root.display()))?;
-    print!("{}", render::task_view(task));
+    print!("{}", render::task_view(task, &project.fields));
     Ok(())
 }
 
@@ -468,6 +550,8 @@ fn bare_id(id: &str) -> &str {
 }
 
 fn create(root: &Path, args: &CreateArgs) -> Result<()> {
+    let custom = field_cmd::parse_pairs(&args.set)?;
+    field_cmd::validate_set_pairs(root, &custom)?;
     let task = NewBacklogTask {
         title: args.title.clone(),
         description: args.description.clone().unwrap_or_default(),
@@ -479,6 +563,7 @@ fn create(root: &Path, args: &CreateArgs) -> Result<()> {
         assignees: args.assignees.clone(),
         project: args.in_project.clone(),
         dependencies: args.depends_on.clone(),
+        custom,
     };
     let id = switchbard_core::create_backlog_task(root, &task)?;
     println!("{id}");
@@ -491,6 +576,9 @@ fn create(root: &Path, args: &CreateArgs) -> Result<()> {
 /// Translate flags into the shared atomic edit command, preserving their order.
 fn edit(root: &Path, args: &EditArgs) -> Result<()> {
     use switchbard_core::{TaskChecklist, TaskEditRequest};
+    let set_custom = field_cmd::parse_pairs(&args.set)?;
+    field_cmd::validate_set_pairs(root, &set_custom)?;
+    field_cmd::validate_unset_names(root, &args.unset)?;
     let mut checklists = Vec::new();
     for (indices, checked, list) in [
         (&args.check_ac, true, TaskChecklist::AcceptanceCriteria),
@@ -501,7 +589,7 @@ fn edit(root: &Path, args: &EditArgs) -> Result<()> {
         checklists.extend(indices.iter().map(|index| (list, *index, checked)));
     }
     let request = TaskEditRequest {
-        patch: patch_from(args),
+        patch: patch_from(args, set_custom),
         acceptance_edits: acceptance_edits(&args.edit_ac)?,
         acceptance_removals: args.remove_ac.clone(),
         ball: args
@@ -555,7 +643,7 @@ fn acceptance_edits(raw: &[String]) -> Result<Vec<ChecklistTextEdit>> {
         .collect()
 }
 
-fn patch_from(args: &EditArgs) -> BacklogTaskPatch {
+fn patch_from(args: &EditArgs, set_custom: Vec<(String, String)>) -> BacklogTaskPatch {
     BacklogTaskPatch {
         title: args.title.clone(),
         description: args.description.clone(),
@@ -569,6 +657,8 @@ fn patch_from(args: &EditArgs) -> BacklogTaskPatch {
         append_acceptance_criteria: args.acceptance_criteria.clone(),
         project: args.in_project.clone(),
         clear_project: args.clear_project,
+        set_custom,
+        unset_custom: args.unset.clone(),
     }
 }
 
