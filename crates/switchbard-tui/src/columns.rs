@@ -14,6 +14,8 @@ pub enum Column {
     Labels,
     Project,
     Ball,
+    /// The optional target date (`due_date:`), `YYYY-MM-DD`.
+    Due,
     /// Position in the repo's top list (the expedite lane); empty when not in it.
     Rank,
     /// The weekly goal(s) the task feeds: by scope, attachment, or attached project.
@@ -50,7 +52,7 @@ pub struct ColumnSpec {
     pub numeric: bool,
 }
 
-pub const COLUMNS: [ColumnSpec; 18] = [
+pub const COLUMNS: [ColumnSpec; 19] = [
     ColumnSpec {
         column: Column::Id,
         name: "id",
@@ -132,6 +134,18 @@ pub const COLUMNS: [ColumnSpec; 18] = [
         field: Some(FilterField::Ball),
         vocabulary: &["me", "agent"],
         groupable: true,
+        multi_valued: false,
+        numeric: false,
+    },
+    ColumnSpec {
+        column: Column::Due,
+        name: "due",
+        alias: None,
+        header: "due",
+        width: Some(10),
+        field: Some(FilterField::Due),
+        vocabulary: &[],
+        groupable: false,
         multi_valued: false,
         numeric: false,
     },
@@ -287,7 +301,7 @@ pub const COLUMNS: [ColumnSpec; 18] = [
 
 impl Column {
     /// Every column sbt knows, in catalog order. Shown columns are a user-ordered subset.
-    pub const ALL: [Column; 11] = [
+    pub const ALL: [Column; 12] = [
         Column::Id,
         Column::Status,
         Column::Priority,
@@ -295,6 +309,7 @@ impl Column {
         Column::Labels,
         Column::Project,
         Column::Ball,
+        Column::Due,
         Column::Rank,
         Column::Goal,
         Column::Work,

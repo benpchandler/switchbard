@@ -55,6 +55,7 @@ fn native_task_create(root: &std::path::Path, title: &str) -> String {
             assignees: vec![],
             project: None,
             dependencies: vec![],
+            due_date: None,
         },
     )
     .expect("native fixture create")

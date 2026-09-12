@@ -220,6 +220,7 @@ pub(crate) fn parse_task_text(
             .or_else(|| yaml_string(&frontmatter, "parent")),
         created_date: yaml_string(&frontmatter, "created_date"),
         updated_date: yaml_string(&frontmatter, "updated_date"),
+        due_date: yaml_string(&frontmatter, "due_date"),
         description,
         implementation_plan,
         implementation_notes,
@@ -747,6 +748,19 @@ pub fn parse_backlog_day(value: &str) -> Option<i64> {
         .map(|dt| dt.and_utc().timestamp().div_euclid(86_400))
 }
 
+/// The `due_date` boundary check: validates a `--due` value is a real
+/// calendar date in `YYYY-MM-DD` form, returning the trimmed string. Callers
+/// at the untrusted-input boundary (the `sb` CLI) run this once; everything
+/// downstream (`BacklogTask::due_date`, `sbt`'s Due column/filter) trusts an
+/// already-`Some` value without re-validating (Rule 5).
+pub fn parse_due_date(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    if chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d").is_err() {
+        bail!("due date must be YYYY-MM-DD, got `{trimmed}`");
+    }
+    Ok(trimmed.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1207,6 +1221,36 @@ Existing note.
         assert_eq!(task.acceptance_criteria[0].index, 1);
         assert!(!task.acceptance_criteria[0].checked);
         assert!(task.acceptance_criteria[1].checked);
+        assert_eq!(task.due_date, None, "the fixture carries no due_date key");
+    }
+
+    #[test]
+    fn parses_due_date_from_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("task-19 - Example.md");
+        fs::write(
+            &path,
+            "---\nid: TASK-19\ntitle: Example\nstatus: To Do\ndue_date: '2026-09-14'\n---\n",
+        )
+        .unwrap();
+
+        let task = parse_task_file(&path, BacklogTaskSource::Active).unwrap().0;
+        assert_eq!(task.due_date.as_deref(), Some("2026-09-14"));
+    }
+
+    #[test]
+    fn parse_due_date_accepts_well_formed_dates_and_trims_whitespace() {
+        assert_eq!(parse_due_date(" 2026-09-14 ").unwrap(), "2026-09-14");
+    }
+
+    #[test]
+    fn parse_due_date_rejects_malformed_input() {
+        for bad in ["not a date", "2026/09/14", "2026-13-40", "", "09-14-2026"] {
+            assert!(
+                parse_due_date(bad).is_err(),
+                "`{bad}` should not parse as a due date"
+            );
+        }
     }
 
     /// The Linear-hierarchy divergence's membership-key rule (trajectory:

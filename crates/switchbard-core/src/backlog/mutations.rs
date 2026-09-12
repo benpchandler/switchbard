@@ -177,6 +177,11 @@ pub(super) fn apply_patch_draft(
     } else if patch.clear_project {
         changed |= super::write::set_task_project_draft(draft, None)?.changed();
     }
+    if let Some(due_date) = &patch.due_date {
+        changed |= super::write::set_task_due_date_draft(draft, Some(due_date))?.changed();
+    } else if patch.clear_due_date {
+        changed |= super::write::set_task_due_date_draft(draft, None)?.changed();
+    }
     Ok(changed)
 }
 
@@ -592,6 +597,7 @@ mod tests {
             assignees: vec![],
             project: None,
             dependencies: vec![],
+            due_date: None,
         }
     }
 

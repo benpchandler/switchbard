@@ -102,6 +102,7 @@ fn task(repo: usize, i: usize) -> BacklogTask {
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-01 09:00".to_string()),
+        due_date: None,
         description: "Lorem ipsum dolor sit amet.".to_string(),
         implementation_plan: String::new(),
         // Notes matter: `dispatch_state` scans them for the PR link / failure

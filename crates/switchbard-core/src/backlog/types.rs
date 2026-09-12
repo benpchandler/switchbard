@@ -266,6 +266,10 @@ pub struct BacklogTask {
     pub parent: Option<String>,
     pub created_date: Option<String>,
     pub updated_date: Option<String>,
+    /// Optional target date (`YYYY-MM-DD`), read from the `due_date:`
+    /// frontmatter key. Validated once at the `sb` CLI boundary
+    /// (`parse_due_date`); core trusts an already-`Some` value here.
+    pub due_date: Option<String>,
     pub description: String,
     pub implementation_plan: String,
     pub implementation_notes: String,
@@ -342,6 +346,14 @@ pub struct BacklogTaskPatch {
     /// to police that; `edit_backlog_task` only ever receives one or the
     /// other from the UI layer.
     pub clear_project: bool,
+    /// `Some(date)` sets `due_date` (already validated as `YYYY-MM-DD` by
+    /// the `sb` CLI boundary — see `parse_due_date`); `None` with
+    /// `clear_due_date` unset leaves it untouched. Assign and clear are
+    /// mutually exclusive, same shape as `project`/`clear_project`.
+    pub due_date: Option<String>,
+    /// Clears the task's due date (`--clear-due`). Ignored if `due_date` is
+    /// also set (assigning wins).
+    pub clear_due_date: bool,
 }
 
 impl BacklogTaskPatch {
@@ -358,6 +370,8 @@ impl BacklogTaskPatch {
             && self.append_acceptance_criteria.is_empty()
             && self.project.is_none()
             && !self.clear_project
+            && self.due_date.is_none()
+            && !self.clear_due_date
     }
 }
 
@@ -383,6 +397,9 @@ pub struct NewBacklogTask {
     /// task create --help`; same flag `edit_backlog_task` uses for
     /// `BacklogTaskPatch::dependencies`).
     pub dependencies: Vec<String>,
+    /// Optional due date at creation time (`--due`), already validated as
+    /// `YYYY-MM-DD` by the `sb` CLI boundary (`parse_due_date`).
+    pub due_date: Option<String>,
 }
 
 #[cfg(test)]
@@ -408,6 +425,7 @@ mod tests {
                 parent: None,
                 created_date: None,
                 updated_date: None,
+                due_date: None,
                 description: String::new(),
                 implementation_plan: String::new(),
                 implementation_notes: String::new(),
@@ -498,6 +516,7 @@ mod tests {
                     parent: None,
                     created_date: None,
                     updated_date: None,
+                    due_date: None,
                     description: String::new(),
                     implementation_plan: String::new(),
                     implementation_notes: String::new(),

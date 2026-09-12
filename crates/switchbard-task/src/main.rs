@@ -220,6 +220,9 @@ struct CreateArgs {
     /// Dependency task ids, comma-separated
     #[arg(long, value_delimiter = ',')]
     depends_on: Vec<String>,
+    /// Target date, YYYY-MM-DD
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    due: Option<String>,
     #[command(flatten)]
     rank: rank_cmd::CreatePlacementArgs,
 }
@@ -288,6 +291,12 @@ struct EditArgs {
     /// `--clear-milestone` is a deprecated alias)
     #[arg(long, alias = "clear-milestone")]
     clear_project: bool,
+    /// Set the due date, YYYY-MM-DD
+    #[arg(long, value_name = "YYYY-MM-DD", conflicts_with = "clear_due")]
+    due: Option<String>,
+    /// Remove the due date
+    #[arg(long)]
+    clear_due: bool,
     /// Move the task under another parent (its id is re-minted as that
     /// parent's next sub-issue, e.g. TASK-8.3) or `none` to promote it to a
     /// top-level task; dependencies, rank, and goal inputs follow the new
@@ -468,6 +477,11 @@ fn bare_id(id: &str) -> &str {
 }
 
 fn create(root: &Path, args: &CreateArgs) -> Result<()> {
+    let due_date = args
+        .due
+        .as_deref()
+        .map(switchbard_core::parse_due_date)
+        .transpose()?;
     let task = NewBacklogTask {
         title: args.title.clone(),
         description: args.description.clone().unwrap_or_default(),
@@ -479,6 +493,7 @@ fn create(root: &Path, args: &CreateArgs) -> Result<()> {
         assignees: args.assignees.clone(),
         project: args.in_project.clone(),
         dependencies: args.depends_on.clone(),
+        due_date,
     };
     let id = switchbard_core::create_backlog_task(root, &task)?;
     println!("{id}");
@@ -501,7 +516,7 @@ fn edit(root: &Path, args: &EditArgs) -> Result<()> {
         checklists.extend(indices.iter().map(|index| (list, *index, checked)));
     }
     let request = TaskEditRequest {
-        patch: patch_from(args),
+        patch: patch_from(args)?,
         acceptance_edits: acceptance_edits(&args.edit_ac)?,
         acceptance_removals: args.remove_ac.clone(),
         ball: args
@@ -555,8 +570,13 @@ fn acceptance_edits(raw: &[String]) -> Result<Vec<ChecklistTextEdit>> {
         .collect()
 }
 
-fn patch_from(args: &EditArgs) -> BacklogTaskPatch {
-    BacklogTaskPatch {
+fn patch_from(args: &EditArgs) -> Result<BacklogTaskPatch> {
+    let due_date = args
+        .due
+        .as_deref()
+        .map(switchbard_core::parse_due_date)
+        .transpose()?;
+    Ok(BacklogTaskPatch {
         title: args.title.clone(),
         description: args.description.clone(),
         status: args.status.clone(),
@@ -569,7 +589,9 @@ fn patch_from(args: &EditArgs) -> BacklogTaskPatch {
         append_acceptance_criteria: args.acceptance_criteria.clone(),
         project: args.in_project.clone(),
         clear_project: args.clear_project,
-    }
+        due_date,
+        clear_due_date: args.clear_due,
+    })
 }
 
 #[cfg(test)]
@@ -616,5 +638,100 @@ mod tests {
     fn cli_definition_is_internally_consistent() {
         use clap::CommandFactory;
         Cli::command().debug_assert();
+    }
+
+    /// A throwaway Backlog project: just enough directory shape for
+    /// `create`/`edit`/`view` to run against.
+    fn fixture_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("backlog/tasks")).expect("project layout");
+        dir
+    }
+
+    /// AC #1: `sb create --due` writes `due_date` and `sb view` shows it.
+    #[test]
+    fn create_with_due_writes_due_date_and_view_shows_it() {
+        let fixture = fixture_repo();
+        let root = fixture.path();
+        let cli = Cli::try_parse_from(["sb", "create", "Fixture task", "--due", "2026-09-14"])
+            .expect("parses");
+        let Command::Create(args) = cli.command else {
+            panic!("expected Create");
+        };
+        create(root, &args).expect("create succeeds");
+
+        let project = switchbard_core::load_backlog_repo(root).expect("reparse");
+        let task = &project.tasks[0];
+        assert_eq!(task.due_date.as_deref(), Some("2026-09-14"));
+        assert!(render::task_view(task).contains("Due: 2026-09-14"));
+    }
+
+    /// AC #2: an invalid `--due` is rejected at the CLI boundary with a
+    /// message naming the expected shape, for both `create` and `edit`.
+    #[test]
+    fn create_rejects_a_malformed_due_date() {
+        let fixture = fixture_repo();
+        let root = fixture.path();
+        let cli = Cli::try_parse_from(["sb", "create", "Fixture task", "--due", "09/14/2026"])
+            .expect("parses");
+        let Command::Create(args) = cli.command else {
+            panic!("expected Create");
+        };
+        let error = create(root, &args).unwrap_err();
+        assert!(error.to_string().contains("YYYY-MM-DD"), "got: {error}");
+    }
+
+    #[test]
+    fn edit_rejects_a_malformed_due_date_without_touching_the_task() {
+        let fixture = fixture_repo();
+        let root = fixture.path();
+        let create_cli = Cli::try_parse_from(["sb", "create", "Fixture task"]).expect("parses");
+        let Command::Create(create_args) = create_cli.command else {
+            panic!("expected Create");
+        };
+        create(root, &create_args).expect("create succeeds");
+
+        let edit_cli =
+            Cli::try_parse_from(["sb", "edit", "TASK-1", "--due", "not-a-date"]).expect("parses");
+        let Command::Edit(edit_args) = edit_cli.command else {
+            panic!("expected Edit");
+        };
+        let error = patch_from(&edit_args).unwrap_err();
+        assert!(error.to_string().contains("YYYY-MM-DD"), "got: {error}");
+
+        let project = switchbard_core::load_backlog_repo(root).expect("reparse");
+        assert_eq!(
+            project.tasks[0].due_date, None,
+            "the rejected edit never wrote"
+        );
+    }
+
+    #[test]
+    fn edit_can_set_and_clear_the_due_date() {
+        let fixture = fixture_repo();
+        let root = fixture.path();
+        let create_cli = Cli::try_parse_from(["sb", "create", "Fixture task"]).expect("parses");
+        let Command::Create(create_args) = create_cli.command else {
+            panic!("expected Create");
+        };
+        create(root, &create_args).expect("create succeeds");
+
+        let edit_cli =
+            Cli::try_parse_from(["sb", "edit", "TASK-1", "--due", "2026-09-14"]).expect("parses");
+        let Command::Edit(edit_args) = edit_cli.command else {
+            panic!("expected Edit");
+        };
+        edit(root, &edit_args).expect("edit succeeds");
+        let project = switchbard_core::load_backlog_repo(root).expect("reparse");
+        assert_eq!(project.tasks[0].due_date.as_deref(), Some("2026-09-14"));
+
+        let clear_cli =
+            Cli::try_parse_from(["sb", "edit", "TASK-1", "--clear-due"]).expect("parses");
+        let Command::Edit(clear_args) = clear_cli.command else {
+            panic!("expected Edit");
+        };
+        edit(root, &clear_args).expect("edit succeeds");
+        let project = switchbard_core::load_backlog_repo(root).expect("reparse");
+        assert_eq!(project.tasks[0].due_date, None);
     }
 }

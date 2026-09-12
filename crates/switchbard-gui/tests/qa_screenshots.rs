@@ -63,6 +63,7 @@ fn sample_task(id: &str, title: &str, status: &str) -> BacklogTask {
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-20 12:00".to_string()),
+        due_date: None,
         description: "## Why\n\nExercises **CommonMark** rendering.".to_string(),
         implementation_plan: "Step one, then step two.".to_string(),
         implementation_notes: "Existing note text.".to_string(),

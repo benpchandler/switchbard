@@ -53,6 +53,7 @@ fn task(id: &str, title: &str, status: &str) -> BacklogTask {
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-01 09:00".to_string()),
+        due_date: None,
         description: String::new(),
         implementation_plan: String::new(),
         implementation_notes: String::new(),
@@ -2707,6 +2708,30 @@ fn detail_harness_on(t: BacklogTask) -> Harness<'static, HiveApp> {
     harness
 }
 
+/// AC #4: the detail pane shows the due date, read-only, when the task
+/// carries one, and shows nothing extra when it doesn't.
+#[test]
+fn detail_pane_shows_due_date_only_when_set() {
+    let mut with_due = detail_task_with_checklists();
+    with_due.due_date = Some("2026-09-14".to_string());
+    let mut harness = detail_harness_on(with_due);
+    harness.run();
+    assert!(
+        harness
+            .query_all_by_label_contains("due 2026-09-14")
+            .next()
+            .is_some(),
+        "due date should render in the detail pane header"
+    );
+
+    let mut harness = detail_harness_on(detail_task_with_checklists());
+    harness.run();
+    assert!(
+        harness.query_all_by_label_contains("due ").next().is_none(),
+        "no due label should render when the task has no due date"
+    );
+}
+
 #[test]
 fn acceptance_criterion_checkbox_click_sets_the_synchronous_updating_status() {
     let mut harness = detail_harness_on(detail_task_with_checklists());
@@ -3544,6 +3569,7 @@ fn sub_task_hierarchy_renders_correctly_from_a_native_created_subtask() {
                 assignees: vec![],
                 project: None,
                 dependencies: vec![],
+                due_date: None,
             },
         )
         .expect("native fixture subtask create");
@@ -3654,6 +3680,7 @@ fn native_task_create(root: &std::path::Path, title: &str) -> String {
             assignees: vec![],
             project: None,
             dependencies: vec![],
+            due_date: None,
         },
     )
     .expect("native fixture create")

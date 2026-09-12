@@ -307,6 +307,7 @@ mod tests {
             assignees: Vec::new(),
             project: None,
             dependencies: Vec::new(),
+            due_date: None,
         };
         let (_, path) = create_task_allocating_id(dir.path(), &task).expect("create shorthand");
         assert!(fs::read_to_string(path)

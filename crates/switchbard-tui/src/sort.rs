@@ -117,6 +117,25 @@ pub fn compare_values(
     b: &impl crate::column_values::ColumnValues,
     sort: Sort,
 ) -> Ordering {
+    // Due sorts on the raw `YYYY-MM-DD` value (lexicographic == chronological
+    // for that format), with an absent due date always last regardless of
+    // direction — "no due date" is not a date, so ascending/descending
+    // shouldn't reposition it the way a real value would.
+    if sort.column == Column::Due {
+        let due = |values: &dyn crate::column_values::ColumnValues| {
+            values.values(Column::Due).into_iter().next()
+        };
+        let ordering = match (due(a), due(b)) {
+            (None, None) => Ordering::Equal,
+            (None, Some(_)) => Ordering::Greater,
+            (Some(_), None) => Ordering::Less,
+            (Some(a), Some(b)) if sort.order == Order::Descending => b.cmp(&a),
+            (Some(a), Some(b)) => a.cmp(&b),
+        };
+        return ordering
+            .then_with(|| a.numeric_key(Column::Id).cmp(&b.numeric_key(Column::Id)))
+            .then_with(|| a.identity().cmp(b.identity()));
+    }
     let plain = || {
         if sort.column.spec().numeric {
             a.numeric_key(sort.column).cmp(&b.numeric_key(sort.column))
@@ -143,4 +162,87 @@ pub fn compare_values(
     ordering
         .then_with(|| a.numeric_key(Column::Id).cmp(&b.numeric_key(Column::Id)))
         .then_with(|| a.identity().cmp(b.identity()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use switchbard_core::BacklogTaskSource;
+
+    fn task(id: &str, due: Option<&str>) -> BacklogTask {
+        BacklogTask {
+            storage_identity: None,
+            id: id.to_string(),
+            title: id.to_string(),
+            status: "To Do".to_string(),
+            priority: "medium".to_string(),
+            assignees: vec![],
+            labels: vec![],
+            dependencies: vec![],
+            references: vec![],
+            project: None,
+            parent: None,
+            created_date: None,
+            updated_date: None,
+            due_date: due.map(str::to_string),
+            description: String::new(),
+            implementation_plan: String::new(),
+            implementation_notes: String::new(),
+            final_summary: String::new(),
+            acceptance_criteria: vec![],
+            definition_of_done: vec![],
+            source: BacklogTaskSource::Active,
+            path: std::path::PathBuf::from(format!("/repo/backlog/tasks/{id}.md")),
+        }
+    }
+
+    fn ordered(tasks: &[BacklogTask], order: Order) -> Vec<String> {
+        let goals = [];
+        let mut visible: Vec<usize> = (0..tasks.len()).collect();
+        apply(
+            tasks,
+            &mut visible,
+            Sort {
+                column: Column::Due,
+                order,
+            },
+            &[],
+            &goals,
+        );
+        visible.into_iter().map(|i| tasks[i].id.clone()).collect()
+    }
+
+    #[test]
+    fn ascending_orders_by_date_with_the_absent_value_last() {
+        let tasks = [
+            task("TASK-1", Some("2026-09-20")),
+            task("TASK-2", None),
+            task("TASK-3", Some("2026-09-14")),
+        ];
+        assert_eq!(
+            ordered(&tasks, Order::Ascending),
+            vec!["TASK-3", "TASK-1", "TASK-2"]
+        );
+    }
+
+    /// Descending still keeps an absent due date last — it is not a date
+    /// that reverses with the rest, it is the absence of one.
+    #[test]
+    fn descending_reverses_dated_tasks_but_still_keeps_the_absent_value_last() {
+        let tasks = [
+            task("TASK-1", Some("2026-09-20")),
+            task("TASK-2", None),
+            task("TASK-3", Some("2026-09-14")),
+        ];
+        assert_eq!(
+            ordered(&tasks, Order::Descending),
+            vec!["TASK-1", "TASK-3", "TASK-2"]
+        );
+    }
+
+    #[test]
+    fn two_absent_due_dates_break_ties_by_id() {
+        let tasks = [task("TASK-2", None), task("TASK-1", None)];
+        assert_eq!(ordered(&tasks, Order::Ascending), vec!["TASK-1", "TASK-2"]);
+    }
 }

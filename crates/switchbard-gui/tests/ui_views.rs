@@ -39,6 +39,7 @@ fn seeded_backlog_task() -> BacklogTask {
         parent: None,
         created_date: Some("2026-06-20 12:00".to_string()),
         updated_date: Some("2026-06-20 12:00".to_string()),
+        due_date: None,
         description: "Task detail body".to_string(),
         implementation_plan: String::new(),
         implementation_notes: "Existing note".to_string(),
@@ -744,6 +745,7 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
                     parent: None,
                     created_date: None,
                     updated_date: None,
+                    due_date: None,
                     description: String::new(),
                     implementation_plan: String::new(),
                     implementation_notes: String::new(),
@@ -989,6 +991,7 @@ fn harness_on_disk_task(labels: &[&str]) -> (tempfile::TempDir, Harness<'static,
             assignees: vec!["ben".to_string()],
             project: None,
             dependencies: vec![],
+            due_date: None,
         },
     )
     .expect("seed task file");

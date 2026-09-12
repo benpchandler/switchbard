@@ -43,6 +43,7 @@ fn task(id: &str, title: &str, status: &str, labels: &[&str], notes: &str) -> Ba
         parent: None,
         created_date: Some("2026-06-20 12:00".to_string()),
         updated_date: Some("2026-06-20 12:00".to_string()),
+        due_date: None,
         description: "body".to_string(),
         implementation_plan: String::new(),
         implementation_notes: notes.to_string(),
@@ -500,6 +501,7 @@ fn retry_re_flags_the_task_through_the_real_write_layer() {
             assignees: vec![],
             project: None,
             dependencies: vec![],
+            due_date: None,
         },
     )
     .expect("create fixture task");

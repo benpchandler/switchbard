@@ -193,6 +193,7 @@ mod tests {
             parent: parent.map(str::to_string),
             created_date: None,
             updated_date: None,
+            due_date: None,
             description: String::new(),
             implementation_plan: String::new(),
             implementation_notes: String::new(),

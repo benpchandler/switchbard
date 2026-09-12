@@ -167,6 +167,9 @@ pub fn set_task_title(path: &Path, title: &str) -> Result<WriteOutcome> {
 pub fn set_task_project(path: &Path, project: Option<&str>) -> Result<WriteOutcome> {
     edit_document(path, |draft| set_task_project_draft(draft, project))
 }
+pub fn set_task_due_date(path: &Path, due_date: Option<&str>) -> Result<WriteOutcome> {
+    edit_document(path, |draft| set_task_due_date_draft(draft, due_date))
+}
 pub fn set_task_list_field(
     path: &Path,
     field: TaskListField,
@@ -281,6 +284,28 @@ pub(super) fn set_task_project_draft(
         } else {
             set_scalar(fm, "project", &rendered, Some("priority"));
         }
+        Ok(())
+    })
+}
+
+/// `Some(date)` sets the due date; `None` clears it (`--clear-due`). The
+/// value is trusted already-validated `YYYY-MM-DD` (the `sb` CLI boundary
+/// runs `parse_due_date` before this is ever called) — this is a plain
+/// scalar write, same shape as [`set_task_project_draft`] without the
+/// legacy-key migration `project`/`milestone` needs.
+pub(super) fn set_task_due_date_draft(
+    path: &mut TaskDraft,
+    due_date: Option<&str>,
+) -> Result<WriteOutcome> {
+    let Some(date) = due_date else {
+        return apply_edit(path, |fm, _| {
+            remove_key(fm, "due_date");
+            Ok(())
+        });
+    };
+    let date = validated_single_line("due_date", date)?.to_string();
+    apply_edit(path, move |fm, _| {
+        set_scalar(fm, "due_date", &yaml_scalar(&date), Some("updated_date"));
         Ok(())
     })
 }
@@ -1362,6 +1387,12 @@ fn new_task_text(
         &cleaned_list_values("assignee", &task.assignees)?,
     ));
     fm.push(format!("created_date: '{stamp}'"));
+    if let Some(due_date) = &task.due_date {
+        fm.push(format!(
+            "due_date: {}",
+            yaml_scalar(validated_single_line("due_date", due_date)?)
+        ));
+    }
     fm.extend(render_list(
         "labels",
         &cleaned_list_values("labels", &task.labels)?,
@@ -1764,6 +1795,65 @@ mod tests {
             WriteOutcome::Changed
         );
         assert!(!read(&path).contains("project:"));
+    }
+
+    #[test]
+    fn due_date_assign_inserts_after_updated_date_and_clear_removes_the_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = fixture_file(&dir);
+
+        // First real edit bumps `updated_date` into existence, so the due
+        // date's anchor key is present for the second edit to land after.
+        assert_eq!(
+            set_task_status(&path, "In Progress").expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+        assert_eq!(
+            set_task_due_date(&path, Some("2026-09-14")).expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+        let after = read(&path);
+        let lines: Vec<&str> = after.lines().collect();
+        let updated = lines
+            .iter()
+            .position(|l| l.starts_with("updated_date:"))
+            .expect("updated_date survives");
+        assert_eq!(lines[updated + 1], "due_date: '2026-09-14'");
+
+        assert_eq!(
+            set_task_due_date(&path, None).expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+        assert!(!read(&path).contains("due_date:"));
+    }
+
+    #[test]
+    fn reassigning_the_same_due_date_is_a_byte_no_op() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = fixture_file(&dir);
+        assert_eq!(
+            set_task_due_date(&path, Some("2026-09-14")).expect("edit succeeds"),
+            WriteOutcome::Changed
+        );
+        let before = read(&path);
+
+        assert_eq!(
+            set_task_due_date(&path, Some("2026-09-14")).expect("edit succeeds"),
+            WriteOutcome::Unchanged
+        );
+        assert_eq!(read(&path), before);
+    }
+
+    #[test]
+    fn clearing_an_absent_due_date_is_a_byte_no_op() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = fixture_file(&dir);
+
+        assert_eq!(
+            set_task_due_date(&path, None).expect("edit succeeds"),
+            WriteOutcome::Unchanged
+        );
+        assert_eq!(read(&path), FIXTURE);
     }
 
     /// A fixture still carrying the pre-divergence `milestone:` key, with a
@@ -2289,6 +2379,7 @@ mod tests {
             assignees: vec![],
             project: Some("m-1".to_string()),
             dependencies: vec!["task-5".to_string()],
+            due_date: None,
         };
 
         let path = write_new_task_file(dir.path(), "TASK", "42", &task).expect("create succeeds");
@@ -2357,6 +2448,7 @@ mod tests {
             assignees: vec![],
             project: None,
             dependencies: vec![],
+            due_date: None,
         };
 
         let path = write_new_task_file(dir.path(), "LED", "11", &task).expect("create succeeds");
@@ -2396,6 +2488,7 @@ mod tests {
                 assignees: vec![],
                 project: None,
                 dependencies: vec![],
+                due_date: None,
             };
             let path =
                 write_new_task_file(dir.path(), &prefix, "4", &task).expect("create Unicode task");
@@ -2426,6 +2519,7 @@ mod tests {
             assignees: vec![],
             project: None,
             dependencies: vec![],
+            due_date: None,
         };
 
         let first =
