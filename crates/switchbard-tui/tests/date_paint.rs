@@ -1,6 +1,6 @@
 //! Real-key date painting over disk-backed tasks and optional real GitHub history.
 mod harness;
-use chrono::{Duration, Utc};
+use chrono::{Duration, Local};
 use crossterm::event::KeyCode;
 use harness::*;
 use ratatui::{backend::TestBackend, style::Color, Terminal};
@@ -32,7 +32,10 @@ fn dated() -> Harness {
     for entry in std::fs::read_dir(h.root.join("backlog/tasks")).expect("fixture directory") {
         std::fs::remove_file(entry.expect("entry").path()).expect("remove fixture");
     }
-    let today = Utc::now().date_naive();
+    // The same clock the app stamps `created_date` with, so "Age 0" really is
+    // the viewer's today. Reading `Utc::now()` here made the fixture a day
+    // ahead of the buckets west of Greenwich.
+    let today = Local::now().date_naive();
     for (index, age) in [-1, 0, 1, 6, 7, 29, 30].into_iter().enumerate() {
         let date = today - Duration::days(age);
         let text = format!("---\nid: TASK-{}\ntitle: Age {age} boundary\nstatus: To Do\ncreated_date: '{date} 23:59'\n---\n", index + 1);
@@ -60,7 +63,7 @@ fn paint(h: &mut Harness, bucket: &str, color: &str) {
 }
 
 #[test]
-fn utc_calendar_boundaries_overlap_without_treating_missing_as_recent() {
+fn calendar_boundaries_overlap_without_treating_missing_as_recent() {
     let mut h = dated();
     paint(&mut h, "last 7 days", "green");
     for age in [0, 1, 6] {

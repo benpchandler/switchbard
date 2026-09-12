@@ -62,6 +62,10 @@ pub enum PickerPurpose {
     Views,
     SaveView,
     GlobalView,
+    /// `v n`: which slot to name.
+    RenameView,
+    /// `v x`: which slot to delete.
+    DeleteView,
     ChooseColumnAction(ColumnAction),
 }
 
@@ -171,7 +175,11 @@ pub enum Payload {
     ViewSlot(usize),
     SaveView,
     GlobalView,
+    RenameView,
+    DeleteView,
     GlobalSettings,
+    TitleWrapping,
+    RowSpacing,
     Project(Option<String>),
     Parent(Option<String>),
     CancelMerge,
@@ -354,6 +362,8 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         | PickerPurpose::Views
         | PickerPurpose::SaveView
         | PickerPurpose::GlobalView
+        | PickerPurpose::RenameView
+        | PickerPurpose::DeleteView
         | PickerPurpose::ChooseColumnAction(_) => "↑↓/jk select · →/l open · ←/h back · Esc closes",
         PickerPurpose::TaskParent(_) => "type ID/title · ↑↓ select · Enter saves · ← back · Esc",
         PickerPurpose::Ball => "number or name picks · new person opens entry · esc",

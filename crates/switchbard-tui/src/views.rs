@@ -1,9 +1,17 @@
-//! Saved views: numbered slots of `ViewState` (filter, sort, columns, glyphs, paint).
+//! Saved views: numbered slots of `ViewState` (filter, sort, columns, glyphs, paint,
+//! grouping, row layout, and name).
 //! Slot 1 is what `sbt` opens on. The same Lua record serializes a slot on disk and
 //! the live state across a self-restart, so one place enumerates the fields.
 //! Global slots live in `~/.switchbard/views.lua`; each repo can override slots in
 //! `~/.switchbard/views/<repo path>.lua`. `v s <n>` writes the repo file, `v g <n>`
 //! promotes a repo slot to the global file so every repo sees it.
+//!
+//! A slot may also carry a user-given `name`, page-agnostic and rides along with
+//! the rest of the record. `v n` names a slot; it writes wherever the slot's
+//! effective definition already lives - the repo file if a repo override exists
+//! for that slot, otherwise the global file. `v x` deletes a slot the same way.
+//! An unnamed slot's display label falls back to `ViewState::label()`, the old
+//! derived-from-contents name.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -32,11 +40,25 @@ pub struct ViewState {
     pub group: Grouping,
     /// Whether the top list sits as its own first section.
     pub pin_top: bool,
+    /// Task title wrapping and vertical separation, saved with this view.
+    pub row_layout: crate::row_layout::RowLayout,
+    /// A user-given name for this slot; empty means unnamed (fall back to `label()`).
+    pub name: String,
 }
 
 impl ViewState {
+    /// The name shown for this slot: the user-given `name` if set, else the
+    /// derived `label()`.
+    pub fn display_name(&self) -> String {
+        if self.name.is_empty() {
+            self.label()
+        } else {
+            self.name.clone()
+        }
+    }
+
     /// A view is named by what it does, so it reads the same in every repo.
-    pub fn name(&self) -> String {
+    pub fn label(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         if !self.filter.is_empty() {
             parts.push(self.filter.clone());
@@ -61,6 +83,9 @@ impl ViewState {
         }
         if !self.pin_top {
             parts.push("nopin".to_string());
+        }
+        if let Some(label) = self.row_layout.label() {
+            parts.push(label);
         }
         if parts.is_empty() {
             "all".to_string()
@@ -168,6 +193,8 @@ pub fn starter_views() -> Vec<ViewState> {
         paint: Vec::new(),
         group: Grouping::flat(),
         pin_top: true,
+        row_layout: crate::row_layout::RowLayout::default(),
+        name: String::new(),
     })
     .collect()
 }
@@ -327,6 +354,62 @@ impl ViewStore {
         next.repo_source = SourceGuard::capture(next.repo_path.as_deref());
         *self = next;
         Ok(())
+    }
+
+    /// Names a slot wherever its effective definition lives: the repo file if
+    /// this repo overrides that slot, otherwise the global file.
+    pub fn set_name(&mut self, slot: usize, name: String) -> Result<(), String> {
+        if self.repo.contains_key(&slot) {
+            self.repo_source.check(self.repo_path.as_deref())?;
+            let mut next = self.clone();
+            let mut view = next
+                .repo
+                .get(&slot)
+                .cloned()
+                .ok_or_else(|| format!("no view in slot {}", slot + 1))?;
+            view.name = name;
+            next.repo.insert(slot, view);
+            next.write_repo()?;
+            next.repo_source = SourceGuard::capture(next.repo_path.as_deref());
+            *self = next;
+            Ok(())
+        } else if let Some(mut view) = self.global.get(slot).cloned() {
+            self.global_source.check(self.global_path.as_deref())?;
+            let mut next = self.clone();
+            view.name = name;
+            next.global[slot] = view;
+            next.write_global()?;
+            next.global_source = SourceGuard::capture(next.global_path.as_deref());
+            *self = next;
+            Ok(())
+        } else {
+            Err(format!("no view in slot {}", slot + 1))
+        }
+    }
+
+    /// Removes a slot wherever it lives: the repo override if this repo has
+    /// one, otherwise the global entry (shifting later global slots down,
+    /// the natural consequence of the global list's contiguous numbering).
+    pub fn delete(&mut self, slot: usize) -> Result<(), String> {
+        if self.repo.contains_key(&slot) {
+            self.repo_source.check(self.repo_path.as_deref())?;
+            let mut next = self.clone();
+            next.repo.remove(&slot);
+            next.write_repo()?;
+            next.repo_source = SourceGuard::capture(next.repo_path.as_deref());
+            *self = next;
+            Ok(())
+        } else if slot < self.global.len() {
+            self.global_source.check(self.global_path.as_deref())?;
+            let mut next = self.clone();
+            next.global.remove(slot);
+            next.write_global()?;
+            next.global_source = SourceGuard::capture(next.global_path.as_deref());
+            *self = next;
+            Ok(())
+        } else {
+            Err(format!("no view in slot {}", slot + 1))
+        }
     }
 
     fn prepare_promotion(&mut self, slot: usize) -> Result<(), String> {
@@ -492,6 +575,9 @@ impl ViewState {
             }
             PaintRule::Rows { .. } => true,
         });
+        if !scope.supports_row_layout() {
+            self.row_layout = crate::row_layout::RowLayout::default();
+        }
         if !scope.supports_grouping() {
             self.group = Grouping::flat();
         }
@@ -525,6 +611,8 @@ impl Default for ViewState {
             paint: Vec::new(),
             group: Grouping::flat(),
             pin_top: true,
+            row_layout: crate::row_layout::RowLayout::default(),
+            name: String::new(),
         }
     }
 }
@@ -563,11 +651,13 @@ fn parse_view(entry: &Table) -> Result<ViewState, String> {
                 .filter(|column| column.abbreviable())
                 .collect(),
         },
+        name: field("name")?,
+        row_layout: crate::row_layout::RowLayout::from_lua(entry)?,
     })
 }
 
 fn validate_view(entry: &Table) -> Result<(), String> {
-    const KEYS: [&str; 8] = [
+    const KEYS: [&str; 11] = [
         "filter",
         "sort",
         "columns",
@@ -576,6 +666,9 @@ fn validate_view(entry: &Table) -> Result<(), String> {
         "group",
         "pin",
         "abbreviated",
+        "name",
+        "title_lines",
+        "row_spacing",
     ];
     for pair in entry.pairs::<String, mlua::Value>().take(KEYS.len() + 1) {
         let (key, _) = pair.map_err(|e| e.to_string())?;
@@ -648,6 +741,8 @@ impl ViewState {
                 .fields()
                 .any(|field| unsupported(field.column()))
             || self.sort.is_some_and(|s| unsupported(s.column))
+            || (!scope.supports_row_layout()
+                && self.row_layout != crate::row_layout::RowLayout::default())
             || (!scope.supports_grouping() && !self.group.is_flat())
             || self.paint.iter().any(|rule| match rule {
                 PaintRule::ByColumn { column, .. } | PaintRule::Column { column, .. } => {
@@ -690,8 +785,14 @@ fn lua_view(view: &ViewState) -> String {
     } else {
         format!(", group = {}", lua_string(&view.group.text()))
     };
+    let row_layout = view.row_layout.to_lua();
+    let name = if view.name.is_empty() {
+        String::new()
+    } else {
+        format!(", name = {}", lua_string(&view.name))
+    };
     format!(
-        "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint}{group}{abbreviated}{pin} }}",
+        "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint}{group}{abbreviated}{pin}{name}{row_layout} }}",
         lua_string(&view.filter),
         lua_string(&view.sort.map(|sort| sort.to_text()).unwrap_or_default()),
         lua_string(&columns_text(&view.columns)),

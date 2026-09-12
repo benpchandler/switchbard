@@ -41,6 +41,8 @@ pub enum Mode {
     PickValue,
     /// After `t b`: type a new named ball holder, then Enter assigns it.
     BallName,
+    /// After `v n` picks a slot: type its name, then Enter saves it.
+    RenameView,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +104,8 @@ pub struct App {
     move_origin: Option<Vec<Column>>,
     /// Which values list to return to after a color is picked.
     paint_return: Option<Column>,
+    /// The slot `v n` is naming, while `Mode::RenameView` is active.
+    rename_slot: Option<usize>,
     pub views: ViewStore,
     /// Zero-based slot the current state came from.
     pub view: usize,
@@ -168,6 +172,7 @@ impl App {
             calendar_day: crate::date_fields::today(),
             move_origin: None,
             paint_return: None,
+            rename_slot: None,
             views,
             view: 0,
             state: ViewState::default(),
@@ -254,9 +259,11 @@ impl App {
     }
 
     /// The slot number while filter and sort still match it; `custom` once edited.
-    /// The attributes follow in the title, so they are the name.
+    /// The attributes follow in the title, so they are the name - unless the
+    /// slot carries a user-given name, which leads instead.
     pub fn view_label(&self) -> String {
         match self.views.get(self.view) {
+            Some(saved) if saved == self.state && !saved.name.is_empty() => saved.name,
             Some(saved) if saved == self.state => format!("v{}", self.view + 1),
             _ => "custom".to_string(),
         }
@@ -591,6 +598,7 @@ impl App {
             Mode::NewTask => self.handle_new_task_key(event),
             Mode::PickValue => self.handle_pick_value_key(event),
             Mode::BallName => self.handle_ball_name_key(event),
+            Mode::RenameView => self.handle_rename_view_key(event),
         }
         if !self.merge_target_current()
             || (self.mode != Mode::Browse
@@ -706,6 +714,32 @@ impl App {
                 }
                 Err(error) => self.status = error.to_string(),
             },
+            KeyCode::Char(character) => self.input.push(character),
+            _ => {}
+        }
+    }
+
+    fn handle_rename_view_key(&mut self, event: KeyEvent) {
+        match event.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Browse;
+                self.input.clear();
+                self.rename_slot = None;
+                self.status = "view naming cancelled".to_string();
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Enter => {
+                let Some(slot) = self.rename_slot.take() else {
+                    self.mode = Mode::Browse;
+                    return;
+                };
+                let name = self.input.trim().to_string();
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.save_view_name(slot, name);
+            }
             KeyCode::Char(character) => self.input.push(character),
             _ => {}
         }
@@ -1435,9 +1469,29 @@ impl App {
                     }
                 })
                 .collect();
+        if crate::list_settings::ListSettings::for_page(self.page)
+            .is_some_and(|scope| scope.supports_row_layout())
+        {
+            options.push(PickOption::keyed(
+                'w',
+                format!(
+                    "Title wrapping: {} (this view)",
+                    self.state.row_layout.wrap_label()
+                ),
+                Payload::TitleWrapping,
+            ));
+            options.push(PickOption::keyed(
+                's',
+                format!(
+                    "Row spacing: {} (this view)",
+                    self.state.row_layout.spacing_label()
+                ),
+                Payload::RowSpacing,
+            ));
+        }
         options.push(PickOption::keyed(
             'g',
-            "Use these settings in every repo",
+            "Use hidden-status settings in every repo",
             Payload::GlobalSettings,
         ));
         self.open_picker(PickerPurpose::Settings, options);
@@ -1446,6 +1500,22 @@ impl App {
             SettingsScope::Global => "settings shared by every repo".to_string(),
         };
         self.telemetry.record("action", "settings");
+    }
+
+    pub(super) fn cycle_row_layout(&mut self, wrapping: bool) {
+        if wrapping {
+            self.state.row_layout.cycle_wrapping();
+        } else {
+            self.state.row_layout.spaced = !self.state.row_layout.spaced;
+        }
+        self.open_settings();
+        if let Some(picker) = self.picker.as_mut() {
+            picker.selected = picker
+                .position_of_key(if wrapping { 'w' } else { 's' })
+                .unwrap_or(0);
+        }
+        self.status = "Row layout changed for this view · Esc previews · v s saves".into();
+        self.telemetry.record("action", "row_layout");
     }
 
     /// A settings row picked: flip it for this repo, write the file, keep the panel open.

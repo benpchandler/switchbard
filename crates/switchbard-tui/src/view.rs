@@ -145,26 +145,59 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     let heading =
         app.selected > 0 && matches!(app.rows.get(app.selected - 1), Some(Row::Heading { .. }));
-    let viewport = crate::list_presentation::ListViewport::new(
+    let title_width = app
+        .state
+        .columns
+        .iter()
+        .zip(cells.iter())
+        .find(|(column, _)| **column == Column::Title)
+        .map_or(0, |(_, cell)| cell.width);
+    let row_height = |row: usize| -> usize {
+        match app.rows.get(row) {
+            Some(Row::Task(index)) => {
+                let title = crate::row_layout::title_text(&app.tasks()[*index].title);
+                usize::from(app.state.row_layout.title_height(&title.text, title_width))
+                    + usize::from(app.state.row_layout.spaced && row != app.selected)
+            }
+            _ => 1,
+        }
+    };
+    let viewport = crate::list_presentation::ListViewport::variable(
         app.scroll,
         app.selected,
         app.rows.len(),
         inner.height.saturating_sub(1) as usize,
         heading,
+        row_height,
     );
     app.scroll = viewport.scroll;
     let window = viewport.slots;
+    let mut used = 0;
+    let mut visible_tasks = 0;
     let body = Rect {
         y: inner.y + 1,
         height: inner.height - 1,
         ..inner
     };
     for (line, row) in app.rows.iter().skip(app.scroll).take(window).enumerate() {
+        if used >= window {
+            break;
+        }
+        let content_height = match row {
+            Row::Heading { .. } => 1,
+            Row::Task(index) => {
+                visible_tasks += 1;
+                let title = crate::row_layout::title_text(&app.tasks()[*index].title);
+                app.state.row_layout.title_height(&title.text, title_width)
+            }
+        };
         let row_area = Rect {
-            y: body.y + line as u16,
-            height: 1,
+            y: body.y + used as u16,
+            height: content_height.min((window - used) as u16),
             ..body
         };
+        used += usize::from(content_height)
+            + usize::from(matches!(row, Row::Task(_)) && app.state.row_layout.spaced);
         let selected = app.scroll + line == app.selected;
         match row {
             Row::Heading { text, depth } => frame.render_widget(
@@ -213,16 +246,62 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                         // white at the peak, its rest colour in the trough.
                         style = style.fg(theme.working_fg(style.fg, glow));
                     }
-                    frame.render_widget(
-                        Paragraph::new(text).style(style),
-                        Rect {
-                            y: row_area.y,
-                            ..*cell
-                        },
-                    );
+                    let cell_area = Rect {
+                        y: row_area.y,
+                        height: row_area.height,
+                        ..*cell
+                    };
+                    if *column == Column::Title {
+                        draw_task_title(frame, &text, app.state.row_layout, style, cell_area);
+                    } else {
+                        frame.render_widget(
+                            Paragraph::new(text).style(style),
+                            Rect {
+                                height: 1,
+                                ..cell_area
+                            },
+                        );
+                    }
                 }
             }
         }
+    }
+    app.page_size = visible_tasks.max(1);
+}
+
+fn draw_task_title(
+    frame: &mut Frame,
+    title: &str,
+    layout: crate::row_layout::RowLayout,
+    style: Style,
+    area: Rect,
+) {
+    let title_text = crate::row_layout::title_text(title);
+    let text = title_text.text;
+    if layout.lines() == 1 {
+        frame.render_widget(Paragraph::new(text).style(style), area);
+        return;
+    }
+    let paragraph = crate::row_layout::paragraph(&text).style(style);
+    let clipped =
+        paragraph.line_count(area.width) > usize::from(area.height) || title_text.truncated;
+    frame.render_widget(paragraph, area);
+    if clipped && area.width > 0 && area.height > 0 {
+        // Do not leave half a wide glyph underneath the overflow indicator.
+        if area.width > 1 {
+            if let Some(cell) = frame
+                .buffer_mut()
+                .cell_mut((area.right() - 2, area.bottom() - 1))
+            {
+                if Span::raw(cell.symbol()).width() > 1 {
+                    cell.set_symbol(" ");
+                }
+            }
+        }
+        frame.render_widget(
+            Paragraph::new("…").style(style),
+            Rect::new(area.right() - 1, area.bottom() - 1, 1, 1),
+        );
     }
 }
 
@@ -262,6 +341,9 @@ fn table_title(app: &App) -> String {
     }
     if !app.state.pin_top {
         parts.push("nopin".to_string());
+    }
+    if let Some(label) = app.state.row_layout.label() {
+        parts.push(label);
     }
     if let Some(label) = app.settings.effective().label() {
         parts.push(label);
@@ -369,7 +451,7 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
             };
             (
                 format!("v{}", index + 1),
-                format!("{}{scope}", saved.name()),
+                format!("{}{scope}", saved.display_name()),
             )
         }))
         .collect();
@@ -457,6 +539,11 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         )),
         Mode::BallName => Line::from(vec![
             Span::styled(" ball person: ", theme.style(Surface::Accent)),
+            Span::raw(app.input.clone()),
+            Span::styled("▏", theme.style(Surface::Accent)),
+        ]),
+        Mode::RenameView => Line::from(vec![
+            Span::styled(" view name: ", theme.style(Surface::Accent)),
             Span::raw(app.input.clone()),
             Span::styled("▏", theme.style(Surface::Accent)),
         ]),
@@ -747,6 +834,8 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::Views => "views".to_string(),
         PickerPurpose::SaveView => "save view".to_string(),
         PickerPurpose::GlobalView => "make view global".to_string(),
+        PickerPurpose::RenameView => "name which view".to_string(),
+        PickerPurpose::DeleteView => "delete which view".to_string(),
         PickerPurpose::ChooseColumnAction(action) => action.label().to_string(),
     };
     if picker.typed.is_empty() {
@@ -765,7 +854,15 @@ pub fn buffer_text(buffer: &Buffer) -> String {
     }
     let mut out = String::new();
     for row in buffer.content.chunks(width) {
-        let line: String = row.iter().map(|cell| cell.symbol()).collect();
+        let mut line = String::new();
+        let mut next = 0;
+        for (column, cell) in row.iter().enumerate() {
+            if column < next {
+                continue;
+            }
+            line.push_str(cell.symbol());
+            next = column + Span::raw(cell.symbol()).width().max(1);
+        }
         out.push_str(line.trim_end());
         out.push('\n');
     }
