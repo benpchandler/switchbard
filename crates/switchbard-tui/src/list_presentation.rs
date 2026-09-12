@@ -15,6 +15,35 @@ pub(crate) struct ListViewport {
 }
 
 impl ListViewport {
+    /// Row indices remain navigation identities; heights consume terminal lines.
+    /// Only a viewport-sized suffix before selection is measured.
+    pub fn variable(
+        scroll: usize,
+        selected: usize,
+        count: usize,
+        slots: usize,
+        heading: bool,
+        height: impl Fn(usize) -> usize,
+    ) -> Self {
+        let selected = selected.min(count.saturating_sub(1));
+        let mut scroll = scroll.min(selected).max(selected.saturating_sub(slots));
+        let mut used: usize = (scroll..=selected)
+            .map(|row| height(row).min(slots).max(1))
+            .sum();
+        let before_selected = scroll..selected;
+        for row in before_selected {
+            if used <= slots {
+                break;
+            }
+            used = used.saturating_sub(height(row).min(slots).max(1));
+            scroll = row + 1;
+        }
+        if heading && scroll == selected && scroll > 0 && used + height(scroll - 1) <= slots {
+            scroll -= 1;
+        }
+        Self { scroll, slots }
+    }
+
     pub fn new(scroll: usize, selected: usize, count: usize, slots: usize, heading: bool) -> Self {
         let selected = selected.min(count.saturating_sub(1));
         let mut scroll = scroll.min(selected);
@@ -90,4 +119,25 @@ fn confirmation(frame: &mut Frame, area: Rect, block: Block<'_>, lines: Vec<Line
         );
     }
     fits
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ListViewport;
+    use std::cell::Cell;
+
+    #[test]
+    fn distant_selection_only_measures_a_viewport_sized_suffix() {
+        let calls = Cell::new(0);
+        let viewport = ListViewport::variable(0, 9_999, 10_000, 20, false, |_| {
+            calls.set(calls.get() + 1);
+            3
+        });
+        assert!(
+            calls.get() <= 42,
+            "work is bounded by slots, not task count"
+        );
+        assert_eq!(viewport.scroll, 9_994);
+        assert_eq!(viewport.slots, 20);
+    }
 }
