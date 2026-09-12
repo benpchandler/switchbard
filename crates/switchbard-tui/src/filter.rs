@@ -10,6 +10,7 @@ pub enum FilterField {
     Project,
     Ball,
     Blocked,
+    Due,
     Goal,
     Title,
     Tasks,
@@ -31,6 +32,7 @@ impl FilterField {
             "project" => FilterField::Project,
             "ball" => FilterField::Ball,
             "blocked" => FilterField::Blocked,
+            "due" => FilterField::Due,
             "goal" => FilterField::Goal,
             "title" => FilterField::Title,
             "tasks" => FilterField::Tasks,
@@ -53,6 +55,7 @@ impl FilterField {
             FilterField::Project => "project",
             FilterField::Ball => "ball",
             FilterField::Blocked => "blocked",
+            FilterField::Due => "due",
             FilterField::Goal => "goal",
             FilterField::Draft => "draft",
             FilterField::Merge => "merge",
@@ -75,6 +78,7 @@ impl FilterField {
             FilterField::Project => Column::Project,
             FilterField::Ball => Column::Ball,
             FilterField::Blocked => Column::Blocked,
+            FilterField::Due => Column::Due,
             FilterField::Goal => Column::Goal,
             FilterField::Draft => Column::Draft,
             FilterField::Merge => Column::Merge,
@@ -88,6 +92,27 @@ impl FilterField {
     }
 }
 
+/// A relative-day comparator for `due:<=7d`-style terms; the day delta is
+/// `due_date - today` (negative when overdue).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DueCmp {
+    Le,
+    Lt,
+    Ge,
+    Gt,
+}
+
+impl DueCmp {
+    fn matches(self, delta: i64, threshold: i64) -> bool {
+        match self {
+            DueCmp::Le => delta <= threshold,
+            DueCmp::Lt => delta < threshold,
+            DueCmp::Ge => delta >= threshold,
+            DueCmp::Gt => delta > threshold,
+        }
+    }
+}
+
 /// One word of a filter. `pri:high,medium` is one term matching either value;
 /// `status:!done` hides a value; a bare word searches id and title.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +120,9 @@ enum Term {
     Text(String),
     AnyOf(FilterField, Vec<String>),
     Not(FilterField, String),
+    /// `due:<=7d` / `due:<7d` / `due:>=7d` / `due:>7d` — relative to today,
+    /// computed off the same clock `date_fields::today()` uses.
+    DueRelative(DueCmp, i64),
 }
 
 impl Term {
@@ -106,6 +134,11 @@ impl Term {
         let Some(field) = FilterField::parse(keyword) else {
             return Term::Text(lower);
         };
+        if field == FilterField::Due {
+            if let Some(term) = parse_due_relative(value) {
+                return term;
+            }
+        }
         match value.strip_prefix('!') {
             Some(hidden) => Term::Not(field, boolean_alias(field, loose(hidden))),
             None => Term::AnyOf(
@@ -122,6 +155,7 @@ impl Term {
         match self {
             Term::Text(_) => None,
             Term::AnyOf(field, _) | Term::Not(field, _) => Some(*field),
+            Term::DueRelative(..) => Some(FilterField::Due),
         }
     }
 
@@ -132,12 +166,49 @@ impl Term {
             Term::AnyOf(FilterField::Id | FilterField::Tasks, wanted) => values
                 .iter()
                 .any(|value| wanted.iter().any(|want| loose(value) == *want)),
+            // `due:none` matches a task with no due date, which carries no
+            // value at all rather than a sentinel string.
+            Term::AnyOf(FilterField::Due, wanted) if values.is_empty() => {
+                wanted.iter().any(|want| want == "none")
+            }
             Term::AnyOf(_, wanted) => values
                 .iter()
                 .any(|value| wanted.iter().any(|want| loose(value).contains(want))),
             Term::Not(_, hidden) => !values.iter().any(|value| loose(value) == *hidden),
+            Term::DueRelative(cmp, threshold) => values.iter().any(|value| {
+                due_day_delta(value).is_some_and(|delta| cmp.matches(delta, *threshold))
+            }),
         }
     }
+}
+
+/// Parses `<=Nd`, `<Nd`, `>=Nd`, `>Nd`; anything else (an exact date, `none`)
+/// falls through to the ordinary `AnyOf`/`Not` handling.
+fn parse_due_relative(value: &str) -> Option<Term> {
+    let (cmp, rest) = if let Some(rest) = value.strip_prefix("<=") {
+        (DueCmp::Le, rest)
+    } else if let Some(rest) = value.strip_prefix(">=") {
+        (DueCmp::Ge, rest)
+    } else if let Some(rest) = value.strip_prefix('<') {
+        (DueCmp::Lt, rest)
+    } else if let Some(rest) = value.strip_prefix('>') {
+        (DueCmp::Gt, rest)
+    } else {
+        return None;
+    };
+    let days: i64 = rest.strip_suffix('d')?.parse().ok()?;
+    Some(Term::DueRelative(cmp, days))
+}
+
+/// `due_date - today`, in whole days; `None` for an unparseable or absent value.
+fn due_day_delta(value: &str) -> Option<i64> {
+    let day = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .ok()?
+        .and_hms_opt(0, 0, 0)?
+        .and_utc()
+        .timestamp()
+        .div_euclid(86_400);
+    Some(day - crate::date_fields::today())
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -173,6 +244,7 @@ impl Filter {
                 .iter()
                 .any(|value| value.to_lowercase().contains(needle)),
             Term::AnyOf(field, _) | Term::Not(field, _) => term.allows(&values(*field)),
+            Term::DueRelative(..) => term.allows(&values(FilterField::Due)),
         })
     }
 
@@ -254,4 +326,102 @@ fn loose(text: &str) -> String {
         .filter(|c| !c.is_whitespace() && *c != '-' && *c != '_')
         .flat_map(char::to_lowercase)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `due:2026-09-14` is an ordinary `AnyOf` match on the raw stored date.
+    #[test]
+    fn due_exact_date_matches_the_stored_value() {
+        assert!(Filter::field_allows(
+            "due:2026-09-14",
+            FilterField::Due,
+            "2026-09-14"
+        ));
+        assert!(!Filter::field_allows(
+            "due:2026-09-14",
+            FilterField::Due,
+            "2026-09-15"
+        ));
+    }
+
+    /// `due:none` matches a task carrying no value for the field at all —
+    /// the empty-values case ordinary `AnyOf` can't express.
+    #[test]
+    fn due_none_matches_only_the_absent_value() {
+        let filter = Filter::parse("due:none");
+        assert!(filter.matches_values(&[], |field| {
+            assert_eq!(field, FilterField::Due);
+            Vec::new()
+        }));
+        assert!(!filter.matches_values(&[], |_| vec!["2026-09-14".to_string()]));
+    }
+
+    #[test]
+    fn due_relative_le_and_gt_split_on_the_threshold() {
+        let today = crate::date_fields::today();
+        let in_three_days = chrono::DateTime::from_timestamp((today + 3) * 86_400, 0)
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string();
+        let in_thirty_days = chrono::DateTime::from_timestamp((today + 30) * 86_400, 0)
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string();
+
+        assert!(Filter::field_allows(
+            "due:<=7d",
+            FilterField::Due,
+            &in_three_days
+        ));
+        assert!(!Filter::field_allows(
+            "due:<=7d",
+            FilterField::Due,
+            &in_thirty_days
+        ));
+        assert!(Filter::field_allows(
+            "due:>7d",
+            FilterField::Due,
+            &in_thirty_days
+        ));
+        assert!(!Filter::field_allows(
+            "due:>7d",
+            FilterField::Due,
+            &in_three_days
+        ));
+    }
+
+    /// A relative filter never matches a task with no due date at all —
+    /// "within a week" cannot be true of a task with nothing to compare.
+    #[test]
+    fn due_relative_never_matches_a_missing_value() {
+        let filter = Filter::parse("due:<=7d");
+        assert!(!filter.matches_values(&[], |_| Vec::new()));
+    }
+
+    #[test]
+    fn parse_due_relative_recognizes_every_comparator_and_rejects_garbage() {
+        assert_eq!(
+            parse_due_relative("<=7d"),
+            Some(Term::DueRelative(DueCmp::Le, 7))
+        );
+        assert_eq!(
+            parse_due_relative("<7d"),
+            Some(Term::DueRelative(DueCmp::Lt, 7))
+        );
+        assert_eq!(
+            parse_due_relative(">=7d"),
+            Some(Term::DueRelative(DueCmp::Ge, 7))
+        );
+        assert_eq!(
+            parse_due_relative(">7d"),
+            Some(Term::DueRelative(DueCmp::Gt, 7))
+        );
+        assert_eq!(parse_due_relative("none"), None);
+        assert_eq!(parse_due_relative("2026-09-14"), None);
+        assert_eq!(parse_due_relative("<=7"), None, "missing the `d` suffix");
+        assert_eq!(parse_due_relative("<=nd"), None, "not a number");
+    }
 }

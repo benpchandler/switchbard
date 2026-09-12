@@ -56,6 +56,7 @@ fn task(
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-20 12:00".to_string()),
+        due_date: None,
         description: String::new(),
         implementation_plan: String::new(),
         implementation_notes: String::new(),

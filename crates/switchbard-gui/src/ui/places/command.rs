@@ -955,6 +955,7 @@ mod tests {
                     parent: None,
                     created_date: None,
                     updated_date: None,
+                    due_date: None,
                     description: String::new(),
                     implementation_plan: String::new(),
                     implementation_notes: String::new(),

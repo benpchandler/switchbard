@@ -53,6 +53,7 @@ fn backlog_task(id: &str, title: &str, status: &str, project: Option<&str>) -> B
         parent: None,
         created_date: Some("2026-06-20 12:00".to_string()),
         updated_date: Some(current_week()),
+        due_date: None,
         description: "body".to_string(),
         implementation_plan: String::new(),
         implementation_notes: String::new(),
@@ -549,6 +550,7 @@ fn inputs_card_attach_and_detach_wire_through_the_real_write_layer() {
             assignees: vec![],
             project: None,
             dependencies: vec![],
+            due_date: None,
         },
     )
     .expect("create task");

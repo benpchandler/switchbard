@@ -41,6 +41,7 @@ fn backlog_task(id: &str, title: &str, status: &str) -> BacklogTask {
         parent: None,
         created_date: Some("2026-06-20 12:00".to_string()),
         updated_date: Some("2026-06-20 12:00".to_string()),
+        due_date: None,
         description: "body".to_string(),
         implementation_plan: String::new(),
         implementation_notes: String::new(),

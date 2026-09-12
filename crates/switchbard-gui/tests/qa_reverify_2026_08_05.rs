@@ -44,6 +44,7 @@ fn task(id: &str, title: &str, status: &str) -> BacklogTask {
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-01 09:00".to_string()),
+        due_date: None,
         description: String::new(),
         implementation_plan: String::new(),
         implementation_notes: String::new(),
@@ -118,6 +119,7 @@ fn native_task_create(root: &std::path::Path, title: &str) -> String {
             assignees: vec![],
             project: None,
             dependencies: vec![],
+            due_date: None,
         },
     )
     .expect("native fixture create")

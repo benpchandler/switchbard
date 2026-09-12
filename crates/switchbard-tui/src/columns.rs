@@ -20,6 +20,8 @@ pub enum Column {
     /// is never blocked. Backed by `switchbard_core::is_blocked` — see
     /// `tasks::TaskRelations`.
     Blocked,
+    /// The optional target date (`due_date:`), `YYYY-MM-DD`.
+    Due,
     /// Position in the repo's top list (the expedite lane); empty when not in it.
     Rank,
     /// The weekly goal(s) the task feeds: by scope, attachment, or attached project.
@@ -56,7 +58,7 @@ pub struct ColumnSpec {
     pub numeric: bool,
 }
 
-pub const COLUMNS: [ColumnSpec; 19] = [
+pub const COLUMNS: [ColumnSpec; 20] = [
     ColumnSpec {
         column: Column::Id,
         name: "id",
@@ -150,6 +152,18 @@ pub const COLUMNS: [ColumnSpec; 19] = [
         field: Some(FilterField::Blocked),
         vocabulary: &["yes", "no"],
         groupable: true,
+        multi_valued: false,
+        numeric: false,
+    },
+    ColumnSpec {
+        column: Column::Due,
+        name: "due",
+        alias: None,
+        header: "due",
+        width: Some(10),
+        field: Some(FilterField::Due),
+        vocabulary: &[],
+        groupable: false,
         multi_valued: false,
         numeric: false,
     },
@@ -314,6 +328,7 @@ impl Column {
         Column::Project,
         Column::Ball,
         Column::Blocked,
+        Column::Due,
         Column::Rank,
         Column::Goal,
         Column::Work,

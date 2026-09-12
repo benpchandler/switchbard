@@ -29,6 +29,7 @@ pub fn task_view(task: &BacklogTask) -> String {
     out.push_str(&format!("{} - {}\n", task.id, task.title));
     push_field(&mut out, "Status", &task.status);
     push_field(&mut out, "Priority", &task.priority);
+    push_field(&mut out, "Due", task.due_date.as_deref().unwrap_or(""));
     push_field(&mut out, "Labels", &task.labels.join(", "));
     push_field(&mut out, "Assignee", &task.assignees.join(", "));
     push_field(&mut out, "Project", task.project.as_deref().unwrap_or(""));
@@ -101,6 +102,7 @@ mod tests {
             parent: None,
             created_date: Some("2026-08-28 10:00".to_string()),
             updated_date: None,
+            due_date: None,
             description: "Why.".to_string(),
             implementation_plan: String::new(),
             implementation_notes: String::new(),

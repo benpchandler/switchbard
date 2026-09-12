@@ -495,6 +495,7 @@ fn legibility_backlog_task() -> BacklogTask {
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-20 12:00".to_string()),
+        due_date: None,
         description: "## Why\n\nThis exercises **CommonMark** rendering with a list:\n\n- first item\n- second item\n\nand a [link](https://example.com).".to_string(),
         implementation_plan: "Step one, then step two.".to_string(),
         implementation_notes: "Existing note text.".to_string(),

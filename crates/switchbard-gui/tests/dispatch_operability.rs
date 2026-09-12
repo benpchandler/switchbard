@@ -46,6 +46,7 @@ fn task(id: &str, labels: &[&str], notes: &str) -> BacklogTask {
         parent: None,
         created_date: None,
         updated_date: None,
+        due_date: None,
         description: String::new(),
         implementation_plan: String::new(),
         implementation_notes: notes.to_string(),

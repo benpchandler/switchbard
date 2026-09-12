@@ -32,6 +32,7 @@ impl ColumnValues for TaskValues<'_> {
             Column::Priority => vec![task.priority.clone()],
             Column::Title => vec![task.title.clone()],
             Column::Filed => crate::date_fields::filed(task.created_date.as_deref()),
+            Column::Due => task.due_date.clone().into_iter().collect(),
             Column::Labels => task.labels.clone(),
             Column::Project => task.project.clone().into_iter().collect(),
             Column::Ball => Ball::of(task)
