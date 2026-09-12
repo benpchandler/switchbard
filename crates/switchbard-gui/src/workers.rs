@@ -44,7 +44,7 @@
 //! | — trunk comparison | every probe tick | ~1.5-1.7s over 61 worktrees (~25-28ms each, measured 2026-08-26 via `examples/scan_cadence_audit.rs`) | Replaced `probe_main_drift` (~0.6s): it resolves the trunk via `default_branch` instead of assuming local `main`, and counts by patch-equivalence rather than ancestry, so it is ~3 subprocesses rather than 2. The staleness derivation above more than pays for it — the whole tick went 21.5s → 21.1s. |
 //! | detection | 60s (was 30s) | ~0.15s cold, ~0 steady-state (idempotent — skips worktrees already in `services`) | No urgency: a newly tracked worktree still gets detected within a minute. |
 //! | agent-context | 60s (was 30s), capped at `AGENT_CONTEXT_MAX_MISSING_PER_TICK` new worktrees per tick | ~47s in one unbroken burst pre-fix (cold scan of all 84 at once) | Recursive per-worktree filesystem walk; cheap in steady state (only rescans missing/>24h-stale entries) but a cold launch or adding several repos at once used to stall the thread for tens of seconds in a single tick. Capping the batch turns that into several bounded, interleaved ticks instead. |
-//! | backlog | 30s (unchanged) | ~0.15-0.2s over 6 repo *roots*, not per-worktree | Already cheap at this scale (one load per tracked repo, not per worktree) and users watch task state change in near-real-time — no evidence to slow this down. |
+//! | backlog | 1s sequence poll, 30s legacy scan | ~0.15-0.2s over 6 repo *roots*, not per-worktree | Already cheap at this scale (one load per tracked repo, not per worktree) and users watch task state change in near-real-time — no evidence to slow this down. |
 //! | dispatch | 90s (unchanged) | negligible when the queue is empty (the common case); unbounded while a run is in flight (TASK-46 removed the wall-clock kill — see `spawn_dispatch`'s own doc) | Opt-in and rare by design — see its own doc. Unaffected by worktree count. |
 //! | mission projection | 2s focused / 16s unfocused | one bounded local JSON read, capped at 4 MiB / 500 missions | Decision and hold state should feel live, but the optional xplan snapshot never belongs on the render path. Missing and invalid files publish explicit cache states. |
 //! | size (TASK-41) | 300s, bounded catch-up batch of 5 | ~650ms **per worktree** average (measured 2026-08-19 via `examples/scan_cadence_audit.rs`, sampled 20/84 real worktrees, `du -sk`; a manual sweep of `~/Dev/.worktrees`'s larger checkouts saw individual calls up to ~1.5s) — an order of magnitude past every other per-worktree probe | `du` walks the whole tree (node_modules/target/build artifacts); see `worktree_size.rs`'s own doc. Never runs inline with the git-probe tick — its own worker, own cadence, catches up a bounded batch of never-yet-sized worktrees per tick (same shape as agent-context's cold-start batching below) rather than blocking on a full sweep. |
@@ -74,7 +74,7 @@ use eframe::egui;
 use switchbard_core::dispatch_inspect::{inspect_dispatch_run, DispatchRun};
 use switchbard_core::{
     agent_context_needs_rescan, attribute, attribute_agent_sessions, detect_services,
-    drain_dispatch_queue, find_hub_repo, is_backlog_repo, list_dispatch_queue, load_backlog_repo,
+    drain_dispatch_queue, find_hub_repo, list_dispatch_queue, load_backlog_repo,
     load_ordering_overlay, probe_dirty_files, probe_fetch_age, probe_head_commit_time,
     probe_ignored_files, probe_pr_state, probe_push_state, probe_recent_commits,
     probe_ref_drift_detail, probe_remote_drift, probe_trunk_detail, probe_trunk_divergence,
@@ -957,8 +957,17 @@ pub(crate) fn collect_backlog_repos(roots: &[PathBuf]) -> TasksReadResult {
     let mut repos = HashMap::new();
     let mut unreadable_roots = Vec::new();
     for root in roots {
-        if !is_backlog_repo(root) {
-            continue;
+        match switchbard_core::backlog_repo_available(root) {
+            Ok(false) => continue,
+            Err(error) => {
+                unreadable_roots.push(root.clone());
+                eprintln!(
+                    "Switchbard: failed to locate task storage for {}: {error}",
+                    root.display()
+                );
+                continue;
+            }
+            Ok(true) => {}
         }
         match load_backlog_repo(root) {
             Ok(repo) => {
@@ -1055,7 +1064,7 @@ fn apply_tasks_read(
 /// still *claimed* is collected in the same pass, because the sidecar sweep
 /// below needs it and re-locking to ask would be a second walk.
 fn refresh_dispatch_runs(ch: &Channels) {
-    let targets: Vec<(PathBuf, String, bool)> = {
+    let targets: Vec<(BacklogTaskKey, bool)> = {
         let repos = ch.backlog_repos.lock().unwrap();
         repos
             .iter()
@@ -1065,7 +1074,7 @@ fn refresh_dispatch_runs(ch: &Channels) {
                     .filter(|task| task.labels.iter().any(|label| is_dispatch_label(label)))
                     .map(|task| {
                         let claimed = task.labels.iter().any(|label| label == DISPATCHING_LABEL);
-                        (root.clone(), task.id.clone(), claimed)
+                        (BacklogTaskKey::for_task(root, task), claimed)
                     })
                     .collect::<Vec<_>>()
             })
@@ -1074,10 +1083,10 @@ fn refresh_dispatch_runs(ch: &Channels) {
 
     let runs = targets
         .into_iter()
-        .map(|(root, task_id, claimed)| {
-            let run = inspect_dispatch_run(&root, &task_id);
+        .map(|(key, claimed)| {
+            let run = inspect_dispatch_run(&key.0, &key.1);
             sweep_sidecar_if_finished(&run, claimed);
-            ((root, task_id), run)
+            (key, run)
         })
         .collect();
     *ch.dispatch_runs.lock().unwrap() = runs;
@@ -1162,8 +1171,10 @@ pub(crate) fn merge_backlog_repos(
 
 fn spawn_backlog(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
     thread::spawn(move || {
-        ch.backlog_kick.wait(initial_delay);
+        ch.backlog_kick
+            .wait(initial_delay.min(Duration::from_secs(1)));
         loop {
+            let seen_sequence = switchbard_core::storage::current_change_sequence();
             let repos = ch.repos.lock().unwrap().clone();
             let roots = backlog_repo_roots(&repos);
             let result = collect_backlog_repos(&roots);
@@ -1171,6 +1182,7 @@ fn spawn_backlog(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
                 let mut cache = ch.backlog_repos.lock().unwrap();
                 apply_tasks_read(&mut cache, &roots, result)
             };
+            let retry_read = !matches!(read_state, crate::runtime::TasksReadState::Ready);
             *ch.tasks_read_state.lock().unwrap() = read_state;
             refresh_dispatch_runs(&ch);
 
@@ -1178,17 +1190,38 @@ fn spawn_backlog(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
             // `ordering.yml` (the "hub" repo — see backlog_triage module doc).
             // No tracked repo having one is the expected steady state and yields
             // an empty overlay with no warning.
-            let hub_repo = find_hub_repo(repos.iter().map(|r| r.path.as_path()));
-            let (overlay, warning) = match &hub_repo {
-                Some(hub_root) => load_ordering_overlay(hub_root),
-                None => Default::default(),
-            };
-            *ch.ordering.lock().unwrap() = OrderingState { overlay, warning };
+            let ordering =
+                find_hub_repo(repos.iter().map(|r| r.path.as_path())).and_then(|hub| match hub {
+                    Some(root) => load_ordering_overlay(&root),
+                    None => Ok(Default::default()),
+                });
+            match ordering {
+                Ok((overlay, warning)) => {
+                    *ch.ordering.lock().unwrap() = OrderingState { overlay, warning }
+                }
+                Err(error) => {
+                    ch.ordering.lock().unwrap().warning =
+                        Some(format!("Ordering is stale: {error}"))
+                }
+            }
 
             ctx.request_repaint();
             let focused = ctx.input(|i| i.focused);
-            ch.backlog_kick
-                .wait(effective_period(BACKLOG_PERIOD, focused));
+            let legacy_period = effective_period(BACKLOG_PERIOD, focused);
+            let started_wait = Instant::now();
+            while started_wait.elapsed() < legacy_period {
+                if ch.backlog_kick.wait_notified(Duration::from_secs(1)) {
+                    break;
+                }
+                if retry_read {
+                    break;
+                }
+                let current_sequence = switchbard_core::storage::current_change_sequence();
+                match (&seen_sequence, current_sequence) {
+                    (Ok(previous), Ok(current)) if *previous == current => {}
+                    _ => break,
+                }
+            }
         }
     });
 }
@@ -1433,7 +1466,7 @@ mod tests {
         );
         // Sanity: the linked worktree really is a Backlog repo on disk —
         // the exact condition that used to duplicate every task.
-        assert!(is_backlog_repo(&linked));
+        assert!(switchbard_core::is_backlog_repo(&linked));
 
         let repos = vec![Repo {
             name: "fixture".to_string(),
@@ -1466,6 +1499,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(i, title)| BacklogTask {
+                    storage_identity: None,
                     id: format!("TASK-{}", i + 1),
                     title: title.to_string(),
                     status: "To Do".to_string(),

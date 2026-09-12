@@ -1,5 +1,7 @@
 # sbt - switchbard terminal UI
+
 Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths`. Install: `cargo install --path crates/switchbard-tui`.
+
 ## Standing commitments (owner-set, 2026-09-02)
 1. Everything the user might tune lives in Lua (`~/.switchbard/tui.lua`, hot reload).
    New feature => new config surface only if a user would plausibly change it.
@@ -17,7 +19,7 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
 - `pr_notifications.rs` - bounded session PR change/availability alerts across pages; n dismisses latest. After first PR visit, refresh continues on Tasks. O opens selected PR in the browser.
 - `page.rs` - Tasks / Pull Requests identity and allowed actions; Tab (`page` in Lua) toggles, the header marks the active page. `pull_requests.rs` caches bounded repo reads off-thread; `pr_view.rs` renders the list/detail. PR refresh uses `pr_refresh_seconds` (default 60): the first observation row counts down, shows refreshing in flight, and restarts on completion (including failure); r retries immediately. The source includes Open/Closed/Merged, initially 100 rows; `:more` expands by 100 up to 1000 with explicit partial coverage. `/`, `f`, `s`, `p`, `c`, numbered headers and `v` reuse shared controls with independent PR state; `status:`/`lifecycle:`, `tasks:`, `checks:`, `review:`, `merge:`, `draft:` and `title:` read cached PR fields. Sorting retains selected identity; painting never writes PRs; Enter toggles the right detail pane, j/k select rows, Ctrl-d/u scroll details. Metadata survives optional active-check enrichment failures. State/Tasks/Checks use compact widths; Tasks shows an ID or link count, absent links a dash. Checks shows only check observations (closed/merged: NF, expanded to Not fetched in details); review and merge observations remain separately labeled in details.
 - `app/` - `mod.rs` state, loop, browse keys, commands; `pickers.rs` column/filter/sort
-  pickers + the shared picker key handler; `new_task.rs` the Tasks `t n` title draft and native create; `task_parent.rs` the `t a` existing-parent picker (ID/title search, native reparent); `task_status.rs` / `task_project.rs` the `t s` status and `t p` project native edits with stable task IDs; `paint_flow.rs` the `p` flow; `slots.rs` the shared `v` open/save/global pickers.
+  pickers + the shared picker key handler; `new_task.rs` the Tasks `t n` title draft and native create; `task_parent.rs` the `t a` existing-parent picker (ID/title search, native reparent); `task_status.rs` / `task_project.rs` the `t s` status and `t p` project native edits with stable task IDs; `paint_flow.rs` the `p` flow; `slots.rs` the shared `v` open/save/global/name/delete pickers, `v n`'s one-line name input (`Mode::RenameView`).
 - `picker.rs` - the one list every menu uses: typed `PickOption` payloads, numbered/lettered rows,
   type-ahead; `app/` dispatches on payloads. Task/view menus and column/settings/paint-rule actions are selectable rows; mutation menus require Enter after type-ahead. A bounded parent stack supports ←/h back and →/l open, with Esc closing all; filter-value initials h/l keep typeahead precedence when matching a label (arrows always navigate); merge confirmation retains explicit authorization. Short pickers scroll to selection; results stay in the footer. A digit in browse opens that column's `ColumnActions`.
 - `detail_pane.rs` - shared task/PR split, border, bold title, muted metadata, accent sections, wrapping and bounded scroll.
@@ -32,9 +34,9 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
   keys, hint...) each a Style (fg/bg/modifiers) and `theme.columns` maps columns to surfaces.
 - `tasks.rs` - task load + filter language (`status: pri: label: project:` + words,
   loose match: `status:todo` == "To Do"); `field_values` feeds the `f <n>` picker.
-- `views.rs` - `ViewState` (filter, sort, columns, glyphs, paint, group) is what a slot saves and
-  a restart resumes, one Lua record for both; global `~/.switchbard/views.lua`, per-repo overrides
-  in `views/<repo path>.lua`; PRs use `.prs.lua` beside these files. `vs<n>` saves to repo, `vg<n>` promotes to global; slot 1 opens. Both page states survive Tab/restart.
+- `views.rs` - `ViewState` (filter, sort, columns, glyphs, paint, group, name) is what a slot saves
+  and a restart resumes, one Lua record for both; global `~/.switchbard/views.lua`, per-repo overrides
+  in `views/<repo path>.lua`; PRs use `.prs.lua` beside these files. `vs<n>` saves to repo, `vg<n>` promotes to global; slot 1 opens. `v n` names a slot (writes the repo override if one exists, else global), `v x` deletes one; an unnamed slot's label is derived from its contents (`ViewState::label()`). Both page states survive Tab/restart.
 - `date_fields.rs`: `p` offers When task filed / When merged in UTC buckets; authoritative creation/merge dates only. `paint_eval.rs` chooses semantic tokens; terminal conversion stays in `paint.rs`.
 - `paint.rs` - `p` rules in a hierarchy: `by:<col>=v:c,...`, `rows:<filter>=c`, `column:<col>=c`.
   Top rule is the base (whole rows); lower rules paint only their scope. `po` reorders.

@@ -27,6 +27,7 @@ mise run bundle                       # macOS: Switchbard.app in this worktree's
 mise run package                      # macOS: DMG + sha256 in this worktree's Cargo target
 mise run test                         # full test suite (~0.1s)
 mise run target-prune                 # list Cargo target dirs no live worktree owns (--yes removes)
+mise run install                      # install sb + sbt from this worktree (refuses a downgrade)
 cargo test -p switchbard-core <pat>   # single test by name substring
 ```
 
@@ -48,6 +49,20 @@ worktree's own `target/`.
 
 `mise run bundle` and `mise run package` require `XPLAN_SIDECAR_SOURCE` (a clean checkout of the pinned xplan revision from `xplan-sidecar-pin.json`) and `XPLAN_SIDECAR_ARCHIVE` (the sidecar archive built from it with `scripts/build_mission_sidecar.py`); the sidecar is packaged from those exact local inputs, never downloaded. Run `mise run bundle` without them for the full recipe.
 CI and Linux release builds materialize that same pinned revision from the sub-megabyte Git bundle in `vendor/xplan`, then build it with the pinned CPython 3.12.11 interpreter and verify the helper locally. This keeps Switchbard's build independent of cross-repository credentials while preserving xplan's exact Git identity and sole-writer authority.
+
+## Installing `sb` and `sbt`
+
+Install through `mise run install` (or `scripts/install-switchbard.sh`), never a
+bare `cargo install --path`. Both binaries are installed from whatever worktree
+someone is standing in, and a running `sbt` re-execs itself the moment the file
+on disk changes - so an install from a worktree that predates a feature deletes
+that feature from every live session at once. That is TASK-172, and it happened
+twice. The guard refuses any install whose target tree does not contain the
+commit the installed binary was built from; `--force` overrides and prints what
+is being dropped. Every binary stamps its own commit and branch at compile time
+(`switchbard-core/build.rs` -> `switchbard_core::build_identity`), surfaced by
+`--version`, by the `build-id` subcommand, and in sbt's `session_start` event -
+so "which build am I on" is always answerable.
 
 ## Live app ownership
 
@@ -81,7 +96,7 @@ Mission Command uses one bundled xplan one-shot helper process per request. Swit
 
 **Hierarchy (Linear vocabulary, trajectory: *Linear-vocabulary hierarchy*):** Initiative → Project → Issue (task) → Sub-issue (decimal child). Task membership is the `project:` frontmatter key (legacy `milestone:` reads as a fallback and migrates on the next assignment); `backlog/hierarchy.rs` owns the optional def files; roll-up is computed (`compute_hierarchy_rollup`), never stored. "Repo" is the word for the repo-backlog scope everywhere user-facing.
 
-**Weekly goals (trajectory: *Weekly goals*):** numeric targets tracked relative to the week clock, stored in `backlog/goals.yml` (records, not documents — `backlog/goals.rs` owns it; never hand-edit). Actuals come from append-only dated check-ins (manual) or done-in-week tasks matching a scope and/or attached inputs (`measure: tasks`; `goal attach` links tasks/projects as inputs); pace (`compute_goal_statuses`: on-track / behind / met / missed) is computed, never stored. CLI: `goal create/check-in/list/view/roll/attach/detach`; the Digest lens leads with the current week's goal cards.
+**Weekly goals (trajectory: *Weekly goals*):** numeric targets tracked relative to the week clock. Legacy repositories store these records in `backlog/goals.yml`; after this kind is migrated, the central database owns the aggregate and retains the YAML as provenance. Actuals come from append-only dated check-ins (manual) or done-in-week tasks matching a scope and/or attached inputs (`measure: tasks`; `goal attach` links tasks/projects as inputs); pace (`compute_goal_statuses`: on-track / behind / met / missed) is computed, never stored. CLI: `goal create/check-in/list/view/roll/attach/detach`; the Digest lens leads with the current week's goal cards. See `docs/central-storage.md` for the authority and migration contract.
 
 ### `crates/switchbard-core` — domain layer
 

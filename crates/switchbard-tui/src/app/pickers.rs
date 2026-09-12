@@ -25,6 +25,7 @@ impl App {
             for (key, label, action) in [
                 ('b', "Assign ball", TaskAction::Ball),
                 ('s', "Status", TaskAction::Status),
+                ('d', "Mark Done", TaskAction::Done),
                 ('p', "Link project", TaskAction::Project),
                 ('a', "Link parent task", TaskAction::Parent),
                 ('r', "Top list", TaskAction::TopList),
@@ -69,6 +70,7 @@ impl App {
             TaskAction::TopList => self.open_top_list_picker(),
             TaskAction::Drop => self.drop_rank(),
             TaskAction::Goals => self.open_goal_picker(),
+            TaskAction::Done => self.mark_done(),
             TaskAction::Pin => {
                 let selected = self.selected_task().map(|task| task.id.clone());
                 self.state.pin_top = !self.state.pin_top;
@@ -529,7 +531,11 @@ impl App {
                     task_rank_room
                 } else if matches!(
                     purpose,
-                    PickerPurpose::Views | PickerPurpose::SaveView | PickerPurpose::GlobalView
+                    PickerPurpose::Views
+                        | PickerPurpose::SaveView
+                        | PickerPurpose::GlobalView
+                        | PickerPurpose::RenameView
+                        | PickerPurpose::DeleteView
                 ) {
                     picker
                         .row_keys()
@@ -551,7 +557,10 @@ impl App {
                 if index == 0 || index > count {
                     picker.number.clear();
                     self.status = match purpose {
-                        PickerPurpose::Views | PickerPurpose::GlobalView => {
+                        PickerPurpose::Views
+                        | PickerPurpose::GlobalView
+                        | PickerPurpose::RenameView
+                        | PickerPurpose::DeleteView => {
                             format!("no view in slot {index}")
                         }
                         PickerPurpose::SaveView => format!("slot {index} is out of reach"),
@@ -572,7 +581,13 @@ impl App {
                     } else if let Some(position) = picker.position_of_number(index) {
                         picker.selected = position;
                         self.apply_picked_value();
-                    } else if matches!(purpose, PickerPurpose::Views | PickerPurpose::GlobalView) {
+                    } else if matches!(
+                        purpose,
+                        PickerPurpose::Views
+                            | PickerPurpose::GlobalView
+                            | PickerPurpose::RenameView
+                            | PickerPurpose::DeleteView
+                    ) {
                         self.status = format!("no view in slot {index}");
                     } else if purpose == PickerPurpose::SaveView {
                         self.status = format!("slot {index} is out of reach");
@@ -865,6 +880,14 @@ impl App {
             (PickerPurpose::Views, Payload::GlobalView) => {
                 self.open_view_picker(PickerPurpose::GlobalView)
             }
+            (PickerPurpose::Views, Payload::RenameView) => {
+                self.open_view_picker(PickerPurpose::RenameView)
+            }
+            (PickerPurpose::Views, Payload::DeleteView) => {
+                self.open_view_picker(PickerPurpose::DeleteView)
+            }
+            (PickerPurpose::RenameView, Payload::ViewSlot(slot)) => self.open_rename_view(slot),
+            (PickerPurpose::DeleteView, Payload::ViewSlot(slot)) => self.delete_view(slot),
             (PickerPurpose::SaveView, Payload::ViewSlot(slot)) => self.save_view(slot),
             (PickerPurpose::GlobalView, Payload::ViewSlot(slot)) => self.promote_view(slot),
             (PickerPurpose::Settings, Payload::GlobalSettings) => self.promote_settings(),

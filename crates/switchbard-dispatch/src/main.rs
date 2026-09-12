@@ -17,7 +17,7 @@
 use std::time::Duration;
 use switchbard_core::config;
 use switchbard_core::dispatch::{drain_dispatch_queue, DispatchOptions, DispatchResult};
-use switchbard_core::{is_backlog_repo, load_backlog_repo};
+use switchbard_core::{backlog_repo_available, load_backlog_repo};
 
 fn main() {
     let cfg = config::load();
@@ -28,8 +28,17 @@ fn main() {
     let mut failed = 0usize;
 
     for repo in &cfg.repos {
-        if !is_backlog_repo(&repo.path) {
-            continue;
+        match backlog_repo_available(&repo.path) {
+            Ok(false) => continue,
+            Err(error) => {
+                eprintln!(
+                    "switchbard-dispatch: {}: task storage unavailable: {error}",
+                    repo.name
+                );
+                failed += 1;
+                continue;
+            }
+            Ok(true) => {}
         }
         let project = match load_backlog_repo(&repo.path) {
             Ok(project) => project,

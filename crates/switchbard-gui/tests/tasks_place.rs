@@ -24,6 +24,7 @@ use switchbard_gui::ui::places::tasks::state::{FilterPredicate, TasksViewMode};
 
 fn task(id: &str, title: &str, status: &str) -> BacklogTask {
     BacklogTask {
+        storage_identity: None,
         id: id.to_string(),
         title: title.to_string(),
         status: status.to_string(),
@@ -624,7 +625,7 @@ fn clicking_a_row_selects_it_the_same_way_the_boards_stroke_ring_selection_does(
     app.tasks_place.group_by = None;
     // Deterministic precondition rather than relying on which task the
     // default Triage sort happens to auto-select first.
-    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-2".to_string()));
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-2".to_string()).into());
     let mut harness = harness(app);
     harness.run();
 
@@ -633,7 +634,10 @@ fn clicking_a_row_selects_it_the_same_way_the_boards_stroke_ring_selection_does(
 
     assert_eq!(
         harness.state().backlog_view.selected_task,
-        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string())),
+        Some(switchbard_gui::runtime::BacklogTaskKey::from((
+            PathBuf::from(REPO_PATH),
+            "TASK-1".to_string()
+        ))),
         "clicking a row should select it via the same backlog_view.selected_task \
          Board and List already share"
     );

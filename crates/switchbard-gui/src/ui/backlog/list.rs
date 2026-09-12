@@ -569,7 +569,8 @@ fn bulk_patch_button(
 /// selected keys accordingly before queuing the pending bulk-save entries.
 fn group_by_project(keys: &[BacklogTaskKey]) -> Vec<(PathBuf, Vec<String>)> {
     let mut grouped: Vec<(PathBuf, Vec<String>)> = Vec::new();
-    for (project_root, task_id) in keys {
+    for key in keys {
+        let (project_root, task_id) = &key.address;
         match grouped.iter_mut().find(|(root, _)| root == project_root) {
             Some((_, ids)) => ids.push(task_id.clone()),
             None => grouped.push((project_root.clone(), vec![task_id.clone()])),

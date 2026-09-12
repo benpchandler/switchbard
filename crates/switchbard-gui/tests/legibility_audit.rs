@@ -478,6 +478,7 @@ fn seed_mission_projection(app: &HiveApp) {
 /// covers the parity work, not just the pre-existing views.
 fn legibility_backlog_task() -> BacklogTask {
     BacklogTask {
+            storage_identity: None,
         id: "TASK-1".to_string(),
         title: "Legibility fixture task".to_string(),
         status: "In Progress".to_string(),
@@ -704,7 +705,7 @@ fn seed_dispatch_runs(app: &HiveApp) {
     let log_path = write_dispatch_log_fixture();
     let mut runs = app.dispatch_runs.lock().unwrap();
     runs.insert(
-        (PathBuf::from(REPO_PATH), "TASK-6".to_string()),
+        (PathBuf::from(REPO_PATH), "TASK-6".to_string()).into(),
         DispatchRun {
             task_id: "TASK-6".to_string(),
             branch: "dispatch/task-6".to_string(),
@@ -723,7 +724,7 @@ fn seed_dispatch_runs(app: &HiveApp) {
         },
     );
     runs.insert(
-        (PathBuf::from(REPO_PATH), "TASK-8".to_string()),
+        (PathBuf::from(REPO_PATH), "TASK-8".to_string()).into(),
         DispatchRun {
             task_id: "TASK-8".to_string(),
             branch: "dispatch/task-8".to_string(),
@@ -746,7 +747,7 @@ fn seed_dispatch_runs(app: &HiveApp) {
 fn seed_dispatches_running(app: &mut HiveApp) {
     seed_backlog_project(app);
     seed_dispatch_runs(app);
-    app.dispatches_view.selected = Some((PathBuf::from(REPO_PATH), "TASK-6".to_string()));
+    app.dispatches_view.selected = Some((PathBuf::from(REPO_PATH), "TASK-6".to_string()).into());
 }
 
 /// TASK-98: the Command place's Fleet section — TASK-6 (dispatch, in
@@ -765,10 +766,9 @@ fn seed_command_fleet(app: &mut HiveApp) {
         started_unix: Some(switchbard_core::dispatch_inspect::now_unix() - 900),
         pgid: Some(5150),
     }];
-    app.command_view.selected = Some(switchbard_gui::runtime::CommandRowKey::Dispatch((
-        PathBuf::from(REPO_PATH),
-        "TASK-8".to_string(),
-    )));
+    app.command_view.selected = Some(switchbard_gui::runtime::CommandRowKey::Dispatch(
+        (PathBuf::from(REPO_PATH), "TASK-8".to_string()).into(),
+    ));
 }
 
 /// Build the harnesses for every view we audit, under `theme`. Covers the top
@@ -906,7 +906,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     list_app
         .backlog_view
         .expanded_parents
-        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
     seed_backlog_project(&list_app);
     let list = harness(list_app);
 
@@ -921,7 +921,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     dispatched_app.backlog_view.lens = BacklogLens::List;
     dispatched_app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     dispatched_app.backlog_view.selected_task =
-        Some((PathBuf::from(REPO_PATH), "TASK-7".to_string()));
+        Some((PathBuf::from(REPO_PATH), "TASK-7".to_string()).into());
     seed_backlog_project(&dispatched_app);
     let dispatched = harness(dispatched_app);
 
@@ -931,7 +931,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     dispatch_failed_app.backlog_view.lens = BacklogLens::List;
     dispatch_failed_app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     dispatch_failed_app.backlog_view.selected_task =
-        Some((PathBuf::from(REPO_PATH), "TASK-8".to_string()));
+        Some((PathBuf::from(REPO_PATH), "TASK-8".to_string()).into());
     seed_backlog_project(&dispatch_failed_app);
     let dispatch_failed = harness(dispatch_failed_app);
 
@@ -947,7 +947,8 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     done_app.place = Place::Tasks;
     done_app.backlog_view.lens = BacklogLens::List;
     done_app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
-    done_app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-9".to_string()));
+    done_app.backlog_view.selected_task =
+        Some((PathBuf::from(REPO_PATH), "TASK-9".to_string()).into());
     done_app.backlog_view.archive_confirm = true;
     // `reconcile_selected_task` (mod.rs) clears a selection outside the
     // currently visible rows, and Done tasks are hidden by default — without
@@ -981,7 +982,7 @@ fn views(theme: ThemeChoice) -> Vec<(String, Harness<'static, HiveApp>)> {
     board_app
         .backlog_view
         .bulk_selected_tasks
-        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
     let board = harness(board_app);
 
     // Owner UX pass (2026-08-05): the onboarding modal's two "success"

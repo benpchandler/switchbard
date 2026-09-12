@@ -561,9 +561,13 @@ pub fn build_dispatch_prompt(task: &BacklogTask) -> String {
         "## Operating contract\n\n\
          - Implement the task fully in this worktree.\n\
          - As you genuinely satisfy each Acceptance Criterion, check it off in \
-           THIS worktree's copy of the task — `sb --repo . edit {id} \
-           --check-ac N` (one N per satisfied criterion) — and commit the \
-           check-offs. The orchestrator refuses to call a run complete while \
+           the task through `sb --repo . edit {id} --check-ac N` (one N per \
+           satisfied criterion). Switchbard resolves this repository's task \
+           authority. For central tasks this updates the database directly: \
+           do not edit retained task Markdown, export an exchange, or create \
+           a task-file commit/PR to sync check-offs. For legacy tasks include \
+           the CLI's task-file changes in your implementation commit. The \
+           orchestrator refuses to call a run complete while \
            any criterion is unchecked; never check a criterion you have not \
            actually proven.\n\
          - Run this repo's test/build gate before finishing, if one exists.\n\
@@ -575,6 +579,15 @@ pub fn build_dispatch_prompt(task: &BacklogTask) -> String {
         id = task.id
     ));
     prompt
+}
+
+/// Complete model context for CLI/headless callers, including flexible fields
+/// and custom sections from the captured authority revision.
+pub fn build_dispatch_prompt_with_context(repo_root: &Path, task: &BacklogTask) -> Result<String> {
+    let context = crate::task_model_context::TaskModelContext::capture(repo_root, task)?;
+    let (_, prompt) =
+        context.prepare_prompt(&dispatch_log_dir(), "dispatch", task, build_dispatch_prompt)?;
+    Ok(prompt)
 }
 
 fn push_checklist_section(
@@ -641,6 +654,9 @@ pub fn dispatch_one(
     task: &BacklogTask,
     opts: &DispatchOptions,
 ) -> Result<DispatchOutcome> {
+    // Resolve the complete queued snapshot before our own claim/status writes
+    // advance its revision. The model gets these exact immutable bytes.
+    let model_context = crate::task_model_context::TaskModelContext::capture(repo_root, task)?;
     claim_task_for_dispatch(repo_root, &task.id)?;
 
     // Captured *before* the pipeline moves the task, so a failure can put it
@@ -649,7 +665,7 @@ pub fn dispatch_one(
     let prior_status = task.status.clone();
     set_dispatch_status(repo_root, &task.id, DISPATCH_IN_PROGRESS_STATUS);
 
-    let paths = match prepare_dispatch(repo_root, task, opts) {
+    let paths = match prepare_dispatch(repo_root, task, opts, &model_context) {
         Ok(paths) => paths,
         Err(e) => {
             release_as_failed(repo_root, &task.id, &e.to_string(), &prior_status);
@@ -738,6 +754,7 @@ fn prepare_dispatch(
     repo_root: &Path,
     task: &BacklogTask,
     opts: &DispatchOptions,
+    model_context: &crate::task_model_context::TaskModelContext,
 ) -> Result<DispatchPaths> {
     let branch = dispatch_branch_name(&task.id);
     let worktree_path = dispatch_worktree_path(repo_root, &task.id);
@@ -756,10 +773,14 @@ fn prepare_dispatch(
     let started_at_unix = unix_now();
     let stem = dispatch_log_stem(&task.id, started_at_unix);
     let log_path = log_dir.join(format!("{stem}.log"));
-    let prompt_path = log_dir.join(format!("{stem}-prompt.md"));
     let pid_path = log_dir.join(format!("{stem}.pid"));
-    std::fs::write(&prompt_path, build_dispatch_prompt(task))
-        .context("failed writing dispatch prompt")?;
+    let (private_path, _) =
+        model_context.prepare_prompt(&log_dir, "dispatch", task, build_dispatch_prompt)?;
+    // Inspection/process-proof readers use this address. A create-new hard
+    // link retains their protocol without overwriting another run's bytes.
+    let prompt_path = log_dir.join(format!("{stem}-prompt.md"));
+    std::fs::hard_link(&private_path, &prompt_path)
+        .context("dispatch prompt address already exists")?;
 
     debug_assert!(
         worktree_path.starts_with(repo_root),
@@ -1047,6 +1068,7 @@ mod tests {
 
     fn task(id: &str, labels: &[&str]) -> BacklogTask {
         BacklogTask {
+            storage_identity: None,
             id: id.to_string(),
             title: "Example".to_string(),
             status: "To Do".to_string(),

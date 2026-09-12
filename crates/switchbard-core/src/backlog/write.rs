@@ -21,18 +21,20 @@
 //!   unchanged, the file is not touched and `updated_date` is not bumped.
 //! - **Any real change bumps `updated_date`** (parity with the `backlog` CLI
 //!   this layer replaces).
-//! - **Writes are atomic**: write-tmp-then-rename, the same pattern as
-//!   `crate::config::save_to`.
+//! - **Writes are atomic**: one database transaction after task cutover;
+//!   write-tmp-then-rename for a legacy repository. Commands can compose
+//!   multiple edits on an explicit raw draft before persisting once.
 //! - **Body-structure edits fail closed** on
 //!   [`super::parse::task_file_round_trips`]` == false`, the same contract
 //!   `crate::refine` already holds: "I could not verify the structure" must
 //!   mean "do not rewrite it", never "assume it's fine".
 //!
-//! Not yet wired into `super::mutations` — that swap is its own step in the
-//! fork sequence, so this layer lands with its gate and no callers to break.
+//! Public path-taking functions are compatibility wrappers. The document
+//! router chooses the authoritative store and never mirrors central edits
+//! back into the retained Markdown migration sources.
 
 use super::parse::{
-    heading_title, parse_checklist_index, scan_fences, scan_section_markers, task_file_round_trips,
+    body_round_trips, heading_title, parse_checklist_index, scan_fences, scan_section_markers,
     KNOWN_SECTION_HEADINGS,
 };
 use super::types::NewBacklogTask;
@@ -153,9 +155,74 @@ pub struct ChecklistTextEdit {
     pub text: String,
 }
 
+pub fn set_task_status(path: &Path, status: &str) -> Result<WriteOutcome> {
+    edit_document(path, |draft| set_task_status_draft(draft, status))
+}
+pub fn set_task_priority(path: &Path, priority: &str) -> Result<WriteOutcome> {
+    edit_document(path, |draft| set_task_priority_draft(draft, priority))
+}
+pub fn set_task_title(path: &Path, title: &str) -> Result<WriteOutcome> {
+    edit_document(path, |draft| set_task_title_draft(draft, title))
+}
+pub fn set_task_project(path: &Path, project: Option<&str>) -> Result<WriteOutcome> {
+    edit_document(path, |draft| set_task_project_draft(draft, project))
+}
+pub fn set_task_list_field(
+    path: &Path,
+    field: TaskListField,
+    values: &[String],
+) -> Result<WriteOutcome> {
+    edit_document(path, |draft| {
+        set_task_list_field_draft(draft, field, values)
+    })
+}
+pub fn set_task_label(path: &Path, label: &str, enabled: bool) -> Result<WriteOutcome> {
+    edit_document(path, |draft| set_task_label_draft(draft, label, enabled))
+}
+pub fn swap_task_label(path: &Path, from: &str, to: &str) -> Result<WriteOutcome> {
+    edit_document(path, |draft| swap_task_label_draft(draft, from, to))
+}
+pub fn replace_task_section(
+    path: &Path,
+    section: TaskSection,
+    content: &str,
+) -> Result<WriteOutcome> {
+    edit_document(path, |draft| {
+        replace_task_section_draft(draft, section, content)
+    })
+}
+pub fn append_task_notes(path: &Path, note: &str) -> Result<WriteOutcome> {
+    edit_document(path, |draft| append_task_notes_draft(draft, note))
+}
+pub fn append_task_acceptance_criteria(path: &Path, items: &[String]) -> Result<WriteOutcome> {
+    edit_document(path, |draft| {
+        append_task_acceptance_criteria_draft(draft, items)
+    })
+}
+pub fn set_task_checklist_item(
+    path: &Path,
+    list: TaskChecklist,
+    index: usize,
+    checked: bool,
+) -> Result<WriteOutcome> {
+    edit_document(path, |draft| {
+        set_task_checklist_item_draft(draft, list, index, checked)
+    })
+}
+pub fn revise_task_checklist(
+    path: &Path,
+    list: TaskChecklist,
+    edits: &[ChecklistTextEdit],
+    removals: &[usize],
+) -> Result<WriteOutcome> {
+    edit_document(path, |draft| {
+        revise_task_checklist_draft(draft, list, edits, removals)
+    })
+}
+
 // ---- public operations: frontmatter ----
 
-pub fn set_task_status(path: &Path, status: &str) -> Result<WriteOutcome> {
+pub(super) fn set_task_status_draft(path: &mut TaskDraft, status: &str) -> Result<WriteOutcome> {
     let status = validated_single_line("status", status)?.to_string();
     apply_edit(path, move |fm, _| {
         set_scalar(fm, "status", &yaml_scalar(&status), None);
@@ -163,7 +230,10 @@ pub fn set_task_status(path: &Path, status: &str) -> Result<WriteOutcome> {
     })
 }
 
-pub fn set_task_priority(path: &Path, priority: &str) -> Result<WriteOutcome> {
+pub(super) fn set_task_priority_draft(
+    path: &mut TaskDraft,
+    priority: &str,
+) -> Result<WriteOutcome> {
     let priority = validated_single_line("priority", priority)?.to_string();
     apply_edit(path, move |fm, _| {
         set_scalar(fm, "priority", &yaml_scalar(&priority), None);
@@ -171,7 +241,7 @@ pub fn set_task_priority(path: &Path, priority: &str) -> Result<WriteOutcome> {
     })
 }
 
-pub fn set_task_title(path: &Path, title: &str) -> Result<WriteOutcome> {
+pub(super) fn set_task_title_draft(path: &mut TaskDraft, title: &str) -> Result<WriteOutcome> {
     let title = validated_single_line("title", title)?.to_string();
     apply_edit(path, move |fm, _| {
         set_scalar(fm, "title", &yaml_scalar(&title), None);
@@ -189,7 +259,10 @@ pub fn set_task_title(path: &Path, title: &str) -> Result<WriteOutcome> {
 /// to `project:` alone in the same atomic write. Files are otherwise never
 /// migrated: every other operation leaves a legacy `milestone:` line
 /// byte-identical.
-pub fn set_task_project(path: &Path, project: Option<&str>) -> Result<WriteOutcome> {
+pub(super) fn set_task_project_draft(
+    path: &mut TaskDraft,
+    project: Option<&str>,
+) -> Result<WriteOutcome> {
     let Some(name) = project else {
         return apply_edit(path, |fm, _| {
             remove_key(fm, "project");
@@ -218,8 +291,8 @@ pub fn set_task_project(path: &Path, project: Option<&str>) -> Result<WriteOutco
 /// *semantically* identical list in a different on-disk style (e.g. an
 /// inline `[a, b]`) is rewritten to block style — the byte-no-op guarantee
 /// holds only when the rendered bytes match.
-pub fn set_task_list_field(
-    path: &Path,
+pub(super) fn set_task_list_field_draft(
+    path: &mut TaskDraft,
     field: TaskListField,
     values: &[String],
 ) -> Result<WriteOutcome> {
@@ -236,7 +309,11 @@ pub fn set_task_list_field(
 /// snapshot. A semantic no-op (adding a label already present, removing one
 /// already absent) leaves the file bytes completely untouched, whatever
 /// style the list is currently written in.
-pub fn set_task_label(path: &Path, label: &str, enabled: bool) -> Result<WriteOutcome> {
+pub(super) fn set_task_label_draft(
+    path: &mut TaskDraft,
+    label: &str,
+    enabled: bool,
+) -> Result<WriteOutcome> {
     let label = validated_single_line("label", label)?.to_string();
     apply_edit(path, move |fm, _| {
         let labels = current_list(fm, "labels");
@@ -265,7 +342,11 @@ pub fn set_task_label(path: &Path, label: &str, enabled: bool) -> Result<WriteOu
 /// let two claimants both "win". The read happens inside the same
 /// read-modify-rename cycle as the write, so the lost-race window is the
 /// microseconds between them, not a caller's stale snapshot.
-pub fn swap_task_label(path: &Path, from: &str, to: &str) -> Result<WriteOutcome> {
+pub(super) fn swap_task_label_draft(
+    path: &mut TaskDraft,
+    from: &str,
+    to: &str,
+) -> Result<WriteOutcome> {
     let from = validated_single_line("label", from)?.to_string();
     let to = validated_single_line("label", to)?.to_string();
     apply_edit(path, move |fm, _| {
@@ -282,13 +363,41 @@ pub fn swap_task_label(path: &Path, from: &str, to: &str) -> Result<WriteOutcome
     })
 }
 
+pub(super) fn reconcile_task_ball_draft(
+    draft: &mut TaskDraft,
+    desired: Option<&str>,
+) -> Result<WriteOutcome> {
+    apply_edit(draft, |fm, _| {
+        let current = current_list(fm, "labels");
+        let mut next: Vec<_> = current
+            .iter()
+            .filter(|label| !label.starts_with(super::ball::BALL_LABEL_PREFIX))
+            .cloned()
+            .collect();
+        if let Some(label) = desired {
+            next.push(label.to_owned());
+        }
+        // Preserve original ordering and inline format for an already correct holder.
+        let holders: Vec<_> = current
+            .iter()
+            .filter(|label| label.starts_with(super::ball::BALL_LABEL_PREFIX))
+            .map(String::as_str)
+            .collect();
+        if holders == desired.into_iter().collect::<Vec<_>>() {
+            return Ok(());
+        }
+        set_list(fm, "labels", &next);
+        Ok(())
+    })
+}
+
 // ---- public operations: body ----
 
 /// Replace one prose section's content wholesale, regenerating its
 /// `SECTION:*:BEGIN/END` markers. Creates the section (at its canonical
 /// position among the known headings) if the task doesn't have it yet.
-pub fn replace_task_section(
-    path: &Path,
+pub(super) fn replace_task_section_draft(
+    path: &mut TaskDraft,
     section: TaskSection,
     content: &str,
 ) -> Result<WriteOutcome> {
@@ -304,7 +413,7 @@ pub fn replace_task_section(
 /// Existing notes are never rewritten — the note is inserted just before the
 /// section's END marker, separated by a blank line when the section already
 /// has content.
-pub fn append_task_notes(path: &Path, note: &str) -> Result<WriteOutcome> {
+pub(super) fn append_task_notes_draft(path: &mut TaskDraft, note: &str) -> Result<WriteOutcome> {
     let note = note.trim().to_string();
     if note.is_empty() {
         bail!("note is empty");
@@ -319,7 +428,10 @@ pub fn append_task_notes(path: &Path, note: &str) -> Result<WriteOutcome> {
 /// Append acceptance criteria, never disturbing existing ones — the
 /// `--ac`-not-`--acceptance-criteria` contract `crate::refine` depends on.
 /// Numbering continues from the highest existing `#N`.
-pub fn append_task_acceptance_criteria(path: &Path, items: &[String]) -> Result<WriteOutcome> {
+pub(super) fn append_task_acceptance_criteria_draft(
+    path: &mut TaskDraft,
+    items: &[String],
+) -> Result<WriteOutcome> {
     let cleaned: Vec<String> = items
         .iter()
         .map(|s| s.trim().to_string())
@@ -346,8 +458,8 @@ pub fn append_task_acceptance_criteria(path: &Path, items: &[String]) -> Result<
 /// round-trip: the fence-aware section scan is enough to guarantee the flip
 /// lands on the same line the parser counts, and no other byte moves.
 /// Setting an item to the state it's already in is a no-op.
-pub fn set_task_checklist_item(
-    path: &Path,
+pub(super) fn set_task_checklist_item_draft(
+    path: &mut TaskDraft,
     list: TaskChecklist,
     index: usize,
     checked: bool,
@@ -375,8 +487,8 @@ pub fn set_task_checklist_item(
 /// checked mark and its `- [x] #N ` prefix byte-for-byte. Any unknown index
 /// fails the whole call before anything is written, naming the valid range,
 /// so a mangled `--remove-ac` can never half-apply.
-pub fn revise_task_checklist(
-    path: &Path,
+pub(super) fn revise_task_checklist_draft(
+    path: &mut TaskDraft,
     list: TaskChecklist,
     edits: &[ChecklistTextEdit],
     removals: &[usize],
@@ -457,6 +569,27 @@ pub fn write_new_task_file(
     id: &str,
     task: &NewBacklogTask,
 ) -> Result<PathBuf> {
+    let (path, text) = new_task_document(tasks_dir, prefix, id, task)?;
+    let _repository_lock = super::task_storage::lock_for_path(&path)?;
+    if super::task_storage::create(&path, &text)? {
+        return Ok(path);
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .with_context(|| format!("creating {} (id already taken?)", path.display()))?;
+    file.write_all(text.as_bytes())
+        .with_context(|| format!("writing {}", path.display()))?;
+    Ok(path)
+}
+
+pub(super) fn new_task_document(
+    tasks_dir: &Path,
+    prefix: &str,
+    id: &str,
+    task: &NewBacklogTask,
+) -> Result<(PathBuf, String)> {
     validate_task_id(id)?;
     let prefix = prefix.trim();
     if prefix.is_empty() {
@@ -470,14 +603,7 @@ pub fn write_new_task_file(
         .context("task prefix and id exceed the filename byte limit")?;
     let slug = filename_slug(title);
     let path = tasks_dir.join(format!("{stem}{}.md", utf8_prefix(&slug, slug_budget)));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .with_context(|| format!("creating {} (id already taken?)", path.display()))?;
-    file.write_all(text.as_bytes())
-        .with_context(|| format!("writing {}", path.display()))?;
-    Ok(path)
+    Ok((path, text))
 }
 
 /// Re-home a task file under a new id: rewrite `id:` and the parent key,
@@ -497,14 +623,43 @@ pub fn rehome_task_file(
     new_id: &str,
     new_parent: Option<&str>,
 ) -> Result<PathBuf> {
+    let _repository_lock = super::task_storage::lock_for_path(path)?;
+    let original = super::task_storage::read(path)?;
+    let (new_path, text) = rehome_document(path, &original, prefix, new_id, new_parent)?;
+    if super::task_storage::rehome(path, &new_path, Some((&original, &text)))? {
+        return Ok(new_path);
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&new_path)
+        .with_context(|| format!("creating {} (id already taken?)", new_path.display()))?;
+    file.write_all(text.as_bytes())
+        .with_context(|| format!("writing {}", new_path.display()))?;
+    drop(file);
+    fs::remove_file(path).with_context(|| {
+        format!(
+            "removing {} after writing {} - delete it by hand",
+            path.display(),
+            new_path.display()
+        )
+    })?;
+    Ok(new_path)
+}
+
+pub(super) fn rehome_document(
+    path: &Path,
+    original: &str,
+    prefix: &str,
+    new_id: &str,
+    new_parent: Option<&str>,
+) -> Result<(PathBuf, String)> {
     validate_task_id(new_id)?;
     let prefix = prefix.trim();
     if prefix.is_empty() {
         bail!("task prefix is empty");
     }
-    let original =
-        fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let RawTask { mut fm, rest } = split_raw(&original)?;
+    let RawTask { mut fm, rest } = split_raw(original)?;
     set_scalar(&mut fm, "id", &format!("{prefix}-{new_id}"), None);
     match new_parent {
         Some(parent) => {
@@ -537,22 +692,7 @@ pub fn rehome_task_file(
     if new_path == path {
         bail!("{} already carries id {new_id}", path.display());
     }
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&new_path)
-        .with_context(|| format!("creating {} (id already taken?)", new_path.display()))?;
-    file.write_all(join_raw(&fm, &rest).as_bytes())
-        .with_context(|| format!("writing {}", new_path.display()))?;
-    drop(file);
-    fs::remove_file(path).with_context(|| {
-        format!(
-            "removing {} after writing {} - delete it by hand",
-            path.display(),
-            new_path.display()
-        )
-    })?;
-    Ok(new_path)
+    Ok((new_path, join_raw(&fm, &rest)))
 }
 
 /// A bare task id is digit groups joined by single dots — `42`, `42.1`,
@@ -603,24 +743,45 @@ pub(super) fn join_raw(fm: &[String], rest: &str) -> String {
 /// write. The byte comparison happens *before* the date bump, which is what
 /// makes "no-op writes nothing" hold: an edit that reproduces the file
 /// exactly returns `Unchanged` without touching disk.
-fn apply_edit(
+/// Explicit draft used to compose a command before its single durable write.
+pub(super) struct TaskDraft {
+    text: String,
+}
+
+pub(super) fn edit_document<T>(
     path: &Path,
+    edit: impl FnOnce(&mut TaskDraft) -> Result<T>,
+) -> Result<T> {
+    super::task_storage::edit(path, |text| edit_text(text, edit))
+}
+
+pub(super) fn edit_text<T>(
+    text: &str,
+    edit: impl FnOnce(&mut TaskDraft) -> Result<T>,
+) -> Result<(String, T)> {
+    let mut draft = TaskDraft {
+        text: text.to_owned(),
+    };
+    let result = edit(&mut draft)?;
+    Ok((draft.text, result))
+}
+
+fn apply_edit(
+    draft: &mut TaskDraft,
     edit: impl FnOnce(&mut Vec<String>, &mut String) -> Result<()>,
 ) -> Result<WriteOutcome> {
-    let original =
-        fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let RawTask { mut fm, mut rest } = split_raw(&original)?;
+    let RawTask { mut fm, mut rest } = split_raw(&draft.text)?;
     debug_assert_eq!(
         join_raw(&fm, &rest),
-        original,
+        draft.text,
         "split/join must be byte-lossless"
     );
     edit(&mut fm, &mut rest)?;
-    if join_raw(&fm, &rest) == original {
+    if join_raw(&fm, &rest) == draft.text {
         return Ok(WriteOutcome::Unchanged);
     }
     bump_updated_date(&mut fm, &local_stamp());
-    atomic_write(path, &join_raw(&fm, &rest))?;
+    draft.text = join_raw(&fm, &rest);
     Ok(WriteOutcome::Changed)
 }
 
@@ -643,16 +804,12 @@ pub(super) fn atomic_write(path: &Path, text: &str) -> Result<()> {
     fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))
 }
 
-fn ensure_body_rewrite_safe(path: &Path) -> Result<()> {
-    if task_file_round_trips(path) {
+fn ensure_body_rewrite_safe(draft: &TaskDraft) -> Result<()> {
+    let (_, body) = super::parse::split_frontmatter(&draft.text);
+    if body_round_trips(body) {
         return Ok(());
     }
-    bail!(
-        "refusing to rewrite {}: the task body does not round-trip losslessly \
-         (unbalanced code fences or section markers, a duplicated section heading, or content \
-         before the first heading) — fix the file by hand first",
-        path.display()
-    )
+    bail!("refusing to rewrite task: the task body does not round-trip losslessly")
 }
 
 // ---- frontmatter primitives ----
@@ -903,7 +1060,9 @@ fn insert_pos(lines: &[String], inside: &[bool], marked: &[bool], heading: &str)
 fn insert_block_at(lines: &mut Vec<String>, pos: usize, block: Vec<String>) {
     debug_assert!(pos <= lines.len(), "insert position is in range");
     let mut chunk = Vec::with_capacity(block.len() + 2);
-    if pos > 0 && !lines[pos - 1].trim().is_empty() {
+    // `rest` starts immediately after the closing `---`, so an insertion
+    // at index zero still needs the newline that terminates that fence.
+    if pos == 0 || !lines[pos - 1].trim().is_empty() {
         chunk.push(String::new());
     }
     chunk.extend(block);
@@ -1389,6 +1548,36 @@ mod tests {
             filtered(after),
             "an edit touched lines outside {except:?}"
         );
+    }
+
+    #[test]
+    fn standalone_rehome_preserves_body_and_refuses_existing_destination() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = fixture_file(&dir);
+        let destination = dir.path().join("task-10 - Fixture.md");
+        fs::write(&destination, "existing").unwrap();
+        assert!(rehome_task_file(&path, "TASK", "10", None).is_err());
+        assert_eq!(read(&path), FIXTURE);
+        assert_eq!(read(&destination), "existing");
+        fs::remove_file(&destination).unwrap();
+        assert_eq!(
+            rehome_task_file(&path, "TASK", "10", None).unwrap(),
+            destination
+        );
+        assert!(!path.exists());
+        let after = read(&destination);
+        assert!(after.contains("id: TASK-10"));
+        assert_only_lines_touched(FIXTURE, &after, &["id:", "updated_date:"]);
+    }
+
+    #[test]
+    fn standalone_edit_refuses_missing_parent_without_creating_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let parent = dir.path().join("missing");
+        let path = parent.join("task-9.md");
+        let error = set_task_status(&path, "Done").unwrap_err();
+        assert!(error.to_string().contains("resolve repository lock root"));
+        assert!(!parent.exists());
     }
 
     #[test]

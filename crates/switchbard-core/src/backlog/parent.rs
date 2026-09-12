@@ -17,7 +17,7 @@ pub fn eligible_backlog_parents<'a>(
     repo: &'a BacklogRepo,
     task_id: &str,
 ) -> Result<Vec<&'a BacklogTask>> {
-    let prefix = configured_task_prefix(&repo.root);
+    let prefix = configured_task_prefix(&repo.root)?;
     let task = task_in_repo(&repo.tasks, task_id, &prefix)?;
     validate_move_source(&repo.tasks, task, &prefix)?;
     Ok(repo

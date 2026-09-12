@@ -38,7 +38,11 @@ impl Telemetry {
         }
         let sink = OpenOptions::new().create(true).append(true).open(path).ok();
         let mut telemetry = Telemetry::with_sink(sink);
-        telemetry.record("session_start", env!("CARGO_PKG_VERSION"));
+        // The workspace version alone cannot tell two branches apart, which
+        // is how TASK-172 spent an afternoon: the log said 0.4.0 both before
+        // and after a build without the Pull Requests page replaced every
+        // running session.
+        telemetry.record("session_start", switchbard_core::VERSION_LINE);
         telemetry
     }
 

@@ -369,7 +369,7 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
             };
             (
                 format!("v{}", index + 1),
-                format!("{}{scope}", saved.name()),
+                format!("{}{scope}", saved.display_name()),
             )
         }))
         .collect();
@@ -457,6 +457,11 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         )),
         Mode::BallName => Line::from(vec![
             Span::styled(" ball person: ", theme.style(Surface::Accent)),
+            Span::raw(app.input.clone()),
+            Span::styled("▏", theme.style(Surface::Accent)),
+        ]),
+        Mode::RenameView => Line::from(vec![
+            Span::styled(" view name: ", theme.style(Surface::Accent)),
             Span::raw(app.input.clone()),
             Span::styled("▏", theme.style(Surface::Accent)),
         ]),
@@ -747,6 +752,8 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
         PickerPurpose::Views => "views".to_string(),
         PickerPurpose::SaveView => "save view".to_string(),
         PickerPurpose::GlobalView => "make view global".to_string(),
+        PickerPurpose::RenameView => "name which view".to_string(),
+        PickerPurpose::DeleteView => "delete which view".to_string(),
         PickerPurpose::ChooseColumnAction(action) => action.label().to_string(),
     };
     if picker.typed.is_empty() {

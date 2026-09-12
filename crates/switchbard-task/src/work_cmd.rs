@@ -276,7 +276,13 @@ fn hook(dir: &Path, text: &str, max_stop_blocks: u32) -> Result<()> {
     if event.session_id.is_empty() {
         return Ok(());
     }
-    let Some(root) = event.cwd.as_deref().and_then(crate::find_repo_root) else {
+    let Some(root) = event
+        .cwd
+        .as_deref()
+        .map(crate::find_repo_root)
+        .transpose()?
+        .flatten()
+    else {
         return Ok(());
     };
     let session = switchbard_core::load_work_session(dir, &event.session_id)?

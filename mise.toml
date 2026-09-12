@@ -76,7 +76,15 @@ run = [
   "cargo test -p switchbard-tui",
 ]
 
+[tasks.hooks-test]
+description = "Run the Claude hook regression tests (main-checkout-guard)"
+run = "python3 -m pytest -q tests/hooks"
+
 [tasks.tui-install]
 description = "Check the TUI crate, then install sbt; a running sbt re-execs itself"
 depends = ["tui"]
-run = "cargo install --path crates/switchbard-tui"
+run = "bash scripts/install-switchbard.sh sbt"
+
+[tasks.install]
+description = "Install sb and sbt from this worktree, refusing a silent downgrade"
+run = "bash scripts/install-switchbard.sh"

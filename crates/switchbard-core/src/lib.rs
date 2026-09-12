@@ -6,6 +6,7 @@ pub mod backlog_relations;
 pub mod backlog_stats;
 pub mod backlog_triage;
 pub mod boot_time;
+pub mod build_identity;
 pub mod classify;
 pub mod config;
 pub mod discover;
@@ -28,6 +29,8 @@ pub mod removal_safety;
 pub mod resolve;
 pub mod scanner;
 pub mod spawn;
+pub mod storage;
+mod task_model_context;
 pub mod types;
 pub mod work_sessions;
 pub mod workflow;
@@ -48,25 +51,27 @@ pub use agent_sessions::{
 pub use attribution::attribute;
 pub use backlog::{
     append_backlog_notes, append_task_acceptance_criteria, append_task_notes, archive_backlog_task,
-    assignable_statuses, attach_goal_inputs, backlog_day_of, backlog_today, body_round_trips,
-    check_in_goal, complete_backlog_task, create_backlog_task, create_goal, create_initiative_def,
-    create_project_def, create_task_allocating_id, detach_goal_inputs, edit_backlog_task,
-    edit_goal_target, edit_initiative_def, edit_project_def, eligible_backlog_parents,
-    expedite_task, expedite_task_at, goals_feeding, is_backlog_repo, load_backlog_repo,
-    missing_standard_statuses, move_backlog_task, next_task_id, ordered_status_vocabulary,
-    parse_backlog_day, rank_project, rank_project_move, rank_task, rank_task_move,
-    rehome_task_file, rename_project, replace_task_section, revise_backlog_acceptance_criteria,
-    revise_task_checklist, roll_goals, set_backlog_acceptance_checked, set_backlog_ball,
-    set_backlog_dod_checked, set_backlog_final_summary, set_backlog_label, set_task_checklist_item,
-    set_task_label, set_task_list_field, set_task_priority, set_task_project, set_task_status,
-    set_task_title, swap_backlog_label, swap_task_label, task_file_round_trips, unexpedite_task,
-    unrank_project, unrank_task, write_new_task_file, BacklogChecklistItem, BacklogRepo,
+    assignable_statuses, attach_goal_inputs, backlog_day_of, backlog_repo_available, backlog_today,
+    body_round_trips, check_in_goal, complete_backlog_task, create_backlog_task, create_goal,
+    create_initiative_def, create_project_def, create_task_allocating_id, detach_goal_inputs,
+    edit_backlog_task, edit_backlog_task_command, edit_backlog_task_expected, edit_goal_target,
+    edit_initiative_def, edit_project_def, eligible_backlog_parents, expedite_task,
+    expedite_task_at, goals_feeding, is_backlog_repo, load_backlog_repo, missing_standard_statuses,
+    move_backlog_task, next_task_id, ordered_status_vocabulary, parse_backlog_day, rank_project,
+    rank_project_move, rank_task, rank_task_move, rehome_task_file, rename_project,
+    replace_task_section, revise_backlog_acceptance_criteria, revise_task_checklist, roll_goals,
+    set_backlog_acceptance_checked, set_backlog_ball, set_backlog_dod_checked,
+    set_backlog_final_summary, set_backlog_label, set_task_checklist_item, set_task_label,
+    set_task_list_field, set_task_priority, set_task_project, set_task_status, set_task_title,
+    swap_backlog_label, swap_task_label, task_file_round_trips, unexpedite_task, unrank_project,
+    unrank_task, write_new_task_file, BacklogChecklistItem, BacklogRepo, BacklogStorageIdentity,
     BacklogTask, BacklogTaskPatch, BacklogTaskSource, Ball, ChecklistTextEdit, GoalCheckIn,
     GoalDef, GoalInputs, GoalMeasure, GoalWeek, InitiativeDef, InitiativeDefPatch, NewBacklogTask,
     NewGoal, NewInitiativeDef, NewProjectDef, ProjectDef, ProjectDefPatch, ProjectRename, RankMove,
-    RankPlacement, RepoRanking, TaskChecklist, TaskListField, TaskSection, WriteOutcome,
-    ACTIVE_BRANCH_DAYS, BACKLOG_PRIORITIES, BACKLOG_STATUSES, BALL_AGENT_LABEL, BALL_ME_LABEL,
-    CANONICAL_STATUS_ORDER, DEFAULT_PROJECT_STATUS, PROJECT_STATUSES, STANDARD_STATUSES,
+    RankPlacement, RepoRanking, TaskChecklist, TaskEditRequest, TaskEditResult, TaskListField,
+    TaskSection, WriteOutcome, ACTIVE_BRANCH_DAYS, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
+    BALL_AGENT_LABEL, BALL_ME_LABEL, CANONICAL_STATUS_ORDER, DEFAULT_PROJECT_STATUS,
+    PROJECT_STATUSES, STANDARD_STATUSES,
 };
 pub use backlog_relations::{
     ancestor_depth, blocking_dependencies, blocks, children, dependency_statuses,
@@ -81,16 +86,21 @@ pub use backlog_triage::{
     find_hub_repo, load_ordering_overlay, parse_backlog_datetime_unix, triage_entry_from_task,
     triage_rank, OrderingOverlay, TriageDue, TriageEntry, TriagePriority,
 };
+pub use build_identity::{
+    build_commit_is_known, build_id_report, build_is_dirty, version_line, BUILD_BRANCH,
+    BUILD_COMMIT, CRATE_VERSION, VERSION_LINE,
+};
 pub use classify::{classify_command, classify_script_body, ServerLikelihood};
 pub use discover::{auto_scan_roots, discover_repos, DiscoveredRepo};
 pub use dispatch::{
-    build_dispatch_prompt, claim_task_for_dispatch, dismiss_run, dispatch_branch_name,
-    dispatch_log_dir, dispatch_log_stem, dispatch_one, dispatch_pid_path, dispatch_worktree_path,
-    drain_dispatch_queue, list_dispatch_queue, parse_dispatch_sidecar, read_dispatch_sidecar,
-    release_as_dispatched, release_as_failed, select_batch, sweep_dead_sidecar, DispatchOptions,
-    DispatchOutcome, DispatchResult, DispatchSidecar, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_TURNS,
-    DEFAULT_STALE_AFTER, DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL,
-    DISPATCH_IN_PROGRESS_STATUS, DISPATCH_LABEL, DISPATCH_REVIEW_STATUS, SIDECAR_VERSION,
+    build_dispatch_prompt, build_dispatch_prompt_with_context, claim_task_for_dispatch,
+    dismiss_run, dispatch_branch_name, dispatch_log_dir, dispatch_log_stem, dispatch_one,
+    dispatch_pid_path, dispatch_worktree_path, drain_dispatch_queue, list_dispatch_queue,
+    parse_dispatch_sidecar, read_dispatch_sidecar, release_as_dispatched, release_as_failed,
+    select_batch, sweep_dead_sidecar, DispatchOptions, DispatchOutcome, DispatchResult,
+    DispatchSidecar, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_TURNS, DEFAULT_STALE_AFTER,
+    DISPATCHED_LABEL, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL, DISPATCH_IN_PROGRESS_STATUS,
+    DISPATCH_LABEL, DISPATCH_REVIEW_STATUS, SIDECAR_VERSION,
 };
 pub use dispatch_kill::{kill_dispatch_run, DispatchKillOutcome, KillRefusal};
 pub use expected_port::{default_port_for_service, expected_port};

@@ -11,7 +11,11 @@ use switchbard_tui::telemetry::{self, Telemetry};
 use switchbard_tui::{config, view, views};
 
 #[derive(Parser)]
-#[command(name = "sbt", about = "Terminal UI for switchbard")]
+#[command(
+    name = "sbt",
+    version = switchbard_core::VERSION_LINE,
+    about = "Terminal UI for switchbard"
+)]
 struct Cli {
     /// Repository root holding a backlog/ directory (default: current directory)
     #[arg(long)]
@@ -26,6 +30,10 @@ enum Command {
     Stats,
     /// Print where the config and event log live
     Paths,
+    /// Print the git identity of this build as `key=value` lines. The
+    /// install guard reads this to refuse a downgrade; see
+    /// `switchbard_core::build_identity`.
+    BuildId,
 }
 
 fn main() -> Result<()> {
@@ -73,12 +81,16 @@ fn main() -> Result<()> {
             );
             Ok(())
         }
+        Some(Command::BuildId) => {
+            print!("{}", switchbard_core::build_id_report());
+            Ok(())
+        }
         None => run(cli.repo.unwrap_or(std::env::current_dir()?)),
     }
 }
 
 fn run(repo_root: PathBuf) -> Result<()> {
-    if !switchbard_core::is_backlog_repo(&repo_root) {
+    if !switchbard_core::backlog_repo_available(&repo_root)? {
         bail!("{} has no backlog/ directory", repo_root.display());
     }
     let telemetry = match telemetry::default_log_path() {
@@ -143,6 +155,8 @@ fn drive(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Exit>
                 return Ok(Exit::Restart);
             }
         }
+        // Polling must not starve while keyboard input remains active.
+        app.tick();
     }
     Ok(Exit::Quit)
 }

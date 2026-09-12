@@ -480,6 +480,7 @@ mod tests {
 
     fn task(id: &str, project: Option<&str>, done: bool) -> BacklogTask {
         BacklogTask {
+            storage_identity: None,
             id: id.to_string(),
             title: id.to_string(),
             status: if done { "Done" } else { "To Do" }.to_string(),

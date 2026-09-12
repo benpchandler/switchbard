@@ -27,6 +27,7 @@ use switchbard_gui::runtime::{AgentsSection, CommandFacet, DispatchesFacet, Plac
 
 fn task(id: &str, labels: &[&str], notes: &str) -> BacklogTask {
     BacklogTask {
+        storage_identity: None,
         id: id.to_string(),
         title: format!("{id} work"),
         status: "In Progress".to_string(),
@@ -93,7 +94,7 @@ fn app_with(tasks: Vec<BacklogTask>, runs: Vec<DispatchRun>) -> HiveApp {
     );
     let mut cached = app.dispatch_runs.lock().unwrap();
     for run in runs {
-        cached.insert((PathBuf::from(REPO_PATH), run.task_id.clone()), run);
+        cached.insert((PathBuf::from(REPO_PATH), run.task_id.clone()).into(), run);
     }
     drop(cached);
     app
@@ -319,7 +320,10 @@ fn needs_you_facet_and_support_card_respond_deep_links_to_the_task() {
     assert_eq!(harness.state().tasks_view, TasksView::All);
     assert_eq!(
         harness.state().backlog_view.selected_task,
-        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()))
+        Some(switchbard_gui::runtime::BacklogTaskKey::from((
+            PathBuf::from(REPO_PATH),
+            "TASK-1".to_string()
+        )))
     );
 }
 

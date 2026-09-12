@@ -208,7 +208,7 @@ fn a_non_done_task_still_gets_a_working_archive_button_no_regression() {
     native_task_status(root, "TASK-1", "In Progress");
 
     let mut app = single_repo_app(root);
-    app.backlog_view.selected_task = Some((root.to_path_buf(), "TASK-1".to_string()));
+    app.backlog_view.selected_task = Some((root.to_path_buf(), "TASK-1".to_string()).into());
     let mut h = harness(app);
     h.run();
 

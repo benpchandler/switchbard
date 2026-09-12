@@ -1,28 +1,8 @@
-//! Writing a project's declared status list into its `backlog/config.yml`.
-//!
-//! The one place this crate mutates a *project's configuration* rather than
-//! its tasks, and it exists because the shared status vocabulary has to be
-//! made true rather than assumed. See
-//! [`crate::backlog::ordered_status_vocabulary`] for the bug that taught us
-//! the difference.
-//!
-//! # Why this edits the file instead of shelling out
-//!
-//! Every other mutation in this crate goes through the `backlog` CLI, which
-//! owns the format. Statuses are the documented exception — the CLI refuses
-//! the write and names the file as the way in:
-//!
-//! ```text
-//! $ backlog config set statuses '[...]'
-//! statuses cannot be set directly. View current values with
-//! 'backlog config get statuses'. Edit the list in the project config file
-//! (`backlog/config.yml`, `.backlog/config.yml`, or `backlog.config.yml`)
-//! directly.
-//! ```
-//!
-//! So a line-level edit is the owning tool's own instruction, not a bypass of
-//! it. Only the `statuses:` line is rewritten; every other key, comment and
-//! byte in the file is left exactly as found.
+//! The shared status-configuration write boundary. Legacy repositories retain
+//! their config files; migrated repositories use the central config document.
+//! Only the statuses line is patched, preserving custom fields and comments.
+
+use super::aggregate_storage;
 
 use std::path::{Path, PathBuf};
 
@@ -52,12 +32,41 @@ pub fn config_path(repo_root: &Path) -> Option<PathBuf> {
 /// Additive by construction: nothing is removed, so no existing task can be
 /// left carrying a status the config no longer allows. Returns the new list.
 pub fn add_standard_statuses(repo_root: &Path) -> Result<Vec<String>> {
-    let path = config_path(repo_root)
-        .ok_or_else(|| anyhow!("no backlog config found under {}", repo_root.display()))?;
-    let original =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    aggregate_storage::with_edit(repo_root, "config", "backlog/config.yml", |edit| {
+        let path = if edit.is_central() {
+            repo_root.join("backlog/config.yml")
+        } else {
+            config_path(repo_root)
+                .ok_or_else(|| anyhow!("no backlog config found under {}", repo_root.display()))?
+        };
+        let original = if edit.is_central() && !edit.exists(&path) {
+            "statuses: []\n".to_string()
+        } else {
+            edit.text(&path)?
+        };
+        let (out, ordered) = with_standard_statuses(&original, &path)?;
+        if !edit.stage(&out) {
+            super::write::atomic_write(&path, &out)?;
+        }
+        Ok(ordered)
+    })
+}
 
-    let (line_idx, declared) = parse_statuses_line(&original)
+/// Effective config content, including the centrally owned singleton after cutover.
+/// An empty migrated kind has the same defaults as an absent legacy config.
+pub(super) fn read_config(repo_root: &Path) -> Result<Option<String>> {
+    if let Some(content) = aggregate_storage::read(repo_root, "config", "backlog/config.yml")? {
+        return Ok(content);
+    }
+    config_path(repo_root)
+        .map(|path| {
+            std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))
+        })
+        .transpose()
+}
+
+fn with_standard_statuses(original: &str, path: &Path) -> Result<(String, Vec<String>)> {
+    let (line_idx, declared) = parse_statuses_line(original)
         .ok_or_else(|| anyhow!("{} has no `statuses:` line", path.display()))?;
 
     let mut merged: std::collections::BTreeSet<String> = declared.into_iter().collect();
@@ -82,11 +91,7 @@ pub fn add_standard_statuses(repo_root: &Path) -> Result<Vec<String>> {
     if original.ends_with('\n') {
         out.push('\n');
     }
-    // Written whole rather than in place: a partial write here would leave the
-    // project with a config the CLI can't parse, which breaks every task
-    // operation in that repo, not just statuses.
-    std::fs::write(&path, out).with_context(|| format!("writing {}", path.display()))?;
-    Ok(ordered)
+    Ok((out, ordered))
 }
 
 /// The `statuses:` line's index and the values it declares.

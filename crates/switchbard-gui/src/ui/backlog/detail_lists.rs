@@ -406,7 +406,10 @@ pub(super) fn render_refine(
         return;
     }
     ui.separator();
-    let in_flight = app.is_refining(&(project_root.to_path_buf(), task.id.clone()));
+    let in_flight = app.is_refining(&crate::runtime::BacklogTaskKey::for_task(
+        project_root,
+        task,
+    ));
     ui.horizontal(|ui| {
         if ui
             .add_enabled(!in_flight, egui::Button::new("Refine"))

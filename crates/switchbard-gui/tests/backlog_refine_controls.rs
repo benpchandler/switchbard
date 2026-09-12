@@ -31,6 +31,7 @@ use switchbard_gui::runtime::{BacklogLens, Place};
 
 fn task(source: BacklogTaskSource) -> BacklogTask {
     BacklogTask {
+        storage_identity: None,
         id: "TASK-1".to_string(),
         title: "Half-baked card".to_string(),
         status: "To Do".to_string(),
@@ -64,7 +65,7 @@ fn rail_app(task: BacklogTask) -> HiveApp {
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     app.backlog_view.show_archived = true;
     app.backlog_view.show_completed = true;
-    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), task.id.clone()));
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), task.id.clone()).into());
     app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogRepo {
@@ -135,7 +136,7 @@ fn refine_disables_itself_while_a_run_is_in_flight_for_that_task() {
     app.refining_tasks
         .lock()
         .unwrap()
-        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
 
     let harness = rail_harness(app);
 
@@ -157,7 +158,7 @@ fn an_in_flight_run_in_another_project_does_not_disable_this_ones_button() {
     app.refining_tasks
         .lock()
         .unwrap()
-        .insert((PathBuf::from("/tmp/some-other-repo"), "TASK-1".to_string()));
+        .insert((PathBuf::from("/tmp/some-other-repo"), "TASK-1".to_string()).into());
 
     let harness = rail_harness(app);
 
@@ -172,9 +173,29 @@ fn is_refining_reports_only_the_keys_actually_in_flight() {
     let app = rail_app(task(BacklogTaskSource::Active));
     let key = (PathBuf::from(REPO_PATH), "TASK-1".to_string());
 
-    assert!(!app.is_refining(&key));
-    app.refining_tasks.lock().unwrap().insert(key.clone());
-    assert!(app.is_refining(&key));
-    app.refining_tasks.lock().unwrap().remove(&key);
-    assert!(!app.is_refining(&key));
+    assert!(
+        !app.is_refining(&switchbard_gui::runtime::BacklogTaskKey::from(
+            (key).clone()
+        ))
+    );
+    app.refining_tasks
+        .lock()
+        .unwrap()
+        .insert(key.clone().into());
+    assert!(
+        app.is_refining(&switchbard_gui::runtime::BacklogTaskKey::from(
+            (key).clone()
+        ))
+    );
+    app.refining_tasks
+        .lock()
+        .unwrap()
+        .remove(&switchbard_gui::runtime::BacklogTaskKey::from(
+            (key).clone(),
+        ));
+    assert!(
+        !app.is_refining(&switchbard_gui::runtime::BacklogTaskKey::from(
+            (key).clone()
+        ))
+    );
 }

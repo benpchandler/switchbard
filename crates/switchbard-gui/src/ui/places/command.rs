@@ -526,10 +526,7 @@ fn collect_command_rows(app: &HiveApp, now: u64, stale_after: Duration) -> Vec<C
             ) {
                 continue;
             }
-            let Some(run) = runs
-                .get(&(root.clone(), task.id.clone()) as &BacklogTaskKey)
-                .cloned()
-            else {
+            let Some(run) = runs.get(&BacklogTaskKey::for_task(root, task)).cloned() else {
                 continue;
             };
             if matches!(state, DispatchState::InFlight) {
@@ -548,7 +545,7 @@ fn collect_command_rows(app: &HiveApp, now: u64, stale_after: Duration) -> Vec<C
             let sitrep_age = run
                 .log_modified_unix
                 .map(|t| Duration::from_secs(now.saturating_sub(t)));
-            let key = CommandRowKey::Dispatch((root.clone(), task.id.clone()));
+            let key = CommandRowKey::Dispatch(BacklogTaskKey::for_task(root, task));
             let row = CommandRow {
                 key,
                 agent_label: "claude",
@@ -833,7 +830,8 @@ fn render_command_row_actions(app: &mut HiveApp, ui: &mut egui::Ui, row: &Comman
 fn respond_to_task(app: &mut HiveApp, repo_root: &std::path::Path, task_id: &str) {
     app.place = Place::Tasks;
     app.tasks_view = TasksView::All;
-    app.backlog_view.selected_task = Some((repo_root.to_path_buf(), task_id.to_string()));
+    app.backlog_view.selected_task =
+        Some(crate::app::task_key(&app.backlog_repos, repo_root, task_id));
 }
 
 /// The support-request card (mock §2c): evidence-only, never fabricated —
@@ -932,7 +930,9 @@ mod tests {
 
     fn row_for(state: DispatchState, run: DispatchRun, needs_you: bool) -> CommandRow {
         CommandRow {
-            key: CommandRowKey::Dispatch((std::path::PathBuf::from("/repo"), "TASK-1".to_string())),
+            key: CommandRowKey::Dispatch(
+                (std::path::PathBuf::from("/repo"), "TASK-1".to_string()).into(),
+            ),
             agent_label: "claude",
             mission: "TASK-1 · demo".to_string(),
             now_line: String::new(),
@@ -942,6 +942,7 @@ mod tests {
             origin: CommandOrigin::Dispatch {
                 repo_root: std::path::PathBuf::from("/repo"),
                 task: Box::new(switchbard_core::BacklogTask {
+                    storage_identity: None,
                     id: "TASK-1".to_string(),
                     title: "demo".to_string(),
                     status: "In Progress".to_string(),

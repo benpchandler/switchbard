@@ -1,0 +1,41 @@
+# Decision: one database, optional repository exchange
+
+Governing update: [phased-contract.md](phased-contract.md) authorizes validated gradual per-kind migration and flexible lossless document content. It supersedes earlier all-at-once cutover and closed wire details. [Historical evidence](historical-evidence.md) does not establish current product behavior.
+Owner clarification (2026-09-08): [schema flexibility](schema-flexibility.md) is a governing requirement. Use a stable envelope with extensible content, preserve unknown fields and kinds, and avoid schema migrations for custom fields. It extends MUST-004 and MUST-017. Earlier wire/schema/model details require revision where inconsistent; implementation readiness remains open.
+
+Status: the owner authorized gradual implementation and migration after validation. Follow phased-contract.md; per-record vector clocks govern the later exchange seam in exchange-current.md. Completion still requires all native task-domain records and real product evidence.
+
+## Owner outcome
+
+Switchbard owns and updates one central database for all repositories. Every local worktree reads the same records without task-file commits, merges, or PRs. A repo may optionally carry one file that collaborators commit and PR to exchange planning data between independent databases.
+
+## Proposed model
+
+Use one machine-local SQLite database at ~/.switchbard/switchbard.sqlite3, with an explicit test/alternate-root override. Move native task-domain data there: all task lifecycle states, project and initiative definitions, goals and check-ins, rank, relationships, and task configuration. GUI, TUI, CLI, dispatch, and refine use the same core command layer and database transactions. No running GUI, daemon, cloud service, or network connection is required.
+
+Machine-specific preferences, executable TUI views, process claims, caches, service logs, and Git observations retain their existing stores and do not enter the exchange file. xplan keeps ownership of mission state. These exclusions preserve independent authorities; no repository's task-domain data is excluded.
+
+Use one optional .switchbard/tasks.json file per repo: deterministic, versioned, and lossless. Explicit export updates it. Ordinary task mutations do not. Explicit import previews incoming changes and conflicts, then applies a reviewed plan transactionally. No automatic commit, PR, fetch, push, or import on checkout. The file is a round-trip exchange artifact, not merely a summary and not the live local authority.
+
+## Invariants
+
+1. Database records are live authority after per-repository/per-kind cutover. Repo files become legacy inputs or explicit exchange artifacts.
+2. Linked worktrees resolve to one stable repository identity. Paths, names, remotes, and task display numbers are mutable locators or labels.
+3. Same-number tasks in different repos stay distinct. Forks are never linked automatically by name or remote.
+4. One core command commits canonical records, indices, related changes, change sequence, and retry receipts together or not at all.
+5. Preserve original bytes and provenance, including unknown frontmatter, custom sections, formatting, goals, and ranks. Do not import from the lossy parsed task struct alone.
+6. An omitted incoming record never means deletion. Deletion requires an explicit tombstone; archive/completed are retained lifecycle states.
+7. No timestamp-based last-writer-wins. Conflicts preserve local, base, and incoming content for explicit resolution.
+8. Stale writes and mismatched command replays reject without side effects. Identical retries cannot duplicate tasks, notes, or check-ins.
+9. Database failure never falls back to writing Markdown or masquerades as an empty repo.
+10. Worktree removal, checkout, and repo rename do not remove or roll back task truth. A per-repo exchange is not a full database backup.
+
+## Alternatives and tradeoffs
+
+A central cache retains file authority and fails the owner outcome. A shared Markdown directory removes some duplication but needs a new multi-record transaction protocol. SQLite fits the required atomic boundary. A hosted service adds accounts and network operations unnecessary for Git-based exchange. A committed binary database makes review and compatibility depend on database internals. Automatic export recreates Git churn; automatic import makes historical checkouts mutate current planning state.
+
+Use per-record version-vector dominance with whole-document conflict granularity: disjoint records merge, stale versions remain preserved, concurrent identical content joins clocks, and divergent edits to the same document require explicit joined-clock resolution. Field-level merging is deferred because custom Markdown, ordered lists, goals, and rank have different semantics. This is a proposed engineering default, not a previously expressed owner preference.
+
+## Execution boundary
+
+Implementation and gradual actual migration are authorized after each slice is validated. Follow phased-contract.md and record evidence and intentional behavior changes in the root migration ledger. Preserve originals and protected recovery data; no new owner approval gate is introduced. A one-time legacy cleanup may need a PR; normal future edits of migrated kinds do not. Whole-domain no-PR completion is claimed only after all kinds migrate.

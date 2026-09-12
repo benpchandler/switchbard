@@ -179,6 +179,7 @@ mod tests {
 
     fn task_labelled(labels: &[&str]) -> BacklogTask {
         BacklogTask {
+            storage_identity: None,
             id: "TASK-1".to_string(),
             title: "Example".to_string(),
             status: "In Progress".to_string(),

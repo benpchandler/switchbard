@@ -1,0 +1,367 @@
+{
+  "scope": "Synthetic decision model only, not product implementation evidence.",
+  "cases": [
+    {
+      "id": "shared-worktree-identity-and-repo-scoped-display-id",
+      "steps": [
+        {
+          "op": "reuse"
+        },
+        {
+          "op": "local",
+          "index": 0,
+          "set": {
+            "title": "Visible through both aliases"
+          }
+        },
+        {
+          "op": "assert",
+          "records": [
+            {
+              "index": 0,
+              "fields": {
+                "title": "Visible through both aliases"
+              }
+            }
+          ]
+        },
+        {
+          "op": "assert_aliases",
+          "title": "Visible through both aliases"
+        }
+      ]
+    },
+    {
+      "id": "deterministic-export-successor-preserves-prior-snapshot",
+      "steps": [
+        {
+          "op": "export",
+          "name": "same"
+        },
+        {
+          "op": "assert",
+          "equal_snapshots": [
+            "base",
+            "same"
+          ]
+        },
+        {
+          "op": "local",
+          "index": 0,
+          "set": {
+            "title": "Successor"
+          }
+        },
+        {
+          "op": "export",
+          "name": "successor"
+        },
+        {
+          "op": "assert",
+          "snapshot_stable": "base"
+        },
+        {
+          "op": "assert",
+          "records": [
+            {
+              "index": 0,
+              "fields": {
+                "title": "Successor"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "remote-update-and-identical-replay",
+      "steps": [
+        {
+          "op": "import",
+          "edits": [
+            {
+              "index": 0,
+              "set": {
+                "title": "Remote"
+              }
+            }
+          ],
+          "changes": 1
+        },
+        {
+          "op": "import",
+          "edits": [
+            {
+              "index": 0,
+              "set": {
+                "title": "Remote"
+              }
+            }
+          ],
+          "changes": 0,
+          "unchanged": true
+        },
+        {
+          "op": "assert",
+          "records": [
+            {
+              "index": 0,
+              "fields": {
+                "title": "Remote",
+                "raw": "---\nid: TASK-1\n---\nOriginal bytes\n"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "disjoint-records-merge",
+      "steps": [
+        {
+          "op": "local",
+          "index": 0,
+          "set": {
+            "title": "Local"
+          }
+        },
+        {
+          "op": "import",
+          "edits": [
+            {
+              "index": 1,
+              "set": {
+                "title": "Remote"
+              }
+            }
+          ],
+          "changes": 1
+        },
+        {
+          "op": "assert",
+          "records": [
+            {
+              "index": 0,
+              "fields": {
+                "title": "Local"
+              }
+            }
+          ]
+        },
+        {
+          "op": "assert",
+          "records": [
+            {
+              "index": 1,
+              "fields": {
+                "title": "Remote"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "incoming-base-keeps-current",
+      "steps": [
+        {
+          "op": "local",
+          "index": 0,
+          "set": {
+            "title": "Local"
+          }
+        },
+        {
+          "op": "import",
+          "edits": [],
+          "changes": 0
+        },
+        {
+          "op": "assert",
+          "records": [
+            {
+              "index": 0,
+              "fields": {
+                "title": "Local"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "equal-concurrent-edit-is-no-op",
+      "steps": [
+        {
+          "op": "local",
+          "index": 0,
+          "set": {
+            "title": "Same"
+          }
+        },
+        {
+          "op": "import",
+          "edits": [
+            {
+              "index": 0,
+              "set": {
+                "title": "Same"
+              }
+            }
+          ],
+          "changes": 0
+        }
+      ]
+    },
+    {
+      "id": "omission-preserves-record",
+      "steps": [
+        {
+          "op": "import",
+          "edits": [],
+          "changes": 0,
+          "omit": [
+            0
+          ]
+        },
+        {
+          "op": "assert",
+          "count": 2
+        },
+        {
+          "op": "assert",
+          "records": [
+            {
+              "index": 0,
+              "fields": {
+                "title": "Synthetic 1"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "explicit-tombstone-retained-and-replayed",
+      "steps": [
+        {
+          "op": "import",
+          "edits": [
+            {
+              "index": 0,
+              "set": {
+                "deleted": true
+              }
+            }
+          ],
+          "changes": 1
+        },
+        {
+          "op": "assert",
+          "records": [
+            {
+              "index": 0,
+              "fields": {
+                "deleted": true
+              }
+            }
+          ]
+        },
+        {
+          "op": "import",
+          "edits": [
+            {
+              "index": 0,
+              "set": {
+                "deleted": true
+              }
+            }
+          ],
+          "changes": 0,
+          "unchanged": true
+        },
+        {
+          "op": "assert",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "id": "remote-create-stable-uuid",
+      "steps": [
+        {
+          "op": "import",
+          "edits": [
+            {
+              "index": 1,
+              "set": {
+                "id": "20000000-0000-4000-8000-000000000003",
+                "display_id": "TASK-3",
+                "title": "New"
+              }
+            }
+          ],
+          "changes": 1
+        },
+        {
+          "op": "assert",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "id": "explicit-empty-repo-bootstrap-stores-checkpoint",
+      "steps": [
+        {
+          "op": "bootstrap"
+        }
+      ]
+    },
+    {
+      "id": "preview-and-apply-unchanged-inputs",
+      "steps": [
+        {
+          "op": "preview",
+          "edits": [
+            {
+              "index": 0,
+              "set": {
+                "title": "Preview update"
+              }
+            }
+          ]
+        },
+        {
+          "op": "apply_preview"
+        }
+      ]
+    },
+    {
+      "id": "successor-export-repeat-stable-base-and-bytes",
+      "steps": [
+        {
+          "op": "local",
+          "index": 0,
+          "set": {
+            "title": "Successor"
+          }
+        },
+        {
+          "op": "export",
+          "name": "successor"
+        },
+        {
+          "op": "export",
+          "name": "repeat"
+        },
+        {
+          "op": "assert",
+          "equal_snapshots": [
+            "successor",
+            "repeat"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -31,7 +31,9 @@
 //! important a task is; blocked is about whether it's actionable *today*,
 //! which only matters once importance is already tied.
 
-use crate::backlog::BacklogTask;
+use crate::backlog::{BacklogStorageIdentity, BacklogTask};
+use crate::storage::{Store, WorkspaceOrderTarget};
+use anyhow::{Context, Result};
 use std::cmp::Ordering;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,6 +44,7 @@ use std::path::{Path, PathBuf};
 /// dependency — see the module doc.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TriageEntry {
+    pub storage_identity: Option<BacklogStorageIdentity>,
     /// The project's worktree-root key, exactly as used elsewhere backlog
     /// state is keyed (`HiveApp::backlog_repos`). Disambiguates tasks
     /// when two tracked repos happen to share a `repo` name.
@@ -120,6 +123,7 @@ pub fn triage_entry_from_task(
     project: &crate::backlog::BacklogRepo,
 ) -> TriageEntry {
     TriageEntry {
+        storage_identity: task.storage_identity.clone(),
         project_key,
         repo: repo.to_string(),
         task_id: task.id.clone(),
@@ -157,6 +161,7 @@ pub fn parse_backlog_datetime_unix(value: &str) -> Option<u64> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OrderingOverlay {
     ranked: Vec<String>,
+    targets: Vec<Option<WorkspaceOrderTarget>>,
 }
 
 #[derive(serde::Deserialize)]
@@ -179,6 +184,7 @@ impl OrderingOverlay {
             Ok(parsed) => (
                 Self {
                     ranked: parsed.ranked,
+                    targets: Vec::new(),
                 },
                 None,
             ),
@@ -195,28 +201,76 @@ impl OrderingOverlay {
     /// everywhere else in this codebase.
     fn rank_of(&self, repo: &str, task_id: &str) -> Option<usize> {
         let key = format!("{repo}:{task_id}");
-        self.ranked.iter().position(|entry| entry == &key)
+        self.ranked.iter().enumerate().position(|(index, entry)| {
+            entry == &key && self.targets.get(index).is_none_or(Option::is_none)
+        })
+    }
+    fn rank_of_entry(&self, entry: &TriageEntry) -> Option<usize> {
+        if let Some(identity) = &entry.storage_identity {
+            if let Some(index) = self.targets.iter().position(|target| {
+                target.as_ref().is_some_and(|target| {
+                    target.repository_id.0 == identity.repository_id
+                        && target.record_id == identity.record_id
+                })
+            }) {
+                return Some(index);
+            }
+        }
+        self.rank_of(&entry.repo, &entry.task_id)
     }
 }
 
 /// Locate the hub repo among tracked repo roots: the first one containing an
 /// `ordering.yml` file at its root. Returns `None` when no tracked repo has
 /// one — callers treat that as "empty overlay", not an error.
-pub fn find_hub_repo<'a>(repo_roots: impl IntoIterator<Item = &'a Path>) -> Option<PathBuf> {
-    repo_roots
+pub fn find_hub_repo<'a>(
+    repo_roots: impl IntoIterator<Item = &'a Path>,
+) -> Result<Option<PathBuf>> {
+    if let Some(store) = Store::open_existing_default()? {
+        if let Some(ordering) = store.workspace_ordering()? {
+            return Ok(Some(
+                ordering
+                    .source_path
+                    .parent()
+                    .context("stored ordering source has no parent")?
+                    .to_path_buf(),
+            ));
+        }
+    }
+    Ok(repo_roots
         .into_iter()
         .find(|root| root.join("ordering.yml").is_file())
-        .map(Path::to_path_buf)
+        .map(Path::to_path_buf))
 }
 
-/// IO boundary: read and parse `<hub_root>/ordering.yml`. A missing file is
-/// an empty overlay with **no** warning (per AC #3 — absence is the expected
-/// steady state until a hub repo exists); a present-but-malformed file is an
-/// empty overlay **with** a warning.
-pub fn load_ordering_overlay(hub_root: &Path) -> (OrderingOverlay, Option<String>) {
+/// Read central workspace state after explicit cutover. Storage errors propagate;
+/// they never reactivate a stale ordering.yml source.
+pub fn load_ordering_overlay(hub_root: &Path) -> Result<(OrderingOverlay, Option<String>)> {
+    if let Some(store) = Store::open_existing_default()? {
+        if let Some(ordering) = store.workspace_ordering()? {
+            return Ok((
+                OrderingOverlay {
+                    ranked: ordering
+                        .entries
+                        .iter()
+                        .map(|entry| entry.locator.clone())
+                        .collect(),
+                    targets: ordering
+                        .entries
+                        .into_iter()
+                        .map(|entry| entry.target)
+                        .collect(),
+                },
+                None,
+            ));
+        }
+    }
     match fs::read_to_string(hub_root.join("ordering.yml")) {
-        Ok(text) => OrderingOverlay::parse(&text),
-        Err(_) => (OrderingOverlay::empty(), None),
+        Ok(text) => Ok(OrderingOverlay::parse(&text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok((OrderingOverlay::empty(), None))
+        }
+        Err(error) => Err(error).context("cannot read ordering.yml"),
     }
 }
 
@@ -231,8 +285,8 @@ pub fn triage_rank(entries: &[TriageEntry], overlay: &OrderingOverlay) -> Vec<Tr
 }
 
 fn compare_entries(a: &TriageEntry, b: &TriageEntry, overlay: &OrderingOverlay) -> Ordering {
-    let a_rank = overlay.rank_of(&a.repo, &a.task_id);
-    let b_rank = overlay.rank_of(&b.repo, &b.task_id);
+    let a_rank = overlay.rank_of_entry(a);
+    let b_rank = overlay.rank_of_entry(b);
     match (a_rank, b_rank) {
         (Some(ra), Some(rb)) => return ra.cmp(&rb),
         // Overlay-ranked entries always outrank unranked ones, regardless of
@@ -257,6 +311,7 @@ mod tests {
 
     fn entry(repo: &str, task_id: &str) -> TriageEntry {
         TriageEntry {
+            storage_identity: None,
             project_key: PathBuf::from(format!("/repos/{repo}")),
             repo: repo.to_string(),
             task_id: task_id.to_string(),
@@ -403,7 +458,11 @@ mod tests {
     fn missing_overlay_file_is_empty_with_no_warning() {
         let dir = tempfile::tempdir().unwrap();
 
-        let (overlay, warning) = load_ordering_overlay(dir.path());
+        let (overlay, warning) =
+            crate::storage::with_test_database(&dir.path().join("absent.sqlite3"), || {
+                load_ordering_overlay(dir.path())
+            })
+            .unwrap();
 
         assert_eq!(overlay, OrderingOverlay::empty());
         assert!(warning.is_none());
@@ -414,7 +473,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("ordering.yml"), "ranked: [\"a:TASK-1\"]").unwrap();
 
-        let (overlay, warning) = load_ordering_overlay(dir.path());
+        let (overlay, warning) =
+            crate::storage::with_test_database(&dir.path().join("absent.sqlite3"), || {
+                load_ordering_overlay(dir.path())
+            })
+            .unwrap();
 
         assert!(warning.is_none());
         assert_eq!(overlay.rank_of("a", "TASK-1"), Some(0));
@@ -429,7 +492,10 @@ mod tests {
         std::fs::create_dir_all(&hub_repo).unwrap();
         std::fs::write(hub_repo.join("ordering.yml"), "ranked: []").unwrap();
 
-        let found = find_hub_repo([plain_repo.as_path(), hub_repo.as_path()]);
+        let found = crate::storage::with_test_database(&dir.path().join("absent.sqlite3"), || {
+            find_hub_repo([plain_repo.as_path(), hub_repo.as_path()])
+        })
+        .unwrap();
 
         assert_eq!(found, Some(hub_repo));
     }
@@ -439,7 +505,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("plain")).unwrap();
 
-        let found = find_hub_repo([dir.path().join("plain").as_path()]);
+        let found = crate::storage::with_test_database(&dir.path().join("absent.sqlite3"), || {
+            find_hub_repo([dir.path().join("plain").as_path()])
+        })
+        .unwrap();
 
         assert_eq!(found, None);
     }
@@ -447,6 +516,7 @@ mod tests {
     #[test]
     fn triage_entry_from_task_defaults_unparseable_age_to_max_not_zero() {
         let task = BacklogTask {
+            storage_identity: None,
             id: "TASK-1".to_string(),
             title: "t".to_string(),
             status: "To Do".to_string(),

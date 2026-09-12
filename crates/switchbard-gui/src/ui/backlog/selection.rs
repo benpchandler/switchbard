@@ -144,7 +144,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn key(id: &str) -> BacklogTaskKey {
-        (PathBuf::from("/repos/a"), id.to_string())
+        (PathBuf::from("/repos/a"), id.to_string()).into()
     }
 
     fn keys<const N: usize>(ids: [&str; N]) -> Vec<BacklogTaskKey> {

@@ -1,0 +1,13 @@
+[
+  {
+    "case": "bootstrap-edit-export-back",
+    "export_base": null,
+    "receiver_result": "unknown-base",
+    "scope": "synthetic implementation; contract says accepted checkpoint should be usable"
+  },
+  {
+    "case": "skip-unshared-intermediate-export",
+    "receiver_result": "unknown-base",
+    "scope": "contract known-base rule; receiver unchanged since common baseline"
+  }
+]

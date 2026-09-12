@@ -40,6 +40,7 @@ use switchbard_gui::ui::places::tasks::state::{FilterPredicate, TasksViewMode};
 
 fn task(id: &str, title: &str, status: &str) -> BacklogTask {
     BacklogTask {
+        storage_identity: None,
         id: id.to_string(),
         title: title.to_string(),
         status: status.to_string(),
@@ -252,7 +253,7 @@ fn clear_button_clears_bulk_selection() {
         .state_mut()
         .backlog_view
         .bulk_selected_tasks
-        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
     harness.run();
 
     harness.get_by_label("Clear").click();
@@ -324,11 +325,12 @@ fn command_click_on_a_row_title_toggles_bulk_selection_without_opening_detail() 
     harness.run();
 
     assert!(
-        harness
-            .state()
-            .backlog_view
-            .bulk_selected_tasks
-            .contains(&(PathBuf::from(REPO_PATH), "TASK-2".to_string())),
+        harness.state().backlog_view.bulk_selected_tasks.contains(
+            &switchbard_gui::runtime::BacklogTaskKey::from((
+                PathBuf::from(REPO_PATH),
+                "TASK-2".to_string()
+            ))
+        ),
         "cmd-click on a row title should toggle its bulk selection"
     );
     assert_eq!(
@@ -350,7 +352,10 @@ fn plain_click_on_a_row_title_selects_it_for_the_detail_pane() {
 
     assert_eq!(
         harness.state().backlog_view.selected_task,
-        Some((PathBuf::from(REPO_PATH), "TASK-2".to_string())),
+        Some(switchbard_gui::runtime::BacklogTaskKey::from((
+            PathBuf::from(REPO_PATH),
+            "TASK-2".to_string()
+        ))),
         "clicking a row title should select it for the detail pane"
     );
 }
@@ -861,7 +866,10 @@ fn search_result_row_click_selects_the_task_without_changing_lens() {
     );
     assert_eq!(
         harness.state().backlog_view.selected_task,
-        Some((PathBuf::from(REPO_PATH), "TASK-2".to_string()))
+        Some(switchbard_gui::runtime::BacklogTaskKey::from((
+            PathBuf::from(REPO_PATH),
+            "TASK-2".to_string()
+        )))
     );
 }
 
@@ -957,7 +965,10 @@ fn board_card_click_selects_the_task_without_changing_lens() {
     );
     assert_eq!(
         harness.state().backlog_view.selected_task,
-        Some((PathBuf::from(REPO_PATH), "TASK-2".to_string())),
+        Some(switchbard_gui::runtime::BacklogTaskKey::from((
+            PathBuf::from(REPO_PATH),
+            "TASK-2".to_string()
+        ))),
         "clicking the second card should select it specifically, not just \
          leave the auto-selected default (TASK-1) in place"
     );
@@ -984,7 +995,10 @@ fn board_non_editable_card_click_still_selects_it() {
 
     assert_eq!(
         harness.state().backlog_view.selected_task,
-        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string())),
+        Some(switchbard_gui::runtime::BacklogTaskKey::from((
+            PathBuf::from(REPO_PATH),
+            "TASK-1".to_string()
+        ))),
         "a non-editable card's click-only (no drag) sense should still select it"
     );
 }
@@ -1165,21 +1179,17 @@ fn board_card_checkbox_click_toggles_bulk_selection() {
     harness.run();
 
     let key = (PathBuf::from(REPO_PATH), "TASK-1".to_string());
-    assert!(!harness
-        .state()
-        .backlog_view
-        .bulk_selected_tasks
-        .contains(&key));
+    assert!(!harness.state().backlog_view.bulk_selected_tasks.contains(
+        &switchbard_gui::runtime::BacklogTaskKey::from((key).clone())
+    ));
 
     unlabeled_checkbox(&harness, 0).click();
     harness.run();
 
     assert!(
-        harness
-            .state()
-            .backlog_view
-            .bulk_selected_tasks
-            .contains(&key),
+        harness.state().backlog_view.bulk_selected_tasks.contains(
+            &switchbard_gui::runtime::BacklogTaskKey::from((key).clone())
+        ),
         "TASK-29: the checkbox is now a non-overlapping sibling of the \
          card's click-and-drag region, so its own click sense is no longer \
          shadowed"
@@ -1188,11 +1198,9 @@ fn board_card_checkbox_click_toggles_bulk_selection() {
     unlabeled_checkbox(&harness, 0).click();
     harness.run();
     assert!(
-        !harness
-            .state()
-            .backlog_view
-            .bulk_selected_tasks
-            .contains(&key),
+        !harness.state().backlog_view.bulk_selected_tasks.contains(
+            &switchbard_gui::runtime::BacklogTaskKey::from((key).clone())
+        ),
         "clicking again should toggle it back off"
     );
 }
@@ -1259,7 +1267,7 @@ fn board_card_secondary_click_opens_the_bulk_context_menu() {
     let key = (PathBuf::from(REPO_PATH), "TASK-2".to_string());
     assert_eq!(
         harness.state().backlog_view.bulk_selection_anchor,
-        Some(key),
+        Some(switchbard_gui::runtime::BacklogTaskKey::from(key)),
         "secondary-click should focus the clicked card for the context menu"
     );
     assert!(
@@ -1290,7 +1298,7 @@ fn board_card_checkbox_reflects_bulk_selection_state() {
         .state_mut()
         .backlog_view
         .bulk_selected_tasks
-        .insert(key);
+        .insert(key.into());
     harness.run();
 
     assert_eq!(
@@ -1603,7 +1611,7 @@ fn board_pending_move_overlay_renders_card_in_destination_column_before_save_res
 
     let key = (PathBuf::from(REPO_PATH), "TASK-2".to_string());
     harness.state_mut().backlog_view.pending_moves.insert(
-        key,
+        key.into(),
         switchbard_gui::runtime::PendingBoardMove {
             target_status: "In Progress".to_string(),
             // No outcome will ever land in `board_move_outcomes` for this
@@ -1767,12 +1775,9 @@ fn board_drag_failure_rolls_back_the_card_and_reloads_the_cache() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         harness.run();
-        if !harness
-            .state()
-            .backlog_view
-            .pending_moves
-            .contains_key(&key)
-        {
+        if !harness.state().backlog_view.pending_moves.contains_key(
+            &switchbard_gui::runtime::BacklogTaskKey::from((key).clone()),
+        ) {
             break;
         }
         assert!(
@@ -1894,7 +1899,7 @@ fn board_rail_edit_save_serializes_against_an_in_flight_drop_on_the_same_task() 
         .task_write_locks
         .lock()
         .unwrap()
-        .entry(key.clone())
+        .entry(key.clone().into())
         .or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(())))
         .clone();
     let held = task_lock.lock().unwrap();
@@ -2019,7 +2024,7 @@ fn board_redrop_onto_the_same_pending_target_column_is_a_no_op() {
 
     let key = (PathBuf::from(REPO_PATH), "TASK-2".to_string());
     harness.state_mut().backlog_view.pending_moves.insert(
-        key.clone(),
+        key.clone().into(),
         switchbard_gui::runtime::PendingBoardMove {
             target_status: "In Progress".to_string(),
             generation: 5,
@@ -2052,7 +2057,9 @@ fn board_redrop_onto_the_same_pending_target_column_is_a_no_op() {
         .state()
         .backlog_view
         .pending_moves
-        .get(&key)
+        .get(&switchbard_gui::runtime::BacklogTaskKey::from(
+            (key).clone(),
+        ))
         .cloned()
         .expect("the original pending move should be untouched, not cleared");
     assert_eq!(
@@ -2090,7 +2097,7 @@ fn board_drop_back_to_origin_while_pending_queues_a_reversing_move() {
 
     let key = (PathBuf::from(REPO_PATH), "TASK-2".to_string());
     harness.state_mut().backlog_view.pending_moves.insert(
-        key.clone(),
+        key.clone().into(),
         switchbard_gui::runtime::PendingBoardMove {
             target_status: "In Progress".to_string(),
             generation: 9,
@@ -2166,7 +2173,9 @@ fn board_drop_back_to_origin_while_pending_queues_a_reversing_move() {
         .state()
         .backlog_view
         .pending_moves
-        .get(&key)
+        .get(&switchbard_gui::runtime::BacklogTaskKey::from(
+            (key).clone(),
+        ))
         .cloned()
         .expect(
             "the reversing move should itself be a fresh pending entry, \
@@ -2212,7 +2221,7 @@ fn board_unrelated_project_reload_does_not_resolve_a_pending_move() {
 
     let key = (PathBuf::from(REPO_PATH), "TASK-2".to_string());
     harness.state_mut().backlog_view.pending_moves.insert(
-        key.clone(),
+        key.clone().into(),
         switchbard_gui::runtime::PendingBoardMove {
             target_status: "In Progress".to_string(),
             generation: 42,
@@ -2255,7 +2264,9 @@ fn board_unrelated_project_reload_does_not_resolve_a_pending_move() {
         .state()
         .backlog_view
         .pending_moves
-        .get(&key)
+        .get(&switchbard_gui::runtime::BacklogTaskKey::from(
+            (key).clone(),
+        ))
         .cloned()
         .expect(
             "F1: an unrelated reload must not resolve a still-in-flight \
@@ -2266,11 +2277,9 @@ fn board_unrelated_project_reload_does_not_resolve_a_pending_move() {
         "the entry itself should be completely untouched"
     );
     assert!(
-        !harness
-            .state()
-            .backlog_view
-            .landing_flash
-            .contains_key(&key),
+        !harness.state().backlog_view.landing_flash.contains_key(
+            &switchbard_gui::runtime::BacklogTaskKey::from((key).clone())
+        ),
         "no landing flash should fire off an unrelated reload either"
     );
 }
@@ -2297,7 +2306,7 @@ fn board_stale_outcome_for_a_superseded_generation_does_not_resolve_the_newer_en
     // "Done") — as if the user dropped on "In Progress" and then, before
     // that save resolved, dragged again onto "Done".
     harness.state_mut().backlog_view.pending_moves.insert(
-        key.clone(),
+        key.clone().into(),
         switchbard_gui::runtime::PendingBoardMove {
             target_status: "Done".to_string(),
             generation: 2,
@@ -2312,7 +2321,7 @@ fn board_stale_outcome_for_a_superseded_generation_does_not_resolve_the_newer_en
         .lock()
         .unwrap()
         .insert(
-            key.clone(),
+            key.clone().into(),
             switchbard_gui::runtime::BoardMoveOutcome {
                 generation: 1,
                 success: true,
@@ -2324,7 +2333,9 @@ fn board_stale_outcome_for_a_superseded_generation_does_not_resolve_the_newer_en
         .state()
         .backlog_view
         .pending_moves
-        .get(&key)
+        .get(&switchbard_gui::runtime::BacklogTaskKey::from(
+            (key).clone(),
+        ))
         .cloned()
         .expect(
             "F3: a stale outcome for a superseded generation must not resolve \
@@ -2336,11 +2347,9 @@ fn board_stale_outcome_for_a_superseded_generation_does_not_resolve_the_newer_en
     );
     assert_eq!(mv.target_status, "Done");
     assert!(
-        !harness
-            .state()
-            .backlog_view
-            .landing_flash
-            .contains_key(&key),
+        !harness.state().backlog_view.landing_flash.contains_key(
+            &switchbard_gui::runtime::BacklogTaskKey::from((key).clone())
+        ),
         "the stale generation's success must not land a flash for the newer move"
     );
 }
@@ -2371,7 +2380,7 @@ fn board_matching_generation_success_resolves_the_entry_and_fires_the_landing_fl
 
     let key = (PathBuf::from(REPO_PATH), "TASK-2".to_string());
     harness.state_mut().backlog_view.pending_moves.insert(
-        key.clone(),
+        key.clone().into(),
         switchbard_gui::runtime::PendingBoardMove {
             target_status: "In Progress".to_string(),
             generation: 7,
@@ -2384,7 +2393,7 @@ fn board_matching_generation_success_resolves_the_entry_and_fires_the_landing_fl
         .lock()
         .unwrap()
         .insert(
-            key.clone(),
+            key.clone().into(),
             switchbard_gui::runtime::BoardMoveOutcome {
                 generation: 7,
                 success: true,
@@ -2393,19 +2402,15 @@ fn board_matching_generation_success_resolves_the_entry_and_fires_the_landing_fl
     harness.run();
 
     assert!(
-        !harness
-            .state()
-            .backlog_view
-            .pending_moves
-            .contains_key(&key),
+        !harness.state().backlog_view.pending_moves.contains_key(
+            &switchbard_gui::runtime::BacklogTaskKey::from((key).clone())
+        ),
         "a matching-generation outcome should resolve (remove) the pending entry"
     );
     assert!(
-        harness
-            .state()
-            .backlog_view
-            .landing_flash
-            .contains_key(&key),
+        harness.state().backlog_view.landing_flash.contains_key(
+            &switchbard_gui::runtime::BacklogTaskKey::from((key).clone())
+        ),
         "N3: a matching-generation *success* outcome must fire the landing \
          flash — this is the exact assertion that catches `landed.push` \
          being deleted from resolve_pending_moves's success branch"
@@ -2604,7 +2609,10 @@ fn milestone_row_click_selects_the_task() {
 
     assert_eq!(
         harness.state().backlog_view.selected_task,
-        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()))
+        Some(switchbard_gui::runtime::BacklogTaskKey::from((
+            PathBuf::from(REPO_PATH),
+            "TASK-1".to_string()
+        )))
     );
 }
 
@@ -2693,7 +2701,7 @@ fn detail_task_with_checklists() -> BacklogTask {
 fn detail_harness_on(t: BacklogTask) -> Harness<'static, HiveApp> {
     let id = t.id.clone();
     let mut app = list_app_with_tasks(vec![t]);
-    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), id));
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), id).into());
     let mut harness = harness(app);
     harness.run();
     harness
@@ -2761,7 +2769,7 @@ fn project_assign_dropdown_offers_only_the_tasks_own_repos_projects() {
             configured_statuses: vec![],
         },
     );
-    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
     let mut harness = harness(app);
     harness.run();
 
@@ -3268,7 +3276,7 @@ fn save_button_completes_a_real_write_round_trip_against_a_real_fixture_repo() {
         root.to_path_buf(),
         switchbard_core::load_backlog_repo(root).expect("load the real fixture repo"),
     );
-    app.backlog_view.selected_task = Some((root.to_path_buf(), "TASK-1".to_string()));
+    app.backlog_view.selected_task = Some((root.to_path_buf(), "TASK-1".to_string()).into());
 
     let mut harness = harness(app);
     harness.run();
@@ -3589,7 +3597,7 @@ fn sub_task_hierarchy_renders_correctly_from_a_native_created_subtask() {
         .lock()
         .unwrap()
         .insert(root.to_path_buf(), real_project);
-    app.backlog_view.selected_task = Some((root.to_path_buf(), "TASK-1".to_string()));
+    app.backlog_view.selected_task = Some((root.to_path_buf(), "TASK-1".to_string()).into());
 
     let mut h = harness(app);
     h.run();
@@ -3832,7 +3840,7 @@ fn a_selection_of_done_tasks_is_labelled_complete() {
     app.backlog_view.show_completed = true;
     app.backlog_view
         .bulk_selected_tasks
-        .insert((PathBuf::from(REPO_PATH), "TASK-2".to_string()));
+        .insert((PathBuf::from(REPO_PATH), "TASK-2".to_string()).into());
     let mut harness = harness(app);
     harness.run();
 
@@ -3856,7 +3864,7 @@ fn an_explicit_selection_enables_clearing_without_a_filter() {
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view
         .bulk_selected_tasks
-        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
     let mut harness = harness(app);
     harness.run();
 
@@ -3885,7 +3893,7 @@ fn the_column_checkbox_selects_only_its_own_column() {
     // Pre-select a card in a different column.
     app.backlog_view
         .bulk_selected_tasks
-        .insert((PathBuf::from(REPO_PATH), "TASK-3".to_string()));
+        .insert((PathBuf::from(REPO_PATH), "TASK-3".to_string()).into());
     let mut harness = harness(app);
     harness.run();
 
@@ -3903,7 +3911,10 @@ fn the_column_checkbox_selects_only_its_own_column() {
         "To Do's two cards join the pre-selected one"
     );
     assert!(
-        selected.contains(&(PathBuf::from(REPO_PATH), "TASK-3".to_string())),
+        selected.contains(&switchbard_gui::runtime::BacklogTaskKey::from((
+            PathBuf::from(REPO_PATH),
+            "TASK-3".to_string()
+        ))),
         "the other column's selection must survive"
     );
 }
@@ -4211,5 +4222,57 @@ fn clean_sibling_source_stays_writable_while_another_is_stale() {
             "update TASK-1 AC #1 failed",
         ],
         "a stale sibling source must not freeze writes to a source that read cleanly",
+    );
+}
+
+#[test]
+fn central_external_edit_retains_draft_and_reload_control_uses_latest_record() {
+    let mut original = detail_task_with_checklists();
+    original.storage_identity = Some(switchbard_core::BacklogStorageIdentity {
+        repository_id: "repo-stable".into(),
+        record_id: "record-stable".into(),
+        revision: 1,
+    });
+    let mut harness = detail_harness_on(original);
+    let title = detail_text_input(&harness, "Checklist task", 0);
+    title.focus();
+    title.type_text(" my draft");
+    harness.run();
+    let draft = harness.state().backlog_view.editor.title.clone();
+    {
+        let mut repos = harness.state().backlog_repos.lock().unwrap();
+        let repo = repos.get_mut(&PathBuf::from(REPO_PATH)).unwrap();
+        repo.loaded_at_unix += 1;
+        repo.tasks[0].title = "Title changed elsewhere".into();
+        repo.tasks[0].id = "TASK-2.1".into();
+        repo.tasks[0].storage_identity.as_mut().unwrap().revision = 2;
+    }
+    harness.run();
+    assert_eq!(harness.state().backlog_view.editor.title, draft);
+    assert_eq!(
+        harness
+            .state()
+            .backlog_view
+            .selected_task
+            .as_ref()
+            .unwrap()
+            .1,
+        "TASK-2.1"
+    );
+    harness.get_by_label("This task changed elsewhere. Your draft is retained.");
+    assert!(harness
+        .get_all_by_label("Save")
+        .next()
+        .unwrap()
+        .accesskit_node()
+        .is_disabled());
+    harness
+        .get_by_label("Discard draft and reload latest")
+        .click_accesskit();
+    harness.run();
+    assert!(!harness.state().backlog_view.editor.conflict);
+    assert_eq!(
+        harness.state().backlog_view.editor.title,
+        "Title changed elsewhere"
     );
 }
