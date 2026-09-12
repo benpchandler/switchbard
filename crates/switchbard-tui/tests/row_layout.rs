@@ -183,6 +183,24 @@ fn capped_unicode_titles_navigation_grouping_and_tiny_viewports_are_bounded() {
 }
 
 #[test]
+fn capped_title_shows_overflow_when_zero_width_remainder_fits() {
+    let mut h = narrow_fixture();
+    let title = format!("Capped{}", "\u{301}".repeat(4091));
+    std::fs::write(
+        h.root.join("backlog/tasks/task-3.md"),
+        format!("---\nid: TASK-3\ntitle: {title}\nstatus: To Do\npriority: medium\n---\n"),
+    )
+    .unwrap();
+    h.press(KeyCode::Char('r'));
+    h.press(KeyCode::Esc);
+    h.type_text(",w");
+    h.press(KeyCode::Esc);
+    h.type_text("/Capped");
+    h.press(KeyCode::Enter);
+    assert!(h.render().contains('…'));
+}
+
+#[test]
 fn many_wrapped_tasks_scroll_by_visible_tasks_and_keep_selection_after_resize() {
     let mut h = Harness::new();
     for index in 0..250 {

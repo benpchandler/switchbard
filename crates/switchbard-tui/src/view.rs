@@ -156,7 +156,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         match app.rows.get(row) {
             Some(Row::Task(index)) => {
                 let title = crate::row_layout::title_text(&app.tasks()[*index].title);
-                usize::from(app.state.row_layout.title_height(&title, title_width))
+                usize::from(app.state.row_layout.title_height(&title.text, title_width))
                     + usize::from(app.state.row_layout.spaced && row != app.selected)
             }
             _ => 1,
@@ -188,7 +188,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             Row::Task(index) => {
                 visible_tasks += 1;
                 let title = crate::row_layout::title_text(&app.tasks()[*index].title);
-                app.state.row_layout.title_height(&title, title_width)
+                app.state.row_layout.title_height(&title.text, title_width)
             }
         };
         let row_area = Rect {
@@ -276,14 +276,14 @@ fn draw_task_title(
     style: Style,
     area: Rect,
 ) {
-    let text = crate::row_layout::title_text(title);
+    let title_text = crate::row_layout::title_text(title);
+    let text = title_text.text;
     if layout.lines() == 1 {
         frame.render_widget(Paragraph::new(text).style(style), area);
         return;
     }
     let paragraph = crate::row_layout::paragraph(&text).style(style);
-    let clipped = paragraph.line_count(area.width) > usize::from(area.height)
-        || title.chars().take(4097).count() > 4096;
+    let clipped = paragraph.line_count(area.width) > usize::from(area.height) || title_text.truncated;
     frame.render_widget(paragraph, area);
     if clipped && area.width > 0 && area.height > 0 {
         // Do not leave half a wide glyph underneath the overflow indicator.

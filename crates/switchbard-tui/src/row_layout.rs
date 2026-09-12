@@ -123,12 +123,21 @@ fn integer_setting(entry: &Table, key: &str, default: u16) -> Result<u16, String
 
 // At most 4096 Unicode scalar values enter the wrapper. Controls cannot move the
 // cursor; source text and the full detail view remain unchanged.
-pub(crate) fn title_text(title: &str) -> String {
-    title
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TitleText {
+    pub text: String,
+    pub truncated: bool,
+}
+
+pub(crate) fn title_text(title: &str) -> TitleText {
+    TitleText {
+        text: title
         .chars()
         .take(4096)
         .map(|c| if c.is_control() { ' ' } else { c })
-        .collect()
+        .collect(),
+        truncated: title.chars().nth(4096).is_some(),
+    }
 }
 
 pub(crate) fn paragraph(title: &str) -> Paragraph<'_> {
