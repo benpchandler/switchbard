@@ -502,6 +502,7 @@ mod tests {
             definition_of_done: vec![],
             source: BacklogTaskSource::Active,
             path: PathBuf::from("/tmp/fixture/backlog/tasks/t.md"),
+            custom: std::collections::BTreeMap::new(),
         }
     }
 
@@ -525,6 +526,7 @@ mod tests {
                 ranking: switchbard_core::RepoRanking::default(),
                 loaded_at_unix: 0,
                 configured_statuses: vec![],
+                fields: Vec::new(),
             },
         }
     }

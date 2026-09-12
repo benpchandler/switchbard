@@ -319,7 +319,7 @@ pub const COLUMNS: [ColumnSpec; 20] = [
 
 impl Column {
     /// Every column sbt knows, in catalog order. Shown columns are a user-ordered subset.
-    pub const ALL: [Column; 12] = [
+    pub const ALL: [Column; 13] = [
         Column::Id,
         Column::Status,
         Column::Priority,

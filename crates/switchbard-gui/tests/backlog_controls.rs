@@ -65,6 +65,7 @@ fn task(id: &str, title: &str, status: &str) -> BacklogTask {
             "{REPO_PATH}/backlog/tasks/{}.md",
             id.to_lowercase()
         )),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -94,6 +95,7 @@ fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     app
@@ -1038,6 +1040,7 @@ fn board_shows_the_icebox_column_even_with_zero_icebox_tasks() {
                 "In Review".to_string(),
                 "Done".to_string(),
             ],
+            fields: Vec::new(),
         },
     );
     let mut harness = harness(app);
@@ -2257,6 +2260,7 @@ fn board_unrelated_project_reload_does_not_resolve_a_pending_move() {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     harness.run();
@@ -2792,6 +2796,7 @@ fn project_assign_dropdown_offers_only_the_tasks_own_repos_projects() {
             ranking: switchbard_core::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![],
+            fields: Vec::new(),
         },
     );
     app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
@@ -3570,6 +3575,7 @@ fn sub_task_hierarchy_renders_correctly_from_a_native_created_subtask() {
                 project: None,
                 dependencies: vec![],
                 due_date: None,
+                custom: Vec::new(),
             },
         )
         .expect("native fixture subtask create");
@@ -3681,6 +3687,7 @@ fn native_task_create(root: &std::path::Path, title: &str) -> String {
             project: None,
             dependencies: vec![],
             due_date: None,
+            custom: Vec::new(),
         },
     )
     .expect("native fixture create")
@@ -4122,6 +4129,7 @@ fn a_drop_onto_a_column_this_repo_lacks_is_refused_and_offers_the_fix() {
                 "In Progress".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     app.backlog_view.selected_repo = None; // all repos in scope

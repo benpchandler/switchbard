@@ -53,6 +53,7 @@ fn task(source: BacklogTaskSource) -> BacklogTask {
         definition_of_done: vec![],
         source,
         path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-1.md")),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -85,6 +86,7 @@ fn rail_app(task: BacklogTask) -> HiveApp {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     app

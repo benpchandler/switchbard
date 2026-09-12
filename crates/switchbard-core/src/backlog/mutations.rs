@@ -182,6 +182,12 @@ pub(super) fn apply_patch_draft(
     } else if patch.clear_due_date {
         changed |= super::write::set_task_due_date_draft(draft, None)?.changed();
     }
+    for (name, value) in &patch.set_custom {
+        changed |= super::write::set_custom_field_draft(draft, name, value)?.changed();
+    }
+    for name in &patch.unset_custom {
+        changed |= super::write::unset_custom_field_draft(draft, name)?.changed();
+    }
     Ok(changed)
 }
 
@@ -598,6 +604,7 @@ mod tests {
             project: None,
             dependencies: vec![],
             due_date: None,
+            custom: Vec::new(),
         }
     }
 

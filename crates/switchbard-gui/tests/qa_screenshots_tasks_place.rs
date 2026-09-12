@@ -72,6 +72,7 @@ fn task(
             "{REPO_PATH}/backlog/tasks/{}.md",
             id.to_lowercase()
         )),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -95,6 +96,7 @@ fn repo_with(
             "In Review".into(),
             "Done".into(),
         ],
+        fields: Vec::new(),
     }
 }
 

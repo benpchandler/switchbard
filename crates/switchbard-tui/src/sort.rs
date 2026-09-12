@@ -198,12 +198,14 @@ mod tests {
             definition_of_done: vec![],
             source: BacklogTaskSource::Active,
             path: std::path::PathBuf::from(format!("/repo/backlog/tasks/{id}.md")),
+            custom: std::collections::BTreeMap::new(),
         }
     }
 
     fn ordered(tasks: &[BacklogTask], order: Order) -> Vec<String> {
         let goals = [];
         let mut visible: Vec<usize> = (0..tasks.len()).collect();
+        let blocked = std::collections::HashSet::new();
         apply(
             tasks,
             &mut visible,
@@ -213,6 +215,7 @@ mod tests {
             },
             &[],
             &goals,
+            &blocked,
         );
         visible.into_iter().map(|i| tasks[i].id.clone()).collect()
     }

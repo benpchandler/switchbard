@@ -512,6 +512,7 @@ mod tests {
             definition_of_done: vec![],
             source: BacklogTaskSource::Active,
             path: PathBuf::from("/tmp/repo/backlog/tasks/task.md"),
+            custom: std::collections::BTreeMap::new(),
         }
     }
 
@@ -547,6 +548,7 @@ mod tests {
                 ranking: switchbard_core::RepoRanking::default(),
                 loaded_at_unix: 0,
                 configured_statuses: vec![],
+                fields: Vec::new(),
             },
         }
     }
@@ -751,6 +753,7 @@ mod tests {
             ranking: switchbard_core::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![],
+            fields: Vec::new(),
         };
 
         assert_eq!(open_task_count(&repo), 2);

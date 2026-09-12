@@ -202,6 +202,7 @@ mod tests {
             definition_of_done: vec![],
             source: BacklogTaskSource::Active,
             path: PathBuf::from("/repo/backlog/tasks/task.md"),
+            custom: std::collections::BTreeMap::new(),
         }
     }
 
@@ -216,6 +217,7 @@ mod tests {
             ranking: crate::backlog::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![],
+            fields: Vec::new(),
         }
     }
 

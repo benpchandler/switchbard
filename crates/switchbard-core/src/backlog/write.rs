@@ -388,6 +388,32 @@ pub(super) fn swap_task_label_draft(
     })
 }
 
+/// Write one declared custom field's value (`sb edit --set name=value`).
+/// `name` and `rendered` are trusted here — validated once at the `sb`
+/// boundary against the repo's declaration (Rule 5) — so this is exactly
+/// `set_scalar` under an existing frontmatter key name.
+pub(super) fn set_custom_field_draft(
+    draft: &mut TaskDraft,
+    name: &str,
+    value: &str,
+) -> Result<WriteOutcome> {
+    let name = name.to_string();
+    let rendered = yaml_scalar(value);
+    apply_edit(draft, move |fm, _| {
+        set_scalar(fm, &name, &rendered, None);
+        Ok(())
+    })
+}
+
+/// Remove a declared custom field's frontmatter key (`sb edit --unset name`).
+pub(super) fn unset_custom_field_draft(draft: &mut TaskDraft, name: &str) -> Result<WriteOutcome> {
+    let name = name.to_string();
+    apply_edit(draft, move |fm, _| {
+        remove_key(fm, &name);
+        Ok(())
+    })
+}
+
 pub(super) fn reconcile_task_ball_draft(
     draft: &mut TaskDraft,
     desired: Option<&str>,
@@ -1417,6 +1443,9 @@ fn new_task_text(
             yaml_scalar(validated_single_line("parent", parent)?)
         ));
     }
+    for (name, value) in &task.custom {
+        fm.push(format!("{name}: {}", yaml_scalar(value)));
+    }
     Ok(format!(
         "---\n{}\n---{}",
         fm.join("\n"),
@@ -2380,6 +2409,7 @@ mod tests {
             project: Some("m-1".to_string()),
             dependencies: vec!["task-5".to_string()],
             due_date: None,
+            custom: Vec::new(),
         };
 
         let path = write_new_task_file(dir.path(), "TASK", "42", &task).expect("create succeeds");
@@ -2449,6 +2479,7 @@ mod tests {
             project: None,
             dependencies: vec![],
             due_date: None,
+            custom: Vec::new(),
         };
 
         let path = write_new_task_file(dir.path(), "LED", "11", &task).expect("create succeeds");
@@ -2489,6 +2520,7 @@ mod tests {
                 project: None,
                 dependencies: vec![],
                 due_date: None,
+                custom: Vec::new(),
             };
             let path =
                 write_new_task_file(dir.path(), &prefix, "4", &task).expect("create Unicode task");
@@ -2520,6 +2552,7 @@ mod tests {
             project: None,
             dependencies: vec![],
             due_date: None,
+            custom: Vec::new(),
         };
 
         let first =

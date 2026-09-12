@@ -122,6 +122,7 @@ pub fn seed_with_priority(root: &Path, title: &str, status: &str, labels: &[&str
         project: None,
         dependencies: Vec::new(),
         due_date: None,
+        custom: Vec::new(),
     };
     create_task_allocating_id(root, &task).unwrap();
 }
@@ -146,6 +147,7 @@ pub fn seed_in_project(
         project: Some(project.to_string()),
         dependencies: Vec::new(),
         due_date: None,
+        custom: Vec::new(),
     };
     create_task_allocating_id(root, &task).unwrap();
 }
@@ -164,6 +166,8 @@ pub fn seed_with_deps(root: &Path, title: &str, status: &str, deps: &[&str]) -> 
         assignees: Vec::new(),
         project: None,
         dependencies: deps.iter().map(|s| s.to_string()).collect(),
+        due_date: None,
+        custom: Vec::new(),
     };
     let (id, _) = create_task_allocating_id(root, &task).unwrap();
     format!("TASK-{id}")
@@ -183,6 +187,8 @@ pub fn seed_child(root: &Path, title: &str, status: &str, parent: &str) -> Strin
         assignees: Vec::new(),
         project: None,
         dependencies: Vec::new(),
+        due_date: None,
+        custom: Vec::new(),
     };
     let (id, _) = create_task_allocating_id(root, &task).unwrap();
     format!("TASK-{id}")

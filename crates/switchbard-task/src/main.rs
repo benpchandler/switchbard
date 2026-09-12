@@ -19,6 +19,7 @@
 //! - Nothing here blocks or waits, so the banner/heartbeat rules don't
 //!   apply; every command does its work and exits.
 
+mod field_cmd;
 mod goals_cmd;
 mod hierarchy_cmd;
 mod queue_cmd;
@@ -146,6 +147,15 @@ enum Command {
         /// actionable now; mutually exclusive with --blocked
         #[arg(long, conflicts_with = "blocked")]
         ready: bool,
+        /// Only rows where a declared custom field equals a value
+        /// (repeatable; every `--where` must match — AND, not OR)
+        #[arg(long = "where", value_name = "NAME=VALUE")]
+        where_: Vec<String>,
+        /// Sort by a declared custom field: enum fields sort in declared
+        /// value order, other kinds sort lexically; tasks not setting the
+        /// field sort last
+        #[arg(long, value_name = "NAME")]
+        sort: Option<String>,
     },
     /// Print one task in full: fields, then every section verbatim
     View {
@@ -188,6 +198,10 @@ enum Command {
     /// Live work: which tasks this session is working (claim/release/pass/list/hook)
     #[command(subcommand)]
     Work(work_cmd::WorkCmd),
+    /// Manage this repo's declared custom task fields (backlog/config.yml's
+    /// `fields:` list) — add/edit/remove/list
+    #[command(subcommand)]
+    Field(field_cmd::FieldCmd),
 }
 
 #[derive(Args)]
@@ -231,6 +245,10 @@ struct CreateArgs {
     /// Target date, YYYY-MM-DD
     #[arg(long, value_name = "YYYY-MM-DD")]
     due: Option<String>,
+    /// Set a declared custom field's value at creation time (repeatable;
+    /// validated against backlog/config.yml's `fields:` list)
+    #[arg(long = "set", value_name = "NAME=VALUE")]
+    set: Vec<String>,
     #[command(flatten)]
     rank: rank_cmd::CreatePlacementArgs,
 }
@@ -342,6 +360,13 @@ struct EditArgs {
     /// the task is finished
     #[arg(long, value_name = "TEXT")]
     final_summary: Option<String>,
+    /// Set a declared custom field's value (repeatable; validated against
+    /// backlog/config.yml's `fields:` list — see `sb field list`)
+    #[arg(long = "set", value_name = "NAME=VALUE")]
+    set: Vec<String>,
+    /// Remove a declared custom field's value (repeatable)
+    #[arg(long = "unset", value_name = "NAME")]
+    unset: Vec<String>,
 }
 
 fn main() {
@@ -383,13 +408,19 @@ fn run(cli: &Cli) -> Result<()> {
             all,
             blocked,
             ready,
+            where_,
+            sort,
         } => list(
             &root,
-            status.as_deref(),
-            in_project.as_deref(),
-            *all,
-            *blocked,
-            *ready,
+            &ListFilters {
+                status: status.as_deref(),
+                in_project: in_project.as_deref(),
+                all: *all,
+                blocked: *blocked,
+                ready: *ready,
+                where_,
+                sort: sort.as_deref(),
+            },
         ),
         Command::View { id } => view(&root, id),
         Command::Create(args) => create(&root, args),
@@ -411,6 +442,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Unexpedite { id } => rank_cmd::run_unexpedite(&root, id),
         Command::Queue(cmd) => queue_cmd::run_queue(&root, cmd),
         Command::Work(cmd) => work_cmd::run_work(&root, cmd),
+        Command::Field(cmd) => field_cmd::run_field(&root, cmd),
     }
 }
 
@@ -445,53 +477,113 @@ pub(crate) fn find_repo_root(start: &Path) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn list(
-    root: &Path,
-    status: Option<&str>,
-    in_project: Option<&str>,
+/// Filters and sort applied by `sb list` (grouped so `list` doesn't carry
+/// clippy's too-many-arguments smell across the format fork's two additive
+/// filter sets: blocked/ready and declared custom fields).
+struct ListFilters<'a> {
+    status: Option<&'a str>,
+    in_project: Option<&'a str>,
     all: bool,
+    /// Only tasks with an open (not-done) dependency and not themselves
+    /// done; mutually exclusive with `ready` at the CLI boundary.
     blocked: bool,
+    /// Only tasks with no open dependency and not themselves done;
+    /// mutually exclusive with `blocked` at the CLI boundary.
     ready: bool,
-) -> Result<()> {
+    where_: &'a [String],
+    sort: Option<&'a str>,
+}
+
+fn list(root: &Path, filters: &ListFilters) -> Result<()> {
     let repo = switchbard_core::load_backlog_repo(root)?;
     for warning in &repo.warnings {
         eprintln!("sb: warning: {warning}");
     }
-    for task in &repo.tasks {
-        if !all && task.source != switchbard_core::BacklogTaskSource::Active {
-            continue;
-        }
-        if let Some(wanted) = status {
-            if !task.status.eq_ignore_ascii_case(wanted) {
-                continue;
+    let field_filters = field_cmd::parse_pairs(filters.where_)?;
+    for (name, _) in &field_filters {
+        find_declared(&repo.fields, name)?;
+    }
+    let mut rows: Vec<&BacklogTask> = repo
+        .tasks
+        .iter()
+        .filter(|task| filters.all || task.source == switchbard_core::BacklogTaskSource::Active)
+        .filter(|task| {
+            filters
+                .status
+                .is_none_or(|wanted| task.status.eq_ignore_ascii_case(wanted))
+        })
+        .filter(|task| {
+            filters
+                .in_project
+                .is_none_or(|wanted| task.project.as_deref() == Some(wanted))
+        })
+        .filter(|task| {
+            field_filters
+                .iter()
+                .all(|(name, value)| task.custom.get(name).is_some_and(|v| v == value))
+        })
+        .filter(|task| {
+            // A done task is never blocked or ready — it isn't actionable work
+            // either way — matching the GUI's and sbt's own
+            // `!task.is_done() && is_blocked(...)` guard.
+            let is_blocked = !task.is_done() && switchbard_core::is_blocked(task, &repo);
+            if filters.blocked && !is_blocked {
+                return false;
             }
-        }
-        if let Some(wanted) = in_project {
-            if task.project.as_deref() != Some(wanted) {
-                continue;
+            if filters.ready && (task.is_done() || is_blocked) {
+                return false;
             }
-        }
-        // A done task is never blocked or ready — it isn't actionable work
-        // either way — matching the GUI's and sbt's own
-        // `!task.is_done() && is_blocked(...)` guard.
-        let is_blocked = !task.is_done() && switchbard_core::is_blocked(task, &repo);
-        if blocked && !is_blocked {
-            continue;
-        }
-        if ready && (task.is_done() || is_blocked) {
-            continue;
-        }
+            true
+        })
+        .collect();
+    if let Some(name) = filters.sort {
+        let decl = find_declared(&repo.fields, name)?;
+        rows.sort_by(|a, b| custom_sort_key(a, decl).cmp(&custom_sort_key(b, decl)));
+    }
+    for task in rows {
         println!("{}", render::list_row(task));
     }
     Ok(())
+}
+
+/// `(absent, declared-value rank, raw value)` — absent sorts last; an enum
+/// field's rank is its position in the declaration's `values` (its
+/// sort/section order); every other kind ranks 0, so the tuple's third
+/// element (lexical) is what actually orders them.
+fn custom_sort_key<'t>(
+    task: &'t BacklogTask,
+    decl: &switchbard_core::FieldDecl,
+) -> (bool, usize, &'t str) {
+    match task.custom.get(&decl.name) {
+        None => (true, usize::MAX, ""),
+        Some(value) => {
+            let rank = if decl.kind == switchbard_core::FieldKind::Enum {
+                decl.values
+                    .iter()
+                    .position(|v| v == value)
+                    .unwrap_or(usize::MAX)
+            } else {
+                0
+            };
+            (false, rank, value.as_str())
+        }
+    }
+}
+
+fn find_declared<'f>(
+    fields: &'f [switchbard_core::FieldDecl],
+    name: &str,
+) -> Result<&'f switchbard_core::FieldDecl> {
+    fields.iter().find(|f| f.name == name).ok_or_else(|| {
+        anyhow!("unknown field `{name}` — see `sb field list` for what this repo declares")
+    })
 }
 
 fn view(root: &Path, id: &str) -> Result<()> {
     let project = switchbard_core::load_backlog_repo(root)?;
     let task = find_task(&project.tasks, id)
         .ok_or_else(|| anyhow!("no task {id} in {} — try `sb list --all`", root.display()))?;
-    print!("{}", render::task_view(task));
+    print!("{}", render::task_view(task, &project.fields));
     Ok(())
 }
 
@@ -517,6 +609,8 @@ fn create(root: &Path, args: &CreateArgs) -> Result<()> {
         .as_deref()
         .map(switchbard_core::parse_due_date)
         .transpose()?;
+    let custom = field_cmd::parse_pairs(&args.set)?;
+    field_cmd::validate_set_pairs(root, &custom)?;
     let task = NewBacklogTask {
         title: args.title.clone(),
         description: args.description.clone().unwrap_or_default(),
@@ -529,6 +623,7 @@ fn create(root: &Path, args: &CreateArgs) -> Result<()> {
         project: args.in_project.clone(),
         dependencies: args.depends_on.clone(),
         due_date,
+        custom,
     };
     let id = switchbard_core::create_backlog_task(root, &task)?;
     println!("{id}");
@@ -541,6 +636,9 @@ fn create(root: &Path, args: &CreateArgs) -> Result<()> {
 /// Translate flags into the shared atomic edit command, preserving their order.
 fn edit(root: &Path, args: &EditArgs) -> Result<()> {
     use switchbard_core::{TaskChecklist, TaskEditRequest};
+    let set_custom = field_cmd::parse_pairs(&args.set)?;
+    field_cmd::validate_set_pairs(root, &set_custom)?;
+    field_cmd::validate_unset_names(root, &args.unset)?;
     let mut checklists = Vec::new();
     for (indices, checked, list) in [
         (&args.check_ac, true, TaskChecklist::AcceptanceCriteria),
@@ -551,7 +649,7 @@ fn edit(root: &Path, args: &EditArgs) -> Result<()> {
         checklists.extend(indices.iter().map(|index| (list, *index, checked)));
     }
     let request = TaskEditRequest {
-        patch: patch_from(args)?,
+        patch: patch_from(args, set_custom)?,
         acceptance_edits: acceptance_edits(&args.edit_ac)?,
         acceptance_removals: args.remove_ac.clone(),
         ball: args
@@ -605,7 +703,7 @@ fn acceptance_edits(raw: &[String]) -> Result<Vec<ChecklistTextEdit>> {
         .collect()
 }
 
-fn patch_from(args: &EditArgs) -> Result<BacklogTaskPatch> {
+fn patch_from(args: &EditArgs, set_custom: Vec<(String, String)>) -> Result<BacklogTaskPatch> {
     let due_date = args
         .due
         .as_deref()
@@ -626,6 +724,8 @@ fn patch_from(args: &EditArgs) -> Result<BacklogTaskPatch> {
         clear_project: args.clear_project,
         due_date,
         clear_due_date: args.clear_due,
+        set_custom,
+        unset_custom: args.unset.clone(),
     })
 }
 
@@ -698,7 +798,7 @@ mod tests {
         let project = switchbard_core::load_backlog_repo(root).expect("reparse");
         let task = &project.tasks[0];
         assert_eq!(task.due_date.as_deref(), Some("2026-09-14"));
-        assert!(render::task_view(task).contains("Due: 2026-09-14"));
+        assert!(render::task_view(task, &[]).contains("Due: 2026-09-14"));
     }
 
     /// AC #2: an invalid `--due` is rejected at the CLI boundary with a
@@ -731,7 +831,7 @@ mod tests {
         let Command::Edit(edit_args) = edit_cli.command else {
             panic!("expected Edit");
         };
-        let error = patch_from(&edit_args).unwrap_err();
+        let error = patch_from(&edit_args, Vec::new()).unwrap_err();
         assert!(error.to_string().contains("YYYY-MM-DD"), "got: {error}");
 
         let project = switchbard_core::load_backlog_repo(root).expect("reparse");

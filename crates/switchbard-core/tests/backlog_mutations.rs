@@ -52,6 +52,7 @@ fn create_fixture_task(root: &Path) -> String {
         project: None,
         dependencies: vec![],
         due_date: None,
+        custom: Vec::new(),
     };
     let output = create_backlog_task(root, &task).expect("create_backlog_task should succeed");
     assert_eq!(
@@ -524,6 +525,7 @@ fn create_backlog_task_wires_labels_assignee_milestone_and_dependencies() {
             project: Some("v1".to_string()),
             dependencies: vec![dependency_id.clone()],
             due_date: Some("2026-09-14".to_string()),
+            custom: Vec::new(),
         },
     )
     .expect("create with labels/assignee/milestone/dependencies should succeed");
@@ -562,6 +564,7 @@ fn subtask_ids_are_decimal_children_of_the_parent_id() {
                 project: None,
                 dependencies: vec![],
                 due_date: None,
+                custom: Vec::new(),
             },
         )
         .expect("subtask create should succeed");
@@ -648,6 +651,7 @@ fn create_backlog_task_mints_the_projects_configured_prefix() {
             project: None,
             dependencies: vec![],
             due_date: None,
+            custom: Vec::new(),
         },
     )
     .expect("create_backlog_task should succeed");

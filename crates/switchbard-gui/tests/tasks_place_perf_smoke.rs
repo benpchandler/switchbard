@@ -111,6 +111,7 @@ fn task(repo: usize, project: usize, i: usize) -> BacklogTask {
         source: BacklogTaskSource::Active,
         path: PathBuf::from(format!("/tmp/switchbard-tasks-place-perf/{id}.md")),
         id,
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -150,6 +151,7 @@ fn build_fixture() -> HiveApp {
                 ranking: RepoRanking::default(),
                 loaded_at_unix: 0,
                 configured_statuses: vec!["To Do".into(), "In Progress".into(), "Done".into()],
+                fields: Vec::new(),
             },
         ));
     }

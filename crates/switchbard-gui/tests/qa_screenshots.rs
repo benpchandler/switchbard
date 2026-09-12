@@ -83,6 +83,7 @@ fn sample_task(id: &str, title: &str, status: &str) -> BacklogTask {
             "{REPO_PATH}/backlog/tasks/{}.md",
             id.to_lowercase()
         )),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -103,6 +104,7 @@ fn project_with(tasks: Vec<BacklogTask>) -> BacklogRepo {
             "In Review".into(),
             "Done".into(),
         ],
+        fields: Vec::new(),
     }
 }
 
@@ -251,6 +253,7 @@ fn shots_for_theme(theme: ThemeChoice) {
                     "In Review".into(),
                     "Done".into(),
                 ],
+                fields: Vec::new(),
             },
         );
         app.dispatch_runs.lock().unwrap().insert(

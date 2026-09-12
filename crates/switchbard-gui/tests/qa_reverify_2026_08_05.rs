@@ -56,6 +56,7 @@ fn task(id: &str, title: &str, status: &str) -> BacklogTask {
             "{REPO_PATH}/backlog/tasks/{}.md",
             id.to_lowercase()
         )),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -82,6 +83,7 @@ fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     app
@@ -120,6 +122,7 @@ fn native_task_create(root: &std::path::Path, title: &str) -> String {
             project: None,
             dependencies: vec![],
             due_date: None,
+            custom: Vec::new(),
         },
     )
     .expect("native fixture create")
