@@ -41,6 +41,8 @@ pub enum Mode {
     PickValue,
     /// After `t b`: type a new named ball holder, then Enter assigns it.
     BallName,
+    /// After `v n` picks a slot: type its name, then Enter saves it.
+    RenameView,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +104,8 @@ pub struct App {
     move_origin: Option<Vec<Column>>,
     /// Which values list to return to after a color is picked.
     paint_return: Option<Column>,
+    /// The slot `v n` is naming, while `Mode::RenameView` is active.
+    rename_slot: Option<usize>,
     pub views: ViewStore,
     /// Zero-based slot the current state came from.
     pub view: usize,
@@ -168,6 +172,7 @@ impl App {
             calendar_day: crate::date_fields::today(),
             move_origin: None,
             paint_return: None,
+            rename_slot: None,
             views,
             view: 0,
             state: ViewState::default(),
@@ -254,9 +259,11 @@ impl App {
     }
 
     /// The slot number while filter and sort still match it; `custom` once edited.
-    /// The attributes follow in the title, so they are the name.
+    /// The attributes follow in the title, so they are the name - unless the
+    /// slot carries a user-given name, which leads instead.
     pub fn view_label(&self) -> String {
         match self.views.get(self.view) {
+            Some(saved) if saved == self.state && !saved.name.is_empty() => saved.name,
             Some(saved) if saved == self.state => format!("v{}", self.view + 1),
             _ => "custom".to_string(),
         }
@@ -591,6 +598,7 @@ impl App {
             Mode::NewTask => self.handle_new_task_key(event),
             Mode::PickValue => self.handle_pick_value_key(event),
             Mode::BallName => self.handle_ball_name_key(event),
+            Mode::RenameView => self.handle_rename_view_key(event),
         }
         if !self.merge_target_current()
             || (self.mode != Mode::Browse
@@ -706,6 +714,32 @@ impl App {
                 }
                 Err(error) => self.status = error.to_string(),
             },
+            KeyCode::Char(character) => self.input.push(character),
+            _ => {}
+        }
+    }
+
+    fn handle_rename_view_key(&mut self, event: KeyEvent) {
+        match event.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Browse;
+                self.input.clear();
+                self.rename_slot = None;
+                self.status = "view naming cancelled".to_string();
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Enter => {
+                let Some(slot) = self.rename_slot.take() else {
+                    self.mode = Mode::Browse;
+                    return;
+                };
+                let name = self.input.trim().to_string();
+                self.input.clear();
+                self.mode = Mode::Browse;
+                self.save_view_name(slot, name);
+            }
             KeyCode::Char(character) => self.input.push(character),
             _ => {}
         }
