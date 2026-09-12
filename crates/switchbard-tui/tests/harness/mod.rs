@@ -8,8 +8,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use switchbard_core::{
-    create_project_def, create_task_allocating_id, rank_project, NewBacklogTask, NewProjectDef,
-    RankPlacement,
+    add_field_decl, create_project_def, create_task_allocating_id, rank_project, FieldDecl,
+    FieldKind, NewBacklogTask, NewProjectDef, RankPlacement,
 };
 use switchbard_tui::app::{App, AppPaths};
 use switchbard_tui::telemetry::Telemetry;
@@ -192,6 +192,75 @@ pub fn seed_child(root: &Path, title: &str, status: &str, parent: &str) -> Strin
     };
     let (id, _) = create_task_allocating_id(root, &task).unwrap();
     format!("TASK-{id}")
+}
+
+/// Declare a repo-level custom field, the way `sb field add` would.
+pub fn declare_field(root: &Path, name: &str, kind: FieldKind, values: &[&str], groupable: bool) {
+    add_field_decl(
+        root,
+        FieldDecl {
+            name: name.to_string(),
+            kind,
+            values: values.iter().map(|v| (*v).to_string()).collect(),
+            groupable,
+        },
+    )
+    .unwrap();
+}
+
+/// A task carrying values for declared custom fields, under `labels` so a test
+/// can narrow the list to exactly its own fixture rows.
+pub fn seed_with_custom(
+    root: &Path,
+    title: &str,
+    status: &str,
+    labels: &[&str],
+    custom: &[(&str, &str)],
+) {
+    let task = NewBacklogTask {
+        title: title.to_string(),
+        description: format!("Description of {title}."),
+        status: status.to_string(),
+        priority: "medium".to_string(),
+        acceptance_criteria: vec!["It works".to_string()],
+        parent: None,
+        labels: labels.iter().map(|s| (*s).to_string()).collect(),
+        assignees: Vec::new(),
+        project: None,
+        dependencies: Vec::new(),
+        due_date: None,
+        custom: custom
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect(),
+    };
+    create_task_allocating_id(root, &task).unwrap();
+}
+
+/// Press the number that picks the open picker's row labelled `label`, whether
+/// it is shown or listed as hidden. Reading the row out of the picker rather
+/// than off the screen keeps a test honest when the catalog grows past the
+/// height of the terminal.
+pub fn pick_labelled(h: &mut Harness, label: &str) {
+    let picker = h.app.picker.as_ref().expect("a picker is open");
+    let hidden = format!("{label}{}", switchbard_tui::columns::Column::HIDDEN_TAG);
+    let index = picker
+        .options
+        .iter()
+        .position(|option| option.label == label || option.label == hidden)
+        .unwrap_or_else(|| {
+            panic!(
+                "no picker row for {label}; rows are {:?}",
+                picker
+                    .options
+                    .iter()
+                    .map(|option| option.label.as_str())
+                    .collect::<Vec<_>>()
+            )
+        });
+    for digit in (index + 1).to_string().chars() {
+        h.press(KeyCode::Char(digit));
+    }
 }
 
 /// A project def under `initiative`, ranked in the order these calls are made.

@@ -1,11 +1,15 @@
 //! In-memory PR observations. One bounded request may run off the event thread.
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use switchbard_core::{fetch_pull_requests_with_limit, PrListRow, PrSnapshot};
 
 #[derive(Default)]
 pub struct PullRequests {
+    /// What columns exist. The PR table shows only built-ins, but the filter
+    /// grammar is shared with the task page, so the same registry answers both.
+    registry: Arc<crate::columns::ColumnRegistry>,
     pub snapshot: Option<PrSnapshot>,
     pub error: Option<String>,
     pub notifications: crate::pr_notifications::PrNotifications,
@@ -25,6 +29,11 @@ pub struct PullRequests {
 }
 
 impl PullRequests {
+    /// Take up the registry `App` rebuilt for this repo load.
+    pub fn set_registry(&mut self, registry: Arc<crate::columns::ColumnRegistry>) {
+        self.registry = registry;
+    }
+
     pub fn refresh(&mut self, root: &Path) {
         if self.pending.is_some() {
             return;
@@ -212,8 +221,8 @@ impl PullRequests {
                 }
             }
         }
-        for value in column.spec().vocabulary {
-            counts.entry((*value).to_string()).or_default();
+        for value in column.spec(&self.registry).vocabulary().iter() {
+            counts.entry(value.to_string()).or_default();
         }
         let mut values: Vec<_> = counts.into_iter().collect();
         values.sort_by(|a, b| {
@@ -223,8 +232,8 @@ impl PullRequests {
                     .cmp(&b.0.parse::<u64>().unwrap_or(u64::MAX))
             } else {
                 column
-                    .vocabulary_rank(&a.0)
-                    .cmp(&column.vocabulary_rank(&b.0))
+                    .vocabulary_rank(&self.registry, &a.0)
+                    .cmp(&column.vocabulary_rank(&self.registry, &b.0))
                     .then_with(|| b.1.cmp(&a.1))
                     .then_with(|| a.0.cmp(&b.0))
             }
@@ -240,7 +249,7 @@ impl PullRequests {
         let selected = restored
             .clone()
             .or_else(|| self.row().map(|row| row.id.clone()));
-        let filter = crate::tasks::Filter::parse(&self.filter);
+        let filter = crate::tasks::Filter::parse(&self.filter, &self.registry);
         let mut visible: Vec<usize> = self
             .snapshot
             .as_ref()
@@ -277,7 +286,12 @@ impl PullRequests {
     }
 
     fn compare(&self, a: &PrListRow, b: &PrListRow, sort: crate::sort::Sort) -> std::cmp::Ordering {
-        crate::sort::compare_values(&self.column_adapter(a), &self.column_adapter(b), sort)
+        crate::sort::compare_values(
+            &self.column_adapter(a),
+            &self.column_adapter(b),
+            sort,
+            &self.registry,
+        )
     }
 
     pub fn column_adapter<'a>(&'a self, row: &'a PrListRow) -> crate::column_values::PrValues<'a> {

@@ -144,7 +144,10 @@ fn date_picker_is_available_with_zero_rows_and_at_narrow_and_wide_sizes() {
         pick(&mut h, "future");
         pick(&mut h, "blue");
         h.press(KeyCode::Esc);
-        assert_eq!(h.app.state.paint[0].to_text(), "by:filed=future:blue");
+        assert_eq!(
+            h.app.state.paint[0].to_text(h.app.registry()),
+            "by:filed=future:blue"
+        );
         assert_eq!(h.app.visible.len(), 0);
     }
 }

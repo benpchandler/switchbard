@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use switchbard_core::{BacklogTask, GoalDef};
 
-use crate::columns::Column;
+use crate::columns::{Column, ColumnRegistry};
 use crate::tasks::{GoalSummary, ProjectSummary};
 
 /// Everything a heading can say beyond the section's key: project facts by
@@ -13,6 +13,8 @@ use crate::tasks::{GoalSummary, ProjectSummary};
 /// derives from, and blocked-task ids (`tasks::TaskRelations::blocked`) for
 /// grouping by the `blocked` column.
 pub struct Headings<'a> {
+    /// What columns exist: section keys for a repo-declared field read through it.
+    pub registry: &'a ColumnRegistry,
     pub projects: &'a [ProjectSummary],
     pub goals: &'a [GoalDef],
     pub goal_summaries: &'a [GoalSummary],
@@ -64,14 +66,16 @@ impl Grouping {
 
     /// `project`, `project,goal` (or `project›goal`), `off`, or empty. Every
     /// level must be groupable and distinct, at most `MAX_DEPTH` deep.
-    pub fn parse(text: &str) -> Option<Grouping> {
+    pub fn parse(text: &str, registry: &ColumnRegistry) -> Option<Grouping> {
         let text = text.trim();
         if text.is_empty() || text == "off" || text == "none" {
             return Some(Grouping::flat());
         }
         let mut levels: Vec<Column> = Vec::new();
         for name in text.split([',', '›']) {
-            let column = Column::parse(name.trim()).filter(|column| column.groupable())?;
+            let column = registry
+                .parse(name.trim())
+                .filter(|column| column.groupable(registry))?;
             if levels.contains(&column) {
                 return None;
             }
@@ -81,24 +85,29 @@ impl Grouping {
     }
 
     /// How it reads on screen: `project›goal`, or `off`.
-    pub fn name(&self) -> String {
+    pub fn name(&self, registry: &ColumnRegistry) -> String {
         if self.is_flat() {
             return "off".to_string();
         }
-        self.0
-            .iter()
-            .map(|column| column.name())
-            .collect::<Vec<_>>()
-            .join("›")
+        self.joined(registry, "›")
     }
 
-    /// The saved-view and `:group` spelling: `project,goal`.
-    pub fn text(&self) -> String {
+    /// The saved-view spelling: `project,goal`, a declared field prefixed.
+    /// `:group` reads this back and the bare name alike.
+    pub fn text(&self, registry: &ColumnRegistry) -> String {
         self.0
             .iter()
-            .map(|column| column.name())
+            .map(|column| column.save_name(registry))
             .collect::<Vec<_>>()
             .join(",")
+    }
+
+    fn joined(&self, registry: &ColumnRegistry, separator: &str) -> String {
+        self.0
+            .iter()
+            .map(|column| column.name(registry))
+            .collect::<Vec<_>>()
+            .join(separator)
     }
 }
 
@@ -188,7 +197,7 @@ pub fn initiatives(projects: &[ProjectSummary]) -> Vec<String> {
 /// files under the first in `goals.yml` order).
 fn section_key(task: &BacklogTask, column: Column, headings: &Headings<'_>) -> String {
     column
-        .values(task, headings.goals, headings.blocked)
+        .values(headings.registry, task, headings.goals, headings.blocked)
         .into_iter()
         .next()
         .unwrap_or_default()
@@ -232,7 +241,13 @@ fn section_keys(
                     .unwrap_or(usize::MAX),
                 key.to_lowercase(),
             ),
-            other => (0, other.vocabulary_rank(key), key.to_lowercase()),
+            // Every other column, a declared field included, sections in its
+            // own vocabulary order — a declared enum field's `values` list.
+            other => (
+                0,
+                other.vocabulary_rank(headings.registry, key),
+                key.to_lowercase(),
+            ),
         }
     };
     keys.sort_by_key(rank);
@@ -241,7 +256,7 @@ fn section_keys(
 
 fn heading(column: Column, key: &str, headings: &Headings<'_>) -> String {
     if key.is_empty() {
-        return format!("no {}", column.name());
+        return format!("no {}", column.name(headings.registry));
     }
     match column {
         Column::Goal => match headings

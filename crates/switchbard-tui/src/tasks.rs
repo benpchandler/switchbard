@@ -40,6 +40,9 @@ pub struct GoalProgress {
 
 pub struct Backlog {
     pub tasks: Vec<BacklogTask>,
+    /// The repo's declared custom fields, which the column registry turns into
+    /// columns; carried here so one repo load answers both.
+    pub fields: Vec<switchbard_core::FieldDecl>,
     pub projects: Vec<ProjectSummary>,
     /// The repo's goal definitions; the goal column derives membership from them.
     pub goals: Vec<GoalDef>,
@@ -154,6 +157,7 @@ pub fn load(root: &Path) -> Result<Backlog> {
         .collect();
     Ok(Backlog {
         tasks,
+        fields: repo.fields.clone(),
         projects,
         goals,
         goal_summaries,
@@ -190,11 +194,13 @@ pub use crate::filter::{Filter, FilterField};
 impl Filter {
     pub fn matches(
         &self,
+        registry: &crate::columns::ColumnRegistry,
         task: &BacklogTask,
         goals: &[GoalDef],
         blocked: &HashSet<String>,
     ) -> bool {
         self.matches_row(&crate::column_values::TaskValues {
+            registry,
             task,
             goals,
             top: &[],
@@ -205,6 +211,7 @@ impl Filter {
 
 /// Distinct values a field takes across `tasks`, most common first, with counts.
 pub fn field_values(
+    registry: &crate::columns::ColumnRegistry,
     tasks: &[BacklogTask],
     field: FilterField,
     goals: &[GoalDef],
@@ -213,7 +220,7 @@ pub fn field_values(
     let mut counts: Vec<(String, usize)> = Vec::new();
     for value in tasks
         .iter()
-        .flat_map(|task| field.column().values(task, goals, blocked))
+        .flat_map(|task| field.column().values(registry, task, goals, blocked))
     {
         match counts.iter_mut().find(|(seen, _)| *seen == value) {
             Some(entry) => entry.1 += 1,

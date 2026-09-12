@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use switchbard_core::{BacklogTask, GoalDef};
 
-use crate::columns::Column;
+use crate::columns::{Column, ColumnRegistry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Order {
@@ -16,14 +16,16 @@ pub enum Order {
 }
 
 impl Order {
-    pub fn label(self, column: Column) -> String {
+    pub fn label(self, column: Column, registry: &ColumnRegistry) -> String {
         match self {
             Order::Ascending => "ascending".to_string(),
             Order::Descending => "descending".to_string(),
             Order::Semantic => match column {
                 Column::Priority => "semantic (high, medium, low)".to_string(),
                 Column::Status => "semantic (to do, in progress, done)".to_string(),
-                _ => "semantic".to_string(),
+                // A declared enum field's order is its own `values` list, which
+                // the repo can make arbitrarily long; name the column instead.
+                _ => format!("semantic ({} order)", column.name(registry)),
             },
         }
     }
@@ -44,23 +46,25 @@ pub struct Sort {
 }
 
 impl Sort {
-    pub fn label(&self) -> String {
-        format!("{}{}", self.order.glyph(), self.column.header())
+    pub fn label(&self, registry: &ColumnRegistry) -> String {
+        format!("{}{}", self.order.glyph(), self.column.header(registry))
     }
 
     /// `pri:semantic`, the form saved views carry.
-    pub fn to_text(&self) -> String {
+    pub fn to_text(&self, registry: &ColumnRegistry) -> String {
         let order = match self.order {
             Order::Ascending => "ascending",
             Order::Descending => "descending",
             Order::Semantic => "semantic",
         };
-        format!("{}:{order}", self.column.name())
+        format!("{}:{order}", self.column.save_name(registry))
     }
 
-    pub fn parse(text: &str) -> Option<Sort> {
-        let (column, order) = text.trim().split_once(':')?;
-        let column = Column::parse(column)?;
+    pub fn parse(text: &str, registry: &ColumnRegistry) -> Option<Sort> {
+        // From the right: a declared field writes itself as `field:<name>`, so
+        // the column part may carry a colon of its own. An order never does.
+        let (column, order) = text.trim().rsplit_once(':')?;
+        let column = registry.parse(column)?;
         let order = match order {
             "ascending" => Order::Ascending,
             "descending" => Order::Descending,
@@ -72,16 +76,16 @@ impl Sort {
 }
 
 /// Orders offered for a column; semantic only where the vocabulary has one.
-pub fn orders_for(column: Column) -> Vec<Order> {
-    match column {
-        _ if !column.spec().vocabulary.is_empty() => {
-            vec![Order::Semantic, Order::Ascending, Order::Descending]
-        }
-        _ => vec![Order::Ascending, Order::Descending],
+pub fn orders_for(column: Column, registry: &ColumnRegistry) -> Vec<Order> {
+    if column.spec(registry).vocabulary().is_empty() {
+        vec![Order::Ascending, Order::Descending]
+    } else {
+        vec![Order::Semantic, Order::Ascending, Order::Descending]
     }
 }
 
 pub fn apply(
+    registry: &ColumnRegistry,
     tasks: &[BacklogTask],
     visible: &mut [usize],
     sort: Sort,
@@ -89,10 +93,11 @@ pub fn apply(
     goals: &[GoalDef],
     blocked: &HashSet<String>,
 ) {
-    visible.sort_by(|&a, &b| compare(&tasks[a], &tasks[b], sort, top, goals, blocked));
+    visible.sort_by(|&a, &b| compare(registry, &tasks[a], &tasks[b], sort, top, goals, blocked));
 }
 
 fn compare(
+    registry: &ColumnRegistry,
     a: &BacklogTask,
     b: &BacklogTask,
     sort: Sort,
@@ -102,18 +107,21 @@ fn compare(
 ) -> Ordering {
     compare_values(
         &crate::column_values::TaskValues {
+            registry,
             task: a,
             top,
             goals,
             blocked,
         },
         &crate::column_values::TaskValues {
+            registry,
             task: b,
             top,
             goals,
             blocked,
         },
         sort,
+        registry,
     )
 }
 
@@ -121,28 +129,38 @@ pub fn compare_values(
     a: &impl crate::column_values::ColumnValues,
     b: &impl crate::column_values::ColumnValues,
     sort: Sort,
+    registry: &ColumnRegistry,
 ) -> Ordering {
     // Due sorts on the raw `YYYY-MM-DD` value (lexicographic == chronological
     // for that format), with an absent due date always last regardless of
     // direction — "no due date" is not a date, so ascending/descending
-    // shouldn't reposition it the way a real value would.
-    if sort.column == Column::Due {
-        let due = |values: &dyn crate::column_values::ColumnValues| {
-            values.values(Column::Due).into_iter().next()
+    // shouldn't reposition it the way a real value would. A declared field
+    // sorts on the same rule: an unset value is not a value, so it sits last
+    // whichever way the rest run (`switchbard_core::custom_field_sort_key`
+    // says the same for `sb list --sort`).
+    if sort.column == Column::Due || matches!(sort.column, Column::Custom(_)) {
+        let first = |values: &dyn crate::column_values::ColumnValues| {
+            values.values(sort.column).into_iter().next()
         };
-        let ordering = match (due(a), due(b)) {
+        let rank = |value: &str| sort.column.vocabulary_rank(registry, value);
+        let ordering = match (first(a), first(b)) {
             (None, None) => Ordering::Equal,
             (None, Some(_)) => Ordering::Greater,
             (Some(_), None) => Ordering::Less,
-            (Some(a), Some(b)) if sort.order == Order::Descending => b.cmp(&a),
-            (Some(a), Some(b)) => a.cmp(&b),
+            // Declared order for an enum field; every other kind ranks flat,
+            // so the raw value is what orders it.
+            (Some(a), Some(b)) => match sort.order {
+                Order::Semantic => rank(&a).cmp(&rank(&b)).then_with(|| a.cmp(&b)),
+                Order::Ascending => a.cmp(&b),
+                Order::Descending => b.cmp(&a),
+            },
         };
         return ordering
             .then_with(|| a.numeric_key(Column::Id).cmp(&b.numeric_key(Column::Id)))
             .then_with(|| a.identity().cmp(b.identity()));
     }
     let plain = || {
-        if sort.column.spec().numeric {
+        if sort.column.spec(registry).numeric {
             a.numeric_key(sort.column).cmp(&b.numeric_key(sort.column))
         } else {
             a.values(sort.column)
@@ -156,7 +174,7 @@ pub fn compare_values(
             let rank = |values: Vec<String>| {
                 values
                     .first()
-                    .map(|value| sort.column.vocabulary_rank(value))
+                    .map(|value| sort.column.vocabulary_rank(registry, value))
                     .unwrap_or(usize::MAX)
             };
             rank(a.values(sort.column)).cmp(&rank(b.values(sort.column)))
@@ -206,7 +224,9 @@ mod tests {
         let goals = [];
         let mut visible: Vec<usize> = (0..tasks.len()).collect();
         let blocked = std::collections::HashSet::new();
+        let registry = ColumnRegistry::builtin_only();
         apply(
+            &registry,
             tasks,
             &mut visible,
             Sort {

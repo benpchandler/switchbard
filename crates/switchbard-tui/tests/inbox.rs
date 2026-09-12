@@ -87,11 +87,11 @@ fn legacy_page_and_task_records_still_resume() {
     h.type_text("/theme");
     h.press(KeyCode::Enter);
     let task_state = h.app.state.clone();
-    let old_task = format!("1\t0\t{}", task_state.to_lua());
+    let old_task = format!("1\t0\t{}", task_state.to_lua(h.app.registry()));
     h.press(KeyCode::Tab);
     let old_pages = format!(
         "pages=[true,0,0,{},0,\"{}\",0]",
-        serde_json::to_string(&task_state.to_lua()).unwrap(),
+        serde_json::to_string(&task_state.to_lua(h.app.registry())).unwrap(),
         "{}"
     );
     h.press(KeyCode::Tab);
@@ -118,9 +118,9 @@ fn legacy_pages3_inbox_restores_both_views_and_reencodes_one_named_record() {
             false,
             0usize,
             0usize,
-            tasks.to_lua(),
+            tasks.to_lua(h.app.registry()),
             0usize,
-            prs.to_lua(),
+            prs.to_lua(h.app.registry()),
             0usize,
             Option::<String>::None,
         ))

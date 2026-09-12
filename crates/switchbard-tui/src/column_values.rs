@@ -1,7 +1,10 @@
 //! Explicit page adapters for the shared column, sorting and matching contracts.
 use std::collections::HashSet;
 
-use crate::{ball::Ball, columns::Column};
+use crate::{
+    ball::Ball,
+    columns::{Column, ColumnRegistry},
+};
 use switchbard_core::{goals_feeding, BacklogTask, GoalDef, PrListRow};
 
 pub trait ColumnValues {
@@ -14,6 +17,8 @@ pub trait ColumnValues {
 }
 
 pub struct TaskValues<'a> {
+    /// Resolves `Column::Custom` back to the frontmatter key it reads.
+    pub registry: &'a ColumnRegistry,
     pub task: &'a BacklogTask,
     pub goals: &'a [GoalDef],
     pub top: &'a [String],
@@ -61,6 +66,16 @@ impl ColumnValues for TaskValues<'_> {
             Column::Goal => goals_feeding(goals, task)
                 .into_iter()
                 .map(str::to_string)
+                .collect(),
+            // A declared field's value is whatever the task's frontmatter
+            // carries under that field's name; absent is no value at all,
+            // the same shape `due` uses, so `name:none` and the `no <name>`
+            // section both mean "unset".
+            Column::Custom(_) => task
+                .custom
+                .get(column.name(self.registry))
+                .cloned()
+                .into_iter()
                 .collect(),
         }
     }
@@ -110,6 +125,7 @@ impl ColumnValues for PrValues<'_> {
             Column::Review => vec![row.review.label().to_string()],
             Column::Merge => vec![row.merge.label().to_string()],
             Column::Draft => vec![if row.draft { "Draft" } else { "Ready" }.to_string()],
+            // A pull request carries no repo-declared task fields.
             _ => Vec::new(),
         }
     }

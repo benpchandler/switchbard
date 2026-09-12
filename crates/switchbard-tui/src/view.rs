@@ -88,6 +88,9 @@ fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = app.config.theme.clone();
+    // Cloned like the theme: the render path writes `app.scroll` part way
+    // through, so nothing may hold a borrow of `app` across the whole frame.
+    let registry = std::sync::Arc::clone(app.registry());
     let repo = app
         .repo_root
         .file_name()
@@ -114,7 +117,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             _ if app.state.glyph_columns.contains(column) => {
                 Constraint::Length((2 + app.glyph_legend(*column).chars().count()).max(3) as u16)
             }
-            column => match column.max_width() {
+            column => match column.max_width(&registry) {
                 Some(max) => Constraint::Length(fitted_width(app, *column, max)),
                 None => Constraint::Min(20),
             },
@@ -131,7 +134,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             let label = if app.state.glyph_columns.contains(column) {
                 app.glyph_legend(*column)
             } else {
-                column.header().to_string()
+                column.header(&registry).to_string()
             };
             format!("{} {}", index + 1, label)
         })
@@ -194,7 +197,8 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     frame.render_widget(Paragraph::new("").style(glow), row_area);
                 }
                 for (column, cell) in app.state.columns.iter().zip(cells.iter()) {
-                    let value = column.cell_text(task, &app.goals, &app.relations.blocked);
+                    let value =
+                        column.cell_text(&registry, task, &app.goals, &app.relations.blocked);
                     let text = if app.state.glyph_columns.contains(column) && !value.is_empty() {
                         app.config.glyph(*column, &value)
                     } else {
@@ -206,6 +210,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     }
                     if let Some(color) = paint::cell_color(
                         &app.state.paint,
+                        &registry,
                         task,
                         *column,
                         &app.goals,
@@ -241,7 +246,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
 /// more than the catalog allows, so a column of `Done` does not reserve room
 /// for `In Progress`.
 fn fitted_width(app: &App, column: Column, max: u16) -> u16 {
-    let header = column.header().chars().count() + 2;
+    let header = column.header(app.registry()).chars().count() + 2;
     let widest = app
         .rows
         .iter()
@@ -260,15 +265,21 @@ fn table_title(app: &App) -> String {
         parts.push(app.state.filter.clone());
     }
     if let Some(sort) = app.state.sort {
-        parts.push(sort.label());
+        parts.push(sort.label(app.registry()));
     }
     if app.state.columns != Column::DEFAULT_SHOWN {
-        parts.push(format!("cols:{}", columns_text(&app.state.columns)));
+        parts.push(format!(
+            "cols:{}",
+            columns_text(&app.state.columns, app.registry())
+        ));
     }
     if !app.state.glyph_columns.is_empty() {
-        parts.push(format!("glyphs:{}", columns_text(&app.state.glyph_columns)));
+        parts.push(format!(
+            "glyphs:{}",
+            columns_text(&app.state.glyph_columns, app.registry())
+        ));
     }
-    if let Some(label) = app.state.abbreviated_label() {
+    if let Some(label) = app.state.abbreviated_label(app.registry()) {
         parts.push(label);
     }
     if !app.state.pin_top {
@@ -281,7 +292,7 @@ fn table_title(app: &App) -> String {
         parts.push(format!("paint:{}", app.state.paint.len()));
     }
     if !app.state.group.is_flat() {
-        parts.push(format!("group:{}", app.state.group.name()));
+        parts.push(format!("group:{}", app.state.group.name(app.registry())));
         if app.state.group.levels().contains(&Column::Project) {
             parts.extend(app.initiatives());
         }
@@ -400,7 +411,7 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
             };
             (
                 format!("v{}", index + 1),
-                format!("{}{scope}", saved.name()),
+                format!("{}{scope}", saved.name(app.registry())),
             )
         }))
         .collect();
@@ -588,7 +599,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
             let value = &option.label;
             let shown = match (&picker.purpose, &option.payload) {
                 (PickerPurpose::Filter(field), Payload::Text(value)) => {
-                    Filter::field_allows(app.filter_text(), *field, value)
+                    Filter::field_allows(app.filter_text(), *field, value, app.registry())
                 }
                 (PickerPurpose::Sort(_), Payload::Order(order)) => {
                     app.state.sort.is_some_and(|sort| sort.order == *order)
@@ -697,7 +708,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         .borders(Borders::ALL)
         .border_style(theme.style(Surface::Accent))
         .title_style(title_style)
-        .title(pending + &picker_title(picker, preview.is_some()));
+        .title(pending + &picker_title(picker, preview.is_some(), app.registry()));
     let block = if picker.purpose != PickerPurpose::Merge
         && rows.len().saturating_add(4) > height as usize
     {
@@ -754,10 +765,14 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
 }
 
 /// What is being picked, plus any typed text. Key hints live in the footer.
-fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
+fn picker_title(
+    picker: &ValuePicker,
+    typed_is_color: bool,
+    registry: &crate::columns::ColumnRegistry,
+) -> String {
     let subject = match &picker.purpose {
-        PickerPurpose::Filter(field) => field.keyword().to_string(),
-        PickerPurpose::Sort(column) => format!("sort by {}", column.header()),
+        PickerPurpose::Filter(field) => field.keyword(registry).to_string(),
+        PickerPurpose::Sort(column) => format!("sort by {}", column.header(registry)),
         PickerPurpose::ChooseColumn(ColumnPurpose::Filter) => "filter by column".to_string(),
         PickerPurpose::ChooseColumn(ColumnPurpose::Sort) => "sort by column".to_string(),
         PickerPurpose::Columns => "columns".to_string(),
@@ -769,13 +784,13 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
                 .collect::<Vec<_>>()
                 .join("")
         ),
-        PickerPurpose::PaintValues(column) => format!("by {}", column.name()),
+        PickerPurpose::PaintValues(column) => format!("by {}", column.name(registry)),
         PickerPurpose::PaintColumn => "paint which column".to_string(),
         PickerPurpose::PaintTarget => "paint".to_string(),
         PickerPurpose::PaintColor(_) => "color".to_string(),
         PickerPurpose::PaintRules => "paint rules · top is the base".to_string(),
         PickerPurpose::ChoosePaintRule(action) => format!("{action:?} paint rule"),
-        PickerPurpose::ColumnActions(column) => column.name().to_string(),
+        PickerPurpose::ColumnActions(column) => column.name(registry).to_string(),
         PickerPurpose::Settings => "settings".to_string(),
         PickerPurpose::Goals(id) => format!("{id} · goals"),
         PickerPurpose::Organize => "organize by".to_string(),

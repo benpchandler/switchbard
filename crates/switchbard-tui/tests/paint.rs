@@ -118,7 +118,7 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
             .state
             .paint
             .iter()
-            .map(|r| r.to_text())
+            .map(|r| r.to_text(h.app.registry()))
             .collect::<Vec<_>>(),
         [
             "by:status=todo:#f49f31,inprogress:#c6c5fe",
@@ -221,7 +221,7 @@ fn hand_picked_values_row_and_column_and_hex_and_clearing() {
         .state
         .paint
         .iter()
-        .any(|r| r.to_text() == format!("rows:id:{selected}=lightblue")));
+        .any(|r| r.to_text(h.app.registry()) == format!("rows:id:{selected}=lightblue")));
 
     h.press(KeyCode::Char('p'));
     h.type_text("c");
@@ -337,7 +337,7 @@ fn palette_presets_swap_live_and_recolor_auto_painted_values() {
             .state
             .paint
             .iter()
-            .any(|rule| rule.to_text().contains("magenta")),
+            .any(|rule| rule.to_text(h.app.registry()).contains("magenta")),
         "hand-picked colors survive: {:?}",
         h.app.state.paint
     );

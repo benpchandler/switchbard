@@ -187,6 +187,38 @@ pub fn validate_field_value(decl: &FieldDecl, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Where `value` sits in a declaration's own order. An enum field ranks by
+/// position in its `values` list (the declaration contract makes that list the
+/// field's sort *and* section order); an unknown value ranks after every
+/// declared one. Every other kind has no declared order, so every value ranks
+/// 0 and the caller's own tie-break (lexical) is what orders them.
+///
+/// The one definition of "a declared field's order": `sb list --sort` reaches
+/// it through [`custom_field_sort_key`], and sbt's column registry ranks its
+/// custom columns with it for sorting, grouping and value pickers.
+pub fn declared_value_rank(decl: &FieldDecl, value: &str) -> usize {
+    if decl.kind != FieldKind::Enum {
+        return 0;
+    }
+    decl.values
+        .iter()
+        .position(|known| known == value)
+        .unwrap_or(decl.values.len())
+}
+
+/// `(absent, declared rank, raw value)` — a task that does not set the field
+/// sorts last whatever the direction, then [`declared_value_rank`] orders the
+/// rest, then the raw value breaks the tie.
+pub fn custom_field_sort_key<'t>(
+    task: &'t crate::backlog::BacklogTask,
+    decl: &FieldDecl,
+) -> (bool, usize, &'t str) {
+    match task.custom.get(&decl.name) {
+        None => (true, usize::MAX, ""),
+        Some(value) => (false, declared_value_rank(decl, value), value.as_str()),
+    }
+}
+
 fn is_person_token(value: &str) -> bool {
     !value.is_empty()
         && value

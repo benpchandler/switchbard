@@ -1,5 +1,10 @@
 //! Entity-independent query parsing and predicates for search, facets and paint.
-use crate::columns::Column;
+//!
+//! Every entry point that turns text into terms takes the
+//! [`ColumnRegistry`](crate::columns::ColumnRegistry): `counterparty:nick` is a
+//! field term only where the repo declares `counterparty`, and the registry is
+//! the one place that knows.
+use crate::columns::{Column, ColumnRegistry, FieldId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterField {
@@ -20,10 +25,14 @@ pub enum FilterField {
     Draft,
     Filed,
     Merged,
+    /// A field the repo declares for itself; see `crate::columns`.
+    Custom(FieldId),
 }
 
 impl FilterField {
-    fn parse(keyword: &str) -> Option<FilterField> {
+    /// The field a filter keyword names. Public because a saved view has to ask
+    /// the same question when it decides whether a term still means anything.
+    pub fn parse(keyword: &str, registry: &ColumnRegistry) -> Option<FilterField> {
         Some(match keyword {
             "id" => FilterField::Id,
             "status" | "lifecycle" => FilterField::Status,
@@ -42,11 +51,14 @@ impl FilterField {
             "draft" => FilterField::Draft,
             "filed" | "created" => FilterField::Filed,
             "merged" | "merged_at" => FilterField::Merged,
-            _ => return None,
+            other => match registry.parse_custom(other) {
+                Some(Column::Custom(id)) => FilterField::Custom(id),
+                _ => return None,
+            },
         })
     }
 
-    pub fn keyword(self) -> &'static str {
+    pub fn keyword(self, registry: &ColumnRegistry) -> &str {
         match self {
             FilterField::Id => "id",
             FilterField::Status => "status",
@@ -65,6 +77,7 @@ impl FilterField {
             FilterField::Title => "title",
             FilterField::Filed => "filed",
             FilterField::Merged => "merged",
+            FilterField::Custom(id) => Column::Custom(id).name(registry),
         }
     }
 
@@ -88,6 +101,7 @@ impl FilterField {
             FilterField::Title => Column::Title,
             FilterField::Filed => Column::Filed,
             FilterField::Merged => Column::Merged,
+            FilterField::Custom(id) => Column::Custom(id),
         }
     }
 }
@@ -126,12 +140,12 @@ enum Term {
 }
 
 impl Term {
-    fn parse(word: &str) -> Term {
+    fn parse(word: &str, registry: &ColumnRegistry) -> Term {
         let lower = word.to_lowercase();
         let Some((keyword, value)) = lower.split_once(':') else {
             return Term::Text(lower);
         };
-        let Some(field) = FilterField::parse(keyword) else {
+        let Some(field) = FilterField::parse(keyword, registry) else {
             return Term::Text(lower);
         };
         if field == FilterField::Due {
@@ -217,9 +231,12 @@ pub struct Filter {
 }
 
 impl Filter {
-    pub fn parse(text: &str) -> Filter {
+    pub fn parse(text: &str, registry: &ColumnRegistry) -> Filter {
         Filter {
-            terms: text.split_whitespace().map(Term::parse).collect(),
+            terms: text
+                .split_whitespace()
+                .map(|word| Term::parse(word, registry))
+                .collect(),
         }
     }
 
@@ -249,9 +266,14 @@ impl Filter {
     }
 
     /// Would a task carrying exactly `value` for `field` pass this filter's terms for that field?
-    pub fn field_allows(text: &str, field: FilterField, value: &str) -> bool {
+    pub fn field_allows(
+        text: &str,
+        field: FilterField,
+        value: &str,
+        registry: &ColumnRegistry,
+    ) -> bool {
         let values = [value.to_string()];
-        Filter::parse(text)
+        Filter::parse(text, registry)
             .terms
             .iter()
             .filter(|term| term.field() == Some(field))
@@ -272,34 +294,45 @@ impl Filter {
     }
 
     /// Replaces every term for `field` with `field:value`; other fields' terms stay.
-    pub fn with_only(text: &str, field: FilterField, value: &str) -> String {
-        let mut words = words_without_field(text, field);
-        words.push(format!("{}:{}", field.keyword(), loose(value)));
+    pub fn with_only(
+        text: &str,
+        field: FilterField,
+        value: &str,
+        registry: &ColumnRegistry,
+    ) -> String {
+        let mut words = words_without_field(text, field, registry);
+        words.push(format!("{}:{}", field.keyword(registry), loose(value)));
         words.join(" ")
     }
 
     /// Rewrites `field`'s terms so exactly `shown` (out of `all`) pass, in the shortest form:
     /// no term when everything is shown, `field:!x` hides when at most half are hidden,
     /// `field:a,b` otherwise.
-    pub fn with_shown(text: &str, field: FilterField, all: &[String], shown: &[String]) -> String {
-        let mut words = words_without_field(text, field);
+    pub fn with_shown(
+        text: &str,
+        field: FilterField,
+        all: &[String],
+        shown: &[String],
+        registry: &ColumnRegistry,
+    ) -> String {
+        let mut words = words_without_field(text, field, registry);
         let hidden: Vec<&String> = all.iter().filter(|value| !shown.contains(value)).collect();
         if hidden.is_empty() {
         } else if shown.is_empty() || hidden.len() <= shown.len() {
             for value in hidden {
-                words.push(format!("{}:!{}", field.keyword(), loose(value)));
+                words.push(format!("{}:!{}", field.keyword(registry), loose(value)));
             }
         } else {
             let values: Vec<String> = shown.iter().map(|value| loose(value)).collect();
-            words.push(format!("{}:{}", field.keyword(), values.join(",")));
+            words.push(format!("{}:{}", field.keyword(registry), values.join(",")));
         }
         words.join(" ")
     }
 }
 
-fn words_without_field(text: &str, field: FilterField) -> Vec<String> {
+fn words_without_field(text: &str, field: FilterField, registry: &ColumnRegistry) -> Vec<String> {
     text.split_whitespace()
-        .filter(|word| Term::parse(word).field() != Some(field))
+        .filter(|word| Term::parse(word, registry).field() != Some(field))
         .map(str::to_string)
         .collect()
 }
@@ -332,18 +365,24 @@ fn loose(text: &str) -> String {
 mod tests {
     use super::*;
 
+    fn registry() -> ColumnRegistry {
+        ColumnRegistry::builtin_only()
+    }
+
     /// `due:2026-09-14` is an ordinary `AnyOf` match on the raw stored date.
     #[test]
     fn due_exact_date_matches_the_stored_value() {
         assert!(Filter::field_allows(
             "due:2026-09-14",
             FilterField::Due,
-            "2026-09-14"
+            "2026-09-14",
+            &registry(),
         ));
         assert!(!Filter::field_allows(
             "due:2026-09-14",
             FilterField::Due,
-            "2026-09-15"
+            "2026-09-15",
+            &registry(),
         ));
     }
 
@@ -351,7 +390,7 @@ mod tests {
     /// the empty-values case ordinary `AnyOf` can't express.
     #[test]
     fn due_none_matches_only_the_absent_value() {
-        let filter = Filter::parse("due:none");
+        let filter = Filter::parse("due:none", &registry());
         assert!(filter.matches_values(&[], |field| {
             assert_eq!(field, FilterField::Due);
             Vec::new()
@@ -374,22 +413,26 @@ mod tests {
         assert!(Filter::field_allows(
             "due:<=7d",
             FilterField::Due,
-            &in_three_days
+            &in_three_days,
+            &registry(),
         ));
         assert!(!Filter::field_allows(
             "due:<=7d",
             FilterField::Due,
-            &in_thirty_days
+            &in_thirty_days,
+            &registry(),
         ));
         assert!(Filter::field_allows(
             "due:>7d",
             FilterField::Due,
-            &in_thirty_days
+            &in_thirty_days,
+            &registry(),
         ));
         assert!(!Filter::field_allows(
             "due:>7d",
             FilterField::Due,
-            &in_three_days
+            &in_three_days,
+            &registry(),
         ));
     }
 
@@ -397,7 +440,7 @@ mod tests {
     /// "within a week" cannot be true of a task with nothing to compare.
     #[test]
     fn due_relative_never_matches_a_missing_value() {
-        let filter = Filter::parse("due:<=7d");
+        let filter = Filter::parse("due:<=7d", &registry());
         assert!(!filter.matches_values(&[], |_| Vec::new()));
     }
 

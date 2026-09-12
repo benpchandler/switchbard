@@ -14,13 +14,14 @@ mod task_status;
 use crate::page::Page;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use switchbard_core::{BacklogTask, GoalDef, WorkSession};
 
 use crate::ball::Ball;
-use crate::columns::Column;
+use crate::columns::{Column, ColumnRegistry};
 use crate::config::{self, Action, Config, KeyChord};
 use crate::group::{self, Grouping, Row};
 use crate::paint;
@@ -65,6 +66,10 @@ pub struct AppPaths {
 
 pub struct App {
     pub repo_root: PathBuf,
+    /// What columns exist: the built-ins plus every field this repo declares.
+    /// Rebuilt once per task reload (never per frame) and shared with the view
+    /// stores and the PR page so one answer serves the whole app.
+    registry: Arc<ColumnRegistry>,
     pub config: Config,
     config_path: Option<PathBuf>,
     pub settings: SettingsStore,
@@ -139,15 +144,23 @@ impl App {
             repo_settings,
             work_dir,
         } = paths;
-        let config = config::load(config_path.as_deref());
+        let registry = Arc::new(ColumnRegistry::for_repo(repo_root));
+        let config = config::load(config_path.as_deref(), &registry);
         let (settings, settings_warnings) = SettingsStore::load(global_settings, repo_settings);
-        let (pr_views, pr_warnings) =
-            ViewStore::load_for_page(global_views.clone(), repo_views.clone(), Page::PullRequests);
+        let (pr_views, pr_warnings) = ViewStore::load_for_page(
+            Arc::clone(&registry),
+            global_views.clone(),
+            repo_views.clone(),
+            Page::PullRequests,
+        );
         let pr_state = pr_views.get(0).unwrap_or_else(ViewState::pull_requests);
         let (views, view_warnings) =
-            ViewStore::load_for_page(global_views, repo_views, Page::Tasks);
+            ViewStore::load_for_page(Arc::clone(&registry), global_views, repo_views, Page::Tasks);
+        let mut pull_requests = crate::pull_requests::PullRequests::default();
+        pull_requests.set_registry(Arc::clone(&registry));
         let mut app = App {
             repo_root: repo_root.to_path_buf(),
+            registry,
             config_seen: config_path.as_deref().and_then(config::modified_at),
             config_path,
             settings,
@@ -183,7 +196,7 @@ impl App {
             input: String::new(),
             pane: Pane::None,
             page: Page::Tasks,
-            pull_requests: Default::default(),
+            pull_requests,
             picker: None,
             picker_parents: Vec::new(),
             column_purpose: ColumnPurpose::Filter,
@@ -228,6 +241,12 @@ impl App {
         self.top.iter().position(|id| *id == task.id).map(|p| p + 1)
     }
 
+    /// What columns exist in this repo, for every caller that has to resolve a
+    /// `Column` (the renderer, the pickers, the view store).
+    pub fn registry(&self) -> &Arc<ColumnRegistry> {
+        &self.registry
+    }
+
     /// A cell's text: what the column says, plus what only the app knows
     /// (rank, live work, and the title's roll-up badge).
     pub fn cell(&self, column: Column, task: &BacklogTask) -> String {
@@ -239,6 +258,7 @@ impl App {
             Column::Work => "●".repeat(self.working(task).len().min(3)),
             Column::Title => self.title_cell(task),
             other => other.display_text(
+                &self.registry,
                 task,
                 self.state.abbreviated.contains(&other),
                 &self.goals,
@@ -296,7 +316,7 @@ impl App {
             self.state.filter,
             self.state
                 .sort
-                .map(|sort| sort.to_text())
+                .map(|sort| sort.to_text(&self.registry))
                 .unwrap_or_default(),
             self.pane
         )
@@ -323,10 +343,10 @@ impl App {
             pr_page: self.page == Page::PullRequests,
             inbox_page: self.page == Page::Inbox,
             task_slot,
-            task_view: tasks.to_lua(),
+            task_view: tasks.to_lua(&self.registry),
             task_selected: self.selected,
             pr_slot,
-            pr_view: prs.to_lua(),
+            pr_view: prs.to_lua(&self.registry),
             pr_selected: self.pull_requests.selected,
             pr_id: self.pull_requests.selection_identity(),
         }
@@ -391,8 +411,8 @@ impl App {
         }
         let selected = parts.next().and_then(|n| n.parse().ok());
         if let Some(record) = parts.next() {
-            self.state = ViewState::from_lua(record);
-            self.state.sanitize(Page::Tasks);
+            self.state = ViewState::from_lua(record, &self.registry);
+            self.state.sanitize(Page::Tasks, &self.registry);
         }
         self.refilter();
         if let Some(selected) = selected {
@@ -408,11 +428,12 @@ impl App {
     fn restore_resume(&mut self, record: &resume::ResumeRecord) {
         self.switch_page(Page::Tasks);
         self.view = record.task_slot;
-        self.state = ViewState::from_lua(&record.task_view);
-        self.state.sanitize(Page::Tasks);
+        self.state = ViewState::from_lua(&record.task_view, &self.registry);
+        self.state.sanitize(Page::Tasks, &self.registry);
         self.inactive_view = record.pr_slot;
-        self.inactive_state = ViewState::from_lua(&record.pr_view);
-        self.inactive_state.sanitize(Page::PullRequests);
+        self.inactive_state = ViewState::from_lua(&record.pr_view, &self.registry);
+        self.inactive_state
+            .sanitize(Page::PullRequests, &self.registry);
         self.refilter();
         self.select(record.task_selected);
         self.pull_requests.selected = record.pr_selected;
@@ -451,11 +472,12 @@ impl App {
         };
         self.switch_page(Page::Tasks);
         self.view = task_slot;
-        self.state = ViewState::from_lua(&tasks);
-        self.state.sanitize(Page::Tasks);
+        self.state = ViewState::from_lua(&tasks, &self.registry);
+        self.state.sanitize(Page::Tasks, &self.registry);
         self.inactive_view = pr_slot;
-        self.inactive_state = ViewState::from_lua(&prs);
-        self.inactive_state.sanitize(Page::PullRequests);
+        self.inactive_state = ViewState::from_lua(&prs, &self.registry);
+        self.inactive_state
+            .sanitize(Page::PullRequests, &self.registry);
         self.refilter();
         self.select(selected);
         self.pull_requests.selected = pr_selected;
@@ -743,7 +765,9 @@ impl App {
             Grouping::nested(Column::Project, Column::Goal),
             Grouping::nested(Column::Goal, Column::Project),
         ];
-        let rest: Vec<Grouping> = Column::groupable_columns()
+        let rest: Vec<Grouping> = self
+            .registry
+            .groupable_task_columns()
             .into_iter()
             .map(Grouping::by)
             .filter(|grouping| !leading.contains(grouping))
@@ -758,7 +782,7 @@ impl App {
                     " "
                 };
                 PickOption {
-                    label: format!("{mark}{}", grouping.name()),
+                    label: format!("{mark}{}", grouping.name(&self.registry)),
                     count: 0,
                     key: None,
                     payload: Payload::Grouping(grouping),
@@ -1225,16 +1249,20 @@ impl App {
             "dismiss" => self.apply(&Action::DismissNotifications),
             "palette" => self.choose_palette(rest.trim()),
             "theme" => self.choose_theme(rest.trim()),
-            "group" => match Grouping::parse(rest) {
+            "group" => match Grouping::parse(rest, &self.registry) {
                 Some(grouping) => self.set_group(grouping),
-                None => self.fail(format!(
-                    "group by one of {}, two of them as a,b, or off",
-                    Column::groupable_columns()
+                None => {
+                    let known = self
+                        .registry
+                        .groupable_task_columns()
                         .iter()
-                        .map(|column| column.name())
+                        .map(|column| column.name(&self.registry).to_string())
                         .collect::<Vec<_>>()
-                        .join(", ")
-                )),
+                        .join(", ");
+                    self.fail(format!(
+                        "group by one of {known}, two of them as a,b, or off"
+                    ));
+                }
             },
             "goal" => self.toggle_goal_link(rest.trim()),
             "bug" => self.file_report(ReportKind::Bug, rest),
@@ -1353,13 +1381,15 @@ impl App {
         }
         self.page = page;
         if page != Page::Inbox {
-            self.state.sanitize(page);
+            self.state.sanitize(page, &self.registry);
         }
         self.refilter();
     }
 
-    pub fn page_columns(&self) -> &'static [Column] {
-        crate::list_settings::ListSettings::for_page(self.page).map_or(&[], |scope| scope.catalog())
+    pub fn page_columns(&self) -> Vec<Column> {
+        crate::list_settings::ListSettings::for_page(self.page)
+            .map(|scope| scope.catalog(&self.registry))
+            .unwrap_or_default()
     }
 
     pub fn filter_text(&self) -> &str {
@@ -1398,14 +1428,20 @@ impl App {
             &self.inactive_state
         };
         let base = self.settings.effective().base_filter(&state.filter);
-        let filter = Filter::parse(&format!("{base} {}", state.filter));
+        let filter = Filter::parse(&format!("{base} {}", state.filter), &self.registry);
         self.visible = (0..self.tasks.len())
             .filter(|&index| {
-                filter.matches(&self.tasks[index], &self.goals, &self.relations.blocked)
+                filter.matches(
+                    &self.registry,
+                    &self.tasks[index],
+                    &self.goals,
+                    &self.relations.blocked,
+                )
             })
             .collect();
         if let Some(sort) = state.sort {
             sort::apply(
+                &self.registry,
                 &self.tasks,
                 &mut self.visible,
                 sort,
@@ -1416,6 +1452,7 @@ impl App {
         }
         let pinned: &[String] = if state.pin_top { &self.top } else { &[] };
         let headings = group::Headings {
+            registry: &self.registry,
             projects: &self.projects,
             goals: &self.goals,
             goal_summaries: &self.goal_summaries,
@@ -1442,15 +1479,19 @@ impl App {
         self.status = if self.state.group.is_flat() {
             "flat list".to_string()
         } else {
-            format!("organized by {} · o changes it", self.state.group.name())
+            format!(
+                "organized by {} · o changes it",
+                self.state.group.name(&self.registry)
+            )
         };
-        self.telemetry
-            .record("action", format!("group {}", self.state.group.name()));
+        let name = self.state.group.name(&self.registry);
+        self.telemetry.record("action", format!("group {name}"));
     }
 
     /// `,`: the standing preferences, one row per status that can be hidden.
     pub(super) fn open_settings(&mut self) {
         let mut options: Vec<PickOption> = tasks::field_values(
+            &self.registry,
             &self.tasks,
             tasks::FilterField::Status,
             &self.goals,
@@ -1568,6 +1609,7 @@ impl App {
                     self.status = "task storage reconnected".into();
                 }
                 self.storage_retry = false;
+                self.adopt_fields(&backlog.fields);
                 self.tasks = backlog.tasks;
                 self.projects = backlog.projects;
                 self.goals = backlog.goals;
@@ -1623,8 +1665,31 @@ impl App {
         }
     }
 
+    /// Take up the repo's declared fields when they have changed: one new
+    /// registry, published to everything that resolves a `Column`, and the live
+    /// views re-sanitized so a column whose field is gone leaves the table.
+    /// Costs one comparison when `backlog/config.yml` is unchanged, which is
+    /// every reload but the one after an edit.
+    fn adopt_fields(&mut self, fields: &[switchbard_core::FieldDecl]) {
+        if self.registry.is_current(fields) {
+            return;
+        }
+        self.registry = Arc::new(self.registry.reloaded(fields));
+        self.views.set_registry(Arc::clone(&self.registry));
+        self.inactive_views.set_registry(Arc::clone(&self.registry));
+        self.pull_requests.set_registry(Arc::clone(&self.registry));
+        let (page, other) = match self.page {
+            Page::PullRequests => (Page::PullRequests, Page::Tasks),
+            _ => (Page::Tasks, Page::PullRequests),
+        };
+        self.state.sanitize(page, &self.registry);
+        self.inactive_state.sanitize(other, &self.registry);
+        self.views.sanitize(page);
+        self.inactive_views.sanitize(other);
+    }
+
     fn reload_config(&mut self) {
-        self.config = config::load(self.config_path.as_deref());
+        self.config = config::load(self.config_path.as_deref(), &self.registry);
         self.status = "config reloaded".to_string();
         self.telemetry
             .record("config_reload", self.config.warnings.len().to_string());

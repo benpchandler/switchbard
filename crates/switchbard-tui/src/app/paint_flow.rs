@@ -13,7 +13,7 @@ impl App {
             .state
             .columns
             .iter()
-            .map(|column| PickOption::paint_column(*column, false))
+            .map(|column| PickOption::paint_column(&self.registry, *column, false))
             .collect();
         let selected_id = if self.page == crate::page::Page::PullRequests {
             self.pull_requests.row().map(|row| row.number.to_string())
@@ -52,9 +52,11 @@ impl App {
                 Payload::DeleteAllPaint,
             ));
         }
-        for &column in self.page_columns() {
-            if !self.state.columns.contains(&column) && column.filter_field().is_some() {
-                options.push(PickOption::paint_column(column, true));
+        for column in self.page_columns() {
+            if !self.state.columns.contains(&column)
+                && column.filter_field(&self.registry).is_some()
+            {
+                options.push(PickOption::paint_column(&self.registry, column, true));
             }
         }
         self.paint_return = None;
@@ -63,7 +65,7 @@ impl App {
     }
 
     pub(super) fn is_categorical(&self, column: Column) -> bool {
-        column.filter_field().is_some() && !self.column_values(column).is_empty()
+        column.filter_field(&self.registry).is_some() && !self.column_values(column).is_empty()
     }
 
     /// A column entry paints by its values when it has categories, else the whole column.
@@ -76,7 +78,7 @@ impl App {
     }
 
     pub(super) fn open_paint_values_picker(&mut self, column: Column) {
-        let Some(_) = column.filter_field() else {
+        let Some(_) = column.filter_field(&self.registry) else {
             return;
         };
         let mut options = vec![PickOption::numbered(
@@ -112,7 +114,9 @@ impl App {
             .paint
             .iter()
             .enumerate()
-            .map(|(index, rule)| PickOption::numbered(rule.label(), Payload::Rule(index)))
+            .map(|(index, rule)| {
+                PickOption::numbered(rule.label(&self.registry), Payload::Rule(index))
+            })
             .collect();
         if options.is_empty() {
             self.status = "no paint rules".to_string();
@@ -145,7 +149,9 @@ impl App {
             .paint
             .iter()
             .enumerate()
-            .map(|(index, rule)| PickOption::numbered(rule.label(), Payload::Rule(index)))
+            .map(|(index, rule)| {
+                PickOption::numbered(rule.label(&self.registry), Payload::Rule(index))
+            })
             .collect();
         self.open_picker(PickerPurpose::ChoosePaintRule(action), options);
     }
@@ -174,7 +180,7 @@ impl App {
     }
 
     pub(super) fn paint_auto(&mut self, column: Column) {
-        let Some(_) = column.filter_field() else {
+        let Some(_) = column.filter_field(&self.registry) else {
             return;
         };
         let palette = if self.config.palette.is_empty() {
@@ -186,9 +192,11 @@ impl App {
             let color = &palette[index % palette.len()];
             paint::set_value_color(&mut self.state.paint, column, value, Some(color));
         }
-        self.status = format!("painted every {} value", column.name());
-        self.telemetry
-            .record("action", format!("paint_auto {}", column.name()));
+        self.status = format!("painted every {} value", column.name(&self.registry));
+        self.telemetry.record(
+            "action",
+            format!("paint_auto {}", column.name(&self.registry)),
+        );
     }
 
     pub(super) fn clear_all_paint(&mut self) {

@@ -63,7 +63,10 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
     let fresh = open_app(&h.root, &h.config_path);
     assert_eq!(fresh.state.filter, "status:!done");
     assert_eq!(fresh.view_label(), "v1");
-    assert_eq!(fresh.views.get(0).unwrap().name(), "status:!done ≈pri");
+    assert_eq!(
+        fresh.views.get(0).unwrap().name(fresh.registry()),
+        "status:!done ≈pri"
+    );
 
     let other_repo = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(other_repo.path().join("backlog/tasks")).unwrap();
@@ -79,11 +82,13 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
             Telemetry::in_memory(),
         )
     };
+    let other = other_global(other_repo.path());
     assert_eq!(
-        other_global(other_repo.path()).views.get(0).unwrap().name(),
+        other.views.get(0).unwrap().name(other.registry()),
         "all",
         "other repos still open the global default"
     );
+    drop(other);
 
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('g'));
@@ -100,8 +105,9 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
     );
     let repo_file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
     assert!(!repo_file.contains("done"), "override dropped: {repo_file}");
+    let other = other_global(other_repo.path());
     assert_eq!(
-        other_global(other_repo.path()).views.get(0).unwrap().name(),
+        other.views.get(0).unwrap().name(other.registry()),
         "status:!done ≈pri"
     );
     assert_eq!(

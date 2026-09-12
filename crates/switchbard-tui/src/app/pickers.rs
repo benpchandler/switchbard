@@ -147,7 +147,7 @@ impl App {
             .filter(|action| *action != ColumnAction::Glyphs || self.is_categorical(column))
             .filter(|action| {
                 *action != ColumnAction::Group
-                    || (self.page == crate::page::Page::Tasks && column.groupable())
+                    || (self.page == crate::page::Page::Tasks && column.groupable(&self.registry))
             })
             .filter(|action| {
                 *action != ColumnAction::Abbreviate
@@ -159,8 +159,10 @@ impl App {
             .collect();
         self.open_picker(PickerPurpose::ColumnActions(column), options);
         self.status.clear();
-        self.telemetry
-            .record("action", format!("column_actions {}", column.name()));
+        self.telemetry.record(
+            "action",
+            format!("column_actions {}", column.name(&self.registry)),
+        );
     }
 
     pub(super) fn run_column_action(&mut self, column: Column, action: ColumnAction) {
@@ -260,12 +262,12 @@ impl App {
         self.state
             .columns
             .iter()
-            .map(|column| PickOption::column(*column, false))
+            .map(|column| PickOption::column(&self.registry, *column, false))
             .chain(
                 self.page_columns()
                     .iter()
                     .filter(|column| !self.state.columns.contains(column))
-                    .map(|column| PickOption::column(*column, true)),
+                    .map(|column| PickOption::column(&self.registry, *column, true)),
             )
             .collect()
     }
@@ -278,15 +280,17 @@ impl App {
             Some(_) => self.status = "at least one column must stay".to_string(),
             None => self.state.columns.push(column),
         }
-        self.telemetry
-            .record("action", format!("column_toggle {}", column.name()));
+        self.telemetry.record(
+            "action",
+            format!("column_toggle {}", column.name(&self.registry)),
+        );
     }
 
     pub(super) fn shown_column_options(&self) -> Vec<PickOption> {
         self.state
             .columns
             .iter()
-            .map(|column| PickOption::column(*column, false))
+            .map(|column| PickOption::column(&self.registry, *column, false))
             .collect()
     }
 
@@ -313,15 +317,20 @@ impl App {
 
     /// The glyphs a column's values take, in vocabulary order, for its header.
     pub fn glyph_legend(&self, column: Column) -> String {
-        let Some(field) = column.filter_field() else {
+        let Some(field) = column.filter_field(&self.registry) else {
             return String::new();
         };
-        let mut values: Vec<String> =
-            tasks::field_values(&self.tasks, field, &self.goals, &self.relations.blocked)
-                .into_iter()
-                .map(|(value, _)| value)
-                .collect();
-        values.sort_by_key(|value| (column.vocabulary_rank(value), value.clone()));
+        let mut values: Vec<String> = tasks::field_values(
+            &self.registry,
+            &self.tasks,
+            field,
+            &self.goals,
+            &self.relations.blocked,
+        )
+        .into_iter()
+        .map(|(value, _)| value)
+        .collect();
+        values.sort_by_key(|value| (column.vocabulary_rank(&self.registry, value), value.clone()));
         values
             .iter()
             .map(|value| self.config.glyph(column, value))
@@ -330,42 +339,49 @@ impl App {
 
     /// `g` in the columns picker: glyphs instead of text, for categorical columns.
     pub(super) fn toggle_glyph_column(&mut self, column: Column) {
-        if column.filter_field().is_none() || column == Column::Id {
-            self.status = format!("{} has no glyphs: it is free text", column.name());
+        if column.filter_field(&self.registry).is_none() || column == Column::Id {
+            self.status = format!(
+                "{} has no glyphs: it is free text",
+                column.name(&self.registry)
+            );
             return;
         }
         match self.state.glyph_columns.iter().position(|c| *c == column) {
             Some(index) => {
                 self.state.glyph_columns.remove(index);
-                self.status = format!("{} shows text", column.name());
+                self.status = format!("{} shows text", column.name(&self.registry));
             }
             None => {
                 self.state.glyph_columns.push(column);
-                self.status = format!("{} shows glyphs", column.name());
+                self.status = format!("{} shows glyphs", column.name(&self.registry));
             }
         }
-        self.telemetry
-            .record("action", format!("glyph_toggle {}", column.name()));
+        self.telemetry.record(
+            "action",
+            format!("glyph_toggle {}", column.name(&self.registry)),
+        );
     }
 
     /// `1a` or `a` in the columns picker: short form (bare id, H/M/L) on or off.
     pub(super) fn toggle_abbreviated(&mut self, column: Column) {
         if self.page == crate::page::Page::PullRequests || !column.abbreviable() {
-            self.status = format!("{} has no short form", column.name());
+            self.status = format!("{} has no short form", column.name(&self.registry));
             return;
         }
         match self.state.abbreviated.iter().position(|c| *c == column) {
             Some(index) => {
                 self.state.abbreviated.remove(index);
-                self.status = format!("{} shows in full", column.name());
+                self.status = format!("{} shows in full", column.name(&self.registry));
             }
             None => {
                 self.state.abbreviated.push(column);
-                self.status = format!("{} abbreviated", column.name());
+                self.status = format!("{} abbreviated", column.name(&self.registry));
             }
         }
-        self.telemetry
-            .record("action", format!("abbreviate_toggle {}", column.name()));
+        self.telemetry.record(
+            "action",
+            format!("abbreviate_toggle {}", column.name(&self.registry)),
+        );
     }
 
     pub(super) fn move_column(&mut self, column: Column, delta: isize) {
@@ -377,8 +393,10 @@ impl App {
             return;
         }
         self.state.columns.swap(index, target as usize);
-        self.telemetry
-            .record("action", format!("column_move {} {delta}", column.name()));
+        self.telemetry.record(
+            "action",
+            format!("column_move {} {delta}", column.name(&self.registry)),
+        );
     }
 
     pub(super) fn column_values(&self, column: Column) -> Vec<(String, usize)> {
@@ -386,19 +404,25 @@ impl App {
             self.pull_requests.column_values(column)
         } else {
             column
-                .filter_field()
+                .filter_field(&self.registry)
                 .map(|field| {
-                    tasks::field_values(&self.tasks, field, &self.goals, &self.relations.blocked)
+                    tasks::field_values(
+                        &self.registry,
+                        &self.tasks,
+                        field,
+                        &self.goals,
+                        &self.relations.blocked,
+                    )
                 })
                 .unwrap_or_default()
         };
         if column.is_date() {
-            for bucket in column.spec().vocabulary {
+            for bucket in column.spec(&self.registry).vocabulary().iter() {
                 if !values.iter().any(|(value, _)| value == bucket) {
-                    values.push(((*bucket).to_string(), 0));
+                    values.push((bucket.to_string(), 0));
                 }
             }
-            values.sort_by_key(|(value, _)| column.vocabulary_rank(value));
+            values.sort_by_key(|(value, _)| column.vocabulary_rank(&self.registry, value));
         }
         values
     }
@@ -407,13 +431,14 @@ impl App {
         let field = if self.page == crate::page::Page::PullRequests && column == Column::Id {
             Some(FilterField::Id)
         } else {
-            column.filter_field()
+            column.filter_field(&self.registry)
         };
         match field {
             Some(field) => {
                 let values = self.column_values(column);
                 if values.is_empty() {
-                    self.status = format!("no {} values to pick from", field.keyword());
+                    self.status =
+                        format!("no {} values to pick from", field.keyword(&self.registry));
                     return;
                 }
                 let options = values
@@ -424,22 +449,31 @@ impl App {
             }
             None => {
                 self.mode = Mode::Filter;
-                self.status = format!("{} is free text: type to search", column.header());
+                self.status = format!(
+                    "{} is free text: type to search",
+                    column.header(&self.registry)
+                );
             }
         }
-        self.telemetry
-            .record("action", format!("filter_column {}", column.header()));
+        self.telemetry.record(
+            "action",
+            format!("filter_column {}", column.header(&self.registry)),
+        );
     }
 
     pub(super) fn open_sort_picker(&mut self, column: Column) {
-        let mut options: Vec<PickOption> = sort::orders_for(column)
+        let mut options: Vec<PickOption> = sort::orders_for(column, &self.registry)
             .into_iter()
-            .map(|order| PickOption::numbered(order.label(column), Payload::Order(order)))
+            .map(|order| {
+                PickOption::numbered(order.label(column, &self.registry), Payload::Order(order))
+            })
             .collect();
         options.push(PickOption::numbered("none", Payload::NoSort));
         self.open_picker(PickerPurpose::Sort(column), options);
-        self.telemetry
-            .record("action", format!("sort_column {}", column.header()));
+        self.telemetry.record(
+            "action",
+            format!("sort_column {}", column.header(&self.registry)),
+        );
     }
 
     pub(super) fn handle_pick_value_key(&mut self, event: KeyEvent) {
@@ -793,7 +827,9 @@ impl App {
             .collect();
         let mut shown: Vec<String> = all
             .iter()
-            .filter(|candidate| Filter::field_allows(self.filter_text(), field, candidate))
+            .filter(|candidate| {
+                Filter::field_allows(self.filter_text(), field, candidate, &self.registry)
+            })
             .cloned()
             .collect();
         match shown.iter().position(|candidate| candidate == value) {
@@ -802,11 +838,11 @@ impl App {
             }
             None => shown.push(value.to_string()),
         }
-        let text = Filter::with_shown(self.filter_text(), field, &all, &shown);
+        let text = Filter::with_shown(self.filter_text(), field, &all, &shown, &self.registry);
         self.set_filter(text);
         self.telemetry.record(
             "action",
-            format!("filter_toggle {}:{value}", field.keyword()),
+            format!("filter_toggle {}:{value}", field.keyword(&self.registry)),
         );
     }
 
@@ -892,17 +928,19 @@ impl App {
             (PickerPurpose::Merge, Payload::CancelMerge) => self.cancel_pr_merge(),
             (PickerPurpose::Merge, Payload::Merge(method)) => self.submit_pr_merge(method),
             (PickerPurpose::Filter(field), Payload::Text(value)) => {
-                let text = Filter::with_only(self.filter_text(), field, &value);
+                let text = Filter::with_only(self.filter_text(), field, &value, &self.registry);
                 self.set_filter(text);
-                self.telemetry
-                    .record("action", format!("filter_pick {}:{value}", field.keyword()));
+                self.telemetry.record(
+                    "action",
+                    format!("filter_pick {}:{value}", field.keyword(&self.registry)),
+                );
             }
             (PickerPurpose::Sort(column), Payload::Order(order)) => {
                 self.state.sort = Some(Sort { column, order });
                 self.refilter();
                 self.telemetry.record(
                     "action",
-                    format!("sort_pick {}:{:?}", column.header(), order),
+                    format!("sort_pick {}:{:?}", column.header(&self.registry), order),
                 );
             }
             (PickerPurpose::Sort(_), Payload::NoSort) => {
@@ -926,7 +964,7 @@ impl App {
                     }
                     self.status = format!(
                         "{} added as column {}",
-                        column.name(),
+                        column.name(&self.registry),
                         self.state.columns.len()
                     );
                 }

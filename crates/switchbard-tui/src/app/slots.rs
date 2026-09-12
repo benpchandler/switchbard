@@ -13,7 +13,7 @@ impl App {
             .map(|(slot, view, _)| {
                 PickOption::keyed(
                     char::from_digit((slot + 1) as u32, 10).expect("slots are bounded to nine"),
-                    view.name(),
+                    view.name(self.registry()),
                     Payload::ViewSlot(slot),
                 )
             })
@@ -100,7 +100,8 @@ impl App {
         };
         self.view = slot;
         self.state = saved;
-        self.state.sanitize(self.page);
+        let registry = std::sync::Arc::clone(self.registry());
+        self.state.sanitize(self.page, &registry);
         self.refilter();
     }
 }

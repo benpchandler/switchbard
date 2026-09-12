@@ -539,36 +539,15 @@ fn list(root: &Path, filters: &ListFilters) -> Result<()> {
         .collect();
     if let Some(name) = filters.sort {
         let decl = find_declared(&repo.fields, name)?;
-        rows.sort_by(|a, b| custom_sort_key(a, decl).cmp(&custom_sort_key(b, decl)));
+        rows.sort_by(|a, b| {
+            switchbard_core::custom_field_sort_key(a, decl)
+                .cmp(&switchbard_core::custom_field_sort_key(b, decl))
+        });
     }
     for task in rows {
         println!("{}", render::list_row(task));
     }
     Ok(())
-}
-
-/// `(absent, declared-value rank, raw value)` — absent sorts last; an enum
-/// field's rank is its position in the declaration's `values` (its
-/// sort/section order); every other kind ranks 0, so the tuple's third
-/// element (lexical) is what actually orders them.
-fn custom_sort_key<'t>(
-    task: &'t BacklogTask,
-    decl: &switchbard_core::FieldDecl,
-) -> (bool, usize, &'t str) {
-    match task.custom.get(&decl.name) {
-        None => (true, usize::MAX, ""),
-        Some(value) => {
-            let rank = if decl.kind == switchbard_core::FieldKind::Enum {
-                decl.values
-                    .iter()
-                    .position(|v| v == value)
-                    .unwrap_or(usize::MAX)
-            } else {
-                0
-            };
-            (false, rank, value.as_str())
-        }
-    }
 }
 
 fn find_declared<'f>(
