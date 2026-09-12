@@ -3,9 +3,37 @@ mod harness;
 use crossterm::event::KeyCode;
 use harness::*;
 
+// The writer stamps local time, while these filters deliberately use UTC days.
+// Seed the day explicitly so the rollover test also works near local midnight.
+fn today_harness() -> Harness {
+    let mut h = Harness::new();
+    let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    for entry in std::fs::read_dir(h.root.join("backlog/tasks"))
+        .expect("fixture tasks")
+        .take(3)
+    {
+        let path = entry.expect("fixture entry").path();
+        let source = std::fs::read_to_string(&path).expect("fixture reads");
+        let text = source
+            .lines()
+            .map(|line| {
+                if line.starts_with("created_date:") {
+                    format!("created_date: '{date} 00:00'")
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(path, text).expect("fixture timestamp");
+    }
+    h.app = open_app(&h.root, &h.config_path);
+    h
+}
+
 #[test]
 fn utc_day_change_rebuilds_a_cached_date_filter_without_disk_edits() {
-    let mut h = Harness::new();
+    let mut h = today_harness();
     h.type_text("/filed:today");
     h.press(KeyCode::Enter);
     assert_eq!(h.app.visible.len(), 3);
@@ -22,7 +50,7 @@ fn utc_day_change_rebuilds_a_cached_date_filter_without_disk_edits() {
 
 #[test]
 fn utc_day_change_rebuilds_tasks_while_pull_requests_is_active() {
-    let mut h = Harness::new();
+    let mut h = today_harness();
     h.type_text("/filed:today");
     h.press(KeyCode::Enter);
     h.press(KeyCode::Tab);
@@ -43,7 +71,7 @@ fn utc_day_change_rebuilds_tasks_while_pull_requests_is_active() {
 
 #[test]
 fn utc_day_change_rebuilds_tasks_while_inbox_is_active() {
-    let mut h = Harness::new();
+    let mut h = today_harness();
     h.type_text("/filed:today");
     h.press(KeyCode::Enter);
     h.press(KeyCode::Tab);
