@@ -99,6 +99,11 @@ pub struct App {
     pub visible: Vec<usize>,
     /// What the table shows: tasks, with a heading before each section when grouped.
     pub rows: Vec<Row>,
+    /// `state.group`'s current resolved levels: its own for a fixed grouping,
+    /// `group::auto_levels`'s answer for `auto`. Recomputed with `rows` in
+    /// `refilter_tasks`, never per frame; the title bar and the `o` status
+    /// line both read this rather than re-deriving it (Fact-source probe).
+    pub group_levels: Vec<Column>,
     /// Index into `rows`; never rests on a heading while a task row exists.
     pub selected: usize,
     /// First row on screen; the renderer keeps `selected` inside the window.
@@ -179,6 +184,7 @@ impl App {
             opened: Instant::now(),
             visible: Vec::new(),
             rows: Vec::new(),
+            group_levels: Vec::new(),
             selected: 0,
             scroll: 0,
             help_scroll: 0,
@@ -755,15 +761,16 @@ impl App {
         }
     }
 
-    /// `o`: what to organize the list by. Project, goal, and the two nestings
-    /// lead; the current choice is ✓, `x` flattens; picking the current
-    /// choice flattens too.
+    /// `o`: what to organize the list by. Project, goal, the two nestings, and
+    /// `auto` lead; the current choice is ✓, `x` flattens; picking the
+    /// current choice flattens too.
     pub(super) fn open_organize_picker(&mut self) {
         let leading = [
             Grouping::by(Column::Project),
             Grouping::by(Column::Goal),
             Grouping::nested(Column::Project, Column::Goal),
             Grouping::nested(Column::Goal, Column::Project),
+            Grouping::auto(),
         ];
         let rest: Vec<Grouping> = self
             .registry
@@ -781,8 +788,17 @@ impl App {
                 } else {
                     " "
                 };
+                // `auto`'s own row shows what it resolved to, once selected;
+                // any other row (including an unselected `auto`) shows its
+                // bare spelling — `self.group_levels` only ever answers for
+                // whichever grouping is actually active right now.
+                let label = if grouping.is_auto() && self.state.group.is_auto() {
+                    grouping.label(&self.registry, &self.group_levels)
+                } else {
+                    grouping.name(&self.registry)
+                };
                 PickOption {
-                    label: format!("{mark}{}", grouping.name(&self.registry)),
+                    label: format!("{mark}{label}"),
                     count: 0,
                     key: None,
                     payload: Payload::Grouping(grouping),
@@ -903,7 +919,7 @@ impl App {
             return Vec::new();
         }
         let mut names: Vec<String> = [
-            "bug", "idea", "group", "palette", "theme", "reload", "page", "help", "q",
+            "bug", "idea", "outline", "palette", "theme", "reload", "page", "help", "q",
         ]
         .iter()
         .map(|name| name.to_string())
@@ -1233,7 +1249,7 @@ impl App {
             self.status = "Switch to Tasks or Pull Requests to use list controls".into();
             return;
         }
-        if self.page == Page::PullRequests && matches!(verb, "group" | "goal") {
+        if self.page == Page::PullRequests && matches!(verb, "group" | "outline" | "goal") {
             self.status = "Switch to Tasks to use task controls".to_string();
             return;
         }
@@ -1249,7 +1265,9 @@ impl App {
             "dismiss" => self.apply(&Action::DismissNotifications),
             "palette" => self.choose_palette(rest.trim()),
             "theme" => self.choose_theme(rest.trim()),
-            "group" => match Grouping::parse(rest, &self.registry) {
+            // `:outline` is the word the rest of the app uses (TASK-145);
+            // `:group` keeps working for anyone who already types it.
+            "group" | "outline" => match Grouping::parse(rest, &self.registry) {
                 Some(grouping) => self.set_group(grouping),
                 None => {
                     let known = self
@@ -1260,7 +1278,7 @@ impl App {
                         .collect::<Vec<_>>()
                         .join(", ");
                     self.fail(format!(
-                        "group by one of {known}, two of them as a,b, or off"
+                        "outline by one of {known}, several of them as a,b,c, auto, or off"
                     ));
                 }
             },
@@ -1458,11 +1476,27 @@ impl App {
             goal_summaries: &self.goal_summaries,
             blocked: &self.relations.blocked,
         };
-        self.rows = group::rows(&self.tasks, &self.visible, &state.group, &headings, pinned);
+        // `auto` resolves here, over the just-filtered set, and nowhere else:
+        // once per rebuild, never per frame. A fixed grouping's levels are
+        // its own; either way `group_levels` becomes the one place downstream
+        // reads "what is this list actually sectioned by right now".
+        let levels: Vec<Column> = if state.group.is_auto() {
+            group::auto_levels(
+                &self.tasks,
+                &self.visible,
+                &self.registry.groupable_task_columns(),
+                &headings,
+                Grouping::MAX_DEPTH,
+            )
+        } else {
+            state.group.levels().to_vec()
+        };
+        self.rows = group::rows(&self.tasks, &self.visible, &levels, &headings, pinned);
+        self.group_levels = levels;
         self.select(self.selected);
     }
 
-    /// `o`, `:group`, or a column's menu: organize the list, or flatten it.
+    /// `o`, `:outline`/`:group`, or a column's menu: organize the list, or flatten it.
     pub(super) fn set_group(&mut self, grouping: Grouping) {
         let kept = self.selected_task().map(|task| task.id.clone());
         self.state.group = grouping;
@@ -1476,16 +1510,13 @@ impl App {
                 self.select(row);
             }
         }
+        let label = self.state.group.label(&self.registry, &self.group_levels);
         self.status = if self.state.group.is_flat() {
             "flat list".to_string()
         } else {
-            format!(
-                "organized by {} · o changes it",
-                self.state.group.name(&self.registry)
-            )
+            format!("organized by {label} · o changes it")
         };
-        let name = self.state.group.name(&self.registry);
-        self.telemetry.record("action", format!("group {name}"));
+        self.telemetry.record("action", format!("group {label}"));
     }
 
     /// `,`: the standing preferences, one row per status that can be hidden.

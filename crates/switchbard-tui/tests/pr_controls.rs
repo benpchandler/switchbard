@@ -27,7 +27,7 @@ fn pr_column_menu_and_saved_layout_are_isolated_from_tasks() {
         "PR header must open shared column menu: {menu}"
     );
     assert!(
-        !menu.contains("group by it"),
+        !menu.contains("outline by it"),
         "PR grouping is not available: {menu}"
     );
     h.press(KeyCode::Char('x'));

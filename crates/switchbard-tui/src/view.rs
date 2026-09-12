@@ -292,8 +292,9 @@ fn table_title(app: &App) -> String {
         parts.push(format!("paint:{}", app.state.paint.len()));
     }
     if !app.state.group.is_flat() {
-        parts.push(format!("group:{}", app.state.group.name(app.registry())));
-        if app.state.group.levels().contains(&Column::Project) {
+        let label = app.state.group.label(app.registry(), &app.group_levels);
+        parts.push(format!("outline:{label}"));
+        if app.group_levels.contains(&Column::Project) {
             parts.extend(app.initiatives());
         }
     }

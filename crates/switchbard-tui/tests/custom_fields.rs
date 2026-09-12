@@ -5,7 +5,37 @@ mod harness;
 
 use crossterm::event::KeyCode;
 use harness::*;
+use switchbard_core::{create_task_allocating_id, NewBacklogTask};
 use switchbard_tui::telemetry::Telemetry;
+
+/// A task carrying a project and ball on top of a declared field, for the
+/// three-deep nesting test — `fixture()`'s own tasks carry neither.
+fn seed_project_task(
+    root: &std::path::Path,
+    title: &str,
+    project: &str,
+    ball_label: &str,
+    custom: &[(&str, &str)],
+) {
+    let task = NewBacklogTask {
+        title: title.to_string(),
+        description: format!("Description of {title}."),
+        status: "To Do".to_string(),
+        priority: "medium".to_string(),
+        acceptance_criteria: vec!["It works".to_string()],
+        parent: None,
+        labels: vec!["loans".to_string(), ball_label.to_string()],
+        assignees: Vec::new(),
+        project: Some(project.to_string()),
+        dependencies: Vec::new(),
+        due_date: None,
+        custom: custom
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect(),
+    };
+    create_task_allocating_id(root, &task).unwrap();
+}
 
 /// The fixture every test here shares: one groupable enum field whose declared
 /// order is deliberately *not* alphabetical (so declared order and alphabetical
@@ -211,7 +241,7 @@ fn a_field_declared_ungroupable_is_refused_as_a_section_level() {
     h.type_text(":group note");
     h.press(KeyCode::Enter);
     assert!(
-        h.app.status.starts_with("group by one of"),
+        h.app.status.starts_with("outline by one of"),
         "{}",
         h.app.status
     );
@@ -405,4 +435,79 @@ fn each_repo_sees_only_its_own_declared_fields() {
     assert!(other_app.registry().parse("counterparty").is_none());
     assert!(h.app.registry().parse("stage").is_none());
     assert!(h.app.registry().parse("counterparty").is_some());
+}
+
+/// TASK-209.6: `MAX_DEPTH` is 4, and a declared field nests alongside two
+/// built-ins as freely as any of them, three levels deep, and a saved view
+/// keeps it.
+#[test]
+fn three_levels_nest_a_declared_field_between_two_built_ins_and_a_saved_view_keeps_it() {
+    let mut h = fixture();
+    seed_project_task(
+        &h.root,
+        "Ally payoff",
+        "Ally",
+        "ball:agent",
+        &[("counterparty", "GoSBA Loans")],
+    );
+    seed_project_task(
+        &h.root,
+        "Chase intake",
+        "Chase",
+        "ball:me",
+        &[("counterparty", "Nick")],
+    );
+    h.app = open_app(&h.root, &h.config_path);
+    h.render();
+    only_the_fixture_rows(&mut h);
+
+    h.type_text(":group project,counterparty,ball");
+    h.press(KeyCode::Enter);
+    assert_eq!(
+        screen_rows(&h),
+        [
+            "# Ally · no def · 0/1",
+            "  # GoSBA Loans",
+            "    # agent",
+            "Ally payoff",
+            "# Chase · no def · 0/1",
+            "  # Nick",
+            "    # me",
+            "Chase intake",
+            "# no project",
+            "  # GoSBA Loans",
+            "    # no ball",
+            "GoSBA rate sheet",
+            "  # Nick",
+            "    # no ball",
+            "Nick payoff letter",
+            "  # no counterparty",
+            "    # no ball",
+            "Unassigned paperwork",
+        ]
+    );
+
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('2'));
+    let reopened = open_app(&h.root, &h.config_path);
+    let saved = reopened.views.get(1).unwrap();
+    assert_eq!(
+        saved.group.text(reopened.registry()),
+        "project,field:counterparty,ball"
+    );
+    let mut h2 = Harness {
+        _dir: h._dir,
+        root: h.root,
+        config_path: h.config_path,
+        app: reopened,
+        terminal: h.terminal,
+    };
+    h2.press(KeyCode::Char('v'));
+    h2.press(KeyCode::Char('2'));
+    assert_eq!(
+        screen_rows(&h2)[0],
+        "# Ally · no def · 0/1",
+        "the three levels round-trip"
+    );
 }

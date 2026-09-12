@@ -61,7 +61,11 @@ impl ViewState {
             parts.push(format!("paint:{}", self.paint.len()));
         }
         if !self.group.is_flat() {
-            parts.push(format!("group:{}", self.group.name(registry)));
+            // A saved slot's own resolved `auto` levels aren't known here —
+            // that only exists once a loaded view is live and its filter has
+            // run — so this names the grouping, not the decorated label the
+            // active title bar shows (`Grouping::label`).
+            parts.push(format!("outline:{}", self.group.name(registry)));
         }
         if !self.pin_top {
             parts.push("nopin".to_string());

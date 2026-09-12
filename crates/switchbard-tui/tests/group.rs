@@ -69,7 +69,7 @@ fn o_sections_by_project_in_rank_order_with_status_and_progress() {
             "Add dark theme",
         ]
     );
-    assert!(screen.contains("group:project · Lenders"), "{screen}");
+    assert!(screen.contains("outline:project · Lenders"), "{screen}");
     assert!(screen.contains("Chase · In Progress · 1/3"), "{screen}");
     assert_eq!(h.app.status, "organized by project · o changes it");
     h.press(KeyCode::Char('o'));
@@ -195,7 +195,7 @@ fn group_by_another_column_and_the_command_form_and_saved_views() {
     h.press(KeyCode::Enter);
     assert_eq!(
         h.app.status,
-        "group by one of status, priority, project, ball, blocked, goal, two of them as a,b, or off"
+        "outline by one of status, priority, project, ball, blocked, goal, several of them as a,b,c, auto, or off"
     );
     h.press(KeyCode::Char(':'));
     h.type_text("group project");
@@ -217,7 +217,7 @@ fn group_by_another_column_and_the_command_form_and_saved_views() {
     };
     h2.press(KeyCode::Char('v'));
     let screen = h2.press(KeyCode::Char('2'));
-    assert!(screen.contains("group:project"), "{screen}");
+    assert!(screen.contains("outline:project"), "{screen}");
     assert_eq!(screen_rows(&h2)[0], "# Chase · In Progress · 1/3");
 }
 
@@ -303,4 +303,50 @@ fn a_theme_preset_is_one_line_and_overrides_layer_on_it() {
         "{}",
         h.app.status
     );
+}
+
+// ─── TASK-209.6: :group auto (also spelled :outline) ────────────────────
+
+/// The three default tasks share no project, ball, or goal, and their
+/// priorities are all different (one level per task, no signal); only
+/// status carries a real distinction, so `auto` resolves to it alone.
+#[test]
+fn outline_auto_drops_columns_with_no_signal_and_names_the_resolved_level() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char(':'));
+    h.type_text("outline auto");
+    let screen = h.press(KeyCode::Enter);
+    let rows = screen_rows(&h);
+    assert_eq!(rows[0], "# To Do", "{rows:?}");
+    assert!(rows.contains(&"# In Progress".to_string()), "{rows:?}");
+    assert!(screen.contains("outline:auto (status)"), "{screen}");
+    assert_eq!(h.app.status, "organized by auto (status) · o changes it");
+
+    // `:group` is still accepted as the same command.
+    h.press(KeyCode::Char(':'));
+    h.type_text("group off");
+    h.press(KeyCode::Enter);
+    assert!(h.app.state.group.is_flat());
+}
+
+/// `auto` sits in the `o` picker next to the fixed choices, and a saved view
+/// stores the literal word rather than whatever it resolved to.
+#[test]
+fn auto_is_offered_in_the_organize_picker_and_saves_as_the_literal_word() {
+    let mut h = Harness::new();
+    let screen = h.press(KeyCode::Char('o'));
+    assert!(screen.contains(" auto"), "{screen}");
+    h.press(KeyCode::Esc);
+
+    h.press(KeyCode::Char(':'));
+    h.type_text("group auto");
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('2'));
+
+    let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
+    assert!(file.contains("group = \"auto\""), "{file}");
+    let reopened = open_app(&h.root, &h.config_path);
+    assert!(reopened.views.get(1).unwrap().group.is_auto());
 }

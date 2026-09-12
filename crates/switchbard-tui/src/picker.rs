@@ -100,7 +100,7 @@ impl ColumnAction {
         match self {
             ColumnAction::Filter => "filter by its values",
             ColumnAction::Sort => "sort by it",
-            ColumnAction::Group => "group by it",
+            ColumnAction::Group => "outline by it",
             ColumnAction::Paint => "paint by it",
             ColumnAction::Glyphs => "glyphs on/off",
             ColumnAction::Abbreviate => "abbreviate on/off",
