@@ -1,4 +1,5 @@
-//! Saved views: numbered slots of `ViewState` (filter, sort, columns, glyphs, paint).
+//! Saved views: numbered slots of `ViewState` (filter, sort, columns, glyphs, paint,
+//! grouping, row layout, and name).
 //! Slot 1 is what `sbt` opens on. The same Lua record serializes a slot on disk and
 //! the live state across a self-restart, so one place enumerates the fields.
 //! Global slots live in `~/.switchbard/views.lua`; each repo can override slots in
@@ -39,6 +40,8 @@ pub struct ViewState {
     pub group: Grouping,
     /// Whether the top list sits as its own first section.
     pub pin_top: bool,
+    /// Task title wrapping and vertical separation, saved with this view.
+    pub row_layout: crate::row_layout::RowLayout,
     /// A user-given name for this slot; empty means unnamed (fall back to `label()`).
     pub name: String,
 }
@@ -80,6 +83,9 @@ impl ViewState {
         }
         if !self.pin_top {
             parts.push("nopin".to_string());
+        }
+        if let Some(label) = self.row_layout.label() {
+            parts.push(label);
         }
         if parts.is_empty() {
             "all".to_string()
@@ -187,6 +193,7 @@ pub fn starter_views() -> Vec<ViewState> {
         paint: Vec::new(),
         group: Grouping::flat(),
         pin_top: true,
+        row_layout: crate::row_layout::RowLayout::default(),
         name: String::new(),
     })
     .collect()
@@ -568,6 +575,9 @@ impl ViewState {
             }
             PaintRule::Rows { .. } => true,
         });
+        if !scope.supports_row_layout() {
+            self.row_layout = crate::row_layout::RowLayout::default();
+        }
         if !scope.supports_grouping() {
             self.group = Grouping::flat();
         }
@@ -601,6 +611,7 @@ impl Default for ViewState {
             paint: Vec::new(),
             group: Grouping::flat(),
             pin_top: true,
+            row_layout: crate::row_layout::RowLayout::default(),
             name: String::new(),
         }
     }
@@ -641,11 +652,12 @@ fn parse_view(entry: &Table) -> Result<ViewState, String> {
                 .collect(),
         },
         name: field("name")?,
+        row_layout: crate::row_layout::RowLayout::from_lua(entry)?,
     })
 }
 
 fn validate_view(entry: &Table) -> Result<(), String> {
-    const KEYS: [&str; 9] = [
+    const KEYS: [&str; 11] = [
         "filter",
         "sort",
         "columns",
@@ -655,6 +667,8 @@ fn validate_view(entry: &Table) -> Result<(), String> {
         "pin",
         "abbreviated",
         "name",
+        "title_lines",
+        "row_spacing",
     ];
     for pair in entry.pairs::<String, mlua::Value>().take(KEYS.len() + 1) {
         let (key, _) = pair.map_err(|e| e.to_string())?;
@@ -727,6 +741,8 @@ impl ViewState {
                 .fields()
                 .any(|field| unsupported(field.column()))
             || self.sort.is_some_and(|s| unsupported(s.column))
+            || (!scope.supports_row_layout()
+                && self.row_layout != crate::row_layout::RowLayout::default())
             || (!scope.supports_grouping() && !self.group.is_flat())
             || self.paint.iter().any(|rule| match rule {
                 PaintRule::ByColumn { column, .. } | PaintRule::Column { column, .. } => {
@@ -769,13 +785,14 @@ fn lua_view(view: &ViewState) -> String {
     } else {
         format!(", group = {}", lua_string(&view.group.text()))
     };
+    let row_layout = view.row_layout.to_lua();
     let name = if view.name.is_empty() {
         String::new()
     } else {
         format!(", name = {}", lua_string(&view.name))
     };
     format!(
-        "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint}{group}{abbreviated}{pin}{name} }}",
+        "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint}{group}{abbreviated}{pin}{name}{row_layout} }}",
         lua_string(&view.filter),
         lua_string(&view.sort.map(|sort| sort.to_text()).unwrap_or_default()),
         lua_string(&columns_text(&view.columns)),
