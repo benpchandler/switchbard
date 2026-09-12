@@ -62,6 +62,8 @@ impl App {
             assignees: Vec::new(),
             project: None,
             dependencies: Vec::new(),
+            due_date: None,
+            custom: Vec::new(),
         };
         match create_backlog_task(&self.repo_root, &task) {
             Ok(id) => self.finish_new_task(&id),

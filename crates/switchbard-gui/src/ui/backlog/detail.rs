@@ -181,6 +181,14 @@ fn render_detail_header(
             .small()
             .color(theme::muted_text()),
         );
+        if let Some(due) = task.due_date.as_deref() {
+            ui.separator();
+            ui.label(
+                egui::RichText::new(format!("due {due}"))
+                    .small()
+                    .color(theme::muted_text()),
+            );
+        }
     });
     if !repo.repo.warnings.is_empty() {
         for warning in &repo.repo.warnings {

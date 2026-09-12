@@ -19,6 +19,7 @@
 //! - Nothing here blocks or waits, so the banner/heartbeat rules don't
 //!   apply; every command does its work and exits.
 
+mod field_cmd;
 mod goals_cmd;
 mod hierarchy_cmd;
 mod queue_cmd;
@@ -138,6 +139,23 @@ enum Command {
         /// Include completed, draft, and archived tasks (default: active only)
         #[arg(long)]
         all: bool,
+        /// Only tasks with an open (not-done) dependency and not themselves
+        /// done (switchbard_core::is_blocked); mutually exclusive with --ready
+        #[arg(long, conflicts_with = "ready")]
+        blocked: bool,
+        /// Only tasks with no open dependency and not themselves done —
+        /// actionable now; mutually exclusive with --blocked
+        #[arg(long, conflicts_with = "blocked")]
+        ready: bool,
+        /// Only rows where a declared custom field equals a value
+        /// (repeatable; every `--where` must match — AND, not OR)
+        #[arg(long = "where", value_name = "NAME=VALUE")]
+        where_: Vec<String>,
+        /// Sort by a declared custom field: enum fields sort in declared
+        /// value order, other kinds sort lexically; tasks not setting the
+        /// field sort last
+        #[arg(long, value_name = "NAME")]
+        sort: Option<String>,
     },
     /// Print one task in full: fields, then every section verbatim
     View {
@@ -180,6 +198,10 @@ enum Command {
     /// Live work: which tasks this session is working (claim/release/pass/list/hook)
     #[command(subcommand)]
     Work(work_cmd::WorkCmd),
+    /// Manage this repo's declared custom task fields (backlog/config.yml's
+    /// `fields:` list) — add/edit/remove/list
+    #[command(subcommand)]
+    Field(field_cmd::FieldCmd),
 }
 
 #[derive(Args)]
@@ -220,6 +242,13 @@ struct CreateArgs {
     /// Dependency task ids, comma-separated
     #[arg(long, value_delimiter = ',')]
     depends_on: Vec<String>,
+    /// Target date, YYYY-MM-DD
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    due: Option<String>,
+    /// Set a declared custom field's value at creation time (repeatable;
+    /// validated against backlog/config.yml's `fields:` list)
+    #[arg(long = "set", value_name = "NAME=VALUE")]
+    set: Vec<String>,
     #[command(flatten)]
     rank: rank_cmd::CreatePlacementArgs,
 }
@@ -288,6 +317,12 @@ struct EditArgs {
     /// `--clear-milestone` is a deprecated alias)
     #[arg(long, alias = "clear-milestone")]
     clear_project: bool,
+    /// Set the due date, YYYY-MM-DD
+    #[arg(long, value_name = "YYYY-MM-DD", conflicts_with = "clear_due")]
+    due: Option<String>,
+    /// Remove the due date
+    #[arg(long)]
+    clear_due: bool,
     /// Move the task under another parent (its id is re-minted as that
     /// parent's next sub-issue, e.g. TASK-8.3) or `none` to promote it to a
     /// top-level task; dependencies, rank, and goal inputs follow the new
@@ -325,6 +360,13 @@ struct EditArgs {
     /// the task is finished
     #[arg(long, value_name = "TEXT")]
     final_summary: Option<String>,
+    /// Set a declared custom field's value (repeatable; validated against
+    /// backlog/config.yml's `fields:` list — see `sb field list`)
+    #[arg(long = "set", value_name = "NAME=VALUE")]
+    set: Vec<String>,
+    /// Remove a declared custom field's value (repeatable)
+    #[arg(long = "unset", value_name = "NAME")]
+    unset: Vec<String>,
 }
 
 fn main() {
@@ -364,7 +406,22 @@ fn run(cli: &Cli) -> Result<()> {
             status,
             in_project,
             all,
-        } => list(&root, status.as_deref(), in_project.as_deref(), *all),
+            blocked,
+            ready,
+            where_,
+            sort,
+        } => list(
+            &root,
+            &ListFilters {
+                status: status.as_deref(),
+                in_project: in_project.as_deref(),
+                all: *all,
+                blocked: *blocked,
+                ready: *ready,
+                where_,
+                sort: sort.as_deref(),
+            },
+        ),
         Command::View { id } => view(&root, id),
         Command::Create(args) => create(&root, args),
         Command::Edit(args) => edit(&root, args),
@@ -385,6 +442,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Unexpedite { id } => rank_cmd::run_unexpedite(&root, id),
         Command::Queue(cmd) => queue_cmd::run_queue(&root, cmd),
         Command::Work(cmd) => work_cmd::run_work(&root, cmd),
+        Command::Field(cmd) => field_cmd::run_field(&root, cmd),
     }
 }
 
@@ -419,35 +477,93 @@ pub(crate) fn find_repo_root(start: &Path) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-fn list(root: &Path, status: Option<&str>, in_project: Option<&str>, all: bool) -> Result<()> {
+/// Filters and sort applied by `sb list` (grouped so `list` doesn't carry
+/// clippy's too-many-arguments smell across the format fork's two additive
+/// filter sets: blocked/ready and declared custom fields).
+struct ListFilters<'a> {
+    status: Option<&'a str>,
+    in_project: Option<&'a str>,
+    all: bool,
+    /// Only tasks with an open (not-done) dependency and not themselves
+    /// done; mutually exclusive with `ready` at the CLI boundary.
+    blocked: bool,
+    /// Only tasks with no open dependency and not themselves done;
+    /// mutually exclusive with `blocked` at the CLI boundary.
+    ready: bool,
+    where_: &'a [String],
+    sort: Option<&'a str>,
+}
+
+fn list(root: &Path, filters: &ListFilters) -> Result<()> {
     let repo = switchbard_core::load_backlog_repo(root)?;
     for warning in &repo.warnings {
         eprintln!("sb: warning: {warning}");
     }
-    for task in &repo.tasks {
-        if !all && task.source != switchbard_core::BacklogTaskSource::Active {
-            continue;
-        }
-        if let Some(wanted) = status {
-            if !task.status.eq_ignore_ascii_case(wanted) {
-                continue;
+    let field_filters = field_cmd::parse_pairs(filters.where_)?;
+    for (name, value) in &field_filters {
+        let decl = find_declared(&repo.fields, name)?;
+        switchbard_core::validate_field_value(decl, value)?;
+    }
+    let mut rows: Vec<&BacklogTask> = repo
+        .tasks
+        .iter()
+        .filter(|task| filters.all || task.source == switchbard_core::BacklogTaskSource::Active)
+        .filter(|task| {
+            filters
+                .status
+                .is_none_or(|wanted| task.status.eq_ignore_ascii_case(wanted))
+        })
+        .filter(|task| {
+            filters
+                .in_project
+                .is_none_or(|wanted| task.project.as_deref() == Some(wanted))
+        })
+        .filter(|task| {
+            field_filters
+                .iter()
+                .all(|(name, value)| task.custom.get(name).is_some_and(|v| v == value))
+        })
+        .filter(|task| {
+            // A done task is never blocked or ready — it isn't actionable work
+            // either way — matching the GUI's and sbt's own
+            // `!task.is_done() && is_blocked(...)` guard.
+            let is_blocked = !task.is_done() && switchbard_core::is_blocked(task, &repo);
+            if filters.blocked && !is_blocked {
+                return false;
             }
-        }
-        if let Some(wanted) = in_project {
-            if task.project.as_deref() != Some(wanted) {
-                continue;
+            if filters.ready && (task.is_done() || is_blocked) {
+                return false;
             }
-        }
+            true
+        })
+        .collect();
+    if let Some(name) = filters.sort {
+        let decl = find_declared(&repo.fields, name)?;
+        rows.sort_by(|a, b| {
+            switchbard_core::custom_field_sort_key(a, decl)
+                .cmp(&switchbard_core::custom_field_sort_key(b, decl))
+        });
+    }
+    for task in rows {
         println!("{}", render::list_row(task));
     }
     Ok(())
+}
+
+fn find_declared<'f>(
+    fields: &'f [switchbard_core::FieldDecl],
+    name: &str,
+) -> Result<&'f switchbard_core::FieldDecl> {
+    fields.iter().find(|f| f.name == name).ok_or_else(|| {
+        anyhow!("unknown field `{name}` — see `sb field list` for what this repo declares")
+    })
 }
 
 fn view(root: &Path, id: &str) -> Result<()> {
     let project = switchbard_core::load_backlog_repo(root)?;
     let task = find_task(&project.tasks, id)
         .ok_or_else(|| anyhow!("no task {id} in {} — try `sb list --all`", root.display()))?;
-    print!("{}", render::task_view(task));
+    print!("{}", render::task_view(task, &project.fields));
     Ok(())
 }
 
@@ -468,6 +584,13 @@ fn bare_id(id: &str) -> &str {
 }
 
 fn create(root: &Path, args: &CreateArgs) -> Result<()> {
+    let due_date = args
+        .due
+        .as_deref()
+        .map(switchbard_core::parse_due_date)
+        .transpose()?;
+    let custom = field_cmd::parse_pairs(&args.set)?;
+    field_cmd::validate_set_pairs(root, &custom)?;
     let task = NewBacklogTask {
         title: args.title.clone(),
         description: args.description.clone().unwrap_or_default(),
@@ -479,6 +602,8 @@ fn create(root: &Path, args: &CreateArgs) -> Result<()> {
         assignees: args.assignees.clone(),
         project: args.in_project.clone(),
         dependencies: args.depends_on.clone(),
+        due_date,
+        custom,
     };
     let id = switchbard_core::create_backlog_task(root, &task)?;
     println!("{id}");
@@ -491,6 +616,9 @@ fn create(root: &Path, args: &CreateArgs) -> Result<()> {
 /// Translate flags into the shared atomic edit command, preserving their order.
 fn edit(root: &Path, args: &EditArgs) -> Result<()> {
     use switchbard_core::{TaskChecklist, TaskEditRequest};
+    let set_custom = field_cmd::parse_pairs(&args.set)?;
+    field_cmd::validate_set_pairs(root, &set_custom)?;
+    field_cmd::validate_unset_names(root, &args.unset)?;
     let mut checklists = Vec::new();
     for (indices, checked, list) in [
         (&args.check_ac, true, TaskChecklist::AcceptanceCriteria),
@@ -501,7 +629,7 @@ fn edit(root: &Path, args: &EditArgs) -> Result<()> {
         checklists.extend(indices.iter().map(|index| (list, *index, checked)));
     }
     let request = TaskEditRequest {
-        patch: patch_from(args),
+        patch: patch_from(args, set_custom)?,
         acceptance_edits: acceptance_edits(&args.edit_ac)?,
         acceptance_removals: args.remove_ac.clone(),
         ball: args
@@ -555,8 +683,13 @@ fn acceptance_edits(raw: &[String]) -> Result<Vec<ChecklistTextEdit>> {
         .collect()
 }
 
-fn patch_from(args: &EditArgs) -> BacklogTaskPatch {
-    BacklogTaskPatch {
+fn patch_from(args: &EditArgs, set_custom: Vec<(String, String)>) -> Result<BacklogTaskPatch> {
+    let due_date = args
+        .due
+        .as_deref()
+        .map(switchbard_core::parse_due_date)
+        .transpose()?;
+    Ok(BacklogTaskPatch {
         title: args.title.clone(),
         description: args.description.clone(),
         status: args.status.clone(),
@@ -569,7 +702,11 @@ fn patch_from(args: &EditArgs) -> BacklogTaskPatch {
         append_acceptance_criteria: args.acceptance_criteria.clone(),
         project: args.in_project.clone(),
         clear_project: args.clear_project,
-    }
+        due_date,
+        clear_due_date: args.clear_due,
+        set_custom,
+        unset_custom: args.unset.clone(),
+    })
 }
 
 #[cfg(test)]
@@ -616,5 +753,144 @@ mod tests {
     fn cli_definition_is_internally_consistent() {
         use clap::CommandFactory;
         Cli::command().debug_assert();
+    }
+
+    /// A throwaway Backlog project: just enough directory shape for
+    /// `create`/`edit`/`view` to run against.
+    fn fixture_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("backlog/tasks")).expect("project layout");
+        dir
+    }
+
+    /// `sb list --where` must validate the value against the field's own
+    /// declaration the same way `--set` does (Rule 5, one boundary check) —
+    /// an impossible enum value errors instead of silently matching zero
+    /// rows, which would look like "no tasks match" rather than "you typoed
+    /// the filter".
+    #[test]
+    fn list_where_rejects_a_value_the_declared_field_does_not_allow() {
+        let fixture = fixture_repo();
+        let root = fixture.path();
+        std::fs::write(
+            root.join("backlog/config.yml"),
+            "project_name: fixture\nstatuses: [\"To Do\", \"In Progress\", \"Done\"]\n",
+        )
+        .expect("fixture config");
+        switchbard_core::add_field_decl(
+            root,
+            switchbard_core::FieldDecl {
+                name: "counterparty".to_string(),
+                kind: switchbard_core::FieldKind::Enum,
+                values: vec!["Nick".to_string(), "GoSBA Loans".to_string()],
+                groupable: false,
+            },
+        )
+        .expect("declare field");
+
+        let error = list(
+            root,
+            &ListFilters {
+                status: None,
+                in_project: None,
+                all: false,
+                blocked: false,
+                ready: false,
+                where_: &["counterparty=Bogus".to_string()],
+                sort: None,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("Nick"),
+            "names the allowed values: {error}"
+        );
+    }
+
+    /// AC #1: `sb create --due` writes `due_date` and `sb view` shows it.
+    #[test]
+    fn create_with_due_writes_due_date_and_view_shows_it() {
+        let fixture = fixture_repo();
+        let root = fixture.path();
+        let cli = Cli::try_parse_from(["sb", "create", "Fixture task", "--due", "2026-09-14"])
+            .expect("parses");
+        let Command::Create(args) = cli.command else {
+            panic!("expected Create");
+        };
+        create(root, &args).expect("create succeeds");
+
+        let project = switchbard_core::load_backlog_repo(root).expect("reparse");
+        let task = &project.tasks[0];
+        assert_eq!(task.due_date.as_deref(), Some("2026-09-14"));
+        assert!(render::task_view(task, &[]).contains("Due: 2026-09-14"));
+    }
+
+    /// AC #2: an invalid `--due` is rejected at the CLI boundary with a
+    /// message naming the expected shape, for both `create` and `edit`.
+    #[test]
+    fn create_rejects_a_malformed_due_date() {
+        let fixture = fixture_repo();
+        let root = fixture.path();
+        let cli = Cli::try_parse_from(["sb", "create", "Fixture task", "--due", "09/14/2026"])
+            .expect("parses");
+        let Command::Create(args) = cli.command else {
+            panic!("expected Create");
+        };
+        let error = create(root, &args).unwrap_err();
+        assert!(error.to_string().contains("YYYY-MM-DD"), "got: {error}");
+    }
+
+    #[test]
+    fn edit_rejects_a_malformed_due_date_without_touching_the_task() {
+        let fixture = fixture_repo();
+        let root = fixture.path();
+        let create_cli = Cli::try_parse_from(["sb", "create", "Fixture task"]).expect("parses");
+        let Command::Create(create_args) = create_cli.command else {
+            panic!("expected Create");
+        };
+        create(root, &create_args).expect("create succeeds");
+
+        let edit_cli =
+            Cli::try_parse_from(["sb", "edit", "TASK-1", "--due", "not-a-date"]).expect("parses");
+        let Command::Edit(edit_args) = edit_cli.command else {
+            panic!("expected Edit");
+        };
+        let error = patch_from(&edit_args, Vec::new()).unwrap_err();
+        assert!(error.to_string().contains("YYYY-MM-DD"), "got: {error}");
+
+        let project = switchbard_core::load_backlog_repo(root).expect("reparse");
+        assert_eq!(
+            project.tasks[0].due_date, None,
+            "the rejected edit never wrote"
+        );
+    }
+
+    #[test]
+    fn edit_can_set_and_clear_the_due_date() {
+        let fixture = fixture_repo();
+        let root = fixture.path();
+        let create_cli = Cli::try_parse_from(["sb", "create", "Fixture task"]).expect("parses");
+        let Command::Create(create_args) = create_cli.command else {
+            panic!("expected Create");
+        };
+        create(root, &create_args).expect("create succeeds");
+
+        let edit_cli =
+            Cli::try_parse_from(["sb", "edit", "TASK-1", "--due", "2026-09-14"]).expect("parses");
+        let Command::Edit(edit_args) = edit_cli.command else {
+            panic!("expected Edit");
+        };
+        edit(root, &edit_args).expect("edit succeeds");
+        let project = switchbard_core::load_backlog_repo(root).expect("reparse");
+        assert_eq!(project.tasks[0].due_date.as_deref(), Some("2026-09-14"));
+
+        let clear_cli =
+            Cli::try_parse_from(["sb", "edit", "TASK-1", "--clear-due"]).expect("parses");
+        let Command::Edit(clear_args) = clear_cli.command else {
+            panic!("expected Edit");
+        };
+        edit(root, &clear_args).expect("edit succeeds");
+        let project = switchbard_core::load_backlog_repo(root).expect("reparse");
+        assert_eq!(project.tasks[0].due_date, None);
     }
 }

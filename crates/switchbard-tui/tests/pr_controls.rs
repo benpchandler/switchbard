@@ -27,7 +27,7 @@ fn pr_column_menu_and_saved_layout_are_isolated_from_tasks() {
         "PR header must open shared column menu: {menu}"
     );
     assert!(
-        !menu.contains("group by it"),
+        !menu.contains("outline by it"),
         "PR grouping is not available: {menu}"
     );
     h.press(KeyCode::Char('x'));
@@ -374,8 +374,8 @@ fn pr_columns_reorder_and_global_save_do_not_change_tasks() {
     h.type_text("cm21");
     h.press(KeyCode::Enter);
     h.press(KeyCode::Esc);
-    assert_eq!(h.app.state.columns[0].name(), "lifecycle");
-    assert_eq!(h.app.state.columns[1].name(), "id");
+    assert_eq!(h.app.state.columns[0].name(h.app.registry()), "lifecycle");
+    assert_eq!(h.app.state.columns[1].name(h.app.registry()), "id");
     let menu = h.press(KeyCode::Char('1'));
     assert!(
         menu.contains("lifecycle"),
@@ -387,7 +387,7 @@ fn pr_columns_reorder_and_global_save_do_not_change_tasks() {
     h.app = open_app(&h.root, &h.config_path);
     assert_eq!(h.app.state, tasks);
     h.next_list_page();
-    assert_eq!(h.app.state.columns[0].name(), "lifecycle");
+    assert_eq!(h.app.state.columns[0].name(h.app.registry()), "lifecycle");
     let mut other = Harness::new();
     other.app = switchbard_tui::app::App::open(
         &other.root,
@@ -402,7 +402,7 @@ fn pr_columns_reorder_and_global_save_do_not_change_tasks() {
     assert_eq!(other.app.state, tasks);
     other.next_list_page();
     assert_eq!(
-        other.app.state.columns[0].name(),
+        other.app.state.columns[0].name(other.app.registry()),
         "lifecycle",
         "global PR slot applies to another repo only on PR page"
     );

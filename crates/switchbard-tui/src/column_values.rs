@@ -1,5 +1,10 @@
 //! Explicit page adapters for the shared column, sorting and matching contracts.
-use crate::{ball::Ball, columns::Column};
+use std::collections::HashSet;
+
+use crate::{
+    ball::Ball,
+    columns::{Column, ColumnRegistry},
+};
 use switchbard_core::{goals_feeding, BacklogTask, GoalDef, PrListRow};
 
 pub trait ColumnValues {
@@ -12,9 +17,15 @@ pub trait ColumnValues {
 }
 
 pub struct TaskValues<'a> {
+    /// Resolves `Column::Custom` back to the frontmatter key it reads.
+    pub registry: &'a ColumnRegistry,
     pub task: &'a BacklogTask,
     pub goals: &'a [GoalDef],
     pub top: &'a [String],
+    /// Ids of tasks with an open dependency (`tasks::TaskRelations::blocked`,
+    /// computed once per load) — the single source `is_blocked` feeds; this
+    /// is a lookup into its cached answer, not a second definition of it.
+    pub blocked: &'a HashSet<String>,
 }
 
 impl ColumnValues for TaskValues<'_> {
@@ -26,12 +37,21 @@ impl ColumnValues for TaskValues<'_> {
             Column::Priority => vec![task.priority.clone()],
             Column::Title => vec![task.title.clone()],
             Column::Filed => crate::date_fields::filed(task.created_date.as_deref()),
+            Column::Due => task.due_date.clone().into_iter().collect(),
             Column::Labels => task.labels.clone(),
             Column::Project => task.project.clone().into_iter().collect(),
             Column::Ball => Ball::of(task)
                 .map(|ball| ball.text().to_string())
                 .into_iter()
                 .collect(),
+            Column::Blocked => {
+                vec![if self.blocked.contains(&task.id) {
+                    "yes"
+                } else {
+                    "no"
+                }
+                .to_string()]
+            }
             // Rank and work are not on the task: `App::cell` supplies them
             // from the lane and the live session list.
             Column::Rank
@@ -46,6 +66,16 @@ impl ColumnValues for TaskValues<'_> {
             Column::Goal => goals_feeding(goals, task)
                 .into_iter()
                 .map(str::to_string)
+                .collect(),
+            // A declared field's value is whatever the task's frontmatter
+            // carries under that field's name; absent is no value at all,
+            // the same shape `due` uses, so `name:none` and the `no <name>`
+            // section both mean "unset".
+            Column::Custom(_) => task
+                .custom
+                .get(column.name(self.registry))
+                .cloned()
+                .into_iter()
                 .collect(),
         }
     }
@@ -95,6 +125,7 @@ impl ColumnValues for PrValues<'_> {
             Column::Review => vec![row.review.label().to_string()],
             Column::Merge => vec![row.merge.label().to_string()],
             Column::Draft => vec![if row.draft { "Draft" } else { "Ready" }.to_string()],
+            // A pull request carries no repo-declared task fields.
             _ => Vec::new(),
         }
     }

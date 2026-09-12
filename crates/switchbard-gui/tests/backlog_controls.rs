@@ -53,6 +53,7 @@ fn task(id: &str, title: &str, status: &str) -> BacklogTask {
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-01 09:00".to_string()),
+        due_date: None,
         description: String::new(),
         implementation_plan: String::new(),
         implementation_notes: String::new(),
@@ -64,6 +65,7 @@ fn task(id: &str, title: &str, status: &str) -> BacklogTask {
             "{REPO_PATH}/backlog/tasks/{}.md",
             id.to_lowercase()
         )),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -93,6 +95,7 @@ fn list_app_with_tasks(tasks: Vec<BacklogTask>) -> HiveApp {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     app
@@ -1037,6 +1040,7 @@ fn board_shows_the_icebox_column_even_with_zero_icebox_tasks() {
                 "In Review".to_string(),
                 "Done".to_string(),
             ],
+            fields: Vec::new(),
         },
     );
     let mut harness = harness(app);
@@ -2256,6 +2260,7 @@ fn board_unrelated_project_reload_does_not_resolve_a_pending_move() {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     harness.run();
@@ -2707,6 +2712,30 @@ fn detail_harness_on(t: BacklogTask) -> Harness<'static, HiveApp> {
     harness
 }
 
+/// AC #4: the detail pane shows the due date, read-only, when the task
+/// carries one, and shows nothing extra when it doesn't.
+#[test]
+fn detail_pane_shows_due_date_only_when_set() {
+    let mut with_due = detail_task_with_checklists();
+    with_due.due_date = Some("2026-09-14".to_string());
+    let mut harness = detail_harness_on(with_due);
+    harness.run();
+    assert!(
+        harness
+            .query_all_by_label_contains("due 2026-09-14")
+            .next()
+            .is_some(),
+        "due date should render in the detail pane header"
+    );
+
+    let mut harness = detail_harness_on(detail_task_with_checklists());
+    harness.run();
+    assert!(
+        harness.query_all_by_label_contains("due ").next().is_none(),
+        "no due label should render when the task has no due date"
+    );
+}
+
 #[test]
 fn acceptance_criterion_checkbox_click_sets_the_synchronous_updating_status() {
     let mut harness = detail_harness_on(detail_task_with_checklists());
@@ -2767,6 +2796,7 @@ fn project_assign_dropdown_offers_only_the_tasks_own_repos_projects() {
             ranking: switchbard_core::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![],
+            fields: Vec::new(),
         },
     );
     app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
@@ -3544,6 +3574,8 @@ fn sub_task_hierarchy_renders_correctly_from_a_native_created_subtask() {
                 assignees: vec![],
                 project: None,
                 dependencies: vec![],
+                due_date: None,
+                custom: Vec::new(),
             },
         )
         .expect("native fixture subtask create");
@@ -3654,6 +3686,8 @@ fn native_task_create(root: &std::path::Path, title: &str) -> String {
             assignees: vec![],
             project: None,
             dependencies: vec![],
+            due_date: None,
+            custom: Vec::new(),
         },
     )
     .expect("native fixture create")
@@ -4095,6 +4129,7 @@ fn a_drop_onto_a_column_this_repo_lacks_is_refused_and_offers_the_fix() {
                 "In Progress".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     app.backlog_view.selected_repo = None; // all repos in scope

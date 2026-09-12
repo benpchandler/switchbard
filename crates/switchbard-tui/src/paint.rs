@@ -2,12 +2,13 @@
 //! every rule below it colors only its own scope, so lower means more specific.
 //! Reordering the list flips which paint dominates. Saved with the view.
 
+use std::collections::HashSet;
 use std::str::FromStr;
 
 use ratatui::style::Color;
 use switchbard_core::{BacklogTask, GoalDef};
 
-use crate::columns::Column;
+use crate::columns::{Column, ColumnRegistry};
 use crate::tasks::Filter;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,11 +60,11 @@ pub const NAMED_COLORS: [&str; 16] = [
 impl PaintRule {
     /// `by:status=todo:yellow,inprogress:cyan` / `rows:status:done=gray` /
     /// `column:id=darkgray`, the saved and displayed form.
-    pub fn to_text(&self) -> String {
+    pub fn to_text(&self, registry: &ColumnRegistry) -> String {
         match self {
             PaintRule::ByColumn { column, colors } => format!(
                 "by:{}={}",
-                column.name(),
+                column.save_name(registry),
                 colors
                     .iter()
                     .map(|(value, color)| format!("{value}:{color}"))
@@ -71,11 +72,13 @@ impl PaintRule {
                     .join(",")
             ),
             PaintRule::Rows { filter, color } => format!("rows:{filter}={color}"),
-            PaintRule::Column { column, color } => format!("column:{}={color}", column.name()),
+            PaintRule::Column { column, color } => {
+                format!("column:{}={color}", column.save_name(registry))
+            }
         }
     }
 
-    pub fn parse(text: &str) -> Option<PaintRule> {
+    pub fn parse(text: &str, registry: &ColumnRegistry) -> Option<PaintRule> {
         let (target, rhs) = text.trim().split_once('=')?;
         if let Some(column) = target.strip_prefix("by:") {
             let colors = rhs
@@ -87,7 +90,7 @@ impl PaintRule {
                 })
                 .collect();
             return Some(PaintRule::ByColumn {
-                column: Column::parse(column.trim())?,
+                column: registry.parse(column.trim())?,
                 colors,
             });
         }
@@ -100,7 +103,7 @@ impl PaintRule {
             })
         } else if let Some(column) = target.strip_prefix("column:") {
             Some(PaintRule::Column {
-                column: Column::parse(column.trim())?,
+                column: registry.parse(column.trim())?,
                 color,
             })
         } else {
@@ -109,13 +112,15 @@ impl PaintRule {
     }
 
     /// How the rule reads in the hierarchy list.
-    pub fn label(&self) -> String {
+    pub fn label(&self, registry: &ColumnRegistry) -> String {
         match self {
             PaintRule::ByColumn { column, colors } => {
-                format!("by {} ({} values)", column.name(), colors.len())
+                format!("by {} ({} values)", column.name(registry), colors.len())
             }
             PaintRule::Rows { filter, color } => format!("rows {filter} → {color}"),
-            PaintRule::Column { column, color } => format!("column {} → {color}", column.name()),
+            PaintRule::Column { column, color } => {
+                format!("column {} → {color}", column.name(registry))
+            }
         }
     }
 
@@ -136,32 +141,36 @@ impl PaintRule {
 /// the top rule is the base and claims whole rows.
 pub fn cell_color(
     rules: &[PaintRule],
+    registry: &ColumnRegistry,
     task: &BacklogTask,
     column: Column,
     goals: &[GoalDef],
+    blocked: &HashSet<String>,
 ) -> Option<Color> {
     cell_color_with(
         rules,
         column,
+        registry,
         |column| {
-            let values = column.values(task, goals);
+            let values = column.values(registry, task, goals, blocked);
             if column.is_date() {
                 values
             } else {
                 values.into_iter().take(1).collect()
             }
         },
-        |filter| filter.matches(task, goals),
+        |filter| filter.matches(registry, task, goals, blocked),
     )
 }
 
 pub fn cell_color_with(
     rules: &[PaintRule],
     column: Column,
+    registry: &ColumnRegistry,
     values: impl Fn(Column) -> Vec<String>,
     matches: impl Fn(&Filter) -> bool,
 ) -> Option<Color> {
-    crate::paint_eval::cell_token(rules, column, values, matches)
+    crate::paint_eval::cell_token(rules, column, registry, values, matches)
         .and_then(|token| Color::from_str(token).ok())
 }
 
@@ -254,14 +263,16 @@ pub fn set_rule(rules: &mut Vec<PaintRule>, rule: PaintRule) {
     }
 }
 
-pub fn rules_text(rules: &[PaintRule]) -> String {
+pub fn rules_text(rules: &[PaintRule], registry: &ColumnRegistry) -> String {
     rules
         .iter()
-        .map(PaintRule::to_text)
+        .map(|rule| rule.to_text(registry))
         .collect::<Vec<_>>()
         .join(";")
 }
 
-pub fn parse_rules(text: &str) -> Vec<PaintRule> {
-    text.split(';').filter_map(PaintRule::parse).collect()
+pub fn parse_rules(text: &str, registry: &ColumnRegistry) -> Vec<PaintRule> {
+    text.split(';')
+        .filter_map(|rule| PaintRule::parse(rule, registry))
+        .collect()
 }

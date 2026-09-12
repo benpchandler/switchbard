@@ -73,6 +73,7 @@ fn task(repo: usize, project: usize, i: usize) -> BacklogTask {
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-01 09:00".to_string()),
+        due_date: None,
         description: "Lorem ipsum dolor sit amet.".to_string(),
         implementation_plan: String::new(),
         implementation_notes: String::new(),
@@ -82,6 +83,7 @@ fn task(repo: usize, project: usize, i: usize) -> BacklogTask {
         source: BacklogTaskSource::Active,
         path: PathBuf::from(format!("/tmp/switchbard-rank-perf/{id}.md")),
         id,
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -137,6 +139,7 @@ fn build_fixture() -> HiveApp {
                 },
                 loaded_at_unix: 0,
                 configured_statuses: vec!["To Do".into(), "In Progress".into(), "Done".into()],
+                fields: Vec::new(),
             },
         ));
     }

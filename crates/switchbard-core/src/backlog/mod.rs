@@ -11,8 +11,14 @@ mod allocate;
 mod ball;
 mod central_commands;
 mod edit_command;
-mod goals;
 pub use edit_command::{edit_backlog_task_command, TaskEditRequest, TaskEditResult};
+mod field_config;
+pub use field_config::{
+    add_field_decl, custom_field_sort_key, declared_fields, declared_value_rank, edit_field_decl,
+    remove_field_decl, tasks_setting_field, valid_field_name, validate_field_value, FieldDecl,
+    FieldEditPatch, FieldKind, BUILTIN_FIELD_KEYS, RESERVED_FIELD_NAMES,
+};
+mod goals;
 mod hierarchy;
 pub mod migration;
 pub(crate) mod migration_repairs;
@@ -52,7 +58,7 @@ pub use mutations::{
 pub use parent::eligible_backlog_parents;
 pub use parse::{
     backlog_day_of, backlog_repo_available, backlog_today, body_round_trips, is_backlog_repo,
-    load_backlog_repo, parse_backlog_day, task_file_round_trips,
+    load_backlog_repo, parse_backlog_day, parse_due_date, task_file_round_trips,
 };
 pub use ranking::{
     expedite_task, expedite_task_at, rank_project, rank_project_move, rank_task, rank_task_move,
@@ -66,10 +72,10 @@ pub use types::{
 };
 pub use write::{
     append_task_acceptance_criteria, append_task_notes, rehome_task_file, replace_task_section,
-    revise_task_checklist, set_task_checklist_item, set_task_label, set_task_list_field,
-    set_task_priority, set_task_project, set_task_status, set_task_title, swap_task_label,
-    write_new_task_file, ChecklistTextEdit, TaskChecklist, TaskListField, TaskSection,
-    WriteOutcome,
+    revise_task_checklist, set_task_checklist_item, set_task_due_date, set_task_label,
+    set_task_list_field, set_task_priority, set_task_project, set_task_status, set_task_title,
+    swap_task_label, write_new_task_file, ChecklistTextEdit, TaskChecklist, TaskListField,
+    TaskSection, WriteOutcome,
 };
 
 pub(crate) use parse::parse_task_text;

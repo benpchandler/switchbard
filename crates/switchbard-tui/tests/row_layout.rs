@@ -3,7 +3,11 @@ mod harness;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use harness::*;
 use ratatui::{backend::TestBackend, Terminal};
-use switchbard_tui::{columns::Column, row_layout::RowLayout, views::ViewState};
+use switchbard_tui::{
+    columns::{Column, ColumnRegistry},
+    row_layout::RowLayout,
+    views::ViewState,
+};
 
 #[test]
 fn settings_preview_save_switch_and_resume_keep_layout_scoped_to_view() {
@@ -46,14 +50,15 @@ fn settings_preview_save_switch_and_resume_keep_layout_scoped_to_view() {
 
 #[test]
 fn old_views_stay_compact_and_invalid_layout_records_are_preserved() {
+    let registry = ColumnRegistry::builtin_only();
     assert_eq!(
-        ViewState::from_lua("{ title_lines=2.0 }")
+        ViewState::from_lua("{ title_lines=2.0 }", &registry)
             .row_layout
             .lines(),
         2
     );
     assert_eq!(
-        ViewState::from_lua("{ columns='id,title' }").row_layout,
+        ViewState::from_lua("{ columns='id,title' }", &registry).row_layout,
         RowLayout::default()
     );
     for fields in [

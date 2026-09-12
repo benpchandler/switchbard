@@ -866,6 +866,7 @@ mod tests {
             parent: None,
             created_date: None,
             updated_date: None,
+            due_date: None,
             description: "The card is half-baked.".to_string(),
             implementation_plan: String::new(),
             implementation_notes: String::new(),
@@ -874,6 +875,7 @@ mod tests {
             definition_of_done: vec![],
             source: BacklogTaskSource::Active,
             path: PathBuf::from("/repo/backlog/tasks/task-44.md"),
+            custom: std::collections::BTreeMap::new(),
         }
     }
 

@@ -15,10 +15,11 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use mlua::{Lua, Table};
 
-use crate::columns::Column;
+use crate::columns::{Column, ColumnRegistry};
 use crate::filter::Filter;
 use crate::group::Grouping;
 use crate::list_settings::ListSettings;
@@ -49,37 +50,44 @@ pub struct ViewState {
 impl ViewState {
     /// The name shown for this slot: the user-given `name` if set, else the
     /// derived `label()`.
-    pub fn display_name(&self) -> String {
+    pub fn display_name(&self, registry: &ColumnRegistry) -> String {
         if self.name.is_empty() {
-            self.label()
+            self.label(registry)
         } else {
             self.name.clone()
         }
     }
 
     /// A view is named by what it does, so it reads the same in every repo.
-    pub fn label(&self) -> String {
+    pub fn label(&self, registry: &ColumnRegistry) -> String {
         let mut parts: Vec<String> = Vec::new();
         if !self.filter.is_empty() {
             parts.push(self.filter.clone());
         }
         if let Some(sort) = self.sort {
-            parts.push(sort.label());
+            parts.push(sort.label(registry));
         }
-        if let Some(columns) = self.columns_label() {
+        if let Some(columns) = self.columns_label(registry) {
             parts.push(columns);
         }
         if !self.glyph_columns.is_empty() {
-            parts.push(format!("glyphs:{}", columns_text(&self.glyph_columns)));
+            parts.push(format!(
+                "glyphs:{}",
+                columns_text(&self.glyph_columns, registry)
+            ));
         }
-        if let Some(label) = self.abbreviated_label() {
+        if let Some(label) = self.abbreviated_label(registry) {
             parts.push(label);
         }
         if !self.paint.is_empty() {
             parts.push(format!("paint:{}", self.paint.len()));
         }
         if !self.group.is_flat() {
-            parts.push(format!("group:{}", self.group.name()));
+            // A saved slot's own resolved `auto` levels aren't known here —
+            // that only exists once a loaded view is live and its filter has
+            // run — so this names the grouping, not the decorated label the
+            // active title bar shows (`Grouping::label`).
+            parts.push(format!("outline:{}", self.group.name(registry)));
         }
         if !self.pin_top {
             parts.push("nopin".to_string());
@@ -95,41 +103,53 @@ impl ViewState {
     }
 
     /// `abbr:none` or `abbr:id` when the short-form set differs from the default, else nothing.
-    pub fn abbreviated_label(&self) -> Option<String> {
+    pub fn abbreviated_label(&self, registry: &ColumnRegistry) -> Option<String> {
         let mut mine = self.abbreviated.clone();
-        mine.sort_by_key(|c| c.name());
+        mine.sort_by_key(|c| c.name(registry));
         let mut default = Column::DEFAULT_ABBREVIATED.to_vec();
-        default.sort_by_key(|c| c.name());
+        default.sort_by_key(|c| c.name(registry));
         if mine == default {
             return None;
         }
         if mine.is_empty() {
             return Some("abbr:none".to_string());
         }
-        Some(format!("abbr:{}", columns_text(&mine)))
+        Some(format!("abbr:{}", columns_text(&mine, registry)))
     }
 
     /// `cols:id,title` when the columns differ from the default set, else nothing.
-    pub fn columns_label(&self) -> Option<String> {
+    pub fn columns_label(&self, registry: &ColumnRegistry) -> Option<String> {
         if self.columns == Column::DEFAULT_SHOWN {
             return None;
         }
-        Some(format!("cols:{}", columns_text(&self.columns)))
+        Some(format!("cols:{}", columns_text(&self.columns, registry)))
     }
 }
 
-pub fn columns_text(columns: &[Column]) -> String {
+/// How a column list reads on screen: bare names, a declared field included.
+pub fn columns_text(columns: &[Column], registry: &ColumnRegistry) -> String {
     columns
         .iter()
-        .map(|column| column.name())
+        .map(|column| column.name(registry))
         .collect::<Vec<_>>()
         .join(",")
 }
 
-pub fn parse_columns(text: &str) -> Vec<Column> {
+/// How a column list is written to `views.lua`: a declared field carries
+/// `columns::FIELD_PREFIX` so a later load can tell sbt's own dropped field
+/// from a column only a newer build knows.
+fn columns_save_text(columns: &[Column], registry: &ColumnRegistry) -> String {
+    columns
+        .iter()
+        .map(|column| column.save_name(registry))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+pub fn parse_columns(text: &str, registry: &ColumnRegistry) -> Vec<Column> {
     let columns: Vec<Column> = text
         .split(',')
-        .filter_map(|name| Column::parse(name.trim()))
+        .filter_map(|name| registry.parse(name))
         .collect();
     if columns.is_empty() {
         Column::DEFAULT_SHOWN.to_vec()
@@ -201,6 +221,10 @@ pub fn starter_views() -> Vec<ViewState> {
 
 #[derive(Clone)]
 pub struct ViewStore {
+    /// What columns exist while this store reads, writes, and names its slots.
+    /// Shared rather than owned: `App` rebuilds one registry per repo load and
+    /// both its stores read that same answer.
+    registry: Arc<ColumnRegistry>,
     global_source: SourceGuard,
     repo_source: SourceGuard,
     global_path: Option<PathBuf>,
@@ -213,23 +237,26 @@ pub struct ViewStore {
 impl ViewStore {
     /// Reads both files; anything missing or broken falls back and is reported.
     pub fn load(
+        registry: Arc<ColumnRegistry>,
         global_path: Option<PathBuf>,
         repo_path: Option<PathBuf>,
     ) -> (ViewStore, Vec<String>) {
-        Self::load_with_defaults(global_path, repo_path, starter_views())
+        Self::load_with_defaults(registry, global_path, repo_path, starter_views())
     }
 
     pub fn load_with_defaults(
+        registry: Arc<ColumnRegistry>,
         global_path: Option<PathBuf>,
         repo_path: Option<PathBuf>,
         defaults: Vec<ViewState>,
     ) -> (ViewStore, Vec<String>) {
         let mut warnings = Vec::new();
+        let mut dropped: Vec<String> = Vec::new();
         let mut global_source = SourceGuard::capture(global_path.as_deref());
         let mut repo_source = SourceGuard::capture(repo_path.as_deref());
         let global = match global_path
             .as_deref()
-            .map(|path| read_lua(path, parse_sequence))
+            .map(|path| read_lua(path, |table| parse_sequence(table, &registry, &mut dropped)))
         {
             Some(Ok(Some(views))) if !views.is_empty() => views,
             Some(Ok(_)) | None => defaults.clone(),
@@ -239,10 +266,11 @@ impl ViewStore {
                 defaults.clone()
             }
         };
-        let repo = match repo_path
-            .as_deref()
-            .map(|path| read_lua(path, parse_overrides))
-        {
+        let repo = match repo_path.as_deref().map(|path| {
+            read_lua(path, |table| {
+                parse_overrides(table, &registry, &mut dropped)
+            })
+        }) {
             Some(Ok(Some(overrides))) => overrides,
             Some(Ok(None)) | None => BTreeMap::new(),
             Some(Err(error)) => {
@@ -251,7 +279,14 @@ impl ViewStore {
                 BTreeMap::new()
             }
         };
+        if !dropped.is_empty() {
+            warnings.push(format!(
+                "this repo no longer declares {}; dropped from the saved view",
+                dropped.join(", ")
+            ));
+        }
         let store = ViewStore {
+            registry,
             global_source,
             repo_source,
             global_path,
@@ -263,21 +298,29 @@ impl ViewStore {
     }
 
     pub fn load_for_page(
+        registry: Arc<ColumnRegistry>,
         global: Option<PathBuf>,
         repo: Option<PathBuf>,
         page: crate::page::Page,
     ) -> (Self, Vec<String>) {
         let Some(scope) = ListSettings::for_page(page) else {
-            return Self::load_with_defaults(None, None, Vec::new());
+            return Self::load_with_defaults(registry, None, None, Vec::new());
         };
         let (mut store, warnings) = Self::load_with_defaults(
+            Arc::clone(&registry),
             global.map(|p| scope.path(&p)),
             repo.map(|p| scope.path(&p)),
             scope.defaults(),
         );
         let mut warnings = warnings;
-        let global_unsupported = store.global.iter().any(|v| v.unsupported_on(scope));
-        let repo_unsupported = store.repo.values().any(|v| v.unsupported_on(scope));
+        let global_unsupported = store
+            .global
+            .iter()
+            .any(|v| v.unsupported_on(scope, &registry));
+        let repo_unsupported = store
+            .repo
+            .values()
+            .any(|v| v.unsupported_on(scope, &registry));
         store.global_source.blocked |= global_unsupported;
         store.repo_source.blocked |= repo_unsupported;
         if global_unsupported || repo_unsupported {
@@ -288,12 +331,24 @@ impl ViewStore {
     }
 
     pub fn sanitize(&mut self, page: crate::page::Page) {
+        let registry = Arc::clone(&self.registry);
         for state in &mut self.global {
-            state.sanitize(page);
+            state.sanitize(page, &registry);
         }
         for state in self.repo.values_mut() {
-            state.sanitize(page);
+            state.sanitize(page, &registry);
         }
+    }
+
+    /// What columns existed when this store was loaded.
+    pub fn registry(&self) -> &Arc<ColumnRegistry> {
+        &self.registry
+    }
+
+    /// Take up the registry `App` rebuilt for a repo load, so naming and saving
+    /// a slot read the same catalog the table does.
+    pub fn set_registry(&mut self, registry: Arc<ColumnRegistry>) {
+        self.registry = registry;
     }
 
     /// The slots as the user sees them: repo overrides win, global fills the rest.
@@ -444,7 +499,7 @@ impl ViewStore {
              return {\n",
         );
         for view in &self.global {
-            text.push_str(&format!("  {},\n", lua_view(view)));
+            text.push_str(&format!("  {},\n", lua_view(view, &self.registry)));
         }
         text.push_str("}\n");
         write_atomically(path, &text)
@@ -460,7 +515,11 @@ impl ViewStore {
              return {\n",
         );
         for (slot, view) in &self.repo {
-            text.push_str(&format!("  [{}] = {},\n", slot + 1, lua_view(view)));
+            text.push_str(&format!(
+                "  [{}] = {},\n",
+                slot + 1,
+                lua_view(view, &self.registry)
+            ));
         }
         text.push_str("}\n");
         write_atomically(path, &text)
@@ -487,8 +546,12 @@ fn read_lua<T>(
         .map_err(|error| format!("{}: {error}", path.display()))
 }
 
-fn parse_sequence(table: &Table) -> Result<Vec<ViewState>, String> {
-    let slots = parse_overrides(table)?;
+fn parse_sequence(
+    table: &Table,
+    registry: &ColumnRegistry,
+    dropped: &mut Vec<String>,
+) -> Result<Vec<ViewState>, String> {
+    let slots = parse_overrides(table, registry, dropped)?;
     let mut views = Vec::with_capacity(slots.len());
     for (expected, (slot, view)) in slots.into_iter().enumerate() {
         if expected != slot {
@@ -499,41 +562,46 @@ fn parse_sequence(table: &Table) -> Result<Vec<ViewState>, String> {
     Ok(views)
 }
 
-fn parse_overrides(table: &Table) -> Result<BTreeMap<usize, ViewState>, String> {
+fn parse_overrides(
+    table: &Table,
+    registry: &ColumnRegistry,
+    dropped: &mut Vec<String>,
+) -> Result<BTreeMap<usize, ViewState>, String> {
     let mut views = BTreeMap::new();
     for pair in table.pairs::<usize, Table>().take(MAX_SLOTS + 1) {
         let (slot, entry) = pair.map_err(|e| e.to_string())?;
         if !(1..=MAX_SLOTS).contains(&slot) {
             return Err("unsupported view slot".into());
         }
-        views.insert(slot - 1, parse_view(&entry)?);
+        views.insert(slot - 1, parse_view(&entry, registry, dropped)?);
     }
     Ok(views)
 }
 
 impl ViewState {
     /// The Lua record form, `{ filter = "...", sort = "...", ... }`.
-    pub fn to_lua(&self) -> String {
-        lua_view(self)
+    pub fn to_lua(&self, registry: &ColumnRegistry) -> String {
+        lua_view(self, registry)
     }
 
     /// Parses the record form; anything unreadable yields the default state.
-    pub fn from_lua(text: &str) -> ViewState {
+    pub fn from_lua(text: &str, registry: &ColumnRegistry) -> ViewState {
         let lua = Lua::new();
+        let mut dropped = Vec::new();
         lua.load(format!("return {text}"))
             .eval::<Table>()
             .ok()
-            .and_then(|table| parse_view(&table).ok())
+            .and_then(|table| parse_view(&table, registry, &mut dropped).ok())
             .unwrap_or_default()
     }
 }
 
 impl ViewState {
-    pub fn sanitize(&mut self, page: crate::page::Page) {
+    pub fn sanitize(&mut self, page: crate::page::Page, registry: &ColumnRegistry) {
         let Some(scope) = ListSettings::for_page(page) else {
             return;
         };
-        let catalog = scope.catalog();
+        let catalog = scope.catalog(registry);
         let canonical = |column| scope.canonical(column);
         self.columns = self
             .columns
@@ -559,7 +627,7 @@ impl ViewState {
             .iter()
             .copied()
             .map(canonical)
-            .filter(|c| catalog.contains(c) && c.filter_field().is_some())
+            .filter(|c| catalog.contains(c) && c.filter_field(registry).is_some())
             .collect();
         self.sort = self
             .sort
@@ -578,7 +646,15 @@ impl ViewState {
         if !scope.supports_row_layout() {
             self.row_layout = crate::row_layout::RowLayout::default();
         }
-        if !scope.supports_grouping() {
+        // Flat when the page has no sections at all, and flat when a level
+        // names a column this page no longer offers — a declared field that
+        // left `backlog/config.yml` takes its section level with it.
+        let ungroupable = self
+            .group
+            .levels()
+            .iter()
+            .any(|column| !catalog.contains(column));
+        if !scope.supports_grouping() || ungroupable {
             self.group = Grouping::flat();
         }
         if !scope.supports_top_list() {
@@ -617,37 +693,66 @@ impl Default for ViewState {
     }
 }
 
-fn parse_view(entry: &Table) -> Result<ViewState, String> {
-    validate_view(entry)?;
+fn parse_view(
+    entry: &Table,
+    registry: &ColumnRegistry,
+    dropped: &mut Vec<String>,
+) -> Result<ViewState, String> {
+    validate_view(entry, registry)?;
     let field = |key: &str| -> Result<String, String> {
         entry
             .get::<Option<String>>(key)
             .map(Option::unwrap_or_default)
             .map_err(|e| e.to_string())
     };
+    let columns = field("columns")?;
+    let glyphs = field("glyphs")?;
+    let sort = field("sort")?;
+    let group = field("group")?;
+    let paint = field("paint")?;
+    let abbreviated = entry
+        .get::<Option<String>>("abbreviated")
+        .map_err(|e| e.to_string())?;
+    // Which of this view's declared-field references the repo has since
+    // dropped. Everything that resolves stays; see `prune_filter` for why the
+    // filter is pruned against this list rather than judged on its own.
+    let orphans = undeclared_fields_in(
+        &[
+            columns.as_str(),
+            glyphs.as_str(),
+            &sort,
+            &group,
+            &paint,
+            abbreviated.as_deref().unwrap_or_default(),
+        ]
+        .join(" "),
+        registry,
+    );
+    for name in &orphans {
+        if !dropped.contains(name) {
+            dropped.push(name.clone());
+        }
+    }
     Ok(ViewState {
-        filter: field("filter")?,
-        sort: Sort::parse(&field("sort")?),
-        columns: parse_columns(&field("columns")?),
-        glyph_columns: field("glyphs")?
+        filter: prune_filter(&field("filter")?, &orphans),
+        sort: Sort::parse(&sort, registry),
+        columns: parse_columns(&columns, registry),
+        glyph_columns: glyphs
             .split(',')
-            .filter_map(|name| Column::parse(name.trim()))
+            .filter_map(|name| registry.parse(name))
             .collect(),
-        paint: parse_rules(&field("paint")?),
-        group: Grouping::parse(&field("group")?).unwrap_or_default(),
+        paint: parse_rules(&paint, registry),
+        group: prune_group(&group, registry).unwrap_or_default(),
         pin_top: entry
             .get::<Option<bool>>("pin")
             .map_err(|e| e.to_string())?
             .unwrap_or(true),
         // Absent means the default set; an explicit "" means none.
-        abbreviated: match entry
-            .get::<Option<String>>("abbreviated")
-            .map_err(|e| e.to_string())?
-        {
+        abbreviated: match abbreviated {
             None => Column::DEFAULT_ABBREVIATED.to_vec(),
             Some(text) => text
                 .split(',')
-                .filter_map(|name| Column::parse(name.trim()))
+                .filter_map(|name| registry.parse(name))
                 .filter(|column| column.abbreviable())
                 .collect(),
         },
@@ -656,7 +761,65 @@ fn parse_view(entry: &Table) -> Result<ViewState, String> {
     })
 }
 
-fn validate_view(entry: &Table) -> Result<(), String> {
+/// Every `field:<name>` in `text` naming a field the repo no longer declares.
+/// Reads the prefix directly rather than tokenizing, because the same prefix
+/// appears inside a sort (`field:x:semantic`), a paint rule (`by:field:x=…`)
+/// and a plain list, and only sbt ever writes it.
+fn undeclared_fields_in(text: &str, registry: &ColumnRegistry) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find(crate::columns::FIELD_PREFIX) {
+        rest = &rest[at + crate::columns::FIELD_PREFIX.len()..];
+        let end = rest
+            .find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'))
+            .unwrap_or(rest.len());
+        let (name, tail) = rest.split_at(end);
+        rest = tail;
+        let reference = format!("{}{name}", crate::columns::FIELD_PREFIX);
+        if registry.unknown_field_name(&reference) && !names.iter().any(|seen| seen == name) {
+            names.push(name.to_string());
+        }
+    }
+    names
+}
+
+/// A saved filter minus any `name:value` term naming one of `orphans`. Left in
+/// place, such a term would silently match nothing and hide the whole list.
+///
+/// Pruned against the view's own dropped columns rather than judged term by
+/// term: a filter is typed by hand and saved verbatim, so an unrecognized
+/// keyword is just as likely to be a bare text search (`labels:ui`) as a field
+/// that has gone. The view naming the same field under `columns::FIELD_PREFIX`
+/// elsewhere is what makes the answer certain.
+fn prune_filter(text: &str, orphans: &[String]) -> String {
+    if orphans.is_empty() {
+        return text.to_string();
+    }
+    text.split_whitespace()
+        .filter(|word| {
+            word.split_once(':').is_none_or(|(keyword, _)| {
+                !orphans.iter().any(|name| name == &keyword.to_lowercase())
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A saved grouping minus any level naming a field this repo no longer declares;
+/// the levels that survive keep their order, and losing every level is flat.
+fn prune_group(text: &str, registry: &ColumnRegistry) -> Option<Grouping> {
+    if let Some(grouping) = Grouping::parse(text, registry) {
+        return Some(grouping);
+    }
+    let kept: Vec<&str> = text
+        .split([',', '\u{203a}'])
+        .map(str::trim)
+        .filter(|name| !registry.unknown_field_name(name))
+        .collect();
+    Grouping::parse(&kept.join(","), registry)
+}
+
+fn validate_view(entry: &Table, registry: &ColumnRegistry) -> Result<(), String> {
     const KEYS: [&str; 11] = [
         "filter",
         "sort",
@@ -681,18 +844,21 @@ fn validate_view(entry: &Table) -> Result<(), String> {
             .get::<Option<String>>(key)
             .map_err(|e| e.to_string())?
             .unwrap_or_default();
+        // A name this repo no longer declares is dropped with a note, not an
+        // error: the field left `backlog/config.yml`, the file is not broken.
         if text
             .split(',')
-            .filter(|s| !s.trim().is_empty())
-            .any(|s| Column::parse(s.trim()).is_none())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .any(|s| registry.parse(s).is_none() && !registry.unknown_field_name(s))
         {
             return Err(format!("unsupported {key} column; source preserved"));
         }
     }
-    validate_view_rules(entry)
+    validate_view_rules(entry, registry)
 }
 
-fn validate_view_rules(entry: &Table) -> Result<(), String> {
+fn validate_view_rules(entry: &Table, registry: &ColumnRegistry) -> Result<(), String> {
     let field = |key| {
         entry
             .get::<Option<String>>(key)
@@ -700,24 +866,36 @@ fn validate_view_rules(entry: &Table) -> Result<(), String> {
             .map_err(|e| e.to_string())
     };
     let sort = field("sort")?;
-    if !sort.is_empty() && Sort::parse(&sort).is_none() {
+    if !sort.is_empty()
+        && Sort::parse(&sort, registry).is_none()
+        && !names_an_undeclared_field(&sort, registry)
+    {
         return Err("unsupported saved sort".into());
     }
-    if Grouping::parse(&field("group")?).is_none() {
+    let group = field("group")?;
+    if prune_group(&group, registry).is_none() {
         return Err("unsupported saved grouping".into());
     }
     if field("paint")?
         .split(';')
         .filter(|s| !s.trim().is_empty())
-        .any(|s| !valid_saved_paint(s))
+        .any(|s| !valid_saved_paint(s, registry) && !names_an_undeclared_field(s, registry))
     {
         return Err("unsupported saved paint".into());
     }
     Ok(())
 }
 
-fn valid_saved_paint(text: &str) -> bool {
-    match PaintRule::parse(text) {
+/// Whether the only thing wrong with a saved sort or paint rule is that it names
+/// a field this repo no longer declares — the case that degrades rather than
+/// blocking the file. `by:counterparty=nick:yellow` and `counterparty:semantic`
+/// both hide their column name between a prefix and a separator.
+fn names_an_undeclared_field(text: &str, registry: &ColumnRegistry) -> bool {
+    !undeclared_fields_in(text, registry).is_empty()
+}
+
+fn valid_saved_paint(text: &str, registry: &ColumnRegistry) -> bool {
+    match PaintRule::parse(text, registry) {
         Some(PaintRule::ByColumn { colors, .. }) => text
             .split_once('=')
             .is_some_and(|(_, rhs)| rhs.is_empty() || colors.len() == rhs.split(',').count()),
@@ -727,8 +905,9 @@ fn valid_saved_paint(text: &str) -> bool {
 }
 
 impl ViewState {
-    fn unsupported_on(&self, scope: ListSettings) -> bool {
-        let unsupported = |column| !scope.catalog().contains(&scope.canonical(column));
+    fn unsupported_on(&self, scope: ListSettings, registry: &ColumnRegistry) -> bool {
+        let catalog = scope.catalog(registry);
+        let unsupported = |column| !catalog.contains(&scope.canonical(column));
         self.columns
             .iter()
             .chain(&self.glyph_columns)
@@ -736,8 +915,8 @@ impl ViewState {
             || self
                 .glyph_columns
                 .iter()
-                .any(|c| scope.canonical(*c).filter_field().is_none())
-            || Filter::parse(&self.filter)
+                .any(|c| scope.canonical(*c).filter_field(registry).is_none())
+            || Filter::parse(&self.filter, registry)
                 .fields()
                 .any(|field| unsupported(field.column()))
             || self.sort.is_some_and(|s| unsupported(s.column))
@@ -753,37 +932,40 @@ impl ViewState {
     }
 }
 
-fn lua_view(view: &ViewState) -> String {
+fn lua_view(view: &ViewState, registry: &ColumnRegistry) -> String {
     let glyphs = if view.glyph_columns.is_empty() {
         String::new()
     } else {
         format!(
             ", glyphs = {}",
-            lua_string(&columns_text(&view.glyph_columns))
+            lua_string(&columns_save_text(&view.glyph_columns, registry))
         )
     };
     let paint = if view.paint.is_empty() {
         String::new()
     } else {
-        format!(", paint = {}", lua_string(&rules_text(&view.paint)))
+        format!(
+            ", paint = {}",
+            lua_string(&rules_text(&view.paint, registry))
+        )
     };
     let pin = if view.pin_top {
         String::new()
     } else {
         ", pin = false".to_string()
     };
-    let abbreviated = if view.abbreviated_label().is_none() {
+    let abbreviated = if view.abbreviated_label(registry).is_none() {
         String::new()
     } else {
         format!(
             ", abbreviated = {}",
-            lua_string(&columns_text(&view.abbreviated))
+            lua_string(&columns_save_text(&view.abbreviated, registry))
         )
     };
     let group = if view.group.is_flat() {
         String::new()
     } else {
-        format!(", group = {}", lua_string(&view.group.text()))
+        format!(", group = {}", lua_string(&view.group.text(registry)))
     };
     let row_layout = view.row_layout.to_lua();
     let name = if view.name.is_empty() {
@@ -794,8 +976,13 @@ fn lua_view(view: &ViewState) -> String {
     format!(
         "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint}{group}{abbreviated}{pin}{name}{row_layout} }}",
         lua_string(&view.filter),
-        lua_string(&view.sort.map(|sort| sort.to_text()).unwrap_or_default()),
-        lua_string(&columns_text(&view.columns)),
+        lua_string(
+            &view
+                .sort
+                .map(|sort| sort.to_text(registry))
+                .unwrap_or_default()
+        ),
+        lua_string(&columns_save_text(&view.columns, registry)),
     )
 }
 

@@ -1081,6 +1081,7 @@ mod tests {
             parent: None,
             created_date: None,
             updated_date: None,
+            due_date: None,
             description: "Do the thing.".to_string(),
             implementation_plan: String::new(),
             implementation_notes: String::new(),
@@ -1089,6 +1090,7 @@ mod tests {
             definition_of_done: vec![],
             source: BacklogTaskSource::Active,
             path: PathBuf::from(format!("/repo/backlog/tasks/{id}.md")),
+            custom: std::collections::BTreeMap::new(),
         }
     }
 
@@ -1109,6 +1111,7 @@ mod tests {
             ranking: crate::backlog::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![],
+            fields: Vec::new(),
         };
 
         let queue = list_dispatch_queue(&project);
@@ -1135,6 +1138,7 @@ mod tests {
             ranking: crate::backlog::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec![],
+            fields: Vec::new(),
         };
 
         assert!(list_dispatch_queue(&project).is_empty());

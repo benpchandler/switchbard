@@ -620,6 +620,8 @@ mod tests {
             assignees: vec![],
             project: None,
             dependencies: vec![],
+            due_date: None,
+            custom: Vec::new(),
         }
     }
 

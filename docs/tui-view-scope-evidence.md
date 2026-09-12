@@ -8,6 +8,23 @@ The Tasks paths remain `views.lua` and the existing repo override path; Pull Req
 
 Older task records with omitted fields retain the established defaults. Recognized aliases load and serialize under their canonical names. Missing files use starter slots and can be saved. Unknown columns, fields, sorting/grouping forms, malformed Lua, invalid paint rules or unsupported slot numbers produce a warning and prevent writes to the affected file. Recognized columns and parsed filter fields that are unsupported on the current feature remain unusable and block replacement of their source. Filter aliases are checked through the shared parser and page catalog, so a Tasks view cannot silently accept a PR-only field, and a PR view cannot silently accept a task-only field. Unsupported feature grouping likewise blocks replacement. Existing unsupported data is not silently rewritten as defaults.
 
+One narrow exception to "unknown means preserve and block", added with repo-declared
+custom fields (TASK-209.5). A field the repo declares in `backlog/config.yml` becomes an
+ordinary column, and a repo can stop declaring it, so a saved view can name a column that
+was sbt's own and is simply gone — which is not the same situation as a record from a
+newer build. Nothing syntactic separates the two, so sbt writes its own declared-field
+references under the `field:` prefix (`columns = "id,field:counterparty,title"`,
+`group = "field:counterparty"`, `sort = "field:counterparty:semantic"`,
+`paint = "by:field:counterparty=nick:yellow"`). Reading accepts the bare name too, which
+is what a user types and what `tui.lua` keys spell; only writing adds the prefix, and no
+existing file contains it. A `field:<name>` reference the repo no longer declares is
+dropped from the loaded view with a status-line note naming the field, and the file stays
+writable. A filter term is pruned only when the same view names that field under the
+prefix elsewhere: a filter is typed by hand and saved verbatim, so an unrecognized keyword
+is as likely to be a bare text search (`labels:ui`) as a field that has gone. Every other
+unresolvable name, prefix absent, keeps the established policy: preserved, unwritable,
+reported.
+
 Valid portions of a malformed paint string are not used to overwrite its source; unknown target columns and partially invalid categorical color mappings are rejected as persisted records. Free-text filter grammar retains its existing behavior.
 
 Each source also retains its startup bytes. A file changed externally after loading blocks saving or promotion until reopen. Repairing a malformed source and reopening enables writes again. A blocked global source still permits an independent repo override save; promotion checks both files before changing either. Failed repo saves leave in-memory slots unchanged. Promotion is explicitly two writes: if global succeeds and repo removal fails, the confirmed global state and source guard are retained, the repo override remains, and the UI reports `global saved; repo override retained; retry after repair`. Repairing the failed path allows retry; later external edits still block retry. This is local conflict detection, not an atomic cross-file transaction or a filesystem locking protocol.
@@ -28,6 +45,9 @@ Global slots must be contiguous from 1; sparse global Lua sequences are rejected
 | Sparse global sequences and sparse repo slot 9 | `view_scope::sparse_global_slots_are_preserved_instead_of_truncated_on_promotion`, `view_scope::sparse_repo_slot_keeps_nine_in_picker_help_load_save_and_restart` |
 | Promotion second-write failure and repair retry; external edit after partial result | `view_scope::promotion_reports_confirmed_global_write_and_retries_repo_removal`, `view_scope::partial_promotion_retry_never_overwrites_later_external_global_edit` |
 | Partial invalid paint records | `view_scope::partial_paint_decode_never_overwrites_original_rules` |
+| Declared field as column/filter/sort/group/paint, saved and reloaded | `custom_fields::a_saved_view_naming_a_declared_column_round_trips_through_views_lua` |
+| Prefixed reference to a field the repo stopped declaring: dropped with a note, file still writable | `custom_fields::a_view_naming_an_undeclared_field_loads_with_a_note_instead_of_refusing` |
+| Unprefixed unknown column still preserved and blocking | `custom_fields::a_view_naming_a_malformed_column_still_blocks_the_file`, `view_scope::malformed_and_future_records_are_preserved_on_save_and_promotion` |
 | Keyboard-only current 100x20 terminal | All new tests render through real App keys and TestBackend |
 | Network loading/offline | Persistence is local; PR test renders controls without requiring remote data |
 | Permission errors | Read failures block writes; no dedicated permission fixture because root/write permissions differ across environments |

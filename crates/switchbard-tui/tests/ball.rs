@@ -10,7 +10,10 @@ fn b_passes_the_ball_me_agent_nobody_and_writes_the_label() {
     let mut h = Harness::new();
     let id = h.app.selected_task().unwrap().id.clone();
     h.press(KeyCode::Char('c'));
-    h.type_text("b");
+    // "ba" (not "b"): the `blocked` column also starts with `b` now, so a
+    // single letter is ambiguous and would leave the picker open instead of
+    // applying the unique match.
+    h.type_text("ba");
     h.press(KeyCode::Esc);
     assert!(header_line(&h.render()).contains("5 ball"));
     let screen = h.press(KeyCode::Char('b'));
@@ -58,7 +61,7 @@ fn ball_filters_sorts_and_the_starter_view_is_my_inbox() {
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('1'));
     h.press(KeyCode::Char('s'));
-    h.type_text("b");
+    h.type_text("ba"); // "b" alone is now ambiguous with the `blocked` column
     h.type_text("d");
     assert_eq!(visible_titles(&h)[0], mine, "descending puts me first");
     assert!(h.render().contains("↓ball"));
@@ -86,7 +89,7 @@ fn named_ball_holder_renders_filters_and_b_drops_it() {
     switchbard_core::set_backlog_label(&h.root, &id, "ball:nick", true).unwrap();
     h.app.tick();
     h.press(KeyCode::Char('c'));
-    h.type_text("b");
+    h.type_text("ba"); // "b" alone is now ambiguous with the `blocked` column
     h.press(KeyCode::Esc);
     assert!(h.render().contains("nick"));
     h.press(KeyCode::Char('/'));

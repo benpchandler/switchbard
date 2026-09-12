@@ -70,6 +70,8 @@ pub fn file_report(repo_root: &Path, kind: ReportKind, context: ReportContext) -
         assignees: Vec::new(),
         project: kind.project(),
         dependencies: Vec::new(),
+        due_date: None,
+        custom: Vec::new(),
     };
     let (id, _path) = create_task_allocating_id(repo_root, &task)?;
     Ok(id)

@@ -40,6 +40,7 @@ fn task(id: &str, labels: &[&str], notes: &str) -> BacklogTask {
         parent: None,
         created_date: None,
         updated_date: None,
+        due_date: None,
         description: String::new(),
         implementation_plan: String::new(),
         implementation_notes: notes.to_string(),
@@ -51,6 +52,7 @@ fn task(id: &str, labels: &[&str], notes: &str) -> BacklogTask {
             "{REPO_PATH}/backlog/tasks/{}.md",
             id.to_lowercase()
         )),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -90,6 +92,7 @@ fn app_with(tasks: Vec<BacklogTask>, runs: Vec<DispatchRun>) -> HiveApp {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     let mut cached = app.dispatch_runs.lock().unwrap();

@@ -63,6 +63,7 @@ fn sample_task(id: &str, title: &str, status: &str) -> BacklogTask {
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-20 12:00".to_string()),
+        due_date: None,
         description: "## Why\n\nExercises **CommonMark** rendering.".to_string(),
         implementation_plan: "Step one, then step two.".to_string(),
         implementation_notes: "Existing note text.".to_string(),
@@ -82,6 +83,7 @@ fn sample_task(id: &str, title: &str, status: &str) -> BacklogTask {
             "{REPO_PATH}/backlog/tasks/{}.md",
             id.to_lowercase()
         )),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -102,6 +104,7 @@ fn project_with(tasks: Vec<BacklogTask>) -> BacklogRepo {
             "In Review".into(),
             "Done".into(),
         ],
+        fields: Vec::new(),
     }
 }
 
@@ -250,6 +253,7 @@ fn shots_for_theme(theme: ThemeChoice) {
                     "In Review".into(),
                     "Done".into(),
                 ],
+                fields: Vec::new(),
             },
         );
         app.dispatch_runs.lock().unwrap().insert(

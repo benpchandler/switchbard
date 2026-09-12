@@ -39,6 +39,26 @@ fn p_lists_columns_first_then_row_filtered_column_and_hidden_fields() {
         .contains("number or letter"));
 }
 
+/// TASK-209 wave-1 finding: with both `blocked` and `due` added, the paint
+/// target picker lists 13 entries, which overflows the 100x20 test
+/// terminal's box — the in-box "number or letter picks · esc" hint line
+/// scrolls off with the option rows. The overflow footer (`↑↓ →open ←back
+/// Esc · pos/total`) must keep the hint reachable rather than silently
+/// dropping it.
+#[test]
+fn overflowing_paint_target_picker_keeps_the_purpose_hint_in_the_footer() {
+    let mut h = Harness::new();
+    let screen = h.press(KeyCode::Char('p'));
+    let footer = screen
+        .lines()
+        .find(|line| line.contains("1/13"))
+        .unwrap_or_else(|| panic!("overflow footer with a position counter: {screen}"));
+    assert!(
+        footer.contains("number or letter picks · esc"),
+        "footer keeps the hint reachable: {footer}"
+    );
+}
+
 #[test]
 fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
     use ratatui::style::Color;
@@ -98,7 +118,7 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
             .state
             .paint
             .iter()
-            .map(|r| r.to_text())
+            .map(|r| r.to_text(h.app.registry()))
             .collect::<Vec<_>>(),
         [
             "by:status=todo:#f49f31,inprogress:#c6c5fe",
@@ -201,7 +221,7 @@ fn hand_picked_values_row_and_column_and_hex_and_clearing() {
         .state
         .paint
         .iter()
-        .any(|r| r.to_text() == format!("rows:id:{selected}=lightblue")));
+        .any(|r| r.to_text(h.app.registry()) == format!("rows:id:{selected}=lightblue")));
 
     h.press(KeyCode::Char('p'));
     h.type_text("c");
@@ -317,7 +337,7 @@ fn palette_presets_swap_live_and_recolor_auto_painted_values() {
             .state
             .paint
             .iter()
-            .any(|rule| rule.to_text().contains("magenta")),
+            .any(|rule| rule.to_text(h.app.registry()).contains("magenta")),
         "hand-picked colors survive: {:?}",
         h.app.state.paint
     );
