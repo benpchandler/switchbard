@@ -87,6 +87,14 @@ impl App {
 
     pub(super) fn save_view(&mut self, slot: usize) {
         self.state.filter = self.state.filter.trim().to_string();
+        // The name belongs to the target slot, not to whichever slot the live
+        // state was opened from; saving elsewhere must not clone a name.
+        let name = self
+            .views
+            .get(slot)
+            .map(|view| view.name)
+            .unwrap_or_default();
+        self.state.name = name;
         let saved = self.state.clone();
         match self.views.save_repo(slot, saved) {
             Ok(()) => {

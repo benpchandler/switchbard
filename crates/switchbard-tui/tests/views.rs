@@ -277,3 +277,27 @@ fn a_named_view_shows_custom_once_its_live_state_diverges() {
     h.press(KeyCode::Enter);
     assert_eq!(h.app.view_label(), "custom");
 }
+
+#[test]
+fn saving_into_another_slot_does_not_carry_the_origin_slots_name() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('d'));
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('n'));
+    h.press(KeyCode::Char('1'));
+    h.type_text("Mine");
+    h.press(KeyCode::Enter);
+    assert_eq!(h.app.views.get(0).unwrap().name, "Mine");
+    h.type_text("/status:done");
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('2'));
+    assert_eq!(h.app.views.get(0).unwrap().name, "Mine");
+    assert_eq!(h.app.views.get(1).unwrap().name, "");
+    assert_eq!(h.app.view_label(), "v2");
+    let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
+    assert_eq!(file.matches("Mine").count(), 1, "{file}");
+}
