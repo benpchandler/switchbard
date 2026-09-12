@@ -9,7 +9,7 @@
 
 use super::{scoped_repos, RepoRow, Snapshot, TaskRow};
 use crate::app::HiveApp;
-use crate::runtime::{BacklogTaskKey, BacklogTaskSortDirection, BacklogTaskSortKey};
+use crate::runtime::{BacklogTaskSortDirection, BacklogTaskSortKey};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use switchbard_core::{
@@ -111,9 +111,9 @@ fn sort_by_triage<'a>(app: &HiveApp, rows: &mut Vec<TaskRow<'a>>) {
         .collect();
     let ranked = triage_rank(&entries, &overlay);
 
-    let mut by_key: HashMap<BacklogTaskKey, TaskRow<'a>> = std::mem::take(rows)
+    let mut by_key: HashMap<(std::path::PathBuf, String), TaskRow<'a>> = std::mem::take(rows)
         .into_iter()
-        .map(|row| (row.key(), row))
+        .map(|row| (row.key().address, row))
         .collect();
     let mut ordered: Vec<TaskRow<'a>> = ranked
         .into_iter()
@@ -484,6 +484,7 @@ mod tests {
         total_criteria: usize,
     ) -> BacklogTask {
         BacklogTask {
+            storage_identity: None,
             id: id.to_string(),
             title: title.to_string(),
             status: status.to_string(),

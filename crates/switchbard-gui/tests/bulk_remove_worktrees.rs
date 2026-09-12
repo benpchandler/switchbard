@@ -260,7 +260,7 @@ fn a_locked_worktree_and_a_live_dispatch_run_both_route_to_needs_review() {
 
     // A dispatch agent alive in the otherwise-perfect worktree.
     app.dispatch_runs.lock().unwrap().insert(
-        (repo.clone(), "TASK-1".to_string()),
+        (repo.clone(), "TASK-1".to_string()).into(),
         DispatchRun {
             task_id: "TASK-1".to_string(),
             branch: "feat/clean-merged".to_string(),

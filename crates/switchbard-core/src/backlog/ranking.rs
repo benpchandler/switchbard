@@ -1,5 +1,5 @@
-//! Stack ranking - `backlog/ranking.yml`, one records file per repo
-//! (trajectory: *Stack ranking*, owner-approved 2026-08-31).
+//! Stack ranking - legacy `backlog/ranking.yml`, or the central database after
+//! per-kind migration (trajectory: *Stack ranking*, owner-approved 2026-08-31).
 //!
 //! Manual rank is **hierarchy-shaped with a named exception lane**: siblings
 //! rank within their parent scope (projects against projects in the repo,
@@ -27,6 +27,8 @@
 //! rewrites only the affected scope's block, every other byte survives, and
 //! a hand-restyled file this module cannot confidently locate its edit
 //! point in fails closed with an error naming the fix, never a rewrite.
+
+use super::aggregate_storage::{self, AggregateEdit};
 
 use super::parse::{compare_tasks, load_backlog_repo, source_rank, status_rank};
 use super::types::{BacklogRepo, BacklogTask, BacklogTaskSource};
@@ -123,24 +125,32 @@ struct RankingFileSer {
     subissues: BTreeMap<String, Vec<String>>,
 }
 
-/// Load `backlog/ranking.yml`. Never fails the repo load: missing file is an
+/// Load `backlog/ranking.yml`. Legacy malformed content warns; database failures propagate: missing file is an
 /// empty ranking; a malformed file warns and loads empty.
-pub(super) fn load_ranking(root: &Path, warnings: &mut Vec<String>) -> RepoRanking {
+pub(super) fn load_ranking(root: &Path, warnings: &mut Vec<String>) -> Result<RepoRanking> {
     let path = root.join(RANKING_REL);
-    let Ok(text) = fs::read_to_string(&path) else {
-        return RepoRanking::default();
+    let source = match aggregate_storage::read(root, "ranking", RANKING_REL)? {
+        Some(text) => text,
+        None => fs::read_to_string(&path).ok(),
     };
-    match serde_yaml::from_str::<RankingFileSer>(&text) {
-        Ok(parsed) => RepoRanking {
+    let Some(text) = source else {
+        return Ok(RepoRanking::default());
+    };
+    parse_ranking_text(&text, &path, warnings)
+}
+
+fn parse_ranking_text(text: &str, path: &Path, warnings: &mut Vec<String>) -> Result<RepoRanking> {
+    match serde_yaml::from_str::<RankingFileSer>(text) {
+        Ok(parsed) => Ok(RepoRanking {
             expedite: parsed.expedite,
             projects: parsed.projects,
             tasks: parsed.tasks,
             root_tasks: parsed.root_tasks,
             subissues: parsed.subissues,
-        },
+        }),
         Err(err) => {
             warnings.push(format!("{}: {err}", path.display()));
-            RepoRanking::default()
+            Ok(RepoRanking::default())
         }
     }
 }
@@ -354,17 +364,20 @@ fn ranking_path(root: &Path) -> PathBuf {
     root.join(RANKING_REL)
 }
 
-fn read_lines(path: &Path) -> Result<Vec<String>> {
-    let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+fn read_lines(edit: &mut AggregateEdit, path: &Path) -> Result<Vec<String>> {
+    let text = edit.text(path)?;
     if text.contains('\r') {
         bail!("{} has CR line endings; refusing to edit", path.display());
     }
     Ok(text.lines().map(str::to_string).collect())
 }
 
-fn write_lines(path: &Path, lines: &[String]) -> Result<()> {
+fn write_lines(edit: &mut AggregateEdit, path: &Path, lines: &[String]) -> Result<()> {
     let text = format!("{}\n", lines.join("\n"));
-    if path.is_file() {
+    if edit.stage(&text) {
+        return Ok(());
+    }
+    if edit.exists(path) {
         return atomic_write(path, &text);
     }
     // First write: `atomic_write` preserves an existing file's permissions,
@@ -392,15 +405,17 @@ fn skeleton() -> Vec<String> {
 /// Lines of the current file, or the fresh skeleton when it doesn't exist.
 /// A file that exists but no longer parses fails closed - editing around
 /// structure we cannot read risks compounding whatever broke it.
-fn load_lines_for_edit(root: &Path) -> Result<Vec<String>> {
+fn load_lines_for_edit(edit: &mut AggregateEdit, root: &Path) -> Result<Vec<String>> {
     let path = ranking_path(root);
-    if !path.is_file() {
-        fs::create_dir_all(path.parent().expect("ranking.yml has a parent"))
-            .with_context(|| format!("creating {}", root.join("backlog").display()))?;
+    if !edit.exists(&path) {
+        if !edit.is_central() {
+            fs::create_dir_all(path.parent().expect("ranking.yml has a parent"))
+                .with_context(|| format!("creating {}", root.join("backlog").display()))?;
+        }
         return Ok(skeleton());
     }
     let mut warnings = Vec::new();
-    load_ranking(root, &mut warnings);
+    parse_ranking_text(&edit.text(&path)?, &path, &mut warnings)?;
     if !warnings.is_empty() {
         bail!(
             "{} does not parse cleanly - fix it (or remove it to start fresh): {}",
@@ -408,7 +423,7 @@ fn load_lines_for_edit(root: &Path) -> Result<Vec<String>> {
             warnings.join("; ")
         );
     }
-    read_lines(&path)
+    read_lines(edit, &path)
 }
 
 fn indent_of(line: &str) -> usize {
@@ -601,6 +616,7 @@ fn stored_scope_list<'r>(ranking: &'r RepoRanking, scope: &TaskScope) -> &'r [St
 }
 
 fn write_scope_list(
+    edit: &mut AggregateEdit,
     root: &Path,
     scope: &TaskScope,
     stored: &[String],
@@ -610,146 +626,161 @@ fn write_scope_list(
         return Ok(WriteOutcome::Unchanged);
     }
     let path = ranking_path(root);
-    let mut lines = load_lines_for_edit(root)?;
+    let mut lines = load_lines_for_edit(edit, root)?;
     match scope_address(scope) {
         (Some(map_key), scope_key) => {
             set_scope_list(&mut lines, &path, map_key, &scope_key, updated)?
         }
         (None, key) => set_top_level_list(&mut lines, &path, &key, updated)?,
     }
-    write_lines(&path, &lines)?;
+    write_lines(edit, &path, &lines)?;
     Ok(WriteOutcome::Changed)
 }
 
 /// Rank a task within its sibling scope (its project, the repo root, or its
 /// parent's sub-issues), pruning stale ids from that scope as it writes.
 pub fn rank_task(root: &Path, id: &str, placement: &RankPlacement) -> Result<WriteOutcome> {
-    let repo = load_backlog_repo(root)?;
-    let task = rankable_task(&repo, id)?;
-    let scope = scope_of(task);
-    let mut warnings = Vec::new();
-    let ranking = load_ranking(root, &mut warnings);
+    aggregate_storage::with_edit(root, "ranking", RANKING_REL, |edit| {
+        let repo = load_backlog_repo(root)?;
+        let task = rankable_task(&repo, id)?;
+        let scope = scope_of(task);
+        let mut warnings = Vec::new();
+        let ranking = load_ranking(root, &mut warnings)?;
 
-    let stored = stored_scope_list(&ranking, &scope).to_vec();
-    let mut updated = pruned_scope_list(&stored, &scope, &repo);
-    updated.retain(|entry| entry != &task.id);
-    let scope_label = match &scope {
-        TaskScope::Project(name) => format!("project '{name}'s tasks"),
-        TaskScope::Root => "the repo's root tasks".to_string(),
-        TaskScope::Subissue(parent) => format!("{parent}'s sub-issues"),
-    };
-    insert_placed(&mut updated, &task.id, placement, &scope_label)?;
-    write_scope_list(root, &scope, &stored, &updated)
+        let stored = stored_scope_list(&ranking, &scope).to_vec();
+        let mut updated = pruned_scope_list(&stored, &scope, &repo);
+        updated.retain(|entry| entry != &task.id);
+        let scope_label = match &scope {
+            TaskScope::Project(name) => format!("project '{name}'s tasks"),
+            TaskScope::Root => "the repo's root tasks".to_string(),
+            TaskScope::Subissue(parent) => format!("{parent}'s sub-issues"),
+        };
+        insert_placed(&mut updated, &task.id, placement, &scope_label)?;
+        write_scope_list(edit, root, &scope, &stored, &updated)
+    })
 }
 
 /// Remove a task from its scope's ranked list. Unranking an id is valid
 /// even when the task no longer exists (that is how a stray entry is
 /// cleared by hand), so this searches every scope rather than resolving one.
 pub fn unrank_task(root: &Path, id: &str) -> Result<WriteOutcome> {
-    let mut warnings = Vec::new();
-    let ranking = load_ranking(root, &mut warnings);
-    let mut outcome = WriteOutcome::Unchanged;
+    aggregate_storage::with_edit(root, "ranking", RANKING_REL, |edit| {
+        let mut warnings = Vec::new();
+        let ranking = load_ranking(root, &mut warnings)?;
+        let mut outcome = WriteOutcome::Unchanged;
 
-    let mut scopes: Vec<(TaskScope, Vec<String>)> =
-        vec![(TaskScope::Root, ranking.root_tasks.clone())];
-    scopes.extend(
-        ranking
-            .tasks
-            .iter()
-            .map(|(name, list)| (TaskScope::Project(name.clone()), list.clone())),
-    );
-    scopes.extend(
-        ranking
-            .subissues
-            .iter()
-            .map(|(parent, list)| (TaskScope::Subissue(parent.clone()), list.clone())),
-    );
-    for (scope, stored) in scopes {
-        let updated: Vec<String> = stored
-            .iter()
-            .filter(|entry| !entry.eq_ignore_ascii_case(id))
-            .cloned()
-            .collect();
-        if write_scope_list(root, &scope, &stored, &updated)?.changed() {
-            outcome = WriteOutcome::Changed;
+        let mut scopes: Vec<(TaskScope, Vec<String>)> =
+            vec![(TaskScope::Root, ranking.root_tasks.clone())];
+        scopes.extend(
+            ranking
+                .tasks
+                .iter()
+                .map(|(name, list)| (TaskScope::Project(name.clone()), list.clone())),
+        );
+        scopes.extend(
+            ranking
+                .subissues
+                .iter()
+                .map(|(parent, list)| (TaskScope::Subissue(parent.clone()), list.clone())),
+        );
+        for (scope, stored) in scopes {
+            let updated: Vec<String> = stored
+                .iter()
+                .filter(|entry| !entry.eq_ignore_ascii_case(id))
+                .cloned()
+                .collect();
+            if write_scope_list(edit, root, &scope, &stored, &updated)?.changed() {
+                outcome = WriteOutcome::Changed;
+            }
         }
-    }
-    Ok(outcome)
+        Ok(outcome)
+    })
 }
 
 /// Add a task to the expedite lane (at the end - the lane reads top-down
 /// and stays short; reorder by unexpediting and re-expediting). Prunes
 /// stale lane entries as it writes.
 pub fn expedite_task(root: &Path, id: &str) -> Result<WriteOutcome> {
-    let repo = load_backlog_repo(root)?;
-    let task = rankable_task(&repo, id)?;
-    let mut warnings = Vec::new();
-    let ranking = load_ranking(root, &mut warnings);
+    aggregate_storage::with_edit(root, "ranking", RANKING_REL, |edit| {
+        let repo = load_backlog_repo(root)?;
+        let task = rankable_task(&repo, id)?;
+        let mut warnings = Vec::new();
+        let ranking = load_ranking(root, &mut warnings)?;
 
-    let mut updated: Vec<String> = ranking
-        .expedite
-        .iter()
-        .filter(|entry| {
-            repo.tasks
-                .iter()
-                .find(|t| t.id == **entry)
-                .is_some_and(rankable)
-        })
-        .cloned()
-        .collect();
-    if !updated.iter().any(|entry| entry == &task.id) {
-        updated.push(task.id.clone());
-    }
-    write_expedite(root, &ranking.expedite, &updated)
+        let mut updated: Vec<String> = ranking
+            .expedite
+            .iter()
+            .filter(|entry| {
+                repo.tasks
+                    .iter()
+                    .find(|t| t.id == **entry)
+                    .is_some_and(rankable)
+            })
+            .cloned()
+            .collect();
+        if !updated.iter().any(|entry| entry == &task.id) {
+            updated.push(task.id.clone());
+        }
+        write_expedite(edit, root, &ranking.expedite, &updated)
+    })
 }
 
 /// Put a task at 1-based `position` in the expedite lane (moving it if it is
 /// already there), so the lane can serve as an ordered short list. Positions
 /// past the end append. Dead entries are pruned as `expedite_task` does.
 pub fn expedite_task_at(root: &Path, id: &str, position: usize) -> Result<WriteOutcome> {
-    let repo = load_backlog_repo(root)?;
-    let task = rankable_task(&repo, id)?;
-    let mut warnings = Vec::new();
-    let ranking = load_ranking(root, &mut warnings);
-    let mut updated: Vec<String> = ranking
-        .expedite
-        .iter()
-        .filter(|entry| {
-            **entry != task.id
-                && repo
-                    .tasks
-                    .iter()
-                    .find(|t| t.id == **entry)
-                    .is_some_and(rankable)
-        })
-        .cloned()
-        .collect();
-    let index = position.saturating_sub(1).min(updated.len());
-    updated.insert(index, task.id.clone());
-    write_expedite(root, &ranking.expedite, &updated)
+    aggregate_storage::with_edit(root, "ranking", RANKING_REL, |edit| {
+        let repo = load_backlog_repo(root)?;
+        let task = rankable_task(&repo, id)?;
+        let mut warnings = Vec::new();
+        let ranking = load_ranking(root, &mut warnings)?;
+        let mut updated: Vec<String> = ranking
+            .expedite
+            .iter()
+            .filter(|entry| {
+                **entry != task.id
+                    && repo
+                        .tasks
+                        .iter()
+                        .find(|t| t.id == **entry)
+                        .is_some_and(rankable)
+            })
+            .cloned()
+            .collect();
+        let index = position.saturating_sub(1).min(updated.len());
+        updated.insert(index, task.id.clone());
+        write_expedite(edit, root, &ranking.expedite, &updated)
+    })
 }
 
 /// Remove a task from the expedite lane.
 pub fn unexpedite_task(root: &Path, id: &str) -> Result<WriteOutcome> {
-    let mut warnings = Vec::new();
-    let ranking = load_ranking(root, &mut warnings);
-    let updated: Vec<String> = ranking
-        .expedite
-        .iter()
-        .filter(|entry| !entry.eq_ignore_ascii_case(id))
-        .cloned()
-        .collect();
-    write_expedite(root, &ranking.expedite, &updated)
+    aggregate_storage::with_edit(root, "ranking", RANKING_REL, |edit| {
+        let mut warnings = Vec::new();
+        let ranking = load_ranking(root, &mut warnings)?;
+        let updated: Vec<String> = ranking
+            .expedite
+            .iter()
+            .filter(|entry| !entry.eq_ignore_ascii_case(id))
+            .cloned()
+            .collect();
+        write_expedite(edit, root, &ranking.expedite, &updated)
+    })
 }
 
-fn write_expedite(root: &Path, stored: &[String], updated: &[String]) -> Result<WriteOutcome> {
+fn write_expedite(
+    edit: &mut AggregateEdit,
+    root: &Path,
+    stored: &[String],
+    updated: &[String],
+) -> Result<WriteOutcome> {
     if stored == updated {
         return Ok(WriteOutcome::Unchanged);
     }
     let path = ranking_path(root);
-    let mut lines = load_lines_for_edit(root)?;
+    let mut lines = load_lines_for_edit(edit, root)?;
     set_top_level_list(&mut lines, &path, "expedite", updated)?;
-    write_lines(&path, &lines)?;
+    write_lines(edit, &path, &lines)?;
     Ok(WriteOutcome::Changed)
 }
 
@@ -786,40 +817,44 @@ fn moved_list(pruned: Vec<String>, id: &str, direction: RankMove) -> Vec<String>
 /// Move a task one step among its ranked scope siblings - see [`RankMove`]
 /// for the exact arrow semantics. Prunes stale ids as it writes.
 pub fn rank_task_move(root: &Path, id: &str, direction: RankMove) -> Result<WriteOutcome> {
-    let repo = load_backlog_repo(root)?;
-    let task = rankable_task(&repo, id)?;
-    let scope = scope_of(task);
-    let mut warnings = Vec::new();
-    let ranking = load_ranking(root, &mut warnings);
+    aggregate_storage::with_edit(root, "ranking", RANKING_REL, |edit| {
+        let repo = load_backlog_repo(root)?;
+        let task = rankable_task(&repo, id)?;
+        let scope = scope_of(task);
+        let mut warnings = Vec::new();
+        let ranking = load_ranking(root, &mut warnings)?;
 
-    let stored = stored_scope_list(&ranking, &scope).to_vec();
-    let updated = moved_list(
-        pruned_scope_list(&stored, &scope, &repo),
-        &task.id,
-        direction,
-    );
-    write_scope_list(root, &scope, &stored, &updated)
+        let stored = stored_scope_list(&ranking, &scope).to_vec();
+        let updated = moved_list(
+            pruned_scope_list(&stored, &scope, &repo),
+            &task.id,
+            direction,
+        );
+        write_scope_list(edit, root, &scope, &stored, &updated)
+    })
 }
 
 /// [`rank_task_move`]'s project twin, over the repo's ranked project list.
 pub fn rank_project_move(root: &Path, name: &str, direction: RankMove) -> Result<WriteOutcome> {
-    let name = validated_single_line("project", name)?;
-    let repo = load_backlog_repo(root)?;
-    let live = live_project_names(&repo);
-    let Some(canonical) = live.iter().find(|p| p.eq_ignore_ascii_case(name)).cloned() else {
-        bail!("no project named '{name}' - check `project list` for the exact name");
-    };
-    let mut warnings = Vec::new();
-    let ranking = load_ranking(root, &mut warnings);
+    aggregate_storage::with_edit(root, "ranking", RANKING_REL, |edit| {
+        let name = validated_single_line("project", name)?;
+        let repo = load_backlog_repo(root)?;
+        let live = live_project_names(&repo);
+        let Some(canonical) = live.iter().find(|p| p.eq_ignore_ascii_case(name)).cloned() else {
+            bail!("no project named '{name}' - check `project list` for the exact name");
+        };
+        let mut warnings = Vec::new();
+        let ranking = load_ranking(root, &mut warnings)?;
 
-    let pruned: Vec<String> = ranking
-        .projects
-        .iter()
-        .filter(|entry| live.iter().any(|p| p == *entry))
-        .cloned()
-        .collect();
-    let updated = moved_list(pruned, &canonical, direction);
-    write_projects(root, &ranking.projects, &updated)
+        let pruned: Vec<String> = ranking
+            .projects
+            .iter()
+            .filter(|entry| live.iter().any(|p| p == *entry))
+            .cloned()
+            .collect();
+        let updated = moved_list(pruned, &canonical, direction);
+        write_projects(edit, root, &ranking.projects, &updated)
+    })
 }
 
 /// A project is a live rank target while any active, unfinished task names
@@ -848,38 +883,42 @@ fn live_project_names(repo: &BacklogRepo) -> Vec<String> {
 /// Rank a project against its repo siblings, pruning dead names as it
 /// writes.
 pub fn rank_project(root: &Path, name: &str, placement: &RankPlacement) -> Result<WriteOutcome> {
-    let name = validated_single_line("project", name)?;
-    let repo = load_backlog_repo(root)?;
-    let live = live_project_names(&repo);
-    let Some(canonical) = live.iter().find(|p| p.eq_ignore_ascii_case(name)).cloned() else {
-        bail!("no project named '{name}' - check `project list` for the exact name");
-    };
-    let mut warnings = Vec::new();
-    let ranking = load_ranking(root, &mut warnings);
+    aggregate_storage::with_edit(root, "ranking", RANKING_REL, |edit| {
+        let name = validated_single_line("project", name)?;
+        let repo = load_backlog_repo(root)?;
+        let live = live_project_names(&repo);
+        let Some(canonical) = live.iter().find(|p| p.eq_ignore_ascii_case(name)).cloned() else {
+            bail!("no project named '{name}' - check `project list` for the exact name");
+        };
+        let mut warnings = Vec::new();
+        let ranking = load_ranking(root, &mut warnings)?;
 
-    let mut updated: Vec<String> = ranking
-        .projects
-        .iter()
-        .filter(|entry| live.iter().any(|p| p == *entry))
-        .cloned()
-        .collect();
-    updated.retain(|entry| entry != &canonical);
-    insert_placed(&mut updated, &canonical, placement, "the repo's projects")?;
-    write_projects(root, &ranking.projects, &updated)
+        let mut updated: Vec<String> = ranking
+            .projects
+            .iter()
+            .filter(|entry| live.iter().any(|p| p == *entry))
+            .cloned()
+            .collect();
+        updated.retain(|entry| entry != &canonical);
+        insert_placed(&mut updated, &canonical, placement, "the repo's projects")?;
+        write_projects(edit, root, &ranking.projects, &updated)
+    })
 }
 
 /// Remove a project from the ranked list.
 pub fn unrank_project(root: &Path, name: &str) -> Result<WriteOutcome> {
-    let name = validated_single_line("project", name)?;
-    let mut warnings = Vec::new();
-    let ranking = load_ranking(root, &mut warnings);
-    let updated: Vec<String> = ranking
-        .projects
-        .iter()
-        .filter(|entry| !entry.eq_ignore_ascii_case(name))
-        .cloned()
-        .collect();
-    write_projects(root, &ranking.projects, &updated)
+    aggregate_storage::with_edit(root, "ranking", RANKING_REL, |edit| {
+        let name = validated_single_line("project", name)?;
+        let mut warnings = Vec::new();
+        let ranking = load_ranking(root, &mut warnings)?;
+        let updated: Vec<String> = ranking
+            .projects
+            .iter()
+            .filter(|entry| !entry.eq_ignore_ascii_case(name))
+            .cloned()
+            .collect();
+        write_projects(edit, root, &ranking.projects, &updated)
+    })
 }
 
 /// Follow a task move into `ranking.yml`. The task keeps its `expedite`
@@ -888,12 +927,23 @@ pub fn unrank_project(root: &Path, name: &str) -> Result<WriteOutcome> {
 /// scope it ranked in is no longer the one it lives in. A missing file, or
 /// one that never mentions `old`, is `Unchanged`.
 pub(super) fn rename_task_in_ranking(root: &Path, old: &str, new: &str) -> Result<WriteOutcome> {
+    aggregate_storage::with_edit(root, "ranking", RANKING_REL, |edit| {
+        rename_task_in_ranking_draft(edit, root, old, new)
+    })
+}
+
+fn rename_task_in_ranking_draft(
+    edit: &mut AggregateEdit,
+    root: &Path,
+    old: &str,
+    new: &str,
+) -> Result<WriteOutcome> {
     let path = ranking_path(root);
-    if !path.is_file() {
+    if !edit.exists(&path) {
         return Ok(WriteOutcome::Unchanged);
     }
     let mut warnings = Vec::new();
-    let ranking = load_ranking(root, &mut warnings);
+    let ranking = parse_ranking_text(&edit.text(&path)?, &path, &mut warnings)?;
     if !warnings.is_empty() {
         bail!(
             "{} does not parse cleanly - fix it (or remove it to start fresh): {}",
@@ -902,7 +952,7 @@ pub(super) fn rename_task_in_ranking(root: &Path, old: &str, new: &str) -> Resul
         );
     }
     let mentions = |list: &[String]| list.iter().any(|id| id == old);
-    let mut lines = load_lines_for_edit(root)?;
+    let mut lines = load_lines_for_edit(edit, root)?;
     let mut changed = false;
     if mentions(&ranking.expedite) {
         let updated: Vec<String> = ranking
@@ -941,8 +991,18 @@ pub(super) fn rename_task_in_ranking(root: &Path, old: &str, new: &str) -> Resul
     if !changed {
         return Ok(WriteOutcome::Unchanged);
     }
-    write_lines(&path, &lines)?;
+    write_lines(edit, &path, &lines)?;
     Ok(WriteOutcome::Changed)
+}
+
+pub(super) fn rename_task_document(
+    original: Option<&[u8]>,
+    old: &str,
+    new: &str,
+) -> Result<Option<Vec<u8>>> {
+    let mut edit = AggregateEdit::from_document(original);
+    let _outcome = rename_task_in_ranking_draft(&mut edit, Path::new(""), old, new)?;
+    Ok(edit.into_document())
 }
 
 /// Follow a project rename into `ranking.yml`: the `projects` list entry and
@@ -950,12 +1010,23 @@ pub(super) fn rename_task_in_ranking(root: &Path, old: &str, new: &str) -> Resul
 /// is `Unchanged`. A stale list already sitting under `new` is merged
 /// (its order first, then `old`'s entries it lacked) rather than clobbered.
 pub(super) fn rename_project_in_ranking(root: &Path, old: &str, new: &str) -> Result<WriteOutcome> {
+    aggregate_storage::with_edit(root, "ranking", RANKING_REL, |edit| {
+        rename_project_in_ranking_draft(edit, root, old, new)
+    })
+}
+
+fn rename_project_in_ranking_draft(
+    edit: &mut AggregateEdit,
+    root: &Path,
+    old: &str,
+    new: &str,
+) -> Result<WriteOutcome> {
     let path = ranking_path(root);
-    if !path.is_file() {
+    if !edit.exists(&path) {
         return Ok(WriteOutcome::Unchanged);
     }
     let mut warnings = Vec::new();
-    let ranking = load_ranking(root, &mut warnings);
+    let ranking = parse_ranking_text(&edit.text(&path)?, &path, &mut warnings)?;
     if !warnings.is_empty() {
         bail!(
             "{} does not parse cleanly - fix it (or remove it to start fresh): {}",
@@ -968,7 +1039,7 @@ pub(super) fn rename_project_in_ranking(root: &Path, old: &str, new: &str) -> Re
     if !in_projects && scoped.is_none() {
         return Ok(WriteOutcome::Unchanged);
     }
-    let mut lines = load_lines_for_edit(root)?;
+    let mut lines = load_lines_for_edit(edit, root)?;
     if in_projects {
         let updated: Vec<String> = ranking
             .projects
@@ -987,18 +1058,33 @@ pub(super) fn rename_project_in_ranking(root: &Path, old: &str, new: &str) -> Re
         set_scope_list(&mut lines, &path, "tasks", old, &[])?;
         set_scope_list(&mut lines, &path, "tasks", new, &merged)?;
     }
-    write_lines(&path, &lines)?;
+    write_lines(edit, &path, &lines)?;
     Ok(WriteOutcome::Changed)
 }
 
-fn write_projects(root: &Path, stored: &[String], updated: &[String]) -> Result<WriteOutcome> {
+pub(super) fn rename_project_document(
+    original: Option<&[u8]>,
+    old: &str,
+    new: &str,
+) -> Result<Option<Vec<u8>>> {
+    let mut edit = AggregateEdit::from_document(original);
+    let _outcome = rename_project_in_ranking_draft(&mut edit, Path::new(""), old, new)?;
+    Ok(edit.into_document())
+}
+
+fn write_projects(
+    edit: &mut AggregateEdit,
+    root: &Path,
+    stored: &[String],
+    updated: &[String],
+) -> Result<WriteOutcome> {
     if stored == updated {
         return Ok(WriteOutcome::Unchanged);
     }
     let path = ranking_path(root);
-    let mut lines = load_lines_for_edit(root)?;
+    let mut lines = load_lines_for_edit(edit, root)?;
     set_top_level_list(&mut lines, &path, "projects", updated)?;
-    write_lines(&path, &lines)?;
+    write_lines(edit, &path, &lines)?;
     Ok(WriteOutcome::Changed)
 }
 
@@ -1024,7 +1110,7 @@ mod tests {
 
     fn ranking(root: &Path) -> (RepoRanking, Vec<String>) {
         let mut warnings = Vec::new();
-        let loaded = load_ranking(root, &mut warnings);
+        let loaded = load_ranking(root, &mut warnings).expect("load aggregate");
         (loaded, warnings)
     }
 
@@ -1480,14 +1566,18 @@ mod tests {
             .changed());
         let mut warnings = Vec::new();
         assert_eq!(
-            load_ranking(&root, &mut warnings).expedite,
+            load_ranking(&root, &mut warnings)
+                .expect("load aggregate")
+                .expedite,
             ["TASK-2", "TASK-1", "TASK-3"]
         );
         assert!(expedite_task_at(&root, "TASK-3", 2)
             .expect("move up")
             .changed());
         assert_eq!(
-            load_ranking(&root, &mut warnings).expedite,
+            load_ranking(&root, &mut warnings)
+                .expect("load aggregate")
+                .expedite,
             ["TASK-2", "TASK-3", "TASK-1"]
         );
         assert!(!expedite_task_at(&root, "TASK-3", 2)

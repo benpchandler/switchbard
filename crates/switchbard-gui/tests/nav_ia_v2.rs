@@ -28,6 +28,7 @@ const REPO_B_PATH: &str = "/tmp/switchbard-ui-test/second";
 
 fn backlog_task(id: &str, title: &str, status: &str) -> BacklogTask {
     BacklogTask {
+        storage_identity: None,
         id: id.to_string(),
         title: title.to_string(),
         status: status.to_string(),
@@ -615,7 +616,10 @@ fn clicking_a_favorited_task_navigates_to_tasks_and_selects_it() {
     assert_eq!(state.tasks_view, TasksView::All);
     assert_eq!(
         state.backlog_view.selected_task,
-        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()))
+        Some(switchbard_gui::runtime::BacklogTaskKey::from((
+            PathBuf::from(REPO_PATH),
+            "TASK-1".to_string()
+        )))
     );
 }
 

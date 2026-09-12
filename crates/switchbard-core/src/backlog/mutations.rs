@@ -32,19 +32,18 @@
 //!   TASK-28's scar).
 
 use super::allocate::{claim_task_id, create_task_allocating_id, strip_id_prefix};
-use super::ball::{Ball, BALL_LABEL_PREFIX};
+use super::ball::Ball;
 use super::goals::rename_task_in_goals;
-use super::parent::{normalized_id, resolve_parent, same_id, task_in_repo, validate_move_source};
+use super::parent::{normalized_id, resolve_parent, validate_move_source};
 use super::parse::{
     configured_task_prefix, load_backlog_repo, parse_config_statuses, parse_task_file,
     DEFAULT_TASK_PREFIX,
 };
 use super::ranking::rename_task_in_ranking;
-use super::types::{BacklogTaskPatch, BacklogTaskSource, NewBacklogTask};
+use super::types::{BacklogTask, BacklogTaskPatch, BacklogTaskSource, NewBacklogTask};
 use super::write::{
-    append_task_acceptance_criteria, append_task_notes, rehome_task_file, replace_task_section,
-    revise_task_checklist, set_task_checklist_item, set_task_label, set_task_list_field,
-    set_task_priority, set_task_project, set_task_status, set_task_title, swap_task_label,
+    append_task_notes, rehome_task_file, replace_task_section, revise_task_checklist,
+    set_task_checklist_item, set_task_label, set_task_list_field, swap_task_label,
     ChecklistTextEdit, TaskChecklist, TaskListField, TaskSection, WriteOutcome,
 };
 use anyhow::{bail, Context, Result};
@@ -72,23 +71,84 @@ pub fn edit_backlog_task(
     }
 }
 
-/// One write-layer call per populated patch field, in the field order
-/// [`BacklogTaskPatch`] declares. Each call is itself atomic; a failure
-/// partway leaves the earlier fields applied — the same partial-application
-/// surface a failed CLI invocation had, minus the fields it batched.
+/// Save a captured draft only while its storage authority remains unchanged.
+/// Central drafts additionally require the exact stable record revision.
+pub fn edit_backlog_task_expected(
+    project_root: &Path,
+    task_id: &str,
+    patch: &BacklogTaskPatch,
+    expected: Option<&super::BacklogStorageIdentity>,
+) -> Result<String> {
+    let Some(expected) = expected else {
+        anyhow::ensure!(
+            super::task_storage::active(project_root)?.is_none(),
+            "task storage authority changed; reload draft"
+        );
+        return edit_backlog_task(project_root, task_id, patch);
+    };
+    if let Some(status) = &patch.status {
+        validate_status(project_root, status)?;
+    }
+    let (mut store, repo) = super::task_storage::active(project_root)?
+        .context("task storage authority changed; reload draft")?;
+    anyhow::ensure!(
+        repo.0 == expected.repository_id,
+        "repository identity changed; reload draft"
+    );
+    let document = store
+        .list(&repo, "task")?
+        .into_iter()
+        .find(|doc| doc.id == expected.record_id && !doc.deleted)
+        .context("task record no longer exists; reload draft")?;
+    let mut changed = false;
+    store.mutate(
+        &repo,
+        "task",
+        &document.locator,
+        Some(expected.revision),
+        |current| {
+            let current = current
+                .filter(|doc| !doc.deleted && doc.id == expected.record_id)
+                .context("task identity changed; reload draft")?;
+            let (text, did_change) =
+                super::write::edit_text(std::str::from_utf8(&current.content)?, |draft| {
+                    apply_patch_draft(draft, patch)
+                })?;
+            changed = did_change;
+            Ok(Some(text.into_bytes()))
+        },
+    )?;
+    Ok(if changed {
+        format!("Edited {task_id}")
+    } else {
+        "no changes".into()
+    })
+}
+
+/// Compose every populated field on one raw draft. Validation failure leaves
+/// the original document untouched; success persists one document revision.
 fn apply_patch(path: &Path, patch: &BacklogTaskPatch) -> Result<bool> {
+    super::write::edit_document(path, |draft| apply_patch_draft(draft, patch))
+}
+
+pub(super) fn apply_patch_draft(
+    draft: &mut super::write::TaskDraft,
+    patch: &BacklogTaskPatch,
+) -> Result<bool> {
     let mut changed = false;
     if let Some(title) = &patch.title {
-        changed |= set_task_title(path, title)?.changed();
+        changed |= super::write::set_task_title_draft(draft, title)?.changed();
     }
     if let Some(description) = &patch.description {
-        changed |= replace_task_section(path, TaskSection::Description, description)?.changed();
+        changed |=
+            super::write::replace_task_section_draft(draft, TaskSection::Description, description)?
+                .changed();
     }
     if let Some(status) = &patch.status {
-        changed |= set_task_status(path, status)?.changed();
+        changed |= super::write::set_task_status_draft(draft, status)?.changed();
     }
     if let Some(priority) = &patch.priority {
-        changed |= set_task_priority(path, priority)?.changed();
+        changed |= super::write::set_task_priority_draft(draft, priority)?.changed();
     }
     for (field, values) in [
         (TaskListField::Labels, &patch.labels),
@@ -97,20 +157,25 @@ fn apply_patch(path: &Path, patch: &BacklogTaskPatch) -> Result<bool> {
         (TaskListField::References, &patch.references),
     ] {
         if let Some(values) = values {
-            changed |= set_task_list_field(path, field, values)?.changed();
+            changed |= super::write::set_task_list_field_draft(draft, field, values)?.changed();
         }
     }
     if let Some(plan) = &patch.implementation_plan {
-        changed |= replace_task_section(path, TaskSection::ImplementationPlan, plan)?.changed();
+        changed |=
+            super::write::replace_task_section_draft(draft, TaskSection::ImplementationPlan, plan)?
+                .changed();
     }
     if !patch.append_acceptance_criteria.is_empty() {
-        changed |=
-            append_task_acceptance_criteria(path, &patch.append_acceptance_criteria)?.changed();
+        changed |= super::write::append_task_acceptance_criteria_draft(
+            draft,
+            &patch.append_acceptance_criteria,
+        )?
+        .changed();
     }
     if let Some(project) = &patch.project {
-        changed |= set_task_project(path, Some(project))?.changed();
+        changed |= super::write::set_task_project_draft(draft, Some(project))?.changed();
     } else if patch.clear_project {
-        changed |= set_task_project(path, None)?.changed();
+        changed |= super::write::set_task_project_draft(draft, None)?.changed();
     }
     Ok(changed)
 }
@@ -221,28 +286,9 @@ pub fn set_backlog_label(
 pub fn set_backlog_ball(project_root: &Path, task_id: &str, ball: Option<Ball>) -> Result<String> {
     let path = resolve_task_file(project_root, task_id)?;
     let desired = ball.as_ref().map(Ball::label);
-    let (task, _) = parse_task_file(&path, BacklogTaskSource::Active)?;
-    let existing = task
-        .labels
-        .iter()
-        .filter(|label| label.starts_with(BALL_LABEL_PREFIX))
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut changed = false;
-    for label in &existing {
-        if desired.as_deref() != Some(label) {
-            changed |= set_task_label(&path, label, false)?.changed();
-        }
-    }
-    if let Some(label) = desired.filter(|label| !existing.iter().any(|existing| existing == label))
-    {
-        changed |= set_task_label(&path, &label, true)?.changed();
-    }
-    let outcome = if changed {
-        WriteOutcome::Changed
-    } else {
-        WriteOutcome::Unchanged
-    };
+    let outcome = super::write::edit_document(&path, |draft| {
+        super::write::reconcile_task_ball_draft(draft, desired.as_deref())
+    })?;
     Ok(outcome_message(task_id, outcome))
 }
 
@@ -298,33 +344,19 @@ pub fn move_backlog_task(
     task_id: &str,
     new_parent: Option<&str>,
 ) -> Result<Option<String>> {
-    let repo = load_backlog_repo(project_root)?;
-    let prefix = configured_task_prefix(project_root);
-    let task = task_in_repo(&repo.tasks, task_id, &prefix)?;
-    validate_move_source(&repo.tasks, task, &prefix)?;
-    let parent = new_parent
-        .map(|wanted| resolve_parent(&repo.tasks, Some(task), wanted, &prefix))
-        .transpose()?;
-    let current = task.parent.as_deref();
-    let unchanged = match (current, parent) {
-        (None, None) => true,
-        (Some(have), Some(want)) => same_id(have, &want.id, &prefix),
-        _ => false,
-    };
-    if unchanged {
-        return Ok(None);
+    let _repository_lock = crate::storage::RepositoryLock::acquire(project_root)?;
+    if let Some(result) = super::central_commands::move_task(project_root, task_id, new_parent)? {
+        return Ok(result);
     }
-
-    let parent_bare = parent.map(|p| normalized_id(&p.id, &prefix).to_string());
+    let repo = load_backlog_repo(project_root)?;
+    let prefix = configured_task_prefix(project_root)?;
+    let Some((task, parent_bare)) = move_target(&repo.tasks, task_id, new_parent, &prefix)? else {
+        return Ok(None);
+    };
     let claimed = claim_task_id(project_root, parent_bare.as_deref())?;
     let new_full_id = format!("{prefix}-{}", claimed.id);
-    rehome_task_file(
-        &task.path,
-        &prefix,
-        &claimed.id,
-        parent.map(|p| p.id.as_str()),
-    )
-    .with_context(|| format!("moving {} to {new_full_id}", task.id))?;
+    rehome_task_file(&task.path, &prefix, &claimed.id, parent_bare.as_deref())
+        .with_context(|| format!("moving {} to {new_full_id}", task.id))?;
 
     for other in &repo.tasks {
         if !other
@@ -364,6 +396,55 @@ pub fn move_backlog_task(
     Ok(Some(new_full_id))
 }
 
+pub(super) fn move_target<'a>(
+    tasks: &'a [BacklogTask],
+    task_id: &str,
+    new_parent: Option<&str>,
+    prefix: &str,
+) -> Result<Option<(&'a BacklogTask, Option<String>)>> {
+    let task = task_in_repo(tasks, task_id, prefix)?;
+    validate_move_source(tasks, task, prefix)?;
+    let parent = new_parent
+        .map(|wanted| resolve_parent(tasks, Some(task), wanted, prefix))
+        .transpose()?;
+    let current = task.parent.as_deref();
+    let unchanged = match (current, parent) {
+        (None, None) => true,
+        (Some(have), Some(want)) => same_id(have, &want.id, prefix),
+        _ => false,
+    };
+    if unchanged {
+        return Ok(None);
+    }
+
+    // The parent's own literal id, not a re-normalized one: a legacy parent
+    // may carry a different prefix than the repo's configured one (see
+    // `parent::tests::moving_to_legacy_parent_stores_its_actual_identity`),
+    // and `claim_task_id`/`central_candidate` both strip whatever prefix a
+    // full id carries, so passing it through verbatim is safe either way.
+    let parent_id = parent.map(|p| p.id.clone());
+    Ok(Some((task, parent_id)))
+}
+
+/// The loaded task whose id matches `wanted` (`TASK-7`, `task-7`, `7`,
+/// `7.2` - the same tolerance every `<ID>` argument gets).
+fn task_in_repo<'r>(
+    tasks: &'r [BacklogTask],
+    wanted: &str,
+    prefix: &str,
+) -> Result<&'r BacklogTask> {
+    tasks
+        .iter()
+        .find(|task| same_id(&task.id, wanted, prefix))
+        .with_context(|| format!("no task {wanted} in this repo"))
+}
+
+/// Two ids name the same task when their bare parts match, ignoring prefix
+/// case (`TASK-7`, `task-7`, and `7` are one task).
+pub(super) fn same_id(a: &str, b: &str, prefix: &str) -> bool {
+    normalized_id(a, prefix).eq_ignore_ascii_case(normalized_id(b, prefix))
+}
+
 pub fn create_backlog_task(project_root: &Path, task: &NewBacklogTask) -> Result<String> {
     if task.title.trim().is_empty() {
         bail!("title is required");
@@ -371,7 +452,7 @@ pub fn create_backlog_task(project_root: &Path, task: &NewBacklogTask) -> Result
     if let Some(status) = Some(task.status.as_str()).filter(|s| !s.trim().is_empty()) {
         validate_status(project_root, status)?;
     }
-    let prefix = configured_task_prefix(project_root);
+    let prefix = configured_task_prefix(project_root)?;
     let (id, _path) = create_task_allocating_id(project_root, task)?;
     Ok(format!("{prefix}-{id}"))
 }
@@ -395,18 +476,32 @@ fn outcome_message(task_id: &str, outcome: WriteOutcome) -> String {
 /// way `super::allocate` tolerates it when scanning — see that module's
 /// *Configured id prefix* doc). Zero matches and multiple matches are both
 /// errors — a duplicated id is a fact to surface, never to guess through.
-fn resolve_task_file(project_root: &Path, task_id: &str) -> Result<PathBuf> {
-    let prefix = configured_task_prefix(project_root);
+pub(super) fn resolve_task_file(project_root: &Path, task_id: &str) -> Result<PathBuf> {
+    let prefix = configured_task_prefix(project_root)?;
     let key = normalized_id(task_id, &prefix);
     if key.is_empty() {
         bail!("task id is empty");
     }
     let tasks_dir = project_root.join("backlog/tasks");
-    let entries =
-        fs::read_dir(&tasks_dir).with_context(|| format!("reading {}", tasks_dir.display()))?;
-    let mut matches: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
+    let paths = if super::task_storage::active(project_root)?.is_some() {
+        let mut paths = Vec::new();
+        for rel in super::task_storage::TASK_DIRS {
+            for (path, text, _) in super::task_storage::sources(project_root, rel, &mut Vec::new())?
+            {
+                text?;
+                paths.push(path);
+            }
+        }
+        paths
+    } else {
+        fs::read_dir(&tasks_dir)
+            .with_context(|| format!("reading {}", tasks_dir.display()))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect()
+    };
+    let mut matches: Vec<PathBuf> = paths
+        .into_iter()
         .filter(|path| path.extension().and_then(OsStr::to_str) == Some("md"))
         .filter(|path| filename_matches_id(path, key, &prefix))
         .collect();
@@ -438,8 +533,8 @@ fn filename_matches_id(path: &Path, key: &str, prefix: &str) -> bool {
 /// GUI surfaces and the dispatch pipeline's best-effort status writes see
 /// the failure class they were built around. A project declaring no
 /// statuses (missing or minimal `config.yml`) constrains nothing.
-fn validate_status(project_root: &Path, status: &str) -> Result<()> {
-    let declared = parse_config_statuses(project_root);
+pub(super) fn validate_status(project_root: &Path, status: &str) -> Result<()> {
+    let declared = parse_config_statuses(project_root)?;
     if declared.is_empty() || declared.iter().any(|s| s.eq_ignore_ascii_case(status)) {
         return Ok(());
     }
@@ -450,6 +545,13 @@ fn validate_status(project_root: &Path, status: &str) -> Result<()> {
 }
 
 fn move_task_file(from: &Path, dest_dir: &Path) -> Result<()> {
+    let root =
+        super::task_storage::root_for_path(from).context("task path is outside a repository")?;
+    let _repository_lock = crate::storage::RepositoryLock::acquire(&root)?;
+    let destination = dest_dir.join(from.file_name().context("task path has no filename")?);
+    if super::task_storage::rehome(from, &destination, None)? {
+        return Ok(());
+    }
     fs::create_dir_all(dest_dir).with_context(|| format!("creating {}", dest_dir.display()))?;
     let name = from.file_name().context("task path has no filename")?;
     let dest = dest_dir.join(name);

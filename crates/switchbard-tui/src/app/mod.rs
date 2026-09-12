@@ -70,6 +70,9 @@ pub struct App {
     pub settings: SettingsStore,
     config_seen: Option<SystemTime>,
     tasks_seen: Option<SystemTime>,
+    storage_seen: Option<u64>,
+    storage_checked: Option<Instant>,
+    storage_retry: bool,
     tasks: Vec<BacklogTask>,
     /// Project headings' facts, by stack rank; refreshed with the tasks.
     pub projects: Vec<ProjectSummary>,
@@ -146,6 +149,9 @@ impl App {
             config_path,
             settings,
             tasks_seen: None,
+            storage_seen: None,
+            storage_checked: None,
+            storage_retry: false,
             tasks: Vec::new(),
             projects: Vec::new(),
             goals: Vec::new(),
@@ -450,21 +456,27 @@ impl App {
                 self.reload_config();
             }
         }
-        let now = config::modified_at(&self.repo_root.join("backlog/tasks"));
-        if now != self.tasks_seen {
-            self.reload_tasks();
+        if self
+            .storage_checked
+            .is_none_or(|last| last.elapsed() >= Duration::from_secs(1))
+        {
+            self.storage_checked = Some(Instant::now());
+            match switchbard_core::storage::current_change_sequence() {
+                Ok(sequence) => {
+                    let now = config::modified_at(&self.repo_root.join("backlog/tasks"));
+                    if self.storage_retry || sequence != self.storage_seen || now != self.tasks_seen
+                    {
+                        self.storage_seen = sequence;
+                        self.reload_tasks();
+                    }
+                }
+                Err(error) => {
+                    self.storage_retry = true;
+                    self.fail(format!("task storage: {error}"));
+                }
+            }
         }
         self.reload_work();
-    }
-
-    fn refresh_calendar_day(&mut self) {
-        let today = crate::date_fields::today();
-        if self.calendar_day == today {
-            return;
-        }
-        self.calendar_day = today;
-        self.refilter_tasks();
-        self.pull_requests.refilter();
     }
 
     /// Re-read the live session records: a handful of small files, and the
@@ -556,6 +568,16 @@ impl App {
             }
             Err(error) => self.fail(format!("{id}: {error}")),
         }
+    }
+
+    fn refresh_calendar_day(&mut self) {
+        let today = crate::date_fields::today();
+        if self.calendar_day == today {
+            return;
+        }
+        self.calendar_day = today;
+        self.refilter_tasks();
+        self.pull_requests.refilter();
     }
 
     pub fn handle_key(&mut self, event: KeyEvent) {
@@ -1126,6 +1148,34 @@ impl App {
         }
     }
 
+    /// `d`: mark the selected task Done. This is deliberately an ordinary
+    /// native status edit, not archival: completed-task retention stays a
+    /// separate, explicit lifecycle decision.
+    fn mark_done(&mut self) {
+        let Some(task) = self.selected_task() else {
+            self.status = "no task selected".to_string();
+            return;
+        };
+        let id = task.id.clone();
+        if task.status.eq_ignore_ascii_case("Done") {
+            self.status = format!("{id} is already Done");
+            return;
+        }
+        let patch = switchbard_core::BacklogTaskPatch {
+            status: Some("Done".to_string()),
+            ..Default::default()
+        };
+        match switchbard_core::edit_backlog_task(&self.repo_root, &id, &patch) {
+            Ok(_) => {
+                self.reload_tasks();
+                self.select_task(&id);
+                self.status = format!("{id} is Done");
+                self.telemetry.record("action", format!("done {id}"));
+            }
+            Err(error) => self.fail(format!("{id}: {error}")),
+        }
+    }
+
     fn run_command(&mut self, command: &str) {
         let (verb, rest) = command.split_once(' ').unwrap_or((command, ""));
         if self.page == Page::Inbox
@@ -1472,26 +1522,43 @@ impl App {
     }
 
     fn reload_tasks(&mut self) {
-        let selected_id = self.selected_task().map(|task| task.id.clone());
+        let kept = self
+            .selected_task()
+            .map(|task| (task.storage_identity.clone(), task.id.clone()));
         self.tasks_seen = config::modified_at(&self.repo_root.join("backlog/tasks"));
         match tasks::load(&self.repo_root) {
             Ok(backlog) => {
+                if self.storage_retry {
+                    self.status = "task storage reconnected".into();
+                }
+                self.storage_retry = false;
                 self.tasks = backlog.tasks;
                 self.projects = backlog.projects;
                 self.goals = backlog.goals;
                 self.goal_summaries = backlog.goal_summaries;
                 self.top = backlog.top;
             }
-            Err(error) => self.fail(error.to_string()),
+            Err(error) => {
+                self.storage_retry = true;
+                self.fail(error.to_string());
+            }
         }
         self.refilter_tasks();
-        if let Some(id) = selected_id {
-            if let Some(index) = self
-                .rows
-                .iter()
-                .position(|row| matches!(row, Row::Task(i) if self.tasks[*i].id == id))
-            {
-                self.select(index);
+        if let Some((identity, id)) = kept {
+            if let Some(row) = self.rows.iter().position(|row| match row {
+                Row::Task(index) => {
+                    let task = &self.tasks[*index];
+                    match (&identity, &task.storage_identity) {
+                        (Some(old), Some(new)) => {
+                            old.repository_id == new.repository_id && old.record_id == new.record_id
+                        }
+                        (None, _) => task.id == id,
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }) {
+                self.select(row);
             } else if self.mode == Mode::BallName
                 || self.picker.as_ref().is_some_and(|picker| {
                     matches!(

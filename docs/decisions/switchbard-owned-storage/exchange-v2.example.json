@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "repo_id": "10000000-0000-4000-8000-000000000001",
+  "epoch_id": "20000000-0000-4000-8000-000000000002",
+  "kinds": [
+    "initiative"
+  ],
+  "records": [
+    {
+      "id": "30000000-0000-4000-8000-000000000003",
+      "kind": "initiative",
+      "locator": "backlog/initiatives/Example.md",
+      "content": {
+        "encoding": "utf8-lines",
+        "data": [
+          "---\n",
+          "name: Example\n",
+          "status: Planned\n",
+          "custom: {nested: [null, \"\", [], {}]}\n",
+          "---\n",
+          "\n",
+          "## Custom section\n",
+          "Readable collaboration content.\n"
+        ]
+      },
+      "deleted": false,
+      "clock": {
+        "40000000-0000-4000-8000-000000000004": 1
+      }
+    }
+  ],
+  "digest": "580aa9c35261e21ab7a872399e834108aee184b3a0f06f88dba7e29875b46a69"
+}

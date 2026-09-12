@@ -124,6 +124,9 @@ pub enum TaskAction {
     Drop,
     Pin,
     Goals,
+    /// The `d` fast path: mark the selected task Done without opening the
+    /// full status picker.
+    Done,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

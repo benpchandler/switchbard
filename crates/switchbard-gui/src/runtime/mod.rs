@@ -374,7 +374,8 @@ mod filter_migration_tests {
 /// `backlog` task id. A bare task id is only unique **within** a project —
 /// the unified All-projects scope can show two "TASK-10"s side by side from
 /// different repos, so selection/bulk-selection must key on the pair.
-pub type BacklogTaskKey = (PathBuf, String);
+mod task_identity;
+pub use task_identity::{BacklogTaskKey, TaskKeyIndex};
 
 /// Lifecycle of the shared task read model. This deliberately does not fold
 /// row cardinality into the state: `Ready` plus an empty `backlog_repos` cache
@@ -493,6 +494,7 @@ pub struct BoardMoveOutcome {
 #[derive(Debug, Clone)]
 pub struct BacklogViewState {
     pub selected_repo: Option<PathBuf>,
+    pub identity_seen: Vec<(PathBuf, u64)>,
     /// The "New Goal" modal's session-only draft (TASK-75).
     pub new_goal: BacklogNewGoalState,
     /// Session-only draft values for the Digest goal cards' check-in field,
@@ -591,6 +593,7 @@ impl Default for BacklogViewState {
     fn default() -> Self {
         Self {
             selected_repo: None,
+            identity_seen: Vec::new(),
             new_goal: BacklogNewGoalState::default(),
             goal_checkin_drafts: HashMap::new(),
             selected_task: None,
@@ -871,6 +874,9 @@ impl BacklogTaskSortDirection {
 #[derive(Debug, Clone, Default)]
 pub struct BacklogEditorState {
     pub loaded_key: Option<String>,
+    pub base_task: Option<switchbard_core::BacklogTask>,
+    pub conflict: bool,
+    pub submitted: bool,
     pub title: String,
     pub description: String,
     pub status: String,

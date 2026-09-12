@@ -204,7 +204,7 @@ pub(crate) fn summarize_dispatch(app: &HiveApp) -> DispatchSummary {
                 repo.tasks.iter().filter_map(move |task| {
                     match dispatch_ui::dispatch_category(task) {
                         DispatchCategory::NotFlagged => None,
-                        category => Some(((root.clone(), task.id.clone()), category)),
+                        category => Some((BacklogTaskKey::for_task(root, task), category)),
                     }
                 })
             })
@@ -270,7 +270,7 @@ pub(crate) fn render_kill_icon(
     if run.started_at_unix.is_none() {
         return;
     }
-    let key: BacklogTaskKey = (repo_root.to_path_buf(), task_id.to_string());
+    let key = crate::app::task_key(&app.backlog_repos, repo_root, task_id);
     if app.dispatch_kill_confirm.as_ref() == Some(&key) {
         return;
     }
@@ -309,7 +309,7 @@ pub(crate) fn render_kill_confirm_banner(
     let Some(started_at_unix) = run.started_at_unix else {
         return false;
     };
-    let key: BacklogTaskKey = (repo_root.to_path_buf(), task_id.to_string());
+    let key = crate::app::task_key(&app.backlog_repos, repo_root, task_id);
     if app.dispatch_kill_confirm.as_ref() != Some(&key) {
         return false;
     }

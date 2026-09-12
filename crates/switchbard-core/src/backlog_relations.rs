@@ -180,6 +180,7 @@ mod tests {
 
     fn task(id: &str, status: &str, deps: &[&str], parent: Option<&str>) -> BacklogTask {
         BacklogTask {
+            storage_identity: None,
             id: id.to_string(),
             title: id.to_string(),
             status: status.to_string(),

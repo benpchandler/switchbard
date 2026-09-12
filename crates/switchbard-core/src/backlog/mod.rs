@@ -6,17 +6,27 @@
 //! of them (`types`). No mutation shells out to the `backlog` CLI any more;
 //! the files stay Backlog.md-compatible on disk.
 
+mod aggregate_storage;
 mod allocate;
 mod ball;
+mod central_commands;
+mod edit_command;
 mod goals;
+pub use edit_command::{edit_backlog_task_command, TaskEditRequest, TaskEditResult};
 mod hierarchy;
+pub mod migration;
+pub(crate) mod migration_repairs;
 mod mutations;
 mod parent;
 mod parse;
 mod ranking;
 pub mod status_config;
+mod storage_validation;
+pub(super) mod task_storage;
 mod types;
 mod write;
+
+pub use storage_validation::validate_storage_snapshot;
 
 pub use allocate::{create_task_allocating_id, next_task_id, ACTIVE_BRANCH_DAYS};
 
@@ -35,13 +45,14 @@ pub use hierarchy::{
 
 pub use mutations::{
     append_backlog_notes, archive_backlog_task, complete_backlog_task, create_backlog_task,
-    edit_backlog_task, move_backlog_task, remove_backlog_label, revise_backlog_acceptance_criteria,
-    set_backlog_acceptance_checked, set_backlog_ball, set_backlog_dod_checked,
-    set_backlog_final_summary, set_backlog_label, swap_backlog_label,
+    edit_backlog_task, edit_backlog_task_expected, move_backlog_task, remove_backlog_label,
+    revise_backlog_acceptance_criteria, set_backlog_acceptance_checked, set_backlog_ball,
+    set_backlog_dod_checked, set_backlog_final_summary, set_backlog_label, swap_backlog_label,
 };
 pub use parent::eligible_backlog_parents;
 pub use parse::{
-    body_round_trips, is_backlog_repo, load_backlog_repo, parse_backlog_day, task_file_round_trips,
+    backlog_repo_available, body_round_trips, is_backlog_repo, load_backlog_repo,
+    parse_backlog_day, task_file_round_trips,
 };
 pub use ranking::{
     expedite_task, expedite_task_at, rank_project, rank_project_move, rank_task, rank_task_move,
@@ -49,9 +60,9 @@ pub use ranking::{
 };
 pub use types::{
     assignable_statuses, missing_standard_statuses, ordered_status_vocabulary,
-    BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskPatch, BacklogTaskSource,
-    NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES, CANONICAL_STATUS_ORDER,
-    STANDARD_STATUSES,
+    BacklogChecklistItem, BacklogRepo, BacklogStorageIdentity, BacklogTask, BacklogTaskPatch,
+    BacklogTaskSource, NewBacklogTask, BACKLOG_PRIORITIES, BACKLOG_STATUSES,
+    CANONICAL_STATUS_ORDER, STANDARD_STATUSES,
 };
 pub use write::{
     append_task_acceptance_criteria, append_task_notes, rehome_task_file, replace_task_section,
@@ -60,3 +71,5 @@ pub use write::{
     write_new_task_file, ChecklistTextEdit, TaskChecklist, TaskListField, TaskSection,
     WriteOutcome,
 };
+
+pub(crate) use parse::parse_task_text;

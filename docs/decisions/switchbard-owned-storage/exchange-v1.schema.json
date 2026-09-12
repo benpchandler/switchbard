@@ -1,0 +1,280 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "repo_id",
+    "digest",
+    "base",
+    "base_records",
+    "records"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "repo_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "base": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "base_records": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 100000,
+      "items": {
+        "$ref": "#/$defs/record"
+      },
+      "contains": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "config"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "minContains": 0,
+      "maxContains": 1
+    },
+    "records": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": {
+        "$ref": "#/$defs/record"
+      },
+      "contains": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "config"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "minContains": 0,
+      "maxContains": 1
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:switchbard:tasks:exchange:v1",
+  "$defs": {
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_id",
+        "kind",
+        "public_id",
+        "lifecycle",
+        "tombstone",
+        "raw_encoding",
+        "raw_payload",
+        "links"
+      ],
+      "properties": {
+        "record_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "kind": {
+          "enum": [
+            "task",
+            "project",
+            "initiative",
+            "goal",
+            "ranking",
+            "config"
+          ]
+        },
+        "public_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lifecycle": {
+          "enum": [
+            "active",
+            "completed",
+            "draft",
+            "archived",
+            "tombstoned"
+          ]
+        },
+        "tombstone": {
+          "type": "boolean"
+        },
+        "raw_encoding": {
+          "const": "base64"
+        },
+        "raw_payload": {
+          "type": "string",
+          "maxLength": 5592408,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "relation",
+                  "repo_id",
+                  "state",
+                  "record_id"
+                ],
+                "properties": {
+                  "relation": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                  },
+                  "repo_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                  },
+                  "state": {
+                    "const": "resolved"
+                  },
+                  "record_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "relation",
+                  "repo_id",
+                  "state",
+                  "original_name"
+                ],
+                "properties": {
+                  "relation": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                  },
+                  "repo_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                  },
+                  "state": {
+                    "const": "unresolved_optional"
+                  },
+                  "original_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                }
+              }
+            ]
+          },
+          "uniqueItems": true
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "tombstone": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "lifecycle": {
+                "const": "tombstoned"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "lifecycle": {
+                "not": {
+                  "const": "tombstoned"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "config"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "public_id": {
+                "const": "task-config"
+              },
+              "lifecycle": {
+                "const": "active"
+              },
+              "tombstone": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$comment": "HISTORICAL SUPERSEDED PROPOSAL. Not normative for phased flexible storage; see phased-contract.md and historical-evidence.md.",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "base": {
+            "type": "null"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "base_records": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "base_records": {
+            "type": "array"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -33,6 +33,7 @@ use switchbard_gui::runtime::{DispatchesFacet, Place, TasksView};
 
 fn task(id: &str, labels: &[&str], notes: &str) -> BacklogTask {
     BacklogTask {
+        storage_identity: None,
         id: id.to_string(),
         title: format!("{id} work"),
         status: "In Progress".to_string(),
@@ -120,7 +121,7 @@ fn app_with(tasks: Vec<BacklogTask>, runs: Vec<DispatchRun>) -> HiveApp {
     );
     let mut cached = app.dispatch_runs.lock().unwrap();
     for run in runs {
-        cached.insert((PathBuf::from(REPO_PATH), run.task_id.clone()), run);
+        cached.insert((PathBuf::from(REPO_PATH), run.task_id.clone()).into(), run);
     }
     drop(cached);
     app
@@ -453,7 +454,10 @@ fn the_kill_button_is_confirm_armed_and_cancellable() {
 
     assert_eq!(
         harness.state().dispatch_kill_confirm,
-        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string())),
+        Some(switchbard_gui::runtime::BacklogTaskKey::from((
+            PathBuf::from(REPO_PATH),
+            "TASK-1".to_string()
+        ))),
         "arming is keyed by (repo root, task id) — a task id alone is not unique"
     );
     assert!(

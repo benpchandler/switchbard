@@ -6,6 +6,12 @@ use std::path::Path;
 use anyhow::{bail, Result};
 use switchbard_core::{create_task_allocating_id, NewBacklogTask};
 
+/// Where filed bugs land, so a defect is never loose in the backlog: the
+/// standing bucket the reporter and the groomer both look in. Ideas stay
+/// unassigned - an idea's home is the project it turns out to belong to,
+/// which filing time cannot know.
+const BUG_PROJECT: &str = "Bugs";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportKind {
     Bug,
@@ -17,6 +23,13 @@ impl ReportKind {
         match self {
             ReportKind::Bug => "bug",
             ReportKind::Idea => "idea",
+        }
+    }
+
+    fn project(self) -> Option<String> {
+        match self {
+            ReportKind::Bug => Some(BUG_PROJECT.to_string()),
+            ReportKind::Idea => None,
         }
     }
 }
@@ -55,7 +68,7 @@ pub fn file_report(repo_root: &Path, kind: ReportKind, context: ReportContext) -
         parent: None,
         labels: vec!["tui".to_string(), kind.label().to_string()],
         assignees: Vec::new(),
-        project: None,
+        project: kind.project(),
         dependencies: Vec::new(),
     };
     let (id, _path) = create_task_allocating_id(repo_root, &task)?;

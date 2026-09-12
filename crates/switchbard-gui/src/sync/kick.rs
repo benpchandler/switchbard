@@ -55,12 +55,19 @@ impl Kick {
     /// Block up to `dur`, returning early if a kick is pending or arrives.
     /// Consumes the pending kick so the following `wait` sleeps normally.
     pub fn wait(&self, dur: Duration) {
+        self.wait_notified(dur);
+    }
+
+    /// Whether this wait consumed a real notification rather than its timeout.
+    pub fn wait_notified(&self, dur: Duration) -> bool {
         let (lock, cvar) = &*self.0;
         let pending = lock.lock().unwrap();
         let (mut pending, _timeout) = cvar
             .wait_timeout_while(pending, dur, |pending| !*pending)
             .unwrap();
+        let notified = *pending;
         *pending = false;
+        notified
     }
 }
 

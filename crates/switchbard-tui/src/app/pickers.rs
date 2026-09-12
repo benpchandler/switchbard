@@ -25,6 +25,7 @@ impl App {
             for (key, label, action) in [
                 ('b', "Assign ball", TaskAction::Ball),
                 ('s', "Status", TaskAction::Status),
+                ('d', "Mark Done", TaskAction::Done),
                 ('p', "Link project", TaskAction::Project),
                 ('a', "Link parent task", TaskAction::Parent),
                 ('r', "Top list", TaskAction::TopList),
@@ -69,6 +70,7 @@ impl App {
             TaskAction::TopList => self.open_top_list_picker(),
             TaskAction::Drop => self.drop_rank(),
             TaskAction::Goals => self.open_goal_picker(),
+            TaskAction::Done => self.mark_done(),
             TaskAction::Pin => {
                 let selected = self.selected_task().map(|task| task.id.clone());
                 self.state.pin_top = !self.state.pin_top;

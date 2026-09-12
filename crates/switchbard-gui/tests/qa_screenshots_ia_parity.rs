@@ -64,6 +64,7 @@ fn this_week() -> String {
 
 fn task(id: &str, title: &str, status: &str, project: Option<&str>) -> BacklogTask {
     BacklogTask {
+        storage_identity: None,
         id: id.to_string(),
         title: title.to_string(),
         status: status.to_string(),
@@ -299,7 +300,7 @@ fn command_needs_you(theme: ThemeChoice, suffix: &str) {
         .insert(PathBuf::from(REPO_PATH), repo);
     let mut runs = app.dispatch_runs.lock().unwrap();
     runs.insert(
-        (PathBuf::from(REPO_PATH), "TASK-8".to_string()),
+        (PathBuf::from(REPO_PATH), "TASK-8".to_string()).into(),
         DispatchRun {
             task_id: "TASK-8".to_string(),
             branch: "dispatch/task-8".to_string(),
@@ -315,7 +316,7 @@ fn command_needs_you(theme: ThemeChoice, suffix: &str) {
         },
     );
     runs.insert(
-        (PathBuf::from(REPO_PATH), "TASK-6".to_string()),
+        (PathBuf::from(REPO_PATH), "TASK-6".to_string()).into(),
         DispatchRun {
             task_id: "TASK-6".to_string(),
             branch: "dispatch/task-6".to_string(),
@@ -343,10 +344,9 @@ fn command_needs_you(theme: ThemeChoice, suffix: &str) {
         started_unix: Some(now_unix().saturating_sub(900)),
         pgid: Some(5150),
     }];
-    app.command_view.selected = Some(switchbard_gui::runtime::CommandRowKey::Dispatch((
-        PathBuf::from(REPO_PATH),
-        "TASK-8".to_string(),
-    )));
+    app.command_view.selected = Some(switchbard_gui::runtime::CommandRowKey::Dispatch(
+        (PathBuf::from(REPO_PATH), "TASK-8".to_string()).into(),
+    ));
     let mut h = harness(app);
     h.run();
     // The needs-you facet count, the row's Respond affordance, and the
@@ -405,7 +405,7 @@ fn dispatches_table(theme: ThemeChoice, suffix: &str) {
     {
         let mut runs = app.dispatch_runs.lock().unwrap();
         runs.insert(
-            (PathBuf::from(REPO_PATH), "TASK-83".to_string()),
+            (PathBuf::from(REPO_PATH), "TASK-83".to_string()).into(),
             DispatchRun {
                 task_id: "TASK-83".to_string(),
                 branch: "dispatch/task-83-rank-verbs".to_string(),
@@ -424,7 +424,7 @@ fn dispatches_table(theme: ThemeChoice, suffix: &str) {
             },
         );
         runs.insert(
-            (PathBuf::from(REPO_PATH), "TASK-61".to_string()),
+            (PathBuf::from(REPO_PATH), "TASK-61".to_string()).into(),
             DispatchRun {
                 task_id: "TASK-61".to_string(),
                 branch: "dispatch/task-61-gh-timeout".to_string(),
@@ -440,7 +440,7 @@ fn dispatches_table(theme: ThemeChoice, suffix: &str) {
             },
         );
     }
-    app.dispatches_view.selected = Some((PathBuf::from(REPO_PATH), "TASK-83".to_string()));
+    app.dispatches_view.selected = Some((PathBuf::from(REPO_PATH), "TASK-83".to_string()).into());
     let mut h = harness(app);
     h.run();
     assert!(

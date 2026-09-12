@@ -98,6 +98,7 @@ fn task(repo: usize, i: usize) -> BacklogTask {
         ("To Do", vec![], String::new())
     };
     BacklogTask {
+        storage_identity: None,
         title: format!("Task {i} in repo {repo}"),
         status: status.to_string(),
         priority: "medium".to_string(),
@@ -182,7 +183,7 @@ fn build_fixture() -> HiveApp {
             for t in &repo.tasks {
                 if t.labels.contains(&DISPATCHING_LABEL.to_string()) {
                     cached_runs.insert(
-                        (root.clone(), t.id.clone()),
+                        (root.clone(), t.id.clone()).into(),
                         DispatchRun {
                             task_id: t.id.clone(),
                             branch: format!("dispatch/{}", t.id.to_lowercase()),

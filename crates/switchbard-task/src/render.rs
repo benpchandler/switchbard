@@ -88,6 +88,7 @@ mod tests {
 
     fn task() -> BacklogTask {
         BacklogTask {
+            storage_identity: None,
             id: "TASK-7".to_string(),
             title: "Render me".to_string(),
             status: "In Progress".to_string(),

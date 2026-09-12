@@ -1,0 +1,152 @@
+{
+  "scope": "Wire-format specification vectors only; not product parser, import, or database proof.",
+  "passed": 30,
+  "failed": 0,
+  "cases": [
+    {
+      "id": "unicode-raw-bytes-and-base-golden",
+      "status": "pass"
+    },
+    {
+      "id": "first-export-no-base-golden",
+      "status": "pass"
+    },
+    {
+      "id": "wrong-snapshot-digest",
+      "status": "pass",
+      "rejection": "snapshot-digest"
+    },
+    {
+      "id": "wrong-base-digest",
+      "status": "pass",
+      "rejection": "base-digest"
+    },
+    {
+      "id": "unsupported-version",
+      "status": "pass",
+      "rejection": "version"
+    },
+    {
+      "id": "unknown-envelope-field",
+      "status": "pass",
+      "rejection": "closed-shape"
+    },
+    {
+      "id": "unknown-record-field",
+      "status": "pass",
+      "rejection": "closed-shape"
+    },
+    {
+      "id": "noncanonical-base64-pad-bits",
+      "status": "pass",
+      "rejection": "noncanonical-base64"
+    },
+    {
+      "id": "unpadded-base64",
+      "status": "pass",
+      "rejection": "base64"
+    },
+    {
+      "id": "foreign-link",
+      "status": "pass",
+      "rejection": "cross-scope-link"
+    },
+    {
+      "id": "duplicate-record",
+      "status": "pass",
+      "rejection": "record-order-or-duplicate"
+    },
+    {
+      "id": "tombstone-lifecycle-mismatch",
+      "status": "pass",
+      "rejection": "tombstone"
+    },
+    {
+      "id": "duplicate-envelope-key",
+      "status": "pass",
+      "rejection": "duplicate-key"
+    },
+    {
+      "id": "duplicate-record-key",
+      "status": "pass",
+      "rejection": "duplicate-key"
+    },
+    {
+      "id": "duplicate-nested-link-key",
+      "status": "pass",
+      "rejection": "duplicate-key"
+    },
+    {
+      "id": "escaped-duplicate-key",
+      "status": "pass",
+      "rejection": "duplicate-key"
+    },
+    {
+      "id": "float-version",
+      "status": "pass",
+      "rejection": "non-integer-number"
+    },
+    {
+      "id": "nan-version",
+      "status": "pass",
+      "rejection": "non-integer-number"
+    },
+    {
+      "id": "unpaired-surrogate",
+      "status": "pass",
+      "rejection": "surrogate"
+    },
+    {
+      "id": "depth-33",
+      "status": "pass",
+      "rejection": "depth"
+    },
+    {
+      "id": "utf8-bom",
+      "status": "pass",
+      "rejection": "bom"
+    },
+    {
+      "id": "config-yaml-byte-roundtrip",
+      "status": "pass"
+    },
+    {
+      "id": "no-config-selects-builtin-defaults",
+      "status": "pass"
+    },
+    {
+      "id": "two-config-records-rejected",
+      "status": "pass",
+      "rejection": "config-singleton"
+    },
+    {
+      "id": "config-null-role-rejected",
+      "status": "pass",
+      "rejection": "config-role"
+    },
+    {
+      "id": "config-tombstone-rejected",
+      "status": "pass",
+      "rejection": "config-lifecycle"
+    },
+    {
+      "id": "same-public-id-across-kinds-accepted",
+      "status": "pass"
+    },
+    {
+      "id": "same-public-id-within-kind-rejected",
+      "status": "pass",
+      "rejection": "public-id-collision"
+    },
+    {
+      "id": "base_config_current_absent",
+      "status": "pass",
+      "rejection": "config-continuity"
+    },
+    {
+      "id": "base_config_id_changed",
+      "status": "pass",
+      "rejection": "config-continuity"
+    }
+  ]
+}

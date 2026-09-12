@@ -26,6 +26,7 @@ use switchbard_gui::ui::places::tasks::state::TasksViewMode;
 
 fn seeded_backlog_task() -> BacklogTask {
     BacklogTask {
+        storage_identity: None,
         id: "TASK-1".to_string(),
         title: "Seeded Backlog Task".to_string(),
         status: "To Do".to_string(),
@@ -660,7 +661,7 @@ fn backlog_view_surfaces_seeded_task() {
     );
     app.backlog_view
         .bulk_selected_tasks
-        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+        .insert((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     let mut harness = harness(app);
     harness.run();
@@ -730,6 +731,7 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
             BacklogRepo {
                 root: repo_path(repo_name),
                 tasks: vec![BacklogTask {
+                    storage_identity: None,
                     id: "TASK-1".to_string(),
                     title: title.to_string(),
                     status: "To Do".to_string(),
@@ -847,7 +849,7 @@ fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
             ],
         },
     );
-    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-2".to_string()));
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-2".to_string()).into());
     let mut harness = harness(app);
     harness.run();
 
@@ -861,7 +863,7 @@ fn blocked_task_shows_a_marker_and_dependency_status_in_detail() {
     );
 
     harness.state_mut().backlog_view.selected_task =
-        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+        Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
     harness.run();
     assert!(
         harness.query_by_label("TASK-2 Dependent task").is_some(),
@@ -916,7 +918,7 @@ fn parent_task_shows_rollup_and_expands_to_reveal_children() {
             ],
         },
     );
-    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()));
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), "TASK-1".to_string()).into());
     let mut harness = harness(app);
     harness.run();
 
@@ -996,7 +998,7 @@ fn harness_on_disk_task(labels: &[&str]) -> (tempfile::TempDir, Harness<'static,
     app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(root.clone());
-    app.backlog_view.selected_task = Some((root.clone(), "TASK-1".to_string()));
+    app.backlog_view.selected_task = Some((root.clone(), "TASK-1".to_string()).into());
     app.backlog_repos.lock().unwrap().insert(root, repo);
     let mut harness = harness(app);
     harness.run();
@@ -1029,7 +1031,7 @@ fn harness_on_task(task: BacklogTask) -> Harness<'static, HiveApp> {
     app.place = Place::Tasks;
     app.backlog_view.lens = BacklogLens::List;
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
-    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), task.id.clone()));
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), task.id.clone()).into());
     app.backlog_repos.lock().unwrap().insert(
         PathBuf::from(REPO_PATH),
         BacklogRepo {
@@ -1271,7 +1273,7 @@ fn tasks_place_grouped_by_project_renders_the_expedite_marker_and_lane_toggle() 
     app.backlog_view.selected_repo = Some(PathBuf::from(REPO_PATH));
     let mut task = seeded_backlog_task();
     task.project = Some("Ranked Project".to_string());
-    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), task.id.clone()));
+    app.backlog_view.selected_task = Some((PathBuf::from(REPO_PATH), task.id.clone()).into());
     let ranking = RepoRanking {
         projects: vec!["Ranked Project".to_string()],
         expedite: vec![task.id.clone()],
