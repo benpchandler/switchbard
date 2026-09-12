@@ -32,7 +32,7 @@ TASK-214: let the owner experiment with task title wrapping and optional blank s
 - Implementation: delegated TUI code and test ownership; command owns integration, documentation and final evidence.
 - Chosen control contract: existing Tasks settings menu cycles title wrapping through off, 2, 3, or 6 lines and row spacing through compact or one blank line. Settings use the existing view record. PR rendering stays compact.
 - Independent review: final fresh-code review found no remaining correctness blocker. The requested combined grouping/detail paging regression was added. PR records containing unsupported layout remain protected from overwrite; task-only scope and promotion labels are explicit.
-- Verification: final `mise run preflight` passed on 2026-09-12: formatting, workspace clippy, 1,437 tests passed, 50 existing opt-in tests ignored, and developer hook/install/CI-routing checks passed. All eight row-layout integration tests and the instrumented viewport bound passed. Log: `/tmp/sbt-row-layout-preflight-final.log`.
+- Initial verification: `mise run preflight` passed on 2026-09-12: formatting, workspace clippy, 1,437 tests passed, 50 existing opt-in tests ignored, and developer hook/install/CI-routing checks passed. Log: `/tmp/sbt-row-layout-preflight-final.log`. Delivery review subsequently added a ninth row-layout integration regression for title-cap overflow. The extra private helper unit test was removed to follow the TUI's E2E-only test convention; the 250-task real-input navigation journey remains.
 - Owner experimentation: isolated trial launcher provided; visual approval is not inferred from tests.
 
 ## Controls and persistence
@@ -46,7 +46,7 @@ The local trial launcher is `tmp/try-sbt-row-layout.command`. It uses this linke
 ## Evidence sources and limits
 
 - `crates/switchbard-tui/tests/row_layout.rs`: real input, saved-view and resume journeys; narrow title wrapping and separation; invalid-file preservation; Unicode and unbroken strings; resize, empty list, 250-task navigation, grouped short viewport, detail paging, and selected continuation-line paint.
-- `crates/switchbard-tui/src/list_presentation.rs`: instrumented 10,000-row jump confirms the height callback count is bounded by viewport lines.
+- `crates/switchbard-tui/src/list_presentation.rs`: independent code review verified the selected-minus-viewport lower bound limits height measurements to a viewport-sized suffix; scale behavior is exercised through the real terminal harness in `tests/row_layout.rs`.
 - `SBT_ROW_LAYOUT_EVIDENCE=/tmp/sbt-row-layout-evidence mise exec -- cargo test -p switchbard-tui --test row_layout`: optional exports of actual TestBackend cell buffers for compact, wrapped/spaced and capped Unicode states. Command inspected PNG reconstructions of compact and wrapped/spaced buffers. These are fixture evidence, not live terminal screenshots or owner visual approval.
 - Developer hook, install-guard and CI-routing contracts: passed via `bash scripts/test-developer-gates.sh`.
 - Related fix: terminal text snapshots now skip wide-glyph continuation cells, which previously polluted `last_screen` with stale hidden characters. Actual terminal glyph rendering is unchanged.

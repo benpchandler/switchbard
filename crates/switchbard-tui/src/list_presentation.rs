@@ -120,24 +120,3 @@ fn confirmation(frame: &mut Frame, area: Rect, block: Block<'_>, lines: Vec<Line
     }
     fits
 }
-
-#[cfg(test)]
-mod tests {
-    use super::ListViewport;
-    use std::cell::Cell;
-
-    #[test]
-    fn distant_selection_only_measures_a_viewport_sized_suffix() {
-        let calls = Cell::new(0);
-        let viewport = ListViewport::variable(0, 9_999, 10_000, 20, false, |_| {
-            calls.set(calls.get() + 1);
-            3
-        });
-        assert!(
-            calls.get() <= 42,
-            "work is bounded by slots, not task count"
-        );
-        assert_eq!(viewport.scroll, 9_994);
-        assert_eq!(viewport.slots, 20);
-    }
-}
