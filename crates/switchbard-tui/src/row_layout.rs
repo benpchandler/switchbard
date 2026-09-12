@@ -132,10 +132,10 @@ pub(crate) struct TitleText {
 pub(crate) fn title_text(title: &str) -> TitleText {
     TitleText {
         text: title
-        .chars()
-        .take(4096)
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect(),
+            .chars()
+            .take(4096)
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect(),
         truncated: title.chars().nth(4096).is_some(),
     }
 }

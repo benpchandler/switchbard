@@ -283,7 +283,8 @@ fn draw_task_title(
         return;
     }
     let paragraph = crate::row_layout::paragraph(&text).style(style);
-    let clipped = paragraph.line_count(area.width) > usize::from(area.height) || title_text.truncated;
+    let clipped =
+        paragraph.line_count(area.width) > usize::from(area.height) || title_text.truncated;
     frame.render_widget(paragraph, area);
     if clipped && area.width > 0 && area.height > 0 {
         // Do not leave half a wide glyph underneath the overflow indicator.
