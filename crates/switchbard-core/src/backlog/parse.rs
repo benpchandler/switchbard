@@ -781,6 +781,27 @@ pub fn parse_due_date(value: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
+/// Today in the same day space [`parse_backlog_day`] returns. Backlog stamps
+/// are local wall clock (`write::local_stamp`) and parse back as naive-UTC, so
+/// anything comparing against them must read the same clock. Reading
+/// `Utc::now()` instead filed a task stamped 21:00 EDT under "yesterday",
+/// because true UTC had already rolled over.
+pub fn backlog_today() -> i64 {
+    backlog_day_of(chrono::Local::now())
+}
+
+/// The backlog day an absolute instant falls in, for timestamps that carry a
+/// zone (a merged PR) rather than a local wall-clock stamp. Same day space as
+/// [`parse_backlog_day`] and [`backlog_today`], so the three compose.
+pub fn backlog_day_of<Tz: chrono::TimeZone>(instant: chrono::DateTime<Tz>) -> i64 {
+    instant
+        .with_timezone(&chrono::Local)
+        .naive_local()
+        .and_utc()
+        .timestamp()
+        .div_euclid(86_400)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

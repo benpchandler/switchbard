@@ -166,7 +166,7 @@ fn render_burndown_section(_app: &mut HiveApp, ui: &mut egui::Ui, scoped: &[&sup
         .flat_map(|row| row.repo.tasks.iter())
         .filter(|task| task.source != switchbard_core::BacklogTaskSource::Archived)
         .collect();
-    let today_day = chrono::Utc::now().timestamp().div_euclid(86_400);
+    let today_day = switchbard_core::backlog_today();
 
     let overall = compute_burndown(&all_tasks, today_day);
     let milestone_series = compute_burndown_by_project(&all_tasks, today_day);
