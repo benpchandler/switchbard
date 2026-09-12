@@ -82,6 +82,9 @@ pub struct App {
     pub goal_summaries: Vec<GoalSummary>,
     /// The Top 5 (expedite lane) ids in order; the queue.
     pub top: Vec<String>,
+    /// Dependency and sub-task facts, refreshed with the tasks; see
+    /// `tasks::TaskRelations`.
+    pub relations: tasks::TaskRelations,
     /// Live agent sessions holding tasks in this repo; refreshed every tick.
     pub work: Vec<WorkSession>,
     work_dir: Option<PathBuf>,
@@ -157,6 +160,7 @@ impl App {
             goals: Vec::new(),
             goal_summaries: Vec::new(),
             top: Vec::new(),
+            relations: tasks::TaskRelations::default(),
             work: Vec::new(),
             work_dir,
             opened: Instant::now(),
@@ -224,7 +228,8 @@ impl App {
         self.top.iter().position(|id| *id == task.id).map(|p| p + 1)
     }
 
-    /// A cell's text: what the column says, plus what only the app knows (rank).
+    /// A cell's text: what the column says, plus what only the app knows
+    /// (rank, live work, and the title's roll-up badge).
     pub fn cell(&self, column: Column, task: &BacklogTask) -> String {
         match column {
             Column::Rank => self
@@ -232,7 +237,24 @@ impl App {
                 .map(|n| n.to_string())
                 .unwrap_or_default(),
             Column::Work => "●".repeat(self.working(task).len().min(3)),
-            other => other.display_text(task, self.state.abbreviated.contains(&other), &self.goals),
+            Column::Title => self.title_cell(task),
+            other => other.display_text(
+                task,
+                self.state.abbreviated.contains(&other),
+                &self.goals,
+                &self.relations.blocked,
+            ),
+        }
+    }
+
+    /// A parent's title carries a `[done/total]` roll-up badge over its direct
+    /// sub-tasks (`tasks::TaskRelations::subtasks`, computed once per load
+    /// from `switchbard_core::subtask_progress`); a childless task's title is
+    /// unchanged. Matches the GUI's own suffix (`ui/backlog/list.rs`).
+    fn title_cell(&self, task: &BacklogTask) -> String {
+        match self.relations.subtasks.get(&task.id) {
+            Some((done, total)) => format!("{}  [{done}/{total}]", task.title),
+            None => task.title.clone(),
         }
     }
 
@@ -1378,16 +1400,26 @@ impl App {
         let base = self.settings.effective().base_filter(&state.filter);
         let filter = Filter::parse(&format!("{base} {}", state.filter));
         self.visible = (0..self.tasks.len())
-            .filter(|&index| filter.matches(&self.tasks[index], &self.goals))
+            .filter(|&index| {
+                filter.matches(&self.tasks[index], &self.goals, &self.relations.blocked)
+            })
             .collect();
         if let Some(sort) = state.sort {
-            sort::apply(&self.tasks, &mut self.visible, sort, &self.top, &self.goals);
+            sort::apply(
+                &self.tasks,
+                &mut self.visible,
+                sort,
+                &self.top,
+                &self.goals,
+                &self.relations.blocked,
+            );
         }
         let pinned: &[String] = if state.pin_top { &self.top } else { &[] };
         let headings = group::Headings {
             projects: &self.projects,
             goals: &self.goals,
             goal_summaries: &self.goal_summaries,
+            blocked: &self.relations.blocked,
         };
         self.rows = group::rows(&self.tasks, &self.visible, &state.group, &headings, pinned);
         self.select(self.selected);
@@ -1418,23 +1450,27 @@ impl App {
 
     /// `,`: the standing preferences, one row per status that can be hidden.
     pub(super) fn open_settings(&mut self) {
-        let mut options: Vec<PickOption> =
-            tasks::field_values(&self.tasks, tasks::FilterField::Status, &self.goals)
-                .into_iter()
-                .map(|(status, count)| {
-                    let mark = if self.settings.effective().is_hidden(&status) {
-                        "✓"
-                    } else {
-                        " "
-                    };
-                    PickOption {
-                        label: format!("{mark}hide {status}"),
-                        count,
-                        key: None,
-                        payload: Payload::Text(status),
-                    }
-                })
-                .collect();
+        let mut options: Vec<PickOption> = tasks::field_values(
+            &self.tasks,
+            tasks::FilterField::Status,
+            &self.goals,
+            &self.relations.blocked,
+        )
+        .into_iter()
+        .map(|(status, count)| {
+            let mark = if self.settings.effective().is_hidden(&status) {
+                "✓"
+            } else {
+                " "
+            };
+            PickOption {
+                label: format!("{mark}hide {status}"),
+                count,
+                key: None,
+                payload: Payload::Text(status),
+            }
+        })
+        .collect();
         options.push(PickOption::keyed(
             'g',
             "Use these settings in every repo",
@@ -1537,6 +1573,7 @@ impl App {
                 self.goals = backlog.goals;
                 self.goal_summaries = backlog.goal_summaries;
                 self.top = backlog.top;
+                self.relations = backlog.relations;
             }
             Err(error) => {
                 self.storage_retry = true;

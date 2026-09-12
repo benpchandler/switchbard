@@ -1,4 +1,6 @@
 //! Explicit page adapters for the shared column, sorting and matching contracts.
+use std::collections::HashSet;
+
 use crate::{ball::Ball, columns::Column};
 use switchbard_core::{goals_feeding, BacklogTask, GoalDef, PrListRow};
 
@@ -15,6 +17,10 @@ pub struct TaskValues<'a> {
     pub task: &'a BacklogTask,
     pub goals: &'a [GoalDef],
     pub top: &'a [String],
+    /// Ids of tasks with an open dependency (`tasks::TaskRelations::blocked`,
+    /// computed once per load) — the single source `is_blocked` feeds; this
+    /// is a lookup into its cached answer, not a second definition of it.
+    pub blocked: &'a HashSet<String>,
 }
 
 impl ColumnValues for TaskValues<'_> {
@@ -32,6 +38,14 @@ impl ColumnValues for TaskValues<'_> {
                 .map(|ball| ball.text().to_string())
                 .into_iter()
                 .collect(),
+            Column::Blocked => {
+                vec![if self.blocked.contains(&task.id) {
+                    "yes"
+                } else {
+                    "no"
+                }
+                .to_string()]
+            }
             // Rank and work are not on the task: `App::cell` supplies them
             // from the lane and the live session list.
             Column::Rank

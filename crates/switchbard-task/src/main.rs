@@ -138,6 +138,14 @@ enum Command {
         /// Include completed, draft, and archived tasks (default: active only)
         #[arg(long)]
         all: bool,
+        /// Only tasks with an open (not-done) dependency and not themselves
+        /// done (switchbard_core::is_blocked); mutually exclusive with --ready
+        #[arg(long, conflicts_with = "ready")]
+        blocked: bool,
+        /// Only tasks with no open dependency and not themselves done —
+        /// actionable now; mutually exclusive with --blocked
+        #[arg(long, conflicts_with = "blocked")]
+        ready: bool,
     },
     /// Print one task in full: fields, then every section verbatim
     View {
@@ -364,7 +372,16 @@ fn run(cli: &Cli) -> Result<()> {
             status,
             in_project,
             all,
-        } => list(&root, status.as_deref(), in_project.as_deref(), *all),
+            blocked,
+            ready,
+        } => list(
+            &root,
+            status.as_deref(),
+            in_project.as_deref(),
+            *all,
+            *blocked,
+            *ready,
+        ),
         Command::View { id } => view(&root, id),
         Command::Create(args) => create(&root, args),
         Command::Edit(args) => edit(&root, args),
@@ -419,7 +436,15 @@ pub(crate) fn find_repo_root(start: &Path) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-fn list(root: &Path, status: Option<&str>, in_project: Option<&str>, all: bool) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+fn list(
+    root: &Path,
+    status: Option<&str>,
+    in_project: Option<&str>,
+    all: bool,
+    blocked: bool,
+    ready: bool,
+) -> Result<()> {
     let repo = switchbard_core::load_backlog_repo(root)?;
     for warning in &repo.warnings {
         eprintln!("sb: warning: {warning}");
@@ -437,6 +462,16 @@ fn list(root: &Path, status: Option<&str>, in_project: Option<&str>, all: bool) 
             if task.project.as_deref() != Some(wanted) {
                 continue;
             }
+        }
+        // A done task is never blocked or ready — it isn't actionable work
+        // either way — matching the GUI's and sbt's own
+        // `!task.is_done() && is_blocked(...)` guard.
+        let is_blocked = !task.is_done() && switchbard_core::is_blocked(task, &repo);
+        if blocked && !is_blocked {
+            continue;
+        }
+        if ready && (task.is_done() || is_blocked) {
+            continue;
         }
         println!("{}", render::list_row(task));
     }

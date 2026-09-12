@@ -9,6 +9,7 @@ pub enum FilterField {
     Label,
     Project,
     Ball,
+    Blocked,
     Goal,
     Title,
     Tasks,
@@ -29,6 +30,7 @@ impl FilterField {
             "label" => FilterField::Label,
             "project" => FilterField::Project,
             "ball" => FilterField::Ball,
+            "blocked" => FilterField::Blocked,
             "goal" => FilterField::Goal,
             "title" => FilterField::Title,
             "tasks" => FilterField::Tasks,
@@ -50,6 +52,7 @@ impl FilterField {
             FilterField::Label => "label",
             FilterField::Project => "project",
             FilterField::Ball => "ball",
+            FilterField::Blocked => "blocked",
             FilterField::Goal => "goal",
             FilterField::Draft => "draft",
             FilterField::Merge => "merge",
@@ -71,6 +74,7 @@ impl FilterField {
             FilterField::Label => Column::Labels,
             FilterField::Project => Column::Project,
             FilterField::Ball => Column::Ball,
+            FilterField::Blocked => Column::Blocked,
             FilterField::Goal => Column::Goal,
             FilterField::Draft => Column::Draft,
             FilterField::Merge => Column::Merge,
@@ -103,8 +107,14 @@ impl Term {
             return Term::Text(lower);
         };
         match value.strip_prefix('!') {
-            Some(hidden) => Term::Not(field, loose(hidden)),
-            None => Term::AnyOf(field, value.split(',').map(loose).collect()),
+            Some(hidden) => Term::Not(field, boolean_alias(field, loose(hidden))),
+            None => Term::AnyOf(
+                field,
+                value
+                    .split(',')
+                    .map(|v| boolean_alias(field, loose(v)))
+                    .collect(),
+            ),
         }
     }
 
@@ -220,6 +230,22 @@ fn words_without_field(text: &str, field: FilterField) -> Vec<String> {
         .filter(|word| Term::parse(word).field() != Some(field))
         .map(str::to_string)
         .collect()
+}
+
+/// `blocked:true|false` reads as `blocked:yes|no` — the column's own values
+/// (task-209.2's `blocked:yes|no`) stay the one spelling the picker, glyph
+/// legend, and paint rules all show; this only widens what the typed filter
+/// itself accepts, the same way `status:!done` is Backlog.md's spelling but
+/// `!` is generic filter grammar.
+fn boolean_alias(field: FilterField, value: String) -> String {
+    if field != FilterField::Blocked {
+        return value;
+    }
+    match value.as_str() {
+        "true" => "yes".to_string(),
+        "false" => "no".to_string(),
+        _ => value,
+    }
 }
 
 /// "To Do", "todo", and "TO-DO" all compare equal.

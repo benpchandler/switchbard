@@ -2,6 +2,7 @@
 //! every rule below it colors only its own scope, so lower means more specific.
 //! Reordering the list flips which paint dominates. Saved with the view.
 
+use std::collections::HashSet;
 use std::str::FromStr;
 
 use ratatui::style::Color;
@@ -139,19 +140,20 @@ pub fn cell_color(
     task: &BacklogTask,
     column: Column,
     goals: &[GoalDef],
+    blocked: &HashSet<String>,
 ) -> Option<Color> {
     cell_color_with(
         rules,
         column,
         |column| {
-            let values = column.values(task, goals);
+            let values = column.values(task, goals, blocked);
             if column.is_date() {
                 values
             } else {
                 values.into_iter().take(1).collect()
             }
         },
-        |filter| filter.matches(task, goals),
+        |filter| filter.matches(task, goals, blocked),
     )
 }
 

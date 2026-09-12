@@ -1,18 +1,22 @@
 //! Grouping: a projection over the already-filtered, already-sorted task order
 //! into rows, where a heading is an ordinary row the cursor skips.
 
+use std::collections::HashSet;
+
 use switchbard_core::{BacklogTask, GoalDef};
 
 use crate::columns::Column;
 use crate::tasks::{GoalSummary, ProjectSummary};
 
 /// Everything a heading can say beyond the section's key: project facts by
-/// stack rank, goal facts in `goals.yml` order, and the goal defs membership
-/// derives from.
+/// stack rank, goal facts in `goals.yml` order, the goal defs membership
+/// derives from, and blocked-task ids (`tasks::TaskRelations::blocked`) for
+/// grouping by the `blocked` column.
 pub struct Headings<'a> {
     pub projects: &'a [ProjectSummary],
     pub goals: &'a [GoalDef],
     pub goal_summaries: &'a [GoalSummary],
+    pub blocked: &'a HashSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,7 +159,7 @@ fn sections(
         let members: Vec<usize> = ordered
             .iter()
             .copied()
-            .filter(|&index| section_key(&tasks[index], column, headings.goals) == key)
+            .filter(|&index| section_key(&tasks[index], column, headings) == key)
             .collect();
         if members.is_empty() {
             continue;
@@ -182,9 +186,9 @@ pub fn initiatives(projects: &[ProjectSummary]) -> Vec<String> {
 
 /// A task sits in one section: its first value (a task feeding several goals
 /// files under the first in `goals.yml` order).
-fn section_key(task: &BacklogTask, column: Column, goals: &[GoalDef]) -> String {
+fn section_key(task: &BacklogTask, column: Column, headings: &Headings<'_>) -> String {
     column
-        .values(task, goals)
+        .values(task, headings.goals, headings.blocked)
         .into_iter()
         .next()
         .unwrap_or_default()
@@ -200,7 +204,7 @@ fn section_keys(
 ) -> Vec<String> {
     let mut keys: Vec<String> = Vec::new();
     for &index in ordered {
-        let key = section_key(&tasks[index], column, headings.goals);
+        let key = section_key(&tasks[index], column, headings);
         if !keys.contains(&key) {
             keys.push(key);
         }

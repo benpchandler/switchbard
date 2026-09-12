@@ -180,6 +180,10 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                 let working = glow
                     .map(|glow| theme.working_style(glow))
                     .filter(|style| *style != Style::default());
+                // A done task is never blocked (TASK-209.2's AC #2) even if a
+                // listed dependency reads open — matches the GUI's own guard
+                // (`ui/backlog/list.rs`).
+                let blocked = !task.is_done() && app.relations.blocked.contains(&task.id);
                 if selected {
                     frame.render_widget(
                         Paragraph::new("").style(theme.style(Surface::Selected)),
@@ -190,16 +194,23 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     frame.render_widget(Paragraph::new("").style(glow), row_area);
                 }
                 for (column, cell) in app.state.columns.iter().zip(cells.iter()) {
-                    let value = column.cell_text(task, &app.goals);
+                    let value = column.cell_text(task, &app.goals, &app.relations.blocked);
                     let text = if app.state.glyph_columns.contains(column) && !value.is_empty() {
                         app.config.glyph(*column, &value)
                     } else {
                         app.cell(*column, task)
                     };
                     let mut style = theme.column_style(*column);
-                    if let Some(color) =
-                        paint::cell_color(&app.state.paint, task, *column, &app.goals)
-                    {
+                    if blocked {
+                        style = style.patch(theme.style(Surface::Hint));
+                    }
+                    if let Some(color) = paint::cell_color(
+                        &app.state.paint,
+                        task,
+                        *column,
+                        &app.goals,
+                        &app.relations.blocked,
+                    ) {
                         style = style.fg(color);
                     }
                     if selected {
@@ -320,6 +331,26 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
             for item in &task.acceptance_criteria {
                 let mark = if item.checked { "x" } else { " " };
                 lines.push(Line::from(format!("[{mark}] {}", item.text)));
+            }
+        }
+        // "Blocked by" (open dependencies only) and "Blocks" (the reverse
+        // edge), mirroring the GUI's `ui/backlog/detail_lists.rs`
+        // (`render_dependencies`'/`render_blocks`' sections) off the same
+        // `tasks::TaskRelations` cache the row dimming and the `blocked`
+        // filter read.
+        if let Some(deps) = app.relations.blocked_by.get(&task.id) {
+            lines.push(Line::from(""));
+            lines.push(crate::detail_pane::section("blocked by", theme));
+            for (id, title) in deps {
+                lines.push(Line::from(format!("{id} {title}")));
+            }
+        }
+        if let Some(dependents) = app.relations.blocks.get(&task.id) {
+            lines.push(Line::from(""));
+            lines.push(crate::detail_pane::section("blocks", theme));
+            for (id, title, done) in dependents {
+                let status = if *done { "done" } else { "open" };
+                lines.push(Line::from(format!("{id} {title} ({status})")));
             }
         }
     } else {

@@ -148,6 +148,44 @@ pub fn seed_in_project(
     create_task_allocating_id(root, &task).unwrap();
 }
 
+/// A task that depends on `deps` (ids like `"TASK-1"`), for blocked-state
+/// tests. Returns the created task's own id in the same spelling.
+pub fn seed_with_deps(root: &Path, title: &str, status: &str, deps: &[&str]) -> String {
+    let task = NewBacklogTask {
+        title: title.to_string(),
+        description: format!("Description of {title}."),
+        status: status.to_string(),
+        priority: "medium".to_string(),
+        acceptance_criteria: vec!["It works".to_string()],
+        parent: None,
+        labels: Vec::new(),
+        assignees: Vec::new(),
+        project: None,
+        dependencies: deps.iter().map(|s| s.to_string()).collect(),
+    };
+    let (id, _) = create_task_allocating_id(root, &task).unwrap();
+    format!("TASK-{id}")
+}
+
+/// A direct sub-task of `parent` (a full id like `"TASK-2"`), for the
+/// parent roll-up badge tests. Returns the created task's own id.
+pub fn seed_child(root: &Path, title: &str, status: &str, parent: &str) -> String {
+    let task = NewBacklogTask {
+        title: title.to_string(),
+        description: format!("Description of {title}."),
+        status: status.to_string(),
+        priority: "medium".to_string(),
+        acceptance_criteria: vec!["It works".to_string()],
+        parent: Some(parent.to_string()),
+        labels: Vec::new(),
+        assignees: Vec::new(),
+        project: None,
+        dependencies: Vec::new(),
+    };
+    let (id, _) = create_task_allocating_id(root, &task).unwrap();
+    format!("TASK-{id}")
+}
+
 /// A project def under `initiative`, ranked in the order these calls are made.
 pub fn seed_project(root: &Path, name: &str, status: &str, initiative: Option<&str>) {
     create_project_def(

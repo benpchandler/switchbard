@@ -2,6 +2,7 @@
 //! order a column's vocabulary already implies (high before low, To Do before Done).
 
 use std::cmp::Ordering;
+use std::collections::HashSet;
 
 use switchbard_core::{BacklogTask, GoalDef};
 
@@ -86,8 +87,9 @@ pub fn apply(
     sort: Sort,
     top: &[String],
     goals: &[GoalDef],
+    blocked: &HashSet<String>,
 ) {
-    visible.sort_by(|&a, &b| compare(&tasks[a], &tasks[b], sort, top, goals));
+    visible.sort_by(|&a, &b| compare(&tasks[a], &tasks[b], sort, top, goals, blocked));
 }
 
 fn compare(
@@ -96,17 +98,20 @@ fn compare(
     sort: Sort,
     top: &[String],
     goals: &[GoalDef],
+    blocked: &HashSet<String>,
 ) -> Ordering {
     compare_values(
         &crate::column_values::TaskValues {
             task: a,
             top,
             goals,
+            blocked,
         },
         &crate::column_values::TaskValues {
             task: b,
             top,
             goals,
+            blocked,
         },
         sort,
     )

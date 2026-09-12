@@ -316,10 +316,11 @@ impl App {
         let Some(field) = column.filter_field() else {
             return String::new();
         };
-        let mut values: Vec<String> = tasks::field_values(&self.tasks, field, &self.goals)
-            .into_iter()
-            .map(|(value, _)| value)
-            .collect();
+        let mut values: Vec<String> =
+            tasks::field_values(&self.tasks, field, &self.goals, &self.relations.blocked)
+                .into_iter()
+                .map(|(value, _)| value)
+                .collect();
         values.sort_by_key(|value| (column.vocabulary_rank(value), value.clone()));
         values
             .iter()
@@ -386,7 +387,9 @@ impl App {
         } else {
             column
                 .filter_field()
-                .map(|field| tasks::field_values(&self.tasks, field, &self.goals))
+                .map(|field| {
+                    tasks::field_values(&self.tasks, field, &self.goals, &self.relations.blocked)
+                })
                 .unwrap_or_default()
         };
         if column.is_date() {

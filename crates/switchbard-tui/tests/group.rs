@@ -195,7 +195,7 @@ fn group_by_another_column_and_the_command_form_and_saved_views() {
     h.press(KeyCode::Enter);
     assert_eq!(
         h.app.status,
-        "group by one of status, priority, project, ball, goal, two of them as a,b, or off"
+        "group by one of status, priority, project, ball, blocked, goal, two of them as a,b, or off"
     );
     h.press(KeyCode::Char(':'));
     h.type_text("group project");

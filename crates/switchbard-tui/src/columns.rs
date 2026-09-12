@@ -1,6 +1,8 @@
 //! The column catalog: one row per column with everything the rest of the crate
 //! needs to know about it. Adding a column is one row here plus its value accessor.
 
+use std::collections::HashSet;
+
 use switchbard_core::{BacklogTask, GoalDef, BACKLOG_PRIORITIES, CANONICAL_STATUS_ORDER};
 
 use crate::filter::FilterField;
@@ -14,6 +16,10 @@ pub enum Column {
     Labels,
     Project,
     Ball,
+    /// `yes` when an open (not-done) dependency blocks the task; a done task
+    /// is never blocked. Backed by `switchbard_core::is_blocked` — see
+    /// `tasks::TaskRelations`.
+    Blocked,
     /// Position in the repo's top list (the expedite lane); empty when not in it.
     Rank,
     /// The weekly goal(s) the task feeds: by scope, attachment, or attached project.
@@ -50,7 +56,7 @@ pub struct ColumnSpec {
     pub numeric: bool,
 }
 
-pub const COLUMNS: [ColumnSpec; 18] = [
+pub const COLUMNS: [ColumnSpec; 19] = [
     ColumnSpec {
         column: Column::Id,
         name: "id",
@@ -131,6 +137,18 @@ pub const COLUMNS: [ColumnSpec; 18] = [
         width: Some(14),
         field: Some(FilterField::Ball),
         vocabulary: &["me", "agent"],
+        groupable: true,
+        multi_valued: false,
+        numeric: false,
+    },
+    ColumnSpec {
+        column: Column::Blocked,
+        name: "blocked",
+        alias: None,
+        header: "blocked",
+        width: Some(7),
+        field: Some(FilterField::Blocked),
+        vocabulary: &["yes", "no"],
         groupable: true,
         multi_valued: false,
         numeric: false,
@@ -287,7 +305,7 @@ pub const COLUMNS: [ColumnSpec; 18] = [
 
 impl Column {
     /// Every column sbt knows, in catalog order. Shown columns are a user-ordered subset.
-    pub const ALL: [Column; 11] = [
+    pub const ALL: [Column; 12] = [
         Column::Id,
         Column::Status,
         Column::Priority,
@@ -295,6 +313,7 @@ impl Column {
         Column::Labels,
         Column::Project,
         Column::Ball,
+        Column::Blocked,
         Column::Rank,
         Column::Goal,
         Column::Work,
@@ -394,13 +413,21 @@ impl Column {
     }
 
     /// The values a task carries in this column (labels and goals can be several).
-    /// `goals` is the repo's goal set: membership is derived, not stored on the task.
-    pub fn values(self, task: &BacklogTask, goals: &[GoalDef]) -> Vec<String> {
+    /// `goals` is the repo's goal set and `blocked` the blocked-task ids
+    /// (`tasks::TaskRelations::blocked`): both are repo-level facts derived
+    /// once per load, not stored on the task itself.
+    pub fn values(
+        self,
+        task: &BacklogTask,
+        goals: &[GoalDef],
+        blocked: &HashSet<String>,
+    ) -> Vec<String> {
         crate::column_values::ColumnValues::values(
             &crate::column_values::TaskValues {
                 task,
                 goals,
                 top: &[],
+                blocked,
             },
             self,
         )
@@ -418,14 +445,19 @@ impl Column {
     }
 
     /// The cell as text: the values joined. Filter and sort read this.
-    pub fn cell_text(self, task: &BacklogTask, goals: &[GoalDef]) -> String {
+    pub fn cell_text(
+        self,
+        task: &BacklogTask,
+        goals: &[GoalDef],
+        blocked: &HashSet<String>,
+    ) -> String {
         if self.is_date() {
-            self.values(task, goals)
+            self.values(task, goals, blocked)
                 .into_iter()
                 .next()
                 .unwrap_or_default()
         } else {
-            self.values(task, goals).join(",")
+            self.values(task, goals, blocked).join(",")
         }
     }
 
@@ -440,7 +472,13 @@ impl Column {
     /// What the table shows. Abbreviated: the id without its repo prefix (the
     /// title bar names the repo; `80.3` is the part that varies), priority as
     /// H/M/L. The detail pane, reports, and filters always keep full values.
-    pub fn display_text(self, task: &BacklogTask, abbreviated: bool, goals: &[GoalDef]) -> String {
+    pub fn display_text(
+        self,
+        task: &BacklogTask,
+        abbreviated: bool,
+        goals: &[GoalDef],
+        blocked: &HashSet<String>,
+    ) -> String {
         match (self, abbreviated) {
             (Column::Id, true) => bare_id(&task.id).to_string(),
             (Column::Priority, true) => task
@@ -449,7 +487,7 @@ impl Column {
                 .next()
                 .map(|c| c.to_ascii_uppercase().to_string())
                 .unwrap_or_default(),
-            _ => self.cell_text(task, goals),
+            _ => self.cell_text(task, goals, blocked),
         }
     }
 
