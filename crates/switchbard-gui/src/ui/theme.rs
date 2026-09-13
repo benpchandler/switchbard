@@ -36,6 +36,64 @@ use eframe::egui::{self, Color32};
 use std::cell::Cell;
 pub use switchbard_core::config::ThemeChoice;
 
+/// Choose a level by the surface's role, never by its nesting depth:
+/// recessed input or well (0), workspace panel (1), content card (2), or
+/// floating overlay above the workspace (3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Elevation {
+    Well,
+    Panel,
+    Card,
+    Overlay,
+}
+
+/// Complete surface treatment for one elevation in the active palette.
+/// Stroke includes both weight and color; shadows are absent at levels 0-1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ElevationTokens {
+    pub fill: Color32,
+    pub stroke: egui::Stroke,
+    pub shadow: egui::epaint::Shadow,
+}
+
+/// Resolve the four-level scale from the existing palette authorities.
+/// Overlay shares the card's AA-safe fill: its stronger outline and larger
+/// shadow establish height without sacrificing text contrast. Existing
+/// surfaces retain their treatments until explicitly migrated to this scale.
+pub fn elevation(level: Elevation) -> ElevationTokens {
+    let palette = active_palette();
+    let (fill, stroke, shadow) = match level {
+        Elevation::Well => (
+            palette.faint_bg,
+            surface_stroke(),
+            egui::epaint::Shadow::NONE,
+        ),
+        Elevation::Panel => (
+            palette.panel_fill,
+            egui::Stroke::NONE,
+            egui::epaint::Shadow::NONE,
+        ),
+        Elevation::Card => (palette.card_bg, surface_stroke(), card_shadow()),
+        Elevation::Overlay => (
+            palette.card_bg,
+            egui::Stroke::new(1.5, scale_alpha(palette.weak_text, 0.40)),
+            OVERLAY_SHADOW,
+        ),
+    };
+    ElevationTokens {
+        fill,
+        stroke,
+        shadow,
+    }
+}
+
+const OVERLAY_SHADOW: egui::epaint::Shadow = egui::epaint::Shadow {
+    offset: [0, 8],
+    blur: 20,
+    spread: 0,
+    color: Color32::from_black_alpha(64),
+};
+
 /// One theme's full set of semantic colors. Every field has a light
 /// ([`LIGHT`]) and dark ([`DARK`]) value below; nothing in the rest of the
 /// GUI ever constructs a `Color32` for these roles directly.
@@ -1602,12 +1660,7 @@ pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
     visuals.window_corner_radius = egui::CornerRadius::same(8);
     visuals.menu_corner_radius = egui::CornerRadius::same(7);
     visuals.window_stroke = surface_stroke();
-    visuals.window_shadow = egui::epaint::Shadow {
-        offset: [0, 8],
-        blur: 20,
-        spread: 0,
-        color: Color32::from_black_alpha(64),
-    };
+    visuals.window_shadow = OVERLAY_SHADOW;
     visuals.popup_shadow = egui::epaint::Shadow {
         offset: [0, 6],
         blur: 14,
