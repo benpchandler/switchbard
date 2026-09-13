@@ -33,10 +33,20 @@ pub fn draw(
     area: Rect,
     lines: Vec<Line<'_>>,
     scroll: u16,
+    focused: bool,
 ) -> u16 {
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme.style(Surface::Border));
+        .border_style(theme.style(if focused {
+            Surface::Accent
+        } else {
+            Surface::Border
+        }))
+        .title(if focused {
+            " Detail active "
+        } else {
+            " Detail "
+        });
     let inner = block.inner(area);
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     let scroll = if scroll == 0 {
@@ -50,4 +60,26 @@ pub fn draw(
     };
     frame.render_widget(paragraph.block(block).scroll((scroll, 0)), area);
     scroll
+}
+
+/// Transient focus and hit regions from the most recently rendered split.
+#[derive(Default)]
+pub struct Interaction {
+    pub focused: bool,
+    pub scroll: u16,
+    pub task_id: Option<String>,
+    pub list_area: Rect,
+    pub detail_area: Rect,
+}
+
+impl Interaction {
+    pub fn set_areas(&mut self, body: Rect, open: bool) {
+        if open {
+            [self.list_area, self.detail_area] = split(body);
+        } else {
+            self.list_area = body;
+            self.detail_area = Rect::default();
+            self.focused = false;
+        }
+    }
 }

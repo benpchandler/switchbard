@@ -1,6 +1,7 @@
 //! Application state and the single place key events turn into state changes.
 //! Submodules extend `App` by concept: `pickers`, `paint_flow`, `slots`.
 
+mod detail;
 mod new_task;
 mod paint_flow;
 mod pickers;
@@ -111,6 +112,7 @@ pub struct App {
     /// First row on screen; the renderer keeps `selected` inside the window.
     pub scroll: usize,
     pub help_scroll: u16,
+    pub detail: crate::detail_pane::Interaction,
     /// UTC epoch day used to invalidate relative date projections on the next tick.
     pub calendar_day: i64,
     /// Column order when `c m` began, so typed numbers keep meaning what the header showed.
@@ -192,6 +194,7 @@ impl App {
             selected: 0,
             scroll: 0,
             help_scroll: 0,
+            detail: crate::detail_pane::Interaction::default(),
             calendar_day: crate::date_fields::today(),
             move_origin: None,
             paint_return: None,
@@ -1088,18 +1091,6 @@ impl App {
         ) {
             self.cancel_pr_merge();
         }
-        if self.pane == Pane::Detail {
-            let delta = match action {
-                Action::PageDown => Some(self.page_size as i32),
-                Action::PageUp => Some(-(self.page_size as i32)),
-                _ => None,
-            };
-            if let Some(delta) = delta {
-                self.pull_requests.detail_scroll =
-                    (i32::from(self.pull_requests.detail_scroll) + delta).clamp(0, 65535) as u16;
-                return true;
-            }
-        }
         match action {
             Action::OpenBrowser => self.open_pr_browser(),
             Action::Merge => self.open_pr_merge(),
@@ -1111,6 +1102,7 @@ impl App {
             Action::PageUp => self.pull_requests.step(-(self.page_size as isize)),
             Action::Open => {
                 self.pull_requests.detail_scroll = 0;
+                self.detail.focused = false;
                 self.pane = if self.pane == Pane::Detail {
                     Pane::None
                 } else {
@@ -1163,6 +1155,9 @@ impl App {
             self.status = "Switch to Tasks or Pull Requests to use list controls".to_string();
             return;
         }
+        if self.apply_detail_action(action) {
+            return;
+        }
         if self.page == Page::PullRequests && self.apply_pr_action(action) {
             return;
         }
@@ -1186,7 +1181,10 @@ impl App {
             Action::Bottom => self.select(usize::MAX),
             Action::PageDown => self.step(self.page_size as isize),
             Action::PageUp => self.step(-(self.page_size as isize)),
+            Action::FocusPane => {}
             Action::Open => {
+                self.detail.scroll = 0;
+                self.detail.focused = self.pane != Pane::Detail;
                 self.pane = match self.pane {
                     Pane::Detail => Pane::None,
                     _ => Pane::Detail,

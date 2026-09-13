@@ -111,9 +111,13 @@ fn run(repo_root: PathBuf) -> Result<()> {
     );
     app.resume_from(std::env::var(RESUME_ENV).ok().as_deref());
     let mut terminal = ratatui::init();
-    let outcome = drive(&mut terminal, &mut app);
+    let outcome = crossterm::execute!(std::io::stdout(), event::EnableMouseCapture)
+        .map_err(anyhow::Error::from)
+        .and_then(|()| drive(&mut terminal, &mut app));
+    let mouse_restore = crossterm::execute!(std::io::stdout(), event::DisableMouseCapture);
     ratatui::restore();
     app.telemetry.finish();
+    mouse_restore?;
     match outcome? {
         Exit::Quit => Ok(()),
         Exit::Restart => restart_into_new_binary(&app),
@@ -139,8 +143,10 @@ fn drive(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Exit>
             .min(Duration::from_millis(500));
         let input_ready = event::poll(wait)?;
         if input_ready {
-            if let Event::Key(key) = event::read()? {
-                app.handle_key(key);
+            match event::read()? {
+                Event::Key(key) => app.handle_key(key),
+                Event::Mouse(mouse) => app.handle_mouse(mouse),
+                _ => {}
             }
         }
         if !input_ready || last_tick.elapsed() >= Duration::from_millis(500) {

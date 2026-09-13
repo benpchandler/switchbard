@@ -30,6 +30,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Constraint::Length(footer_height),
     ])
     .areas(frame.area());
+    app.detail.set_areas(body, app.pane == Pane::Detail);
     crate::navigation::draw(frame, app, navigation);
     draw_notification(frame, app, notification);
     app.page_size = body.height.saturating_sub(3).max(1) as usize;
@@ -388,7 +389,12 @@ fn table_title(app: &App) -> String {
     format!(" {} ", parts.join(" · "))
 }
 
-fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
+    let selected = app.selected_task().map(|task| task.id.clone());
+    if app.detail.task_id != selected {
+        app.detail.task_id = selected;
+        app.detail.scroll = 0;
+    }
     let theme = &app.config.theme;
     let mut lines: Vec<Line> = Vec::new();
     if let Some(task) = app.selected_task() {
@@ -450,7 +456,14 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         lines.push(Line::from("nothing selected"));
     }
-    crate::detail_pane::draw(frame, theme, area, lines, 0);
+    app.detail.scroll = crate::detail_pane::draw(
+        frame,
+        theme,
+        area,
+        lines,
+        app.detail.scroll,
+        app.detail.focused,
+    );
 }
 
 /// `HH:MM` of the claim on `task_id`, from its RFC 3339 stamp.
@@ -632,6 +645,15 @@ fn draw_new_task(frame: &mut Frame, app: &App, area: Rect) {
 /// The footer while browsing: what is in effect as a chip, the situation, then
 /// the keys with their letters on the `keys` surface.
 fn browse_footer(app: &App) -> Line<'static> {
+    if app.pane == Pane::Detail {
+        let focus = if app.detail.focused { "Detail" } else { "List" };
+        let keys = app.config.bindings_for(&Action::FocusPane).join("/");
+        let back = app.config.bindings_for(&Action::Back).join("/");
+        return Line::from(Span::styled(
+            format!("{focus} active · {keys} switch pane · ↑/↓ scroll · {back} close"),
+            app.config.theme.style(Surface::Hint),
+        ));
+    }
     let actions = if app.page == Page::Inbox {
         vec![(Action::Page, "page"), (Action::Help, "keys")]
     } else if app.page == Page::Tasks {
