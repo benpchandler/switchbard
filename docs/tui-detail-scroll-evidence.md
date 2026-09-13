@@ -30,7 +30,7 @@ TASK-221: details taller than the terminal must remain readable. Enter opens and
 - Independent read-only review: no remaining findings after confirming Shift+Tab normalization and wrapped Unicode/unbroken-content tests.
 - First full TUI gate exposed an existing row-layout assertion that expected Ctrl-d after Enter to move list selection. The new requested focus contract requires Shift+Tab back to the list first; the regression test is being updated to exercise that transition.
 - Full pre-merge TUI gate passed after the explicit row-layout focus transition. Guarded installation refused to drop installed commit `8b6f259e` (line wrapping under `v l`); merged that exact commit without conflicts and independently reviewed integration.
-- The merged gate exposed crowded shortcut text in Help. Help now measures terminal display width, separates key/action labels and gives oversized entries their own wrapping row. Browse, detail, row-layout and shortcut targeted suites pass, including the existing initial report-help discovery assertion. Final guarded installation pending.
+- The merged gate exposed crowded shortcut text in Help. Help now measures terminal display width, separates key/action labels and gives oversized entries their own wrapping row. Browse, detail, row-layout and shortcut targeted suites pass, including the existing initial report-help discovery assertion. Final guarded installation passed.
 - Human terminal-emulator visual approval remains separate from automated terminal-buffer rendering.
 
 ## Implementation evidence
@@ -38,3 +38,9 @@ TASK-221: details taller than the terminal must remain readable. Enter opens and
 `crates/switchbard-tui/tests/detail_pane.rs` covers Enter-focused scrolling, reversible Shift+Tab, list selection and detail reset, hovered wheel/click routing, top/bottom clamping, wrapping with Japanese and accented text plus an unbroken string, terminal sizes 0x0/1x1/40x8/100x20/180x50, picker/filter/help precedence, remapped focus binding and help, empty and short details, and page-switch cleanup. The existing PR frame test compares inactive task/PR framing. The authenticated PR journey includes focus assertions but remains an optional ignored test; authenticated live PR focus is not claimed here.
 
 The shared `detail_pane::Interaction` owns hit regions and task detail focus/position. `app/detail.rs` owns scrolling decisions; both renderers clamp against the same wrapped paragraph geometry. The actual terminal loop enables and disables mouse capture and dispatches both key and mouse events. PR PageUp/PageDown preserves its existing detail-scrolling behavior even with list row focus; Tasks paging follows pane focus.
+
+## Final verification and delivery
+
+`mise run tui-install` passed on the combined branch: formatting, clippy with warnings denied, 253 passed tests and 21 existing optional ignored tests, then the guarded release installation. Installed `sbt build-id` reports clean commit `32cce22c1d4ff709b412641b16fbd9218f433c72`, branch `feat/tui-detail-scroll`. The installer preserved previously installed `8b6f259e` by ancestry; no force flag was used. Final terminal verification also checked readable Help (`/tmp/sbt-detail-help.txt`) and repeated End/Shift+Tab/list navigation on the merged build.
+
+TASK-221 is Done and its live claim released. Code and evidence are committed in the isolated worktree; main remains untouched. No push, PR or remote CI was requested or performed. Automated terminal rendering and real terminal input passed; owner visual acceptance in their own terminal and optional authenticated PR journeys remain unclaimed.
