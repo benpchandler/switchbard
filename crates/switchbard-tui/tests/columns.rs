@@ -100,10 +100,10 @@ fn shift_k_moves_a_column_up_and_the_order_saves_with_the_view() {
         "{file}"
     );
     let fresh = open_app(&h.root, &h.config_path);
-    assert_eq!(fresh.state.columns[0].name(), "status");
+    assert_eq!(fresh.state.columns[0].name(fresh.registry()), "status");
     assert_eq!(fresh.view_label(), "v1");
     assert_eq!(
-        fresh.views.get(0).unwrap().label(),
+        fresh.views.get(0).unwrap().label(fresh.registry()),
         "cols:status,id,priority,title"
     );
 }

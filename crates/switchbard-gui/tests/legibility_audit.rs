@@ -495,6 +495,7 @@ fn legibility_backlog_task() -> BacklogTask {
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-20 12:00".to_string()),
+        due_date: None,
         description: "## Why\n\nThis exercises **CommonMark** rendering with a list:\n\n- first item\n- second item\n\nand a [link](https://example.com).".to_string(),
         implementation_plan: "Step one, then step two.".to_string(),
         implementation_notes: "Existing note text.".to_string(),
@@ -511,6 +512,7 @@ fn legibility_backlog_task() -> BacklogTask {
         }],
         source: BacklogTaskSource::Active,
         path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-1.md")),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -622,6 +624,7 @@ fn seed_backlog_project(app: &HiveApp) {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
 }
@@ -672,6 +675,7 @@ fn seed_goals(app: &HiveApp) {
             ranking: switchbard_core::RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec!["To Do".into(), "In Progress".into(), "Done".into()],
+            fields: Vec::new(),
         });
     repo.goals = vec![
         goal("Close out Stack Ranking", 4, 1),

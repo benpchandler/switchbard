@@ -46,7 +46,7 @@ fn group_goal_sections_tasks_by_the_goal_they_feed_with_this_weeks_progress() {
     );
     assert_eq!(rows[4], "Write onboarding guide", "{rows:?}");
     assert_eq!(rows[5], "# no goal", "{rows:?}");
-    assert!(screen.contains("group:goal"), "{screen}");
+    assert!(screen.contains("outline:goal"), "{screen}");
     assert_eq!(h.app.status, "organized by goal · o changes it");
 }
 
@@ -203,7 +203,7 @@ fn o_3_nests_goal_headings_inside_project_headings_and_a_saved_view_keeps_it() {
     h.press(KeyCode::Char('o'));
     let screen = h.press(KeyCode::Char('3'));
     assert_eq!(h.app.status, "organized by project›goal · o changes it");
-    assert!(screen.contains("group:project›goal"), "{screen}");
+    assert!(screen.contains("outline:project›goal"), "{screen}");
     let rows = screen_rows(&h);
     assert_eq!(rows[0], "# Chase · In Progress · 1/2", "{rows:?}");
     assert!(
@@ -247,7 +247,7 @@ fn o_3_nests_goal_headings_inside_project_headings_and_a_saved_view_keeps_it() {
     h.type_text("group project,project");
     h.press(KeyCode::Enter);
     assert!(
-        h.app.status.starts_with("group by one of"),
+        h.app.status.starts_with("outline by one of"),
         "{}",
         h.app.status
     );

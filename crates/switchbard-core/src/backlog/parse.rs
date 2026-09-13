@@ -2,6 +2,7 @@
 //! inside it) into `super::types` structs. Read-only — writes live in
 //! `super::write` behind the `super::mutations` facade.
 
+use super::field_config::FieldDecl;
 use super::types::{BacklogChecklistItem, BacklogRepo, BacklogTask, BacklogTaskSource};
 use anyhow::{bail, Context, Result};
 use serde_yaml::{Mapping, Value};
@@ -38,6 +39,7 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
         bail!("{} is not a Backlog project", root.display());
     }
 
+    let field_decls = super::field_config::parse_field_decls(root)?;
     let mut warnings = Vec::new();
     let mut tasks = Vec::new();
     for (rel, source) in [
@@ -49,7 +51,9 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
         let relative = format!("backlog/{rel}");
         for (path, text, identity) in super::task_storage::sources(root, &relative, &mut warnings)?
         {
-            match text.and_then(|text| parse_task_text(&path, source, &text)) {
+            match text
+                .and_then(|text| parse_task_text_with_fields(&path, source, &text, &field_decls))
+            {
                 Ok((mut task, task_warnings)) => {
                     task.storage_identity = identity;
                     warnings.extend(
@@ -80,6 +84,7 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
         ranking,
         loaded_at_unix: unix_now(),
         configured_statuses: parse_config_statuses(root)?,
+        fields: field_decls,
     })
 }
 
@@ -162,10 +167,24 @@ pub(super) fn parse_task_file(
     parse_task_text(path, source, &text)
 }
 
+/// Parse with no repo field declarations in scope — every caller that only
+/// needs a task's built-in facts (id matching, dependency rewriting,
+/// migration comparisons) and never reads `custom`. `custom` on the
+/// returned task is always empty; see [`parse_task_text_with_fields`] for
+/// the one caller (`load_backlog_repo`) that populates it for real.
 pub(crate) fn parse_task_text(
     path: &Path,
     source: BacklogTaskSource,
     text: &str,
+) -> Result<(BacklogTask, Vec<String>)> {
+    parse_task_text_with_fields(path, source, text, &[])
+}
+
+pub(super) fn parse_task_text_with_fields(
+    path: &Path,
+    source: BacklogTaskSource,
+    text: &str,
+    field_decls: &[FieldDecl],
 ) -> Result<(BacklogTask, Vec<String>)> {
     let (frontmatter, body) = split_frontmatter(text);
     let mut warnings = Vec::new();
@@ -220,6 +239,7 @@ pub(crate) fn parse_task_text(
             .or_else(|| yaml_string(&frontmatter, "parent")),
         created_date: yaml_string(&frontmatter, "created_date"),
         updated_date: yaml_string(&frontmatter, "updated_date"),
+        due_date: yaml_string(&frontmatter, "due_date"),
         description,
         implementation_plan,
         implementation_notes,
@@ -228,6 +248,7 @@ pub(crate) fn parse_task_text(
         definition_of_done,
         source,
         path: path.to_path_buf(),
+        custom: super::field_config::extract_custom_fields(&frontmatter, field_decls),
     };
     Ok((task, warnings))
 }
@@ -747,6 +768,27 @@ pub fn parse_backlog_day(value: &str) -> Option<i64> {
         .map(|dt| dt.and_utc().timestamp().div_euclid(86_400))
 }
 
+/// The `due_date` boundary check: validates a `--due` value is a real
+/// calendar date in `YYYY-MM-DD` form, returning the trimmed string. Callers
+/// at the untrusted-input boundary (the `sb` CLI) run this once; everything
+/// downstream (`BacklogTask::due_date`, `sbt`'s Due column/filter) trusts an
+/// already-`Some` value without re-validating (Rule 5).
+///
+/// The year segment must be exactly four digits: `chrono`'s `%Y` reads
+/// digits greedily up to the next `-`, so it would otherwise silently accept
+/// `999-01-01` or `20260-01-01` as real dates.
+pub fn parse_due_date(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    let year_is_four_digits = trimmed
+        .split('-')
+        .next()
+        .is_some_and(|year| year.len() == 4 && year.bytes().all(|b| b.is_ascii_digit()));
+    if !year_is_four_digits || chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d").is_err() {
+        bail!("due date must be YYYY-MM-DD, got `{trimmed}`");
+    }
+    Ok(trimmed.to_string())
+}
+
 /// Today in the same day space [`parse_backlog_day`] returns. Backlog stamps
 /// are local wall clock (`write::local_stamp`) and parse back as naive-UTC, so
 /// anything comparing against them must read the same clock. Reading
@@ -1228,6 +1270,50 @@ Existing note.
         assert_eq!(task.acceptance_criteria[0].index, 1);
         assert!(!task.acceptance_criteria[0].checked);
         assert!(task.acceptance_criteria[1].checked);
+        assert_eq!(task.due_date, None, "the fixture carries no due_date key");
+    }
+
+    #[test]
+    fn parses_due_date_from_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("task-19 - Example.md");
+        fs::write(
+            &path,
+            "---\nid: TASK-19\ntitle: Example\nstatus: To Do\ndue_date: '2026-09-14'\n---\n",
+        )
+        .unwrap();
+
+        let task = parse_task_file(&path, BacklogTaskSource::Active).unwrap().0;
+        assert_eq!(task.due_date.as_deref(), Some("2026-09-14"));
+    }
+
+    #[test]
+    fn parse_due_date_accepts_well_formed_dates_and_trims_whitespace() {
+        assert_eq!(parse_due_date(" 2026-09-14 ").unwrap(), "2026-09-14");
+    }
+
+    #[test]
+    fn parse_due_date_rejects_malformed_input() {
+        for bad in ["not a date", "2026/09/14", "2026-13-40", "", "09-14-2026"] {
+            assert!(
+                parse_due_date(bad).is_err(),
+                "`{bad}` should not parse as a due date"
+            );
+        }
+    }
+
+    /// `chrono::NaiveDate::parse_from_str`'s `%Y` reads digits greedily up to
+    /// the next `-`, so it accepts a 3-digit or 5-digit year unless this
+    /// boundary check rejects it explicitly — a due date is only meaningful
+    /// as a real 4-digit calendar year.
+    #[test]
+    fn parse_due_date_rejects_a_year_that_is_not_exactly_four_digits() {
+        for bad in ["999-01-01", "20260-01-01"] {
+            assert!(
+                parse_due_date(bad).is_err(),
+                "`{bad}` should not parse as a due date (non-4-digit year)"
+            );
+        }
     }
 
     /// The Linear-hierarchy divergence's membership-key rule (trajectory:

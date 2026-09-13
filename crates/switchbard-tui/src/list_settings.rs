@@ -2,7 +2,11 @@
 //! catalog remains the authority for individual column properties.
 use std::path::{Path, PathBuf};
 
-use crate::{columns::Column, page::Page, views::ViewState};
+use crate::{
+    columns::{Column, ColumnRegistry},
+    page::Page,
+    views::ViewState,
+};
 
 #[derive(Clone, Copy)]
 pub enum ListSettings {
@@ -19,10 +23,12 @@ impl ListSettings {
         }
     }
 
-    pub fn catalog(self) -> &'static [Column] {
+    /// Every column this page can show. The task page's catalog grows with the
+    /// repo's own declared fields, which is why it is built rather than fixed.
+    pub fn catalog(self, registry: &ColumnRegistry) -> Vec<Column> {
         match self {
-            Self::Tasks => &Column::ALL,
-            Self::PullRequests => &Column::PR_ALL,
+            Self::Tasks => registry.task_columns(),
+            Self::PullRequests => Column::PR_ALL.to_vec(),
         }
     }
 

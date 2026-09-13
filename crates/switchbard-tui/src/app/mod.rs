@@ -14,13 +14,14 @@ mod task_status;
 use crate::page::Page;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use switchbard_core::{BacklogTask, GoalDef, WorkSession};
 
 use crate::ball::Ball;
-use crate::columns::Column;
+use crate::columns::{Column, ColumnRegistry};
 use crate::config::{self, Action, Config, KeyChord};
 use crate::group::{self, Grouping, Row};
 use crate::paint;
@@ -67,6 +68,10 @@ pub struct AppPaths {
 
 pub struct App {
     pub repo_root: PathBuf,
+    /// What columns exist: the built-ins plus every field this repo declares.
+    /// Rebuilt once per task reload (never per frame) and shared with the view
+    /// stores and the PR page so one answer serves the whole app.
+    registry: Arc<ColumnRegistry>,
     pub config: Config,
     config_path: Option<PathBuf>,
     pub settings: SettingsStore,
@@ -84,6 +89,9 @@ pub struct App {
     pub goal_summaries: Vec<GoalSummary>,
     /// The Top 5 (expedite lane) ids in order; the queue.
     pub top: Vec<String>,
+    /// Dependency and sub-task facts, refreshed with the tasks; see
+    /// `tasks::TaskRelations`.
+    pub relations: tasks::TaskRelations,
     /// Live agent sessions holding tasks in this repo; refreshed every tick.
     pub work: Vec<WorkSession>,
     work_dir: Option<PathBuf>,
@@ -93,6 +101,11 @@ pub struct App {
     pub visible: Vec<usize>,
     /// What the table shows: tasks, with a heading before each section when grouped.
     pub rows: Vec<Row>,
+    /// `state.group`'s current resolved levels: its own for a fixed grouping,
+    /// `group::auto_levels`'s answer for `auto`. Recomputed with `rows` in
+    /// `refilter_tasks`, never per frame; the title bar and the `o` status
+    /// line both read this rather than re-deriving it (Fact-source probe).
+    pub group_levels: Vec<Column>,
     /// Index into `rows`; never rests on a heading while a task row exists.
     pub selected: usize,
     /// First row on screen; the renderer keeps `selected` inside the window.
@@ -140,15 +153,23 @@ impl App {
             repo_settings,
             work_dir,
         } = paths;
-        let config = config::load(config_path.as_deref());
+        let registry = Arc::new(ColumnRegistry::for_repo(repo_root));
+        let config = config::load(config_path.as_deref(), &registry);
         let (settings, settings_warnings) = SettingsStore::load(global_settings, repo_settings);
-        let (pr_views, pr_warnings) =
-            ViewStore::load_for_page(global_views.clone(), repo_views.clone(), Page::PullRequests);
+        let (pr_views, pr_warnings) = ViewStore::load_for_page(
+            Arc::clone(&registry),
+            global_views.clone(),
+            repo_views.clone(),
+            Page::PullRequests,
+        );
         let pr_state = pr_views.get(0).unwrap_or_else(ViewState::pull_requests);
         let (views, view_warnings) =
-            ViewStore::load_for_page(global_views, repo_views, Page::Tasks);
+            ViewStore::load_for_page(Arc::clone(&registry), global_views, repo_views, Page::Tasks);
+        let mut pull_requests = crate::pull_requests::PullRequests::default();
+        pull_requests.set_registry(Arc::clone(&registry));
         let mut app = App {
             repo_root: repo_root.to_path_buf(),
+            registry,
             config_seen: config_path.as_deref().and_then(config::modified_at),
             config_path,
             settings,
@@ -161,11 +182,13 @@ impl App {
             goals: Vec::new(),
             goal_summaries: Vec::new(),
             top: Vec::new(),
+            relations: tasks::TaskRelations::default(),
             work: Vec::new(),
             work_dir,
             opened: Instant::now(),
             visible: Vec::new(),
             rows: Vec::new(),
+            group_levels: Vec::new(),
             selected: 0,
             scroll: 0,
             help_scroll: 0,
@@ -184,7 +207,7 @@ impl App {
             input: String::new(),
             pane: Pane::None,
             page: Page::Tasks,
-            pull_requests: Default::default(),
+            pull_requests,
             picker: None,
             picker_parents: Vec::new(),
             column_purpose: ColumnPurpose::Filter,
@@ -229,7 +252,14 @@ impl App {
         self.top.iter().position(|id| *id == task.id).map(|p| p + 1)
     }
 
-    /// A cell's text: what the column says, plus what only the app knows (rank).
+    /// What columns exist in this repo, for every caller that has to resolve a
+    /// `Column` (the renderer, the pickers, the view store).
+    pub fn registry(&self) -> &Arc<ColumnRegistry> {
+        &self.registry
+    }
+
+    /// A cell's text: what the column says, plus what only the app knows
+    /// (rank, live work, and the title's roll-up badge).
     pub fn cell(&self, column: Column, task: &BacklogTask) -> String {
         match column {
             Column::Rank => self
@@ -237,7 +267,25 @@ impl App {
                 .map(|n| n.to_string())
                 .unwrap_or_default(),
             Column::Work => "●".repeat(self.working(task).len().min(3)),
-            other => other.display_text(task, self.state.abbreviated.contains(&other), &self.goals),
+            Column::Title => self.title_cell(task),
+            other => other.display_text(
+                &self.registry,
+                task,
+                self.state.abbreviated.contains(&other),
+                &self.goals,
+                &self.relations.blocked,
+            ),
+        }
+    }
+
+    /// A parent's title carries a `[done/total]` roll-up badge over its direct
+    /// sub-tasks (`tasks::TaskRelations::subtasks`, computed once per load
+    /// from `switchbard_core::subtask_progress`); a childless task's title is
+    /// unchanged. Matches the GUI's own suffix (`ui/backlog/list.rs`).
+    fn title_cell(&self, task: &BacklogTask) -> String {
+        match self.relations.subtasks.get(&task.id) {
+            Some((done, total)) => format!("{}  [{done}/{total}]", task.title),
+            None => task.title.clone(),
         }
     }
 
@@ -281,7 +329,7 @@ impl App {
             self.state.filter,
             self.state
                 .sort
-                .map(|sort| sort.to_text())
+                .map(|sort| sort.to_text(&self.registry))
                 .unwrap_or_default(),
             self.pane
         )
@@ -308,10 +356,10 @@ impl App {
             pr_page: self.page == Page::PullRequests,
             inbox_page: self.page == Page::Inbox,
             task_slot,
-            task_view: tasks.to_lua(),
+            task_view: tasks.to_lua(&self.registry),
             task_selected: self.selected,
             pr_slot,
-            pr_view: prs.to_lua(),
+            pr_view: prs.to_lua(&self.registry),
             pr_selected: self.pull_requests.selected,
             pr_id: self.pull_requests.selection_identity(),
         }
@@ -376,8 +424,8 @@ impl App {
         }
         let selected = parts.next().and_then(|n| n.parse().ok());
         if let Some(record) = parts.next() {
-            self.state = ViewState::from_lua(record);
-            self.state.sanitize(Page::Tasks);
+            self.state = ViewState::from_lua(record, &self.registry);
+            self.state.sanitize(Page::Tasks, &self.registry);
         }
         self.refilter();
         if let Some(selected) = selected {
@@ -393,11 +441,12 @@ impl App {
     fn restore_resume(&mut self, record: &resume::ResumeRecord) {
         self.switch_page(Page::Tasks);
         self.view = record.task_slot;
-        self.state = ViewState::from_lua(&record.task_view);
-        self.state.sanitize(Page::Tasks);
+        self.state = ViewState::from_lua(&record.task_view, &self.registry);
+        self.state.sanitize(Page::Tasks, &self.registry);
         self.inactive_view = record.pr_slot;
-        self.inactive_state = ViewState::from_lua(&record.pr_view);
-        self.inactive_state.sanitize(Page::PullRequests);
+        self.inactive_state = ViewState::from_lua(&record.pr_view, &self.registry);
+        self.inactive_state
+            .sanitize(Page::PullRequests, &self.registry);
         self.refilter();
         self.select(record.task_selected);
         self.pull_requests.selected = record.pr_selected;
@@ -436,11 +485,12 @@ impl App {
         };
         self.switch_page(Page::Tasks);
         self.view = task_slot;
-        self.state = ViewState::from_lua(&tasks);
-        self.state.sanitize(Page::Tasks);
+        self.state = ViewState::from_lua(&tasks, &self.registry);
+        self.state.sanitize(Page::Tasks, &self.registry);
         self.inactive_view = pr_slot;
-        self.inactive_state = ViewState::from_lua(&prs);
-        self.inactive_state.sanitize(Page::PullRequests);
+        self.inactive_state = ViewState::from_lua(&prs, &self.registry);
+        self.inactive_state
+            .sanitize(Page::PullRequests, &self.registry);
         self.refilter();
         self.select(selected);
         self.pull_requests.selected = pr_selected;
@@ -745,17 +795,20 @@ impl App {
         }
     }
 
-    /// `o`: what to organize the list by. Project, goal, and the two nestings
-    /// lead; the current choice is ✓, `x` flattens; picking the current
-    /// choice flattens too.
+    /// `o`: what to organize the list by. Project, goal, the two nestings, and
+    /// `auto` lead; the current choice is ✓, `x` flattens; picking the
+    /// current choice flattens too.
     pub(super) fn open_organize_picker(&mut self) {
         let leading = [
             Grouping::by(Column::Project),
             Grouping::by(Column::Goal),
             Grouping::nested(Column::Project, Column::Goal),
             Grouping::nested(Column::Goal, Column::Project),
+            Grouping::auto(),
         ];
-        let rest: Vec<Grouping> = Column::groupable_columns()
+        let rest: Vec<Grouping> = self
+            .registry
+            .groupable_task_columns()
             .into_iter()
             .map(Grouping::by)
             .filter(|grouping| !leading.contains(grouping))
@@ -769,8 +822,17 @@ impl App {
                 } else {
                     " "
                 };
+                // `auto`'s own row shows what it resolved to, once selected;
+                // any other row (including an unselected `auto`) shows its
+                // bare spelling — `self.group_levels` only ever answers for
+                // whichever grouping is actually active right now.
+                let label = if grouping.is_auto() && self.state.group.is_auto() {
+                    grouping.label(&self.registry, &self.group_levels)
+                } else {
+                    grouping.name(&self.registry)
+                };
                 PickOption {
-                    label: format!("{mark}{}", grouping.name()),
+                    label: format!("{mark}{label}"),
                     count: 0,
                     key: None,
                     payload: Payload::Grouping(grouping),
@@ -891,7 +953,7 @@ impl App {
             return Vec::new();
         }
         let mut names: Vec<String> = [
-            "bug", "idea", "group", "palette", "theme", "reload", "page", "help", "q",
+            "bug", "idea", "outline", "palette", "theme", "reload", "page", "help", "q",
         ]
         .iter()
         .map(|name| name.to_string())
@@ -1221,7 +1283,7 @@ impl App {
             self.status = "Switch to Tasks or Pull Requests to use list controls".into();
             return;
         }
-        if self.page == Page::PullRequests && matches!(verb, "group" | "goal") {
+        if self.page == Page::PullRequests && matches!(verb, "group" | "outline" | "goal") {
             self.status = "Switch to Tasks to use task controls".to_string();
             return;
         }
@@ -1237,16 +1299,22 @@ impl App {
             "dismiss" => self.apply(&Action::DismissNotifications),
             "palette" => self.choose_palette(rest.trim()),
             "theme" => self.choose_theme(rest.trim()),
-            "group" => match Grouping::parse(rest) {
+            // `:outline` is the word the rest of the app uses (TASK-145);
+            // `:group` keeps working for anyone who already types it.
+            "group" | "outline" => match Grouping::parse(rest, &self.registry) {
                 Some(grouping) => self.set_group(grouping),
-                None => self.fail(format!(
-                    "group by one of {}, two of them as a,b, or off",
-                    Column::groupable_columns()
+                None => {
+                    let known = self
+                        .registry
+                        .groupable_task_columns()
                         .iter()
-                        .map(|column| column.name())
+                        .map(|column| column.name(&self.registry).to_string())
                         .collect::<Vec<_>>()
-                        .join(", ")
-                )),
+                        .join(", ");
+                    self.fail(format!(
+                        "outline by one of {known}, several of them as a,b,c, auto, or off"
+                    ));
+                }
             },
             "goal" => self.toggle_goal_link(rest.trim()),
             "bug" => self.file_report(ReportKind::Bug, rest),
@@ -1365,13 +1433,15 @@ impl App {
         }
         self.page = page;
         if page != Page::Inbox {
-            self.state.sanitize(page);
+            self.state.sanitize(page, &self.registry);
         }
         self.refilter();
     }
 
-    pub fn page_columns(&self) -> &'static [Column] {
-        crate::list_settings::ListSettings::for_page(self.page).map_or(&[], |scope| scope.catalog())
+    pub fn page_columns(&self) -> Vec<Column> {
+        crate::list_settings::ListSettings::for_page(self.page)
+            .map(|scope| scope.catalog(&self.registry))
+            .unwrap_or_default()
     }
 
     pub fn filter_text(&self) -> &str {
@@ -1410,24 +1480,57 @@ impl App {
             &self.inactive_state
         };
         let base = self.settings.effective().base_filter(&state.filter);
-        let filter = Filter::parse(&format!("{base} {}", state.filter));
+        let filter = Filter::parse(&format!("{base} {}", state.filter), &self.registry);
         self.visible = (0..self.tasks.len())
-            .filter(|&index| filter.matches(&self.tasks[index], &self.goals))
+            .filter(|&index| {
+                filter.matches(
+                    &self.registry,
+                    &self.tasks[index],
+                    &self.goals,
+                    &self.relations.blocked,
+                )
+            })
             .collect();
         if let Some(sort) = state.sort {
-            sort::apply(&self.tasks, &mut self.visible, sort, &self.top, &self.goals);
+            sort::apply(
+                &self.registry,
+                &self.tasks,
+                &mut self.visible,
+                sort,
+                &self.top,
+                &self.goals,
+                &self.relations.blocked,
+            );
         }
         let pinned: &[String] = if state.pin_top { &self.top } else { &[] };
         let headings = group::Headings {
+            registry: &self.registry,
             projects: &self.projects,
             goals: &self.goals,
             goal_summaries: &self.goal_summaries,
+            blocked: &self.relations.blocked,
         };
-        self.rows = group::rows(&self.tasks, &self.visible, &state.group, &headings, pinned);
+        // `auto` resolves here, over the just-filtered set, and nowhere else:
+        // once per rebuild, never per frame. A fixed grouping's levels are
+        // its own; either way `group_levels` becomes the one place downstream
+        // reads "what is this list actually sectioned by right now".
+        let levels: Vec<Column> = if state.group.is_auto() {
+            group::auto_levels(
+                &self.tasks,
+                &self.visible,
+                &self.registry.groupable_task_columns(),
+                &headings,
+                Grouping::MAX_DEPTH,
+            )
+        } else {
+            state.group.levels().to_vec()
+        };
+        self.rows = group::rows(&self.tasks, &self.visible, &levels, &headings, pinned);
+        self.group_levels = levels;
         self.select(self.selected);
     }
 
-    /// `o`, `:group`, or a column's menu: organize the list, or flatten it.
+    /// `o`, `:outline`/`:group`, or a column's menu: organize the list, or flatten it.
     pub(super) fn set_group(&mut self, grouping: Grouping) {
         let kept = self.selected_task().map(|task| task.id.clone());
         self.state.group = grouping;
@@ -1441,34 +1544,39 @@ impl App {
                 self.select(row);
             }
         }
+        let label = self.state.group.label(&self.registry, &self.group_levels);
         self.status = if self.state.group.is_flat() {
             "flat list".to_string()
         } else {
-            format!("organized by {} · o changes it", self.state.group.name())
+            format!("organized by {label} · o changes it")
         };
-        self.telemetry
-            .record("action", format!("group {}", self.state.group.name()));
+        self.telemetry.record("action", format!("group {label}"));
     }
 
     /// `,`: the standing preferences, one row per status that can be hidden.
     pub(super) fn open_settings(&mut self) {
-        let mut options: Vec<PickOption> =
-            tasks::field_values(&self.tasks, tasks::FilterField::Status, &self.goals)
-                .into_iter()
-                .map(|(status, count)| {
-                    let mark = if self.settings.effective().is_hidden(&status) {
-                        "✓"
-                    } else {
-                        " "
-                    };
-                    PickOption {
-                        label: format!("{mark}hide {status}"),
-                        count,
-                        key: None,
-                        payload: Payload::Text(status),
-                    }
-                })
-                .collect();
+        let mut options: Vec<PickOption> = tasks::field_values(
+            &self.registry,
+            &self.tasks,
+            tasks::FilterField::Status,
+            &self.goals,
+            &self.relations.blocked,
+        )
+        .into_iter()
+        .map(|(status, count)| {
+            let mark = if self.settings.effective().is_hidden(&status) {
+                "✓"
+            } else {
+                " "
+            };
+            PickOption {
+                label: format!("{mark}hide {status}"),
+                count,
+                key: None,
+                payload: Payload::Text(status),
+            }
+        })
+        .collect();
         if crate::list_settings::ListSettings::for_page(self.page)
             .is_some_and(|scope| scope.supports_row_layout())
         {
@@ -1602,11 +1710,13 @@ impl App {
                     self.status = "task storage reconnected".into();
                 }
                 self.storage_retry = false;
+                self.adopt_fields(&backlog.fields);
                 self.tasks = backlog.tasks;
                 self.projects = backlog.projects;
                 self.goals = backlog.goals;
                 self.goal_summaries = backlog.goal_summaries;
                 self.top = backlog.top;
+                self.relations = backlog.relations;
             }
             Err(error) => {
                 self.storage_retry = true;
@@ -1656,8 +1766,31 @@ impl App {
         }
     }
 
+    /// Take up the repo's declared fields when they have changed: one new
+    /// registry, published to everything that resolves a `Column`, and the live
+    /// views re-sanitized so a column whose field is gone leaves the table.
+    /// Costs one comparison when `backlog/config.yml` is unchanged, which is
+    /// every reload but the one after an edit.
+    fn adopt_fields(&mut self, fields: &[switchbard_core::FieldDecl]) {
+        if self.registry.is_current(fields) {
+            return;
+        }
+        self.registry = Arc::new(self.registry.reloaded(fields));
+        self.views.set_registry(Arc::clone(&self.registry));
+        self.inactive_views.set_registry(Arc::clone(&self.registry));
+        self.pull_requests.set_registry(Arc::clone(&self.registry));
+        let (page, other) = match self.page {
+            Page::PullRequests => (Page::PullRequests, Page::Tasks),
+            _ => (Page::Tasks, Page::PullRequests),
+        };
+        self.state.sanitize(page, &self.registry);
+        self.inactive_state.sanitize(other, &self.registry);
+        self.views.sanitize(page);
+        self.inactive_views.sanitize(other);
+    }
+
     fn reload_config(&mut self) {
-        self.config = config::load(self.config_path.as_deref());
+        self.config = config::load(self.config_path.as_deref(), &self.registry);
         self.status = "config reloaded".to_string();
         self.telemetry
             .record("config_reload", self.config.warnings.len().to_string());

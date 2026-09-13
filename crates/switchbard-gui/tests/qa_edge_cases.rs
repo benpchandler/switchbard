@@ -153,6 +153,7 @@ fn malformed_ordering_yaml_app() -> switchbard_gui::app::HiveApp {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     *app.ordering.lock().unwrap() = OrderingState {

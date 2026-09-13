@@ -119,7 +119,7 @@ fn observation(app: &App) -> String {
         {
             let mut active = String::new();
             if let Some(sort) = app.state.sort {
-                active.push_str(&format!(" · {}", sort.label()));
+                active.push_str(&format!(" · {}", sort.label(app.registry())));
             }
             if !app.state.paint.is_empty() {
                 active.push_str(&format!(" · paint:{}", app.state.paint.len()));
@@ -171,7 +171,7 @@ fn list(frame: &mut Frame, app: &mut App, area: Rect) {
                 if *column == crate::columns::Column::Checks && area.width < 70 {
                     "Ck"
                 } else {
-                    column.header()
+                    column.header(app.registry())
                 }
             )
         })
@@ -228,7 +228,7 @@ fn column_widths(app: &App, width: u16) -> Vec<Constraint> {
             crate::columns::Column::Tasks if width < 70 => Constraint::Length(10),
             crate::columns::Column::Checks if width < 70 => Constraint::Length(4),
             column => column
-                .max_width()
+                .max_width(app.registry())
                 .map(Constraint::Length)
                 .unwrap_or(Constraint::Min(1)),
         })
@@ -289,6 +289,7 @@ fn draw_row(frame: &mut Frame, app: &App, row: &PrListRow, rect: Rect, selected:
         if let Some(color) = crate::paint::cell_color_with(
             &app.state.paint,
             *column,
+            app.registry(),
             |column| app.pull_requests.values(column, row),
             |filter| app.pull_requests.matches(filter, row),
         ) {

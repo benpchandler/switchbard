@@ -43,6 +43,7 @@ fn task(id: &str, title: &str, status: &str, labels: &[&str], notes: &str) -> Ba
         parent: None,
         created_date: Some("2026-06-20 12:00".to_string()),
         updated_date: Some("2026-06-20 12:00".to_string()),
+        due_date: None,
         description: "body".to_string(),
         implementation_plan: String::new(),
         implementation_notes: notes.to_string(),
@@ -55,6 +56,7 @@ fn task(id: &str, title: &str, status: &str, labels: &[&str], notes: &str) -> Ba
         definition_of_done: vec![],
         source: BacklogTaskSource::Active,
         path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/{id}.md")),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -147,6 +149,7 @@ fn app_with(tasks: Vec<BacklogTask>, goals: Vec<GoalDef>, runs: Vec<DispatchRun>
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     let mut cached = app.dispatch_runs.lock().unwrap();
@@ -417,6 +420,7 @@ fn in_flight_is_scoped_to_the_current_repo_scope() {
             ranking: RepoRanking::default(),
             loaded_at_unix: 0,
             configured_statuses: vec!["To Do".into(), "In Progress".into(), "Done".into()],
+            fields: Vec::new(),
         },
     );
     app.place = Place::Digest;
@@ -500,6 +504,8 @@ fn retry_re_flags_the_task_through_the_real_write_layer() {
             assignees: vec![],
             project: None,
             dependencies: vec![],
+            due_date: None,
+            custom: Vec::new(),
         },
     )
     .expect("create fixture task");

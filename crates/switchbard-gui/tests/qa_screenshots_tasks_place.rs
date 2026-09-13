@@ -56,6 +56,7 @@ fn task(
         parent: None,
         created_date: Some("2026-06-01 09:00".to_string()),
         updated_date: Some("2026-06-20 12:00".to_string()),
+        due_date: None,
         description: String::new(),
         implementation_plan: String::new(),
         implementation_notes: String::new(),
@@ -71,6 +72,7 @@ fn task(
             "{REPO_PATH}/backlog/tasks/{}.md",
             id.to_lowercase()
         )),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -94,6 +96,7 @@ fn repo_with(
             "In Review".into(),
             "Done".into(),
         ],
+        fields: Vec::new(),
     }
 }
 

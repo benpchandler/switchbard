@@ -104,7 +104,7 @@ impl ColumnAction {
         match self {
             ColumnAction::Filter => "filter by its values",
             ColumnAction::Sort => "sort by it",
-            ColumnAction::Group => "group by it",
+            ColumnAction::Group => "outline by it",
             ColumnAction::Paint => "paint by it",
             ColumnAction::Glyphs => "glyphs on/off",
             ColumnAction::Abbreviate => "abbreviate on/off",
@@ -206,21 +206,29 @@ impl PickOption {
         }
     }
 
-    pub fn paint_column(column: Column, hidden: bool) -> PickOption {
-        let mut option = Self::column(column, hidden);
+    pub fn paint_column(
+        registry: &crate::columns::ColumnRegistry,
+        column: Column,
+        hidden: bool,
+    ) -> PickOption {
+        let mut option = Self::column(registry, column, hidden);
         option.label = if hidden {
-            format!("{}{}", column.label(), Column::HIDDEN_TAG)
+            format!("{}{}", column.label(registry), Column::HIDDEN_TAG)
         } else {
-            column.label().to_string()
+            column.label(registry).to_string()
         };
         option
     }
 
-    pub fn column(column: Column, hidden: bool) -> PickOption {
+    pub fn column(
+        registry: &crate::columns::ColumnRegistry,
+        column: Column,
+        hidden: bool,
+    ) -> PickOption {
         let label = if hidden {
-            format!("{}{}", column.name(), Column::HIDDEN_TAG)
+            format!("{}{}", column.name(registry), Column::HIDDEN_TAG)
         } else {
-            column.name().to_string()
+            column.name(registry).to_string()
         };
         PickOption {
             label,

@@ -189,6 +189,49 @@ fn list_rows_are_tab_separated_and_status_filterable() {
 }
 
 #[test]
+fn list_blocked_and_ready_are_mutually_exclusive_and_match_is_blocked() {
+    let dir = fixture_project();
+    let root = dir.path();
+    assert_eq!(ok_stdout(root, &["create", "Dependency"]), "TASK-1\n");
+    assert_eq!(
+        ok_stdout(root, &["create", "Dependent", "--depends-on", "TASK-1"]),
+        "TASK-2\n"
+    );
+
+    let blocked = ok_stdout(root, &["list", "--blocked"]);
+    assert_eq!(
+        blocked, "TASK-2\tTo Do\tmedium\t\t\tDependent\n",
+        "only the task with an open dependency: {blocked}"
+    );
+    let ready = ok_stdout(root, &["list", "--ready"]);
+    assert_eq!(
+        ready, "TASK-1\tTo Do\tmedium\t\t\tDependency\n",
+        "only the task with no open dependency: {ready}"
+    );
+
+    let out = bin(root, &["list", "--blocked", "--ready"]);
+    assert!(
+        !out.status.success(),
+        "--blocked and --ready are mutually exclusive"
+    );
+
+    assert_eq!(
+        ok_stdout(root, &["edit", "TASK-1", "-s", "Done"]),
+        "Edited TASK-1\n"
+    );
+    assert_eq!(
+        ok_stdout(root, &["list", "--blocked"]),
+        "",
+        "TASK-2's dependency is done, so it is no longer blocked"
+    );
+    assert_eq!(
+        ok_stdout(root, &["list", "--ready"]),
+        "TASK-2\tTo Do\tmedium\t\t\tDependent\n",
+        "TASK-1 itself is done, so it is neither blocked nor ready"
+    );
+}
+
+#[test]
 fn dispatch_flagging_is_a_single_label_toggle() {
     let dir = fixture_project();
     let root = dir.path();

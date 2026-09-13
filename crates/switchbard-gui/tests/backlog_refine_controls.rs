@@ -44,6 +44,7 @@ fn task(source: BacklogTaskSource) -> BacklogTask {
         parent: None,
         created_date: Some("2026-08-19 09:00".to_string()),
         updated_date: Some("2026-08-19 09:00".to_string()),
+        due_date: None,
         description: "Needs fleshing out.".to_string(),
         implementation_plan: String::new(),
         implementation_notes: String::new(),
@@ -52,6 +53,7 @@ fn task(source: BacklogTaskSource) -> BacklogTask {
         definition_of_done: vec![],
         source,
         path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-1.md")),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -84,6 +86,7 @@ fn rail_app(task: BacklogTask) -> HiveApp {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     app

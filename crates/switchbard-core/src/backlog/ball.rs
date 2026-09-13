@@ -124,6 +124,7 @@ mod tests {
             parent: None,
             created_date: None,
             updated_date: None,
+            due_date: None,
             description: String::new(),
             implementation_plan: String::new(),
             implementation_notes: String::new(),
@@ -132,6 +133,7 @@ mod tests {
             definition_of_done: vec![],
             source: BacklogTaskSource::Active,
             path: PathBuf::new(),
+            custom: std::collections::BTreeMap::new(),
         }
     }
 

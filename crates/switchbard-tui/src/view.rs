@@ -88,6 +88,9 @@ fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = app.config.theme.clone();
+    // Cloned like the theme: the render path writes `app.scroll` part way
+    // through, so nothing may hold a borrow of `app` across the whole frame.
+    let registry = std::sync::Arc::clone(app.registry());
     let repo = app
         .repo_root
         .file_name()
@@ -114,7 +117,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             _ if app.state.glyph_columns.contains(column) => {
                 Constraint::Length((2 + app.glyph_legend(*column).chars().count()).max(3) as u16)
             }
-            column => match column.max_width() {
+            column => match column.max_width(&registry) {
                 Some(max) => Constraint::Length(fitted_width(app, *column, max)),
                 None => Constraint::Min(20),
             },
@@ -131,7 +134,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             let label = if app.state.glyph_columns.contains(column) {
                 app.glyph_legend(*column)
             } else {
-                column.header().to_string()
+                column.header(&registry).to_string()
             };
             format!("{} {}", index + 1, label)
         })
@@ -213,6 +216,10 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                 let working = glow
                     .map(|glow| theme.working_style(glow))
                     .filter(|style| *style != Style::default());
+                // A done task is never blocked (TASK-209.2's AC #2) even if a
+                // listed dependency reads open — matches the GUI's own guard
+                // (`ui/backlog/list.rs`).
+                let blocked = !task.is_done() && app.relations.blocked.contains(&task.id);
                 if selected {
                     frame.render_widget(
                         Paragraph::new("").style(theme.style(Surface::Selected)),
@@ -223,16 +230,25 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     frame.render_widget(Paragraph::new("").style(glow), row_area);
                 }
                 for (column, cell) in app.state.columns.iter().zip(cells.iter()) {
-                    let value = column.cell_text(task, &app.goals);
+                    let value =
+                        column.cell_text(&registry, task, &app.goals, &app.relations.blocked);
                     let text = if app.state.glyph_columns.contains(column) && !value.is_empty() {
                         app.config.glyph(*column, &value)
                     } else {
                         app.cell(*column, task)
                     };
                     let mut style = theme.column_style(*column);
-                    if let Some(color) =
-                        paint::cell_color(&app.state.paint, task, *column, &app.goals)
-                    {
+                    if blocked {
+                        style = style.patch(theme.style(Surface::Hint));
+                    }
+                    if let Some(color) = paint::cell_color(
+                        &app.state.paint,
+                        &registry,
+                        task,
+                        *column,
+                        &app.goals,
+                        &app.relations.blocked,
+                    ) {
                         style = style.fg(color);
                     }
                     if selected {
@@ -309,7 +325,7 @@ fn draw_task_title(
 /// more than the catalog allows, so a column of `Done` does not reserve room
 /// for `In Progress`.
 fn fitted_width(app: &App, column: Column, max: u16) -> u16 {
-    let header = column.header().chars().count() + 2;
+    let header = column.header(app.registry()).chars().count() + 2;
     let widest = app
         .rows
         .iter()
@@ -328,15 +344,21 @@ fn table_title(app: &App) -> String {
         parts.push(app.state.filter.clone());
     }
     if let Some(sort) = app.state.sort {
-        parts.push(sort.label());
+        parts.push(sort.label(app.registry()));
     }
     if app.state.columns != Column::DEFAULT_SHOWN {
-        parts.push(format!("cols:{}", columns_text(&app.state.columns)));
+        parts.push(format!(
+            "cols:{}",
+            columns_text(&app.state.columns, app.registry())
+        ));
     }
     if !app.state.glyph_columns.is_empty() {
-        parts.push(format!("glyphs:{}", columns_text(&app.state.glyph_columns)));
+        parts.push(format!(
+            "glyphs:{}",
+            columns_text(&app.state.glyph_columns, app.registry())
+        ));
     }
-    if let Some(label) = app.state.abbreviated_label() {
+    if let Some(label) = app.state.abbreviated_label(app.registry()) {
         parts.push(label);
     }
     if !app.state.pin_top {
@@ -352,8 +374,9 @@ fn table_title(app: &App) -> String {
         parts.push(format!("paint:{}", app.state.paint.len()));
     }
     if !app.state.group.is_flat() {
-        parts.push(format!("group:{}", app.state.group.name()));
-        if app.state.group.levels().contains(&Column::Project) {
+        let label = app.state.group.label(app.registry(), &app.group_levels);
+        parts.push(format!("outline:{label}"));
+        if app.group_levels.contains(&Column::Project) {
             parts.extend(app.initiatives());
         }
     }
@@ -404,6 +427,26 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                 lines.push(Line::from(format!("[{mark}] {}", item.text)));
             }
         }
+        // "Blocked by" (open dependencies only) and "Blocks" (the reverse
+        // edge), mirroring the GUI's `ui/backlog/detail_lists.rs`
+        // (`render_dependencies`'/`render_blocks`' sections) off the same
+        // `tasks::TaskRelations` cache the row dimming and the `blocked`
+        // filter read.
+        if let Some(deps) = app.relations.blocked_by.get(&task.id) {
+            lines.push(Line::from(""));
+            lines.push(crate::detail_pane::section("blocked by", theme));
+            for (id, title) in deps {
+                lines.push(Line::from(format!("{id} {title}")));
+            }
+        }
+        if let Some(dependents) = app.relations.blocks.get(&task.id) {
+            lines.push(Line::from(""));
+            lines.push(crate::detail_pane::section("blocks", theme));
+            for (id, title, done) in dependents {
+                let status = if *done { "done" } else { "open" };
+                lines.push(Line::from(format!("{id} {title} ({status})")));
+            }
+        }
     } else {
         lines.push(Line::from("nothing selected"));
     }
@@ -451,7 +494,7 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
             };
             (
                 format!("v{}", index + 1),
-                format!("{}{scope}", saved.display_name()),
+                format!("{}{scope}", saved.display_name(app.registry())),
             )
         }))
         .collect();
@@ -644,7 +687,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
             let value = &option.label;
             let shown = match (&picker.purpose, &option.payload) {
                 (PickerPurpose::Filter(field), Payload::Text(value)) => {
-                    Filter::field_allows(app.filter_text(), *field, value)
+                    Filter::field_allows(app.filter_text(), *field, value, app.registry())
                 }
                 (PickerPurpose::Sort(_), Payload::Order(order)) => {
                     app.state.sort.is_some_and(|sort| sort.order == *order)
@@ -753,7 +796,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         .borders(Borders::ALL)
         .border_style(theme.style(Surface::Accent))
         .title_style(title_style)
-        .title(pending + &picker_title(picker, preview.is_some()));
+        .title(pending + &picker_title(picker, preview.is_some(), app.registry()));
     let block = if picker.purpose != PickerPurpose::Merge
         && rows.len().saturating_add(4) > height as usize
     {
@@ -764,11 +807,22 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         } else {
             "↑↓ Esc"
         };
-        block.title_bottom(Line::from(format!(
-            " {navigation} · {}/{} ",
+        let position = format!(
+            "{navigation} · {}/{}",
             picker.selected.saturating_add(1).min(rows.len()),
             rows.len()
-        )))
+        );
+        // The in-box hint line (pushed after the option rows) scrolls off
+        // once there are more rows than fit, so the overflow footer is the
+        // only place left to say what the keys do — keep it there when it
+        // fits, rather than silently dropping the purpose hint.
+        let with_hint = format!(" {position} · {hint} ");
+        let footer = if with_hint.chars().count() as u16 <= width {
+            with_hint
+        } else {
+            format!(" {position} ")
+        };
+        block.title_bottom(Line::from(footer))
     } else {
         block
     };
@@ -799,10 +853,14 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
 }
 
 /// What is being picked, plus any typed text. Key hints live in the footer.
-fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
+fn picker_title(
+    picker: &ValuePicker,
+    typed_is_color: bool,
+    registry: &crate::columns::ColumnRegistry,
+) -> String {
     let subject = match &picker.purpose {
-        PickerPurpose::Filter(field) => field.keyword().to_string(),
-        PickerPurpose::Sort(column) => format!("sort by {}", column.header()),
+        PickerPurpose::Filter(field) => field.keyword(registry).to_string(),
+        PickerPurpose::Sort(column) => format!("sort by {}", column.header(registry)),
         PickerPurpose::ChooseColumn(ColumnPurpose::Filter) => "filter by column".to_string(),
         PickerPurpose::ChooseColumn(ColumnPurpose::Sort) => "sort by column".to_string(),
         PickerPurpose::Columns => "columns".to_string(),
@@ -814,13 +872,13 @@ fn picker_title(picker: &ValuePicker, typed_is_color: bool) -> String {
                 .collect::<Vec<_>>()
                 .join("")
         ),
-        PickerPurpose::PaintValues(column) => format!("by {}", column.name()),
+        PickerPurpose::PaintValues(column) => format!("by {}", column.name(registry)),
         PickerPurpose::PaintColumn => "paint which column".to_string(),
         PickerPurpose::PaintTarget => "paint".to_string(),
         PickerPurpose::PaintColor(_) => "color".to_string(),
         PickerPurpose::PaintRules => "paint rules · top is the base".to_string(),
         PickerPurpose::ChoosePaintRule(action) => format!("{action:?} paint rule"),
-        PickerPurpose::ColumnActions(column) => column.name().to_string(),
+        PickerPurpose::ColumnActions(column) => column.name(registry).to_string(),
         PickerPurpose::Settings => "settings".to_string(),
         PickerPurpose::Goals(id) => format!("{id} · goals"),
         PickerPurpose::Organize => "organize by".to_string(),

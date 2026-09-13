@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use mlua::{Lua, Table, Value};
 use ratatui::style::{Color, Modifier, Style};
 
-use crate::columns::Column;
+use crate::columns::{Column, ColumnRegistry};
 
 const DEFAULT_LUA: &str = include_str!("default.lua");
 /// A working row pulses: bright, fading out, fading back in, once per period,
@@ -349,7 +349,7 @@ pub fn modified_at(path: &Path) -> Option<SystemTime> {
 
 /// Loads the baked-in defaults, then layers the user's file over them.
 /// Never fails: a broken user file yields the defaults plus a warning.
-pub fn load(user_path: Option<&Path>) -> Config {
+pub fn load(user_path: Option<&Path>, registry: &ColumnRegistry) -> Config {
     let mut raw = RawConfig::from_lua(DEFAULT_LUA).expect("default.lua must evaluate");
     let mut warnings = Vec::new();
     if let Some(path) = user_path {
@@ -362,7 +362,7 @@ pub fn load(user_path: Option<&Path>) -> Config {
             Err(error) => warnings.push(format!("{}: {error}", path.display())),
         }
     }
-    raw.into_config(warnings)
+    raw.into_config(warnings, registry)
 }
 
 /// `work = { <key> = <ms> }`, absent when the table or key is missing.
@@ -468,7 +468,7 @@ impl RawConfig {
         }
     }
 
-    fn into_config(self, mut warnings: Vec<String>) -> Config {
+    fn into_config(self, mut warnings: Vec<String>, registry: &ColumnRegistry) -> Config {
         let mut keys = HashMap::new();
         for (key, action) in self.keys {
             match (KeyChord::parse(&key), Action::parse(&action)) {
@@ -511,16 +511,16 @@ impl RawConfig {
             .map(|(name, (styles, columns))| {
                 (
                     name.clone(),
-                    resolve_theme(styles.clone(), columns.clone(), &mut warnings),
+                    resolve_theme(styles.clone(), columns.clone(), &mut warnings, registry),
                 )
             })
             .collect();
         themes.sort_by(|(left, _), (right, _)| left.cmp(right));
 
-        let theme = resolve_theme(raw_styles, raw_columns, &mut warnings);
+        let theme = resolve_theme(raw_styles, raw_columns, &mut warnings, registry);
         let mut glyphs: HashMap<Column, HashMap<String, String>> = HashMap::new();
         for (column_name, map) in self.glyphs {
-            match Column::parse(&column_name) {
+            match registry.parse(&column_name) {
                 Some(column) => {
                     let entry = glyphs.entry(column).or_default();
                     for (value, glyph) in map {
@@ -627,6 +627,7 @@ fn resolve_theme(
     raw_styles: HashMap<String, RawStyle>,
     raw_columns: HashMap<String, String>,
     warnings: &mut Vec<String>,
+    registry: &ColumnRegistry,
 ) -> Theme {
     let mut styles = HashMap::new();
     for (name, raw) in raw_styles {
@@ -639,7 +640,7 @@ fn resolve_theme(
     }
     let mut columns = HashMap::new();
     for (column_name, surface_name) in raw_columns {
-        match (Column::parse(&column_name), Surface::parse(&surface_name)) {
+        match (registry.parse(&column_name), Surface::parse(&surface_name)) {
             (Some(column), Some(surface)) => {
                 columns.insert(column, surface);
             }

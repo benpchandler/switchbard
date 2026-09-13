@@ -145,6 +145,7 @@ fn task_in_flight() -> BacklogTask {
         parent: None,
         created_date: None,
         updated_date: None,
+        due_date: None,
         description: String::new(),
         implementation_plan: String::new(),
         implementation_notes: String::new(),
@@ -153,6 +154,7 @@ fn task_in_flight() -> BacklogTask {
         definition_of_done: vec![],
         source: BacklogTaskSource::Active,
         path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-83.md")),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -171,6 +173,7 @@ fn task_failed() -> BacklogTask {
         parent: None,
         created_date: None,
         updated_date: None,
+        due_date: None,
         description: String::new(),
         implementation_plan: String::new(),
         implementation_notes: "Dispatch failed: claude exited with 1".to_string(),
@@ -179,6 +182,7 @@ fn task_failed() -> BacklogTask {
         definition_of_done: vec![],
         source: BacklogTaskSource::Active,
         path: PathBuf::from(format!("{REPO_PATH}/backlog/tasks/task-61.md")),
+        custom: std::collections::BTreeMap::new(),
     }
 }
 
@@ -201,6 +205,7 @@ fn seed_two_dispatch_tasks(app: &HiveApp) {
                 "In Review".into(),
                 "Done".into(),
             ],
+            fields: Vec::new(),
         },
     );
     let log_path = PathBuf::from(REPO_PATH).join("task-83-dispatch.log");

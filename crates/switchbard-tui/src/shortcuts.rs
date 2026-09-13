@@ -61,7 +61,7 @@ const ACTIONS: &[(Action, &str, Availability)] = &[
     (Action::Paint, "paint", Availability::Lists),
     (Action::Ball, "ball", Availability::Tasks),
     (Action::Pass, "pass", Availability::Tasks),
-    (Action::Group, "group", Availability::Tasks),
+    (Action::Group, "outline", Availability::Tasks),
     (Action::Settings, "settings", Availability::Tasks),
     (Action::Rank, "task", Availability::Tasks),
     (Action::Command, "command", Availability::Everywhere),
@@ -84,7 +84,14 @@ impl Action {
     }
 
     pub(crate) fn parse(text: &str) -> Option<Self> {
-        let canonical = if text == "rank" { "task" } else { text };
+        // Both aliases keep an old `tui.lua` working after its action was
+        // renamed to the word this catalog now displays and teaches (`task`,
+        // `outline`); `name()` never reads the alias back.
+        let canonical = match text {
+            "rank" => "task",
+            "group" => "outline",
+            other => other,
+        };
         ACTIONS
             .iter()
             .find(|(_, name, _)| *name == canonical)
