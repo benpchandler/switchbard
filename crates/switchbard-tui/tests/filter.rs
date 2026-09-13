@@ -6,6 +6,56 @@ use crossterm::event::KeyCode;
 use harness::*;
 
 #[test]
+fn column_menu_badges_count_values_independently_of_other_filters() {
+    for (query, expected) in [
+        ("status:todo", "status (1/2 shown)"),
+        ("status:!todo", "status (1/2 shown)"),
+        ("status:missing", "status (0/2 shown)"),
+        ("status:todo,inprogress", "status (2/2 shown)"),
+        ("status:todo pri:high", "status (1/2 shown)"),
+        ("label:bug", "labels · hidden (1/4 shown)"),
+    ] {
+        let mut h = Harness::new();
+        h.press(KeyCode::Char('/'));
+        h.type_text(query);
+        h.press(KeyCode::Enter);
+        let screen = h.press(KeyCode::Char('f'));
+        assert!(screen.contains(expected), "{query}: {screen}");
+    }
+}
+
+#[test]
+fn column_badge_updates_after_value_toggle_and_disappears_when_cleared() {
+    let mut h = Harness::new();
+    assert!(!h.press(KeyCode::Char('f')).contains("shown)"));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char(' '));
+    let screen = h.press(KeyCode::Left);
+    assert!(screen.contains("status (1/2 shown)"), "{screen}");
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Esc);
+    assert!(!h.press(KeyCode::Char('f')).contains("shown)"));
+}
+
+#[test]
+fn column_filter_badge_fits_narrow_and_wide_terminals() {
+    for (width, height) in [(40, 12), (80, 24), (180, 50)] {
+        let mut h = Harness::new();
+        h.terminal.backend_mut().resize(width, height);
+        h.press(KeyCode::Char('/'));
+        h.type_text("status:todo");
+        h.press(KeyCode::Enter);
+        let screen = h.press(KeyCode::Char('f'));
+        assert!(
+            screen.contains("status (1/2 shown)"),
+            "{width}x{height}: {screen}"
+        );
+        h.press(KeyCode::Char('2'));
+        assert!(h.render().contains("✓To Do"));
+    }
+}
+
+#[test]
 fn slash_filters_live_and_esc_clears() {
     let mut h = Harness::new();
     h.press(KeyCode::Char('/'));
