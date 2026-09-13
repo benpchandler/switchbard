@@ -311,6 +311,7 @@ fn detail(frame: &mut Frame, app: &mut App, area: Rect) {
         area,
         lines,
         app.pull_requests.detail_scroll,
+        app.detail.focused,
     );
 }
 
