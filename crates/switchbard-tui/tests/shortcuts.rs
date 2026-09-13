@@ -166,3 +166,37 @@ fn remapped_list_actions_cannot_mutate_hidden_lists_from_inbox() {
     h.press(KeyCode::Tab);
     assert_eq!(h.app.state, prs, "hidden PR view is preserved");
 }
+
+#[test]
+fn help_separates_long_key_bindings_from_action_names() {
+    let mut h = Harness::new();
+    let screen = h.press(KeyCode::Char('?'));
+    assert!(screen.contains("shift-tab focus_pane"), "{screen}");
+    assert!(screen.contains("ctrl-d pagedown page_down"), "{screen}");
+    assert!(screen.contains("ctrl-u pageup page_up"), "{screen}");
+    assert!(screen.contains(":bug"), "{screen}");
+    assert!(!screen.contains("shift-tabfocus_pane"), "{screen}");
+}
+
+#[test]
+fn oversized_help_binding_gets_its_own_readable_row() {
+    let mut h = Harness::new();
+    let keys = "abcdefghijklmnop"
+        .chars()
+        .map(|key| format!("{key} = 'focus_pane'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    std::fs::write(&h.config_path, format!("return {{ keys = {{ {keys} }} }}")).unwrap();
+    h.app.tick();
+    let bindings = h
+        .app
+        .config
+        .bindings_for(&switchbard_tui::config::Action::FocusPane)
+        .join(" ");
+    let screen = h.press(KeyCode::Char('?'));
+    assert!(
+        screen.contains(&format!("{bindings} focus_pane")),
+        "{screen}"
+    );
+    assert!(!screen.contains("focus_panenew_task"), "{screen}");
+}

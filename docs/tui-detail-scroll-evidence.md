@@ -29,7 +29,8 @@ TASK-221: details taller than the terminal must remain readable. Enter opens and
 - Actual binary terminal audit: isolated tmux socket `codex-detail-scroll`, real Enter/Down/Shift+Tab/End keys, SGR wheel-down escape at detail coordinates, resize from 100x20 to 40x8. Detail scroll reached line 79; Shift+Tab returned list navigation and selecting another task reset the detail position. Local captures: `/tmp/sbt-detail-keyboard.txt`, `/tmp/sbt-detail-mouse.txt`, `/tmp/sbt-detail-end.txt`, `/tmp/sbt-detail-narrow.txt`. A transient rebuild-triggered restart interrupted the first mouse probe; repeating with a private binary copy passed.
 - Independent read-only review: no remaining findings after confirming Shift+Tab normalization and wrapped Unicode/unbroken-content tests.
 - First full TUI gate exposed an existing row-layout assertion that expected Ctrl-d after Enter to move list selection. The new requested focus contract requires Shift+Tab back to the list first; the regression test is being updated to exercise that transition.
-- Final full TUI gate and guarded installation pending.
+- Full pre-merge TUI gate passed after the explicit row-layout focus transition. Guarded installation refused to drop installed commit `8b6f259e` (line wrapping under `v l`); merged that exact commit without conflicts and independently reviewed integration.
+- The merged gate exposed crowded shortcut text in Help. Help now measures terminal display width, separates key/action labels and gives oversized entries their own wrapping row. Browse, detail, row-layout and shortcut targeted suites pass, including the existing initial report-help discovery assertion. Final guarded installation pending.
 - Human terminal-emulator visual approval remains separate from automated terminal-buffer rendering.
 
 ## Implementation evidence

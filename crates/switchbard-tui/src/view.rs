@@ -477,6 +477,43 @@ fn claimed_clock(session: &switchbard_core::WorkSession, task_id: &str) -> Strin
         .unwrap_or_default()
 }
 
+fn help_entry(keys: &str, name: &str, theme: &crate::config::Theme) -> Line<'static> {
+    let key_width = Span::raw(keys).width();
+    let padding = " ".repeat(8_usize.saturating_sub(key_width).max(1));
+    Line::from(vec![
+        Span::styled(format!("{keys}{padding}"), theme.style(Surface::Accent)),
+        Span::raw(name.to_string()),
+    ])
+}
+
+fn help_entry_rows(
+    entries: &[(String, String)],
+    width: u16,
+    theme: &crate::config::Theme,
+) -> Vec<Line<'static>> {
+    let columns = (usize::from(width) / 32).max(1);
+    let cell_width = usize::from(width) / columns;
+    let mut rows = Vec::new();
+    for chunk in entries.chunks(columns) {
+        let cells: Vec<_> = chunk
+            .iter()
+            .map(|(keys, name)| help_entry(keys, name, theme))
+            .collect();
+        if cells.iter().any(|cell| cell.width() + 2 > cell_width) {
+            rows.extend(cells);
+            continue;
+        }
+        let mut spans = Vec::new();
+        for cell in cells {
+            let padding = cell_width.saturating_sub(cell.width());
+            spans.extend(cell.spans);
+            spans.push(Span::raw(" ".repeat(padding)));
+        }
+        rows.push(Line::from(spans));
+    }
+    rows
+}
+
 fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.page == Page::Inbox {
         crate::inbox::draw_help(frame, app, area);
@@ -521,19 +558,7 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
             )
         }))
         .collect();
-    let per_line = (area.width.saturating_sub(2) as usize / 32).max(1);
-    let mut lines: Vec<Line> = entries
-        .chunks(per_line)
-        .map(|chunk| {
-            let spans = chunk.iter().flat_map(|(keys, name)| {
-                [
-                    Span::styled(format!("{keys:<8}"), theme.style(Surface::Accent)),
-                    Span::raw(format!("{name:<24}")),
-                ]
-            });
-            Line::from(spans.collect::<Vec<_>>())
-        })
-        .collect();
+    let mut lines = help_entry_rows(&entries, area.width.saturating_sub(2), theme);
     lines.push(Line::from(""));
     for (command, description) in [
         (":bug <doing>", "file a bug with this screen"),
