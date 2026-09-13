@@ -1579,14 +1579,6 @@ impl App {
             .is_some_and(|scope| scope.supports_row_layout())
         {
             options.push(PickOption::keyed(
-                'w',
-                format!(
-                    "Title wrapping: {} (this view)",
-                    self.state.row_layout.wrap_label()
-                ),
-                Payload::TitleWrapping,
-            ));
-            options.push(PickOption::keyed(
                 's',
                 format!(
                     "Row spacing: {} (this view)",
@@ -1614,10 +1606,14 @@ impl App {
         } else {
             self.state.row_layout.spaced = !self.state.row_layout.spaced;
         }
-        self.open_settings();
+        if wrapping {
+            self.open_view_picker(PickerPurpose::Views);
+        } else {
+            self.open_settings();
+        }
         if let Some(picker) = self.picker.as_mut() {
             picker.selected = picker
-                .position_of_key(if wrapping { 'w' } else { 's' })
+                .position_of_key(if wrapping { 'l' } else { 's' })
                 .unwrap_or(0);
         }
         self.status = "Row layout changed for this view · Esc previews · v s saves".into();

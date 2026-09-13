@@ -496,6 +496,16 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
                 .join(" ");
             (keys, "link parent task".to_string())
         }))
+        .chain((app.page == Page::Tasks).then(|| {
+            let keys = app
+                .config
+                .bindings_for(&Action::View)
+                .iter()
+                .map(|key| format!("{key} l"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            (keys, "cycle line wrap".to_string())
+        }))
         .chain(std::iter::once((
             "1-9".to_string(),
             "column actions".to_string(),
