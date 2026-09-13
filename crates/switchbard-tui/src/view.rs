@@ -654,10 +654,23 @@ fn browse_footer(app: &App) -> Line<'static> {
 fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rect) {
     let theme = &app.config.theme;
     let hint = picker::hint(picker);
-    let width = picker
+    let labels: Vec<String> = picker
         .options
         .iter()
-        .map(|option| option.label.chars().count() + 11)
+        .map(|option| {
+            if let (PickerPurpose::ChooseColumn(ColumnPurpose::Filter), Payload::Column(column)) =
+                (&picker.purpose, &option.payload)
+            {
+                if let Some(badge) = app.column_filter_badge(*column) {
+                    return format!("{} {badge}", option.label);
+                }
+            }
+            option.label.clone()
+        })
+        .collect();
+    let width = labels
+        .iter()
+        .map(|label| label.chars().count() + 11)
         .chain(std::iter::once(hint.chars().count() + 4))
         .max()
         .unwrap_or(20)
@@ -684,7 +697,8 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         .iter()
         .enumerate()
         .map(|(index, option)| {
-            let value = &option.label;
+            let value = picker.options.iter().position(|candidate| candidate == option)
+                .map(|position| labels[position].as_str()).unwrap_or(&option.label);
             let shown = match (&picker.purpose, &option.payload) {
                 (PickerPurpose::Filter(field), Payload::Text(value)) => {
                     Filter::field_allows(app.filter_text(), *field, value, app.registry())
