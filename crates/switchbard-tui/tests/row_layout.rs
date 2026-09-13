@@ -10,11 +10,59 @@ use switchbard_tui::{
 };
 
 #[test]
-fn settings_preview_save_switch_and_resume_keep_layout_scoped_to_view() {
+fn remapped_views_key_teaches_and_opens_line_wrap() {
     let mut h = Harness::new();
-    let screen = h.type_text(",w");
+    std::fs::write(
+        &h.config_path,
+        "return { keys = { v = 'help', x = 'view' } }",
+    )
+    .unwrap();
+    h.app = open_app(&h.root, &h.config_path);
+    let help = h.type_text("?");
+    assert!(help.contains("x l"), "{help}");
+    assert!(!help.contains("v l"), "{help}");
+    h.press(KeyCode::Esc);
+    let views = h.type_text("xl");
+    assert!(views.contains("Line wrap: up to 2 lines"), "{views}");
+    assert_eq!(h.app.state.row_layout.lines(), 2);
+}
+
+#[test]
+fn views_line_wrap_key_overrides_open_and_keeps_updated_option_selected() {
+    let mut h = Harness::new();
+    let selected = h.app.selected_task().unwrap().id.clone();
+    let help = h.type_text("?");
+    assert!(help.contains("v l"), "{help}");
+    h.press(KeyCode::Esc);
+    let views = h.type_text("v");
+    assert!(views.contains("l line wrap"), "{views}");
+    assert!(!views.contains("→/l open"), "{views}");
+    for lines in [2, 3, 6, 1] {
+        let screen = h.type_text("l");
+        assert!(screen.contains("Line wrap:"), "{screen}");
+        assert_eq!(h.app.state.row_layout.lines(), lines);
+        let picker = h.app.picker.as_ref().unwrap();
+        assert_eq!(picker.purpose, switchbard_tui::picker::PickerPurpose::Views);
+        assert_eq!(picker.highlighted().unwrap().key, Some('l'));
+        assert_eq!(h.app.selected_task().unwrap().id, selected);
+    }
+    h.press(KeyCode::Right);
+    assert_eq!(h.app.state.row_layout.lines(), 2);
+    h.press(KeyCode::Esc);
+    let settings = h.type_text(",");
+    assert!(!settings.contains("Line wrap:"));
+    assert!(!settings.contains("Title wrapping:"));
+    h.type_text("w");
+    assert_eq!(h.app.state.row_layout.lines(), 2);
+}
+
+#[test]
+fn view_line_wrap_preview_save_switch_and_resume_keep_layout_scoped_to_view() {
+    let mut h = Harness::new();
+    let screen = h.type_text("vl");
     assert!(screen.contains("up to 2 lines (this view)"), "{screen}");
-    h.type_text("s");
+    h.press(KeyCode::Esc);
+    h.type_text(",s");
     assert!(h.app.state.row_layout.spaced);
     assert!(h.app.status.contains("v s saves"));
     h.press(KeyCode::Esc);
@@ -35,13 +83,18 @@ fn settings_preview_save_switch_and_resume_keep_layout_scoped_to_view() {
     assert_eq!(h.app.state.row_layout, layout);
     h.next_list_page();
     assert_eq!(h.app.state.row_layout, RowLayout::default());
+    let pr_views = h.type_text("v");
+    assert!(!pr_views.contains("Line wrap:"));
+    h.press(KeyCode::Esc);
     let pr_settings = h.press(KeyCode::Char(','));
     assert!(!pr_settings.contains("Title wrapping:"));
     assert!(!pr_settings.contains("Row spacing:"));
     h.press(KeyCode::Esc);
     h.next_list_page();
     assert_eq!(h.app.state.row_layout, layout);
-    h.type_text(",wwwwss");
+    h.type_text("vllll");
+    h.press(KeyCode::Esc);
+    h.type_text(",ss");
     assert_eq!(
         h.app.state.row_layout, layout,
         "cycles return to prior settings"
@@ -124,7 +177,9 @@ fn wrapped_titles_and_blank_spacing_render_real_narrow_rows() {
     let compact = h.render();
     assert!(!compact.contains("breathing room"), "{compact}");
     export(&h, "compact");
-    h.type_text(",wws");
+    h.type_text("vll");
+    h.press(KeyCode::Esc);
+    h.type_text(",s");
     h.press(KeyCode::Esc);
     let wrapped = h.render();
     assert!(wrapped.contains("breathing room"), "{wrapped}");
@@ -152,7 +207,9 @@ fn capped_unicode_titles_navigation_grouping_and_tiny_viewports_are_bounded() {
     );
     h.press(KeyCode::Char('r'));
     h.press(KeyCode::Esc);
-    h.type_text(",wwws");
+    h.type_text("vlll");
+    h.press(KeyCode::Esc);
+    h.type_text(",s");
     h.press(KeyCode::Esc);
     h.type_text("/Unicode");
     h.press(KeyCode::Enter);
@@ -198,7 +255,7 @@ fn capped_title_shows_overflow_when_zero_width_remainder_fits() {
     .unwrap();
     h.press(KeyCode::Char('r'));
     h.press(KeyCode::Esc);
-    h.type_text(",w");
+    h.type_text("vl");
     h.press(KeyCode::Esc);
     h.type_text("/Capped");
     h.press(KeyCode::Enter);
@@ -219,7 +276,9 @@ fn many_wrapped_tasks_scroll_by_visible_tasks_and_keep_selection_after_resize() 
     h.press(KeyCode::Char('r'));
     h.press(KeyCode::Esc);
     h.app.state.columns = vec![Column::Id, Column::Title];
-    h.type_text(",ws");
+    h.type_text("vl");
+    h.press(KeyCode::Esc);
+    h.type_text(",s");
     h.press(KeyCode::Esc);
     for (width, height) in [(48, 16), (80, 22), (35, 6)] {
         h.terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -241,7 +300,7 @@ fn many_wrapped_tasks_scroll_by_visible_tasks_and_keep_selection_after_resize() 
         h.render();
         assert_eq!(h.app.selected, down.saturating_sub(up_page));
         let kept = h.app.selected_task().unwrap().id.clone();
-        h.type_text(",w");
+        h.type_text("vl");
         h.press(KeyCode::Esc);
         assert_eq!(h.app.selected_task().unwrap().id, kept);
         assert!(h
@@ -276,7 +335,9 @@ fn spacing_never_hides_selected_task_or_an_otherwise_fitting_group_heading() {
     h.press(KeyCode::Esc);
     h.type_text("o1");
     h.press(KeyCode::Char('g'));
-    h.type_text(",ws");
+    h.type_text("vl");
+    h.press(KeyCode::Esc);
+    h.type_text(",s");
     h.press(KeyCode::Esc);
     for (height, heading) in [(6, false), (7, true)] {
         h.terminal = Terminal::new(TestBackend::new(100, height)).unwrap();
@@ -289,7 +350,9 @@ fn spacing_never_hides_selected_task_or_an_otherwise_fitting_group_heading() {
 #[test]
 fn selection_band_covers_continuation_lines_but_leaves_spacing_blank() {
     let mut h = narrow_fixture();
-    h.type_text(",wws");
+    h.type_text("vll");
+    h.press(KeyCode::Esc);
+    h.type_text(",s");
     h.press(KeyCode::Esc);
     h.type_text("/Review");
     h.press(KeyCode::Enter);
