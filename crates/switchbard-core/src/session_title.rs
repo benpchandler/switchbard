@@ -24,6 +24,7 @@
 //!    blank; and `"interactive session"` when there was no name at all.
 
 use crate::agent_sessions::AgentSession;
+use crate::agent_status::is_safe_file_stem;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -121,6 +122,9 @@ pub fn project_dir_name(cwd: &Path) -> Option<String> {
 
 /// Where the transcript for `session_id` started in `cwd` lives.
 pub fn transcript_path(claude_home: &Path, cwd: &Path, session_id: &str) -> Option<PathBuf> {
+    if !is_safe_file_stem(session_id) {
+        return None;
+    }
     Some(
         claude_home
             .join("projects")
@@ -361,6 +365,14 @@ mod tests {
         assert_eq!(
             transcript_path(Path::new("/home/x/.claude"), Path::new("/w/app"), "abc").unwrap(),
             PathBuf::from("/home/x/.claude/projects/-w-app/abc.jsonl")
+        );
+        assert_eq!(
+            transcript_path(
+                Path::new("/home/x/.claude"),
+                Path::new("/w/app"),
+                "../../secrets"
+            ),
+            None
         );
     }
 

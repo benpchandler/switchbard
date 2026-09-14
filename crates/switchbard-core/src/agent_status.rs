@@ -157,7 +157,7 @@ pub fn parse_status_line_payload(
 /// The session id becomes a file name; only the characters Claude Code
 /// uses in one (UUID hex and hyphens, plus what a fork suffix might add)
 /// are accepted, so a payload can never write outside the store.
-fn is_safe_file_stem(id: &str) -> bool {
+pub(crate) fn is_safe_file_stem(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
         && id
@@ -174,14 +174,15 @@ pub fn default_agent_status_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join(".switchbard").join("agent-status"))
 }
 
-fn record_path(dir: &Path, session_id: &str) -> PathBuf {
-    dir.join(format!("{session_id}.json"))
+fn record_path(dir: &Path, session_id: &str) -> Option<PathBuf> {
+    is_safe_file_stem(session_id).then(|| dir.join(format!("{session_id}.json")))
 }
 
 /// Write `status` as the session's current record, atomically.
 pub fn record_agent_status(dir: &Path, status: &AgentStatus) -> Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-    let path = record_path(dir, &status.session_id);
+    let path = record_path(dir, &status.session_id)
+        .ok_or_else(|| anyhow!("status carries an unsafe session_id"))?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, serde_json::to_vec_pretty(status)?)?;
     std::fs::rename(&tmp, &path).with_context(|| format!("writing {}", path.display()))?;
@@ -223,7 +224,10 @@ pub fn load_agent_statuses(dir: &Path, now_unix: u64) -> Result<HashMap<String, 
 }
 
 pub fn load_agent_status(dir: &Path, session_id: &str) -> Result<Option<AgentStatus>> {
-    read(&record_path(dir, session_id))
+    let Some(path) = record_path(dir, session_id) else {
+        return Ok(None);
+    };
+    read(&path)
 }
 
 #[cfg(test)]
