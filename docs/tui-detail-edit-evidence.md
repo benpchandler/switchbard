@@ -40,6 +40,21 @@ undecided surface. The owner authorized implementation on 2026-09-13.
   since no test stands up a central store outside `tests/central_storage.rs`'s
   own subprocess isolation. The content compare is defense in depth on top
   of, not instead of, that guard.
+- A refusal names the actual recovery gesture rather than a generic "reload
+  and retry": `"<id> changed on disk; press Esc then Enter to reload"`. One
+  `Esc` always returns to plain `Mode::DetailFocus` and `Enter` on the same
+  row re-opens it with a fresh snapshot, from any of `Mode::DetailFocus`,
+  `Mode::DetailInput`, or an open `Detail*` picker. Separately, and without
+  needing that gesture at all, `reload_tasks` itself refreshes the snapshot
+  the moment a background file change (another terminal's `sb edit`, an
+  agent write) lands while the pane is already in plain `Mode::DetailFocus`
+  with nothing else open — the pane already repaints with the fresh content
+  on that reload, so the stale-check snapshot now agrees with what is on
+  screen and a `Space` toggle or a freshly opened picker's pick is judged
+  against it, not against the pre-reload snapshot. This refresh is
+  deliberately skipped while `Mode::DetailInput` or a `Detail*` picker is
+  open: the user is typing against the old content there, and a stale
+  refusal on save is the correct outcome, not something to silently move.
 - A read-only task (`BacklogTask::editable()` false — any source but
   `Active`, e.g. a task migrated into `backlog/drafts`) renders every field
   but refuses every edit with a `"<id> is read-only"` status message.
@@ -73,6 +88,7 @@ undecided surface. The owner authorized implementation on 2026-09-13.
 | Filter that hides the selected task while pane focused | N/A as stated — see note below; the adjacent, reachable scenario is covered instead. | `filter_that_hides_the_selected_task_updates_the_unfocused_pane_live` |
 | Failure: writer error surfaces in status and preserves input | A rejected due date and a stale save both keep the typed draft and show the error. | `due_date_validates_clears_and_rejects_garbage`, `stale_draft_on_disk_fails_the_save_and_keeps_the_typed_input` |
 | Cancel a label picker's own capture returns to the picker | Esc on a "new label" draft goes back to the labels panel, the same place a successful add already reopens into — not out to plain cursor focus. | `esc_from_a_new_label_capture_returns_to_the_labels_picker` |
+| Background reload while cursor-focused refreshes the stale guard | An external, valid edit landing while the pane is focused (no editor/picker open) does not leave a permanently stale snapshot behind; a subsequent toggle lands. | `background_reload_refreshes_the_stale_guard_while_cursor_focused` |
 
 ### N/A note: "filter that hides the selected task while pane focused"
 
@@ -95,7 +111,7 @@ cancel-on-disappearance branch `reload_tasks` already runs for `TaskStatus`/
 
 ## Evidence sources and limits
 
-- `crates/switchbard-tui/tests/detail_edit.rs`: the 25 tests named above, run
+- `crates/switchbard-tui/tests/detail_edit.rs`: the 26 tests named above, run
   through the real key-handling path (`Harness::press`/`type_text`) against a
   real temporary Backlog-format repo, the same harness every other `sbt` test
   file uses.
@@ -171,6 +187,19 @@ cancel-on-disappearance branch `reload_tasks` already runs for `TaskStatus`/
   `.get()` chains and an `.expect("invariant: ...")` naming exactly which
   invariant (`detail_pane::field_rows` and the row list agree by
   construction) would have to break for the index to be out of range.
+- **Independent-review follow-up:** the periodic `reload_tasks` (triggered by
+  `App::tick()`'s file-change check) repaints the pane with fresh content but
+  previously left `detail_draft`'s snapshot pointing at the pre-reload file,
+  so any external edit (another terminal's `sb edit`, an agent write) left a
+  `Space` toggle or picker pick permanently refused with no in-pane recovery
+  besides leaving focus and re-entering. Fixed by refreshing the snapshot
+  (via `begin_detail_edit`, now `pub(super)`) inside `reload_tasks` itself,
+  exactly when the same task is still selected and `self.mode ==
+  Mode::DetailFocus` — cursor navigation only, nothing else open. The
+  refusal message also now names the actual recovery gesture. Verified by
+  temporarily disabling the new refresh and confirming
+  `background_reload_refreshes_the_stale_guard_while_cursor_focused` fails
+  against it, reproducing the exact dead-end refusal reported.
 - `mise run fmt`, `mise run clippy` (workspace, `RUSTFLAGS=-D warnings`), and
   `mise run test` (full workspace suite) all pass unpiped with exit code 0
   on the final tree.
