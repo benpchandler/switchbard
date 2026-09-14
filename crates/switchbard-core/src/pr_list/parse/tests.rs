@@ -38,7 +38,18 @@ fn no_checks_unknown_and_observed_pass_stay_separate() {
         ),
         (
             json!([{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SKIPPED"}]),
-            PrChecks::Unknown,
+            PrChecks::Passing,
+        ),
+        (
+            json!([{"__typename":"CheckRun","status":"COMPLETED","conclusion":"NEUTRAL"}]),
+            PrChecks::Passing,
+        ),
+        (
+            json!([
+                {"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"},
+                {"__typename":"CheckRun","status":"COMPLETED","conclusion":"SKIPPED"}
+            ]),
+            PrChecks::Passing,
         ),
         (
             json!([{"__typename":"CheckRun","status":"IN_PROGRESS"}]),

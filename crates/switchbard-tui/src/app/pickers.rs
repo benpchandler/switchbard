@@ -403,6 +403,21 @@ impl App {
         );
     }
 
+    /// Summary uses the same universe and predicate as the value picker's checkmarks.
+    pub(crate) fn column_filter_badge(&self, column: Column) -> Option<String> {
+        let field = Filter::parse(self.filter_text(), &self.registry)
+            .fields()
+            .find(|field| field.column() == column)?;
+        let values = self.column_values(column);
+        let shown = values
+            .iter()
+            .filter(|(value, _)| {
+                Filter::field_allows(self.filter_text(), field, value, &self.registry)
+            })
+            .count();
+        Some(format!("({shown}/{} shown)", values.len()))
+    }
+
     pub(super) fn column_values(&self, column: Column) -> Vec<(String, usize)> {
         let mut values = if self.page == crate::page::Page::PullRequests {
             self.pull_requests.column_values(column)
@@ -506,6 +521,19 @@ impl App {
             return;
         };
         let mut event = event;
+        if picker.purpose == PickerPurpose::History {
+            match event.code {
+                KeyCode::PageDown => {
+                    picker.preview_scroll = picker.preview_scroll.saturating_add(3);
+                    return;
+                }
+                KeyCode::PageUp => {
+                    picker.preview_scroll = picker.preview_scroll.saturating_sub(3);
+                    return;
+                }
+                _ => picker.preview_scroll = 0,
+            }
+        }
         // Detail-pane pickers hit the same collision `Filter` already solved:
         // `high`/`low` (priority), and any status/project/label starting
         // with h/l, would otherwise be swallowed by the picker-wide
@@ -527,7 +555,9 @@ impl App {
         if event.code == KeyCode::Left
             || (event.code == KeyCode::Char('h')
                 && picker.typed.is_empty()
-                && !legacy_value_initial)
+                && !legacy_value_initial
+                && picker.position_of_key('h').is_none()
+                && picker.purpose != PickerPurpose::History)
         {
             self.picker_back();
             return;
@@ -535,7 +565,8 @@ impl App {
         if event.code == KeyCode::Right
             || (event.code == KeyCode::Char('l')
                 && picker.typed.is_empty()
-                && !legacy_value_initial)
+                && !legacy_value_initial
+                && picker.purpose != PickerPurpose::History)
         {
             event.code = KeyCode::Enter;
         }
@@ -557,8 +588,10 @@ impl App {
             }
             KeyCode::Down => picker.selected = (picker.selected + 1).min(last),
             KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
-            KeyCode::Char('j') if typed_empty => picker.selected = (picker.selected + 1).min(last),
-            KeyCode::Char('k') if typed_empty => {
+            KeyCode::Char('j') if typed_empty && purpose != PickerPurpose::History => {
+                picker.selected = (picker.selected + 1).min(last)
+            }
+            KeyCode::Char('k') if typed_empty && purpose != PickerPurpose::History => {
                 picker.selected = picker.selected.saturating_sub(1)
             }
             KeyCode::Char('t') if purpose == PickerPurpose::Task && typed_empty => {
@@ -737,6 +770,12 @@ impl App {
                 self.mode = Mode::Browse;
                 self.apply_paint(pick, "none");
             }
+            KeyCode::Char(' ') if purpose == PickerPurpose::History => {
+                if picker.typed.len() < 256 {
+                    picker.typed.push(' ');
+                }
+                picker.selected = 0;
+            }
             KeyCode::Char(' ') => self.toggle_picked_value(),
             KeyCode::Char('m') if purpose == PickerPurpose::Columns && typed_empty => {
                 self.move_origin = Some(self.state.columns.clone());
@@ -816,6 +855,7 @@ impl App {
                         | PickerPurpose::TopList
                         | PickerPurpose::Views
                         | PickerPurpose::SaveView
+                        | PickerPurpose::History
                         | PickerPurpose::GlobalView
                         | PickerPurpose::Columns
                         | PickerPurpose::ChooseColumnAction(_)
@@ -954,6 +994,8 @@ impl App {
                 self.telemetry
                     .record("action", format!("view_open {}", slot + 1));
             }
+            (PickerPurpose::Views, Payload::ViewHistory) => self.open_history(),
+            (PickerPurpose::History, Payload::HistoryView(record)) => self.restore_history(&record),
             (PickerPurpose::Views, Payload::SaveView) => {
                 self.open_view_picker(PickerPurpose::SaveView)
             }
