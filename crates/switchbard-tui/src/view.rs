@@ -764,6 +764,10 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
         "config ~/.switchbard/tui.lua (hot reload) · views ~/.switchbard/views.lua + views/<repo>.lua · events ~/.switchbard/tui-events.jsonl",
         theme.style(Surface::Hint),
     )));
+    lines.push(Line::from(Span::styled(
+        format!("build {}", switchbard_core::version_line()),
+        theme.style(Surface::Hint),
+    )));
     let up = app.config.bindings_for(&Action::Up).join("/");
     let down = app.config.bindings_for(&Action::Down).join("/");
     let back = app.config.bindings_for(&Action::Back).join("/");

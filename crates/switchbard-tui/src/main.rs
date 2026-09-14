@@ -115,7 +115,17 @@ fn run(repo_root: PathBuf, fresh: bool) -> Result<()> {
         },
         telemetry,
     );
-    app.restore_session(std::env::var(RESUME_ENV).ok().as_deref(), fresh);
+    let resumed = std::env::var(RESUME_ENV).ok();
+    app.restore_session(resumed.as_deref(), fresh);
+    if resumed.is_some() {
+        let prev_build = std::env::var(switchbard_tui::auto_install::PREV_BUILD_ENV).ok();
+        app.status = switchbard_tui::auto_install::updated_status_line(prev_build.as_deref());
+    } else if let Some(notice) = switchbard_tui::auto_install::pending_notice(
+        switchbard_tui::auto_install::state_dir().as_deref(),
+        chrono::Utc::now(),
+    ) {
+        app.status = notice;
+    }
     let shutdown = ShutdownSignals::register()?;
     let mut terminal = ratatui::init();
     let outcome = crossterm::execute!(std::io::stdout(), event::EnableMouseCapture)
@@ -250,6 +260,10 @@ fn restart_into_new_binary(app: &App) -> Result<()> {
     let error = std::process::Command::new(exe)
         .args(std::env::args_os().skip(1))
         .env(RESUME_ENV, app.resume_state())
+        .env(
+            switchbard_tui::auto_install::PREV_BUILD_ENV,
+            switchbard_core::BUILD_COMMIT,
+        )
         .exec();
     Err(error.into())
 }
