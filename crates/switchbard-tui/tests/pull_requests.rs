@@ -103,9 +103,9 @@ fn live_repository_renders_actual_pull_requests() {
             h.press(KeyCode::Char('k'));
             assert_eq!(h.app.pull_requests.row().unwrap().id, previous);
         }
-        assert!(!h.app.detail.focused, "PR Enter retains list navigation");
+        assert!(!h.app.detail_focused(), "PR Enter retains list navigation");
         h.press(KeyCode::BackTab);
-        assert!(h.app.detail.focused);
+        assert!(h.app.detail_focused());
         let selected = h.app.pull_requests.row().unwrap().id.clone();
         h.press(KeyCode::End);
         h.press(KeyCode::Down);
@@ -113,7 +113,7 @@ fn live_repository_renders_actual_pull_requests() {
         h.press(KeyCode::Home);
         assert_eq!(h.app.pull_requests.detail_scroll, 0);
         h.press(KeyCode::BackTab);
-        assert!(!h.app.detail.focused);
+        assert!(!h.app.detail_focused());
         println!("{detail}");
     } else {
         assert!(screen.contains("No PRs match"), "{screen}");

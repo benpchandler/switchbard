@@ -75,19 +75,19 @@ fn shift_tab_returns_to_list_and_back_without_closing_or_losing_scroll() {
     h.press(KeyCode::Up);
     h.press(KeyCode::Enter);
     h.press(KeyCode::PageDown);
-    let offset = h.app.detail.scroll;
+    let offset = h.app.detail_scroll;
     let selected = h.selected_title();
     let list = h.press(KeyCode::BackTab);
     assert!(list.contains("List active"), "{list}");
     assert!(list.contains("Detail line"), "{list}");
     let detail = h.press(KeyCode::BackTab);
     assert!(detail.contains("Detail active"), "{detail}");
-    assert_eq!(h.app.detail.scroll, offset);
+    assert_eq!(h.app.detail_scroll, offset);
     assert_eq!(h.selected_title(), selected);
     h.press(KeyCode::BackTab);
     h.press(KeyCode::Up);
     assert_ne!(h.selected_title(), selected);
-    assert_eq!(h.app.detail.scroll, 0);
+    assert_eq!(h.app.detail_scroll, 0);
     let closed = h.press(KeyCode::Esc);
     assert!(!closed.contains(" Detail "), "{closed}");
 }
@@ -107,17 +107,17 @@ fn pointer_scrolls_hovered_pane_and_click_changes_keyboard_focus() {
     assert!(after.contains("Detail line 20"), "{after}");
     assert_eq!(selected, h.selected_title());
     mouse(&mut h, Down(MouseButton::Left), 10, 10);
-    assert!(!h.app.detail.focused);
-    let offset = h.app.detail.scroll;
+    assert!(!h.app.detail_focused());
+    let offset = h.app.detail_scroll;
     mouse(&mut h, ScrollDown, 10, 10);
-    assert_eq!(h.app.detail.scroll, offset);
+    assert_eq!(h.app.detail_scroll, offset);
     mouse(&mut h, Down(MouseButton::Left), 75, 10);
-    assert!(h.app.detail.focused);
+    assert!(h.app.detail_focused());
     mouse(&mut h, ScrollUp, 75, 10);
-    assert_eq!(h.app.detail.scroll, offset - 1);
-    let offset = h.app.detail.scroll;
+    assert_eq!(h.app.detail_scroll, offset - 1);
+    let offset = h.app.detail_scroll;
     mouse(&mut h, ScrollDown, 75, 0);
-    assert_eq!(h.app.detail.scroll, offset, "header ignores scroll");
+    assert_eq!(h.app.detail_scroll, offset, "header ignores scroll");
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn boundaries_resize_and_multiline_content_remain_scrollable() {
         for _ in 0..5 {
             h.press(KeyCode::Up);
         }
-        assert_eq!(h.app.detail.scroll, 0);
+        assert_eq!(h.app.detail_scroll, 0);
         let top = h.render();
         if width >= 100 {
             assert!(top.contains("Detail line 00"), "{top}");
@@ -153,12 +153,12 @@ fn modals_and_filter_own_input_before_detail_focus() {
     let mut h = long_detail();
     h.press(KeyCode::Enter);
     h.press(KeyCode::PageDown);
-    let offset = h.app.detail.scroll;
+    let offset = h.app.detail_scroll;
     h.press(KeyCode::Char('f'));
     let picker = h.render();
     h.press(KeyCode::BackTab);
     mouse(&mut h, crossterm::event::MouseEventKind::ScrollDown, 75, 10);
-    assert_eq!(h.app.detail.scroll, offset);
+    assert_eq!(h.app.detail_scroll, offset);
     assert!(h.app.picker.is_some(), "{picker}");
     h.press(KeyCode::Esc);
     h.press(KeyCode::Char('/'));
@@ -194,7 +194,7 @@ fn list_wheel_navigates_with_details_open_or_closed() {
     let selected = h.selected_title();
     mouse(&mut h, crossterm::event::MouseEventKind::ScrollDown, 10, 10);
     assert_ne!(h.selected_title(), selected);
-    assert!(!h.app.detail.focused);
+    assert!(!h.app.detail_focused());
     assert!(h.render().contains(" Detail "));
 }
 
@@ -203,9 +203,9 @@ fn empty_and_short_details_clamp_and_page_switch_closes_focus() {
     let mut h = Harness::new();
     h.press(KeyCode::Enter);
     h.press(KeyCode::End);
-    assert_eq!(h.app.detail.scroll, 0);
+    assert_eq!(h.app.detail_scroll, 0);
     h.next_list_page();
-    assert!(!h.app.detail.focused);
+    assert!(!h.app.detail_focused());
     assert_eq!(h.app.pane, switchbard_tui::app::Pane::None);
     h.next_list_page();
     h.press(KeyCode::Char('/'));
@@ -215,7 +215,7 @@ fn empty_and_short_details_clamp_and_page_switch_closes_focus() {
     assert!(empty.contains("nothing selected"), "{empty}");
     h.press(KeyCode::End);
     h.press(KeyCode::Down);
-    assert_eq!(h.app.detail.scroll, 0);
+    assert_eq!(h.app.detail_scroll, 0);
     h.app.handle_key(crossterm::event::KeyEvent::new(
         KeyCode::Tab,
         crossterm::event::KeyModifiers::SHIFT,
