@@ -411,6 +411,60 @@ fn stale_draft_blocks_a_picker_driven_field_pick() {
 }
 
 #[test]
+fn background_reload_refreshes_the_stale_guard_while_cursor_focused() {
+    let mut h = Harness::new();
+    select_task_titled(&mut h, "Add dark theme");
+    let id = h.app.selected_task().unwrap().id.clone();
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Enter);
+    for _ in 0..FIRST_ACCEPTANCE {
+        h.press(KeyCode::Char('j'));
+    }
+    assert_eq!(h.app.detail_cursor, FIRST_ACCEPTANCE);
+
+    // An external writer (`sb edit` in another terminal, an agent) lands a
+    // real, valid edit while the pane is focused but no editor/picker is
+    // open. `Harness::new()` never calls `tick()` itself, so this is this
+    // app's first call and bypasses the once-a-second reload throttle the
+    // way the app's own real event loop would after enough wall-clock time.
+    switchbard_core::edit_backlog_task(
+        &h.root,
+        &id,
+        &switchbard_core::BacklogTaskPatch {
+            priority: Some("high".to_string()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    h.app.tick();
+    assert_eq!(
+        h.app.tasks().iter().find(|t| t.id == id).unwrap().priority,
+        "high",
+        "the reload should have picked up the external edit"
+    );
+    assert_eq!(
+        h.app.mode,
+        Mode::DetailFocus,
+        "cursor focus must survive a background reload"
+    );
+
+    // Before the fix, this would refuse with "changed on disk" because the
+    // snapshot taken at focus-entry still predated the external edit above.
+    let screen = h.press(KeyCode::Char(' '));
+    assert!(screen.contains("[x] It works"), "{screen}");
+    assert!(
+        h.app
+            .tasks()
+            .iter()
+            .find(|t| t.id == id)
+            .unwrap()
+            .acceptance_criteria[0]
+            .checked,
+        "the toggle should land once the snapshot is refreshed on reload"
+    );
+}
+
+#[test]
 fn read_only_task_shows_fields_but_refuses_every_edit() {
     let mut h = Harness::new();
     seed(&h.root, "Migrated into drafts", "To Do", &[]);
