@@ -1,6 +1,6 @@
 # sbt - switchbard terminal UI
 
-Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths`. Install: `cargo install --path crates/switchbard-tui`.
+Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths`. Install: `mise run tui-install` (guarded installer; preserve installed ancestry).
 
 ## Standing commitments (owner-set, 2026-09-02)
 1. Everything the user might tune lives in Lua (`~/.switchbard/tui.lua`, hot reload). New feature => new config surface only if a user would plausibly change it.

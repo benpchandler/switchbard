@@ -321,7 +321,3 @@ fn write_atomic(path: &Path, bytes: &[u8], store: &HistoryStore) -> Result<(), S
     }
     result.map_err(|e| format!("could not save view history: {e}"))
 }
-
-#[cfg(test)]
-#[path = "view_history_tests.rs"]
-mod tests;

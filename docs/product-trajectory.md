@@ -45,16 +45,11 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 
 ## Recently implemented
 
-- **Views that keep themselves (TASK-152/153/154).** `sbt` resumes the last per-repository
-  view, captures bounded deduplicated history automatically, and keeps deliberate slots
-  separate. `--fresh`, `v h`, and `v s <number>` are documented in
-  `docs/tui-view-history.md`; the palette-token prerequisite is included.
+- **Views that keep themselves (TASK-152/153/154).** `sbt` resumes the last per-repository view, captures bounded deduplicated history automatically, and keeps deliberate slots separate. `--fresh`, `v h`, and `v s <number>` are documented in `docs/tui-view-history.md`; the palette-token prerequisite is included.
 
 ## Planned
 
 - **Task detail focus and scrolling (owner-directed 2026-09-13, TASK-221).** Enter opens and focuses task details. Shift+Tab switches focus between the task list and its open detail pane; returning to the list retains the preview. Keyboard scrolling follows focus and mouse scrolling follows the pane under the pointer. Esc closes details. Long wrapped content remains reachable in short terminals. State and stress evidence: `docs/tui-detail-scroll-evidence.md`.
-
-- **Views that keep themselves (TASK-153/154; palette prerequisite TASK-152).** Terminal launches restore the last per-repository checkpoint using the same named ResumeRecord and Lua ViewState representation as self-restart. `--fresh` opens the deliberate saved default; automatic capture never writes slots. Every 30 seconds and on exit, one checkpoint path captures resume state and per-page history. History uses globally deduplicated arrangements with move-to-front on revisit, retained for 30 days with a 1000-entry and 4 MiB ceiling. `v h` lists recognizable arrangements and relative times; Enter restores and `v s <number>` deliberately saves a slot. Auto paint persists palette-slot tokens, resolving against the current palette; explicit hex remains literal. See `docs/tui-view-history.md` and `docs/tui-view-history-evidence.md`.
 
 - **Emphasis roles: rule-based terminal formatting (owner-directed 2026-09-12, project Emphasis Roles, TASK-152/215-219, 175-177, 200).** `sbt` paint rules bind facts to theme-defined emphasis roles (quiet, palette slot, strong, alert, band, struck) instead of raw hex, so a rule can sit on any rung of the quiet-to-loud attention ladder and every preset restyles every rule. Rules keep the existing hierarchy; non-conflicting attributes merge, conflicts go to the most specific rule, a trailing `!` stops evaluation, and `band` is a singleton tier enforced in `paint_eval`, patched over only by `selected` and `working`. Targets grow to group headings, the header row and the title line, driven from the cursor. `auto` writes palette-slot tokens, hex typed by a user is stored verbatim. An APCA legibility test owns each preset's contrast claims against a declared background. Speculative and deliberately last: a `scale:` rule for continuous facts and a light preset. Research basis, targets and model: `docs/tui-formatting-legibility.md`.
 

@@ -200,3 +200,27 @@ fn oversized_help_binding_gets_its_own_readable_row() {
     );
     assert!(!screen.contains("focus_panenew_task"), "{screen}");
 }
+
+#[test]
+fn help_explains_history_and_fresh_launch_on_both_list_pages() {
+    for page_tabs in [0, 1] {
+        let mut h = Harness::new();
+        h.terminal = Terminal::new(TestBackend::new(100, 40)).expect("test terminal");
+        for _ in 0..page_tabs {
+            h.press(KeyCode::Tab);
+        }
+        let screen = h.press(KeyCode::Char('?'));
+        assert!(screen.contains("v h"), "history shortcut missing: {screen}");
+        assert!(
+            screen.contains("view history"),
+            "history description missing: {screen}"
+        );
+        assert!(screen.contains("--fresh"), "fresh launch missing: {screen}");
+        h.press(KeyCode::Esc);
+        let screen = h.type_text("vh");
+        assert!(
+            screen.contains("view history"),
+            "advertised chord failed: {screen}"
+        );
+    }
+}

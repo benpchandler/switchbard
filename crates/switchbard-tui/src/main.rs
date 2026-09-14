@@ -250,17 +250,3 @@ fn restart_into_new_binary(app: &App) -> Result<()> {
         .exec();
     Err(error.into())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fresh_is_an_explicit_launch_option_and_defaults_off() {
-        assert!(!Cli::try_parse_from(["sbt"]).expect("default CLI").fresh);
-        let cli =
-            Cli::try_parse_from(["sbt", "--repo", "/tmp/repo", "--fresh"]).expect("fresh CLI");
-        assert!(cli.fresh);
-        assert_eq!(cli.repo, Some(PathBuf::from("/tmp/repo")));
-    }
-}

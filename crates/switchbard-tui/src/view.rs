@@ -571,6 +571,11 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
         (":view <name>  :reload  :q", ""),
         ("f/s <col#>", "filter/sort by column"),
         ("v<n>", "open view; vs<n> save it (vsd = default)"),
+        ("v h", "view history; Enter restores; vs<n> saves a slot"),
+        (
+            "sbt --fresh",
+            "launch saved default instead of last session",
+        ),
     ] {
         lines.push(Line::from(vec![
             Span::styled(format!("{command}  "), theme.style(Surface::Accent)),
