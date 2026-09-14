@@ -41,6 +41,8 @@ struct InstallReceipt {
     outcome: String,
     #[serde(default)]
     reason: Option<String>,
+    #[serde(default)]
+    from_branch: Option<String>,
 }
 
 fn read_hold(dir: &Path, now: DateTime<Utc>) -> Option<HoldMarker> {
@@ -88,9 +90,14 @@ pub fn pending_notice(dir: Option<&Path>, now: DateTime<Utc>) -> Option<String> 
     }
     let receipt = read_receipt(dir)?;
     (receipt.outcome == "refused").then(|| {
+        let branch = receipt
+            .from_branch
+            .as_deref()
+            .unwrap_or("an unrecognized branch");
+        let reason = receipt.reason.as_deref().unwrap_or("reason not recorded");
         format!(
-            "auto-install refused: {} - see ~/.switchbard/auto-install/auto-install.log",
-            receipt.reason.as_deref().unwrap_or("reason not recorded")
+            "auto-install refused (installed build: {branch}): {reason} - \
+             run `mise run install --force` once you've confirmed that's safe"
         )
     })
 }
@@ -174,18 +181,17 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_receipt_surfaces_its_reason() {
+    fn a_refused_receipt_surfaces_its_branch_reason_and_a_resolving_command() {
         let dir = tempfile::tempdir().expect("tempdir");
         write(
             dir.path(),
             "last-install.json",
-            r#"{"outcome": "refused", "reason": "this checkout is not origin/main's tip"}"#,
+            r#"{"outcome": "refused", "reason": "would drop 3 commits", "from_branch": "feat/z"}"#,
         );
         let notice = pending_notice(Some(dir.path()), Utc::now()).expect("refusal notice");
-        assert!(
-            notice.contains("this checkout is not origin/main's tip"),
-            "{notice}"
-        );
+        assert!(notice.contains("feat/z"), "{notice}");
+        assert!(notice.contains("would drop 3 commits"), "{notice}");
+        assert!(notice.contains("mise run install --force"), "{notice}");
     }
 
     #[test]
