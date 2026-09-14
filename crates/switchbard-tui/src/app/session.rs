@@ -11,6 +11,25 @@ use crate::views::ViewState;
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(30);
 
 impl App {
+    /// One status line at session start, never repeated per tick (TASK-227).
+    /// After a self-restart into a new binary: "updated to `<sha>` `<branch>`",
+    /// naming the previous build when `prev_build` carries one. Otherwise,
+    /// whatever `scripts/install-switchbard.sh` last left in
+    /// `auto_install_dir` - an active hold, or a refused attempt - if
+    /// anything. Call once, after `restore_session`.
+    pub fn show_startup_banner(&mut self, restarted: bool, prev_build: Option<&str>) {
+        if restarted {
+            self.status = crate::auto_install::updated_status_line(prev_build);
+            return;
+        }
+        if let Some(notice) = crate::auto_install::pending_notice(
+            self.auto_install_dir.as_deref(),
+            chrono::Utc::now(),
+        ) {
+            self.status = notice;
+        }
+    }
+
     /// An explicit restart handoff wins even when the original launch was fresh.
     pub fn restore_session(&mut self, restart: Option<&str>, fresh: bool) {
         // Opting out of restoration does not authorize discarding unreadable data.

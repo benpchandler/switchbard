@@ -103,6 +103,16 @@ impl Harness {
 }
 
 pub fn open_app(root: &Path, config_path: &Path) -> App {
+    open_app_with_auto_install(root, config_path, None)
+}
+
+/// Like [`open_app`], but wired to a chosen (or absent) auto-install state
+/// directory - the shape `auto_install`'s startup-banner tests need.
+pub fn open_app_with_auto_install(
+    root: &Path,
+    config_path: &Path,
+    auto_install_dir: Option<PathBuf>,
+) -> App {
     App::open(
         root,
         AppPaths {
@@ -112,6 +122,7 @@ pub fn open_app(root: &Path, config_path: &Path) -> App {
             global_settings: Some(root.join("settings.lua")),
             repo_settings: Some(root.join("settings-repo.lua")),
             work_dir: Some(root.join("work")),
+            auto_install_dir,
         },
         Telemetry::in_memory(),
     )

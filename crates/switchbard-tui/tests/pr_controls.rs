@@ -335,6 +335,7 @@ fn live_claimed_task_is_visible_on_tasks_page() {
             global_settings: Some(h.root.join("settings.lua")),
             repo_settings: Some(h.root.join("settings-repo.lua")),
             work_dir: switchbard_core::default_work_dir(),
+            auto_install_dir: None,
         },
         switchbard_tui::telemetry::Telemetry::in_memory(),
     );

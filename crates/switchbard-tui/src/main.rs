@@ -112,20 +112,14 @@ fn run(repo_root: PathBuf, fresh: bool) -> Result<()> {
             global_settings: settings::global_path(),
             repo_settings: settings::repo_path(&repo_root),
             work_dir: switchbard_core::default_work_dir(),
+            auto_install_dir: switchbard_tui::auto_install::state_dir(),
         },
         telemetry,
     );
     let resumed = std::env::var(RESUME_ENV).ok();
     app.restore_session(resumed.as_deref(), fresh);
-    if resumed.is_some() {
-        let prev_build = std::env::var(switchbard_tui::auto_install::PREV_BUILD_ENV).ok();
-        app.status = switchbard_tui::auto_install::updated_status_line(prev_build.as_deref());
-    } else if let Some(notice) = switchbard_tui::auto_install::pending_notice(
-        switchbard_tui::auto_install::state_dir().as_deref(),
-        chrono::Utc::now(),
-    ) {
-        app.status = notice;
-    }
+    let prev_build = std::env::var(switchbard_tui::auto_install::PREV_BUILD_ENV).ok();
+    app.show_startup_banner(resumed.is_some(), prev_build.as_deref());
     let shutdown = ShutdownSignals::register()?;
     let mut terminal = ratatui::init();
     let outcome = crossterm::execute!(std::io::stdout(), event::EnableMouseCapture)
