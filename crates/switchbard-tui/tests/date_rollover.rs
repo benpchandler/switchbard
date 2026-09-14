@@ -36,8 +36,7 @@ fn day_change_rebuilds_tasks_while_pull_requests_is_active() {
         3,
         "inactive Tasks projection is refreshed"
     );
-    h.press(KeyCode::Tab);
-    let screen = h.press(KeyCode::Tab);
+    let screen = h.next_list_page();
     assert!(screen.contains("Fix login redirect loop"), "{screen}");
     assert!(screen.contains("filed:today"), "{screen}");
 }
@@ -47,6 +46,7 @@ fn day_change_rebuilds_tasks_while_inbox_is_active() {
     let mut h = Harness::new();
     h.type_text("/filed:today");
     h.press(KeyCode::Enter);
+    h.press(KeyCode::Tab);
     h.press(KeyCode::Tab);
     h.press(KeyCode::Tab);
     h.app.calendar_day -= 1;
@@ -92,6 +92,7 @@ fn day_change_rebuilds_cached_pr_dates_while_inbox_is_active() {
     h.press(KeyCode::Tab);
     h.type_text("/merged:today");
     h.press(KeyCode::Enter);
+    h.press(KeyCode::Tab);
     h.press(KeyCode::Tab);
     h.app.pull_requests = Default::default();
     h.app.pull_requests.snapshot = Some(recent_merge());

@@ -19,7 +19,7 @@ impl ListSettings {
         match page {
             Page::Tasks => Some(Self::Tasks),
             Page::PullRequests => Some(Self::PullRequests),
-            Page::Inbox => None,
+            Page::Agents | Page::Inbox => None,
         }
     }
 

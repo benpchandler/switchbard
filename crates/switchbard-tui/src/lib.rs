@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod app;
 pub mod ball;
 pub mod columns;
