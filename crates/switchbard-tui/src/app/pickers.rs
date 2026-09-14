@@ -211,15 +211,19 @@ impl App {
     }
 
     fn picker_back(&mut self) {
+        let leaving_detail = self
+            .picker
+            .as_ref()
+            .is_some_and(|picker| picker.purpose.is_detail());
         self.picker = self.picker_parents.pop();
         self.paint_return = match self.picker.as_ref().map(|picker| &picker.purpose) {
             Some(PickerPurpose::PaintValues(column)) => Some(*column),
             _ => None,
         };
-        self.mode = if self.picker.is_some() {
-            Mode::PickValue
-        } else {
-            Mode::Browse
+        self.mode = match (self.picker.is_some(), leaving_detail) {
+            (true, _) => Mode::PickValue,
+            (false, true) => Mode::DetailFocus,
+            (false, false) => Mode::Browse,
         };
         self.status.clear();
     }
@@ -500,6 +504,11 @@ impl App {
             self.handle_merge_picker_key(event);
             return;
         }
+        if event.code == KeyCode::Tab && self.picker.as_ref().is_some_and(|p| p.purpose.is_detail())
+        {
+            self.cancel_detail_and_switch_page();
+            return;
+        }
         if self.handle_parent_search_key(event) {
             return;
         }
@@ -525,8 +534,18 @@ impl App {
                 _ => picker.preview_scroll = 0,
             }
         }
-        let legacy_value_initial = matches!(picker.purpose, PickerPurpose::Filter(_))
-            && matches!(event.code, KeyCode::Char('h' | 'l'))
+        // Detail-pane pickers hit the same collision `Filter` already solved:
+        // `high`/`low` (priority), and any status/project/label starting
+        // with h/l, would otherwise be swallowed by the picker-wide
+        // "h/l with nothing typed yet" back/open convention below.
+        let legacy_value_initial = matches!(
+            picker.purpose,
+            PickerPurpose::Filter(_)
+                | PickerPurpose::DetailStatus(_)
+                | PickerPurpose::DetailPriority(_)
+                | PickerPurpose::DetailProject(_)
+                | PickerPurpose::DetailLabels(_)
+        ) && matches!(event.code, KeyCode::Char('h' | 'l'))
             && picker.options.iter().any(|option| {
                 let KeyCode::Char(letter) = event.code else {
                     return false;
@@ -557,9 +576,14 @@ impl App {
         let typed_empty = picker.typed.is_empty();
         match event.code {
             KeyCode::Esc => {
+                let return_to_detail = purpose.is_detail();
                 self.picker = None;
                 self.picker_parents.clear();
-                self.mode = Mode::Browse;
+                self.mode = if return_to_detail {
+                    Mode::DetailFocus
+                } else {
+                    Mode::Browse
+                };
                 self.paint_return = None;
                 self.move_origin = None;
             }
@@ -825,6 +849,10 @@ impl App {
                         | PickerPurpose::Task
                         | PickerPurpose::TaskStatus(_)
                         | PickerPurpose::TaskProject(_)
+                        | PickerPurpose::DetailStatus(_)
+                        | PickerPurpose::DetailPriority(_)
+                        | PickerPurpose::DetailProject(_)
+                        | PickerPurpose::DetailLabels(_)
                         | PickerPurpose::TopList
                         | PickerPurpose::Views
                         | PickerPurpose::SaveView
@@ -946,6 +974,19 @@ impl App {
             (PickerPurpose::TaskStatus(id), Payload::Text(status)) => {
                 self.change_task_status(&id, &status)
             }
+            (PickerPurpose::DetailStatus(_), Payload::Text(status)) => {
+                self.commit_detail_status(&status)
+            }
+            (PickerPurpose::DetailPriority(_), Payload::Text(priority)) => {
+                self.commit_detail_priority(&priority)
+            }
+            (PickerPurpose::DetailProject(_), Payload::Project(project)) => {
+                self.commit_detail_project(project.as_deref())
+            }
+            (PickerPurpose::DetailLabels(_), Payload::Text(label)) => {
+                self.commit_detail_label_toggle(&label)
+            }
+            (PickerPurpose::DetailLabels(_), Payload::NewLabel) => self.begin_detail_new_label(),
             (PickerPurpose::Task | PickerPurpose::TopList, Payload::Rank(rank)) => {
                 self.set_rank(rank)
             }

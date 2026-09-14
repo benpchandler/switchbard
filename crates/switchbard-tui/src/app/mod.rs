@@ -1,7 +1,7 @@
 //! Application state and the single place key events turn into state changes.
 //! Submodules extend `App` by concept: `pickers`, `paint_flow`, `slots`.
 
-mod detail;
+mod detail_edit;
 mod new_task;
 mod paint_flow;
 mod pickers;
@@ -45,6 +45,30 @@ pub enum Mode {
     BallName,
     /// After `v n` picks a slot: type its name, then Enter saves it.
     RenameView,
+    /// The detail pane has input focus: j/k move the cursor row, Enter/l
+    /// opens the row's editor, Esc/h/Left returns focus to the list.
+    DetailFocus,
+    /// A single-line field the detail pane is editing (see `DetailInputKind`).
+    DetailInput(DetailInputKind),
+}
+
+/// Which detail-pane field a `Mode::DetailInput` capture belongs to; each
+/// reads and writes `App::input` the same way `Mode::NewTask` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetailInputKind {
+    Title,
+    DueDate,
+    NewLabel,
+}
+
+impl DetailInputKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Title => "title",
+            Self::DueDate => "due date (YYYY-MM-DD, empty clears)",
+            Self::NewLabel => "new label",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,7 +136,6 @@ pub struct App {
     /// First row on screen; the renderer keeps `selected` inside the window.
     pub scroll: usize,
     pub help_scroll: u16,
-    pub detail: crate::detail_pane::Interaction,
     /// UTC epoch day used to invalidate relative date projections on the next tick.
     pub calendar_day: i64,
     /// Column order when `c m` began, so typed numbers keep meaning what the header showed.
@@ -135,6 +158,19 @@ pub struct App {
     pub mode: Mode,
     pub input: String,
     pub pane: Pane,
+    /// Cursor row inside the focused detail pane (`detail_edit`'s `FieldRow`
+    /// list for the selected task); meaningless while `pane != Pane::Detail`.
+    pub detail_cursor: usize,
+    /// The detail pane's own scroll offset, kept independent of the PR
+    /// pane's (`pull_requests.detail_scroll`) — the two panes never show at
+    /// once, but each remembers its own place.
+    pub detail_scroll: u16,
+    /// The pre-write snapshot a detail-pane save checks before writing:
+    /// `edit_backlog_task_expected`'s revision guard only fires for a
+    /// centrally-stored task, so this raw-content compare is the "or
+    /// equivalent stale-check" that also catches a plain-file edit landing
+    /// between focus and save.
+    detail_draft: Option<detail_edit::DetailDraft>,
     pub page: Page,
     pub pull_requests: crate::pull_requests::PullRequests,
     pub picker: Option<ValuePicker>,
@@ -204,7 +240,6 @@ impl App {
             selected: 0,
             scroll: 0,
             help_scroll: 0,
-            detail: crate::detail_pane::Interaction::default(),
             calendar_day: crate::date_fields::today(),
             move_origin: None,
             paint_return: None,
@@ -222,6 +257,9 @@ impl App {
             mode: Mode::Browse,
             input: String::new(),
             pane: Pane::None,
+            detail_cursor: 0,
+            detail_scroll: 0,
+            detail_draft: None,
             page: Page::Tasks,
             pull_requests,
             picker: None,
@@ -669,6 +707,8 @@ impl App {
             Mode::PickValue => self.handle_pick_value_key(event),
             Mode::BallName => self.handle_ball_name_key(event),
             Mode::RenameView => self.handle_rename_view_key(event),
+            Mode::DetailFocus => self.handle_detail_focus_key(event),
+            Mode::DetailInput(_) => self.handle_detail_input_key(event),
         }
         if !self.merge_target_current()
             || (self.mode != Mode::Browse
@@ -998,6 +1038,17 @@ impl App {
         if event.code == KeyCode::Enter && event.kind == KeyEventKind::Repeat {
             return;
         }
+        // `→`/`l` is the picker vocabulary's "open" key everywhere else in
+        // sbt (see `picker::hint`'s "→/l open · ←/h back"); the detail pane
+        // reuses it as a second, non-remappable way to focus an already-open
+        // pane, alongside pressing the configured `open` action again below.
+        if self.page == Page::Tasks
+            && self.pane == Pane::Detail
+            && matches!(event.code, KeyCode::Right | KeyCode::Char('l'))
+        {
+            self.enter_detail_focus();
+            return;
+        }
         let chord = KeyChord::from_event(&event);
         if self.page != Page::Inbox {
             if let (KeyCode::Char(digit), false) = (event.code, chord.ctrl) {
@@ -1108,6 +1159,18 @@ impl App {
         ) {
             self.cancel_pr_merge();
         }
+        if self.pane == Pane::Detail {
+            let delta = match action {
+                Action::PageDown => Some(self.page_size as i32),
+                Action::PageUp => Some(-(self.page_size as i32)),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                self.pull_requests.detail_scroll =
+                    (i32::from(self.pull_requests.detail_scroll) + delta).clamp(0, 65535) as u16;
+                return true;
+            }
+        }
         match action {
             Action::OpenBrowser => self.open_pr_browser(),
             Action::Merge => self.open_pr_merge(),
@@ -1119,7 +1182,6 @@ impl App {
             Action::PageUp => self.pull_requests.step(-(self.page_size as isize)),
             Action::Open => {
                 self.pull_requests.detail_scroll = 0;
-                self.detail.focused = false;
                 self.pane = if self.pane == Pane::Detail {
                     Pane::None
                 } else {
@@ -1172,9 +1234,6 @@ impl App {
             self.status = "Switch to Tasks or Pull Requests to use list controls".to_string();
             return;
         }
-        if self.apply_detail_action(action) {
-            return;
-        }
         if self.page == Page::PullRequests && self.apply_pr_action(action) {
             return;
         }
@@ -1188,7 +1247,7 @@ impl App {
                 if self.page == Page::PullRequests {
                     self.refresh_pr_state();
                 }
-                self.pane = Pane::None;
+                self.close_detail_pane();
                 self.status.clear();
             }
             Action::NewTask => self.open_new_task(),
@@ -1198,19 +1257,21 @@ impl App {
             Action::Bottom => self.select(usize::MAX),
             Action::PageDown => self.step(self.page_size as isize),
             Action::PageUp => self.step(-(self.page_size as isize)),
-            Action::FocusPane => {}
-            Action::Open => {
-                self.detail.scroll = 0;
-                self.detail.focused = self.pane != Pane::Detail;
-                self.pane = match self.pane {
-                    Pane::Detail => Pane::None,
-                    _ => Pane::Detail,
+            Action::Open => match self.pane {
+                // A second `open` on an already-open pane focuses it, rather
+                // than closing it — closing is `Action::Back`'s job now, so
+                // that focusing and dismissing are never the same keystroke.
+                Pane::Detail => self.enter_detail_focus(),
+                _ => {
+                    self.pane = Pane::Detail;
+                    self.detail_cursor = 0;
+                    self.detail_scroll = 0;
                 }
-            }
+            },
             Action::Back => {
                 self.cancel_pr_merge();
                 if self.pane != Pane::None {
-                    self.pane = Pane::None;
+                    self.close_detail_pane();
                 } else if self.page != Page::Inbox && !self.filter_text().is_empty() {
                     self.set_filter(String::new());
                 }
@@ -1743,7 +1804,20 @@ impl App {
                 _ => false,
             }) {
                 self.select(row);
+                // A background reload (another terminal's `sb edit`, an
+                // agent write) just repainted the pane with fresh content;
+                // refresh the stale-check snapshot to match it so the next
+                // `Space` toggle or picker pick is judged against what is
+                // now on screen. Only while the pane is plain cursor focus
+                // with nothing else open — `Mode::DetailInput` and an open
+                // `Detail*` picker hold a draft against the *old* content,
+                // and a stale refusal there is the correct outcome, not
+                // something to silently paper over.
+                if self.mode == Mode::DetailFocus {
+                    self.begin_detail_edit();
+                }
             } else if self.mode == Mode::BallName
+                || matches!(self.mode, Mode::DetailFocus | Mode::DetailInput(_))
                 || self.picker.as_ref().is_some_and(|picker| {
                     matches!(
                         picker.purpose,
@@ -1754,13 +1828,14 @@ impl App {
                             | PickerPurpose::TopList
                             | PickerPurpose::Ball
                             | PickerPurpose::Goals(_)
-                    )
+                    ) || picker.purpose.is_detail()
                 })
             {
                 self.picker = None;
                 self.mode = Mode::Browse;
                 self.input.clear();
                 self.picker_parents.clear();
+                self.close_detail_pane();
                 self.status = format!("{id} is no longer visible; task action canceled");
             }
         }

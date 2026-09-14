@@ -310,9 +310,7 @@ fn many_wrapped_tasks_scroll_by_visible_tasks_and_keep_selection_after_resize() 
     h.terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
     h.type_text("o1");
     h.press(KeyCode::Char('g'));
-    let detail = h.press(KeyCode::Enter);
-    assert!(detail.contains("Detail active"), "{detail}");
-    h.press(KeyCode::BackTab);
+    h.press(KeyCode::Enter);
     let before = h.app.selected;
     let page = h.app.page_size;
     h.app

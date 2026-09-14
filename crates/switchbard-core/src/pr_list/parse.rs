@@ -197,7 +197,11 @@ fn check_state(check: &Check, head: &str) -> PrChecks {
 
 fn check_run(check: &Check) -> PrChecks {
     match (check.status.as_deref(), check.conclusion.as_deref()) {
-        (Some("COMPLETED"), Some("SUCCESS")) => PrChecks::Passing,
+        // SKIPPED and NEUTRAL are completed, non-blocking conclusions: GitHub
+        // counts both as satisfied for required checks, and this repo's CI
+        // routing skips whole matrices on purpose (`scripts/ci-change-scope.sh`),
+        // so treating them as Unknown left every routed PR "Checks unknown".
+        (Some("COMPLETED"), Some("SUCCESS" | "SKIPPED" | "NEUTRAL")) => PrChecks::Passing,
         (
             Some("COMPLETED"),
             Some(

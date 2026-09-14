@@ -10,7 +10,6 @@ pub enum Action {
     PageDown,
     PageUp,
     Open,
-    FocusPane,
     OpenBrowser,
     Merge,
     DismissNotifications,
@@ -46,7 +45,6 @@ enum Availability {
 // Ordered as displayed in help: action, canonical Lua name, page availability.
 const ACTIONS: &[(Action, &str, Availability)] = &[
     (Action::Page, "page", Availability::Everywhere),
-    (Action::FocusPane, "focus_pane", Availability::Lists),
     (Action::NewTask, "new_task", Availability::Tasks),
     (Action::Down, "down", Availability::Lists),
     (Action::Up, "up", Availability::Lists),
