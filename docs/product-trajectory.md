@@ -715,7 +715,7 @@ The control and projection health indicators are independent. Queue drafts and d
     session id), else the first user prompt read from a bounded head of the
     transcript at the documented location - its entry format is documented as
     internal, so that reader accepts only the shape it recognises and returns
-    nothing otherwise - else the listed name after all.
+    nothing otherwise - else `<cli> session`.
   - *"Agents" is the name on both surfaces.* `sbt` gains a third page after
     Pull Requests (Tasks / Pull Requests / Agents / Inbox), scoped to the repo
     it runs in like every other page: one row per live session whose cwd is
