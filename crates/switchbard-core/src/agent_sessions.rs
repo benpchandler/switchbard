@@ -54,6 +54,7 @@
 //! affordance at all (see the GUI's `ui::places::command` module doc for why
 //! that is a deliberate scope boundary, not an oversight).
 
+use crate::agent_status::is_safe_file_stem;
 use crate::attribution::{most_specific_worktree, sort_by_specificity};
 use crate::types::WorktreeRef;
 use crate::work_sessions::pid_alive;
@@ -328,7 +329,7 @@ pub fn parse_claude_agents_listing(raw: &str) -> Result<Vec<AgentProcessRow>> {
                 cwd: session.cwd,
                 started_unix: session.started_at.map(|ms| ms / 1000),
                 pgid: None,
-                session_id: session.session_id,
+                session_id: session.session_id.filter(|id| is_safe_file_stem(id)),
                 name: session.name,
                 activity: AgentActivity::from_listed_status(session.status.as_deref()),
             })
@@ -670,6 +671,12 @@ mod tests {
         assert!(parse_claude_agents_listing("not json").is_err());
         let oversize = " ".repeat(MAX_LISTING_BYTES + 1);
         assert!(parse_claude_agents_listing(&oversize).is_err());
+
+        let rows =
+            parse_claude_agents_listing(r#"[{"pid":7,"sessionId":"../../x","status":"idle"}]"#)
+                .unwrap();
+        assert_eq!(rows[0].session_id, None);
+        assert_eq!(rows[0].activity, AgentActivity::Idle);
     }
 
     #[test]
