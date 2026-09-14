@@ -34,3 +34,7 @@ The first review targets are `pull-requests-6fbc942b88a0` and `tasks-grouped-c39
 Focused validation passed: real-key history preview, recognition, history restore, row-layout and detail suites, plus the separately invoked authenticated read-only PR preview. Clippy passed with warnings denied. Existing raw-configuration expectations were replaced by rendered table-row and color assertions.
 
 Full `mise run tui` passed: formatting, all-target clippy with warnings denied, and the complete TUI test suite including real signal/timer recovery. The authenticated PR preview was also run separately and passed. This slice is committed locally for review; installation and visual acceptance remain pending.
+
+## Full-context walkthrough
+
+At the owner’s request, the real-key capture journeys now show both Tasks and Pull Requests at 120 columns by 30 rows: normal list, Views menu, history preview, and the restored list. Captures are under `crates/switchbard-tui/tmp/history-context/`, with corresponding Visual Review targets prefixed `tasks-1` through `tasks-4` and `prs-1` through `prs-4`. All three capture journeys passed, including the separately invoked live read-only PR journey. This followup changes capture coverage only; the review build is still not installed and visual acceptance remains open.

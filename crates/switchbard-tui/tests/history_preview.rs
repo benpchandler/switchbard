@@ -26,6 +26,7 @@ fn capture(h: &Harness, name: &str) {
 #[test]
 fn colored_grouped_preview_shows_current_tasks_without_changing_live_view() {
     let mut h = Harness::new();
+    h.terminal = Terminal::new(TestBackend::new(120, 30)).expect("context terminal");
     h.type_text(":group status");
     h.press(KeyCode::Enter);
     h.type_text("p21");
@@ -34,7 +35,11 @@ fn colored_grouped_preview_shows_current_tasks_without_changing_live_view() {
     h.type_text("v2");
     let live = h.app.resume_state();
     let selected = h.app.selected;
-    let screen = h.type_text("vh");
+    capture(&h, "tasks-1-normal-list");
+    h.type_text("v");
+    capture(&h, "tasks-2-views-menu");
+    let screen = h.type_text("h");
+    capture(&h, "tasks-3-history-preview");
     assert!(screen.contains("Tasks · grouped by Status"), "{screen}");
     assert!(screen.contains("Current data · 3 matches"), "{screen}");
     assert!(screen.contains("Fix login redirect loop"), "{screen}");
@@ -47,6 +52,9 @@ fn colored_grouped_preview_shows_current_tasks_without_changing_live_view() {
     assert_eq!(h.app.resume_state(), live);
     assert_eq!(h.app.selected, selected);
     capture(&h, "tasks-grouped");
+    h.press(KeyCode::Enter);
+    capture(&h, "tasks-4-restored-list");
+    h.type_text("v2");
     h.press(KeyCode::Esc);
     h.type_text("/login");
     h.press(KeyCode::Enter);
@@ -81,6 +89,7 @@ fn live_pr_preview_uses_actual_cached_rows_and_keeps_selection() {
     use std::time::{Duration, Instant};
     let repo = std::env::var_os("SBT_PR_REPO").expect("live repository");
     let mut h = Harness::new();
+    h.terminal = Terminal::new(TestBackend::new(120, 30)).expect("context terminal");
     h.app = switchbard_tui::app::App::open(
         std::path::Path::new(&repo),
         switchbard_tui::app::AppPaths {
@@ -130,9 +139,18 @@ fn live_pr_preview_uses_actual_cached_rows_and_keeps_selection() {
     h.type_text("/status:open");
     h.press(KeyCode::Enter);
     h.app.checkpoint_session().expect("capture open PRs");
+    h.type_text("v1");
+    capture(&h, "prs-1-normal-list");
     let before = h.app.resume_state();
-    let screen = h.type_text("vh");
+    h.type_text("v");
+    capture(&h, "prs-2-views-menu");
+    let screen = h.type_text("h");
+    h.press(KeyCode::Down);
+    capture(&h, "prs-3-history-preview");
     assert!(screen.contains("Open pull requests"), "{screen}");
     assert_eq!(h.app.resume_state(), before);
     capture(&h, "pull-requests");
+    h.press(KeyCode::Enter);
+    assert!(h.render().contains("history restored"));
+    capture(&h, "prs-4-restored-list");
 }
