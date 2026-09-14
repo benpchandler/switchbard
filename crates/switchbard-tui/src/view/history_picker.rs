@@ -1,8 +1,7 @@
 //! History keeps the selected arrangement readable before restoring it.
 use ratatui::{
     layout::Rect,
-    style::Style,
-    text::{Line, Span},
+    text::Line,
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
@@ -25,7 +24,7 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, picker: &ValuePicker, area:
         return;
     }
     let list_height = if inner.height >= 10 {
-        (inner.height / 3).min(6)
+        (inner.height / 3).min(4).min(rows.len() as u16)
     } else {
         0
     };
@@ -35,7 +34,7 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, picker: &ValuePicker, area:
         height: inner.height.saturating_sub(list_height + 1),
         ..inner
     };
-    draw_preview(frame, app, picker, &rows[selected].label, preview_area);
+    draw_preview(frame, app, picker, &rows[selected], preview_area);
     draw_footer(frame, app, inner);
 }
 
@@ -71,27 +70,35 @@ fn draw_preview(
     frame: &mut Frame,
     app: &mut App,
     picker: &ValuePicker,
-    label: &str,
-    preview_area: Rect,
+    row: &crate::picker::PickOption,
+    area: Rect,
 ) {
-    let wrapped = wrap(label, preview_area.width);
-    let max_scroll = wrapped
-        .len()
-        .saturating_sub(usize::from(preview_area.height));
-    let scroll = usize::from(picker.preview_scroll).min(max_scroll);
+    let crate::picker::Payload::HistoryView(record) = &row.payload else {
+        return;
+    };
+    let Ok(mut state) = crate::views::ViewState::try_from_lua(record, app.registry()) else {
+        return;
+    };
+    state.sanitize(app.page, app.registry());
+    let details_height = u16::from(area.height >= 5);
+    let details = super::history_title::details(&state, app.registry());
+    frame.render_widget(
+        Paragraph::new(details).style(app.config.theme.style(Surface::Hint)),
+        Rect {
+            height: details_height,
+            ..area
+        },
+    );
+    let body = Rect {
+        y: area.y + details_height,
+        height: area.height.saturating_sub(details_height),
+        ..area
+    };
+    let scroll =
+        super::history_preview::draw(frame, app, &state, body, usize::from(picker.preview_scroll));
     if let Some(live) = app.picker.as_mut() {
         live.preview_scroll = scroll.min(usize::from(u16::MAX)) as u16;
     }
-    let lines: Vec<Line> = wrapped
-        .into_iter()
-        .skip(scroll)
-        .take(usize::from(preview_area.height))
-        .map(Line::from)
-        .collect();
-    frame.render_widget(
-        Paragraph::new(lines).style(app.config.theme.style(Surface::Text)),
-        preview_area,
-    );
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, inner: Rect) {
@@ -101,9 +108,9 @@ fn draw_footer(frame: &mut Frame, app: &App, inner: Rect) {
         ..inner
     };
     let hint = if inner.width >= 62 {
-        "↑↓ choose · PgUp/PgDn read · Enter restore · Esc back"
+        "↑↓ choose · PgUp/PgDn scroll · Enter restore · Esc back"
     } else {
-        "↑↓ pick PgUp/Dn read Enter open"
+        "↑↓ pick PgUp/Dn scroll Enter open"
     };
     frame.render_widget(
         Paragraph::new(hint).style(app.config.theme.style(Surface::Hint)),
@@ -140,25 +147,4 @@ fn draw_list(
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), Rect { height, ..area });
-}
-
-/// Grapheme-width wrapping also handles unbroken filters and non-Latin labels.
-fn wrap(text: &str, width: u16) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    let mut used = 0;
-    let span = Span::raw(text);
-    for grapheme in span.styled_graphemes(Style::default()) {
-        let size = Span::raw(grapheme.symbol).width();
-        if grapheme.symbol == "\n" || used + size > usize::from(width) {
-            lines.push(std::mem::take(&mut line));
-            used = 0;
-        }
-        if grapheme.symbol != "\n" {
-            line.push_str(grapheme.symbol);
-            used += size;
-        }
-    }
-    lines.push(line);
-    lines
 }

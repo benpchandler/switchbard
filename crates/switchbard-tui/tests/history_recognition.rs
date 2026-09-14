@@ -16,36 +16,41 @@ fn paint_only_changes_have_distinct_recognizable_labels() {
         h.app.checkpoint_session().expect("capture");
     }
     let before = h.app.state.clone();
-    let screen = h.type_text("vh");
-    assert!(screen.contains("todo:#AbCdEf"), "{screen}");
-    assert!(screen.contains("todo:p1"), "{screen}");
+    h.type_text("vh");
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(ratatui::style::Color::Rgb(0xab, 0xcd, 0xef))
+    );
+    h.press(KeyCode::Down);
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(ratatui::style::Color::Rgb(0xf4, 0x9f, 0x31))
+    );
     assert_eq!(h.app.state, before);
 }
 
 #[test]
-fn narrow_preview_scrolls_to_complete_paint_details_without_restoring() {
+fn narrow_preview_scrolls_current_rows_without_restoring() {
     let mut h = Harness::new();
-    h.app.state.filter = format!("日本語 {}", "unbroken".repeat(70));
-    h.app.state.paint = vec![PaintRule::Column {
-        column: Column::Title,
-        color: "#123456".into(),
-    }];
+    for index in 0..25 {
+        seed(&h.root, &format!("日本語 preview {index:02}"), "To Do", &[]);
+    }
+    h.type_text("r");
     h.app.checkpoint_session().expect("capture");
     h.terminal = Terminal::new(TestBackend::new(40, 8)).expect("narrow terminal");
-    let before = h.app.state.clone();
+    let before = h.app.resume_state();
     let first = h.type_text("vh");
     assert!(first.contains("just now"), "age stays visible: {first}");
-    let mut last = first;
-    for _ in 0..30 {
-        last = h.press(KeyCode::PageDown);
+    for _ in 0..10 {
+        h.press(KeyCode::PageDown);
     }
-    assert!(last.contains("#123456"), "tail is readable: {last}");
-    assert!(last.contains("just now"), "age remains pinned: {last}");
-    assert_eq!(h.app.state, before);
-    for _ in 0..30 {
+    assert!(h.render().contains("Current data"));
+    assert_ne!(h.render(), first);
+    assert_eq!(h.app.resume_state(), before);
+    for _ in 0..10 {
         h.press(KeyCode::PageUp);
     }
-    assert!(h.render().contains("日本語"));
+    assert_eq!(h.render(), first);
 }
 
 #[test]

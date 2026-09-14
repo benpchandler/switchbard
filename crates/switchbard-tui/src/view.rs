@@ -1,6 +1,8 @@
 //! Rendering. Reads `App`, writes a frame, and leaves a text copy of the screen behind.
 
 mod history_picker;
+mod history_preview;
+pub(crate) mod history_title;
 
 use std::str::FromStr;
 
@@ -91,9 +93,6 @@ fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = app.config.theme.clone();
-    // Cloned like the theme: the render path writes `app.scroll` part way
-    // through, so nothing may hold a borrow of `app` across the whole frame.
-    let registry = std::sync::Arc::clone(app.registry());
     let repo = app
         .repo_root
         .file_name()
@@ -112,32 +111,58 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
     if inner.height == 0 || inner.width == 0 {
         return;
     }
-    let widths: Vec<Constraint> = app
-        .state
+    let mut cursor = TableCursor {
+        scroll: app.scroll,
+        selected: app.selected,
+        page_size: app.page_size,
+        highlight: true,
+    };
+    draw_task_rows(frame, app, &app.state, &app.rows, &mut cursor, inner);
+    app.scroll = cursor.scroll;
+    app.page_size = cursor.page_size;
+}
+
+struct TableCursor {
+    scroll: usize,
+    selected: usize,
+    page_size: usize,
+    highlight: bool,
+}
+
+fn draw_task_rows(
+    frame: &mut Frame,
+    app: &App,
+    state: &crate::views::ViewState,
+    rows: &[Row],
+    cursor: &mut TableCursor,
+    inner: Rect,
+) {
+    let theme = &app.config.theme;
+    let registry = app.registry();
+    let widths: Vec<Constraint> = state
         .columns
         .iter()
         .map(|column| match column {
-            _ if app.state.glyph_columns.contains(column) => {
+            _ if state.glyph_columns.contains(column) => {
                 Constraint::Length((2 + app.glyph_legend(*column).chars().count()).max(3) as u16)
             }
-            column => match column.max_width(&registry) {
-                Some(max) => Constraint::Length(fitted_width(app, *column, max)),
+            column => match column.max_width(registry) {
+                Some(max) => Constraint::Length(fitted_width(app, state, rows, *column, max)),
                 None => Constraint::Min(20),
             },
         })
         .collect();
     let header_area = Rect { height: 1, ..inner };
     let cells = crate::list_presentation::cells(header_area, &widths);
-    let headers: Vec<String> = app
-        .state
+    let headers: Vec<String> = state
         .columns
         .iter()
         .enumerate()
         .map(|(index, column)| {
-            let label = if app.state.glyph_columns.contains(column) {
+            let label = if state.glyph_columns.contains(column) {
                 app.glyph_legend(*column)
             } else {
-                column.header(&registry).to_string()
+                column.header(registry).to_string()
             };
             format!("{} {}", index + 1, label)
         })
@@ -150,33 +175,34 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         theme.style(Surface::Header),
     );
     let heading =
-        app.selected > 0 && matches!(app.rows.get(app.selected - 1), Some(Row::Heading { .. }));
-    let title_width = app
-        .state
+        cursor.selected > 0 && matches!(rows.get(cursor.selected - 1), Some(Row::Heading { .. }));
+    let title_width = state
         .columns
         .iter()
         .zip(cells.iter())
         .find(|(column, _)| **column == Column::Title)
         .map_or(0, |(_, cell)| cell.width);
     let row_height = |row: usize| -> usize {
-        match app.rows.get(row) {
+        match rows.get(row) {
             Some(Row::Task(index)) => {
                 let title = crate::row_layout::title_text(&app.tasks()[*index].title);
-                usize::from(app.state.row_layout.title_height(&title.text, title_width))
-                    + usize::from(app.state.row_layout.spaced && row != app.selected)
+                usize::from(state.row_layout.title_height(&title.text, title_width))
+                    + usize::from(
+                        state.row_layout.spaced && (row != cursor.selected || !cursor.highlight),
+                    )
             }
             _ => 1,
         }
     };
     let viewport = crate::list_presentation::ListViewport::variable(
-        app.scroll,
-        app.selected,
-        app.rows.len(),
+        cursor.scroll,
+        cursor.selected,
+        rows.len(),
         inner.height.saturating_sub(1) as usize,
         heading,
         row_height,
     );
-    app.scroll = viewport.scroll;
+    cursor.scroll = viewport.scroll;
     let window = viewport.slots;
     let mut used = 0;
     let mut visible_tasks = 0;
@@ -185,7 +211,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         height: inner.height - 1,
         ..inner
     };
-    for (line, row) in app.rows.iter().skip(app.scroll).take(window).enumerate() {
+    for (line, row) in rows.iter().skip(cursor.scroll).take(window).enumerate() {
         if used >= window {
             break;
         }
@@ -194,7 +220,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             Row::Task(index) => {
                 visible_tasks += 1;
                 let title = crate::row_layout::title_text(&app.tasks()[*index].title);
-                app.state.row_layout.title_height(&title.text, title_width)
+                state.row_layout.title_height(&title.text, title_width)
             }
         };
         let row_area = Rect {
@@ -203,8 +229,8 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             ..body
         };
         used += usize::from(content_height)
-            + usize::from(matches!(row, Row::Task(_)) && app.state.row_layout.spaced);
-        let selected = app.scroll + line == app.selected;
+            + usize::from(matches!(row, Row::Task(_)) && state.row_layout.spaced);
+        let selected = cursor.highlight && cursor.scroll + line == cursor.selected;
         match row {
             Row::Heading { text, depth } => frame.render_widget(
                 Paragraph::new(format!("{}▸ {text}", "  ".repeat(*depth)))
@@ -232,22 +258,22 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                 if let Some(glow) = working {
                     frame.render_widget(Paragraph::new("").style(glow), row_area);
                 }
-                for (column, cell) in app.state.columns.iter().zip(cells.iter()) {
+                for (column, cell) in state.columns.iter().zip(cells.iter()) {
                     let value =
-                        column.cell_text(&registry, task, &app.goals, &app.relations.blocked);
-                    let text = if app.state.glyph_columns.contains(column) && !value.is_empty() {
+                        column.cell_text(registry, task, &app.goals, &app.relations.blocked);
+                    let text = if state.glyph_columns.contains(column) && !value.is_empty() {
                         app.config.glyph(*column, &value)
                     } else {
-                        app.cell(*column, task)
+                        app.cell_for_view(state, *column, task)
                     };
                     let mut style = theme.column_style(*column);
                     if blocked {
                         style = style.patch(theme.style(Surface::Hint));
                     }
                     if let Some(color) = paint::cell_color(
-                        &app.state.paint,
+                        &state.paint,
                         &app.config.palette,
-                        &registry,
+                        registry,
                         task,
                         *column,
                         &app.goals,
@@ -272,7 +298,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                         ..*cell
                     };
                     if *column == Column::Title {
-                        draw_task_title(frame, &text, app.state.row_layout, style, cell_area);
+                        draw_task_title(frame, &text, state.row_layout, style, cell_area);
                     } else {
                         frame.render_widget(
                             Paragraph::new(text).style(style),
@@ -286,7 +312,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             }
         }
     }
-    app.page_size = visible_tasks.max(1);
+    cursor.page_size = visible_tasks.max(1);
 }
 
 fn draw_task_title(
@@ -328,13 +354,22 @@ fn draw_task_title(
 /// A fixed column is as wide as its header or its widest visible value, never
 /// more than the catalog allows, so a column of `Done` does not reserve room
 /// for `In Progress`.
-fn fitted_width(app: &App, column: Column, max: u16) -> u16 {
+fn fitted_width(
+    app: &App,
+    state: &crate::views::ViewState,
+    rows: &[Row],
+    column: Column,
+    max: u16,
+) -> u16 {
     let header = column.header(app.registry()).chars().count() + 2;
-    let widest = app
-        .rows
+    let widest = rows
         .iter()
         .filter_map(|row| match row {
-            Row::Task(index) => Some(app.cell(column, &app.tasks()[*index]).chars().count()),
+            Row::Task(index) => Some(
+                app.cell_for_view(state, column, &app.tasks()[*index])
+                    .chars()
+                    .count(),
+            ),
             Row::Heading { .. } => None,
         })
         .max()

@@ -249,25 +249,7 @@ impl PullRequests {
         let selected = restored
             .clone()
             .or_else(|| self.row().map(|row| row.id.clone()));
-        let filter = crate::tasks::Filter::parse(&self.filter, &self.registry);
-        let mut visible: Vec<usize> = self
-            .snapshot
-            .as_ref()
-            .map(|snapshot| {
-                snapshot
-                    .rows
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, row)| self.matches(&filter, row))
-                    .map(|(i, _)| i)
-                    .collect()
-            })
-            .unwrap_or_default();
-        if let Some(snapshot) = &self.snapshot {
-            if let Some(sort) = self.sort {
-                visible.sort_by(|&a, &b| self.compare(&snapshot.rows[a], &snapshot.rows[b], sort));
-            }
-        }
+        let visible = self.visible_for(&self.filter, self.sort);
         self.visible = visible;
         self.selected = selected
             .and_then(|id| {
@@ -283,6 +265,29 @@ impl PullRequests {
                 }
             });
         self.scroll = self.scroll.min(self.selected);
+    }
+
+    pub(crate) fn visible_for(&self, query: &str, sort: Option<crate::sort::Sort>) -> Vec<usize> {
+        let filter = crate::tasks::Filter::parse(query, &self.registry);
+        let mut visible: Vec<usize> = self
+            .snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .rows
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, row)| self.matches(&filter, row))
+                    .map(|(i, _)| i)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Some(snapshot) = &self.snapshot {
+            if let Some(sort) = sort {
+                visible.sort_by(|&a, &b| self.compare(&snapshot.rows[a], &snapshot.rows[b], sort));
+            }
+        }
+        visible
     }
 
     fn compare(&self, a: &PrListRow, b: &PrListRow, sort: crate::sort::Sort) -> std::cmp::Ordering {
