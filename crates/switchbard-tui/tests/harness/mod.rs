@@ -300,6 +300,31 @@ pub fn visible_titles(h: &Harness) -> Vec<String> {
         .collect()
 }
 
+/// Filter down to the single task titled `title` and land the cursor on it.
+/// Deterministic where seed order or an earlier test's ids would otherwise
+/// make `j`/`k` counting fragile. Replaces any filter already applied (rather
+/// than appending to it, the way typing more into an open filter normally
+/// would) and deliberately leaves the new one-task filter in place: clearing
+/// it back to the full list would re-select by row position, which lands on
+/// a different task the moment the unfiltered order differs from the
+/// filtered one. A test that needs the full list back should filter again
+/// through this same helper, or manage its own filter text directly.
+pub fn select_task_titled(h: &mut Harness, title: &str) {
+    h.press(KeyCode::Char('/'));
+    // `/` on an already-non-empty filter appends a trailing space before any
+    // typing happens, so the length to erase is read after pressing it.
+    for _ in 0..h.app.filter_text().len() {
+        h.press(KeyCode::Backspace);
+    }
+    h.type_text(title);
+    h.press(KeyCode::Enter);
+    assert_eq!(
+        h.app.selected_task().map(|task| task.title.as_str()),
+        Some(title),
+        "expected {title} to be the only match"
+    );
+}
+
 /// Every table row as the screen shows it: headings and task titles alike.
 pub fn screen_rows(h: &Harness) -> Vec<String> {
     h.app

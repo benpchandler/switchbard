@@ -59,6 +59,14 @@ pub enum PickerPurpose {
     TaskProject(String),
     TaskParent(String),
     TopList,
+    /// The detail pane's own status/priority/project/labels pickers
+    /// (TASK-222): distinct from `Task*` above because they return focus to
+    /// `Mode::DetailFocus` on close rather than to `Mode::Browse` — see
+    /// `PickerPurpose::is_detail`.
+    DetailStatus(String),
+    DetailPriority(String),
+    DetailProject(String),
+    DetailLabels(String),
     Views,
     History,
     SaveView,
@@ -68,6 +76,21 @@ pub enum PickerPurpose {
     /// `v x`: which slot to delete.
     DeleteView,
     ChooseColumnAction(ColumnAction),
+}
+
+impl PickerPurpose {
+    /// Whether closing this picker (Esc, `h`/Left back, or a completed pick)
+    /// returns to `Mode::DetailFocus` rather than `Mode::Browse` — the
+    /// detail pane's own field pickers, opened while the pane has focus.
+    pub fn is_detail(&self) -> bool {
+        matches!(
+            self,
+            Self::DetailStatus(_)
+                | Self::DetailPriority(_)
+                | Self::DetailProject(_)
+                | Self::DetailLabels(_)
+        )
+    }
 }
 
 /// What a column's menu offers; each row is one of these on a letter.
@@ -171,6 +194,8 @@ pub enum Payload {
     ColumnAction(ColumnAction),
     Ball(Option<Ball>),
     NewBallHolder,
+    /// The detail pane's labels picker: open the "type a new label" input.
+    NewLabel,
     TaskAction(TaskAction),
     Rank(usize),
     ViewSlot(usize),
@@ -384,5 +409,11 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         }
         PickerPurpose::TaskParent(_) => "type ID/title · ↑↓ select · Enter saves · ← back · Esc",
         PickerPurpose::Ball => "number or name picks · new person opens entry · esc",
+        PickerPurpose::DetailStatus(_)
+        | PickerPurpose::DetailPriority(_)
+        | PickerPurpose::DetailProject(_) => "number or name picks · esc returns to the pane",
+        PickerPurpose::DetailLabels(_) => {
+            "enter toggles · n adds a new label · esc returns to the pane"
+        }
     }
 }

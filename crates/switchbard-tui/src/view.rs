@@ -13,7 +13,8 @@ use ratatui::Frame;
 
 use crate::app::{App, Mode, Pane};
 use crate::columns::Column;
-use crate::config::{Action, Surface};
+use crate::config::{Action, Surface, Theme};
+use crate::detail_pane::FieldRow;
 use crate::group::Row;
 use crate::page::Page;
 use crate::paint::{self, PaintRule};
@@ -22,7 +23,11 @@ use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let footer_height = if app.mode == Mode::NewTask { 3 } else { 1 };
+    let footer_height = match app.mode {
+        Mode::NewTask => 3,
+        Mode::DetailInput(_) => 2,
+        _ => 1,
+    };
     let [navigation, notification, body, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(u16::from(
@@ -391,69 +396,198 @@ fn table_title(app: &App) -> String {
     format!(" {} ", parts.join(" · "))
 }
 
-fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
-    let theme = &app.config.theme;
-    let mut lines: Vec<Line> = Vec::new();
-    if let Some(task) = app.selected_task() {
-        lines.push(crate::detail_pane::title(task.title.clone()));
-        lines.push(crate::detail_pane::metadata(
-            format!(
-                "{} · {} · {} · {}",
-                task.id,
-                task.status,
-                task.priority,
-                task.labels.join(",")
-            ),
-            theme,
-        ));
-        for session in app.working(task) {
-            lines.push(Line::from(Span::styled(
-                format!(
-                    "working · {} {} (pid {}) since {}",
-                    session.agent,
-                    session.short_id(),
-                    session.pid,
-                    claimed_clock(session, &task.id)
-                ),
-                theme.style(Surface::Working),
-            )));
-        }
-        lines.push(Line::from(""));
-        for paragraph in task.description.lines() {
-            lines.push(Line::from(paragraph.to_string()));
-        }
-        if !task.acceptance_criteria.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(crate::detail_pane::section("acceptance", theme));
-            for item in &task.acceptance_criteria {
-                let mark = if item.checked { "x" } else { " " };
-                lines.push(Line::from(format!("[{mark}] {}", item.text)));
-            }
-        }
-        // "Blocked by" (open dependencies only) and "Blocks" (the reverse
-        // edge), mirroring the GUI's `ui/backlog/detail_lists.rs`
-        // (`render_dependencies`'/`render_blocks`' sections) off the same
-        // `tasks::TaskRelations` cache the row dimming and the `blocked`
-        // filter read.
-        if let Some(deps) = app.relations.blocked_by.get(&task.id) {
-            lines.push(Line::from(""));
-            lines.push(crate::detail_pane::section("blocked by", theme));
-            for (id, title) in deps {
-                lines.push(Line::from(format!("{id} {title}")));
-            }
-        }
-        if let Some(dependents) = app.relations.blocks.get(&task.id) {
-            lines.push(Line::from(""));
-            lines.push(crate::detail_pane::section("blocks", theme));
-            for (id, title, done) in dependents {
-                let status = if *done { "done" } else { "open" };
-                lines.push(Line::from(format!("{id} {title} ({status})")));
-            }
-        }
-    } else {
-        lines.push(Line::from("nothing selected"));
+/// The editable task detail pane (TASK-222): one line per `FieldRow`, in the
+/// fixed order `crate::detail_pane::field_rows` defines, plus decorative
+/// section headers and the live-work lines above them. The cursor row (while
+/// `app.detail_focused()`) gets the selection style; scroll follows it into
+/// view using the same wrapped-line accounting `draw_help` already uses for
+/// its own scroll clamp.
+fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
+    let theme = app.config.theme.clone();
+    let focused = app.detail_focused();
+    let Some(task) = app.selected_task().cloned() else {
+        crate::detail_pane::draw(frame, &theme, area, vec![Line::from("nothing selected")], 0);
+        app.detail_scroll = 0;
+        return;
+    };
+    let (lines, row_lines) = build_detail_lines(app, &task, &theme, focused, app.detail_cursor);
+    if focused {
+        adjust_detail_scroll(app, &lines, &row_lines, area);
     }
-    crate::detail_pane::draw(frame, theme, area, lines, 0);
+    let scroll = app.detail_scroll;
+    app.detail_scroll = crate::detail_pane::draw(frame, &theme, area, lines, scroll);
+}
+
+/// Every line the pane shows for `task`: the id/read-only header, live-work
+/// lines, then one line per `FieldRow` (with a decorative section header
+/// inserted before the first acceptance/blocked-by/blocks row), styling the
+/// cursor row when focused. `row_lines[n]` is the index into the returned
+/// `lines` for `FieldRow` number `n`, since a section header is not itself a
+/// navigable row.
+fn build_detail_lines(
+    app: &App,
+    task: &switchbard_core::BacklogTask,
+    theme: &Theme,
+    focused: bool,
+    cursor: usize,
+) -> (Vec<Line<'static>>, Vec<usize>) {
+    let mut lines: Vec<Line> = Vec::new();
+    let mut row_lines: Vec<usize> = Vec::new();
+    let mut header = task.id.clone();
+    if !task.editable() {
+        header.push_str(" · read-only");
+    }
+    lines.push(crate::detail_pane::metadata(header, theme));
+    for session in app.working(task) {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "working · {} {} (pid {}) since {}",
+                session.agent,
+                session.short_id(),
+                session.pid,
+                claimed_clock(session, &task.id)
+            ),
+            theme.style(Surface::Working),
+        )));
+    }
+    lines.push(Line::from(""));
+    let rows = app.detail_rows();
+    let (mut acceptance_seen, mut blocked_seen, mut blocks_seen) = (false, false, false);
+    for (index, row) in rows.iter().enumerate() {
+        match row {
+            FieldRow::Acceptance(_) if !acceptance_seen => {
+                acceptance_seen = true;
+                lines.push(Line::from(""));
+                lines.push(crate::detail_pane::section("acceptance", theme));
+            }
+            FieldRow::BlockedBy(_) if !blocked_seen => {
+                blocked_seen = true;
+                lines.push(Line::from(""));
+                lines.push(crate::detail_pane::section("blocked by", theme));
+            }
+            FieldRow::Blocks(_) if !blocks_seen => {
+                blocks_seen = true;
+                lines.push(Line::from(""));
+                lines.push(crate::detail_pane::section("blocks", theme));
+            }
+            _ => {}
+        }
+        let text = detail_row_text(app, task, *row);
+        let mut style = match row {
+            FieldRow::Description | FieldRow::BlockedBy(_) | FieldRow::Blocks(_) => {
+                theme.style(Surface::Hint)
+            }
+            _ => Style::default(),
+        };
+        if *row == FieldRow::Title {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        if focused && index == cursor {
+            style = theme.style(Surface::Selected).patch(style);
+        }
+        lines.push(Line::from(Span::styled(text, style)));
+        row_lines.push(lines.len() - 1);
+    }
+    (lines, row_lines)
+}
+
+/// Keep the cursor row's wrapped display lines inside the viewport, scrolling
+/// up or down the minimum needed — never resets `app.detail_scroll` outright,
+/// so it also self-corrects after a resize without losing an in-view row.
+fn adjust_detail_scroll(app: &mut App, lines: &[Line], row_lines: &[usize], area: Rect) {
+    let Some(&line_index) = row_lines.get(app.detail_cursor) else {
+        return;
+    };
+    let width = area.width.saturating_sub(2);
+    let viewport = area.height.saturating_sub(2);
+    let offset = wrapped_offset(lines, line_index, width);
+    let row_height = wrapped_height(&lines[line_index], width);
+    if offset < app.detail_scroll {
+        app.detail_scroll = offset;
+    } else if offset.saturating_add(row_height) > app.detail_scroll.saturating_add(viewport) {
+        app.detail_scroll = offset + row_height - viewport;
+    }
+}
+
+/// How many wrapped display lines `line` takes at `width` — used to keep the
+/// detail pane's cursor row on screen (each `FieldRow` is exactly one
+/// logical `Line`, but a long title wraps to several display rows).
+fn wrapped_height(line: &Line<'_>, width: u16) -> u16 {
+    if width == 0 {
+        return 1;
+    }
+    Paragraph::new(line.clone())
+        .wrap(Wrap { trim: false })
+        .line_count(width)
+        .min(u16::MAX as usize) as u16
+}
+
+/// The wrapped display-line offset of `lines[upto]`: the sum of every prior
+/// row's own wrapped height, since ratatui wraps each `Line` independently.
+fn wrapped_offset(lines: &[Line<'_>], upto: usize, width: u16) -> u16 {
+    lines[..upto]
+        .iter()
+        .map(|line| wrapped_height(line, width))
+        .fold(0u16, u16::saturating_add)
+}
+
+/// The rendered text for one detail-pane row. Structured fields carry a
+/// `label: value` prefix; the read-only rows (description hint, blocked-by,
+/// blocks) match the non-editable presentation the pane used before TASK-222.
+fn detail_row_text(app: &App, task: &switchbard_core::BacklogTask, row: FieldRow) -> String {
+    match row {
+        FieldRow::Title => task.title.clone(),
+        FieldRow::Status => format!("status: {}", task.status),
+        FieldRow::Priority => format!("priority: {}", task.priority),
+        FieldRow::Project => format!(
+            "project: {}",
+            task.project.as_deref().unwrap_or("(unassigned)")
+        ),
+        FieldRow::DueDate => format!("due date: {}", task.due_date.as_deref().unwrap_or("(none)")),
+        FieldRow::Labels => format!(
+            "labels: {}",
+            if task.labels.is_empty() {
+                "(none)".to_string()
+            } else {
+                task.labels.join(", ")
+            }
+        ),
+        FieldRow::Description => "description · edit with sb edit".to_string(),
+        FieldRow::Acceptance(index) => {
+            let item = task.acceptance_criteria.get(index).expect(
+                "invariant: FieldRow::Acceptance(index) only exists for index < \
+                 acceptance_criteria.len() — detail_pane::field_rows built this list \
+                 from the same task",
+            );
+            format!("[{}] {}", if item.checked { "x" } else { " " }, item.text)
+        }
+        FieldRow::BlockedBy(index) => {
+            let (id, title) = app
+                .relations
+                .blocked_by
+                .get(&task.id)
+                .and_then(|deps| deps.get(index))
+                .expect(
+                    "invariant: FieldRow::BlockedBy(index) only exists for a task with that \
+                     many blocked_by entries — detail_pane::field_rows built this list from \
+                     the same relations",
+                );
+            format!("{id} {title}")
+        }
+        FieldRow::Blocks(index) => {
+            let (id, title, done) = app
+                .relations
+                .blocks
+                .get(&task.id)
+                .and_then(|deps| deps.get(index))
+                .expect(
+                    "invariant: FieldRow::Blocks(index) only exists for a task with that many \
+                     blocks entries — detail_pane::field_rows built this list from the same \
+                     relations",
+                );
+            format!("{id} {title} ({})", if *done { "done" } else { "open" })
+        }
+    }
 }
 
 /// `HH:MM` of the claim on `task_id`, from its RFC 3339 stamp.
@@ -565,6 +699,10 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         draw_new_task(frame, app, area);
         return;
     }
+    if let Mode::DetailInput(kind) = app.mode {
+        draw_detail_input(frame, app, area, kind);
+        return;
+    }
     let theme = &app.config.theme;
     let line = match app.mode {
         Mode::Filter => Line::from(vec![
@@ -597,6 +735,19 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(" view name: ", theme.style(Surface::Accent)),
             Span::raw(app.input.clone()),
             Span::styled("▏", theme.style(Surface::Accent)),
+        ]),
+        // Handled by `draw_detail_input` above; unreachable via this match.
+        Mode::DetailInput(_) => Line::default(),
+        Mode::DetailFocus if !app.status.is_empty() => Line::from(Span::styled(
+            app.status.clone(),
+            theme.style(Surface::Status),
+        )),
+        Mode::DetailFocus => Line::from(vec![
+            Span::styled(" pane focused ", theme.style(Surface::Accent)),
+            Span::styled(
+                "j/k move · enter/l edit · space toggles AC · esc/h back",
+                theme.style(Surface::Hint),
+            ),
         ]),
         Mode::Browse if !app.status.is_empty() => Line::from(Span::styled(
             app.status.clone(),
@@ -637,6 +788,38 @@ fn draw_new_task(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
+/// The detail pane's single-line field capture (title, due date, a new
+/// label): the draft on one line, `app.status` (a validation or save error)
+/// on the next — unlike `Mode::Filter`/`Mode::BallName`'s single line, a
+/// rejected save here must stay visible next to the draft that caused it.
+fn draw_detail_input(frame: &mut Frame, app: &App, area: Rect, kind: crate::app::DetailInputKind) {
+    let theme = &app.config.theme;
+    let prefix = format!(" {}: ", kind.label());
+    let room = usize::from(area.width).saturating_sub(prefix.chars().count() + 1);
+    let mut start = app.input.len();
+    let mut width = 0;
+    let draft = Span::raw(app.input.as_str());
+    let graphemes: Vec<_> = draft.styled_graphemes(Style::default()).collect();
+    for grapheme in graphemes.iter().rev() {
+        let character_width = Span::raw(grapheme.symbol).width();
+        if width + character_width > room {
+            break;
+        }
+        width += character_width;
+        start -= grapheme.symbol.len();
+    }
+    let input = Line::from(vec![
+        Span::styled(prefix, theme.style(Surface::Accent)),
+        Span::raw(app.input[start..].to_string()),
+        Span::styled("▏", theme.style(Surface::Accent)),
+    ]);
+    let lines = vec![
+        input,
+        Line::styled(app.status.clone(), theme.style(Surface::Status)),
+    ];
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
 /// The footer while browsing: what is in effect as a chip, the situation, then
 /// the keys with their letters on the `keys` surface.
 fn browse_footer(app: &App) -> Line<'static> {
@@ -651,11 +834,14 @@ fn browse_footer(app: &App) -> Line<'static> {
     } else {
         vec![(Action::View, "views"), (Action::Help, "keys")]
     };
-    let text = actions
+    let mut text = actions
         .iter()
         .map(|(action, label)| format!("{} {label}", app.config.bindings_for(action).join("/")))
         .collect::<Vec<_>>()
         .join(" · ");
+    if app.page == Page::Tasks && app.pane == Pane::Detail {
+        text.push_str(" · list focused · enter/l focuses the pane");
+    }
     Line::from(Span::styled(text, app.config.theme.style(Surface::Hint)))
 }
 
@@ -729,6 +915,10 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                 (PickerPurpose::TaskParent(id), Payload::Parent(parent)) => app.tasks().iter().any(|task| task.id == *id && task.parent == *parent),
                 (PickerPurpose::TaskProject(id), Payload::Project(project)) => app.tasks().iter().any(|task| task.id == *id && task.project == *project),
                 (PickerPurpose::TaskStatus(id), Payload::Text(status)) => app.tasks().iter().any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
+                (PickerPurpose::DetailStatus(id), Payload::Text(status)) => app.tasks().iter().any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
+                (PickerPurpose::DetailPriority(id), Payload::Text(priority)) => app.tasks().iter().any(|task| task.id == *id && task.priority.eq_ignore_ascii_case(priority)),
+                (PickerPurpose::DetailProject(id), Payload::Project(project)) => app.tasks().iter().any(|task| task.id == *id && task.project == *project),
+                (PickerPurpose::DetailLabels(id), Payload::Text(label)) => app.tasks().iter().any(|task| task.id == *id && task.labels.iter().any(|l| l.eq_ignore_ascii_case(label))),
                 (PickerPurpose::MoveColumns(placed), _) => placed.contains(&(index + 1)),
                 (PickerPurpose::PaintRules, Payload::Rule(rule)) => *rule == 0,
                 (PickerPurpose::PaintValues(column), Payload::Text(value)) => {
@@ -915,6 +1105,10 @@ fn picker_title(
         PickerPurpose::TaskParent(id) => format!("{id} · parent"),
         PickerPurpose::TaskProject(id) => format!("{id} · project"),
         PickerPurpose::TaskStatus(id) => format!("{id} · status"),
+        PickerPurpose::DetailStatus(id) => format!("{id} · status"),
+        PickerPurpose::DetailPriority(id) => format!("{id} · priority"),
+        PickerPurpose::DetailProject(id) => format!("{id} · project"),
+        PickerPurpose::DetailLabels(id) => format!("{id} · labels"),
         PickerPurpose::Views => "views".to_string(),
         PickerPurpose::History => "view history".to_string(),
         PickerPurpose::SaveView => "save view".to_string(),
