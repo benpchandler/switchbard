@@ -288,6 +288,7 @@ fn draw_row(frame: &mut Frame, app: &App, row: &PrListRow, rect: Rect, selected:
         let mut style = app.config.theme.column_style(*column);
         if let Some(color) = crate::paint::cell_color_with(
             &app.state.paint,
+            &app.config.palette,
             *column,
             app.registry(),
             |column| app.pull_requests.values(column, row),

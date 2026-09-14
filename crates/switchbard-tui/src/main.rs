@@ -1,5 +1,7 @@
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{bail, Result};
@@ -20,6 +22,9 @@ struct Cli {
     /// Repository root holding a backlog/ directory (default: current directory)
     #[arg(long)]
     repo: Option<PathBuf>,
+    /// Open the saved default view instead of the last session (self-restarts still resume)
+    #[arg(long)]
+    fresh: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -85,11 +90,12 @@ fn main() -> Result<()> {
             print!("{}", switchbard_core::build_id_report());
             Ok(())
         }
-        None => run(cli.repo.unwrap_or(std::env::current_dir()?)),
+        None => run(cli.repo.unwrap_or(std::env::current_dir()?), cli.fresh),
     }
 }
 
-fn run(repo_root: PathBuf) -> Result<()> {
+fn run(repo_root: PathBuf, fresh: bool) -> Result<()> {
+    let repo_root = repo_root.canonicalize()?;
     if !switchbard_core::backlog_repo_available(&repo_root)? {
         bail!("{} has no backlog/ directory", repo_root.display());
     }
@@ -109,13 +115,17 @@ fn run(repo_root: PathBuf) -> Result<()> {
         },
         telemetry,
     );
-    app.resume_from(std::env::var(RESUME_ENV).ok().as_deref());
+    app.restore_session(std::env::var(RESUME_ENV).ok().as_deref(), fresh);
+    let shutdown = ShutdownSignals::register()?;
     let mut terminal = ratatui::init();
     let outcome = crossterm::execute!(std::io::stdout(), event::EnableMouseCapture)
         .map_err(anyhow::Error::from)
-        .and_then(|()| drive(&mut terminal, &mut app));
+        .and_then(|()| drive(&mut terminal, &mut app, &shutdown.requested));
     let mouse_restore = crossterm::execute!(std::io::stdout(), event::DisableMouseCapture);
     ratatui::restore();
+    if let Err(error) = app.checkpoint_session() {
+        eprintln!("{error}");
+    }
     app.telemetry.finish();
     mouse_restore?;
     match outcome? {
@@ -129,11 +139,15 @@ enum Exit {
     Restart,
 }
 
-fn drive(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Exit> {
+fn drive(
+    terminal: &mut ratatui::DefaultTerminal,
+    app: &mut App,
+    shutdown: &AtomicBool,
+) -> Result<Exit> {
     let binary = InstalledBinary::current();
     app.tick();
     let mut last_tick = Instant::now();
-    while !app.should_quit {
+    while !app.should_quit && !shutdown.load(Ordering::Relaxed) {
         let started = Instant::now();
         terminal.draw(|frame| view::draw(frame, app))?;
         app.telemetry.record_render(started);
@@ -141,7 +155,11 @@ fn drive(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Exit>
             .next_blink()
             .unwrap_or(Duration::from_millis(500))
             .min(Duration::from_millis(500));
-        let input_ready = event::poll(wait)?;
+        let input_ready = match event::poll(wait) {
+            Ok(ready) => ready,
+            Err(_) if shutdown.load(Ordering::Relaxed) => return Ok(Exit::Quit),
+            Err(error) => return Err(error.into()),
+        };
         if input_ready {
             match event::read()? {
                 Event::Key(key) => app.handle_key(key),
@@ -168,6 +186,41 @@ fn drive(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Exit>
 }
 
 const RESUME_ENV: &str = "SBT_RESUME";
+
+/// Signal handlers only flip a flag. The normal event loop owns terminal cleanup
+/// and the same final checkpoint used by an explicit quit or binary replacement.
+struct ShutdownSignals {
+    requested: Arc<AtomicBool>,
+    registrations: Vec<signal_hook::SigId>,
+}
+
+impl ShutdownSignals {
+    fn register() -> std::io::Result<Self> {
+        let mut shutdown = Self {
+            requested: Arc::new(AtomicBool::new(false)),
+            registrations: Vec::with_capacity(3),
+        };
+        for signal in [
+            signal_hook::consts::SIGHUP,
+            signal_hook::consts::SIGTERM,
+            signal_hook::consts::SIGINT,
+        ] {
+            shutdown.registrations.push(signal_hook::flag::register(
+                signal,
+                Arc::clone(&shutdown.requested),
+            )?);
+        }
+        Ok(shutdown)
+    }
+}
+
+impl Drop for ShutdownSignals {
+    fn drop(&mut self) {
+        for registration in self.registrations.drain(..) {
+            signal_hook::low_level::unregister(registration);
+        }
+    }
+}
 
 /// A fresh `cargo install` swaps the file under us; re-exec so the running
 /// tab is always the newest build without the user restarting anything.
@@ -196,4 +249,18 @@ fn restart_into_new_binary(app: &App) -> Result<()> {
         .env(RESUME_ENV, app.resume_state())
         .exec();
     Err(error.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_is_an_explicit_launch_option_and_defaults_off() {
+        assert!(!Cli::try_parse_from(["sbt"]).expect("default CLI").fresh);
+        let cli =
+            Cli::try_parse_from(["sbt", "--repo", "/tmp/repo", "--fresh"]).expect("fresh CLI");
+        assert!(cli.fresh);
+        assert_eq!(cli.repo, Some(PathBuf::from("/tmp/repo")));
+    }
 }

@@ -183,14 +183,9 @@ impl App {
         let Some(_) = column.filter_field(&self.registry) else {
             return;
         };
-        let palette = if self.config.palette.is_empty() {
-            paint::AUTO_PALETTE.map(str::to_string).to_vec()
-        } else {
-            self.config.palette.clone()
-        };
         for (index, (value, _)) in self.column_values(column).iter().enumerate() {
-            let color = &palette[index % palette.len()];
-            paint::set_value_color(&mut self.state.paint, column, value, Some(color));
+            let token = format!("p{}", index + 1);
+            paint::set_value_color(&mut self.state.paint, column, value, Some(&token));
         }
         self.status = format!("painted every {} value", column.name(&self.registry));
         self.telemetry.record(

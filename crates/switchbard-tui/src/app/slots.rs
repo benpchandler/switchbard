@@ -21,6 +21,7 @@ impl App {
             .collect();
         match purpose {
             PickerPurpose::Views => {
+                options.push(PickOption::keyed('h', "History", Payload::ViewHistory));
                 if self.page == crate::page::Page::Tasks {
                     options.push(PickOption::keyed(
                         'p',

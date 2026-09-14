@@ -7,6 +7,7 @@ mod paint_flow;
 mod pickers;
 pub mod pr_merge;
 pub mod resume;
+mod session;
 mod slots;
 mod task_parent;
 mod task_project;
@@ -25,7 +26,6 @@ use crate::ball::Ball;
 use crate::columns::{Column, ColumnRegistry};
 use crate::config::{self, Action, Config, KeyChord};
 use crate::group::{self, Grouping, Row};
-use crate::paint;
 use crate::picker::{ColumnPurpose, Payload, PickOption, PickerPurpose, ValuePicker};
 use crate::report::{self, ReportContext, ReportKind};
 use crate::settings::{Scope as SettingsScope, SettingsStore};
@@ -121,6 +121,9 @@ pub struct App {
     paint_return: Option<Column>,
     /// The slot `v n` is naming, while `Mode::RenameView` is active.
     rename_slot: Option<usize>,
+    pub history: crate::view_history::HistoryStore,
+    resume_store: resume::ResumeStore,
+    checkpoint_due: Instant,
     pub views: ViewStore,
     /// Zero-based slot the current state came from.
     pub view: usize,
@@ -156,6 +159,13 @@ impl App {
             work_dir,
         } = paths;
         let registry = Arc::new(ColumnRegistry::for_repo(repo_root));
+        let resume_store = resume::ResumeStore::load(repo_views.as_deref());
+        let (history, history_warnings) = crate::view_history::HistoryStore::load(
+            repo_views
+                .as_ref()
+                .map(|path| path.with_extension("history.json")),
+            &registry,
+        );
         let config = config::load(config_path.as_deref(), &registry);
         let (settings, settings_warnings) = SettingsStore::load(global_settings, repo_settings);
         let (pr_views, pr_warnings) = ViewStore::load_for_page(
@@ -200,6 +210,9 @@ impl App {
             paint_return: None,
             rename_slot: None,
             views,
+            history,
+            resume_store,
+            checkpoint_due: Instant::now() + Duration::from_secs(30),
             view: 0,
             state: ViewState::default(),
             inactive_state: pr_state,
@@ -233,6 +246,9 @@ impl App {
         }
         if let Some(warning) = settings_warnings.first() {
             app.fail(format!("settings: {warning}"));
+        }
+        if let Some(warning) = history_warnings.first() {
+            app.fail(format!("view history: {warning}"));
         }
         app
     }
@@ -506,6 +522,7 @@ impl App {
 
     /// Cheap per-tick work: pick up edits to the config file or the task files.
     pub fn tick(&mut self) {
+        self.checkpoint_if_due(Instant::now());
         self.refresh_calendar_day();
         self.refresh_pr_state();
         self.tick_pr_merge();
@@ -1322,8 +1339,8 @@ impl App {
         }
     }
 
-    /// `:palette <name>`: use a preset for this session and re-color every auto-painted
-    /// value that still wears a preset color, so the change shows at once.
+    /// `:palette <name>`: use a preset for this session. Token-backed paint
+    /// resolves against it at render time; literal colors keep their value.
     fn choose_palette(&mut self, name: &str) {
         let names: Vec<String> = self
             .config
@@ -1336,13 +1353,6 @@ impl App {
             return;
         };
         let colors = colors.clone();
-        let known: Vec<Vec<String>> = self
-            .config
-            .palettes
-            .iter()
-            .map(|(_, colors)| colors.clone())
-            .collect();
-        paint::recolor_from_palettes(&mut self.state.paint, &known, &colors);
         self.config.palette = colors;
         self.status = format!("palette {name} · keep it: palette = \"{name}\" in tui.lua");
         self.telemetry.record("action", format!("palette {name}"));

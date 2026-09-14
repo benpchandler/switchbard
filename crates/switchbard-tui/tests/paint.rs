@@ -121,8 +121,8 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
             .map(|r| r.to_text(h.app.registry()))
             .collect::<Vec<_>>(),
         [
-            "by:status=todo:#f49f31,inprogress:#c6c5fe",
-            "by:priority=high:#f49f31,low:#c6c5fe,medium:#4af6c3"
+            "by:status=todo:p1,inprogress:p2",
+            "by:priority=high:p1,low:p2,medium:p3"
         ]
     );
 }
@@ -283,7 +283,7 @@ fn paint_rules_round_trip_through_the_view_file() {
     h.press(KeyCode::Char('d'));
     let file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
     assert!(
-        file.contains("paint = \"by:status=todo:#f49f31,inprogress:#c6c5fe;rows:id:"),
+        file.contains("paint = \"by:status=todo:p1,inprogress:p2;rows:id:"),
         "{file}"
     );
     let fresh = open_app(&h.root, &h.config_path);
@@ -347,5 +347,99 @@ fn palette_presets_swap_live_and_recolor_auto_painted_values() {
     assert_eq!(
         h.app.status,
         "palette: one of balanced, berg, bloomberg, darkroom, muted, vivid"
+    );
+}
+
+#[test]
+fn palette_change_preserves_literal_hex_even_when_it_matches_an_old_palette() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('2'));
+    h.type_text("#f49f31");
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Esc);
+    let before = h.app.state.paint.clone();
+    h.press(KeyCode::Char(':'));
+    h.type_text("palette vivid");
+    h.press(KeyCode::Enter);
+    assert_eq!(h.app.state.paint, before);
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Rgb(0xf4, 0x9f, 0x31))
+    );
+}
+
+#[test]
+fn saved_palette_tokens_follow_config_reload_without_mutating_rules() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Esc);
+    let before = h.app.state.paint.clone();
+    std::fs::write(&h.config_path, "return { palette = { 'magenta' } }").unwrap();
+    h.app.tick();
+    h.render();
+    assert_eq!(h.app.state.paint, before);
+    assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Magenta));
+    assert_eq!(cell_fg(&h, "Fix login"), Some(Color::Magenta));
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    assert_eq!(cell_fg(&h, "To Do"), Some(Color::Magenta));
+}
+
+#[test]
+fn palette_tokens_and_legacy_literals_round_trip_and_resolve_safely() {
+    use switchbard_tui::{columns::ColumnRegistry, paint};
+    let registry = ColumnRegistry::default();
+    let text = "by:status=todo:p1,done:#F49F31;column:id=p9;rows:status:done=green";
+    let rules = paint::parse_rules(text, &registry);
+    assert_eq!(paint::rules_text(&rules, &registry), text);
+    assert_eq!(paint::resolve_color("p9", &[]), Some(Color::Yellow));
+    assert_eq!(
+        paint::resolve_color("p9", &["red".into(), "blue".into()]),
+        Some(Color::Red)
+    );
+    assert_eq!(
+        paint::resolve_color("#F49F31", &["blue".into()]),
+        Some(Color::Rgb(0xf4, 0x9f, 0x31))
+    );
+    for invalid in ["p0", "p-1", "p+1", "p", "p999999999999999999999999999999"] {
+        assert_eq!(paint::resolve_color(invalid, &[]), None, "{invalid}");
+    }
+}
+
+#[test]
+fn legacy_saved_hex_loads_and_remains_literal_after_palette_change() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('p'));
+    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('1'));
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('d'));
+    let path = h.root.join("views-repo.lua");
+    let file = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        file.replace("todo:p1,inprogress:p2", "todo:#F49F31,inprogress:#c6c5fe"),
+    )
+    .unwrap();
+    h.app = open_app(&h.root, &h.config_path);
+    h.render();
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Rgb(0xf4, 0x9f, 0x31))
+    );
+    let before = h.app.state.paint.clone();
+    h.press(KeyCode::Char(':'));
+    h.type_text("palette vivid");
+    h.press(KeyCode::Enter);
+    assert_eq!(h.app.state.paint, before);
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(Color::Rgb(0xf4, 0x9f, 0x31))
     );
 }

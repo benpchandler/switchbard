@@ -60,6 +60,7 @@ pub enum PickerPurpose {
     TaskParent(String),
     TopList,
     Views,
+    History,
     SaveView,
     GlobalView,
     /// `v n`: which slot to name.
@@ -173,6 +174,8 @@ pub enum Payload {
     TaskAction(TaskAction),
     Rank(usize),
     ViewSlot(usize),
+    ViewHistory,
+    HistoryView(String),
     SaveView,
     GlobalView,
     RenameView,
@@ -266,6 +269,8 @@ pub struct ValuePicker {
     pub number: String,
     /// Index into `matching()`.
     pub selected: usize,
+    /// Wrapped selected history entry preview, independent of list selection.
+    pub preview_scroll: u16,
 }
 
 impl ValuePicker {
@@ -276,6 +281,7 @@ impl ValuePicker {
             typed: String::new(),
             number: String::new(),
             selected: 0,
+            preview_scroll: 0,
         }
     }
 
@@ -376,6 +382,9 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         | PickerPurpose::RenameView
         | PickerPurpose::DeleteView
         | PickerPurpose::ChooseColumnAction(_) => "↑↓/jk select · →/l open · ←/h back · Esc closes",
+        PickerPurpose::History => {
+            "↑↓ select · type to find · Enter restores · v s number saves · Esc"
+        }
         PickerPurpose::TaskParent(_) => "type ID/title · ↑↓ select · Enter saves · ← back · Esc",
         PickerPurpose::Ball => "number or name picks · new person opens entry · esc",
     }
