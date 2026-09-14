@@ -237,7 +237,9 @@ TMP_INSTALL_ROOT=""
 # into a 1.
 cleanup_tmp_install_root() {
     if [[ -n "$TMP_INSTALL_ROOT" ]]; then
-        rm -rf "$TMP_INSTALL_ROOT"
+        # `|| true`: a failing rm inside the trap would abort it under errexit
+        # before `return 0` and corrupt the script's real exit status again.
+        rm -rf "$TMP_INSTALL_ROOT" 2>/dev/null || true
     fi
     return 0
 }

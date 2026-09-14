@@ -103,7 +103,8 @@ pub fn pending_notice(dir: Option<&Path>, now: DateTime<Utc>) -> Option<String> 
         }
         "failed" => Some(format!(
             "auto-install's last build failed: {reason} - \
-             see ~/.switchbard/auto-install/auto-install.log, nothing was replaced"
+             see {}, nothing was replaced",
+            dir.join("auto-install.log").display()
         )),
         _ => None,
     }
