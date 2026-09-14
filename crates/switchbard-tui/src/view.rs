@@ -447,7 +447,7 @@ fn table_title(app: &App) -> String {
 /// its own scroll clamp.
 fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = app.config.theme.clone();
-    let focused = app.detail_focused();
+    let focused = app.detail_edit_focused();
     app.detail_viewport = area.height.saturating_sub(2);
     let Some(task) = app.selected_task().cloned() else {
         crate::detail_pane::draw(frame, &theme, area, vec![Line::from("nothing selected")], 0);
@@ -971,8 +971,19 @@ fn browse_footer(app: &App) -> Line<'static> {
         .map(|(action, label)| format!("{} {label}", app.config.bindings_for(action).join("/")))
         .collect::<Vec<_>>()
         .join(" · ");
-    if app.page == Page::Tasks && app.pane == Pane::Detail {
-        text.push_str(" · list focused · enter/l focuses the pane");
+    if app.page.has_list_view() && app.pane == Pane::Detail {
+        text.push_str(if app.detail_focused() {
+            " · Detail active"
+        } else {
+            " · List active"
+        });
+        if app.page == Page::Tasks {
+            text.push_str(" · enter/l edits");
+        }
+        text.push_str(&format!(
+            " · {} focus",
+            app.config.bindings_for(&Action::FocusPane).join("/")
+        ));
     }
     Line::from(Span::styled(text, app.config.theme.style(Surface::Hint)))
 }

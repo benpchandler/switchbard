@@ -222,3 +222,31 @@ fn empty_and_short_details_clamp_and_page_switch_closes_focus() {
     ));
     assert!(h.render().contains("List active"));
 }
+
+#[test]
+fn reading_editing_and_pointer_focus_compose_without_losing_the_task() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    use switchbard_tui::app::{Mode, Pane};
+    let mut h = long_detail();
+    let selected = h.selected_title();
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::PageDown);
+    assert!(h.app.detail_scroll > 0);
+    h.press(KeyCode::Enter);
+    assert_eq!(h.app.mode, Mode::DetailFocus);
+    assert!(h.render().contains("enter/l edit"));
+    h.press(KeyCode::Esc);
+    assert_eq!(h.app.mode, Mode::Browse);
+    assert!(!h.app.detail_focused());
+    h.press(KeyCode::BackTab);
+    assert!(h.app.detail_focused());
+    h.press(KeyCode::PageDown);
+    let offset = h.app.detail_scroll;
+    mouse(&mut h, MouseEventKind::Down(MouseButton::Left), 10, 10);
+    assert!(!h.app.detail_focused());
+    assert_eq!(h.app.detail_scroll, offset);
+    assert_eq!(h.selected_title(), selected);
+    h.press(KeyCode::Tab);
+    assert_eq!(h.app.pane, Pane::None);
+    assert!(!h.app.detail_focused());
+}

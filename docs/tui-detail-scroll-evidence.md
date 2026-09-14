@@ -37,7 +37,9 @@ TASK-221: details taller than the terminal must remain readable. Enter opens and
 
 `crates/switchbard-tui/tests/detail_pane.rs` covers Enter-focused scrolling, reversible Shift+Tab, list selection and detail reset, hovered wheel/click routing, top/bottom clamping, wrapping with Japanese and accented text plus an unbroken string, terminal sizes 0x0/1x1/40x8/100x20/180x50, picker/filter/help precedence, remapped focus binding and help, empty and short details, and page-switch cleanup. The existing PR frame test compares inactive task/PR framing. The authenticated PR journey includes focus assertions but remains an optional ignored test; authenticated live PR focus is not claimed here.
 
-The shared `detail_pane::Interaction` owns hit regions and task detail focus/position. `app/detail.rs` owns scrolling decisions; both renderers clamp against the same wrapped paragraph geometry. The actual terminal loop enables and disables mouse capture and dispatches both key and mouse events. PR PageUp/PageDown preserves its existing detail-scrolling behavior even with list row focus; Tasks paging follows pane focus.
+The current detail-edit implementation distinguishes reading focus from its editable field-cursor mode, with `detail_pane::Hit` recording pointer regions. Opening Tasks details focuses reading; a second Enter or `l` activates editing. Shift+Tab returns to the list without closing the pane or losing the scroll position. Reading scroll does not trigger the editor's cursor-follow adjustment. The actual terminal loop enables and disables mouse capture and dispatches both key and mouse events. PR PageUp/PageDown preserves its existing detail-scrolling behavior even with list row focus; Tasks paging follows pane focus.
+
+Rebase recovery retained these contracts alongside the newer detail editor and Agents page. The unchanged 30 detail-edit and eight detail-pane E2Es pass, with one additional mixed reading/editing/Esc/Shift+Tab/mouse/page-switch journey. The focused recovery run passed 63 tests; four authenticated opt-in tests were excluded from that deterministic run.
 
 ## Final verification and delivery
 

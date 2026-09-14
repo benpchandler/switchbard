@@ -104,6 +104,7 @@ pub fn draw(
 ) -> u16 {
     let block = Block::default()
         .borders(Borders::ALL)
+        .title(" Detail ")
         .border_style(theme.style(Surface::Border));
     let inner = block.inner(area);
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
