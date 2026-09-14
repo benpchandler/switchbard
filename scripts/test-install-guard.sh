@@ -143,6 +143,33 @@ else
 fi
 [[ "$(receipt_field outcome)" == refused ]] || fail "receipt not marked refused for the missing --branch case"
 
+# --- TASK-227 AC #3: sb and sbt move together, never one without the other -
+stub_sb_reports() {
+    local commit="$1" branch="${2:-x}"
+    cat > "$BIN/sb" <<STUB
+#!/usr/bin/env bash
+[[ "\${1:-}" == "build-id" ]] || exit 1
+printf 'commit=%s\nbranch=%s\ndirty=false\nversion=0.4.0\n' "$commit" "$branch"
+STUB
+    chmod +x "$BIN/sb"
+}
+stub_reports "0000000000000000000000000000000000000000" # sbt: unknown commit, refuses
+stub_sb_reports "$BASE"                                   # sb: plain forward, would pass alone
+git -C "$REPO" checkout -q main
+set +e
+output="$(cd "$REPO" && PATH="$BIN:$PATH" bash "$GUARD" --dry-run sb sbt 2>&1)"
+status=$?
+set -e
+if [[ "$status" -ne 1 ]]; then
+    fail "sb+sbt should refuse together when sbt's own guard refuses" "$output"
+elif [[ "$output" == *"sb: dry run"* ]]; then
+    fail "sb must not be queued for install while sbt is refused (not atomic)" "$output"
+else
+    echo "ok: sb and sbt install atomically - sbt's refusal blocks sb too"
+fi
+[[ "$(receipt_field outcome)" == refused ]] || fail "receipt not marked refused for the atomic-refusal case"
+rm -f "$BIN/sb"
+
 # --- TASK-227: --main-authority drops instead of refusing, and receipts it -
 stub_reports "$STALE_UNRELATED" stale
 set +e

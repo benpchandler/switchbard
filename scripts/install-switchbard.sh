@@ -271,6 +271,9 @@ if [[ "$CURRENT_BRANCH" != "main" && $BRANCH_ACK -eq 0 && $FORCE -eq 0 ]]; then
     exit 1
 fi
 
+# Two passes, so neither binary is ever replaced when the other refuses
+# (TASK-227 AC #3): first decide every target's verdict, then only install if
+# nothing refused.
 REFUSED=0
 REASON=""
 FROM_COMMIT=""
@@ -303,24 +306,26 @@ for binary in "${TARGETS[@]}"; do
             FROM_COMMIT="$prior"
             FROM_BRANCH="$(installed_branch "$binary")"
         fi
-        if [[ $FORCE -eq 0 ]]; then
-            REFUSED=1
-            continue
-        fi
-        echo "  --force given; installing anyway." >&2
+        [[ $FORCE -eq 0 ]] && REFUSED=1
     fi
+done
 
+if [[ $REFUSED -eq 1 && $FORCE -eq 0 ]]; then
+    echo "REFUSED - not installing any of: ${TARGETS[*]} (neither binary moves while either refuses)." >&2
+    write_receipt refused "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON" ""
+    exit 1
+fi
+if [[ $REFUSED -eq 1 ]]; then
+    echo "--force given; installing ${TARGETS[*]} anyway." >&2
+fi
+
+for binary in "${TARGETS[@]}"; do
     if [[ $DRY_RUN -eq 1 ]]; then
         echo "$binary: dry run; not installing"
         continue
     fi
     cargo install --path "$(crate_for "$binary")" --locked
 done
-
-if [[ $REFUSED -eq 1 ]]; then
-    write_receipt refused "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON" ""
-    exit 1
-fi
 
 HOLD_UNTIL=""
 if [[ -n "$HOLD_DURATION" && $DRY_RUN -eq 0 ]]; then
