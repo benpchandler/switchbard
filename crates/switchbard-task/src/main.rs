@@ -19,6 +19,7 @@
 //! - Nothing here blocks or waits, so the banner/heartbeat rules don't
 //!   apply; every command does its work and exits.
 
+mod agent_cmd;
 mod field_cmd;
 mod goals_cmd;
 mod hierarchy_cmd;
@@ -202,6 +203,11 @@ enum Command {
     /// `fields:` list) — add/edit/remove/list
     #[command(subcommand)]
     Field(field_cmd::FieldCmd),
+    /// What running agent sessions report about themselves: `status` is the
+    /// status-line sink (JSON on stdin), `list` reads the records back.
+    /// Needs no Backlog repo
+    #[command(subcommand)]
+    Agent(agent_cmd::AgentCmd),
 }
 
 #[derive(Args)]
@@ -388,6 +394,9 @@ fn run(cli: &Cli) -> Result<()> {
         print!("{}", switchbard_core::build_id_report());
         return Ok(());
     }
+    if let Command::Agent(cmd) = &cli.command {
+        return agent_cmd::run_agent(cmd);
+    }
     if let Command::Storage(args) = &cli.command {
         let root = cli
             .repo
@@ -402,6 +411,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Storage(_) => {
             unreachable!("storage commands handled before legacy scope resolution")
         }
+        Command::Agent(_) => unreachable!("agent commands handled before repo resolution"),
         Command::List {
             status,
             in_project,

@@ -697,6 +697,53 @@ The control and projection health indicators are independent. Queue drafts and d
 
 ## Known gaps / debt
 
+- **Agents page: the live sessions in this repo (owner-directed 2026-09-13; TASK-225).**
+  The owner runs five or six interactive Claude sessions across repo tabs and
+  could not tell, from `sbt`, which sessions exist in a repo, which are idle
+  and waiting on him, or what each is about. Decisions:
+  - *Claude Code's own listing is the source of state.* `claude agents --json`
+    is documented for scripting and reports pid, cwd, session id, name and
+    `idle`/`busy`; the OS scan proves the process and supplies the pgid the
+    dispatch dedup needs. `switchbard-core/src/agent_sessions.rs` runs both
+    and joins them on pid; a listing failure degrades to the scan with
+    `AgentActivity::Unknown` and is reported, never hidden. Pid-less
+    background sessions in the listing are not shown (this module vouches
+    only for processes it can see).
+  - *Title resolution has one order* (`switchbard-core/src/session_title.rs`):
+    the listed name unless it is the derived default (`<dir>-<2 chars>`),
+    else the title of a task the session holds (`work_sessions` join on
+    session id), else the first user prompt read from a bounded head of the
+    transcript at the documented location - its entry format is documented as
+    internal, so that reader accepts only the shape it recognises and returns
+    nothing otherwise - else the listed name after all.
+  - *"Agents" is the name on both surfaces.* `sbt` gains a fourth page after
+    Pull Requests (Tasks / Pull Requests / Agents / Inbox), scoped to the repo
+    it runs in like every other page: one row per live session whose cwd is
+    inside one of the repo's worktrees, with state, the age the page has
+    observed that state (shown only once a change has been seen - a session
+    already idle at startup gets no fabricated age), worktree branch, title
+    and held task ids; a detail pane; an attention badge counting idle
+    sessions, live on every page. The GUI Command -> Fleet interactive rows
+    read the same `AgentSession`, so its mission shows the resolved title and
+    its now-line the state. Nothing is stored: each poll replaces the last.
+  - *Model, context use, cost and last activity come from the status line
+    (owner-directed 2026-09-13).* Claude Code hands its status-line command a
+    documented JSON payload on every session update; that is the only
+    push-style source for those facts. `sb agent status` reads one payload on
+    stdin and writes `~/.switchbard/agent-status/<session_id>.json`
+    (`switchbard-core/src/agent_status.rs`; `SWITCHBARD_AGENT_STATUS_DIR`
+    overrides; needs no repo), the owner's status-line script pipes its input
+    there in the background, and the Agents page joins the records on session
+    id: `model` and `ctx` columns, and `last` = time since the session's own
+    report, which moves every turn and so reads as "how long has this sat".
+    A session with no record shows blanks and the page's observed-state age
+    instead; stale records (dead pid, or a week untouched) are pruned on read.
+    `sb agent list` prints the records for scripts.
+  - *Named gaps for a second slice:* Codex sessions carry no state or title
+    until a Codex hook feeds a store (the `sb work hook` pattern); a
+    needs-input state for either CLI; jump-to-pane from a row (macOS `ps -E`
+    exposes `WEZTERM_PANE`); background sessions from the listing.
+
 - **"Safe to remove" now has exactly one definition** (`switchbard-core/src/removal_safety.rs`).
   It previously had three that disagreed: the Workspace row badge ran three checks, the bulk
   sweep ran five, and the single-row confirm dialog re-derived merged-ness from

@@ -15,6 +15,7 @@ fn inbox_cycles_and_resumes_both_list_states_without_mutation() {
     h.type_text("/title:example");
     h.press(KeyCode::Enter);
     let prs = h.app.state.clone();
+    h.press(KeyCode::Tab);
     let screen = h.press(KeyCode::Tab);
     assert_eq!(h.app.page, Page::Inbox);
     assert!(
@@ -61,6 +62,8 @@ fn inbox_cycles_and_resumes_both_list_states_without_mutation() {
 #[test]
 fn inbox_reports_help_and_narrow_render_are_real() {
     let mut h = Harness::new();
+    h.type_text(":page");
+    h.press(KeyCode::Enter);
     h.type_text(":page");
     h.press(KeyCode::Enter);
     h.type_text(":page");

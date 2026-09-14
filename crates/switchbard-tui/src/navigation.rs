@@ -19,6 +19,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             Page::PullRequests,
             if compact { "PRs" } else { "Pull Requests" },
         ),
+        (Page::Agents, "Agents"),
         (Page::Inbox, "Inbox"),
     ];
     let mut spans = Vec::with_capacity(10);
@@ -38,6 +39,9 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             spans.push(Span::raw(" "));
             spans.extend(pr_count_spans(app));
         }
+        if page == Page::Agents {
+            spans.extend(idle_agents_spans(app));
+        }
         spans.push(Span::raw(" "));
     }
     let mut line = Line::from(spans);
@@ -50,6 +54,29 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             .push(Span::styled(hint, app.config.theme.style(Surface::Keys)));
     }
     frame.render_widget(Paragraph::new(line), area);
+}
+
+/// Sessions in this repo waiting on the reader, on the attention surface
+/// like the open-PR count; nothing at zero, `…` until the first poll has
+/// answered, `?` when the last poll failed.
+fn idle_agents_spans(app: &App) -> Vec<Span<'static>> {
+    let theme = &app.config.theme;
+    let agents = &app.agents;
+    let mut spans = Vec::with_capacity(2);
+    let idle = agents.idle_count();
+    if idle > 0 {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            format!(" {idle} "),
+            theme.style(Surface::AttentionBadge),
+        ));
+    }
+    if agents.loading() {
+        spans.push(Span::styled(" …", theme.style(Surface::Hint)));
+    } else if agents.error.is_some() {
+        spans.push(Span::styled(" ?", theme.style(Surface::Hint)));
+    }
+    spans
 }
 
 fn pr_count_spans(app: &App) -> Vec<Span<'static>> {

@@ -34,6 +34,8 @@ pub struct ResumeRecord {
     pub pr_page: bool,
     #[serde(default)]
     pub inbox_page: bool,
+    #[serde(default)]
+    pub agents_page: bool,
     pub task_slot: usize,
     /// The live task view as its Lua record, the same text a saved slot holds.
     pub task_view: String,
@@ -124,6 +126,7 @@ fn decode_legacy(record: &str) -> Restored {
         )) => Restored::Record(ResumeRecord {
             pr_page,
             inbox_page: false,
+            agents_page: false,
             task_slot,
             task_view,
             task_selected,
@@ -144,6 +147,7 @@ mod tests {
         ResumeRecord {
             pr_page: true,
             inbox_page: false,
+            agents_page: false,
             task_slot: 2,
             task_view: "{ filter = \"status:!done\", group = \"project\" }".into(),
             task_selected: 7,
@@ -190,6 +194,7 @@ mod tests {
             Restored::Record(ResumeRecord {
                 pr_page: true,
                 inbox_page: false,
+                agents_page: false,
                 task_slot: 2,
                 task_view: "{}".into(),
                 task_selected: 7,

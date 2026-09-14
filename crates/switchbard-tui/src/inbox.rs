@@ -37,7 +37,9 @@ pub fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
             ])
         })
         .collect();
-    lines.push(Line::raw(":page cycles Tasks / Pull Requests / Inbox"));
+    lines.push(Line::raw(
+        ":page cycles Tasks / Pull Requests / Agents / Inbox",
+    ));
     lines.push(Line::raw(":bug <description> / :idea <description>"));
     frame.render_widget(
         Paragraph::new(lines).wrap(Wrap { trim: false }).block(

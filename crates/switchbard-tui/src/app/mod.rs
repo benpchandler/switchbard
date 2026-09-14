@@ -173,6 +173,8 @@ pub struct App {
     detail_draft: Option<detail_edit::DetailDraft>,
     pub page: Page,
     pub pull_requests: crate::pull_requests::PullRequests,
+    /// The Agents page: this repo's live sessions, polled off-thread.
+    pub agents: crate::agents::Agents,
     pub picker: Option<ValuePicker>,
     picker_parents: Vec<ValuePicker>,
     pub pr_merge: pr_merge::MergeFlow,
@@ -182,6 +184,17 @@ pub struct App {
     pub page_size: usize,
     pub telemetry: Telemetry,
     pub should_quit: bool,
+}
+
+/// The `:` verbs that work on a page with no task or PR list (Agents, Inbox):
+/// leaving, reloading, help, and filing reports. Everything else is a list
+/// control and is refused there. One list, read by both the completion menu
+/// and the command runner.
+fn command_allowed_off_lists(verb: &str) -> bool {
+    matches!(
+        verb,
+        "" | "q" | "quit" | "reload" | "page" | "help" | "bug" | "idea" | "dismiss"
+    )
 }
 
 impl App {
@@ -262,6 +275,7 @@ impl App {
             detail_draft: None,
             page: Page::Tasks,
             pull_requests,
+            agents: crate::agents::Agents::new(),
             picker: None,
             picker_parents: Vec::new(),
             column_purpose: ColumnPurpose::Filter,
@@ -412,6 +426,7 @@ impl App {
         resume::ResumeRecord {
             pr_page: self.page == Page::PullRequests,
             inbox_page: self.page == Page::Inbox,
+            agents_page: self.page == Page::Agents,
             task_slot,
             task_view: tasks.to_lua(&self.registry),
             task_selected: self.selected,
@@ -435,6 +450,7 @@ impl App {
             self.resume_pages(record);
             self.switch_page(match page {
                 "prs" => Page::PullRequests,
+                "agents" => Page::Agents,
                 "inbox" => Page::Inbox,
                 _ => Page::Tasks,
             });
@@ -510,6 +526,8 @@ impl App {
         self.pull_requests.restore_selection(record.pr_id.clone());
         self.switch_page(if record.inbox_page {
             Page::Inbox
+        } else if record.agents_page {
+            Page::Agents
         } else if record.pr_page {
             Page::PullRequests
         } else {
@@ -592,6 +610,34 @@ impl App {
             }
         }
         self.reload_work();
+        self.tick_agents();
+    }
+
+    /// Collect the agent poll and start the next one when due; the page's
+    /// rows are titled with the tasks the live-work store says they hold.
+    fn tick_agents(&mut self) {
+        let held = self.held_task_titles();
+        let before = self.agents.row().map(|row| row.pid);
+        if self.agents.tick(&self.repo_root, held, Instant::now()) {
+            let after = self.agents.row().map(|row| row.pid);
+            if self.page == Page::Agents && self.pane == Pane::Detail && before != after {
+                self.pane = Pane::None;
+                self.status = "Selected session is no longer running".into();
+            }
+        }
+    }
+
+    /// Session id -> title of the first task it holds, for session titling.
+    fn held_task_titles(&self) -> std::collections::HashMap<String, String> {
+        self.work
+            .iter()
+            .filter(|session| !session.abandoned)
+            .filter_map(|session| {
+                let claim = session.claims.first()?;
+                let task = self.tasks.iter().find(|task| task.id == claim.task_id)?;
+                Some((session.session_id.clone(), task.title.clone()))
+            })
+            .collect()
     }
 
     /// Re-read the live session records: a handful of small files, and the
@@ -1022,11 +1068,7 @@ impl App {
             names.push("more".to_string());
         }
         names.retain(|name| {
-            (self.page != Page::Inbox
-                || matches!(
-                    name.as_str(),
-                    "bug" | "idea" | "reload" | "page" | "help" | "q"
-                ))
+            (self.page.has_list_view() || command_allowed_off_lists(name))
                 && name.starts_with(typed)
                 && name != typed
         });
@@ -1050,7 +1092,7 @@ impl App {
             return;
         }
         let chord = KeyChord::from_event(&event);
-        if self.page != Page::Inbox {
+        if self.page.has_list_view() {
             if let (KeyCode::Char(digit), false) = (event.code, chord.ctrl) {
                 if let Some(position) = digit.to_digit(10).filter(|n| *n > 0) {
                     self.open_column_actions(position as usize);
@@ -1197,6 +1239,46 @@ impl App {
         true
     }
 
+    /// Cursor, detail and reload on the Agents page. Everything else falls
+    /// through to the shared handling.
+    fn apply_agents_action(&mut self, action: &Action) -> bool {
+        if self.pane == Pane::Detail {
+            let delta = match action {
+                Action::PageDown => Some(self.page_size as i32),
+                Action::PageUp => Some(-(self.page_size as i32)),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                self.agents.detail_scroll =
+                    (i32::from(self.agents.detail_scroll) + delta).clamp(0, 65535) as u16;
+                return true;
+            }
+        }
+        match action {
+            Action::Down => self.agents.step(1),
+            Action::Up => self.agents.step(-1),
+            Action::Top => self.agents.step(isize::MIN),
+            Action::Bottom => self.agents.step(isize::MAX),
+            Action::PageDown => self.agents.step(self.page_size as isize),
+            Action::PageUp => self.agents.step(-(self.page_size as isize)),
+            Action::Open => {
+                self.agents.detail_scroll = 0;
+                self.pane = if self.pane == Pane::Detail {
+                    Pane::None
+                } else {
+                    Pane::Detail
+                }
+            }
+            Action::Reload => {
+                let held = self.held_task_titles();
+                self.agents.poll_now(&self.repo_root, held);
+                self.status = "Polling agent sessions".into();
+            }
+            _ => return false,
+        }
+        true
+    }
+
     fn open_pr_browser(&mut self) {
         let Some(row) = self.pull_requests.row() else {
             self.status = "No PR selected".into();
@@ -1237,6 +1319,9 @@ impl App {
         if self.page == Page::PullRequests && self.apply_pr_action(action) {
             return;
         }
+        if self.page == Page::Agents && self.apply_agents_action(action) {
+            return;
+        }
         match action {
             Action::Merge => self.status = "Switch to Pull Requests to merge a PR".into(),
             Action::OpenBrowser => self.status = "Switch to Pull Requests to open a PR".into(),
@@ -1272,7 +1357,7 @@ impl App {
                 self.cancel_pr_merge();
                 if self.pane != Pane::None {
                     self.close_detail_pane();
-                } else if self.page != Page::Inbox && !self.filter_text().is_empty() {
+                } else if self.page.has_list_view() && !self.filter_text().is_empty() {
                     self.set_filter(String::new());
                 }
                 self.status.clear();
@@ -1350,12 +1435,7 @@ impl App {
 
     fn run_command(&mut self, command: &str) {
         let (verb, rest) = command.split_once(' ').unwrap_or((command, ""));
-        if self.page == Page::Inbox
-            && !matches!(
-                verb,
-                "q" | "quit" | "reload" | "page" | "help" | "bug" | "idea" | "dismiss" | ""
-            )
-        {
+        if !self.page.has_list_view() && !command_allowed_off_lists(verb) {
             self.status = "Switch to Tasks or Pull Requests to use list controls".into();
             return;
         }
@@ -1501,7 +1581,7 @@ impl App {
             std::mem::swap(&mut self.view, &mut self.inactive_view);
         }
         self.page = page;
-        if page != Page::Inbox {
+        if page.has_list_view() {
             self.state.sanitize(page, &self.registry);
         }
         self.refilter();
