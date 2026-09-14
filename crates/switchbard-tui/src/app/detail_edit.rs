@@ -289,7 +289,17 @@ impl App {
     /// toggling (`toggle_detail_acceptance`), which opens and commits in one
     /// keystroke and so never refreshes the snapshot immediately before its
     /// own save — see that function's doc.
-    fn begin_detail_edit(&mut self) -> bool {
+    ///
+    /// Also called from `reload_tasks` (`pub(super)` for that) after a
+    /// background file-change reload lands while the pane is in plain
+    /// `Mode::DetailFocus` — cursor navigation only, no picker or capture
+    /// open — so a `Space` toggle or a freshly opened picker's pick is
+    /// checked against what the pane now actually shows, not a snapshot from
+    /// before the very reload that just repainted it. `Mode::DetailInput`
+    /// and an open `Detail*` picker are deliberately excluded: the user is
+    /// mid-draft against the old content there, and the stale refusal on
+    /// save is the correct outcome, not a reload target to silently move.
+    pub(super) fn begin_detail_edit(&mut self) -> bool {
         let Some(task) = self.selected_task() else {
             self.status = "nothing selected".to_string();
             return false;
@@ -352,7 +362,18 @@ impl App {
         };
         match std::fs::read_to_string(&draft.path) {
             Ok(current) if current == draft.snapshot => Ok(draft),
-            Ok(_) => Err(format!("{id} changed on disk; reload and retry")),
+            // Names the actual gesture rather than a generic "reload and
+            // retry": one `Esc` always returns to plain `Mode::DetailFocus`
+            // (from a picker, from a capture, or already there), and `Enter`
+            // on the same row re-activates it with a fresh snapshot —
+            // `reload_tasks` also refreshes the snapshot on its own the
+            // moment a background file change lands while already in
+            // `Mode::DetailFocus`, so this message is a fallback for the
+            // window right after a stale save is refused, not the only way
+            // to recover.
+            Ok(_) => Err(format!(
+                "{id} changed on disk; press Esc then Enter to reload"
+            )),
             Err(error) => Err(format!("{id}: could not verify draft: {error}")),
         }
     }

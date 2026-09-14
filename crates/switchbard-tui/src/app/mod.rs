@@ -1798,6 +1798,18 @@ impl App {
                 _ => false,
             }) {
                 self.select(row);
+                // A background reload (another terminal's `sb edit`, an
+                // agent write) just repainted the pane with fresh content;
+                // refresh the stale-check snapshot to match it so the next
+                // `Space` toggle or picker pick is judged against what is
+                // now on screen. Only while the pane is plain cursor focus
+                // with nothing else open — `Mode::DetailInput` and an open
+                // `Detail*` picker hold a draft against the *old* content,
+                // and a stale refusal there is the correct outcome, not
+                // something to silently paper over.
+                if self.mode == Mode::DetailFocus {
+                    self.begin_detail_edit();
+                }
             } else if self.mode == Mode::BallName
                 || matches!(self.mode, Mode::DetailFocus | Mode::DetailInput(_))
                 || self.picker.as_ref().is_some_and(|picker| {
