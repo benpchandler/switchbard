@@ -1,5 +1,7 @@
 //! Rendering. Reads `App`, writes a frame, and leaves a text copy of the screen behind.
 
+mod history_picker;
+
 use std::str::FromStr;
 
 use ratatui::buffer::Buffer;
@@ -243,6 +245,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     }
                     if let Some(color) = paint::cell_color(
                         &app.state.paint,
+                        &app.config.palette,
                         &registry,
                         task,
                         *column,
@@ -652,6 +655,10 @@ fn browse_footer(app: &App) -> Line<'static> {
 }
 
 fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rect) {
+    if picker.purpose == PickerPurpose::History {
+        history_picker::draw(frame, app, picker, body);
+        return;
+    }
     let theme = &app.config.theme;
     let hint = picker::hint(picker);
     let width = picker
@@ -738,13 +745,13 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                 }
                 (PickerPurpose::PaintValues(column), Payload::Text(value)) => {
                     if let Some(color) = paint::value_color(&app.state.paint, *column, value)
-                        .and_then(|color| ratatui::style::Color::from_str(&color).ok())
+                        .and_then(|color| paint::resolve_color(&color, &app.config.palette))
                     {
                         style = style.fg(color);
                     }
                 }
                 (PickerPurpose::PaintRules, Payload::Rule(rule)) => {
-                    if let Some(color) = app.state.paint.get(*rule).and_then(PaintRule::swatch) {
+                    if let Some(color) = app.state.paint.get(*rule).and_then(|rule| rule.swatch(&app.config.palette)) {
                         style = style.fg(color);
                     }
                 }
@@ -890,6 +897,7 @@ fn picker_title(
         PickerPurpose::TaskProject(id) => format!("{id} · project"),
         PickerPurpose::TaskStatus(id) => format!("{id} · status"),
         PickerPurpose::Views => "views".to_string(),
+        PickerPurpose::History => "view history".to_string(),
         PickerPurpose::SaveView => "save view".to_string(),
         PickerPurpose::GlobalView => "make view global".to_string(),
         PickerPurpose::RenameView => "name which view".to_string(),

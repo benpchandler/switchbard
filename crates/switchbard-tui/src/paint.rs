@@ -85,7 +85,7 @@ impl PaintRule {
                 .split(',')
                 .filter_map(|pair| {
                     let (value, color) = pair.rsplit_once(':')?;
-                    Color::from_str(color).ok()?;
+                    resolve_color(color, &[])?;
                     Some((value.to_string(), color.to_string()))
                 })
                 .collect();
@@ -94,7 +94,7 @@ impl PaintRule {
                 colors,
             });
         }
-        Color::from_str(rhs.trim()).ok()?;
+        resolve_color(rhs.trim(), &[])?;
         let color = rhs.trim().to_string();
         if let Some(filter) = target.strip_prefix("rows:") {
             Some(PaintRule::Rows {
@@ -125,13 +125,13 @@ impl PaintRule {
     }
 
     /// A representative color for the list: the first value's, or the rule's own.
-    pub fn swatch(&self) -> Option<Color> {
+    pub fn swatch(&self, palette: &[String]) -> Option<Color> {
         match self {
             PaintRule::ByColumn { colors, .. } => colors
                 .first()
-                .and_then(|(_, color)| Color::from_str(color).ok()),
+                .and_then(|(_, color)| resolve_color(color, palette)),
             PaintRule::Rows { color, .. } | PaintRule::Column { color, .. } => {
-                Color::from_str(color).ok()
+                resolve_color(color, palette)
             }
         }
     }
@@ -141,6 +141,7 @@ impl PaintRule {
 /// the top rule is the base and claims whole rows.
 pub fn cell_color(
     rules: &[PaintRule],
+    palette: &[String],
     registry: &ColumnRegistry,
     task: &BacklogTask,
     column: Column,
@@ -149,6 +150,7 @@ pub fn cell_color(
 ) -> Option<Color> {
     cell_color_with(
         rules,
+        palette,
         column,
         registry,
         |column| {
@@ -165,13 +167,14 @@ pub fn cell_color(
 
 pub fn cell_color_with(
     rules: &[PaintRule],
+    palette: &[String],
     column: Column,
     registry: &ColumnRegistry,
     values: impl Fn(Column) -> Vec<String>,
     matches: impl Fn(&Filter) -> bool,
 ) -> Option<Color> {
     crate::paint_eval::cell_token(rules, column, registry, values, matches)
-        .and_then(|token| Color::from_str(token).ok())
+        .and_then(|token| resolve_color(token, palette))
 }
 
 /// The color a by-column rule assigns `value`, if any.
@@ -188,29 +191,26 @@ pub fn value_color(rules: &[PaintRule], column: Column, value: &str) -> Option<S
     })
 }
 
-/// Sets (or with `None`, clears) one value's color on `column`'s by-column rule,
-/// creating the rule at the bottom when it does not exist yet.
-/// Swap preset colors for their counterparts in `next`: a value colored with the
-/// n-th color of any known palette gets the n-th of the new one; hand-picked
-/// colors are left alone.
-pub fn recolor_from_palettes(rules: &mut [PaintRule], known: &[Vec<String>], next: &[String]) {
-    for rule in rules {
-        let PaintRule::ByColumn { colors, .. } = rule else {
-            continue;
-        };
-        for (_, color) in colors.iter_mut() {
-            let position = known
-                .iter()
-                .find_map(|palette| palette.iter().position(|c| c.eq_ignore_ascii_case(color)));
-            if let Some(index) = position {
-                if let Some(replacement) = next.get(index % next.len().max(1)) {
-                    *color = replacement.clone();
-                }
-            }
+/// Resolve a one-based palette slot against the current palette. Slot identity
+/// survives palette edits; shorter palettes cycle and an empty palette uses the
+/// built-in fallback. Literal named colors and legacy hex are never rewritten.
+pub fn resolve_color(token: &str, palette: &[String]) -> Option<Color> {
+    if let Some(slot) = token.strip_prefix('p') {
+        if !slot.is_empty() && slot.bytes().all(|byte| byte.is_ascii_digit()) {
+            let index = slot.parse::<usize>().ok()?.checked_sub(1)?;
+            let color = if palette.is_empty() {
+                AUTO_PALETTE[index % AUTO_PALETTE.len()]
+            } else {
+                palette[index % palette.len()].as_str()
+            };
+            return Color::from_str(color).ok();
         }
     }
+    Color::from_str(token).ok()
 }
 
+/// Sets (or with `None`, clears) one value's color on `column`'s by-column rule,
+/// creating the rule at the bottom when it does not exist yet.
 pub fn set_value_color(
     rules: &mut Vec<PaintRule>,
     column: Column,

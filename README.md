@@ -77,6 +77,10 @@ Switchbard can own task data in one local database at `~/.switchbard/switchbard.
 
 Use `sb --repo /path/to/repo storage status` to inspect authority. `storage migrate --kind project` previews all linked worktrees and relevant local branches; apply requires the exact preview digest and creates a verified private backup. Divergent copies refuse cutover until reconciled. See [the migration guide](docs/central-storage.md) for commands, collaboration, and recovery.
 
+## Terminal views
+
+`sbt` resumes the last view for each repo. Use `sbt --fresh` for the saved default, `v h` to browse automatic history, and `v s <number>` to keep a restored arrangement in a slot. History retains 30 days with count and byte ceilings; auto-painted colors follow the current palette. See [resume and history](docs/tui-view-history.md) for controls, limits, and recovery.
+
 ## Install
 
 ### macOS
