@@ -24,6 +24,10 @@ pub(crate) fn title(state: &ViewState, page: Page, registry: &ColumnRegistry) ->
         "Tasks excluding Done".into()
     } else if matches!(filter, "status:open" | "lifecycle:open") && page == Page::PullRequests {
         "Open pull requests".into()
+    } else if matches!(filter, "status:closed" | "lifecycle:closed") && page == Page::PullRequests {
+        "Closed pull requests".into()
+    } else if matches!(filter, "status:merged" | "lifecycle:merged") && page == Page::PullRequests {
+        "Merged pull requests".into()
     } else {
         format!("Filtered {}", subject.to_lowercase())
     };

@@ -322,13 +322,9 @@ fn draw_task_rows(
             }
         }
     }
-<<<<<<< HEAD
     cursor.page_size = visible_tasks.max(1);
     app.page_size = visible_tasks.max(1);
     app.detail_hit.list_rows = list_rows;
-=======
-    cursor.page_size = visible_tasks.max(1);
->>>>>>> 9a03b7d2 (Preview saved history with plain titles and current table rows)
 }
 
 fn draw_task_title(
