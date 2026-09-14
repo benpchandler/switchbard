@@ -89,21 +89,28 @@ pub fn pending_notice(dir: Option<&Path>, now: DateTime<Utc>) -> Option<String> 
         ));
     }
     let receipt = read_receipt(dir)?;
-    (receipt.outcome == "refused").then(|| {
-        let branch = receipt
-            .from_branch
-            .as_deref()
-            .unwrap_or("an unrecognized branch");
-        let reason = receipt.reason.as_deref().unwrap_or("reason not recorded");
-        format!(
-            "auto-install refused (installed build: {branch}): {reason} - \
-             run `mise run install --force` once you've confirmed that's safe"
-        )
-    })
+    let reason = receipt.reason.as_deref().unwrap_or("reason not recorded");
+    match receipt.outcome.as_str() {
+        "refused" => {
+            let branch = receipt
+                .from_branch
+                .as_deref()
+                .unwrap_or("an unrecognized branch");
+            Some(format!(
+                "auto-install refused (installed build: {branch}): {reason} - \
+                 run `mise run install --force` once you've confirmed that's safe"
+            ))
+        }
+        "failed" => Some(format!(
+            "auto-install's last build failed: {reason} - \
+             see ~/.switchbard/auto-install/auto-install.log, nothing was replaced"
+        )),
+        _ => None,
+    }
 }
 
 fn short(sha: &str) -> &str {
-    &sha[..sha.len().min(8)]
+    sha.get(..8).unwrap_or(sha)
 }
 
 #[cfg(test)]
@@ -192,6 +199,19 @@ mod tests {
         assert!(notice.contains("feat/z"), "{notice}");
         assert!(notice.contains("would drop 3 commits"), "{notice}");
         assert!(notice.contains("mise run install --force"), "{notice}");
+    }
+
+    #[test]
+    fn a_failed_build_receipt_surfaces_its_reason_and_names_nothing_replaced() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(
+            dir.path(),
+            "last-install.json",
+            r#"{"outcome": "failed", "reason": "cargo install failed for sbt (exit 101): error[E0308]"}"#,
+        );
+        let notice = pending_notice(Some(dir.path()), Utc::now()).expect("failure notice");
+        assert!(notice.contains("error[E0308]"), "{notice}");
+        assert!(notice.contains("nothing was replaced"), "{notice}");
     }
 
     #[test]
