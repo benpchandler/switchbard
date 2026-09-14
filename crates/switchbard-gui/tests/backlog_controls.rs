@@ -1773,12 +1773,32 @@ fn board_drag_failure_rolls_back_the_card_and_reloads_the_cache() {
     // Bounded poll for the real `backlog` CLI subprocess to finish and
     // fail — same pattern as
     // save_button_completes_a_real_write_round_trip_against_a_real_fixture_repo.
-    // Plain `run()` (see `drag_and_drop`'s doc) — it keeps settling in one
-    // step on every iteration of this loop even while the move stays
-    // pending the whole time.
+    //
+    // `run_steps`, not `run()`: this loop's own synthetic pointer is still
+    // resting at `target_center`, over the "In Progress" column's empty-state
+    // "+ Add task" button (`on_hover_text`, board.rs). `run()` asserts the UI
+    // reaches a no-more-repaints-needed state within `max_steps`, but once
+    // the pointer has sat still for `Style::interaction.tooltip_delay`
+    // (0.5s, egui default) that button legitimately starts showing its own
+    // hover tooltip — a brand-new `Area` that needs its own sizing pass +
+    // move-to-top before it settles (`egui::containers::area::Prepared::end`/
+    // `begin`), on top of whatever this iteration is already settling for the
+    // real save. Under load that lands in the same `run()` call the drop's
+    // own resolution needs, and the combined frame count can exceed
+    // `max_steps` — reproduced deterministically by running this test under
+    // parallel contention (`Repaint causes: [area.rs:554, area.rs:686]`,
+    // exactly this incidental tooltip's Area lifecycle, not the drop/save
+    // path itself). The tooltip is real, legitimate egui behavior that this
+    // test has no business asserting on either way, so — like
+    // `create_modal_task_is_visible_in_both_list_and_board_against_a_real_
+    // fixture_repo`'s own identical poll below — step a fixed, generous
+    // budget per iteration instead of demanding convergence: state reads
+    // (`pending_moves`, `backlog_status`) don't need `run()`'s settle
+    // guarantee, only enough real frames per iteration for the background
+    // thread's outcome to be picked up and rendered.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        harness.run();
+        harness.run_steps(4);
         if !harness.state().backlog_view.pending_moves.contains_key(
             &switchbard_gui::runtime::BacklogTaskKey::from((key).clone()),
         ) {
@@ -1954,9 +1974,19 @@ fn board_rail_edit_save_serializes_against_an_in_flight_drop_on_the_same_task() 
     // contending for it) is now free to proceed.
     drop(held);
 
+    // `run_steps`, not `run()` — same reasoning as the identical poll in
+    // `board_drag_failure_rolls_back_the_card_and_reloads_the_cache` above:
+    // `run()`'s "no more repaints needed within max_steps" assertion isn't
+    // suited to a loop that straddles indeterminate real wall-clock time
+    // waiting on a background thread. Nothing here parks the pointer on a
+    // hover target the way the drag test does, but the same class of
+    // incidental, legitimate egui repaint (a tooltip delay elapsing, a fade,
+    // an Area's own settle) could just as easily land inside one of these
+    // iterations under load and isn't what this loop is testing — only the
+    // background save's landed state is.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        harness.run();
+        harness.run_steps(4);
         let landed = harness
             .state()
             .backlog_repos
