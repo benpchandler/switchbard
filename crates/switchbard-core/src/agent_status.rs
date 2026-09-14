@@ -29,7 +29,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// A status-line payload is a few kilobytes; anything past this is not one.
 pub const MAX_STATUS_PAYLOAD_BYTES: usize = 1024 * 1024;
@@ -183,7 +186,13 @@ pub fn record_agent_status(dir: &Path, status: &AgentStatus) -> Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     let path = record_path(dir, &status.session_id)
         .ok_or_else(|| anyhow!("status carries an unsafe session_id"))?;
-    let tmp = path.with_extension("json.tmp");
+    let suffix = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(
+        ".{}-{}-{}.json.tmp",
+        status.session_id,
+        std::process::id(),
+        suffix
+    ));
     std::fs::write(&tmp, serde_json::to_vec_pretty(status)?)?;
     std::fs::rename(&tmp, &path).with_context(|| format!("writing {}", path.display()))?;
     Ok(())
@@ -329,5 +338,24 @@ mod tests {
             0
         );
         assert_eq!(live.age(now + 90), Duration::from_secs(90));
+    }
+
+    #[test]
+    fn concurrent_writers_leave_one_valid_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let status = parse_status_line_payload(PAYLOAD, Some(std::process::id()), 1_000).unwrap();
+        let first = status.clone();
+        let second = status;
+        let first_dir = dir.path().to_path_buf();
+        let second_dir = dir.path().to_path_buf();
+        let first = std::thread::spawn(move || record_agent_status(&first_dir, &first));
+        let second = std::thread::spawn(move || record_agent_status(&second_dir, &second));
+
+        first.join().unwrap().unwrap();
+        second.join().unwrap().unwrap();
+
+        assert!(load_agent_status(dir.path(), "abc123-def")
+            .unwrap()
+            .is_some());
     }
 }
