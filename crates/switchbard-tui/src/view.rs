@@ -125,9 +125,10 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         page_size: app.page_size,
         highlight: true,
     };
-    draw_task_rows(frame, app, &app.state, &app.rows, &mut cursor, inner);
+    let list_rows = draw_task_rows(frame, app, &app.state, &app.rows, &mut cursor, inner);
     app.scroll = cursor.scroll;
     app.page_size = cursor.page_size;
+    app.detail_hit.list_rows = list_rows;
 }
 
 struct TableCursor {
@@ -144,7 +145,7 @@ fn draw_task_rows(
     rows: &[Row],
     cursor: &mut TableCursor,
     inner: Rect,
-) {
+) -> Vec<(u16, usize)> {
     let theme = &app.config.theme;
     let registry = app.registry();
     let widths: Vec<Constraint> = state
@@ -323,8 +324,7 @@ fn draw_task_rows(
         }
     }
     cursor.page_size = visible_tasks.max(1);
-    app.page_size = visible_tasks.max(1);
-    app.detail_hit.list_rows = list_rows;
+    list_rows
 }
 
 fn draw_task_title(

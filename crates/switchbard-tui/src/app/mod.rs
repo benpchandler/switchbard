@@ -1432,6 +1432,15 @@ impl App {
             }
             Action::Quit => self.request_quit(),
             Action::View => self.open_view_picker(PickerPurpose::Views),
+            Action::FocusPane => {
+                if self.pane == Pane::Detail {
+                    if self.detail_focused() {
+                        self.mode = Mode::Browse;
+                    } else {
+                        self.enter_detail_focus();
+                    }
+                }
+            }
         }
     }
 

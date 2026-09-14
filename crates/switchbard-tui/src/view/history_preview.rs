@@ -32,7 +32,7 @@ pub(super) fn draw(
             page_size: 1,
             highlight: false,
         };
-        super::draw_task_rows(frame, app, state, &projection.rows, &mut cursor, body);
+        let _ = super::draw_task_rows(frame, app, state, &projection.rows, &mut cursor, body);
     }
     scroll
 }
