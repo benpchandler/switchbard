@@ -4,7 +4,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::{resume, App};
 use crate::page::Page;
-use crate::paint::PaintRule;
 use crate::picker::{Payload, PickOption, PickerPurpose};
 use crate::views::ViewState;
 
@@ -106,7 +105,7 @@ impl App {
                     label: format!(
                         "{} · {}",
                         relative_time(now, entry.visited_at),
-                        history_label(&state, &self.registry)
+                        crate::view::history_title::title(&state, self.page, &self.registry)
                     ),
                     count: 0,
                     key: None,
@@ -136,33 +135,6 @@ impl App {
             Err(error) => self.fail(format!("history entry unreadable: {error}")),
         }
     }
-}
-
-fn history_label(state: &ViewState, registry: &crate::columns::ColumnRegistry) -> String {
-    let mut label = state.label(registry);
-    let painted = state
-        .paint
-        .iter()
-        .map(|rule| match rule {
-            PaintRule::ByColumn { column, colors } => format!(
-                "by {} [{}]",
-                column.name(registry),
-                colors
-                    .iter()
-                    .map(|(value, color)| format!("{value}:{color}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            PaintRule::Rows { filter, color } => format!("rows {filter}:{color}"),
-            PaintRule::Column { column, color } => {
-                format!("column {}:{color}", column.name(registry))
-            }
-        })
-        .collect::<Vec<_>>();
-    if !painted.is_empty() {
-        label.push_str(&format!(" · painted {}", painted.join(", ")));
-    }
-    format!("{label} · {} cols", state.columns.len())
 }
 
 pub(super) fn epoch_seconds() -> u64 {

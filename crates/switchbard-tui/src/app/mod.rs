@@ -91,6 +91,12 @@ pub struct AppPaths {
     pub work_dir: Option<PathBuf>,
 }
 
+pub(crate) struct TaskProjection {
+    pub visible: Vec<usize>,
+    pub rows: Vec<group::Row>,
+    pub levels: Vec<Column>,
+}
+
 pub struct App {
     pub repo_root: PathBuf,
     /// What columns exist: the built-ins plus every field this repo declares.
@@ -347,6 +353,15 @@ impl App {
     /// A cell's text: what the column says, plus what only the app knows
     /// (rank, live work, and the title's roll-up badge).
     pub fn cell(&self, column: Column, task: &BacklogTask) -> String {
+        self.cell_for_view(&self.state, column, task)
+    }
+
+    pub(crate) fn cell_for_view(
+        &self,
+        state: &ViewState,
+        column: Column,
+        task: &BacklogTask,
+    ) -> String {
         match column {
             Column::Rank => self
                 .rank_of(task)
@@ -357,7 +372,7 @@ impl App {
             other => other.display_text(
                 &self.registry,
                 task,
-                self.state.abbreviated.contains(&other),
+                state.abbreviated.contains(&other),
                 &self.goals,
                 &self.relations.blocked,
             ),
@@ -1643,9 +1658,17 @@ impl App {
         } else {
             &self.inactive_state
         };
+        let projection = self.project_tasks(state);
+        self.visible = projection.visible;
+        self.rows = projection.rows;
+        self.group_levels = projection.levels;
+        self.select(self.selected);
+    }
+
+    pub(crate) fn project_tasks(&self, state: &ViewState) -> TaskProjection {
         let base = self.settings.effective().base_filter(&state.filter);
         let filter = Filter::parse(&format!("{base} {}", state.filter), &self.registry);
-        self.visible = (0..self.tasks.len())
+        let mut visible: Vec<usize> = (0..self.tasks.len())
             .filter(|&index| {
                 filter.matches(
                     &self.registry,
@@ -1659,7 +1682,7 @@ impl App {
             sort::apply(
                 &self.registry,
                 &self.tasks,
-                &mut self.visible,
+                &mut visible,
                 sort,
                 &self.top,
                 &self.goals,
@@ -1681,7 +1704,7 @@ impl App {
         let levels: Vec<Column> = if state.group.is_auto() {
             group::auto_levels(
                 &self.tasks,
-                &self.visible,
+                &visible,
                 &self.registry.groupable_task_columns(),
                 &headings,
                 Grouping::MAX_DEPTH,
@@ -1689,9 +1712,12 @@ impl App {
         } else {
             state.group.levels().to_vec()
         };
-        self.rows = group::rows(&self.tasks, &self.visible, &levels, &headings, pinned);
-        self.group_levels = levels;
-        self.select(self.selected);
+        let rows = group::rows(&self.tasks, &visible, &levels, &headings, pinned);
+        TaskProjection {
+            visible,
+            rows,
+            levels,
+        }
     }
 
     /// `o`, `:outline`/`:group`, or a column's menu: organize the list, or flatten it.

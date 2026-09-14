@@ -200,6 +200,7 @@ fn list(frame: &mut Frame, app: &mut App, area: Rect) {
         draw_row(
             frame,
             app,
+            &app.state,
             row,
             rect,
             offset + app.pull_requests.scroll == selected,
@@ -214,13 +215,17 @@ fn draw_cells(
     texts: &[String],
     style: ratatui::style::Style,
 ) {
-    let widths = column_widths(app, rect.width);
+    let widths = column_widths(app, &app.state, rect.width);
     let cells = crate::list_presentation::cells(rect, &widths);
     crate::list_presentation::header(frame, rect, &cells, texts, style);
 }
 
-fn column_widths(app: &App, width: u16) -> Vec<Constraint> {
-    app.state
+pub(crate) fn column_widths(
+    app: &App,
+    state: &crate::views::ViewState,
+    width: u16,
+) -> Vec<Constraint> {
+    state
         .columns
         .iter()
         .map(|column| match column {
@@ -235,15 +240,21 @@ fn column_widths(app: &App, width: u16) -> Vec<Constraint> {
         .collect()
 }
 
-fn draw_row(frame: &mut Frame, app: &App, row: &PrListRow, rect: Rect, selected: bool) {
+pub(crate) fn draw_row(
+    frame: &mut Frame,
+    app: &App,
+    state: &crate::views::ViewState,
+    row: &PrListRow,
+    rect: Rect,
+    selected: bool,
+) {
     let links = app
         .pull_requests
         .links
         .get(&row.url)
         .map(Vec::as_slice)
         .unwrap_or(&[]);
-    let texts: Vec<String> = app
-        .state
+    let texts: Vec<String> = state
         .columns
         .iter()
         .map(|column| {
@@ -260,7 +271,7 @@ fn draw_row(frame: &mut Frame, app: &App, row: &PrListRow, rect: Rect, selected:
                     "NF".to_string()
                 }
                 crate::columns::Column::Checks
-                    if rect.width < 70 && !app.state.glyph_columns.contains(column) =>
+                    if rect.width < 70 && !state.glyph_columns.contains(column) =>
                 {
                     match row.checks {
                         switchbard_core::PrChecks::Failed => "!",
@@ -270,7 +281,7 @@ fn draw_row(frame: &mut Frame, app: &App, row: &PrListRow, rect: Rect, selected:
                     }
                     .to_string()
                 }
-                _ if app.state.glyph_columns.contains(column) => {
+                _ if state.glyph_columns.contains(column) => {
                     app.config.glyph(*column, &values.join(","))
                 }
                 _ => values.join(","),
@@ -283,11 +294,11 @@ fn draw_row(frame: &mut Frame, app: &App, row: &PrListRow, rect: Rect, selected:
         Surface::Text
     });
     frame.render_widget(Paragraph::new("").style(style), rect);
-    let cells = crate::list_presentation::cells(rect, &column_widths(app, rect.width));
-    for ((column, text), cell) in app.state.columns.iter().zip(&texts).zip(cells.iter()) {
+    let cells = crate::list_presentation::cells(rect, &column_widths(app, state, rect.width));
+    for ((column, text), cell) in state.columns.iter().zip(&texts).zip(cells.iter()) {
         let mut style = app.config.theme.column_style(*column);
         if let Some(color) = crate::paint::cell_color_with(
-            &app.state.paint,
+            &state.paint,
             &app.config.palette,
             *column,
             app.registry(),
