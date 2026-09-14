@@ -162,9 +162,6 @@ pub struct App {
     /// pane's (`pull_requests.detail_scroll`) — the two panes never show at
     /// once, but each remembers its own place.
     pub detail_scroll: u16,
-    /// The task a live detail-focus session belongs to; sees `refilter_tasks`
-    /// cancel the session when a filter change moves selection elsewhere.
-    detail_task_id: Option<String>,
     /// The pre-write snapshot a detail-pane save checks before writing:
     /// `edit_backlog_task_expected`'s revision guard only fires for a
     /// centrally-stored task, so this raw-content compare is the "or
@@ -249,7 +246,6 @@ impl App {
             pane: Pane::None,
             detail_cursor: 0,
             detail_scroll: 0,
-            detail_task_id: None,
             detail_draft: None,
             page: Page::Tasks,
             pull_requests,

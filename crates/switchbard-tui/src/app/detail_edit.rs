@@ -77,7 +77,6 @@ impl App {
         }
         let rows = self.detail_rows();
         self.detail_cursor = self.detail_cursor.min(rows.len().saturating_sub(1));
-        self.detail_task_id = self.selected_task().map(|task| task.id.clone());
         self.mode = Mode::DetailFocus;
         self.begin_detail_edit();
         self.status.clear();
@@ -97,7 +96,6 @@ impl App {
         self.pane = Pane::None;
         self.detail_cursor = 0;
         self.detail_scroll = 0;
-        self.detail_task_id = None;
         self.detail_draft = None;
     }
 
@@ -198,6 +196,15 @@ impl App {
     /// `Space` (or Enter) on an acceptance row: flip its checked state
     /// through `set_backlog_acceptance_checked`, gated by the same
     /// stale-draft compare as every other detail-pane save.
+    ///
+    /// Deliberately does **not** call `begin_detail_edit` here: unlike every
+    /// other row, a toggle opens and commits in the same keystroke, so
+    /// re-snapshotting immediately beforehand would compare the file against
+    /// itself and the stale-draft guard would never fire. The snapshot this
+    /// checks against is whichever one is already current — taken when focus
+    /// entered the pane, or refreshed after this task's last successful
+    /// detail-pane save — so a real edit landing anywhere in between is
+    /// still caught.
     fn toggle_detail_acceptance(&mut self, position: usize) {
         let Some(task) = self.selected_task() else {
             return;
@@ -209,18 +216,9 @@ impl App {
         let Some(item) = task.acceptance_criteria.get(position) else {
             return;
         };
+        let id = task.id.clone();
         let checklist_index = item.index;
         let checked = !item.checked;
-        if !self.begin_detail_edit() {
-            return;
-        }
-        let Some(id) = self
-            .detail_draft
-            .as_ref()
-            .map(|draft| draft.task_id.clone())
-        else {
-            return;
-        };
         match self.save_detail_checklist(&id, checklist_index, checked) {
             Ok(_) => {
                 self.reload_tasks();
@@ -243,6 +241,14 @@ impl App {
         };
         match event.code {
             KeyCode::Tab => self.cancel_detail_and_switch_page(),
+            // A new-label capture came from the labels picker (`n`), so
+            // canceling it returns there rather than dropping all the way
+            // to plain cursor focus — the same place a *successful* add
+            // (`commit_detail_new_label`) already reopens into.
+            KeyCode::Esc if kind == DetailInputKind::NewLabel => {
+                self.input.clear();
+                self.open_detail_labels_picker();
+            }
             KeyCode::Esc => {
                 self.input.clear();
                 self.mode = Mode::DetailFocus;
@@ -277,8 +283,12 @@ impl App {
 
     /// Snapshot the selected task's file for the stale-check, refusing on a
     /// read-only task or an unreadable file. Called when focus is gained and
-    /// again every time a specific row's editor opens, so the snapshot is
-    /// always as fresh as the moment editing actually began.
+    /// again every time a row that opens a separate editor (a picker or a
+    /// single-line capture) does so, so the snapshot is as fresh as the
+    /// moment editing actually began. The one exception is acceptance
+    /// toggling (`toggle_detail_acceptance`), which opens and commits in one
+    /// keystroke and so never refreshes the snapshot immediately before its
+    /// own save — see that function's doc.
     fn begin_detail_edit(&mut self) -> bool {
         let Some(task) = self.selected_task() else {
             self.status = "nothing selected".to_string();
