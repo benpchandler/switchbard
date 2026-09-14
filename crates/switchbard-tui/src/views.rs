@@ -586,13 +586,32 @@ impl ViewState {
 
     /// Parses the record form; anything unreadable yields the default state.
     pub fn from_lua(text: &str, registry: &ColumnRegistry) -> ViewState {
-        let lua = Lua::new();
-        let mut dropped = Vec::new();
-        lua.load(format!("return {text}"))
+        Self::try_from_lua(text, registry).unwrap_or_default()
+    }
+
+    /// Fallible arrangement parsing with no filesystem/process libraries and
+    /// bounded memory/instructions. Shared by restart recovery and history.
+    pub fn try_from_lua(text: &str, registry: &ColumnRegistry) -> Result<ViewState, String> {
+        if text.len() > 64 * 1024 {
+            return Err("view record exceeds 64 KiB".into());
+        }
+        let lua = Lua::new_with(mlua::StdLib::NONE, mlua::LuaOptions::default())
+            .map_err(|error| error.to_string())?;
+        lua.set_memory_limit(2 * 1024 * 1024)
+            .map_err(|error| error.to_string())?;
+        lua.set_hook(
+            mlua::HookTriggers::new().every_nth_instruction(10_000),
+            |_, _| {
+                Err(mlua::Error::RuntimeError(
+                    "view record instruction limit exceeded".into(),
+                ))
+            },
+        );
+        let table = lua
+            .load(format!("return {text}"))
             .eval::<Table>()
-            .ok()
-            .and_then(|table| parse_view(&table, registry, &mut dropped).ok())
-            .unwrap_or_default()
+            .map_err(|error| error.to_string())?;
+        parse_view(&table, registry, &mut Vec::new())
     }
 }
 
@@ -987,7 +1006,17 @@ fn lua_view(view: &ViewState, registry: &ColumnRegistry) -> String {
 }
 
 fn lua_string(text: &str) -> String {
-    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+    let mut escaped = String::from("\"");
+    for character in text.chars() {
+        match character {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            c if c.is_ascii_control() => escaped.push_str(&format!("\\{:03}", c as u32)),
+            c => escaped.push(c),
+        }
+    }
+    escaped.push('"');
+    escaped
 }
 
 fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
