@@ -9,6 +9,9 @@ repository.workspace = true
 homepage.workspace = true
 description = "Terminal UI for switchbard: drive the backlog from a terminal tab"
 
+[lints]
+workspace = true
+
 [dependencies]
 switchbard-core = { path = "../switchbard-core" }
 anyhow.workspace = true

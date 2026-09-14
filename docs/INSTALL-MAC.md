@@ -84,8 +84,8 @@ Without mise:
 git clone https://github.com/benpchandler/switchbard
 cd switchbard
 cargo fmt --all -- --check
-RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets -- -D warnings
-RUSTFLAGS="-D warnings" cargo test --workspace --all-targets
+cargo clippy --workspace --all-targets
+cargo test --workspace --all-targets
 bash scripts/package-dmg.sh
 open target/dist/Switchbard-v0.1.1-macos-arm64.dmg
 ```
