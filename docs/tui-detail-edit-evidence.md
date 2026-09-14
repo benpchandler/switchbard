@@ -53,7 +53,7 @@ undecided surface. The owner authorized implementation on 2026-09-13.
 | Focused | A second `open`/`l`/`Right` moves the cursor in; `j`/`k` move it; the cursor row is highlighted. | `second_open_or_right_focuses_the_pane`, `j_k_move_the_cursor_without_moving_list_selection`, `cursor_highlight_follows_j_and_k` |
 | Editing input | Title/due-date/new-label capture prefills, types, and shows a two-line footer (draft + status). | `title_edit_prefills_saves_and_round_trips_non_ascii`, `due_date_validates_clears_and_rejects_garbage`, `labels_multi_select_toggles_and_a_new_label_can_be_added` |
 | Saving success | Write lands, `reload_tasks` + reselect, status names the field, pane stays focused on the same row. | `title_edit_prefills_saves_and_round_trips_non_ascii`, `status_priority_and_project_pickers_write_through_the_native_layer`, `due_date_validates_clears_and_rejects_garbage`, `space_and_enter_toggle_an_acceptance_row` |
-| Save failure (stale identity) | A file changed on disk between focus and save fails visibly with no write. | `stale_draft_on_disk_fails_the_save_and_keeps_the_typed_input` |
+| Save failure (stale identity) | A file changed on disk between focus and save fails visibly with no write, for a typed field, a picker-driven field, and an acceptance toggle. | `stale_draft_on_disk_fails_the_save_and_keeps_the_typed_input`, `stale_draft_blocks_a_picker_driven_field_pick`, `stale_draft_blocks_an_acceptance_toggle_and_leaves_the_file_untouched` |
 | Read-only task | Fields render, cursor moves, every edit attempt is refused with a status message and no write. | `read_only_task_shows_fields_but_refuses_every_edit` |
 | Nothing selected | The pane says "nothing selected"; the focus gesture is a no-op. | `nothing_selected_makes_the_focus_gesture_a_no_op` |
 | Zero acceptance items | No acceptance section renders (`field_rows` only extends past a task's own `acceptance_criteria.len()`). | Covered by every test against the 3-task fixture, whose seeded tasks carry exactly one acceptance item each, plus the zero-label fixtures in `zero_and_many_labels_render_as_none_or_a_joined_list`, which carry the same single-item shape; the many-item test below is the same code path at the other extreme, so both ends of `0..len()` are exercised. |
@@ -72,6 +72,7 @@ undecided surface. The owner authorized implementation on 2026-09-13.
 | Switching page (Tab) closes pane focus and cancels input | From cursor-only focus, a mid-field capture, and an open Detail* picker. | `tab_while_focused_or_mid_edit_switches_page_and_cancels` |
 | Filter that hides the selected task while pane focused | N/A as stated — see note below; the adjacent, reachable scenario is covered instead. | `filter_that_hides_the_selected_task_updates_the_unfocused_pane_live` |
 | Failure: writer error surfaces in status and preserves input | A rejected due date and a stale save both keep the typed draft and show the error. | `due_date_validates_clears_and_rejects_garbage`, `stale_draft_on_disk_fails_the_save_and_keeps_the_typed_input` |
+| Cancel a label picker's own capture returns to the picker | Esc on a "new label" draft goes back to the labels panel, the same place a successful add already reopens into — not out to plain cursor focus. | `esc_from_a_new_label_capture_returns_to_the_labels_picker` |
 
 ### N/A note: "filter that hides the selected task while pane focused"
 
@@ -94,7 +95,7 @@ cancel-on-disappearance branch `reload_tasks` already runs for `TaskStatus`/
 
 ## Evidence sources and limits
 
-- `crates/switchbard-tui/tests/detail_edit.rs`: the 22 tests named above, run
+- `crates/switchbard-tui/tests/detail_edit.rs`: the 25 tests named above, run
   through the real key-handling path (`Harness::press`/`type_text`) against a
   real temporary Backlog-format repo, the same harness every other `sbt` test
   file uses.
@@ -137,6 +138,39 @@ cancel-on-disappearance branch `reload_tasks` already runs for `TaskStatus`/
   instant (moving a file into `backlog/drafts` after an earlier seed+tick)
   presses `r` (`Action::Reload`) instead, the same un-throttled path a user
   gets from the keyboard (`read_only_task_shows_fields_but_refuses_every_edit`).
+- **Independent-review fix (MAJOR):** `toggle_detail_acceptance` was calling
+  `begin_detail_edit` (re-snapshotting the draft) immediately before its own
+  `save_detail_checklist` call, so the stale-draft compare always ran against
+  a snapshot of itself — a real edit landing between focus and a `Space`
+  toggle was silently overwritten instead of refused. `Space` is the one row
+  that opens and commits in a single keystroke, so unlike every other field
+  there is no separate "editor open" moment to snapshot at; the fix snapshots
+  only at focus entry (and after this task's own prior successful save) and
+  never refreshes immediately before the toggle's save. Verified by
+  temporarily reintroducing the bad `begin_detail_edit` call and confirming
+  `stale_draft_blocks_an_acceptance_toggle_and_leaves_the_file_untouched`
+  fails against it (it turns "changed on disk; reload and retry" into a raw
+  parse error against the tampered file, which is the actual behavior the
+  guard exists to prevent). `stale_draft_blocks_a_picker_driven_field_pick`
+  is the matching regression test for a picker-driven field, which never had
+  this bug (its snapshot is already taken when the picker opens, not
+  immediately before the commit) but had no dedicated test before this pass.
+- **Independent-review fix:** a "new label" capture's Esc handler dropped
+  straight to `Mode::DetailFocus`, while a *successful* add reopened the
+  labels picker — an inconsistent cancel/commit symmetry. Esc on
+  `DetailInputKind::NewLabel` now reopens the labels picker too
+  (`esc_from_a_new_label_capture_returns_to_the_labels_picker`).
+- **Independent-review cleanup:** removed `App::detail_task_id`, a
+  write-only field whose doc comment claimed a cancellation mechanism that
+  actually lives in `reload_tasks`'s existing per-`PickerPurpose`
+  cancellation branch (extended to cover `Mode::DetailFocus`/`DetailInput`
+  directly, with no dependency on the removed field); split `draw_detail`
+  into `build_detail_lines` (row construction) and `adjust_detail_scroll`
+  (the cursor-visibility math) so neither exceeds the repo's function-length
+  norm; and replaced raw `[index]`/`[&id]` indexing in `detail_row_text` with
+  `.get()` chains and an `.expect("invariant: ...")` naming exactly which
+  invariant (`detail_pane::field_rows` and the row list agree by
+  construction) would have to break for the index to be out of range.
 - `mise run fmt`, `mise run clippy` (workspace, `RUSTFLAGS=-D warnings`), and
   `mise run test` (full workspace suite) all pass unpiped with exit code 0
   on the final tree.
