@@ -49,7 +49,7 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 
 ## Planned
 
-- **Recognizable view-history previews (owner-directed 2026-09-14, TASK-154 reopened).** Replace serialized arrangement labels with plain-language titles and a miniature table using the saved arrangement against current cached data. Show actual headings, grouping and palette-aware paint, clearly label current data, and preserve the active view while browsing. Review one real example before broad visual acceptance. State and stress evidence: `docs/history-preview-review.md`.
+- **Recognizable view-history previews (owner-directed 2026-09-14, TASK-154 reopened).** Render each history entry as its own compact card containing a plain-language title, relative time and miniature table using the saved arrangement against current cached data. Multiple cards and their tables must be visible simultaneously; a list with one shared selected preview does not meet this requirement. Show actual headings, grouping and palette-aware paint, clearly label current data, and preserve the active view while browsing. Review one real example before broad visual acceptance. State and stress evidence: `docs/history-preview-review.md`.
 
 - **Task detail focus and scrolling (owner-directed 2026-09-13, TASK-221).** Enter opens and focuses task details. Shift+Tab switches focus between the task list and its open detail pane; returning to the list retains the preview. Keyboard scrolling follows focus and mouse scrolling follows the pane under the pointer. Esc closes details. Long wrapped content remains reachable in short terminals. State and stress evidence: `docs/tui-detail-scroll-evidence.md`.
 

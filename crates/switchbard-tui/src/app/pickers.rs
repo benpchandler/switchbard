@@ -515,11 +515,14 @@ impl App {
         if picker.purpose == PickerPurpose::History {
             match event.code {
                 KeyCode::PageDown => {
-                    picker.preview_scroll = picker.preview_scroll.saturating_add(3);
+                    picker.selected = picker
+                        .selected
+                        .saturating_add(2)
+                        .min(picker.matching().len().saturating_sub(1));
                     return;
                 }
                 KeyCode::PageUp => {
-                    picker.preview_scroll = picker.preview_scroll.saturating_sub(3);
+                    picker.selected = picker.selected.saturating_sub(2);
                     return;
                 }
                 _ => picker.preview_scroll = 0,

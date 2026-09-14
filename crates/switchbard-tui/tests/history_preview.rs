@@ -42,7 +42,7 @@ fn colored_grouped_preview_shows_current_tasks_without_changing_live_view() {
     capture(&h, "tasks-3-history-preview");
     assert!(screen.contains("Tasks · grouped by Status"), "{screen}");
     assert!(screen.contains("Current data · 3 matches"), "{screen}");
-    assert!(screen.contains("Fix login redirect loop"), "{screen}");
+    assert!(screen.contains("Write onboarding guide"), "{screen}");
     assert!(screen.contains("▸ To Do"), "{screen}");
     assert!(!screen.contains("painted by"), "{screen}");
     assert_eq!(
@@ -99,6 +99,7 @@ fn live_pr_preview_uses_actual_cached_rows_and_keeps_selection() {
         },
         switchbard_tui::telemetry::Telemetry::in_memory(),
     );
+    h.terminal = Terminal::new(TestBackend::new(120, 30)).expect("cards terminal");
     h.next_list_page();
     let deadline = Instant::now() + Duration::from_secs(90);
     while h.app.pull_requests.loading() && Instant::now() < deadline {
@@ -136,9 +137,9 @@ fn live_pr_preview_uses_actual_cached_rows_and_keeps_selection() {
     assert_eq!(h.app.pull_requests.visible, visible);
     capture(&h, "pull-requests-all");
     h.press(KeyCode::Esc);
-    h.type_text("/status:open");
+    h.type_text("/status:merged");
     h.press(KeyCode::Enter);
-    h.app.checkpoint_session().expect("capture open PRs");
+    h.app.checkpoint_session().expect("capture merged PRs");
     h.type_text("v1");
     capture(&h, "prs-1-normal-list");
     let before = h.app.resume_state();
@@ -147,10 +148,104 @@ fn live_pr_preview_uses_actual_cached_rows_and_keeps_selection() {
     let screen = h.type_text("h");
     h.press(KeyCode::Down);
     capture(&h, "prs-3-history-preview");
-    assert!(screen.contains("Open pull requests"), "{screen}");
+    assert!(screen.contains("Merged pull requests"), "{screen}");
     assert_eq!(h.app.resume_state(), before);
-    capture(&h, "pull-requests");
+    assert!(
+        screen.matches("Current data").count() >= 2,
+        "two cards: {screen}"
+    );
+    assert!(
+        screen.matches("1 id").count() >= 2
+            || screen.matches("1 #").count() >= 2
+            || screen.matches("1 PR").count() >= 2,
+        "independent PR headers: {screen}"
+    );
+    assert!(
+        !screen.contains("No current pull requests match"),
+        "both miniatures need rows: {screen}"
+    );
+    capture(&h, "pull-requests-cards");
     h.press(KeyCode::Enter);
     assert!(h.render().contains("history restored"));
     capture(&h, "prs-4-restored-list");
+}
+
+#[test]
+fn every_visible_history_entry_has_its_own_table_before_selection() {
+    let mut h = Harness::new();
+    h.terminal = Terminal::new(TestBackend::new(120, 30)).expect("ordinary terminal");
+    for query in ["login", "theme"] {
+        h.type_text(&format!("/{query}"));
+        h.press(KeyCode::Enter);
+        h.app.checkpoint_session().expect("capture separate view");
+        h.press(KeyCode::Esc);
+    }
+    let before = h.app.resume_state();
+    let screen = h.type_text("vh");
+    assert!(
+        screen.matches("Current data").count() >= 2,
+        "each card needs a miniature: {screen}"
+    );
+    assert!(
+        screen.contains("Fix login redirect loop"),
+        "unselected miniature missing: {screen}"
+    );
+    assert!(
+        screen.contains("Add dark theme"),
+        "selected miniature missing: {screen}"
+    );
+    assert!(
+        screen.matches("1 id").count() >= 2,
+        "independent table headers: {screen}"
+    );
+    assert_eq!(h.app.resume_state(), before);
+    assert_eq!(
+        cell_fg(&h, "Tasks matching “login”"),
+        h.app
+            .config
+            .theme
+            .style(switchbard_tui::config::Surface::Text)
+            .fg
+    );
+    assert_eq!(
+        cell_fg(&h, "view history"),
+        h.app
+            .config
+            .theme
+            .style(switchbard_tui::config::Surface::Text)
+            .fg
+    );
+    assert_eq!(
+        cell_fg(&h, "4 columns"),
+        h.app
+            .config
+            .theme
+            .style(switchbard_tui::config::Surface::Hint)
+            .fg
+    );
+    capture(&h, "tasks-cards");
+}
+
+#[test]
+fn nested_group_card_keeps_heading_context_and_actual_task_rows() {
+    let mut h = Harness::new();
+    h.type_text(":group status,priority,ball,blocked");
+    h.press(KeyCode::Enter);
+    assert_eq!(h.app.state.group.levels().len(), 4, "four-level fixture");
+    h.app.checkpoint_session().expect("capture nested view");
+    let before = h.app.resume_state();
+    let screen = h.type_text("vh");
+    assert!(screen.contains("Current data"), "{screen}");
+    assert!(
+        screen.contains('›'),
+        "nested values form a breadcrumb: {screen}"
+    );
+    assert!(
+        screen.contains("Write onboarding guide")
+            || screen.contains("Add dark theme")
+            || screen.contains("Fix login redirect loop"),
+        "miniature must show data, not only headings: {screen}"
+    );
+    assert_eq!(h.app.resume_state(), before);
+    capture(&h, "tasks-nested-card");
 }

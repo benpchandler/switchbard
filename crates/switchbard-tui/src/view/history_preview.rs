@@ -15,7 +15,8 @@ pub(super) fn draw(
     if app.page == Page::PullRequests {
         return draw_prs(frame, app, state, area, scroll);
     }
-    let projection = app.project_tasks(state);
+    let mut projection = app.project_tasks(state);
+    projection.rows = compact_headings(projection.rows);
     let scroll = scroll.min(projection.rows.len().saturating_sub(1));
     let body = current_data(frame, app, area, projection.visible.len(), "");
     if projection.visible.is_empty() {
@@ -126,4 +127,21 @@ fn current_data(frame: &mut Frame, app: &App, area: Rect, count: usize, suffix: 
         height: area.height.saturating_sub(1),
         ..area
     }
+}
+
+/// Nested outlines retain their exact heading values without crowding task rows
+/// out of a miniature. The full table keeps its original separate heading rows.
+fn compact_headings(rows: Vec<crate::group::Row>) -> Vec<crate::group::Row> {
+    use crate::group::Row;
+    let mut compact = Vec::with_capacity(rows.len());
+    for row in rows {
+        match (compact.last_mut(), row) {
+            (Some(Row::Heading { text, .. }), Row::Heading { text: next, .. }) => {
+                text.push_str(" › ");
+                text.push_str(&next);
+            }
+            (_, row) => compact.push(row),
+        }
+    }
+    compact
 }
