@@ -14,23 +14,24 @@ Always resume the latest checkpoint on a cold start; `--fresh` opens the deliber
 | 153.2: same self-restart representation | `App::resume_state` produces the existing `sbt-resume-1` ResumeRecord; both environment handoff and `.resume` file consume it. Codec tests retain older named records and legacy positional records. |
 | 153.3: deliberate defaults stay untouched | Cold/default/fresh and PTY tests inspect persisted slot output and prove automatic capture does not create or change repo/global `.lua` slots. |
 | 153.4: first-ever launch | Cold-start test with no resume file opens the deliberately saved default. |
-| 153.5: documented opt-out | CLI parsing test verifies `--fresh`; `docs/tui-view-history.md` documents semantics and self-restart precedence. |
+| 153.5: documented opt-out | Real PTY launches verify `--fresh` clears the prior session filter; rendered `?` help advertises history and fresh launch; `docs/tui-view-history.md` documents semantics and self-restart precedence. |
 | 154.1: one automatic capture path | `App::tick` checks the deadline; timer and every graceful exit call `checkpoint_session`. App deadline tests verify capture without saving and while the paint picker remains open. Real PTY test keeps a stable copied binary alive through the actual 30-second deadline, verifies both durable files while it is running, then sends SIGKILL and verifies cold restoration; it also covers SIGHUP/SIGTERM/SIGINT. |
-| 154.2: global dedupe / move to front | Store tests execute A/B/A, idle capture, cold revisit, expiry and reload; one arrangement moves to front and is re-dated, with no duplicate for names or cursor positions. |
+| 154.2: global dedupe / move to front | `tests/persistence_edges.rs` uses persisted fixtures and real keys for A/B/A, idle capture, cold revisit, expiry and reload; one arrangement moves to front and is re-dated, with no duplicate for names or cursor positions. |
 | 154.3: recognizable labels and time | `tests/history_recognition.rs` and `tests/view_history.rs` render actual menus with relative age, filter/sort/group/column/glyph/row layout descriptions and complete paint assignments. Wrapped selected preview and PgUp/PgDn reveal long entries without restoring. |
 | 154.4: restore and promote | Real keys `v h`, Enter, `v s 2` restore and save; reopening proves the slot is durable. Picker payloads retain the serialized entry, so a concurrent capture cannot redirect selection to a different entry. |
 | 154.5 / prerequisite 152: current palette | Paint tests reproduce and fix literal hex corruption, assert auto `p<n>` storage, current-palette cell/picker rendering, reload, shorter/empty palettes, and legacy hex retention. History tests restore token-backed paint after a palette change. Explicit literals remain literal. |
-| 154.6: bounded retention | Store tests cover 30-day expiry, active renewal, 1000 global entries, 4 MiB file trimming, 64 KiB entry rejection and bounded input parsing. Limits are documented. |
+| 154.6: bounded retention | `tests/persistence_edges.rs` covers 30-day expiry, active renewal, 1000 global entries, 4 MiB file trimming, 64 KiB entry rejection and bounded input parsing. Limits are documented. |
 
 ## State and stress matrix
 
 | Dimension | Evidence and result |
 | --- | --- |
-| Default, first run, fresh, cold/restart precedence, resumption | Cold-start, codec and CLI tests passed. |
+| Default, first run, fresh, cold/restart precedence, resumption | Cold-start, codec, real CLI launch and rendered help tests passed. |
 | Active and changed views, timer, exit, repeated capture, A/B/A, independent pages | App/history tests passed; picker mode does not starve the timer. |
-| Empty, one, many, 1000 entries, expired records and byte ceiling | Store tests and actual rendered menu tests passed. |
-| Corrupt/future files, failed writes, busy lock, external edits, retry, killed writer | Sources and prior in-memory history are preserved. OS locks release on process death; unique temporary names avoid abandoned-file blockage. Storage regression tests passed. |
-| Long labels, multiline/control characters, unbroken strings and non-Latin text | Shared Lua codec round-trip test passed; render tests cover Japanese, accented Latin and long unbroken strings. |
+| Empty, one, many, 1000 entries, expired records and byte ceiling | Persisted-fixture App journeys and actual rendered menu tests passed. |
+| Corrupt/future files, failed writes, busy lock, external edits, retry, killed writer | Sources and prior in-memory history are preserved. OS locks release on process death; unique temporary names avoid abandoned-file blockage. `tests/persistence_edges.rs` drives real keys and rendered errors against malformed fixtures, concurrent Apps and a separate lock-holding process. |
+| Oversized live view | The real-key saved-view journey reproduces the rejected-history/overwritten-resume mismatch, then verifies outbound shared validation preserves the previous usable resume and allows later valid edits to save. |
+| Long labels, multiline/control characters, unbroken strings and non-Latin text | Full-arrangement cold restore and adversarial persisted Lua journeys passed; render tests cover Japanese, accented Latin and long unbroken strings. |
 | Narrow/current/wide/short/zero terminal | Rendered at 40x8, 80x24, 120x40, 180x50, 20x4/20x5, and zero dimensions. Long selected entries wrap and scroll at 40x8; tiny containers degrade safely. |
 | Keyboard selection, search, no matches, cancel, restore, deliberate slot save | Real key tests passed; typing does not restore prematurely. Arrow navigation and PgUp/PgDn remain available. |
 | Navigation while capturing / stable identity | Capture after opening/searching history does not change the selected entry's serialized payload. |
