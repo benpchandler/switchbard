@@ -165,6 +165,18 @@ pub struct App {
     /// pane's (`pull_requests.detail_scroll`) — the two panes never show at
     /// once, but each remembers its own place.
     pub detail_scroll: u16,
+    /// The detail pane's own rendered content height, refreshed every frame
+    /// `view::draw_detail` runs; `PageDown`/`PageUp` while focused scroll by
+    /// this many lines rather than a hardcoded guess.
+    pub detail_viewport: u16,
+    /// `(task id, detail_cursor)` as of the last scroll adjustment: while
+    /// unchanged, a manually paged/scrolled position into the description
+    /// body is left alone instead of being snapped back to the row's own
+    /// line on every frame — see `view::adjust_detail_scroll`.
+    pub detail_scroll_anchor: Option<(String, usize)>,
+    /// Where the last frame put the list/detail split and each row, so a
+    /// mouse event can be routed to the right pane and row.
+    pub detail_hit: crate::detail_pane::Hit,
     /// The pre-write snapshot a detail-pane save checks before writing:
     /// `edit_backlog_task_expected`'s revision guard only fires for a
     /// centrally-stored task, so this raw-content compare is the "or
@@ -259,6 +271,9 @@ impl App {
             pane: Pane::None,
             detail_cursor: 0,
             detail_scroll: 0,
+            detail_viewport: 0,
+            detail_scroll_anchor: None,
+            detail_hit: crate::detail_pane::Hit::default(),
             detail_draft: None,
             page: Page::Tasks,
             pull_requests,

@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use switchbard_core::{
@@ -87,6 +87,18 @@ impl Harness {
 
     pub fn selected_title(&self) -> String {
         self.app.selected_task().unwrap().title.clone()
+    }
+
+    /// A real `crossterm` mouse event at `(column, row)`, rendered
+    /// afterward the same way `press`/`type_text` are.
+    pub fn mouse(&mut self, kind: MouseEventKind, column: u16, row: u16) -> String {
+        self.app.handle_mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+        self.render()
     }
 }
 

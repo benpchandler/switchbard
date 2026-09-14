@@ -5,10 +5,13 @@
 TASK-222: the sbt task detail pane becomes a focusable, editable surface for
 structured fields (title, status, priority, project, due date, labels,
 acceptance-criterion checkmarks) without leaving the terminal, using the same
-picker/single-line-input vocabulary the list already has. Multiline prose
-(description body, implementation plan, acceptance-criterion text) is
+picker/single-line-input vocabulary the list already has. Inline editing of
+multiline prose (implementation plan, acceptance-criterion text) is
 explicitly out of scope — a textarea or `$EDITOR` handoff is a separate,
-undecided surface. The owner authorized implementation on 2026-09-13.
+undecided surface; the description body is the one exception (see
+"Reconciliation with TASK-221" below): it renders and keyboard/mouse-scrolls
+in full, but is likewise not inline-editable — `sb edit <id> --description`
+is its own path. The owner authorized implementation on 2026-09-13.
 
 ## Design
 
@@ -18,11 +21,12 @@ undecided surface. The owner authorized implementation on 2026-09-13.
   pane. `j`/`k` move the cursor; `Enter`/`l`/`Right` opens the row's editor;
   `Space` toggles an acceptance row.
 - Row order is fixed: title, status, priority, project, due date, labels,
-  then a read-only description hint ("edit with `sb edit`"), then one row
-  per acceptance item, then the read-only blocked-by/blocks lists — one
-  function, `detail_pane::field_rows`, builds this list and both the cursor
-  logic (`app::detail_edit`) and the renderer (`view::draw_detail`) walk it,
-  so they cannot disagree about what row N is.
+  then the read-only description row (its full body renders as extra,
+  non-navigable lines directly beneath it), then one row per acceptance
+  item, then the read-only blocked-by/blocks lists — one function,
+  `detail_pane::field_rows`, builds this list and both the cursor logic
+  (`app::detail_edit`) and the renderer (`view::draw_detail`) walk it, so
+  they cannot disagree about what row N is.
 - Status/priority/project/labels open the existing picker vocabulary under
   new purposes (`PickerPurpose::Detail{Status,Priority,Project,Labels}`)
   that return focus to `Mode::DetailFocus` on close instead of `Mode::Browse`;
@@ -89,6 +93,11 @@ undecided surface. The owner authorized implementation on 2026-09-13.
 | Failure: writer error surfaces in status and preserves input | A rejected due date and a stale save both keep the typed draft and show the error. | `due_date_validates_clears_and_rejects_garbage`, `stale_draft_on_disk_fails_the_save_and_keeps_the_typed_input` |
 | Cancel a label picker's own capture returns to the picker | Esc on a "new label" draft goes back to the labels panel, the same place a successful add already reopens into — not out to plain cursor focus. | `esc_from_a_new_label_capture_returns_to_the_labels_picker` |
 | Background reload while cursor-focused refreshes the stale guard | An external, valid edit landing while the pane is focused (no editor/picker open) does not leave a permanently stale snapshot behind; a subsequent toggle lands. | `background_reload_refreshes_the_stale_guard_while_cursor_focused` |
+| Description body renders and is read-only | The full body renders as extra lines beneath the row; `Enter`/`l` on the row names the `sb edit --description` path instead of opening anything. | `description_row_shows_its_body_and_is_read_only_with_a_status_pointer` |
+| Long (120-line) description body scrolls | `PageDown` reaches the acceptance section past it without moving the cursor or the list selection; `PageUp` returns to the top. | `long_description_pages_into_the_acceptance_section_without_moving_cursor_or_selection` |
+| Mouse wheel over the detail pane scrolls it, bounded | Scrolling far past either end lands exactly on the actual top/bottom row, without changing keyboard focus or list selection. | `wheel_scrolls_the_detail_pane_and_is_bounded_without_touching_focus_or_selection` |
+| Mouse click on a pane row moves the cursor and focuses the pane | Clicking a specific row (not just anywhere in the pane) lands the cursor exactly there and enters `Mode::DetailFocus`, without changing list selection. | `clicking_a_pane_row_moves_the_cursor_there_and_focuses_the_pane` |
+| Mouse click on a list row selects it and returns to Browse | Works from `Mode::DetailFocus`, proving a click on the list side both re-selects and de-focuses the pane in one gesture. | `clicking_the_list_selects_that_row_and_returns_to_browse` |
 
 ### N/A note: "filter that hides the selected task while pane focused"
 
@@ -111,8 +120,9 @@ cancel-on-disappearance branch `reload_tasks` already runs for `TaskStatus`/
 
 ## Evidence sources and limits
 
-- `crates/switchbard-tui/tests/detail_edit.rs`: the 26 tests named above, run
-  through the real key-handling path (`Harness::press`/`type_text`) against a
+- `crates/switchbard-tui/tests/detail_edit.rs`: the 30 tests named above, run
+  through the real key-handling path (`Harness::press`/`type_text`, plus the
+  new `Harness::mouse` for real `crossterm::event::MouseEvent`s) against a
   real temporary Backlog-format repo, the same harness every other `sbt` test
   file uses.
 - `crates/switchbard-tui/tests/harness/mod.rs::select_task_titled`: a new
@@ -123,9 +133,12 @@ cancel-on-disappearance branch `reload_tasks` already runs for `TaskStatus`/
   order differs from the filtered one. A test that renames the selected
   task's title switches the filter to `id:<id>` first, since an
   in-place title filter would otherwise hide the very row it just renamed.
-- Two pre-existing tests changed to match the new pane content (multiline
-  description prose is no longer shown inline; the combined
-  `id · status · priority · labels` metadata line is now one row per field):
+- Two pre-existing tests changed to match the new pane content (the combined
+  `id · status · priority · labels` metadata line is now one row per field;
+  `browse.rs`'s own assertion was updated again in the TASK-221
+  reconciliation once the description body came back —
+  `screen.contains("description:")` plus its actual body text, rather than
+  the now-gone `"description · edit with sb edit"` hint string):
   `crates/switchbard-tui/tests/browse.rs::j_and_k_move_selection_and_enter_opens_detail`,
   `crates/switchbard-tui/tests/columns.rs::ids_drop_the_repo_prefix_priority_is_a_letter_and_columns_fit_their_content`.
 - `crates/switchbard-tui/tests/blocked.rs::detail_pane_lists_blocked_by_and_blocks`
@@ -209,15 +222,53 @@ cancel-on-disappearance branch `reload_tasks` already runs for `TaskStatus`/
 An earlier, independently developed branch (TASK-221, "Fix task detail pane
 focus and scrolling") shipped a read-only focus/scroll model for the same
 pane: `Shift+Tab` toggled focus between list and detail, a mouse could scroll
-or click to focus either pane, and the full description body scrolled inline.
-Reconciling that branch with this one, the design above is the surviving
-model — description body display was already explicitly out of scope here,
-so there was no raw content left for `Shift+Tab`/mouse scrolling to serve; PR
-detail's own `Ctrl-d`/`Ctrl-u`/`PageUp`/`PageDown` scrolling pre-dates both
-branches and needed no porting. `docs/tui-detail-scroll-evidence.md`, that
+or click to focus either pane, and the full description body scrolled
+inline. Reconciling that branch with this one, the design above (cursor-row
+focus, `Mode::DetailFocus`/`Enter`/`l`) is the surviving model — `Shift+Tab`,
+`Action::FocusPane`, and the click-to-focus/wheel-hit-region plumbing tied to
+it were dropped outright, and `docs/tui-detail-scroll-evidence.md`, that
 branch's execution ledger, was removed rather than folded in, since its
 recorded evidence (tmux mouse captures, `Shift+Tab` normalization) describes
-mechanics that no longer exist. Two things from that branch's line survive
-unrelated to focus and are documented at their own call sites: "Keep longer
-terminal shortcuts readable in help" (`view::help_entry_rows`,
-`tests/shortcuts.rs`) and "Move TUI line wrapping to v l" (TASK-220).
+a focus mechanism that no longer exists. PR detail's own
+`Ctrl-d`/`Ctrl-u`/`PageUp`/`PageDown` scrolling pre-dates both branches and
+needed no porting. Two things from that branch's line survive unrelated to
+focus and are documented at their own call sites: "Keep longer terminal
+shortcuts readable in help" (`view::help_entry_rows`, `tests/shortcuts.rs`)
+and "Move TUI line wrapping to v l" (TASK-220).
+
+Two capabilities were found missing on a first pass and restored in a
+follow-up commit, since they are shipped, owner-checked TASK-221 acceptance
+criteria rather than incidental TASK-221 mechanics:
+
+- **The description body.** `FieldRow::Description` stays a single,
+  non-editable cursor row, but `build_detail_lines` now appends the
+  description's own lines directly beneath it (not separately navigable —
+  `Enter`/`l` on the row sets a status message naming
+  `sb edit <id> --description` rather than opening anything). A description
+  longer than the viewport is reachable: `adjust_detail_scroll` brings the
+  row's own line into view exactly as it does for every other row, but
+  tracks `(task id, detail_cursor)` in `App::detail_scroll_anchor` so that,
+  once settled on the description row, a manual `PageDown`/`PageUp`
+  (`App::page_detail_scroll`, using the pane's own last-rendered
+  `detail_viewport` height) or mouse wheel scrolling further into the body
+  is not immediately snapped back to the row's header on the next frame —
+  moving the cursor to a different row, or selecting a different task,
+  resets the anchor and the ordinary strict-visibility snap applies again.
+  Every other row is unaffected: their one-line height means "past the row"
+  and "not visible" are the same condition, so the existing snap-up/snap-down
+  behaviour (including the resize self-correction
+  `cursor_stays_visible_after_resize` covers) is untouched.
+- **Mouse support**, reintroduced against the row model rather than the old
+  `Interaction`/`focused` one: `main.rs` re-enables mouse capture and routes
+  `Event::Mouse` to `App::handle_mouse`. `detail_pane::Hit` (set every frame
+  from `view::draw`/`draw_table`/`draw_detail`) is the single source for
+  "which pane, which row is at this coordinate" — it records the list/detail
+  split, `(y, App::rows index)` for every visible list row, and each
+  `FieldRow`'s own first wrapped display line. A wheel over the detail pane
+  scrolls it the same way `page_detail_scroll` does (Tasks) or nudges
+  `pull_requests.detail_scroll` (PR, which has no row cursor); a wheel over
+  the list moves the list selection via the ordinary `Action::Down`/`Up`. A
+  left click on a Tasks pane row moves the cursor there and enters
+  `Mode::DetailFocus`; a left click anywhere in the list selects that row and
+  returns to `Mode::Browse`. Ignored while a picker, a single-line capture,
+  the help screen, or Inbox is showing.
