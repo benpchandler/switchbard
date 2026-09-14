@@ -31,7 +31,7 @@
 # never an accident of `cd`. `--hold <duration>` (default 2h) additionally
 # tells the auto-install agent to leave that choice alone for a while.
 #
-# Every attempt (installed, refused, held) leaves a durable receipt at
+# Every attempt (installed, refused, held, failed) leaves a durable receipt at
 # `$STATE_DIR/last-install.json` so a person - or sbt's startup banner - can
 # see what happened without reading the log.
 
@@ -47,13 +47,20 @@ Installs the named binaries (default: both) from this worktree.
   --dry-run          report the decision for each binary and install nothing
   --branch           acknowledge an intentional install from a non-main branch
   --hold [DURATION]  protect that branch install from auto-install for DURATION
-                      (30m, 2h, ...; default 2h). Implies --branch.
+                      (30m, 2h, ...; default 2h, capped at 24h). Implies
+                      --branch. Refused on main - there is nothing to hold
+                      main back from.
   --main-authority   for the auto-install agent only: the target tree must be
                       origin/main's own tip; never refuses on ancestry, only
                       on that precondition. Prints what it drops.
 
-Exit codes: 0 installed (or would install, or an unexpired hold left it
-alone), 1 refused or failed.
+Every attempt (installed, refused, held, failed) leaves a receipt at
+$SWITCHBARD_AUTO_INSTALL_DIR/last-install.json (default
+~/.switchbard/auto-install/last-install.json).
+
+Exit codes: 0 an install happened, would happen (--dry-run), or an unexpired
+hold left it alone. 1 refused, or a build failed (nothing is ever replaced
+when a build fails - see perform_installs below).
 USAGE
 }
 
@@ -102,13 +109,32 @@ crate_for() {
     esac
 }
 
+# Every wait on the network or an external binary is bounded (Bash
+# Power-of-10 rule 2): `timeout`/`gtimeout` where available, else a `perl
+# alarm` shim (perl ships on every machine this runs on already - no new
+# dependency), else run unbounded as a last resort rather than refuse to run
+# at all.
+run_with_timeout() {
+    local secs="$1"
+    shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$secs" "$@"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        gtimeout "$secs" "$@"
+    elif command -v perl >/dev/null 2>&1; then
+        perl -e 'alarm shift @ARGV; exec @ARGV or exit 127' "$secs" "$@"
+    else
+        "$@"
+    fi
+}
+
 # The commit (or branch) an already-installed binary reports, or empty when
 # there is no such binary or it predates `build-id`.
 installed_field() {
     local binary="$1" key="$2" path
     path="$(command -v "$binary" 2>/dev/null || true)"
     [[ -z "$path" ]] && return 0
-    "$path" build-id 2>/dev/null | sed -n "s/^${key}=//p" || true
+    run_with_timeout 5 "$path" build-id 2>/dev/null | sed -n "s/^${key}=//p" || true
 }
 installed_commit() { installed_field "$1" commit; }
 installed_branch() { installed_field "$1" branch; }
@@ -157,11 +183,22 @@ json_array() {
     printf ']'
 }
 
+# Writes $1 to path $2 as a temp file in the same directory, then `mv`s it
+# into place - a reader (sbt's startup banner, polling on its own schedule)
+# can never observe a half-written file.
+atomic_write() {
+    local contents="$1" path="$2" tmp
+    tmp="$(mktemp "${path}.XXXXXX")"
+    printf '%s' "$contents" > "$tmp"
+    mv -f "$tmp" "$path"
+}
+
 write_receipt() {
     local outcome="$1" from_commit="$2" from_branch="$3" to_commit="$4" to_branch="$5" reason="$6" hold_until="$7"
     shift 7
     mkdir -p "$STATE_DIR"
-    cat > "$RECEIPT_FILE" <<JSON
+    local body
+    body="$(cat <<JSON
 {
   "ts": $(json_str_or_null "$(now_iso)"),
   "binary": $(json_str_or_null "$BINARY_LABEL"),
@@ -175,6 +212,8 @@ write_receipt() {
   "hold_until": $(json_str_or_null "$hold_until")
 }
 JSON
+)"
+    atomic_write "$body" "$RECEIPT_FILE"
 }
 
 # Up to MAX_DROPPED "shortsha subject" lines reachable from $1 but not $2.
@@ -185,37 +224,118 @@ dropped_commits() {
     done
 }
 
+# Where `cargo install --path` would put the binaries by default - the same
+# resolution cargo itself uses, so a build failure's scratch root lands on
+# the same filesystem as the real destination and the final move is a plain
+# rename, not a copy.
+CARGO_ROOT="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}"
+BIN_DIR="$CARGO_ROOT/bin"
+TMP_INSTALL_ROOT=""
+# An EXIT trap's own exit status becomes the script's if it's the last thing
+# that ran - `return 0` is load-bearing here, not decoration: without it, a
+# no-op cleanup (`[[ -n "" ]]` is false) would silently turn every `exit 0`
+# into a 1.
+cleanup_tmp_install_root() {
+    if [[ -n "$TMP_INSTALL_ROOT" ]]; then
+        rm -rf "$TMP_INSTALL_ROOT"
+    fi
+    return 0
+}
+trap cleanup_tmp_install_root EXIT
+
+# Builds every named target into a scratch root first; only once ALL of them
+# build cleanly does it move the resulting binaries into place with a
+# same-filesystem `mv` (a rename, so it can't leave a half-written binary
+# behind). A build failure never replaces anything - not even the target that
+# built fine - and writes a "failed" receipt naming which binary and why
+# before exiting 1 (TASK-227 audit #2).
+perform_installs() {
+    mkdir -p "$CARGO_ROOT"
+    TMP_INSTALL_ROOT="$(mktemp -d "$CARGO_ROOT/.switchbard-install.XXXXXX")"
+    local binary crate_path status
+    for binary in "$@"; do
+        crate_path="$(crate_for "$binary")"
+        status=0
+        # `tee` keeps normal live build output on stderr while also capturing
+        # it, so a failure's receipt can quote the actual last line.
+        cargo install --path "$crate_path" --locked --root "$TMP_INSTALL_ROOT" \
+            2> >(tee "$TMP_INSTALL_ROOT/$binary.stderr" >&2) || status=$?
+        wait
+        if [[ $status -ne 0 ]]; then
+            local last_line
+            last_line="$(tail -1 "$TMP_INSTALL_ROOT/$binary.stderr" 2>/dev/null | cut -c1-200)"
+            REASON="cargo install failed for $binary (exit $status): ${last_line:-no output captured}"
+            echo "$binary: REFUSED - $REASON" >&2
+            write_receipt failed "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" "$TO_BRANCH_LABEL" "$REASON" ""
+            exit 1
+        fi
+    done
+    mkdir -p "$BIN_DIR"
+    for binary in "$@"; do
+        mv -f "$TMP_INSTALL_ROOT/bin/$binary" "$BIN_DIR/$binary"
+    done
+}
+
 HEAD_COMMIT="$(git rev-parse HEAD)"
 CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+
+if [[ -n "$HOLD_DURATION" ]]; then
+    HOLD_SECONDS="$(duration_to_seconds "$HOLD_DURATION")"
+    if [[ "$HOLD_SECONDS" -gt 86400 ]]; then
+        REASON="--hold $HOLD_DURATION exceeds the 24h cap"
+        echo "REFUSED - $REASON." >&2
+        write_receipt refused "" "" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON" ""
+        exit 1
+    fi
+    if [[ "$CURRENT_BRANCH" == "main" ]]; then
+        REASON="--hold on main is meaningless - main is never held back from itself"
+        echo "REFUSED - $REASON." >&2
+        write_receipt refused "" "" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON" ""
+        exit 1
+    fi
+fi
 
 if [[ $MAIN_AUTHORITY -eq 1 ]]; then
     mkdir -p "$STATE_DIR"
     if [[ -f "$HOLD_FILE" ]]; then
         hold_branch="$(sed -n 's/.*"branch": *"\([^"]*\)".*/\1/p' "$HOLD_FILE" | head -1)"
         hold_until="$(sed -n 's/.*"until": *"\([^"]*\)".*/\1/p' "$HOLD_FILE" | head -1)"
-        hold_epoch="$(iso_to_epoch "$hold_until")"
-        now_epoch="$(date -u +%s)"
-        if [[ -n "$hold_until" && "$hold_epoch" -gt "$now_epoch" && $FORCE -eq 0 ]]; then
-            echo "holding $hold_branch until $hold_until"
-            write_receipt held "" "$hold_branch" "$HEAD_COMMIT" main "manual hold active" "$hold_until"
-            exit 0
+        if [[ "$hold_branch" == "main" ]]; then
+            # Only a manual install writes this file, and it now refuses to
+            # write one for main - a hold naming main here is stale or hand-
+            # edited, and holding "main" back from main is meaningless.
+            echo "dropping an invalid hold on main (a hold protects a non-main branch, never main)" >&2
+            rm -f "$HOLD_FILE"
+        else
+            hold_epoch="$(iso_to_epoch "$hold_until")"
+            now_epoch="$(date -u +%s)"
+            if [[ -n "$hold_until" && "$hold_epoch" -gt "$now_epoch" && $FORCE -eq 0 ]]; then
+                echo "holding $hold_branch until $hold_until"
+                write_receipt held "" "$hold_branch" "$HEAD_COMMIT" origin/main "manual hold active" "$hold_until"
+                exit 0
+            fi
+            rm -f "$HOLD_FILE"
         fi
-        rm -f "$HOLD_FILE"
     fi
 
     if [[ $FORCE -eq 0 ]]; then
-        git fetch -q origin main 2>/dev/null || true
+        if ! run_with_timeout 60 git fetch -q origin main 2>/dev/null; then
+            REASON="could not verify origin/main (git fetch failed or timed out)"
+            echo "REFUSED - $REASON; --main-authority requires it." >&2
+            write_receipt refused "" "" "$HEAD_COMMIT" origin/main "$REASON" ""
+            exit 1
+        fi
         ORIGIN_MAIN="$(git rev-parse origin/main 2>/dev/null || true)"
         if [[ -z "$ORIGIN_MAIN" ]]; then
             REASON="cannot resolve origin/main in this checkout"
             echo "REFUSED - $REASON; --main-authority requires it." >&2
-            write_receipt refused "" "" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON" ""
+            write_receipt refused "" "" "$HEAD_COMMIT" origin/main "$REASON" ""
             exit 1
         fi
         if [[ "$HEAD_COMMIT" != "$ORIGIN_MAIN" ]]; then
             REASON="this checkout ($(git rev-parse --short "$HEAD_COMMIT")) is not origin/main's tip ($(git rev-parse --short "$ORIGIN_MAIN"))"
             echo "REFUSED - $REASON; --main-authority only installs origin/main's own tip." >&2
-            write_receipt refused "" "" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON" ""
+            write_receipt refused "" "" "$HEAD_COMMIT" origin/main "$REASON" ""
             exit 1
         fi
     fi
@@ -223,6 +343,7 @@ if [[ $MAIN_AUTHORITY -eq 1 ]]; then
     FROM_COMMIT=""
     FROM_BRANCH=""
     DROPPED=()
+    REASON=""
     for binary in "${TARGETS[@]}"; do
         prior="$(installed_commit "$binary")"
         prior_branch="$(installed_branch "$binary")"
@@ -235,12 +356,21 @@ if [[ $MAIN_AUTHORITY -eq 1 ]]; then
         else
             THIS_DROPPED=()
             if git cat-file -e "${prior}^{commit}" 2>/dev/null; then
+                # origin/main itself moved backward relative to what is
+                # already running (a force-push) is a distinct, more alarming
+                # case than "a stray feature branch was installed" - label it.
+                if git merge-base --is-ancestor "$HEAD_COMMIT" "$prior" 2>/dev/null; then
+                    THIS_REASON="rewind: origin/main is behind the installed build's branch '$prior_branch'"
+                else
+                    THIS_REASON="dropping branch '$prior_branch', not on origin/main"
+                fi
                 while IFS= read -r line; do THIS_DROPPED+=("$line"); done < <(dropped_commits "$prior" "$HEAD_COMMIT")
-                echo "$binary: main authority - dropping $(git rev-list --count "$HEAD_COMMIT".."$prior") commit(s) from branch '$prior_branch' not on origin/main:" >&2
+                echo "$binary: main authority - $THIS_REASON ($(git rev-list --count "$HEAD_COMMIT".."$prior") commit(s)):" >&2
                 printf '  %s\n' "${THIS_DROPPED[@]+"${THIS_DROPPED[@]}"}" >&2
             else
+                THIS_REASON="dropping unknown commit $prior from branch '$prior_branch'"
                 THIS_DROPPED=("$prior (unknown commit; not reachable in this repository)")
-                echo "$binary: main authority - dropping unknown commit $prior from branch '$prior_branch'; origin/main is authoritative" >&2
+                echo "$binary: main authority - $THIS_REASON; origin/main is authoritative" >&2
             fi
             # sbt is what reads the receipt; prefer its story, else keep the
             # first divergence seen so the receipt is never empty.
@@ -248,18 +378,22 @@ if [[ $MAIN_AUTHORITY -eq 1 ]]; then
                 FROM_COMMIT="$prior"
                 FROM_BRANCH="$prior_branch"
                 DROPPED=("${THIS_DROPPED[@]+"${THIS_DROPPED[@]}"}")
+                REASON="$THIS_REASON"
             fi
         fi
-        if [[ $DRY_RUN -eq 1 ]]; then
-            echo "$binary: dry run; not installing"
-            continue
-        fi
-        cargo install --path "$(crate_for "$binary")" --locked
     done
+    TO_BRANCH_LABEL=origin/main
+    if [[ $DRY_RUN -eq 1 ]]; then
+        for binary in "${TARGETS[@]}"; do
+            echo "$binary: dry run; not installing"
+        done
+    else
+        perform_installs "${TARGETS[@]}"
+    fi
     # bash 3.2 (macOS's /bin/bash) treats a *declared-but-empty* array as
     # unset under `set -u`; the `+` guard is the portable way to expand
     # "zero or more elements" without tripping that quirk.
-    write_receipt installed "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" main "" "" "${DROPPED[@]+"${DROPPED[@]}"}"
+    write_receipt installed "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" origin/main "$REASON" "" "${DROPPED[@]+"${DROPPED[@]}"}"
     exit 0
 fi
 
@@ -319,21 +453,20 @@ if [[ $REFUSED -eq 1 ]]; then
     echo "--force given; installing ${TARGETS[*]} anyway." >&2
 fi
 
-for binary in "${TARGETS[@]}"; do
-    if [[ $DRY_RUN -eq 1 ]]; then
+TO_BRANCH_LABEL="$CURRENT_BRANCH"
+if [[ $DRY_RUN -eq 1 ]]; then
+    for binary in "${TARGETS[@]}"; do
         echo "$binary: dry run; not installing"
-        continue
-    fi
-    cargo install --path "$(crate_for "$binary")" --locked
-done
+    done
+else
+    perform_installs "${TARGETS[@]}"
+fi
 
 HOLD_UNTIL=""
 if [[ -n "$HOLD_DURATION" && $DRY_RUN -eq 0 ]]; then
     mkdir -p "$STATE_DIR"
     HOLD_UNTIL="$(iso_after_now "$(duration_to_seconds "$HOLD_DURATION")")"
-    cat > "$HOLD_FILE" <<JSON
-{"branch": $(json_str_or_null "$CURRENT_BRANCH"), "until": $(json_str_or_null "$HOLD_UNTIL")}
-JSON
+    atomic_write "{\"branch\": $(json_str_or_null "$CURRENT_BRANCH"), \"until\": $(json_str_or_null "$HOLD_UNTIL")}" "$HOLD_FILE"
     echo "auto-install replaces this with main after $HOLD_UNTIL"
 elif [[ "$CURRENT_BRANCH" != "main" && $DRY_RUN -eq 0 ]]; then
     echo "auto-install replaces this with main within the next check (~60s); pass --hold to delay that"

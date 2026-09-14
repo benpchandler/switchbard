@@ -237,6 +237,68 @@ else
     echo "ok: an expired hold is swept and main-authority proceeds"
 fi
 
+# --- audit follow-ups: --hold on main, the 24h cap, an invalid main hold, --
+# --- and a fetch that fails must fail closed, not `|| true` ----------------
+stub_reports "$BASE"
+git -C "$REPO" checkout -q main
+set +e
+output="$(cd "$REPO" && PATH="$BIN:$PATH" bash "$GUARD" --dry-run --hold sbt 2>&1)"
+status=$?
+set -e
+if [[ "$status" -ne 1 ]]; then
+    fail "--hold on main should refuse (got exit $status)" "$output"
+else
+    echo "ok: --hold on main refuses"
+fi
+[[ "$(receipt_field outcome)" == refused ]] || fail "receipt not marked refused for --hold on main"
+
+git -C "$REPO" checkout -q stale
+set +e
+output="$(cd "$REPO" && PATH="$BIN:$PATH" bash "$GUARD" --dry-run --branch --hold 48h sbt 2>&1)"
+status=$?
+set -e
+if [[ "$status" -ne 1 ]]; then
+    fail "--hold 48h should refuse the 24h cap (got exit $status)" "$output"
+else
+    echo "ok: --hold is capped at 24h"
+fi
+
+# A hold file naming "main" (stale, or hand-edited) must never block
+# main-authority - it is dropped and logged, not honored.
+stub_reports "$BASE" x
+FUTURE="$(portable_iso 30)"
+printf '{"branch": "main", "until": "%s"}' "$FUTURE" > "$HOLD_FILE"
+set +e
+output="$(cd "$CHECKOUT" && PATH="$BIN:$PATH" bash "$GUARD" --dry-run --main-authority sbt 2>&1)"
+status=$?
+set -e
+if [[ "$status" -ne 0 ]]; then
+    fail "main-authority should drop an invalid main hold and proceed" "$output"
+elif [[ -f "$HOLD_FILE" ]]; then
+    fail "an invalid main hold must be deleted, not left in place"
+elif [[ "$(receipt_field outcome)" != installed ]]; then
+    fail "receipt not marked installed once the invalid main hold was dropped"
+else
+    echo "ok: main-authority drops an invalid hold on main and installs anyway"
+fi
+
+# A fetch that fails must refuse closed, not silently proceed as if main were
+# unreachable-but-fine (the `|| true` this replaced would have let it through).
+git -C "$CHECKOUT" remote set-url origin "$WORK/no-such-remote.git"
+set +e
+output="$(cd "$CHECKOUT" && PATH="$BIN:$PATH" bash "$GUARD" --dry-run --main-authority sbt 2>&1)"
+status=$?
+set -e
+if [[ "$status" -ne 1 ]]; then
+    fail "a failed fetch under --main-authority should refuse (got exit $status)" "$output"
+elif [[ "$output" != *"could not verify origin/main"* ]]; then
+    fail "fetch failure did not name 'could not verify origin/main'" "$output"
+else
+    echo "ok: a failed fetch under --main-authority fails closed"
+fi
+[[ "$(receipt_field outcome)" == refused ]] || fail "receipt not marked refused for the failed-fetch case"
+git -C "$CHECKOUT" remote set-url origin "$ORIGIN"
+
 if [[ "$FAILURES" -gt 0 ]]; then
     echo "$FAILURES install-guard case(s) failed" >&2
     exit 1
