@@ -399,6 +399,21 @@ impl App {
         );
     }
 
+    /// Summary uses the same universe and predicate as the value picker's checkmarks.
+    pub(crate) fn column_filter_badge(&self, column: Column) -> Option<String> {
+        let field = Filter::parse(self.filter_text(), &self.registry)
+            .fields()
+            .find(|field| field.column() == column)?;
+        let values = self.column_values(column);
+        let shown = values
+            .iter()
+            .filter(|(value, _)| {
+                Filter::field_allows(self.filter_text(), field, value, &self.registry)
+            })
+            .count();
+        Some(format!("({shown}/{} shown)", values.len()))
+    }
+
     pub(super) fn column_values(&self, column: Column) -> Vec<(String, usize)> {
         let mut values = if self.page == crate::page::Page::PullRequests {
             self.pull_requests.column_values(column)

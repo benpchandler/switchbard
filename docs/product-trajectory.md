@@ -43,6 +43,13 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 - **Platforms:** macOS (unsigned DMG) + Linux (build from source). CI runs both
   (macos-latest + ubuntu-latest); `release-linux.yml` ships Linux artifacts.
 
+## Recently implemented
+
+- **Views that keep themselves (TASK-152/153/154).** `sbt` resumes the last per-repository
+  view, captures bounded deduplicated history automatically, and keeps deliberate slots
+  separate. `--fresh`, `v h`, and `v s <number>` are documented in
+  `docs/tui-view-history.md`; the palette-token prerequisite is included.
+
 ## Planned
 
 - **Views that keep themselves (TASK-153/154; palette prerequisite TASK-152).** Terminal launches restore the last per-repository checkpoint using the same named ResumeRecord and Lua ViewState representation as self-restart. `--fresh` opens the deliberate saved default; automatic capture never writes slots. Every 30 seconds and on exit, one checkpoint path captures resume state and per-page history. History uses globally deduplicated arrangements with move-to-front on revisit, retained for 30 days with a 1000-entry and 4 MiB ceiling. `v h` lists recognizable arrangements and relative times; Enter restores and `v s <number>` deliberately saves a slot. Auto paint persists palette-slot tokens, resolving against the current palette; explicit hex remains literal. See `docs/tui-view-history.md` and `docs/tui-view-history-evidence.md`.
