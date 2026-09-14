@@ -302,6 +302,33 @@ fn labels_multi_select_toggles_and_a_new_label_can_be_added() {
 }
 
 #[test]
+fn esc_from_a_new_label_capture_returns_to_the_labels_picker() {
+    let mut h = Harness::new();
+    select_task_titled(&mut h, "Fix login redirect loop");
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Enter);
+    for _ in 0..LABELS {
+        h.press(KeyCode::Char('j'));
+    }
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Char('n'));
+    assert_eq!(h.app.mode, Mode::DetailInput(DetailInputKind::NewLabel));
+    h.type_text("partial");
+    h.press(KeyCode::Esc);
+    assert_eq!(
+        h.app.mode,
+        Mode::PickValue,
+        "canceling a new label should return to the labels picker, not the pane's own cursor \
+         -- the same place a successful add already reopens into"
+    );
+    assert!(h.app.input.is_empty());
+    assert!(matches!(
+        h.app.picker.as_ref().map(|picker| picker.purpose.clone()),
+        Some(switchbard_tui::picker::PickerPurpose::DetailLabels(_))
+    ));
+}
+
+#[test]
 fn space_and_enter_toggle_an_acceptance_row() {
     let mut h = Harness::new();
     select_task_titled(&mut h, "Add dark theme");
@@ -335,6 +362,51 @@ fn space_and_enter_toggle_an_acceptance_row() {
             .unwrap()
             .acceptance_criteria[0]
             .checked
+    );
+}
+
+#[test]
+fn stale_draft_blocks_an_acceptance_toggle_and_leaves_the_file_untouched() {
+    let mut h = Harness::new();
+    select_task_titled(&mut h, "Add dark theme");
+    let path = h.app.selected_task().unwrap().path.clone();
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Enter);
+    for _ in 0..FIRST_ACCEPTANCE {
+        h.press(KeyCode::Char('j'));
+    }
+    // Space opens and commits an acceptance toggle in one keystroke, so the
+    // only window for an external writer to land a change is between
+    // focus (the snapshot) and this press -- there is no separate "editor
+    // open" step to snapshot at, the way there is for every other field.
+    std::fs::write(&path, "tampered content, not a valid task file\n").unwrap();
+    let screen = h.press(KeyCode::Char(' '));
+    assert!(screen.contains("changed on disk"), "{screen}");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "tampered content, not a valid task file\n",
+        "the stale toggle must not have touched the file"
+    );
+}
+
+#[test]
+fn stale_draft_blocks_a_picker_driven_field_pick() {
+    let mut h = Harness::new();
+    select_task_titled(&mut h, "Add dark theme");
+    let path = h.app.selected_task().unwrap().path.clone();
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Char('j'));
+    assert_eq!(h.app.detail_cursor, STATUS);
+    h.press(KeyCode::Enter);
+    std::fs::write(&path, "tampered content, not a valid task file\n").unwrap();
+    h.type_text("Done");
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("changed on disk"), "{screen}");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "tampered content, not a valid task file\n",
+        "the stale pick must not have touched the file"
     );
 }
 
