@@ -1,5 +1,5 @@
-//! The handoff a self-restart carries: what the running build was looking at,
-//! written into the environment of the build that replaces it.
+//! The record shared by cold launches and self-restarts: what the running build
+//! was looking at, persisted per repo and handed to its replacement via the environment.
 //!
 //! One build writes this and a *different* build reads it, so the record is a
 //! named-field object, not a positional tuple: a build that gained a field
@@ -12,7 +12,10 @@
 //! The other half of that rule is [`Restored`]: a record we cannot read is a
 //! reportable outcome, never a quiet fall-back to defaults.
 
+mod store;
+
 use serde::{Deserialize, Serialize};
+pub use store::ResumeStore;
 
 /// The prefix naming the record format. Bump it only for a change no
 /// `#[serde(default)]` field can absorb; readers reject an unknown prefix
@@ -43,7 +46,7 @@ pub struct ResumeRecord {
 }
 
 impl ResumeRecord {
-    /// The environment value handed to the replacement build.
+    /// The value persisted on disk and handed to the replacement build.
     pub fn encode(&self) -> String {
         format!(
             "{PREFIX}{}",
