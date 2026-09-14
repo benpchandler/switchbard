@@ -5,7 +5,8 @@ design basis for rule-based ("conditional") formatting. Two halves: what the res
 says (sections 1-4), then what sbt has today and how it should grow (sections 5-7).
 Sources are at the end.
 
-Related backlog: TASK-152 (paint_auto stores a palette token), TASK-175/176/177
+The palette-token prerequisite from TASK-152 is implemented. Remaining related backlog:
+TASK-175/176/177
 (header, tab bar, second-row differentiation), TASK-200 (paint any cell, inherit its
 hierarchy). Related docs: `docs/tui-abstraction-boundaries.md`,
 `docs/tui-date-paint-evidence.md`.
