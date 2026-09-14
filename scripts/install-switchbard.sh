@@ -1,49 +1,88 @@
 #!/usr/bin/env bash
-# Install a Switchbard binary from this worktree, refusing a silent downgrade.
+# Install a Switchbard binary, refusing a silent downgrade.
 #
-# WHY THIS EXISTS (TASK-172, and its recurrence on 2026-09-09)
+# WHY THIS EXISTS (TASK-172, and its recurrence on 2026-09-09 and 2026-09-13)
 #
-# Every Switchbard binary is installed with `cargo install --path` from
-# whichever worktree the agent or the owner happens to be standing in, and a
-# running `sbt` re-execs itself the moment the file on disk changes. An install
-# from a worktree that predates a feature therefore deletes that feature from
-# every running session at once, with no prompt and no version change. The
-# reported failure both times was "the Pull Requests page is gone".
+# Every Switchbard binary is installed with `cargo install --path`, and a
+# running `sbt` re-execs itself the moment the file on disk changes. An
+# install from a tree that predates a feature therefore deletes that feature
+# from every running session at once, with no prompt and no version change.
 #
-# THE RULE
+# TWO CALLERS, TWO RULES (TASK-227)
 #
-# An install may only move forward. The commit the *installed* binary was built
-# from must be an ancestor of the commit being installed. If it is not, this
-# worktree does not contain everything the user already had, and the install is
-# refused. `--force` overrides, and prints exactly what is being given up.
+# A human standing in a worktree and the unattended launchd agent
+# (`scripts/auto-install-main.sh`) need different answers to "is this safe":
 #
-# Ancestry is the right test rather than "is this branch behind main", because
-# a feature branch legitimately installs a build that main does not have; what
-# is never legitimate is installing a build that drops commits the user is
-# already running.
+# - A human's worktree may legitimately be a feature branch that does not
+#   (yet) contain everything main has, or vice versa. The rule for a manual
+#   install is ANCESTRY: refuse unless the target contains every commit the
+#   running binary already has. `--force` overrides.
+# - The unattended agent only ever installs origin/main's own tip, passed
+#   with `--main-authority`. There main IS the authority, so a running build
+#   that main does not contain (a feature branch someone installed on
+#   purpose) is not a downgrade to refuse - it is exactly the case this repo
+#   needs auto-install to resolve on its own. `--main-authority` never
+#   refuses on ancestry; it installs and prints precisely what is dropped.
+#   It still refuses if the checkout is not actually origin/main's tip -
+#   that would mean the flag is being used somewhere it should not be.
+#
+# A manual install from any branch but main must now pass `--branch`,
+# so "I meant to install a feature branch" is always an explicit choice,
+# never an accident of `cd`. `--hold <duration>` (default 2h) additionally
+# tells the auto-install agent to leave that choice alone for a while.
+#
+# Every attempt (installed, refused, held) leaves a durable receipt at
+# `$STATE_DIR/last-install.json` so a person - or sbt's startup banner - can
+# see what happened without reading the log.
 
 set -euo pipefail
 
 usage() {
     cat <<'USAGE'
-usage: install-switchbard.sh [--force] [--dry-run] [sbt|sb]...
+usage: install-switchbard.sh [options] [sbt|sb]...
 
 Installs the named binaries (default: both) from this worktree.
 
-  --force     install even when it would drop commits from the running build
-  --dry-run   report the decision for each binary and install nothing
+  --force            install even when a guard below would refuse
+  --dry-run          report the decision for each binary and install nothing
+  --branch           acknowledge an intentional install from a non-main branch
+  --hold [DURATION]  protect that branch install from auto-install for DURATION
+                      (30m, 2h, ...; default 2h). Implies --branch.
+  --main-authority   for the auto-install agent only: the target tree must be
+                      origin/main's own tip; never refuses on ancestry, only
+                      on that precondition. Prints what it drops.
 
-Exit codes: 0 installed (or would install), 1 refused or failed.
+Exit codes: 0 installed (or would install, or an unexpired hold left it
+alone), 1 refused or failed.
 USAGE
 }
 
+STATE_DIR="${SWITCHBARD_AUTO_INSTALL_DIR:-$HOME/.switchbard/auto-install}"
+HOLD_FILE="$STATE_DIR/hold.json"
+RECEIPT_FILE="$STATE_DIR/last-install.json"
+MAX_DROPPED=20
+
 FORCE=0
 DRY_RUN=0
+BRANCH_ACK=0
+MAIN_AUTHORITY=0
+HOLD_DURATION=""
 TARGETS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force) FORCE=1 ;;
         --dry-run) DRY_RUN=1 ;;
+        --branch) BRANCH_ACK=1 ;;
+        --hold)
+            BRANCH_ACK=1
+            if [[ $# -ge 2 && "$2" =~ ^[0-9]+[mh]$ ]]; then
+                HOLD_DURATION="$2"
+                shift
+            else
+                HOLD_DURATION="2h"
+            fi
+            ;;
+        --main-authority) MAIN_AUTHORITY=1 ;;
         -h|--help) usage; exit 0 ;;
         sbt|sb) TARGETS+=("$1") ;;
         *) echo "install-switchbard.sh: unknown argument: $1" >&2; usage >&2; exit 1 ;;
@@ -51,6 +90,7 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 [[ ${#TARGETS[@]} -eq 0 ]] && TARGETS=(sbt sb)
+BINARY_LABEL="$(IFS=,; echo "${TARGETS[*]}")"
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
@@ -62,41 +102,206 @@ crate_for() {
     esac
 }
 
-# The commit an already-installed binary reports, or empty when there is no
-# such binary or it predates `build-id`.
-installed_commit() {
-    local binary="$1" path commit
+# The commit (or branch) an already-installed binary reports, or empty when
+# there is no such binary or it predates `build-id`.
+installed_field() {
+    local binary="$1" key="$2" path
     path="$(command -v "$binary" 2>/dev/null || true)"
     [[ -z "$path" ]] && return 0
-    commit="$("$path" build-id 2>/dev/null | sed -n 's/^commit=//p' || true)"
-    [[ "$commit" == "unknown" ]] && return 0
-    echo "$commit"
+    "$path" build-id 2>/dev/null | sed -n "s/^${key}=//p" || true
+}
+installed_commit() { installed_field "$1" commit; }
+installed_branch() { installed_field "$1" branch; }
+
+# --- portable UTC timestamp helpers (macOS `date` vs. GNU `date`) ----------
+now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+iso_to_epoch() {
+    date -u -d "$1" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null || echo 0
+}
+iso_after_now() {
+    local secs="$1"
+    date -u -d "+${secs} seconds" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+        || date -u -j -v "+${secs}S" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null
+}
+duration_to_seconds() {
+    local d="$1"
+    if [[ "$d" =~ ^([0-9]+)m$ ]]; then
+        echo $(( 10#${BASH_REMATCH[1]} * 60 ))
+    elif [[ "$d" =~ ^([0-9]+)h$ ]]; then
+        echo $(( 10#${BASH_REMATCH[1]} * 3600 ))
+    else
+        echo 7200
+    fi
+}
+
+# --- tiny hand-rolled JSON, so a comma or a quote in a commit subject can
+# never produce a receipt sbt's parser trips on ------------------------------
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+json_str_or_null() {
+    if [[ -z "${1:-}" ]]; then printf 'null'; else printf '"%s"' "$(json_escape "$1")"; fi
+}
+json_array() {
+    local first=1
+    printf '['
+    for item in "$@"; do
+        [[ $first -eq 1 ]] && first=0 || printf ','
+        printf '"%s"' "$(json_escape "$item")"
+    done
+    printf ']'
+}
+
+write_receipt() {
+    local outcome="$1" from_commit="$2" from_branch="$3" to_commit="$4" to_branch="$5" reason="$6" hold_until="$7"
+    shift 7
+    mkdir -p "$STATE_DIR"
+    cat > "$RECEIPT_FILE" <<JSON
+{
+  "ts": $(json_str_or_null "$(now_iso)"),
+  "binary": $(json_str_or_null "$BINARY_LABEL"),
+  "outcome": $(json_str_or_null "$outcome"),
+  "from_commit": $(json_str_or_null "$from_commit"),
+  "from_branch": $(json_str_or_null "$from_branch"),
+  "to_commit": $(json_str_or_null "$to_commit"),
+  "to_branch": $(json_str_or_null "$to_branch"),
+  "dropped": $(json_array "$@"),
+  "reason": $(json_str_or_null "$reason"),
+  "hold_until": $(json_str_or_null "$hold_until")
+}
+JSON
+}
+
+# Up to MAX_DROPPED "shortsha subject" lines reachable from $1 but not $2.
+dropped_commits() {
+    local prior="$1" head="$2" sha
+    git rev-list --max-count="$MAX_DROPPED" "$head..$prior" 2>/dev/null | while read -r sha; do
+        printf '%s %s\n' "$(git rev-parse --short "$sha")" "$(git log -1 --format=%s "$sha")"
+    done
 }
 
 HEAD_COMMIT="$(git rev-parse HEAD)"
-REFUSED=0
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 
+if [[ $MAIN_AUTHORITY -eq 1 ]]; then
+    mkdir -p "$STATE_DIR"
+    if [[ -f "$HOLD_FILE" ]]; then
+        hold_branch="$(sed -n 's/.*"branch": *"\([^"]*\)".*/\1/p' "$HOLD_FILE" | head -1)"
+        hold_until="$(sed -n 's/.*"until": *"\([^"]*\)".*/\1/p' "$HOLD_FILE" | head -1)"
+        hold_epoch="$(iso_to_epoch "$hold_until")"
+        now_epoch="$(date -u +%s)"
+        if [[ -n "$hold_until" && "$hold_epoch" -gt "$now_epoch" && $FORCE -eq 0 ]]; then
+            echo "holding $hold_branch until $hold_until"
+            write_receipt held "" "$hold_branch" "$HEAD_COMMIT" main "manual hold active" "$hold_until"
+            exit 0
+        fi
+        rm -f "$HOLD_FILE"
+    fi
+
+    if [[ $FORCE -eq 0 ]]; then
+        git fetch -q origin main 2>/dev/null || true
+        ORIGIN_MAIN="$(git rev-parse origin/main 2>/dev/null || true)"
+        if [[ -z "$ORIGIN_MAIN" ]]; then
+            REASON="cannot resolve origin/main in this checkout"
+            echo "REFUSED - $REASON; --main-authority requires it." >&2
+            write_receipt refused "" "" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON" ""
+            exit 1
+        fi
+        if [[ "$HEAD_COMMIT" != "$ORIGIN_MAIN" ]]; then
+            REASON="this checkout ($(git rev-parse --short "$HEAD_COMMIT")) is not origin/main's tip ($(git rev-parse --short "$ORIGIN_MAIN"))"
+            echo "REFUSED - $REASON; --main-authority only installs origin/main's own tip." >&2
+            write_receipt refused "" "" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON" ""
+            exit 1
+        fi
+    fi
+
+    FROM_COMMIT=""
+    FROM_BRANCH=""
+    DROPPED=()
+    for binary in "${TARGETS[@]}"; do
+        prior="$(installed_commit "$binary")"
+        prior_branch="$(installed_branch "$binary")"
+        if [[ -z "$prior" ]]; then
+            echo "$binary: no build stamp on the installed binary; installing $(git rev-parse --short "$HEAD_COMMIT")"
+        elif [[ "$prior" == "$HEAD_COMMIT" ]]; then
+            echo "$binary: already built from $(git rev-parse --short "$HEAD_COMMIT"); reinstalling"
+        elif git cat-file -e "${prior}^{commit}" 2>/dev/null && git merge-base --is-ancestor "$prior" "$HEAD_COMMIT" 2>/dev/null; then
+            echo "$binary: $(git rev-parse --short "$prior") -> $(git rev-parse --short "$HEAD_COMMIT") (+$(git rev-list --count "$prior".."$HEAD_COMMIT") commits)"
+        else
+            THIS_DROPPED=()
+            if git cat-file -e "${prior}^{commit}" 2>/dev/null; then
+                while IFS= read -r line; do THIS_DROPPED+=("$line"); done < <(dropped_commits "$prior" "$HEAD_COMMIT")
+                echo "$binary: main authority - dropping $(git rev-list --count "$HEAD_COMMIT".."$prior") commit(s) from branch '$prior_branch' not on origin/main:" >&2
+                printf '  %s\n' "${THIS_DROPPED[@]+"${THIS_DROPPED[@]}"}" >&2
+            else
+                THIS_DROPPED=("$prior (unknown commit; not reachable in this repository)")
+                echo "$binary: main authority - dropping unknown commit $prior from branch '$prior_branch'; origin/main is authoritative" >&2
+            fi
+            # sbt is what reads the receipt; prefer its story, else keep the
+            # first divergence seen so the receipt is never empty.
+            if [[ "$binary" == "sbt" || -z "$FROM_COMMIT" ]]; then
+                FROM_COMMIT="$prior"
+                FROM_BRANCH="$prior_branch"
+                DROPPED=("${THIS_DROPPED[@]+"${THIS_DROPPED[@]}"}")
+            fi
+        fi
+        if [[ $DRY_RUN -eq 1 ]]; then
+            echo "$binary: dry run; not installing"
+            continue
+        fi
+        cargo install --path "$(crate_for "$binary")" --locked
+    done
+    # bash 3.2 (macOS's /bin/bash) treats a *declared-but-empty* array as
+    # unset under `set -u`; the `+` guard is the portable way to expand
+    # "zero or more elements" without tripping that quirk.
+    write_receipt installed "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" main "" "" "${DROPPED[@]+"${DROPPED[@]}"}"
+    exit 0
+fi
+
+# --- manual install: ancestry guard, now gated by --branch off main --------
+if [[ "$CURRENT_BRANCH" != "main" && $BRANCH_ACK -eq 0 && $FORCE -eq 0 ]]; then
+    REASON="installing branch '$CURRENT_BRANCH', not main; re-run with --branch to confirm"
+    echo "REFUSED - $REASON." >&2
+    write_receipt refused "" "" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON" ""
+    exit 1
+fi
+
+REFUSED=0
+REASON=""
+FROM_COMMIT=""
+FROM_BRANCH=""
 for binary in "${TARGETS[@]}"; do
     prior="$(installed_commit "$binary")"
 
     if [[ -z "$prior" ]]; then
-        echo "$binary: no build stamp on the installed binary; installing $(git rev-parse --short HEAD)"
+        echo "$binary: no build stamp on the installed binary; installing $(git rev-parse --short "$HEAD_COMMIT")"
     elif [[ "$prior" == "$HEAD_COMMIT" ]]; then
-        echo "$binary: already built from $(git rev-parse --short HEAD); reinstalling"
-    elif git merge-base --is-ancestor "$prior" HEAD 2>/dev/null; then
-        echo "$binary: $(git rev-parse --short "$prior") -> $(git rev-parse --short HEAD) (+$(git rev-list --count "$prior"..HEAD) commits)"
+        echo "$binary: already built from $(git rev-parse --short "$HEAD_COMMIT"); reinstalling"
+    elif git merge-base --is-ancestor "$prior" "$HEAD_COMMIT" 2>/dev/null; then
+        echo "$binary: $(git rev-parse --short "$prior") -> $(git rev-parse --short "$HEAD_COMMIT") (+$(git rev-list --count "$prior".."$HEAD_COMMIT") commits)"
     else
         # `git cat-file -e` first: a commit from a deleted worktree's branch may
         # no longer be reachable here, and "cannot verify" must refuse too.
         if ! git cat-file -e "${prior}^{commit}" 2>/dev/null; then
             echo "$binary: REFUSED - the installed build came from commit $prior, which does not exist in this repository." >&2
             echo "  Nothing here can prove this install would not lose work. Fetch that commit, or re-run with --force." >&2
+            REASON="installed build's commit $prior is unknown to this repository"
         else
-            lost="$(git rev-list --count HEAD.."$prior")"
+            lost="$(git rev-list --count "$HEAD_COMMIT".."$prior")"
             echo "$binary: REFUSED - this would drop $lost commit(s) you are already running." >&2
             echo "  installed: $(git rev-parse --short "$prior") ($(git log -1 --format=%s "$prior"))" >&2
-            echo "  this tree: $(git rev-parse --short HEAD) ($(git log -1 --format=%s HEAD))" >&2
+            echo "  this tree: $(git rev-parse --short "$HEAD_COMMIT") ($(git log -1 --format=%s "$HEAD_COMMIT"))" >&2
             echo "  Merge or rebase onto the installed build first, or re-run with --force." >&2
+            REASON="would drop $lost commit(s) already running"
+        fi
+        if [[ "$binary" == "sbt" || -z "$FROM_COMMIT" ]]; then
+            FROM_COMMIT="$prior"
+            FROM_BRANCH="$(installed_branch "$binary")"
         fi
         if [[ $FORCE -eq 0 ]]; then
             REFUSED=1
@@ -112,4 +317,22 @@ for binary in "${TARGETS[@]}"; do
     cargo install --path "$(crate_for "$binary")" --locked
 done
 
-exit "$REFUSED"
+if [[ $REFUSED -eq 1 ]]; then
+    write_receipt refused "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON" ""
+    exit 1
+fi
+
+HOLD_UNTIL=""
+if [[ -n "$HOLD_DURATION" && $DRY_RUN -eq 0 ]]; then
+    mkdir -p "$STATE_DIR"
+    HOLD_UNTIL="$(iso_after_now "$(duration_to_seconds "$HOLD_DURATION")")"
+    cat > "$HOLD_FILE" <<JSON
+{"branch": $(json_str_or_null "$CURRENT_BRANCH"), "until": $(json_str_or_null "$HOLD_UNTIL")}
+JSON
+    echo "auto-install replaces this with main after $HOLD_UNTIL"
+elif [[ "$CURRENT_BRANCH" != "main" && $DRY_RUN -eq 0 ]]; then
+    echo "auto-install replaces this with main within the next check (~60s); pass --hold to delay that"
+fi
+
+write_receipt installed "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" "$CURRENT_BRANCH" "" "$HOLD_UNTIL"
+exit 0
