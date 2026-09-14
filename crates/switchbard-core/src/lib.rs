@@ -1,5 +1,6 @@
 pub mod agent_context;
 pub mod agent_sessions;
+pub mod agent_status;
 pub mod attribution;
 pub mod backlog;
 pub mod backlog_relations;
@@ -28,6 +29,7 @@ pub mod refine;
 pub mod removal_safety;
 pub mod resolve;
 pub mod scanner;
+pub mod session_title;
 pub mod spawn;
 pub mod storage;
 mod task_model_context;
@@ -46,7 +48,12 @@ pub use agent_context::{
     AgentHookWarning, AgentKind, ContextKind, ContextScope,
 };
 pub use agent_sessions::{
-    attribute_agent_sessions, scan_agent_sessions, AgentProcessKind, AgentProcessRow, AgentSession,
+    attribute_agent_sessions, merge_agent_rows, parse_claude_agents_listing, scan_agent_sessions,
+    AgentActivity, AgentProcessKind, AgentProcessRow, AgentScan, AgentSession,
+};
+pub use agent_status::{
+    default_agent_status_dir, load_agent_status, load_agent_statuses, parse_status_line_payload,
+    record_agent_status, AgentStatus, MAX_RECORD_AGE,
 };
 pub use attribution::attribute;
 pub use backlog::{
@@ -146,6 +153,11 @@ pub use removal_safety::{
 };
 pub use resolve::{resolve, ResolvedService};
 pub use scanner::scan_listeners;
+pub use session_title::{
+    default_claude_home, entitle_sessions, first_user_prompt, first_user_prompt_for,
+    is_derived_session_name, parse_first_user_prompt, resolve_session_title, transcript_path,
+    unnamed_session_title, UNNAMED_SESSION_TITLE,
+};
 pub use spawn::{spawn_in_session, wait_for_exit, SpawnedRun, WaitOutcome};
 pub use types::{AttributedListener, LocalListener, Repo, WorktreeAlias, WorktreeRef};
 pub use work_sessions::{

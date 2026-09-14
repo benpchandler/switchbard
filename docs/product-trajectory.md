@@ -51,11 +51,11 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 
 - **Recognizable view-history previews (owner-directed 2026-09-14, TASK-154 reopened).** Render each history entry as its own compact card containing a plain-language title, relative time and miniature table using the saved arrangement against current cached data. Multiple cards and their tables must be visible simultaneously; a list with one shared selected preview does not meet this requirement. Show actual headings, grouping and palette-aware paint, clearly label current data, and preserve the active view while browsing. Review one real example before broad visual acceptance. State and stress evidence: `docs/history-preview-review.md`.
 
-- **Task detail focus and scrolling (owner-directed 2026-09-13, TASK-221).** Enter opens and focuses task details. Shift+Tab switches focus between the task list and its open detail pane; returning to the list retains the preview. Keyboard scrolling follows focus and mouse scrolling follows the pane under the pointer. Esc closes details. Long wrapped content remains reachable in short terminals. State and stress evidence: `docs/tui-detail-scroll-evidence.md`.
-
-- **Emphasis roles: rule-based terminal formatting (owner-directed 2026-09-12, project Emphasis Roles, TASK-152/215-219, 175-177, 200).** `sbt` paint rules bind facts to theme-defined emphasis roles (quiet, palette slot, strong, alert, band, struck) instead of raw hex, so a rule can sit on any rung of the quiet-to-loud attention ladder and every preset restyles every rule. Rules keep the existing hierarchy; non-conflicting attributes merge, conflicts go to the most specific rule, a trailing `!` stops evaluation, and `band` is a singleton tier enforced in `paint_eval`, patched over only by `selected` and `working`. Targets grow to group headings, the header row and the title line, driven from the cursor. `auto` writes palette-slot tokens, hex typed by a user is stored verbatim. An APCA legibility test owns each preset's contrast claims against a declared background. Speculative and deliberately last: a `scale:` rule for continuous facts and a light preset. Research basis, targets and model: `docs/tui-formatting-legibility.md`.
+- **Emphasis roles: rule-based terminal formatting (owner-directed 2026-09-12, project Emphasis Roles, TASK-175/176/177, TASK-200).** `sbt` paint rules bind facts to theme-defined emphasis roles (quiet, palette slot, strong, alert, band, struck) instead of raw hex, so a rule can sit on any rung of the quiet-to-loud attention ladder and every preset restyles every rule. Rules keep the existing hierarchy; non-conflicting attributes merge, conflicts go to the most specific rule, a trailing `!` stops evaluation, and `band` is a singleton tier enforced in `paint_eval`, patched over only by `selected` and `working`. Targets grow to group headings, the header row and the title line, driven from the cursor. Palette-slot tokens for automatic paint are implemented; the remaining role vocabulary and targets are planned. An APCA legibility test owns each preset's contrast claims against a declared background. Speculative and deliberately last: a `scale:` rule for continuous facts and a light preset. Research basis, targets and model: `docs/tui-formatting-legibility.md`.
 
 - **Configurable terminal task rows (owner-directed 2026-09-12, TASK-214).** The Tasks Views menu offers line wrapping (`v l`, owner-directed 2026-09-13, TASK-220); the settings menu retains optional blank spacing between tasks so narrow terminal panes remain readable. Layout belongs to the existing saved view and self-restart record; older records retain compact single-line defaults. Wrapping is capped at a configurable 2, 3, or 6 lines and uses terminal display widths. Selection, grouping, paging, resize and detail-pane layout must account for actual rendered row heights. Pull Requests retains its existing compact rendering. State and stress evidence is recorded in `docs/tui-row-layout-evidence.md`.
+
+- **Editable task detail pane (owner-directed 2026-09-13, TASK-222).** The Tasks detail pane becomes a focusable surface: a second `open` gesture (or `l`/`Right`) moves the cursor into it, `j`/`k` walk its fixed field rows (title, status, priority, project, due date, labels, description, acceptance criteria, and blocked-by/blocks), and Enter opens the row's editor through the existing picker/single-line-input vocabulary. Inline editing of multiline prose (implementation plan, acceptance-criterion text) stays out of scope — a textarea or `$EDITOR` handoff is a separate, undecided surface; the description row is read-only the same way, but its full body renders beneath it and is reachable with `PageDown`/`PageUp` or a mouse wheel once the pane is focused, restoring TASK-221's checked "keyboard and mouse scroll long details" acceptance criterion against this pane's row-cursor model rather than TASK-221's own now-superseded `Shift+Tab`/click-to-focus mechanism. Every save goes through `switchbard_core`'s native write layer, gated by a byte-for-byte stale-draft compare taken when the field's editor opened (`edit_backlog_task_expected`'s own central-storage revision guard is defense in depth on top of it, not a substitute — it cannot detect a plain-file edit, which is the only shape every `tests/harness` fixture exercises). A read-only task (anything but `BacklogTaskSource::Active`) shows its fields but refuses every edit with a status message. This is the one surviving detail-pane focus model, reconciled from two independently developed branches (2026-09-14). State and stress evidence is recorded in `docs/tui-detail-edit-evidence.md`.
 
 - **Reusable terminal list contracts (owner-directed 2026-09-08, TASK-144/162-167).** Tasks and Pull Requests share explicit column capabilities and entity adapters, one deterministic sorter and filter matcher, semantic paint precedence, bounded terminal presentation inputs, feature-scoped view settings and one configurable keyboard action catalog. This is a frontend-local boundary because the two concrete consumers are terminal lists; core retains domain facts and no UI dependencies. Existing GUI table/filter/badge primitives stay separate. `p` offers When task filed and When merged using authoritative timestamps and UTC calendar-day categories; no task completion or file modification surrogate is used. Existing view file names and Lua records remain the persistence authority, with explicit non-destructive handling of unreadable/unsupported records and external edits. See `docs/tui-abstraction-boundaries.md`, `docs/tui-date-paint-evidence.md`, `docs/tui-list-state-evidence.md` and `docs/tui-view-scope-evidence.md` for rationale, compatibility and state evidence.
 
@@ -699,6 +699,53 @@ The control and projection health indicators are independent. Queue drafts and d
 
 ## Known gaps / debt
 
+- **Agents page: the live sessions in this repo (owner-directed 2026-09-13; TASK-225).**
+  The owner runs five or six interactive Claude sessions across repo tabs and
+  could not tell, from `sbt`, which sessions exist in a repo, which are idle
+  and waiting on him, or what each is about. Decisions:
+  - *Claude Code's own listing is the source of state.* `claude agents --json`
+    is documented for scripting and reports pid, cwd, session id, name and
+    `idle`/`busy`; the OS scan proves the process and supplies the pgid the
+    dispatch dedup needs. `switchbard-core/src/agent_sessions.rs` runs both
+    and joins them on pid; a listing failure degrades to the scan with
+    `AgentActivity::Unknown` and is reported, never hidden. Pid-less
+    background sessions in the listing are not shown (this module vouches
+    only for processes it can see).
+  - *Title resolution has one order* (`switchbard-core/src/session_title.rs`):
+    the listed name unless it is the derived default (`<dir>-<2 chars>`),
+    else the title of a task the session holds (`work_sessions` join on
+    session id), else the first user prompt read from a bounded head of the
+    transcript at the documented location - its entry format is documented as
+    internal, so that reader accepts only the shape it recognises and returns
+    nothing otherwise - else `<cli> session`.
+  - *"Agents" is the name on both surfaces.* `sbt` gains a third page after
+    Pull Requests (Tasks / Pull Requests / Agents / Inbox), scoped to the repo
+    it runs in like every other page: one row per live session whose cwd is
+    inside one of the repo's worktrees, with state, the age the page has
+    observed that state (shown only once a change has been seen - a session
+    already idle at startup gets no fabricated age), worktree branch, title
+    and held task ids; a detail pane; an attention badge counting idle
+    sessions, live on every page. The GUI Command -> Fleet interactive rows
+    read the same `AgentSession`, so its mission shows the resolved title and
+    its now-line the state. Nothing is stored: each poll replaces the last.
+  - *Model, context use, cost and last activity come from the status line
+    (owner-directed 2026-09-13).* Claude Code hands its status-line command a
+    documented JSON payload on every session update; that is the only
+    push-style source for those facts. `sb agent status` reads one payload on
+    stdin and writes `~/.switchbard/agent-status/<session_id>.json`
+    (`switchbard-core/src/agent_status.rs`; `SWITCHBARD_AGENT_STATUS_DIR`
+    overrides; needs no repo), the owner's status-line script pipes its input
+    there in the background, and the Agents page joins the records on session
+    id: `model` and `ctx` columns, and `last` = time since the session's own
+    report, which moves every turn and so reads as "how long has this sat".
+    A session with no record shows blanks and the page's observed-state age
+    instead; stale records (dead pid, or a week untouched) are pruned on read.
+    `sb agent list` prints the records for scripts.
+  - *Named gaps for a second slice:* Codex sessions carry no state or title
+    until a Codex hook feeds a store (the `sb work hook` pattern); a
+    needs-input state for either CLI; jump-to-pane from a row (macOS `ps -E`
+    exposes `WEZTERM_PANE`); background sessions from the listing.
+
 - **"Safe to remove" now has exactly one definition** (`switchbard-core/src/removal_safety.rs`).
   It previously had three that disagreed: the Workspace row badge ran three checks, the bulk
   sweep ran five, and the single-row confirm dialog re-derived merged-ness from
@@ -742,7 +789,7 @@ The control and projection health indicators are independent. Queue drafts and d
 
 ## TUI page navigation (owner-directed 2026-09-06)
 
-The first PR slice established navigation: Tasks and Pull Requests are separate pages, Tab toggles through the configurable `page` action, and a persistent header marks the active page with brackets and the theme chip. Saved task views remain task views. Switching pages preserves task filters and selection, closes transient detail/help, and cannot operate on hidden tasks. Self-restart retains the page. Later repository PR and controls slices supersede the original unconnected PR-page placeholder.
+The first PR slice established navigation: Tasks and Pull Requests are separate pages, Tab toggles through the configurable `page` action, and a persistent header marks the active page with brackets and the theme chip. The later Agents and Inbox destinations complete the four-page cycle. Saved task views remain task views. Switching pages preserves task filters and selection, closes transient detail/help, and cannot operate on hidden tasks. Self-restart retains the page. Later repository PR and controls slices supersede the original unconnected PR-page placeholder.
 
 State/stress evidence: `crates/switchbard-tui/tests/pages.rs` exercises real keys and rendered screens for toggle/return, filtered selection, hidden-task controls, key remapping, help, self-restart, empty backlog, and 80x24 / 120x40 / 180x50 / 40x8 / zero-sized terminals. Loading, remote errors, stale delivery and writes are N/A to this unconnected page shell. Native owner visual review follows installation and is not implied by passing tests.
 

@@ -3,6 +3,7 @@ mod harness;
 
 use crossterm::event::KeyCode;
 use harness::*;
+use switchbard_tui::app::{Mode, Pane};
 
 #[test]
 fn line_wrap_and_history_shortcuts_coexist_and_restore_wrapped_details() {
@@ -20,6 +21,8 @@ fn line_wrap_and_history_shortcuts_coexist_and_restore_wrapped_details() {
     assert_eq!(h.app.state.row_layout.lines(), 2);
     assert!(h.render().contains("history restored"));
     h.press(KeyCode::Enter);
-    assert!(h.app.detail.focused);
-    assert!(h.render().contains("Description of"));
+    assert_eq!(h.app.pane, Pane::Detail);
+    assert!(h.render().contains("status:"));
+    h.press(KeyCode::Enter);
+    assert_eq!(h.app.mode, Mode::DetailFocus);
 }

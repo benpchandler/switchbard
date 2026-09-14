@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use switchbard_core::{
@@ -67,14 +67,14 @@ impl Harness {
         self.render()
     }
 
-    /// Travel between the two list destinations, passing the Inbox when needed.
+    /// Travel between the two list destinations, passing Agents and the
+    /// Inbox when needed.
     pub fn next_list_page(&mut self) -> String {
-        let screen = self.press(KeyCode::Tab);
-        if self.app.page == switchbard_tui::page::Page::Inbox {
-            self.press(KeyCode::Tab)
-        } else {
-            screen
+        let mut screen = self.press(KeyCode::Tab);
+        while !self.app.page.has_list_view() {
+            screen = self.press(KeyCode::Tab);
         }
+        screen
     }
 
     pub fn type_text(&mut self, text: &str) -> String {
@@ -87,6 +87,18 @@ impl Harness {
 
     pub fn selected_title(&self) -> String {
         self.app.selected_task().unwrap().title.clone()
+    }
+
+    /// A real `crossterm` mouse event at `(column, row)`, rendered
+    /// afterward the same way `press`/`type_text` are.
+    pub fn mouse(&mut self, kind: MouseEventKind, column: u16, row: u16) -> String {
+        self.app.handle_mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+        self.render()
     }
 }
 
@@ -298,6 +310,31 @@ pub fn visible_titles(h: &Harness) -> Vec<String> {
     (0..h.app.rows.len())
         .filter_map(|row| h.app.task(row).map(|task| task.title.clone()))
         .collect()
+}
+
+/// Filter down to the single task titled `title` and land the cursor on it.
+/// Deterministic where seed order or an earlier test's ids would otherwise
+/// make `j`/`k` counting fragile. Replaces any filter already applied (rather
+/// than appending to it, the way typing more into an open filter normally
+/// would) and deliberately leaves the new one-task filter in place: clearing
+/// it back to the full list would re-select by row position, which lands on
+/// a different task the moment the unfiltered order differs from the
+/// filtered one. A test that needs the full list back should filter again
+/// through this same helper, or manage its own filter text directly.
+pub fn select_task_titled(h: &mut Harness, title: &str) {
+    h.press(KeyCode::Char('/'));
+    // `/` on an already-non-empty filter appends a trailing space before any
+    // typing happens, so the length to erase is read after pressing it.
+    for _ in 0..h.app.filter_text().len() {
+        h.press(KeyCode::Backspace);
+    }
+    h.type_text(title);
+    h.press(KeyCode::Enter);
+    assert_eq!(
+        h.app.selected_task().map(|task| task.title.as_str()),
+        Some(title),
+        "expected {title} to be the only match"
+    );
 }
 
 /// Every table row as the screen shows it: headings and task titles alike.

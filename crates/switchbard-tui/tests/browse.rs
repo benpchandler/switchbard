@@ -25,13 +25,15 @@ fn j_and_k_move_selection_and_enter_opens_detail() {
     h.press(KeyCode::Char('k'));
     assert_eq!(h.selected_title(), rows[0]);
     let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains(&rows[0]), "{screen}");
+    assert!(screen.contains("description:"), "{screen}");
     assert!(
         screen.contains(&format!("Description of {}.", rows[0])),
         "{screen}"
     );
     assert!(screen.contains("[ ] It works"), "{screen}");
     let screen = h.press(KeyCode::Esc);
-    assert!(!screen.contains("Description of"), "{screen}");
+    assert!(!screen.contains("description:"), "{screen}");
 }
 
 #[test]

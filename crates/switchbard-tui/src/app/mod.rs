@@ -1,7 +1,7 @@
 //! Application state and the single place key events turn into state changes.
 //! Submodules extend `App` by concept: `pickers`, `paint_flow`, `slots`.
 
-mod detail;
+mod detail_edit;
 mod new_task;
 mod paint_flow;
 mod pickers;
@@ -45,6 +45,30 @@ pub enum Mode {
     BallName,
     /// After `v n` picks a slot: type its name, then Enter saves it.
     RenameView,
+    /// The detail pane has input focus: j/k move the cursor row, Enter/l
+    /// opens the row's editor, Esc/h/Left returns focus to the list.
+    DetailFocus,
+    /// A single-line field the detail pane is editing (see `DetailInputKind`).
+    DetailInput(DetailInputKind),
+}
+
+/// Which detail-pane field a `Mode::DetailInput` capture belongs to; each
+/// reads and writes `App::input` the same way `Mode::NewTask` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetailInputKind {
+    Title,
+    DueDate,
+    NewLabel,
+}
+
+impl DetailInputKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Title => "title",
+            Self::DueDate => "due date (YYYY-MM-DD, empty clears)",
+            Self::NewLabel => "new label",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,7 +142,6 @@ pub struct App {
     /// First row on screen; the renderer keeps `selected` inside the window.
     pub scroll: usize,
     pub help_scroll: u16,
-    pub detail: crate::detail_pane::Interaction,
     /// UTC epoch day used to invalidate relative date projections on the next tick.
     pub calendar_day: i64,
     /// Column order when `c m` began, so typed numbers keep meaning what the header showed.
@@ -141,8 +164,35 @@ pub struct App {
     pub mode: Mode,
     pub input: String,
     pub pane: Pane,
+    /// Cursor row inside the focused detail pane (`detail_edit`'s `FieldRow`
+    /// list for the selected task); meaningless while `pane != Pane::Detail`.
+    pub detail_cursor: usize,
+    /// The detail pane's own scroll offset, kept independent of the PR
+    /// pane's (`pull_requests.detail_scroll`) — the two panes never show at
+    /// once, but each remembers its own place.
+    pub detail_scroll: u16,
+    /// The detail pane's own rendered content height, refreshed every frame
+    /// `view::draw_detail` runs; `PageDown`/`PageUp` while focused scroll by
+    /// this many lines rather than a hardcoded guess.
+    pub detail_viewport: u16,
+    /// `(task id, detail_cursor)` as of the last scroll adjustment: while
+    /// unchanged, a manually paged/scrolled position into the description
+    /// body is left alone instead of being snapped back to the row's own
+    /// line on every frame — see `view::adjust_detail_scroll`.
+    pub detail_scroll_anchor: Option<(String, usize)>,
+    /// Where the last frame put the list/detail split and each row, so a
+    /// mouse event can be routed to the right pane and row.
+    pub detail_hit: crate::detail_pane::Hit,
+    /// The pre-write snapshot a detail-pane save checks before writing:
+    /// `edit_backlog_task_expected`'s revision guard only fires for a
+    /// centrally-stored task, so this raw-content compare is the "or
+    /// equivalent stale-check" that also catches a plain-file edit landing
+    /// between focus and save.
+    detail_draft: Option<detail_edit::DetailDraft>,
     pub page: Page,
     pub pull_requests: crate::pull_requests::PullRequests,
+    /// The Agents page: this repo's live sessions, polled off-thread.
+    pub agents: crate::agents::Agents,
     pub picker: Option<ValuePicker>,
     picker_parents: Vec<ValuePicker>,
     pub pr_merge: pr_merge::MergeFlow,
@@ -152,6 +202,17 @@ pub struct App {
     pub page_size: usize,
     pub telemetry: Telemetry,
     pub should_quit: bool,
+}
+
+/// The `:` verbs that work on a page with no task or PR list (Agents, Inbox):
+/// leaving, reloading, help, and filing reports. Everything else is a list
+/// control and is refused there. One list, read by both the completion menu
+/// and the command runner.
+fn command_allowed_off_lists(verb: &str) -> bool {
+    matches!(
+        verb,
+        "" | "q" | "quit" | "reload" | "page" | "help" | "bug" | "idea" | "dismiss"
+    )
 }
 
 impl App {
@@ -210,7 +271,6 @@ impl App {
             selected: 0,
             scroll: 0,
             help_scroll: 0,
-            detail: crate::detail_pane::Interaction::default(),
             calendar_day: crate::date_fields::today(),
             move_origin: None,
             paint_return: None,
@@ -228,8 +288,15 @@ impl App {
             mode: Mode::Browse,
             input: String::new(),
             pane: Pane::None,
+            detail_cursor: 0,
+            detail_scroll: 0,
+            detail_viewport: 0,
+            detail_scroll_anchor: None,
+            detail_hit: crate::detail_pane::Hit::default(),
+            detail_draft: None,
             page: Page::Tasks,
             pull_requests,
+            agents: crate::agents::Agents::new(),
             picker: None,
             picker_parents: Vec::new(),
             column_purpose: ColumnPurpose::Filter,
@@ -389,6 +456,7 @@ impl App {
         resume::ResumeRecord {
             pr_page: self.page == Page::PullRequests,
             inbox_page: self.page == Page::Inbox,
+            agents_page: self.page == Page::Agents,
             task_slot,
             task_view: tasks.to_lua(&self.registry),
             task_selected: self.selected,
@@ -412,6 +480,7 @@ impl App {
             self.resume_pages(record);
             self.switch_page(match page {
                 "prs" => Page::PullRequests,
+                "agents" => Page::Agents,
                 "inbox" => Page::Inbox,
                 _ => Page::Tasks,
             });
@@ -487,6 +556,8 @@ impl App {
         self.pull_requests.restore_selection(record.pr_id.clone());
         self.switch_page(if record.inbox_page {
             Page::Inbox
+        } else if record.agents_page {
+            Page::Agents
         } else if record.pr_page {
             Page::PullRequests
         } else {
@@ -569,6 +640,34 @@ impl App {
             }
         }
         self.reload_work();
+        self.tick_agents();
+    }
+
+    /// Collect the agent poll and start the next one when due; the page's
+    /// rows are titled with the tasks the live-work store says they hold.
+    fn tick_agents(&mut self) {
+        let held = self.held_task_titles();
+        let before = self.agents.row().map(|row| row.pid);
+        if self.agents.tick(&self.repo_root, held, Instant::now()) {
+            let after = self.agents.row().map(|row| row.pid);
+            if self.page == Page::Agents && self.pane == Pane::Detail && before != after {
+                self.pane = Pane::None;
+                self.status = "Selected session is no longer running".into();
+            }
+        }
+    }
+
+    /// Session id -> title of the first task it holds, for session titling.
+    fn held_task_titles(&self) -> std::collections::HashMap<String, String> {
+        self.work
+            .iter()
+            .filter(|session| !session.abandoned)
+            .filter_map(|session| {
+                let claim = session.claims.first()?;
+                let task = self.tasks.iter().find(|task| task.id == claim.task_id)?;
+                Some((session.session_id.clone(), task.title.clone()))
+            })
+            .collect()
     }
 
     /// Re-read the live session records: a handful of small files, and the
@@ -684,6 +783,8 @@ impl App {
             Mode::PickValue => self.handle_pick_value_key(event),
             Mode::BallName => self.handle_ball_name_key(event),
             Mode::RenameView => self.handle_rename_view_key(event),
+            Mode::DetailFocus => self.handle_detail_focus_key(event),
+            Mode::DetailInput(_) => self.handle_detail_input_key(event),
         }
         if !self.merge_target_current()
             || (self.mode != Mode::Browse
@@ -997,11 +1098,7 @@ impl App {
             names.push("more".to_string());
         }
         names.retain(|name| {
-            (self.page != Page::Inbox
-                || matches!(
-                    name.as_str(),
-                    "bug" | "idea" | "reload" | "page" | "help" | "q"
-                ))
+            (self.page.has_list_view() || command_allowed_off_lists(name))
                 && name.starts_with(typed)
                 && name != typed
         });
@@ -1013,8 +1110,19 @@ impl App {
         if event.code == KeyCode::Enter && event.kind == KeyEventKind::Repeat {
             return;
         }
+        // `→`/`l` is the picker vocabulary's "open" key everywhere else in
+        // sbt (see `picker::hint`'s "→/l open · ←/h back"); the detail pane
+        // reuses it as a second, non-remappable way to focus an already-open
+        // pane, alongside pressing the configured `open` action again below.
+        if self.page == Page::Tasks
+            && self.pane == Pane::Detail
+            && matches!(event.code, KeyCode::Right | KeyCode::Char('l'))
+        {
+            self.enter_detail_focus();
+            return;
+        }
         let chord = KeyChord::from_event(&event);
-        if self.page != Page::Inbox {
+        if self.page.has_list_view() {
             if let (KeyCode::Char(digit), false) = (event.code, chord.ctrl) {
                 if let Some(position) = digit.to_digit(10).filter(|n| *n > 0) {
                     self.open_column_actions(position as usize);
@@ -1123,6 +1231,18 @@ impl App {
         ) {
             self.cancel_pr_merge();
         }
+        if self.pane == Pane::Detail {
+            let delta = match action {
+                Action::PageDown => Some(self.page_size as i32),
+                Action::PageUp => Some(-(self.page_size as i32)),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                self.pull_requests.detail_scroll =
+                    (i32::from(self.pull_requests.detail_scroll) + delta).clamp(0, 65535) as u16;
+                return true;
+            }
+        }
         match action {
             Action::OpenBrowser => self.open_pr_browser(),
             Action::Merge => self.open_pr_merge(),
@@ -1134,7 +1254,6 @@ impl App {
             Action::PageUp => self.pull_requests.step(-(self.page_size as isize)),
             Action::Open => {
                 self.pull_requests.detail_scroll = 0;
-                self.detail.focused = false;
                 self.pane = if self.pane == Pane::Detail {
                     Pane::None
                 } else {
@@ -1144,6 +1263,46 @@ impl App {
             Action::Reload => {
                 self.pull_requests.refresh(&self.repo_root);
                 self.status.clear();
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Cursor, detail and reload on the Agents page. Everything else falls
+    /// through to the shared handling.
+    fn apply_agents_action(&mut self, action: &Action) -> bool {
+        if self.pane == Pane::Detail {
+            let delta = match action {
+                Action::PageDown => Some(self.page_size as i32),
+                Action::PageUp => Some(-(self.page_size as i32)),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                self.agents.detail_scroll =
+                    (i32::from(self.agents.detail_scroll) + delta).clamp(0, 65535) as u16;
+                return true;
+            }
+        }
+        match action {
+            Action::Down => self.agents.step(1),
+            Action::Up => self.agents.step(-1),
+            Action::Top => self.agents.step(isize::MIN),
+            Action::Bottom => self.agents.step(isize::MAX),
+            Action::PageDown => self.agents.step(self.page_size as isize),
+            Action::PageUp => self.agents.step(-(self.page_size as isize)),
+            Action::Open => {
+                self.agents.detail_scroll = 0;
+                self.pane = if self.pane == Pane::Detail {
+                    Pane::None
+                } else {
+                    Pane::Detail
+                }
+            }
+            Action::Reload => {
+                let held = self.held_task_titles();
+                self.agents.poll_now(&self.repo_root, held);
+                self.status = "Polling agent sessions".into();
             }
             _ => return false,
         }
@@ -1187,10 +1346,10 @@ impl App {
             self.status = "Switch to Tasks or Pull Requests to use list controls".to_string();
             return;
         }
-        if self.apply_detail_action(action) {
+        if self.page == Page::PullRequests && self.apply_pr_action(action) {
             return;
         }
-        if self.page == Page::PullRequests && self.apply_pr_action(action) {
+        if self.page == Page::Agents && self.apply_agents_action(action) {
             return;
         }
         match action {
@@ -1203,7 +1362,7 @@ impl App {
                 if self.page == Page::PullRequests {
                     self.refresh_pr_state();
                 }
-                self.pane = Pane::None;
+                self.close_detail_pane();
                 self.status.clear();
             }
             Action::NewTask => self.open_new_task(),
@@ -1213,20 +1372,22 @@ impl App {
             Action::Bottom => self.select(usize::MAX),
             Action::PageDown => self.step(self.page_size as isize),
             Action::PageUp => self.step(-(self.page_size as isize)),
-            Action::FocusPane => {}
-            Action::Open => {
-                self.detail.scroll = 0;
-                self.detail.focused = self.pane != Pane::Detail;
-                self.pane = match self.pane {
-                    Pane::Detail => Pane::None,
-                    _ => Pane::Detail,
+            Action::Open => match self.pane {
+                // A second `open` on an already-open pane focuses it, rather
+                // than closing it — closing is `Action::Back`'s job now, so
+                // that focusing and dismissing are never the same keystroke.
+                Pane::Detail => self.enter_detail_focus(),
+                _ => {
+                    self.pane = Pane::Detail;
+                    self.detail_cursor = 0;
+                    self.detail_scroll = 0;
                 }
-            }
+            },
             Action::Back => {
                 self.cancel_pr_merge();
                 if self.pane != Pane::None {
-                    self.pane = Pane::None;
-                } else if self.page != Page::Inbox && !self.filter_text().is_empty() {
+                    self.close_detail_pane();
+                } else if self.page.has_list_view() && !self.filter_text().is_empty() {
                     self.set_filter(String::new());
                 }
                 self.status.clear();
@@ -1304,12 +1465,7 @@ impl App {
 
     fn run_command(&mut self, command: &str) {
         let (verb, rest) = command.split_once(' ').unwrap_or((command, ""));
-        if self.page == Page::Inbox
-            && !matches!(
-                verb,
-                "q" | "quit" | "reload" | "page" | "help" | "bug" | "idea" | "dismiss" | ""
-            )
-        {
+        if !self.page.has_list_view() && !command_allowed_off_lists(verb) {
             self.status = "Switch to Tasks or Pull Requests to use list controls".into();
             return;
         }
@@ -1455,7 +1611,7 @@ impl App {
             std::mem::swap(&mut self.view, &mut self.inactive_view);
         }
         self.page = page;
-        if page != Page::Inbox {
+        if page.has_list_view() {
             self.state.sanitize(page, &self.registry);
         }
         self.refilter();
@@ -1769,7 +1925,20 @@ impl App {
                 _ => false,
             }) {
                 self.select(row);
+                // A background reload (another terminal's `sb edit`, an
+                // agent write) just repainted the pane with fresh content;
+                // refresh the stale-check snapshot to match it so the next
+                // `Space` toggle or picker pick is judged against what is
+                // now on screen. Only while the pane is plain cursor focus
+                // with nothing else open — `Mode::DetailInput` and an open
+                // `Detail*` picker hold a draft against the *old* content,
+                // and a stale refusal there is the correct outcome, not
+                // something to silently paper over.
+                if self.mode == Mode::DetailFocus {
+                    self.begin_detail_edit();
+                }
             } else if self.mode == Mode::BallName
+                || matches!(self.mode, Mode::DetailFocus | Mode::DetailInput(_))
                 || self.picker.as_ref().is_some_and(|picker| {
                     matches!(
                         picker.purpose,
@@ -1780,13 +1949,14 @@ impl App {
                             | PickerPurpose::TopList
                             | PickerPurpose::Ball
                             | PickerPurpose::Goals(_)
-                    )
+                    ) || picker.purpose.is_detail()
                 })
             {
                 self.picker = None;
                 self.mode = Mode::Browse;
                 self.input.clear();
                 self.picker_parents.clear();
+                self.close_detail_pane();
                 self.status = format!("{id} is no longer visible; task action canceled");
             }
         }

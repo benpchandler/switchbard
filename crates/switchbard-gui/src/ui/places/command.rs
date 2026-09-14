@@ -589,12 +589,19 @@ fn collect_command_rows(app: &HiveApp, now: u64, stale_after: Duration) -> Vec<C
         if !in_scope {
             continue;
         }
+        // Idle/busy is the session's own report (`claude agents --json`);
+        // a process only the OS scan saw has no state to show, so the line
+        // stays as it was rather than claiming one.
+        let activity = match session.activity {
+            switchbard_core::AgentActivity::Unknown => String::new(),
+            state => format!("{} · ", state.label()),
+        };
         let now_line = match session.started_unix {
             Some(started) => format!(
-                "active {}",
+                "{activity}active {}",
                 format_elapsed(Duration::from_secs(now.saturating_sub(started)))
             ),
-            None => "active session (start time unknown)".to_string(),
+            None => format!("{activity}active session (start time unknown)"),
         };
         let lease = match (&session.worktree_branch, &session.worktree_path) {
             (Some(branch), _) => format!("wt {branch}"),
@@ -604,7 +611,10 @@ fn collect_command_rows(app: &HiveApp, now: u64, stale_after: Duration) -> Vec<C
         let row = CommandRow {
             key: CommandRowKey::Interactive(session.pid),
             agent_label: session.kind.label(),
-            mission: "interactive session".to_string(),
+            mission: session
+                .title
+                .clone()
+                .unwrap_or_else(|| switchbard_core::UNNAMED_SESSION_TITLE.to_string()),
             now_line,
             lease,
             sitrep_age: None,

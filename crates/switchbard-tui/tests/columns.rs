@@ -239,7 +239,7 @@ fn ids_drop_the_repo_prefix_priority_is_a_letter_and_columns_fit_their_content()
     h.press(KeyCode::Enter);
     let detail = h.render();
     assert!(
-        detail.contains("TASK-1 ·"),
+        detail.contains("TASK-1"),
         "detail keeps the full id: {detail}"
     );
 }

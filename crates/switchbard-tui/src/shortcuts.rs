@@ -10,7 +10,6 @@ pub enum Action {
     PageDown,
     PageUp,
     Open,
-    FocusPane,
     OpenBrowser,
     Merge,
     DismissNotifications,
@@ -39,22 +38,24 @@ pub enum Action {
 #[derive(Clone, Copy)]
 enum Availability {
     Tasks,
+    /// Task and PR pages: the ones with a filterable, paintable list view.
     Lists,
+    /// Every page with a cursor, the Agents page included.
+    Cursor,
     Everywhere,
 }
 
 // Ordered as displayed in help: action, canonical Lua name, page availability.
 const ACTIONS: &[(Action, &str, Availability)] = &[
     (Action::Page, "page", Availability::Everywhere),
-    (Action::FocusPane, "focus_pane", Availability::Lists),
     (Action::NewTask, "new_task", Availability::Tasks),
-    (Action::Down, "down", Availability::Lists),
-    (Action::Up, "up", Availability::Lists),
-    (Action::Top, "top", Availability::Lists),
-    (Action::Bottom, "bottom", Availability::Lists),
-    (Action::PageDown, "page_down", Availability::Lists),
-    (Action::PageUp, "page_up", Availability::Lists),
-    (Action::Open, "open", Availability::Lists),
+    (Action::Down, "down", Availability::Cursor),
+    (Action::Up, "up", Availability::Cursor),
+    (Action::Top, "top", Availability::Cursor),
+    (Action::Bottom, "bottom", Availability::Cursor),
+    (Action::PageDown, "page_down", Availability::Cursor),
+    (Action::PageUp, "page_up", Availability::Cursor),
+    (Action::Open, "open", Availability::Cursor),
     (Action::Back, "back", Availability::Everywhere),
     (Action::Filter, "filter", Availability::Lists),
     (Action::FilterColumn, "filter_column", Availability::Lists),
@@ -115,7 +116,8 @@ impl Action {
     pub(crate) fn available_on(&self, page: Page) -> bool {
         match self.metadata().1 {
             Availability::Tasks => page == Page::Tasks,
-            Availability::Lists => page != Page::Inbox,
+            Availability::Lists => page.has_list_view(),
+            Availability::Cursor => page.has_cursor(),
             Availability::Everywhere => true,
         }
     }

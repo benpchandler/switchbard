@@ -127,8 +127,11 @@ fn run(repo_root: PathBuf, fresh: bool) -> Result<()> {
         eprintln!("{error}");
     }
     app.telemetry.finish();
+    // The run's own error is the one worth reporting; a failed mouse
+    // restore only matters when the run itself was clean.
+    let exit = outcome?;
     mouse_restore?;
-    match outcome? {
+    match exit {
         Exit::Quit => Ok(()),
         Exit::Restart => restart_into_new_binary(&app),
     }

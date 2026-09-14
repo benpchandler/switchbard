@@ -19,8 +19,8 @@ use common::{harness, seeded_app, REPO_PATH};
 use egui_kittest::kittest::{self, NodeT, Queryable};
 use switchbard_core::dispatch_inspect::{now_unix, DispatchRun, DispatchRunLiveness};
 use switchbard_core::{
-    AgentProcessKind, AgentSession, BacklogRepo, BacklogTask, BacklogTaskSource, RepoRanking,
-    DISPATCHING_LABEL, DISPATCH_FAILED_LABEL,
+    AgentActivity, AgentProcessKind, AgentSession, BacklogRepo, BacklogTask, BacklogTaskSource,
+    RepoRanking, DISPATCHING_LABEL, DISPATCH_FAILED_LABEL,
 };
 use switchbard_gui::app::HiveApp;
 use switchbard_gui::runtime::{AgentsSection, CommandFacet, DispatchesFacet, Place, TasksView};
@@ -160,6 +160,11 @@ fn interactive_session(pid: u32) -> AgentSession {
         // `a_dispatch_runs_own_claude_process_never_double_rows` for the
         // fixture that *does* overlap, proving the dedup actually fires.
         pgid: Some(pid as i32),
+        cwd: None,
+        session_id: None,
+        name: None,
+        activity: AgentActivity::Unknown,
+        title: None,
     }
 }
 
@@ -240,6 +245,11 @@ fn a_dispatch_runs_own_claude_process_never_double_rows() {
         worktree_branch: Some(run.branch.clone()),
         started_unix: Some(now_unix().saturating_sub(60)),
         pgid: Some(7777),
+        cwd: None,
+        session_id: None,
+        name: None,
+        activity: AgentActivity::Unknown,
+        title: None,
     };
     let mut app = app_with_fleet(
         vec![task("TASK-1", &[DISPATCHING_LABEL], "")],

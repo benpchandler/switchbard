@@ -346,6 +346,11 @@ fn command_needs_you(theme: ThemeChoice, suffix: &str) {
         worktree_branch: Some("feature/stack-ranking-core".to_string()),
         started_unix: Some(now_unix().saturating_sub(900)),
         pgid: Some(5150),
+        cwd: None,
+        session_id: None,
+        name: None,
+        activity: switchbard_core::AgentActivity::Unknown,
+        title: None,
     }];
     app.command_view.selected = Some(switchbard_gui::runtime::CommandRowKey::Dispatch(
         (PathBuf::from(REPO_PATH), "TASK-8".to_string()).into(),

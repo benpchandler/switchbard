@@ -71,6 +71,7 @@ fn help_catalog_obeys_page_availability_and_survives_page_return() {
     h.press(KeyCode::Esc);
     h.press(KeyCode::Tab);
     h.press(KeyCode::Tab);
+    h.press(KeyCode::Tab);
     assert!(h.press(KeyCode::Char('?')).contains("new_task"));
 }
 
@@ -113,6 +114,7 @@ fn remapped_list_actions_cannot_mutate_hidden_lists_from_inbox() {
     h.type_text("/title:example");
     h.press(KeyCode::Enter);
     let prs = h.app.state.clone();
+    h.press(KeyCode::Tab);
     h.press(KeyCode::Tab);
     for action in [
         "new_task",
@@ -170,12 +172,24 @@ fn remapped_list_actions_cannot_mutate_hidden_lists_from_inbox() {
 #[test]
 fn help_separates_long_key_bindings_from_action_names() {
     let mut h = Harness::new();
+    std::fs::write(
+        &h.config_path,
+        "return { keys = { backspace = 'dismiss_notifications' } }",
+    )
+    .unwrap();
+    h.app.tick();
     let screen = h.press(KeyCode::Char('?'));
-    assert!(screen.contains("shift-tab focus_pane"), "{screen}");
+    assert!(
+        screen.contains("backspace n dismiss_notifications"),
+        "{screen}"
+    );
     assert!(screen.contains("ctrl-d pagedown page_down"), "{screen}");
     assert!(screen.contains("ctrl-u pageup page_up"), "{screen}");
     assert!(screen.contains(":bug"), "{screen}");
-    assert!(!screen.contains("shift-tabfocus_pane"), "{screen}");
+    assert!(
+        !screen.contains("backspace ndismiss_notifications"),
+        "{screen}"
+    );
 }
 
 #[test]
@@ -183,7 +197,7 @@ fn oversized_help_binding_gets_its_own_readable_row() {
     let mut h = Harness::new();
     let keys = "abcdefghijklmnop"
         .chars()
-        .map(|key| format!("{key} = 'focus_pane'"))
+        .map(|key| format!("{key} = 'dismiss_notifications'"))
         .collect::<Vec<_>>()
         .join(", ");
     std::fs::write(&h.config_path, format!("return {{ keys = {{ {keys} }} }}")).unwrap();
@@ -191,14 +205,17 @@ fn oversized_help_binding_gets_its_own_readable_row() {
     let bindings = h
         .app
         .config
-        .bindings_for(&switchbard_tui::config::Action::FocusPane)
+        .bindings_for(&switchbard_tui::config::Action::DismissNotifications)
         .join(" ");
     let screen = h.press(KeyCode::Char('?'));
     assert!(
-        screen.contains(&format!("{bindings} focus_pane")),
+        screen.contains(&format!("{bindings} dismiss_notifications")),
         "{screen}"
     );
-    assert!(!screen.contains("focus_panenew_task"), "{screen}");
+    assert!(
+        !screen.contains("dismiss_notificationsnew_task"),
+        "{screen}"
+    );
 }
 
 #[test]

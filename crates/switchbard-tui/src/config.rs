@@ -42,7 +42,6 @@ impl KeyChord {
             "enter" => KeyCode::Enter,
             "esc" => KeyCode::Esc,
             "tab" => KeyCode::Tab,
-            "shift-tab" | "backtab" => KeyCode::BackTab,
             "pagedown" => KeyCode::PageDown,
             "pageup" => KeyCode::PageUp,
             "up" => KeyCode::Up,
@@ -61,18 +60,13 @@ impl KeyChord {
 
     pub fn from_event(event: &KeyEvent) -> KeyChord {
         KeyChord {
-            code: if event.code == KeyCode::Tab && event.modifiers.contains(KeyModifiers::SHIFT) {
-                KeyCode::BackTab
-            } else {
-                event.code
-            },
+            code: event.code,
             ctrl: event.modifiers.contains(KeyModifiers::CONTROL),
         }
     }
 
     pub fn label(&self) -> String {
         let key = match self.code {
-            KeyCode::BackTab => "shift-tab".to_string(),
             KeyCode::Char(' ') => "space".to_string(),
             KeyCode::Char(c) => c.to_string(),
             other => format!("{other:?}").to_lowercase(),
