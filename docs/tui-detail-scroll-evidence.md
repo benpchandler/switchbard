@@ -23,7 +23,7 @@ TASK-221: details taller than the terminal must remain readable. Enter opens and
 ## Execution ledger
 
 - Initial primary checkout: clean, main at f8098a30.
-- Isolated implementation: feat/tui-detail-scroll in /Users/bpc/Dev/.worktrees/switchbard-detail-scroll.
+- Isolated implementation: the recovered detail-scroll work is included on feat/tui-history-preview in this worktree.
 - Source and E2E tests delegated to detail_scroll; docs, audit, gates and guarded installation owned by root.
 - Reproduction: `cargo test -p switchbard-tui --test detail_pane` failed on the unmodified implementation after Enter and 20 Down events; the screen still showed only description lines 00-12. Task rendering passed a constant zero scroll and the main loop consumed only key events.
 - Actual binary terminal audit: isolated tmux socket `codex-detail-scroll`, real Enter/Down/Shift+Tab/End keys, SGR wheel-down escape at detail coordinates, resize from 100x20 to 40x8. Detail scroll reached line 79; Shift+Tab returned list navigation and selecting another task reset the detail position. Local captures: `/tmp/sbt-detail-keyboard.txt`, `/tmp/sbt-detail-mouse.txt`, `/tmp/sbt-detail-end.txt`, `/tmp/sbt-detail-narrow.txt`. A transient rebuild-triggered restart interrupted the first mouse probe; repeating with a private binary copy passed.
@@ -43,6 +43,6 @@ Rebase recovery retained these contracts alongside the newer detail editor and A
 
 ## Final verification and delivery
 
-`mise run tui-install` passed on the combined branch: formatting, clippy with warnings denied, 253 passed tests and 21 existing optional ignored tests, then the guarded release installation. Installed `sbt build-id` reports clean commit `32cce22c1d4ff709b412641b16fbd9218f433c72`, branch `feat/tui-detail-scroll`. The installer preserved previously installed `8b6f259e` by ancestry; no force flag was used. Final terminal verification also checked readable Help (`/tmp/sbt-detail-help.txt`) and repeated End/Shift+Tab/list navigation on the merged build.
+The earlier combined-branch verification passed formatting, clippy with warnings denied, 253 tests and 21 existing optional ignored tests, followed by guarded release installation. That verification used the predecessor detail-scroll branch and is historical evidence, not proof of the current history-card revision. Final terminal verification also checked readable Help (`/tmp/sbt-detail-help.txt`) and repeated End/Shift+Tab/list navigation on the merged build.
 
-TASK-221 is Done and its live claim released. Code and evidence are committed in the isolated worktree; main remains untouched. No push, PR or remote CI was requested or performed. Automated terminal rendering and real terminal input passed; owner visual acceptance in their own terminal and optional authenticated PR journeys remain unclaimed.
+TASK-221 is Done and its live claim released. Code and evidence are committed in the isolated worktree; main remains untouched. Automated terminal rendering and real terminal input passed; optional authenticated PR journeys remain unclaimed.
