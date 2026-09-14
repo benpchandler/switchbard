@@ -346,7 +346,7 @@ fn list_claude_sessions() -> Result<Vec<AgentProcessRow>> {
         .args(["agents", "--json"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .map_err(|e| anyhow!("failed to spawn claude: {e}"))?;
     let stdout = child
@@ -370,11 +370,7 @@ fn list_claude_sessions() -> Result<Vec<AgentProcessRow>> {
         .wait_with_output()
         .map_err(|e| anyhow!("waiting for claude agents: {e}"))?;
     if !output.status.success() {
-        bail!(
-            "claude agents exited {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
+        bail!("claude agents exited {}", output.status);
     }
     parse_claude_agents_listing(&String::from_utf8_lossy(&raw))
 }
