@@ -1377,6 +1377,7 @@ impl App {
                     self.detail_cursor = 0;
                     self.detail_scroll = 0;
                     self.detail_read_focus = true;
+                    self.status.clear();
                 }
             },
             Action::Back => {
