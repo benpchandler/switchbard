@@ -2,7 +2,7 @@
 
 ## Outcome and boundaries
 
-TASK-193 is the owner's high-priority first slice toward visible handoffs. The first row contains Tasks, Pull Requests, and Inbox. Pull Requests counts all open PRs in the repository, independently of bounded history, filters, checks, reviewer, and active page. Positive counts use the shared `attention_badge` theme surface; known zero hides the badge. Inbox is intentionally unpopulated and has no fabricated action count. The collapsible bottom pane, action collection, handoff enforcement, and recent completion history are later work.
+TASK-193 is the owner's high-priority first slice toward visible handoffs. The page cycle contains Tasks, Pull Requests, Agents, and Inbox. Pull Requests counts all open PRs in the repository, independently of bounded history, filters, checks, reviewer, and active page. Positive counts use the shared `attention_badge` theme surface; known zero hides the badge. Inbox is intentionally unpopulated and has no fabricated action count. The collapsible bottom pane, action collection, handoff enforcement, and recent completion history are later work.
 
 The seven abstraction tasks remain a separate implemented branch awaiting PR delivery. This slice does not imply their acceptance or supersede that outcome. TASK-193 must remain In Review with a concrete PR after delivery, pending owner acceptance.
 

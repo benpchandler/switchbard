@@ -716,7 +716,7 @@ The control and projection health indicators are independent. Queue drafts and d
     transcript at the documented location - its entry format is documented as
     internal, so that reader accepts only the shape it recognises and returns
     nothing otherwise - else the listed name after all.
-  - *"Agents" is the name on both surfaces.* `sbt` gains a fourth page after
+  - *"Agents" is the name on both surfaces.* `sbt` gains a third page after
     Pull Requests (Tasks / Pull Requests / Agents / Inbox), scoped to the repo
     it runs in like every other page: one row per live session whose cwd is
     inside one of the repo's worktrees, with state, the age the page has
@@ -787,7 +787,7 @@ The control and projection health indicators are independent. Queue drafts and d
 
 ## TUI page navigation (owner-directed 2026-09-06)
 
-The first PR slice established navigation: Tasks and Pull Requests are separate pages, Tab toggles through the configurable `page` action, and a persistent header marks the active page with brackets and the theme chip. Saved task views remain task views. Switching pages preserves task filters and selection, closes transient detail/help, and cannot operate on hidden tasks. Self-restart retains the page. Later repository PR and controls slices supersede the original unconnected PR-page placeholder.
+The first PR slice established navigation: Tasks and Pull Requests are separate pages, Tab toggles through the configurable `page` action, and a persistent header marks the active page with brackets and the theme chip. The later Agents and Inbox destinations complete the four-page cycle. Saved task views remain task views. Switching pages preserves task filters and selection, closes transient detail/help, and cannot operate on hidden tasks. Self-restart retains the page. Later repository PR and controls slices supersede the original unconnected PR-page placeholder.
 
 State/stress evidence: `crates/switchbard-tui/tests/pages.rs` exercises real keys and rendered screens for toggle/return, filtered selection, hidden-task controls, key remapping, help, self-restart, empty backlog, and 80x24 / 120x40 / 180x50 / 40x8 / zero-sized terminals. Loading, remote errors, stale delivery and writes are N/A to this unconnected page shell. Native owner visual review follows installation and is not implied by passing tests.
 
