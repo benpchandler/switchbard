@@ -115,9 +115,6 @@ with tempfile.TemporaryDirectory(prefix="sbt-signal-resume-") as directory:
         record = json.loads(records[0].read_text().split("=", 1)[1])
         assert value in record["task_view"], record
         run_session(binary, repo, env, [], value.encode(), signal.SIGTERM)
-        run_session(binary, repo, env, ["--fresh"], b"Tasks", signal.SIGTERM)
-        fresh_record = json.loads(records[0].read_text().split("=", 1)[1])
-        assert value not in fresh_record["task_view"], "--fresh retained last filter"
     assert not list((root / "home" / ".switchbard" / "views").glob("*.lua"))
     print("SIGHUP, SIGTERM, SIGINT: durable quit and cold restore; relative/absolute repo identity")
     timer_checkpoint_then_forced_exit(

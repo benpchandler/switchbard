@@ -54,7 +54,6 @@ impl HistoryPage {
         match page {
             Page::Tasks => Some(Self::Tasks),
             Page::PullRequests => Some(Self::PullRequests),
-            Page::Agents => None,
             Page::Inbox => None,
         }
     }
@@ -268,21 +267,9 @@ fn lock_history(path: &Path) -> Result<fs::File, String> {
         .write(true)
         .open(path.with_extension("history.lock"))
         .map_err(|e| e.to_string())?;
-    // A timer checkpoint and a graceful-exit checkpoint can legitimately meet
-    // at the same persistence boundary. Give the writer holding the lock a
-    // short chance to finish before reporting a real contention failure.
-    let mut last_error = None;
-    for _ in 0..50 {
-        match file.try_lock() {
-            Ok(()) => return Ok(file),
-            Err(error) => last_error = Some(error),
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    Err(format!(
-        "view history busy: {}",
-        last_error.expect("lock attempts always run")
-    ))
+    file.try_lock()
+        .map_err(|e| format!("view history busy: {e}"))?;
+    Ok(file)
 }
 
 fn temporary_path(path: &Path) -> PathBuf {
@@ -322,3 +309,7 @@ fn write_atomic(path: &Path, bytes: &[u8], store: &HistoryStore) -> Result<(), S
     }
     result.map_err(|e| format!("could not save view history: {e}"))
 }
+
+#[cfg(test)]
+#[path = "view_history_tests.rs"]
+mod tests;

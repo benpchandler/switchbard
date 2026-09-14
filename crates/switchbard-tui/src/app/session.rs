@@ -53,7 +53,7 @@ impl App {
     pub fn checkpoint_session(&mut self) -> Result<(), String> {
         let now = epoch_seconds();
         let mut errors = Vec::new();
-        if let Err(error) = self.checkpoint_resume() {
+        if let Err(error) = self.resume_store.checkpoint(&self.resume_state()) {
             errors.push(format!("resume not saved: {error}"));
         }
         let (tasks, prs) = if self.page == Page::PullRequests {
@@ -72,15 +72,6 @@ impl App {
         let error = errors.join("; ");
         self.fail(error.clone());
         Err(error)
-    }
-
-    fn checkpoint_resume(&mut self) -> Result<(), String> {
-        let state = self.resume_state();
-        let resume::Restored::Record(record) = resume::decode(Some(&state)) else {
-            return Err("outgoing resume record is unreadable".into());
-        };
-        validate_resume_views(&record, &self.registry)?;
-        self.resume_store.checkpoint(&state)
     }
 
     /// A monotonic deadline keeps rapid input from starving persistence.
