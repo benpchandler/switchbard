@@ -708,21 +708,28 @@ fn help_entry_rows(
     let columns = (usize::from(width) / 32).max(1);
     let cell_width = usize::from(width) / columns;
     let mut rows = Vec::new();
-    for chunk in entries.chunks(columns) {
-        let cells: Vec<_> = chunk
-            .iter()
-            .map(|(keys, name)| help_entry(keys, name, theme))
-            .collect();
-        if cells.iter().any(|cell| cell.width() + 2 > cell_width) {
-            rows.extend(cells);
+    let mut spans = Vec::new();
+    let mut filled = 0;
+    for (keys, name) in entries {
+        let cell = help_entry(keys, name, theme);
+        if cell.width() + 2 > cell_width {
+            if !spans.is_empty() {
+                rows.push(Line::from(std::mem::take(&mut spans)));
+                filled = 0;
+            }
+            rows.push(cell);
             continue;
         }
-        let mut spans = Vec::new();
-        for cell in cells {
-            let padding = cell_width.saturating_sub(cell.width());
-            spans.extend(cell.spans);
-            spans.push(Span::raw(" ".repeat(padding)));
+        let padding = cell_width.saturating_sub(cell.width());
+        spans.extend(cell.spans);
+        spans.push(Span::raw(" ".repeat(padding)));
+        filled += 1;
+        if filled == columns {
+            rows.push(Line::from(std::mem::take(&mut spans)));
+            filled = 0;
         }
+    }
+    if !spans.is_empty() {
         rows.push(Line::from(spans));
     }
     rows
