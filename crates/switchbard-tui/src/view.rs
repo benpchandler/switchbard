@@ -37,6 +37,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Constraint::Length(footer_height),
     ])
     .areas(frame.area());
+    app.detail_hit.set_areas(body, app.pane == Pane::Detail);
     crate::navigation::draw(frame, app, navigation);
     draw_notification(frame, app, notification);
     app.page_size = body.height.saturating_sub(3).max(1) as usize;
@@ -116,6 +117,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.height == 0 || inner.width == 0 {
+        app.detail_hit.list_rows.clear();
         return;
     }
     let widths: Vec<Constraint> = app
@@ -186,6 +188,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
     let window = viewport.slots;
     let mut used = 0;
     let mut visible_tasks = 0;
+    let mut list_rows: Vec<(u16, usize)> = Vec::new();
     let body = Rect {
         y: inner.y + 1,
         height: inner.height - 1,
@@ -208,6 +211,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
             height: content_height.min((window - used) as u16),
             ..body
         };
+        list_rows.push((row_area.y, app.scroll + line));
         used += usize::from(content_height)
             + usize::from(matches!(row, Row::Task(_)) && app.state.row_layout.spaced);
         let selected = app.scroll + line == app.selected;
@@ -293,6 +297,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
     app.page_size = visible_tasks.max(1);
+    app.detail_hit.list_rows = list_rows;
 }
 
 fn draw_task_title(
@@ -407,14 +412,23 @@ fn table_title(app: &App) -> String {
 fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = app.config.theme.clone();
     let focused = app.detail_focused();
+    app.detail_viewport = area.height.saturating_sub(2);
     let Some(task) = app.selected_task().cloned() else {
         crate::detail_pane::draw(frame, &theme, area, vec![Line::from("nothing selected")], 0);
         app.detail_scroll = 0;
+        app.detail_hit.row_starts.clear();
         return;
     };
-    let (lines, row_lines) = build_detail_lines(app, &task, &theme, focused, app.detail_cursor);
+    let rows = app.detail_rows();
+    let (lines, row_lines) =
+        build_detail_lines(app, &task, &theme, focused, app.detail_cursor, &rows);
+    let width = area.width.saturating_sub(2);
+    app.detail_hit.row_starts = row_lines
+        .iter()
+        .map(|&line_index| wrapped_offset(&lines, line_index, width))
+        .collect();
     if focused {
-        adjust_detail_scroll(app, &lines, &row_lines, area);
+        adjust_detail_scroll(app, &lines, &row_lines, &rows, &task.id, area);
     }
     let scroll = app.detail_scroll;
     app.detail_scroll = crate::detail_pane::draw(frame, &theme, area, lines, scroll);
@@ -422,16 +436,18 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
 
 /// Every line the pane shows for `task`: the id/read-only header, live-work
 /// lines, then one line per `FieldRow` (with a decorative section header
-/// inserted before the first acceptance/blocked-by/blocks row), styling the
+/// inserted before the first acceptance/blocked-by/blocks row, and the
+/// description's own body lines directly beneath its row), styling the
 /// cursor row when focused. `row_lines[n]` is the index into the returned
-/// `lines` for `FieldRow` number `n`, since a section header is not itself a
-/// navigable row.
+/// `lines` for `FieldRow` number `n`, since a section header or a body line
+/// is not itself a navigable row.
 fn build_detail_lines(
     app: &App,
     task: &switchbard_core::BacklogTask,
     theme: &Theme,
     focused: bool,
     cursor: usize,
+    rows: &[FieldRow],
 ) -> (Vec<Line<'static>>, Vec<usize>) {
     let mut lines: Vec<Line> = Vec::new();
     let mut row_lines: Vec<usize> = Vec::new();
@@ -453,7 +469,6 @@ fn build_detail_lines(
         )));
     }
     lines.push(Line::from(""));
-    let rows = app.detail_rows();
     let (mut acceptance_seen, mut blocked_seen, mut blocks_seen) = (false, false, false);
     for (index, row) in rows.iter().enumerate() {
         match row {
@@ -489,14 +504,37 @@ fn build_detail_lines(
         }
         lines.push(Line::from(Span::styled(text, style)));
         row_lines.push(lines.len() - 1);
+        if *row == FieldRow::Description {
+            for body_line in task.description.lines() {
+                lines.push(Line::from(Span::styled(
+                    body_line.to_string(),
+                    theme.style(Surface::Hint),
+                )));
+            }
+        }
     }
     (lines, row_lines)
 }
 
-/// Keep the cursor row's wrapped display lines inside the viewport, scrolling
-/// up or down the minimum needed — never resets `app.detail_scroll` outright,
-/// so it also self-corrects after a resize without losing an in-view row.
-fn adjust_detail_scroll(app: &mut App, lines: &[Line], row_lines: &[usize], area: Rect) {
+/// Keep the cursor row's own line inside the viewport, scrolling up or down
+/// the minimum needed — never resets `app.detail_scroll` outright, so it
+/// also self-corrects after a resize without losing an in-view row.
+///
+/// The description row is the one exception: its body can run to many
+/// times the viewport's height, directly beneath its own (one-line) row.
+/// Once that row's line has been brought into view, `PageDown`/`PageUp`
+/// (`App::page_detail_scroll`) or a mouse wheel may scroll on past it into
+/// the body without this snapping back — tracked by `detail_scroll_anchor`,
+/// which only forgets a manual scroll once the cursor actually leaves the
+/// row (or a different task is selected).
+fn adjust_detail_scroll(
+    app: &mut App,
+    lines: &[Line],
+    row_lines: &[usize],
+    rows: &[FieldRow],
+    task_id: &str,
+    area: Rect,
+) {
     let Some(&line_index) = row_lines.get(app.detail_cursor) else {
         return;
     };
@@ -504,8 +542,14 @@ fn adjust_detail_scroll(app: &mut App, lines: &[Line], row_lines: &[usize], area
     let viewport = area.height.saturating_sub(2);
     let offset = wrapped_offset(lines, line_index, width);
     let row_height = wrapped_height(&lines[line_index], width);
+    let anchor = (task_id.to_string(), app.detail_cursor);
+    let settled = app.detail_scroll_anchor.as_ref() == Some(&anchor);
+    app.detail_scroll_anchor = Some(anchor);
+    let long_content = matches!(rows.get(app.detail_cursor), Some(FieldRow::Description));
     if offset < app.detail_scroll {
-        app.detail_scroll = offset;
+        if !(long_content && settled) {
+            app.detail_scroll = offset;
+        }
     } else if offset.saturating_add(row_height) > app.detail_scroll.saturating_add(viewport) {
         app.detail_scroll = offset + row_height - viewport;
     }
@@ -534,8 +578,10 @@ fn wrapped_offset(lines: &[Line<'_>], upto: usize, width: u16) -> u16 {
 }
 
 /// The rendered text for one detail-pane row. Structured fields carry a
-/// `label: value` prefix; the read-only rows (description hint, blocked-by,
+/// `label: value` prefix; the read-only rows (description header, blocked-by,
 /// blocks) match the non-editable presentation the pane used before TASK-222.
+/// The description's own body is separate — `build_detail_lines` appends it
+/// as extra, non-navigable lines directly beneath this row's line.
 fn detail_row_text(app: &App, task: &switchbard_core::BacklogTask, row: FieldRow) -> String {
     match row {
         FieldRow::Title => task.title.clone(),
@@ -554,7 +600,13 @@ fn detail_row_text(app: &App, task: &switchbard_core::BacklogTask, row: FieldRow
                 task.labels.join(", ")
             }
         ),
-        FieldRow::Description => "description · edit with sb edit".to_string(),
+        FieldRow::Description => {
+            if task.description.trim().is_empty() {
+                "description: (none)".to_string()
+            } else {
+                "description:".to_string()
+            }
+        }
         FieldRow::Acceptance(index) => {
             let item = task.acceptance_criteria.get(index).expect(
                 "invariant: FieldRow::Acceptance(index) only exists for index < \
@@ -603,6 +655,43 @@ fn claimed_clock(session: &switchbard_core::WorkSession, task_id: &str) -> Strin
         .unwrap_or_default()
 }
 
+fn help_entry(keys: &str, name: &str, theme: &crate::config::Theme) -> Line<'static> {
+    let key_width = Span::raw(keys).width();
+    let padding = " ".repeat(8_usize.saturating_sub(key_width).max(1));
+    Line::from(vec![
+        Span::styled(format!("{keys}{padding}"), theme.style(Surface::Accent)),
+        Span::raw(name.to_string()),
+    ])
+}
+
+fn help_entry_rows(
+    entries: &[(String, String)],
+    width: u16,
+    theme: &crate::config::Theme,
+) -> Vec<Line<'static>> {
+    let columns = (usize::from(width) / 32).max(1);
+    let cell_width = usize::from(width) / columns;
+    let mut rows = Vec::new();
+    for chunk in entries.chunks(columns) {
+        let cells: Vec<_> = chunk
+            .iter()
+            .map(|(keys, name)| help_entry(keys, name, theme))
+            .collect();
+        if cells.iter().any(|cell| cell.width() + 2 > cell_width) {
+            rows.extend(cells);
+            continue;
+        }
+        let mut spans = Vec::new();
+        for cell in cells {
+            let padding = cell_width.saturating_sub(cell.width());
+            spans.extend(cell.spans);
+            spans.push(Span::raw(" ".repeat(padding)));
+        }
+        rows.push(Line::from(spans));
+    }
+    rows
+}
+
 fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.page == Page::Inbox {
         crate::inbox::draw_help(frame, app, area);
@@ -622,6 +711,16 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
                 .join(" ");
             (keys, "link parent task".to_string())
         }))
+        .chain((app.page == Page::Tasks).then(|| {
+            let keys = app
+                .config
+                .bindings_for(&Action::View)
+                .iter()
+                .map(|key| format!("{key} l"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            (keys, "cycle line wrap".to_string())
+        }))
         .chain(std::iter::once((
             "1-9".to_string(),
             "column actions".to_string(),
@@ -637,19 +736,7 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
             )
         }))
         .collect();
-    let per_line = (area.width.saturating_sub(2) as usize / 32).max(1);
-    let mut lines: Vec<Line> = entries
-        .chunks(per_line)
-        .map(|chunk| {
-            let spans = chunk.iter().flat_map(|(keys, name)| {
-                [
-                    Span::styled(format!("{keys:<8}"), theme.style(Surface::Accent)),
-                    Span::raw(format!("{name:<24}")),
-                ]
-            });
-            Line::from(spans.collect::<Vec<_>>())
-        })
-        .collect();
+    let mut lines = help_entry_rows(&entries, area.width.saturating_sub(2), theme);
     lines.push(Line::from(""));
     for (command, description) in [
         (":bug <doing>", "file a bug with this screen"),

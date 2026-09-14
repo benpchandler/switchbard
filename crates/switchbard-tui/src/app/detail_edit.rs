@@ -1,7 +1,8 @@
 //! The editable detail pane (TASK-222): a focusable surface over structured
 //! task fields, reusing the app's existing picker/input vocabulary. Multiline
-//! prose (description body, implementation plan, acceptance-criterion text)
-//! is out of scope — those stay read-only here, edited with `sb edit`.
+//! prose (implementation plan, acceptance-criterion text) stays read-only
+//! here, edited with `sb edit`; the description body renders in full but is
+//! likewise not inline-editable — `sb edit <id> --description` is its path.
 //!
 //! Every write goes through `switchbard_core`'s native write layer
 //! (`edit_backlog_task_expected` / `set_backlog_acceptance_checked`), gated
@@ -15,11 +16,15 @@
 
 use std::path::PathBuf;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::Position;
 
 use switchbard_core::{BacklogStorageIdentity, BacklogTaskPatch};
 
 use super::{App, DetailInputKind, Mode, Pane};
+use crate::config::{Action, KeyChord};
 use crate::detail_pane::{self, FieldRow};
 use crate::page::Page;
 use crate::picker::{Payload, PickOption, PickerPurpose};
@@ -96,6 +101,7 @@ impl App {
         self.pane = Pane::None;
         self.detail_cursor = 0;
         self.detail_scroll = 0;
+        self.detail_scroll_anchor = None;
         self.detail_draft = None;
     }
 
@@ -124,7 +130,109 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => self.move_detail_cursor(-1),
             KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => self.activate_detail_row(),
             KeyCode::Char(' ') => self.toggle_detail_acceptance_at_cursor(),
+            _ => self.handle_detail_scroll_key(&event),
+        }
+    }
+
+    /// The physical `PageDown`/`PageUp` keys, or whatever the user's own
+    /// `page_down`/`page_up` Lua bindings are (`ctrl-d`/`ctrl-u` by
+    /// default): scroll the pane by its own last-rendered height without
+    /// moving the cursor — the one way to page through a long description
+    /// body, since `j`/`k` only walk field rows. Restores TASK-221's
+    /// "bounded offsets, unchanged task selection" for long content; see
+    /// `view::adjust_detail_scroll` for how the auto-follow-cursor scroll
+    /// gets out of the way of a deliberate page here.
+    fn handle_detail_scroll_key(&mut self, event: &KeyEvent) {
+        let chord = KeyChord::from_event(event);
+        match self.config.keys.get(&chord) {
+            Some(Action::PageDown) => self.page_detail_scroll(1),
+            Some(Action::PageUp) => self.page_detail_scroll(-1),
             _ => {}
+        }
+    }
+
+    /// Move `detail_scroll` by `direction` (`1` or `-1`) times the pane's
+    /// own last-rendered viewport height, clamped to a non-negative offset;
+    /// the render-time clamp in `detail_pane::draw` bounds the top end
+    /// against the content actually on screen.
+    pub(super) fn page_detail_scroll(&mut self, direction: i32) {
+        let delta = direction * i32::from(self.detail_viewport.max(1));
+        self.detail_scroll = (i32::from(self.detail_scroll) + delta).clamp(0, 65535) as u16;
+    }
+
+    /// Real terminal mouse input, restoring TASK-221's AC #2 ("keyboard and
+    /// mouse scroll long details") against the row-cursor model: wheel over
+    /// the detail pane scrolls it the same way `page_detail_scroll` does on
+    /// Tasks, or nudges `pull_requests.detail_scroll` on the PR pane (which
+    /// has no row cursor of its own); wheel over the list moves the list
+    /// selection, the same as an `Action::Down`/`Up` key press. A left
+    /// click on a Tasks pane row moves the cursor there and enters
+    /// `Mode::DetailFocus`; a left click anywhere in the list selects that
+    /// row and returns to `Mode::Browse`. Ignored while a picker, a
+    /// single-line capture, the help screen, or Inbox is showing — none of
+    /// those have the stable list/detail split `detail_hit` describes.
+    pub fn handle_mouse(&mut self, event: MouseEvent) {
+        if !matches!(self.mode, Mode::Browse | Mode::DetailFocus) {
+            return;
+        }
+        if self.page == Page::Inbox || self.pane == Pane::Help {
+            return;
+        }
+        let position = Position::new(event.column, event.row);
+        match event.kind {
+            MouseEventKind::ScrollDown => self.scroll_at(position, 1),
+            MouseEventKind::ScrollUp => self.scroll_at(position, -1),
+            MouseEventKind::Down(MouseButton::Left) => self.click_at(position),
+            _ => {}
+        }
+    }
+
+    fn scroll_at(&mut self, position: Position, direction: i32) {
+        if self.pane == Pane::Detail && self.detail_hit.detail_area.contains(position) {
+            if self.page == Page::PullRequests {
+                let delta = direction * 3;
+                self.pull_requests.detail_scroll =
+                    (i32::from(self.pull_requests.detail_scroll) + delta).clamp(0, 65535) as u16;
+            } else {
+                self.detail_scroll =
+                    (i32::from(self.detail_scroll) + direction).clamp(0, 65535) as u16;
+            }
+            return;
+        }
+        if self.detail_hit.list_area.contains(position) {
+            self.mode = Mode::Browse;
+            let action = if direction > 0 {
+                Action::Down
+            } else {
+                Action::Up
+            };
+            self.apply(&action);
+        }
+    }
+
+    fn click_at(&mut self, position: Position) {
+        if self.page == Page::Tasks
+            && self.pane == Pane::Detail
+            && self.detail_hit.detail_area.contains(position)
+        {
+            let inner = self.detail_hit.detail_inner();
+            let display_line = position
+                .y
+                .saturating_sub(inner.y)
+                .saturating_add(self.detail_scroll);
+            if let Some(row) = self.detail_hit.row_at(display_line) {
+                self.detail_cursor = row;
+                self.enter_detail_focus();
+            }
+            return;
+        }
+        if self.detail_hit.list_area.contains(position) {
+            if self.page == Page::Tasks {
+                if let Some(index) = self.detail_hit.list_row_at(position.y) {
+                    self.select(index);
+                }
+            }
+            self.mode = Mode::Browse;
         }
     }
 
@@ -182,7 +290,10 @@ impl App {
                 self.open_detail_labels_picker();
             }
             FieldRow::Acceptance(index) => self.toggle_detail_acceptance(index),
-            FieldRow::Description | FieldRow::BlockedBy(_) | FieldRow::Blocks(_) => {}
+            FieldRow::Description => {
+                self.status = format!("edit the description with sb edit {task_id} --description");
+            }
+            FieldRow::BlockedBy(_) | FieldRow::Blocks(_) => {}
         }
     }
 

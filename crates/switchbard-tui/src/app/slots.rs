@@ -33,6 +33,18 @@ impl App {
                         Payload::TaskAction(TaskAction::Pin),
                     ));
                 }
+                if crate::list_settings::ListSettings::for_page(self.page)
+                    .is_some_and(|scope| scope.supports_row_layout())
+                {
+                    options.push(PickOption::keyed(
+                        'l',
+                        format!(
+                            "Line wrap: {} (this view)",
+                            self.state.row_layout.wrap_label()
+                        ),
+                        Payload::TitleWrapping,
+                    ));
+                }
                 options.push(PickOption::keyed(
                     's',
                     "Save current view",

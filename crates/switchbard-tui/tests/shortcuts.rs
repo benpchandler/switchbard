@@ -170,6 +170,55 @@ fn remapped_list_actions_cannot_mutate_hidden_lists_from_inbox() {
 }
 
 #[test]
+fn help_separates_long_key_bindings_from_action_names() {
+    let mut h = Harness::new();
+    std::fs::write(
+        &h.config_path,
+        "return { keys = { backspace = 'dismiss_notifications' } }",
+    )
+    .unwrap();
+    h.app.tick();
+    let screen = h.press(KeyCode::Char('?'));
+    assert!(
+        screen.contains("backspace n dismiss_notifications"),
+        "{screen}"
+    );
+    assert!(screen.contains("ctrl-d pagedown page_down"), "{screen}");
+    assert!(screen.contains("ctrl-u pageup page_up"), "{screen}");
+    assert!(screen.contains(":bug"), "{screen}");
+    assert!(
+        !screen.contains("backspace ndismiss_notifications"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn oversized_help_binding_gets_its_own_readable_row() {
+    let mut h = Harness::new();
+    let keys = "abcdefghijklmnop"
+        .chars()
+        .map(|key| format!("{key} = 'dismiss_notifications'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    std::fs::write(&h.config_path, format!("return {{ keys = {{ {keys} }} }}")).unwrap();
+    h.app.tick();
+    let bindings = h
+        .app
+        .config
+        .bindings_for(&switchbard_tui::config::Action::DismissNotifications)
+        .join(" ");
+    let screen = h.press(KeyCode::Char('?'));
+    assert!(
+        screen.contains(&format!("{bindings} dismiss_notifications")),
+        "{screen}"
+    );
+    assert!(
+        !screen.contains("dismiss_notificationsnew_task"),
+        "{screen}"
+    );
+}
+
+#[test]
 fn help_explains_history_and_fresh_launch_on_both_list_pages() {
     for page_tabs in [0, 1] {
         let mut h = Harness::new();

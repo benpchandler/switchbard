@@ -394,6 +394,9 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
             "number or name organizes · the current one again flattens · x off · esc"
         }
         PickerPurpose::Merge => "number confirms · j/k select · Enter confirms · Esc cancels",
+        PickerPurpose::Views if picker.position_of_key('l').is_some() => {
+            "l line wrap · ↑↓/jk select · →/Enter open · ←/h back · Esc closes"
+        }
         PickerPurpose::Task
         | PickerPurpose::TaskStatus(_)
         | PickerPurpose::TaskProject(_)

@@ -37,7 +37,7 @@ TASK-214: let the owner experiment with task title wrapping and optional blank s
 
 ## Controls and persistence
 
-On Tasks, press `,` to open settings, `w` to cycle wrapping (off, 2, 3, 6 lines), and `s` to toggle the blank separation line. Press Esc to return to the list. These are current-view changes; `v s` opens the existing save-view menu. Saved views and self-restart use the same `ViewState` record. Old records omit `title_lines` and `row_spacing` and keep compact defaults. Invalid values and unsupported PR layouts preserve their source files under the existing view repair policy.
+On Tasks, press `v l` to cycle line wrapping (off, 2, 3, 6 lines) in Views. Press `, s` to toggle the blank separation line in Settings. Press Esc to return to the list. These are current-view changes; `v s` opens the existing save-view menu. Saved views and self-restart use the same `ViewState` record. Old records omit `title_lines` and `row_spacing` and keep compact defaults. Invalid values and unsupported PR layouts preserve their source files under the existing view repair policy.
 
 Titles use the same ratatui paragraph wrapping for measurement and painting, with input capped at 4096 Unicode scalars and at most six rendered lines. Truncated wrapped titles show an ellipsis. The full detail text remains available. Metadata stays on the first line, selection and live-work styling cover content lines, and spacing is not selectable.
 
@@ -52,3 +52,19 @@ The local trial launcher is `tmp/try-sbt-row-layout.command`. It uses this linke
 - Related fix: terminal text snapshots now skip wide-glyph continuation cells, which previously polluted `last_screen` with stale hidden characters. Actual terminal glyph rendering is unchanged.
 - Validation correction during verification: mlua's integer conversion silently accepted fractions and numeric strings. The new exact-value boundary rejects these; malformed-value source preservation and valid integral-number compatibility pass on the final tree.
 - Remaining limitation: no human terminal appearance approval yet. The local gate does not establish Linux CI or installation into existing live sessions.
+
+## TASK-220: Views line-wrap shortcut (2026-09-13)
+
+The owner moved line wrapping from `, w` to `v l`. Views retains focus on the updated Line wrap row so repeated `l` cycles without reopening the menu. Arrow Right and Enter still activate the highlighted row; `l` keeps its existing open behavior in menus without a keyed `l` action. Bare `w` retains its live-work pass action. The historical TASK-214 verification above does not certify this change.
+
+| State or stress | Evidence |
+| --- | --- |
+| Default, active, repeated cycling, selected row and legacy shortcut removal | Real-input row-layout shortcut regression, current label and highlighted payload assertions. |
+| Saved views, dirty state, restart and page transitions | Existing row-layout save/switch/resume journey now uses `v l`; PR Views exclude line wrap. |
+| Narrow/short/wide, long/Unicode/unbroken titles, many tasks, grouped/detail layout | Existing row-layout real-input renders and navigation journeys now use `v l`. |
+| Bare `w`, keyboard navigation and other menus | Existing work-pass and menu navigation E2E suites; Views keyed `l` takes priority over generic navigation. |
+| Save failure/invalid external records | Existing view persistence and row-layout invalid-record preservation suites; persistence unchanged. |
+| Loading, remote failures, permissions, stale/conflict, pointer/touch, zoom | N/A for this synchronous local menu relocation; existing persisted view policy and terminal resize coverage apply. |
+| Human appearance acceptance | Gap: automated terminal fixture evidence does not establish owner visual approval. |
+
+Validation for TASK-220: `mise run tui` passed formatting, warning-free TUI clippy, and 243 tests (21 existing opt-in tests ignored), including all 11 row-layout tests and the bare-`w` live-work pass regression. Final log: `/tmp/switchbard-task220-tui-final.log`. `git diff --check` passed. The local TUI gate does not establish Linux CI, shared installation or owner appearance approval.

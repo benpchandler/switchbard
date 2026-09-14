@@ -42,6 +42,8 @@ impl KeyChord {
             "enter" => KeyCode::Enter,
             "esc" => KeyCode::Esc,
             "tab" => KeyCode::Tab,
+            "pagedown" => KeyCode::PageDown,
+            "pageup" => KeyCode::PageUp,
             "up" => KeyCode::Up,
             "down" => KeyCode::Down,
             "left" => KeyCode::Left,

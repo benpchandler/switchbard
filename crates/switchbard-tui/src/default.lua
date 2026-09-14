@@ -3,11 +3,12 @@
 -- Every key is optional; anything you leave out falls back to this file.
 return {
   -- key -> action. Keys: single chars, "enter", "esc", "tab", "up", "down",
-  -- "ctrl-<char>". Actions: down, up, top, bottom, page_down, page_up, open, new_task,
+  -- "pagedown", "pageup", "home", "end", "ctrl-<char>". Actions: down, up, top, bottom, page_down, page_up, open, new_task,
   -- back, filter, filter_column, sort_column, columns, paint, ball, pass, outline, task, settings, view, command, reload, help, quit, page, merge, open_browser, dismiss_notifications.
   keys = {
     j = "down", k = "up", down = "down", up = "up",
-    g = "top", G = "bottom",
+    g = "top", G = "bottom", home = "top", ["end"] = "bottom",
+    pagedown = "page_down", pageup = "page_up",
     ["ctrl-d"] = "page_down", ["ctrl-u"] = "page_up",
     enter = "open", esc = "back", tab = "page",
     ["/"] = "filter", f = "filter_column", s = "sort_column", [":"] = "command",

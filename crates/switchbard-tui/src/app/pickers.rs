@@ -566,6 +566,7 @@ impl App {
             || (event.code == KeyCode::Char('l')
                 && picker.typed.is_empty()
                 && !legacy_value_initial
+                && picker.position_of_key('l').is_none()
                 && picker.purpose != PickerPurpose::History)
         {
             event.code = KeyCode::Enter;
@@ -1013,7 +1014,7 @@ impl App {
             (PickerPurpose::SaveView, Payload::ViewSlot(slot)) => self.save_view(slot),
             (PickerPurpose::GlobalView, Payload::ViewSlot(slot)) => self.promote_view(slot),
             (PickerPurpose::Settings, Payload::GlobalSettings) => self.promote_settings(),
-            (PickerPurpose::Settings, Payload::TitleWrapping) => self.cycle_row_layout(true),
+            (PickerPurpose::Views, Payload::TitleWrapping) => self.cycle_row_layout(true),
             (PickerPurpose::Settings, Payload::RowSpacing) => self.cycle_row_layout(false),
             (PickerPurpose::Columns, Payload::ColumnAction(ColumnAction::Move)) => {
                 self.move_origin = Some(self.state.columns.clone());

@@ -118,13 +118,20 @@ fn run(repo_root: PathBuf, fresh: bool) -> Result<()> {
     app.restore_session(std::env::var(RESUME_ENV).ok().as_deref(), fresh);
     let shutdown = ShutdownSignals::register()?;
     let mut terminal = ratatui::init();
-    let outcome = drive(&mut terminal, &mut app, &shutdown.requested);
+    let outcome = crossterm::execute!(std::io::stdout(), event::EnableMouseCapture)
+        .map_err(anyhow::Error::from)
+        .and_then(|()| drive(&mut terminal, &mut app, &shutdown.requested));
+    let mouse_restore = crossterm::execute!(std::io::stdout(), event::DisableMouseCapture);
     ratatui::restore();
     if let Err(error) = app.checkpoint_session() {
         eprintln!("{error}");
     }
     app.telemetry.finish();
-    match outcome? {
+    // The run's own error is the one worth reporting; a failed mouse
+    // restore only matters when the run itself was clean.
+    let exit = outcome?;
+    mouse_restore?;
+    match exit {
         Exit::Quit => Ok(()),
         Exit::Restart => restart_into_new_binary(&app),
     }
@@ -157,8 +164,10 @@ fn drive(
             Err(error) => return Err(error.into()),
         };
         if input_ready {
-            if let Event::Key(key) = event::read()? {
-                app.handle_key(key);
+            match event::read()? {
+                Event::Key(key) => app.handle_key(key),
+                Event::Mouse(mouse) => app.handle_mouse(mouse),
+                _ => {}
             }
         }
         if !input_ready || last_tick.elapsed() >= Duration::from_millis(500) {

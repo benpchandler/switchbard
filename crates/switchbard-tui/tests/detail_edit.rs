@@ -3,7 +3,7 @@
 
 mod harness;
 
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, MouseButton, MouseEventKind};
 use harness::*;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
@@ -711,6 +711,68 @@ fn cursor_stays_visible_after_resize() {
 }
 
 #[test]
+fn long_description_pages_into_the_acceptance_section_without_moving_cursor_or_selection() {
+    let mut h = Harness::new();
+    let description: String = (1..=120).map(|n| format!("Detail line {n:03}\n")).collect();
+    let task = switchbard_core::NewBacklogTask {
+        title: "Long description task".to_string(),
+        description,
+        status: "To Do".to_string(),
+        priority: "medium".to_string(),
+        acceptance_criteria: vec!["End of long description".to_string()],
+        parent: None,
+        labels: Vec::new(),
+        assignees: Vec::new(),
+        project: None,
+        dependencies: Vec::new(),
+        due_date: None,
+        custom: Vec::new(),
+    };
+    switchbard_core::create_task_allocating_id(&h.root, &task).unwrap();
+    h.app.tick();
+
+    select_task_titled(&mut h, "Long description task");
+    let selected = h.selected_title();
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Enter);
+    for _ in 0..DESCRIPTION {
+        h.press(KeyCode::Char('j'));
+    }
+    assert_eq!(h.app.detail_cursor, DESCRIPTION);
+    let screen = h.render();
+    assert!(screen.contains("Detail line 001"), "{screen}");
+
+    let mut screen = String::new();
+    for _ in 0..30 {
+        screen = h.press(KeyCode::PageDown);
+        if screen.contains("End of long description") {
+            break;
+        }
+    }
+    assert!(screen.contains("acceptance"), "{screen}");
+    assert!(screen.contains("End of long description"), "{screen}");
+    assert_eq!(
+        h.app.detail_cursor, DESCRIPTION,
+        "PageDown must not move the cursor"
+    );
+    assert_eq!(
+        h.selected_title(),
+        selected,
+        "PageDown must not change task selection"
+    );
+
+    let mut top = String::new();
+    for _ in 0..30 {
+        top = h.press(KeyCode::PageUp);
+        if top.contains("Detail line 001") {
+            break;
+        }
+    }
+    assert!(top.contains("Detail line 001"), "{top}");
+    assert_eq!(h.app.detail_cursor, DESCRIPTION);
+}
+
+#[test]
 fn long_unbroken_title_wraps_and_stays_on_screen() {
     let mut h = Harness::new();
     let title: String = "Q".repeat(500);
@@ -749,13 +811,14 @@ fn three_terminal_sizes_render_the_focused_pane_without_panicking() {
 }
 
 #[test]
-fn description_row_is_a_read_only_hint_not_the_multiline_body() {
+fn description_row_shows_its_body_and_is_read_only_with_a_status_pointer() {
     let mut h = Harness::new();
     select_task_titled(&mut h, "Add dark theme");
     let id = h.app.selected_task().unwrap().id.clone();
     let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("description:"), "{screen}");
     assert!(
-        screen.contains("description · edit with sb edit"),
+        screen.contains("Description of Add dark theme."),
         "{screen}"
     );
     h.press(KeyCode::Enter);
@@ -763,11 +826,17 @@ fn description_row_is_a_read_only_hint_not_the_multiline_body() {
         h.press(KeyCode::Char('j'));
     }
     assert_eq!(h.app.detail_cursor, DESCRIPTION);
-    h.press(KeyCode::Enter);
+    let screen = h.press(KeyCode::Enter);
     assert_eq!(
         h.app.mode,
         Mode::DetailFocus,
         "the description row has nothing to open"
+    );
+    assert!(
+        screen.contains(&format!(
+            "edit the description with sb edit {id} --description"
+        )),
+        "{screen}"
     );
     assert_eq!(
         h.app
@@ -778,4 +847,113 @@ fn description_row_is_a_read_only_hint_not_the_multiline_body() {
             .description,
         format!("Description of Add dark theme.")
     );
+}
+
+#[test]
+fn wheel_scrolls_the_detail_pane_and_is_bounded_without_touching_focus_or_selection() {
+    let mut h = Harness::new();
+    let description: String = (1..=120).map(|n| format!("Detail line {n:03}\n")).collect();
+    let task = switchbard_core::NewBacklogTask {
+        title: "Wheel task".to_string(),
+        description,
+        status: "To Do".to_string(),
+        priority: "medium".to_string(),
+        acceptance_criteria: vec!["End of wheel task".to_string()],
+        parent: None,
+        labels: Vec::new(),
+        assignees: Vec::new(),
+        project: None,
+        dependencies: Vec::new(),
+        due_date: None,
+        custom: Vec::new(),
+    };
+    switchbard_core::create_task_allocating_id(&h.root, &task).unwrap();
+    h.app.tick();
+    select_task_titled(&mut h, "Wheel task");
+    // A first `open` only opens the pane; the list keeps keyboard focus, and
+    // the wheel must scroll the pane without changing either.
+    h.press(KeyCode::Enter);
+    assert_eq!(h.app.mode, Mode::Browse);
+    let selected = h.selected_title();
+
+    let mut after = String::new();
+    for _ in 0..200 {
+        after = h.mouse(MouseEventKind::ScrollDown, 75, 10);
+        if after.contains("End of wheel task") {
+            break;
+        }
+    }
+    assert!(after.contains("End of wheel task"), "{after}");
+    assert_eq!(h.app.mode, Mode::Browse, "wheel must not change focus");
+    assert_eq!(
+        h.selected_title(),
+        selected,
+        "wheel must not change selection"
+    );
+
+    // Bounded: scrolling far past the end, then far past the start, lands
+    // exactly on the actual top and bottom rather than wrapping or panicking.
+    for _ in 0..300 {
+        h.mouse(MouseEventKind::ScrollDown, 75, 10);
+    }
+    let bottom = h.render();
+    assert!(bottom.contains("End of wheel task"), "{bottom}");
+
+    let mut top = String::new();
+    for _ in 0..500 {
+        top = h.mouse(MouseEventKind::ScrollUp, 75, 10);
+    }
+    assert!(top.contains("Detail line 001"), "{top}");
+}
+
+#[test]
+fn clicking_a_pane_row_moves_the_cursor_there_and_focuses_the_pane() {
+    let mut h = Harness::new();
+    select_task_titled(&mut h, "Add dark theme");
+    h.press(KeyCode::Enter);
+    assert_eq!(h.app.mode, Mode::Browse);
+    let selected = h.selected_title();
+    // Status is the pane's second row; see the fixed row order in the
+    // module-level `STATUS` constant.
+    let screen = h.mouse(MouseEventKind::Down(MouseButton::Left), 55, 5);
+    assert_eq!(h.app.mode, Mode::DetailFocus);
+    assert_eq!(h.app.detail_cursor, STATUS);
+    assert!(screen.contains("status:"), "{screen}");
+    assert_eq!(
+        h.selected_title(),
+        selected,
+        "clicking a pane row must not change list selection"
+    );
+
+    // A different row: due date, two rows further down.
+    let screen = h.mouse(MouseEventKind::Down(MouseButton::Left), 55, 8);
+    assert_eq!(h.app.detail_cursor, DUE_DATE);
+    assert!(screen.contains("due date:"), "{screen}");
+}
+
+#[test]
+fn clicking_the_list_selects_that_row_and_returns_to_browse() {
+    let mut h = Harness::new();
+    let rows = visible_titles(&h);
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Enter);
+    assert_eq!(h.app.mode, Mode::DetailFocus);
+    let selected = h.selected_title();
+    let target_row = rows
+        .iter()
+        .position(|title| *title != selected)
+        .expect("fixture has more than one task");
+
+    let screen = h.mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        10,
+        3 + target_row as u16,
+    );
+    assert_eq!(
+        h.app.mode,
+        Mode::Browse,
+        "click outside the pane returns to list"
+    );
+    assert_eq!(h.selected_title(), rows[target_row]);
+    assert!(screen.contains(&rows[target_row]), "{screen}");
 }
