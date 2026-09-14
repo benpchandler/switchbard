@@ -1572,3 +1572,60 @@ fn work_hook_denies_edits_without_a_claim_holds_stop_while_claimed_and_lets_go_b
         "session end drops the record"
     );
 }
+
+/// `sb agent status` is the status-line sink: it needs no repo, takes the
+/// documented payload on stdin, and `sb agent list` reads it back.
+#[test]
+fn agent_status_records_a_payload_without_a_repo_and_list_reads_it_back() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let store = tempfile::tempdir().unwrap();
+    let nowhere = tempfile::tempdir().unwrap();
+    let payload = r#"{"session_id":"cli-sess-1","cwd":"/w/app","model":{"id":"claude-opus-5","display_name":"Opus"},"workspace":{"current_dir":"/w/app"},"cost":{"total_cost_usd":0.5},"context_window":{"used_percentage":12}}"#;
+    let run = |args: &[&str], stdin: Option<&str>| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_sb"))
+            .args(args)
+            .current_dir(nowhere.path())
+            .env("SWITCHBARD_AGENT_STATUS_DIR", store.path())
+            .env("CLAUDE_PID", std::process::id().to_string())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("binary runs");
+        if let Some(text) = stdin {
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(text.as_bytes())
+                .unwrap();
+        } else {
+            drop(child.stdin.take());
+        }
+        child.wait_with_output().expect("binary exits")
+    };
+
+    let out = run(&["agent", "status"], Some(payload));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.stdout.is_empty(), "status prints nothing");
+    assert!(store.path().join("cli-sess-1.json").exists());
+
+    let out = run(&["agent", "list"], None);
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let fields: Vec<&str> = stdout.trim_end().split('\t').collect();
+    assert_eq!(fields[0], "cli-sess-1");
+    assert_eq!(fields[1], "Opus");
+    assert_eq!(fields[2], "12");
+    assert_eq!(fields[3], "0.5000");
+    assert_eq!(fields[5], "/w/app");
+
+    let out = run(&["agent", "status"], Some("{}"));
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("session_id"));
+}

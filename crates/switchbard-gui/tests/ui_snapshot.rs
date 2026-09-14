@@ -293,6 +293,11 @@ fn command_fleet_mixed_app(theme: ThemeChoice) -> HiveApp {
         worktree_branch: Some("feature/stack-ranking-core".to_string()),
         started_unix: Some(now_unix() - 900),
         pgid: Some(5150),
+        cwd: None,
+        session_id: None,
+        name: None,
+        activity: switchbard_core::AgentActivity::Unknown,
+        title: None,
     }];
     app.command_view.selected = Some(CommandRowKey::Dispatch(
         (PathBuf::from(REPO_PATH), "TASK-61".to_string()).into(),

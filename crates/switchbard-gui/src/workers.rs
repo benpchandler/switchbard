@@ -398,10 +398,21 @@ fn spawn_scanner(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
 fn spawn_agent_sessions(ctx: egui::Context, ch: Channels, initial_delay: Duration) {
     thread::spawn(move || {
         ch.agent_sessions_kick.wait(initial_delay);
+        // First prompts never change, so each session's transcript is read
+        // once for the life of this worker — see `entitle_sessions`.
+        let mut prompt_cache = std::collections::HashMap::new();
+        let claude_home = switchbard_core::default_claude_home();
         loop {
             let wts = ch.worktrees.lock().unwrap().clone();
-            if let Ok(rows) = scan_agent_sessions() {
-                *ch.agent_sessions.lock().unwrap() = attribute_agent_sessions(&rows, &wts);
+            if let Ok(scan) = scan_agent_sessions() {
+                let mut sessions = attribute_agent_sessions(&scan.rows, &wts);
+                switchbard_core::entitle_sessions(
+                    &mut sessions,
+                    claude_home.as_deref(),
+                    |_| None,
+                    &mut prompt_cache,
+                );
+                *ch.agent_sessions.lock().unwrap() = sessions;
                 ctx.request_repaint();
             }
             let focused = ctx.input(|i| i.focused);

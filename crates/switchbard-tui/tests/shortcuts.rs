@@ -71,6 +71,7 @@ fn help_catalog_obeys_page_availability_and_survives_page_return() {
     h.press(KeyCode::Esc);
     h.press(KeyCode::Tab);
     h.press(KeyCode::Tab);
+    h.press(KeyCode::Tab);
     assert!(h.press(KeyCode::Char('?')).contains("new_task"));
 }
 
@@ -113,6 +114,7 @@ fn remapped_list_actions_cannot_mutate_hidden_lists_from_inbox() {
     h.type_text("/title:example");
     h.press(KeyCode::Enter);
     let prs = h.app.state.clone();
+    h.press(KeyCode::Tab);
     h.press(KeyCode::Tab);
     for action in [
         "new_task",

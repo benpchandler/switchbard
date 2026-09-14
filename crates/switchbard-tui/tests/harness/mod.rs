@@ -67,14 +67,14 @@ impl Harness {
         self.render()
     }
 
-    /// Travel between the two list destinations, passing the Inbox when needed.
+    /// Travel between the two list destinations, passing Agents and the
+    /// Inbox when needed.
     pub fn next_list_page(&mut self) -> String {
-        let screen = self.press(KeyCode::Tab);
-        if self.app.page == switchbard_tui::page::Page::Inbox {
-            self.press(KeyCode::Tab)
-        } else {
-            screen
+        let mut screen = self.press(KeyCode::Tab);
+        while !self.app.page.has_list_view() {
+            screen = self.press(KeyCode::Tab);
         }
+        screen
     }
 
     pub fn type_text(&mut self, text: &str) -> String {

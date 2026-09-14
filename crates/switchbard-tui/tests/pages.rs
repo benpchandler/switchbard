@@ -15,6 +15,7 @@ fn cycles_pages_without_losing_task_context() {
     assert!(!screen.contains("Add dark theme"), "{screen}");
     h.type_text("td");
     h.press(KeyCode::Esc);
+    assert!(h.press(KeyCode::Tab).contains("[Agents]"));
     assert!(h.press(KeyCode::Tab).contains("[Inbox]"));
     let screen = h.press(KeyCode::Tab);
     assert!(screen.contains("[Tasks]"), "{screen}");
@@ -58,6 +59,7 @@ fn page_binding_is_configurable_and_help_is_available_on_both_pages() {
     assert!(screen.contains("page"));
     assert!(screen.contains(" keys "));
     h.press(KeyCode::Esc);
+    assert!(h.press(KeyCode::Char('x')).contains("[Agents]"));
     let screen = h.press(KeyCode::Char('x'));
     assert!(screen.contains("[Inbox]"));
     assert!(h.press(KeyCode::Tab).contains("Inbox keys"));

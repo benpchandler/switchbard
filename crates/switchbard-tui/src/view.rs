@@ -43,6 +43,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.page_size = body.height.saturating_sub(3).max(1) as usize;
     if app.page == Page::Inbox && app.pane != Pane::Help {
         crate::inbox::draw(frame, app, body);
+    } else if app.page == Page::Agents && app.pane != Pane::Help {
+        crate::agents::draw(frame, app, body);
     } else if app.page == Page::PullRequests && app.pane != Pane::Help {
         crate::pr_view::draw(frame, app, body);
     } else {
@@ -912,6 +914,13 @@ fn draw_detail_input(frame: &mut Frame, app: &App, area: Rect, kind: crate::app:
 fn browse_footer(app: &App) -> Line<'static> {
     let actions = if app.page == Page::Inbox {
         vec![(Action::Page, "page"), (Action::Help, "keys")]
+    } else if app.page == Page::Agents {
+        vec![
+            (Action::Open, "detail"),
+            (Action::Reload, "poll"),
+            (Action::Page, "page"),
+            (Action::Help, "keys"),
+        ]
     } else if app.page == Page::Tasks {
         vec![
             (Action::Rank, "tasks"),
