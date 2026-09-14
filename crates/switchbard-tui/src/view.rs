@@ -11,7 +11,7 @@ use ratatui::Frame;
 
 use crate::app::{App, Mode, Pane};
 use crate::columns::Column;
-use crate::config::{Action, Surface};
+use crate::config::{Action, Surface, Theme};
 use crate::detail_pane::FieldRow;
 use crate::group::Row;
 use crate::page::Page;
@@ -402,19 +402,40 @@ fn table_title(app: &App) -> String {
 fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = app.config.theme.clone();
     let focused = app.detail_focused();
-    let mut lines: Vec<Line> = Vec::new();
-    let mut row_lines: Vec<usize> = Vec::new();
     let Some(task) = app.selected_task().cloned() else {
         crate::detail_pane::draw(frame, &theme, area, vec![Line::from("nothing selected")], 0);
         app.detail_scroll = 0;
         return;
     };
+    let (lines, row_lines) = build_detail_lines(app, &task, &theme, focused, app.detail_cursor);
+    if focused {
+        adjust_detail_scroll(app, &lines, &row_lines, area);
+    }
+    let scroll = app.detail_scroll;
+    app.detail_scroll = crate::detail_pane::draw(frame, &theme, area, lines, scroll);
+}
+
+/// Every line the pane shows for `task`: the id/read-only header, live-work
+/// lines, then one line per `FieldRow` (with a decorative section header
+/// inserted before the first acceptance/blocked-by/blocks row), styling the
+/// cursor row when focused. `row_lines[n]` is the index into the returned
+/// `lines` for `FieldRow` number `n`, since a section header is not itself a
+/// navigable row.
+fn build_detail_lines(
+    app: &App,
+    task: &switchbard_core::BacklogTask,
+    theme: &Theme,
+    focused: bool,
+    cursor: usize,
+) -> (Vec<Line<'static>>, Vec<usize>) {
+    let mut lines: Vec<Line> = Vec::new();
+    let mut row_lines: Vec<usize> = Vec::new();
     let mut header = task.id.clone();
     if !task.editable() {
         header.push_str(" · read-only");
     }
-    lines.push(crate::detail_pane::metadata(header, &theme));
-    for session in app.working(&task) {
+    lines.push(crate::detail_pane::metadata(header, theme));
+    for session in app.working(task) {
         lines.push(Line::from(Span::styled(
             format!(
                 "working · {} {} (pid {}) since {}",
@@ -427,7 +448,6 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
         )));
     }
     lines.push(Line::from(""));
-    let cursor = app.detail_cursor;
     let rows = app.detail_rows();
     let (mut acceptance_seen, mut blocked_seen, mut blocks_seen) = (false, false, false);
     for (index, row) in rows.iter().enumerate() {
@@ -435,21 +455,21 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
             FieldRow::Acceptance(_) if !acceptance_seen => {
                 acceptance_seen = true;
                 lines.push(Line::from(""));
-                lines.push(crate::detail_pane::section("acceptance", &theme));
+                lines.push(crate::detail_pane::section("acceptance", theme));
             }
             FieldRow::BlockedBy(_) if !blocked_seen => {
                 blocked_seen = true;
                 lines.push(Line::from(""));
-                lines.push(crate::detail_pane::section("blocked by", &theme));
+                lines.push(crate::detail_pane::section("blocked by", theme));
             }
             FieldRow::Blocks(_) if !blocks_seen => {
                 blocks_seen = true;
                 lines.push(Line::from(""));
-                lines.push(crate::detail_pane::section("blocks", &theme));
+                lines.push(crate::detail_pane::section("blocks", theme));
             }
             _ => {}
         }
-        let text = detail_row_text(app, &task, *row);
+        let text = detail_row_text(app, task, *row);
         let mut style = match row {
             FieldRow::Description | FieldRow::BlockedBy(_) | FieldRow::Blocks(_) => {
                 theme.style(Surface::Hint)
@@ -465,22 +485,25 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
         lines.push(Line::from(Span::styled(text, style)));
         row_lines.push(lines.len() - 1);
     }
-    if focused {
-        if let Some(&line_index) = row_lines.get(cursor) {
-            let width = area.width.saturating_sub(2);
-            let viewport = area.height.saturating_sub(2);
-            let offset = wrapped_offset(&lines, line_index, width);
-            let row_height = wrapped_height(&lines[line_index], width);
-            if offset < app.detail_scroll {
-                app.detail_scroll = offset;
-            } else if offset.saturating_add(row_height) > app.detail_scroll.saturating_add(viewport)
-            {
-                app.detail_scroll = offset + row_height - viewport;
-            }
-        }
+    (lines, row_lines)
+}
+
+/// Keep the cursor row's wrapped display lines inside the viewport, scrolling
+/// up or down the minimum needed — never resets `app.detail_scroll` outright,
+/// so it also self-corrects after a resize without losing an in-view row.
+fn adjust_detail_scroll(app: &mut App, lines: &[Line], row_lines: &[usize], area: Rect) {
+    let Some(&line_index) = row_lines.get(app.detail_cursor) else {
+        return;
+    };
+    let width = area.width.saturating_sub(2);
+    let viewport = area.height.saturating_sub(2);
+    let offset = wrapped_offset(lines, line_index, width);
+    let row_height = wrapped_height(&lines[line_index], width);
+    if offset < app.detail_scroll {
+        app.detail_scroll = offset;
+    } else if offset.saturating_add(row_height) > app.detail_scroll.saturating_add(viewport) {
+        app.detail_scroll = offset + row_height - viewport;
     }
-    let scroll = app.detail_scroll;
-    app.detail_scroll = crate::detail_pane::draw(frame, &theme, area, lines, scroll);
 }
 
 /// How many wrapped display lines `line` takes at `width` — used to keep the
@@ -528,15 +551,37 @@ fn detail_row_text(app: &App, task: &switchbard_core::BacklogTask, row: FieldRow
         ),
         FieldRow::Description => "description · edit with sb edit".to_string(),
         FieldRow::Acceptance(index) => {
-            let item = &task.acceptance_criteria[index];
+            let item = task.acceptance_criteria.get(index).expect(
+                "invariant: FieldRow::Acceptance(index) only exists for index < \
+                 acceptance_criteria.len() — detail_pane::field_rows built this list \
+                 from the same task",
+            );
             format!("[{}] {}", if item.checked { "x" } else { " " }, item.text)
         }
         FieldRow::BlockedBy(index) => {
-            let (id, title) = &app.relations.blocked_by[&task.id][index];
+            let (id, title) = app
+                .relations
+                .blocked_by
+                .get(&task.id)
+                .and_then(|deps| deps.get(index))
+                .expect(
+                    "invariant: FieldRow::BlockedBy(index) only exists for a task with that \
+                     many blocked_by entries — detail_pane::field_rows built this list from \
+                     the same relations",
+                );
             format!("{id} {title}")
         }
         FieldRow::Blocks(index) => {
-            let (id, title, done) = &app.relations.blocks[&task.id][index];
+            let (id, title, done) = app
+                .relations
+                .blocks
+                .get(&task.id)
+                .and_then(|deps| deps.get(index))
+                .expect(
+                    "invariant: FieldRow::Blocks(index) only exists for a task with that many \
+                     blocks entries — detail_pane::field_rows built this list from the same \
+                     relations",
+                );
             format!("{id} {title} ({})", if *done { "done" } else { "open" })
         }
     }
