@@ -510,9 +510,10 @@ pub fn apply_planning_migration(
         .context("migration did not commit; backup and prepared receipt retained")?;
     receipt.after = documents(&store, &repo)?;
     ensure!(
-        same_result(&receipt.after, &preview.proposed),
+        same_payload(&receipt.after, &preview.proposed),
         "migration committed but readback differs; inspect backup and prepared receipt"
     );
+    preview.proposed = receipt.after.clone();
     receipt.state = "applied".into();
     write_receipt(&receipt_path, &receipt).context(
         "migration committed; receipt finalization failed; inspect prepared receipt and backup",
@@ -522,8 +523,20 @@ pub fn apply_planning_migration(
 fn same_result(actual: &[Document], desired: &[Document]) -> bool {
     actual.len() == desired.len()
         && actual.iter().zip(desired).all(|(a, b)| {
-            (b.id.is_empty() || a.id == b.id)
+            a.id == b.id
                 && a.repo_id == b.repo_id
+                && a.kind == b.kind
+                && a.locator == b.locator
+                && a.content == b.content
+                && a.deleted == b.deleted
+                && a.revision == b.revision
+                && a.content_version == b.content_version
+        })
+}
+fn same_payload(actual: &[Document], desired: &[Document]) -> bool {
+    actual.len() == desired.len()
+        && actual.iter().zip(desired).all(|(a, b)| {
+            a.repo_id == b.repo_id
                 && a.kind == b.kind
                 && a.locator == b.locator
                 && a.content == b.content

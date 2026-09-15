@@ -235,6 +235,37 @@ fn altered_preview_and_task_revision_are_rejected_without_mutation() {
 }
 
 #[test]
+fn restored_content_with_new_revision_is_not_already_applied() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("repo");
+    let db = dir.path().join("state.sqlite3");
+    with_test_database(&db, || {
+        fixture(&root, &db);
+        let preview = prepare_planning_migration(&root).unwrap();
+        let (mut store, repo) = central(&root).unwrap();
+        for (kind, locator) in [("task", "backlog/tasks/task-1.md"), ("config", CONFIG), ("ranking", RANKING)] {
+            let original = store.get(&repo, kind, locator).unwrap().unwrap().content;
+            store
+                .mutate(&repo, kind, locator, None, |document| {
+                    let mut changed = document.unwrap().content.clone();
+                    changed.extend_from_slice(b"\nconcurrent edit\n");
+                    Ok(Some(changed))
+                })
+                .unwrap();
+            store
+                .mutate(&repo, kind, locator, None, |_| Ok(Some(original.clone())))
+                .unwrap();
+        }
+        assert!(
+            apply_planning_migration(&root, &preview, &dir.path().join("backups"))
+                .unwrap_err()
+                .to_string()
+                .contains("stale")
+        );
+    });
+}
+
+#[test]
 fn inline_status_comments_and_quoted_brackets_survive() {
     for input in [
         "statuses: [\"To Do\"] # migration note ]\nother: retained\n",
