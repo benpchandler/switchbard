@@ -3,13 +3,19 @@
 //!
 //! ## Where a title can come from, in order of trust
 //!
-//! 1. **The name the CLI lists.** `claude agents --json` reports a `name`
-//!    that is either something a human or the CLI chose (`--name`,
-//!    `/rename`, a generated title on plan accept) or the *derived default*
-//!    every unnamed interactive session gets: the working directory's
-//!    basename plus a two-character suffix (`budget-c2`). The default is a
-//!    display handle, not a description, so [`is_derived_session_name`]
-//!    rejects it and resolution falls through.
+//! 1. **The session's name.** Two readers report the same fact: the
+//!    status-line payload the session itself pushes on every update
+//!    (`session_name`, stored by `sb agent status` in `agent_status`) and
+//!    `claude agents --json`'s `name`. The payload is the fresher one -
+//!    it is exactly what the status line prints, and it moves the moment
+//!    the CLI renames the session (`/rename`, a generated title after a
+//!    `/clear`) where the listing has been seen to lag by a whole task -
+//!    so [`entitle_sessions`] takes it first and the listing's name only
+//!    when no payload has been recorded. Either may be the *derived
+//!    default* every unnamed interactive session gets: the working
+//!    directory's basename plus a two-character suffix (`budget-c2`). The
+//!    default is a display handle, not a description, so
+//!    [`is_derived_session_name`] rejects it and resolution falls through.
 //! 2. **A task the session holds.** A `work_sessions` claim names exactly
 //!    what the session is working; the caller joins the claim on session
 //!    id and passes the task's title in.
@@ -185,23 +191,28 @@ pub fn first_user_prompt_for(session: &AgentSession, claude_home: &Path) -> Opti
 }
 
 /// Fill [`AgentSession::title`] for every session, in the module doc's
-/// order. `held_title` answers "which task does this session hold" from
-/// whatever claim store the caller reads; `prompt_cache` remembers each
-/// session's first prompt across polls (keyed by session id — a first
-/// prompt never changes, and reading it costs a file open), so a poll
-/// re-reads only sessions it has not seen. `claude_home` `None` disables
-/// the transcript fallback.
+/// order. `reported_name` answers "what did this session last call itself"
+/// from the status-line records the caller reads (the fresher reader of
+/// the name, see the module doc); `held_title` answers "which task does
+/// this session hold" from whatever claim store the caller reads;
+/// `prompt_cache` remembers each session's first prompt across polls
+/// (keyed by session id — a first prompt never changes, and reading it
+/// costs a file open), so a poll re-reads only sessions it has not seen.
+/// `claude_home` `None` disables the transcript fallback.
 pub fn entitle_sessions(
     sessions: &mut [AgentSession],
     claude_home: Option<&Path>,
+    reported_name: impl Fn(&AgentSession) -> Option<String>,
     held_title: impl Fn(&AgentSession) -> Option<String>,
     prompt_cache: &mut HashMap<String, Option<String>>,
 ) {
     for session in sessions.iter_mut() {
+        let name = reported_name(session)
+            .filter(|n| !n.trim().is_empty())
+            .or_else(|| session.name.clone());
         let held = held_title(session);
         let needs_prompt = held.is_none()
-            && session
-                .name
+            && name
                 .as_deref()
                 .is_none_or(|name| is_derived_session_name(name, session.cwd.as_deref()));
         let prompt = match (needs_prompt, claude_home, session.session_id.as_deref()) {
@@ -213,7 +224,7 @@ pub fn entitle_sessions(
         };
         session.title = Some(
             resolve_session_title(
-                session.name.as_deref(),
+                name.as_deref(),
                 session.cwd.as_deref(),
                 held.as_deref(),
                 prompt.as_deref(),
@@ -262,9 +273,10 @@ mod tests {
             session(4, None, "/w/budget", None),
         ];
         let mut cache = HashMap::new();
+        let none = |_: &AgentSession| None;
         let held = |s: &AgentSession| (s.pid == 2).then(|| "Fix login".to_string());
 
-        entitle_sessions(&mut sessions, Some(home.path()), held, &mut cache);
+        entitle_sessions(&mut sessions, Some(home.path()), none, held, &mut cache);
 
         assert_eq!(sessions[0].title.as_deref(), Some("why is login slow"));
         assert_eq!(sessions[1].title.as_deref(), Some("Fix login"));
@@ -277,18 +289,57 @@ mod tests {
         );
 
         std::fs::remove_file(project.join("sid-1.jsonl")).unwrap();
-        entitle_sessions(&mut sessions, Some(home.path()), held, &mut cache);
+        entitle_sessions(&mut sessions, Some(home.path()), none, held, &mut cache);
         assert_eq!(
             sessions[0].title.as_deref(),
             Some("why is login slow"),
             "the cache answers the second poll without the file"
         );
 
-        entitle_sessions(&mut sessions, None, held, &mut HashMap::new());
+        entitle_sessions(&mut sessions, None, none, held, &mut HashMap::new());
         assert_eq!(
             sessions[0].title.as_deref(),
             Some("budget-c2"),
             "no claude home: the derived name is the honest fallback"
+        );
+    }
+
+    #[test]
+    fn the_status_line_name_outranks_the_listing_name_and_moves_with_it() {
+        let mut sessions = vec![
+            session(
+                1,
+                Some("board-model-review-proposals"),
+                "/w/budget",
+                Some("sid-1"),
+            ),
+            session(2, Some("budget-c2"), "/w/budget", Some("sid-2")),
+            session(3, Some("auth-refactor"), "/w/budget", Some("sid-3")),
+        ];
+        let none = |_: &AgentSession| None;
+        let reported = |s: &AgentSession| match s.pid {
+            1 => Some("Agent count and status line config".to_string()),
+            2 => Some("budget-c2".to_string()),
+            3 => Some("   ".to_string()),
+            _ => None,
+        };
+
+        entitle_sessions(&mut sessions, None, reported, none, &mut HashMap::new());
+
+        assert_eq!(
+            sessions[0].title.as_deref(),
+            Some("Agent count and status line config"),
+            "the listing lagged a rename; the payload is what the status line shows"
+        );
+        assert_eq!(
+            sessions[1].title.as_deref(),
+            Some("budget-c2"),
+            "a derived name is derived whichever reader reported it"
+        );
+        assert_eq!(
+            sessions[2].title.as_deref(),
+            Some("auth-refactor"),
+            "a blank payload name defers to the listing"
         );
     }
 

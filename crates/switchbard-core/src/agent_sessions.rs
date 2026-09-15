@@ -45,6 +45,16 @@
 //! feature whose only job is to tell the truth about what is running; the
 //! Claude listing above is the path that catches such installs instead.
 //!
+//! One narrowing on top of the name match: a matched process that is a
+//! *descendant of another matched process* is that session's own helper,
+//! not a second session, and [`drop_agent_descendants`] removes it. The
+//! case that motivated it: Codex's computer-use plugin spawns a `codex`
+//! binary bundled inside ChatGPT.app under the interactive `codex` TUI,
+//! and the fleet counted the helper as a session in the same worktree.
+//! The walk is by parent pid, bounded by [`MAX_ANCESTOR_DEPTH`], and a
+//! process whose parent is unknown is kept: the rule only ever removes a
+//! row it can prove is a child.
+//!
 //! ## Read-only and bounded
 //!
 //! This module only ever reads process tables (`ps`) or `/proc`. It has no
@@ -70,6 +80,11 @@ use std::process::{Command, Stdio};
 /// the bound, the child is killed, and the poll reports an error rather
 /// than buffering whatever it was sending.
 pub const MAX_LISTING_BYTES: usize = 4 * 1024 * 1024;
+
+/// How far up the parent chain [`drop_agent_descendants`] will look for
+/// another agent process. A helper sits a handful of levels below its
+/// session; the bound keeps a cyclic or absurdly deep table from looping.
+pub const MAX_ANCESTOR_DEPTH: usize = 64;
 
 /// Which agent CLI a session belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,6 +266,41 @@ pub fn scan_agent_sessions() -> Result<AgentScan> {
     })
 }
 
+/// Remove every row whose ancestor chain (via `parent_of`, `None` when the
+/// parent is unknown or the pid is init) reaches another row's pid: a
+/// session's own spawned agent helper is not a session. Pure; see the
+/// module doc for the case this exists for. Order is preserved.
+pub fn drop_agent_descendants(
+    rows: Vec<AgentProcessRow>,
+    parent_of: impl Fn(u32) -> Option<u32>,
+) -> Vec<AgentProcessRow> {
+    let agent_pids: std::collections::HashSet<u32> = rows.iter().map(|row| row.pid).collect();
+    rows.into_iter()
+        .filter(|row| !has_agent_ancestor(row.pid, &agent_pids, &parent_of))
+        .collect()
+}
+
+fn has_agent_ancestor(
+    pid: u32,
+    agent_pids: &std::collections::HashSet<u32>,
+    parent_of: &impl Fn(u32) -> Option<u32>,
+) -> bool {
+    let mut current = pid;
+    for _ in 0..MAX_ANCESTOR_DEPTH {
+        let Some(parent) = parent_of(current) else {
+            return false;
+        };
+        if parent <= 1 || parent == current {
+            return false;
+        }
+        if agent_pids.contains(&parent) {
+            return true;
+        }
+        current = parent;
+    }
+    false
+}
+
 fn scan_processes() -> Result<Vec<AgentProcessRow>> {
     #[cfg(target_os = "linux")]
     {
@@ -380,7 +430,8 @@ fn list_claude_sessions() -> Result<Vec<AgentProcessRow>> {
 fn scan_ps() -> Result<Vec<AgentProcessRow>> {
     let raw = run_ps()?;
     let now = crate::dispatch_inspect::now_unix();
-    let mut rows = parse_ps_agent_rows(&raw, now);
+    let table = parse_ps_table(&raw, now);
+    let mut rows = drop_agent_descendants(table.agents, |pid| table.parent_of.get(&pid).copied());
     fill_cwds(&mut rows);
     Ok(rows)
 }
@@ -393,7 +444,7 @@ fn scan_ps() -> Result<Vec<AgentProcessRow>> {
 #[cfg(not(target_os = "linux"))]
 fn run_ps() -> Result<String> {
     let output = Command::new("ps")
-        .args(["-axwwo", "pid=,pgid=,etime=,comm="])
+        .args(["-axwwo", "pid=,ppid=,pgid=,etime=,comm="])
         .output()
         .map_err(|e| anyhow!("failed to spawn ps: {e}"))?;
     if !output.status.success() && output.stdout.is_empty() {
@@ -406,48 +457,93 @@ fn run_ps() -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Parse `ps -axwwo pid=,pgid=,etime=,comm=` output into agent-CLI rows,
-/// dropping every line that isn't `claude`/`codex`. Pure and independent of
-/// `now` for which lines match; `now` only converts each survivor's elapsed
-/// time to an absolute start stamp.
+/// What one `ps` table yields: the agent-CLI rows, plus every process's
+/// parent so [`drop_agent_descendants`] can walk a helper up to its session.
 #[cfg(not(target_os = "linux"))]
-fn parse_ps_agent_rows(raw: &str, now: u64) -> Vec<AgentProcessRow> {
-    raw.lines()
-        .filter_map(|line| parse_ps_line(line, now))
-        .collect()
+#[derive(Debug, Default)]
+struct PsTable {
+    agents: Vec<AgentProcessRow>,
+    parent_of: std::collections::HashMap<u32, u32>,
 }
 
-/// One `pid  pgid  etime  comm` line. Column boundaries are found by
+/// Parse `ps -axwwo pid=,ppid=,pgid=,etime=,comm=` output. Every parsable
+/// line contributes its parent link; only `claude`/`codex` lines become
+/// rows. Pure and independent of `now` for which lines match; `now` only
+/// converts each survivor's elapsed time to an absolute start stamp.
+#[cfg(not(target_os = "linux"))]
+fn parse_ps_table(raw: &str, now: u64) -> PsTable {
+    let mut table = PsTable::default();
+    for line in raw.lines() {
+        let Some(parsed) = parse_ps_line(line) else {
+            continue;
+        };
+        table.parent_of.insert(parsed.pid, parsed.ppid);
+        let Some(basename) = std::path::Path::new(parsed.comm)
+            .file_name()
+            .and_then(|n| n.to_str())
+        else {
+            continue;
+        };
+        let Some(kind) = classify_command(basename) else {
+            continue;
+        };
+        let started_unix = parse_ps_etime(parsed.etime).map(|elapsed| now.saturating_sub(elapsed));
+        table.agents.push(AgentProcessRow {
+            pid: parsed.pid,
+            kind,
+            cwd: None,
+            started_unix,
+            pgid: Some(parsed.pgid),
+            session_id: None,
+            name: None,
+            activity: AgentActivity::Unknown,
+        });
+    }
+    table
+}
+
+/// The agent rows alone from a `ps` table - the shape the tests assert on.
+#[cfg(all(test, not(target_os = "linux")))]
+fn parse_ps_agent_rows(raw: &str, now: u64) -> Vec<AgentProcessRow> {
+    parse_ps_table(raw, now).agents
+}
+
+#[cfg(not(target_os = "linux"))]
+struct PsLine<'a> {
+    pid: u32,
+    ppid: u32,
+    pgid: i32,
+    etime: &'a str,
+    comm: &'a str,
+}
+
+/// One `pid  ppid  pgid  etime  comm` line. Column boundaries are found by
 /// scanning for whitespace runs rather than a fixed split, because `ps`
-/// right-pads `pid`/`pgid`/`etime` to varying widths depending on the
+/// right-pads the numeric columns to varying widths depending on the
 /// widest value in the whole table.
 #[cfg(not(target_os = "linux"))]
-fn parse_ps_line(line: &str, now: u64) -> Option<AgentProcessRow> {
-    let trimmed = line.trim_start();
-    let pid_end = trimmed.find(char::is_whitespace)?;
-    let pid: u32 = trimmed[..pid_end].parse().ok()?;
-    let after_pid = trimmed[pid_end..].trim_start();
-    let pgid_end = after_pid.find(char::is_whitespace)?;
-    let pgid: i32 = after_pid[..pgid_end].parse().ok()?;
-    let after_pgid = after_pid[pgid_end..].trim_start();
-    let etime_end = after_pgid.find(char::is_whitespace)?;
-    let etime_str = &after_pgid[..etime_end];
-    let comm = after_pgid[etime_end..].trim();
+fn parse_ps_line(line: &str) -> Option<PsLine<'_>> {
+    let mut rest = line.trim_start();
+    let mut take = || -> Option<&str> {
+        let end = rest.find(char::is_whitespace)?;
+        let field = &rest[..end];
+        rest = rest[end..].trim_start();
+        Some(field)
+    };
+    let pid: u32 = take()?.parse().ok()?;
+    let ppid: u32 = take()?.parse().ok()?;
+    let pgid: i32 = take()?.parse().ok()?;
+    let etime = take()?;
+    let comm = rest.trim();
     if comm.is_empty() {
         return None;
     }
-    let basename = std::path::Path::new(comm).file_name()?.to_str()?;
-    let kind = classify_command(basename)?;
-    let started_unix = parse_ps_etime(etime_str).map(|elapsed| now.saturating_sub(elapsed));
-    Some(AgentProcessRow {
+    Some(PsLine {
         pid,
-        kind,
-        cwd: None,
-        started_unix,
-        pgid: Some(pgid),
-        session_id: None,
-        name: None,
-        activity: AgentActivity::Unknown,
+        ppid,
+        pgid,
+        etime,
+        comm,
     })
 }
 
@@ -529,7 +625,14 @@ mod linux {
                 activity: AgentActivity::Unknown,
             });
         }
-        Ok(out)
+        Ok(super::drop_agent_descendants(out, ppid_of))
+    }
+
+    /// `ppid` - field 4 overall, index 1 in [`stat_fields_after_comm`]'s
+    /// slice after `state`. Read lazily per ancestor rather than for every
+    /// pid in the walk: only matched rows are ever asked about.
+    fn ppid_of(pid: u32) -> Option<u32> {
+        stat_fields_after_comm(pid)?.get(1)?.parse().ok()
     }
 
     fn pid_from_proc_entry(entry: &fs::DirEntry) -> Option<u32> {
@@ -795,9 +898,9 @@ mod tests {
     #[test]
     fn parses_ps_lines_and_drops_non_agent_processes() {
         let raw = "\
-  501   501 01:23:45 /usr/local/bin/claude
-  502   488    05:10 /opt/homebrew/bin/codex
-  600   600 1-02:00:00 /usr/bin/node
+  501   400   501 01:23:45 /usr/local/bin/claude
+  502   488   488    05:10 /opt/homebrew/bin/codex
+  600   400   600 1-02:00:00 /usr/bin/node
 ";
         let now = 10_000_000;
         let rows = parse_ps_agent_rows(raw, now);
@@ -826,5 +929,65 @@ mod tests {
     fn a_malformed_ps_line_is_skipped_not_panicked_on() {
         let rows = parse_ps_agent_rows("not a valid line\n\n   \n", 0);
         assert!(rows.is_empty());
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn ps_table_records_every_parent_link_not_only_agents() {
+        let raw = "\
+    1     0     1 9-00:00:00 /sbin/launchd
+ 4417  3980  4417    05:10 codex
+ 4507  4417  4507    05:00 /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node
+17526  4507  4507    04:50 /Applications/ChatGPT.app/Contents/Resources/codex
+";
+        let table = parse_ps_table(raw, 10_000);
+        assert_eq!(table.agents.len(), 2, "both codex binaries match by name");
+        assert_eq!(table.parent_of.get(&17526), Some(&4507));
+        assert_eq!(table.parent_of.get(&4507), Some(&4417));
+        assert_eq!(table.parent_of.get(&1), Some(&0));
+    }
+
+    #[test]
+    fn a_helper_spawned_under_a_session_is_not_a_second_session() {
+        // codex 4417 -> node 4507 -> node_repl 4514 -> codex 17526 (helper);
+        // codex 1167 stands alone; claude 900's parent is unknown to us.
+        let parent: std::collections::HashMap<u32, u32> = [
+            (4417, 3980),
+            (3980, 1),
+            (4507, 4417),
+            (4514, 4507),
+            (17526, 4514),
+        ]
+        .into_iter()
+        .collect();
+        let rows = vec![
+            row(4417, AgentProcessKind::Codex, Some("/w/a")),
+            row(17526, AgentProcessKind::Codex, Some("/w/a")),
+            row(1167, AgentProcessKind::Codex, Some("/w/b")),
+            row(900, AgentProcessKind::Claude, Some("/w/c")),
+        ];
+        let kept = drop_agent_descendants(rows, |pid| parent.get(&pid).copied());
+        let pids: Vec<u32> = kept.iter().map(|r| r.pid).collect();
+        assert_eq!(
+            pids,
+            vec![4417, 1167, 900],
+            "only the proven child is dropped"
+        );
+    }
+
+    #[test]
+    fn ancestor_walk_is_bounded_against_cycles() {
+        let rows = vec![
+            row(10, AgentProcessKind::Codex, None),
+            row(20, AgentProcessKind::Codex, None),
+        ];
+        // 20 -> 30 -> 40 -> 30 ... never reaches 10 and never terminates on its own.
+        let kept = drop_agent_descendants(rows, |pid| match pid {
+            20 => Some(30),
+            30 => Some(40),
+            40 => Some(30),
+            _ => None,
+        });
+        assert_eq!(kept.len(), 2);
     }
 }
