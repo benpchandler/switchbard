@@ -244,7 +244,13 @@ fn restored_content_with_new_revision_is_not_already_applied() {
         let preview = prepare_planning_migration(&root).unwrap();
         let (mut store, repo) = central(&root).unwrap();
         for (kind, locator) in [("task", "backlog/tasks/task-1.md"), ("config", CONFIG), ("ranking", RANKING)] {
-            let original = store.get(&repo, kind, locator).unwrap().unwrap().content;
+            let original = store
+                .list(&repo, kind)
+                .unwrap()
+                .into_iter()
+                .find(|document| document.locator == locator)
+                .unwrap()
+                .content;
             store
                 .mutate(&repo, kind, locator, None, |document| {
                     let mut changed = document.unwrap().content.clone();

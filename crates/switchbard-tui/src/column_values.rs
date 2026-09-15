@@ -33,7 +33,16 @@ impl ColumnValues for TaskValues<'_> {
         let Self { task, goals, .. } = self;
         match column {
             Column::Id => vec![task.id.clone()],
-            Column::Status => vec![task.status.clone()],
+            Column::Status => {
+                let mut values = vec![task.status.clone()];
+                match task.planning {
+                    switchbard_core::PlanningState::Planned => values.push("To Do".into()),
+                    switchbard_core::PlanningState::Considering => {
+                        values.extend(["Icebox".into(), "Backlog".into()]);
+                    }
+                }
+                values
+            }
             Column::Planning => vec![task.planning.to_string()],
             Column::Priority => vec![task.priority.clone()],
             Column::Title => vec![task.title.clone()],

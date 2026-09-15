@@ -3,6 +3,7 @@ use super::{planning::PlanningState, BacklogTaskSource};
 use crate::storage::{Document, RepositoryId, RepositoryLock, Store};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 const KINDS: [&str; 3] = ["task", "config", "ranking"];
@@ -39,6 +40,10 @@ pub struct PlanningMigrationPreview {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanningMigrationReceipt {
+    #[serde(default)]
+    pub preview_digest: String,
+    #[serde(default)]
+    pub epoch_id: String,
     pub backup_path: Option<PathBuf>,
     pub receipt_path: Option<PathBuf>,
     pub tasks_changed: usize,
@@ -453,8 +458,28 @@ pub fn apply_planning_migration(
         "repository epoch changed; prepare migration again"
     );
     let current = documents(&store, &repo)?;
-    if same_result(&current, &preview.proposed) {
+    let preview_digest = preview_digest(preview)?;
+    if let Some(receipt) = find_applied_receipt(backup_dir, &preview_digest, &preview.epoch_id, &current)? {
         return Ok(PlanningMigrationReceipt {
+            backup_path: receipt.backup_path,
+            receipt_path: receipt.receipt_path,
+            tasks_changed: 0,
+            already_applied: true,
+            state: "already_applied".into(),
+            before: current.clone(),
+            after: current,
+            preview_digest,
+            epoch_id: preview.epoch_id.clone(),
+        });
+    }
+    if same_result(&current, &preview.proposed) {
+        ensure!(
+            prepare_planning_migration(root)? == *preview,
+            "migration preview differs from current migration rules; prepare again"
+        );
+        return Ok(PlanningMigrationReceipt {
+            preview_digest,
+            epoch_id: preview.epoch_id.clone(),
             backup_path: None,
             receipt_path: None,
             tasks_changed: 0,
@@ -488,6 +513,8 @@ pub fn apply_planning_migration(
         std::fs::set_permissions(&backup_path, std::fs::Permissions::from_mode(0o600))?;
     }
     let mut receipt = PlanningMigrationReceipt {
+        preview_digest,
+        epoch_id: preview.epoch_id.clone(),
         backup_path: Some(backup_path),
         receipt_path: Some(receipt_path.clone()),
         tasks_changed: preview.task_changes.len(),
@@ -513,12 +540,45 @@ pub fn apply_planning_migration(
         same_payload(&receipt.after, &preview.proposed),
         "migration committed but readback differs; inspect backup and prepared receipt"
     );
-    preview.proposed = receipt.after.clone();
     receipt.state = "applied".into();
     write_receipt(&receipt_path, &receipt).context(
         "migration committed; receipt finalization failed; inspect prepared receipt and backup",
     )?;
     Ok(receipt)
+}
+fn preview_digest(preview: &PlanningMigrationPreview) -> Result<String> {
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(preview)?),
+    ))
+}
+fn find_applied_receipt(
+    backup_dir: &Path,
+    digest: &str,
+    epoch_id: &str,
+    current: &[Document],
+) -> Result<Option<PlanningMigrationReceipt>> {
+    let Ok(entries) = std::fs::read_dir(backup_dir) else {
+        return Ok(None);
+    };
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let receipt: PlanningMigrationReceipt = match serde_json::from_slice(&std::fs::read(&path)?) {
+            Ok(receipt) => receipt,
+            Err(_) => continue,
+        };
+        if receipt.state == "applied"
+            && receipt.preview_digest == digest
+            && receipt.epoch_id == epoch_id
+            && same_result(current, &receipt.after)
+        {
+            return Ok(Some(receipt));
+        }
+    }
+    Ok(None)
 }
 fn same_result(actual: &[Document], desired: &[Document]) -> bool {
     actual.len() == desired.len()
