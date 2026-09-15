@@ -11,6 +11,9 @@ description = "Domain logic for Switchbard — listener scanning, service detect
 keywords = ["devtools", "git", "worktree", "lsof", "supervisor"]
 categories = ["development-tools"]
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true

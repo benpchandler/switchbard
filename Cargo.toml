@@ -30,3 +30,24 @@ serde_yaml = "0.9"
 chrono = { version = "0.4", features = ["serde"] }
 toml = "0.8"
 dirs = "5"
+
+# The warning policy for every cargo command: mise tasks, Git hooks, CI,
+# `cargo install --path`, and plain cargo. Any rustc warning fails the build,
+# and under `cargo clippy` so does any clippy warning. Lint levels reach only
+# workspace crates, so unlike `-D warnings` passed through RUSTFLAGS this leaves
+# dependency artifacts shared between commands. Every member opts in with
+# `[lints] workspace = true`, which scripts/test-rust-flag-standard.py enforces.
+# (`[build] warnings = "deny"` in .cargo/config.toml would be lighter, but cargo
+# 1.95 silently ignores it without `-Z warnings`.)
+[workspace.lints.rust]
+warnings = "deny"
+
+# Debug info sized for test backtraces: workspace crates keep file:line tables
+# and dependencies carry none, which shrinks rlibs and incremental data.
+# Release builds are unaffected. When a debugger session needs variables,
+# CARGO_PROFILE_DEV_DEBUG=true restores full debug info for workspace crates.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

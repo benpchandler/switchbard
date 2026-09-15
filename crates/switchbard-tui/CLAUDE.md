@@ -39,4 +39,4 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
 Slice => commit on a `feat/tui-*` branch => `mise run tui-install` => running sbt re-execs (`main.rs::InstalledBinary`, resumes view/filter/row) => user drives it => drain `label:tui`.
 ## Gates
 Per slice: `mise run tui-install` (fmt, clippy, tests for this crate only, then install).
-Never run `mise run ci` mid-loop: its RUSTFLAGS differ from cargo install, rebuilding the workspace/GUI. Run it once before merge.
+`mise run ci` uses the same flags (warnings denied by `[workspace.lints]` in `Cargo.toml`), so alternating with it reuses dependency builds; only crates whose features differ under `-p` rebuild. It runs every crate's tests, so run it once before merge.

@@ -11,6 +11,9 @@ description = "Switchbard — local-first dashboard for dev servers and git work
 keywords = ["devtools", "git", "worktree", "linux", "egui"]
 categories = ["development-tools", "gui"]
 
+[lints]
+workspace = true
+
 [dependencies]
 switchbard-core = { path = "../switchbard-core" }
 anyhow.workspace = true
