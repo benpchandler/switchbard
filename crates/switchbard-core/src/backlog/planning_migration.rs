@@ -459,7 +459,9 @@ pub fn apply_planning_migration(
     );
     let current = documents(&store, &repo)?;
     let preview_digest = preview_digest(preview)?;
-    if let Some(receipt) = find_applied_receipt(backup_dir, &preview_digest, &preview.epoch_id, &current)? {
+    if let Some(receipt) =
+        find_applied_receipt(backup_dir, &preview_digest, &preview.epoch_id, &current)?
+    {
         return Ok(PlanningMigrationReceipt {
             backup_path: receipt.backup_path,
             receipt_path: receipt.receipt_path,
@@ -566,7 +568,8 @@ fn find_applied_receipt(
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
-        let receipt: PlanningMigrationReceipt = match serde_json::from_slice(&std::fs::read(&path)?) {
+        let receipt: PlanningMigrationReceipt = match serde_json::from_slice(&std::fs::read(&path)?)
+        {
             Ok(receipt) => receipt,
             Err(_) => continue,
         };

@@ -243,7 +243,11 @@ fn restored_content_with_new_revision_is_not_already_applied() {
         fixture(&root, &db);
         let preview = prepare_planning_migration(&root).unwrap();
         let (mut store, repo) = central(&root).unwrap();
-        for (kind, locator) in [("task", "backlog/tasks/task-1.md"), ("config", CONFIG), ("ranking", RANKING)] {
+        for (kind, locator) in [
+            ("task", "backlog/tasks/task-1.md"),
+            ("config", CONFIG),
+            ("ranking", RANKING),
+        ] {
             let original = store
                 .list(&repo, kind)
                 .unwrap()
