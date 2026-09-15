@@ -54,6 +54,15 @@ pub struct Backlog {
     pub relations: TaskRelations,
 }
 
+/// A direct child remains visible in its parent's details after filing or archiving.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChildSummary {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub source: BacklogTaskSource,
+}
+
 /// Dependency and sub-task facts derived once per load from
 /// `switchbard_core::backlog_relations` (task-18/17's core functions are
 /// O(project) each; recomputing them per row per frame would make sbt's
@@ -74,11 +83,27 @@ pub struct TaskRelations {
     pub blocks: HashMap<String, Vec<(String, String, bool)>>,
     /// (done, total) direct sub-tasks, by parent id; absent when childless.
     pub subtasks: HashMap<String, (usize, usize)>,
+    /// All direct children, including historical records, keyed by parent ID.
+    pub children: HashMap<String, Vec<ChildSummary>>,
 }
 
 impl TaskRelations {
     fn compute(repo: &BacklogRepo, tasks: &[BacklogTask]) -> TaskRelations {
         let mut relations = TaskRelations::default();
+        for child in &repo.tasks {
+            if let Some(parent) = &child.parent {
+                relations
+                    .children
+                    .entry(parent.clone())
+                    .or_default()
+                    .push(ChildSummary {
+                        id: child.id.clone(),
+                        title: child.title.clone(),
+                        status: child.status.clone(),
+                        source: child.source,
+                    });
+            }
+        }
         for task in tasks {
             if !task.is_done() && is_blocked(task, repo) {
                 relations.blocked.insert(task.id.clone());

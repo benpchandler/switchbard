@@ -11,6 +11,12 @@ mod allocate;
 mod ball;
 mod central_commands;
 mod edit_command;
+pub use task_cancel::{cancel_task_expected, prepare_task_cancellation, PreparedTaskCancellation};
+pub use task_snapshot::{
+    edit_backlog_task_snapshot, read_backlog_task_snapshot,
+    set_backlog_acceptance_checked_expected, validate_backlog_task_snapshot, BacklogTaskSnapshot,
+};
+
 pub use edit_command::{edit_backlog_task_command, TaskEditRequest, TaskEditResult};
 mod field_config;
 pub use field_config::{
@@ -28,6 +34,8 @@ mod parse;
 mod ranking;
 pub mod status_config;
 mod storage_validation;
+mod task_cancel;
+mod task_snapshot;
 pub(super) mod task_storage;
 mod types;
 mod write;

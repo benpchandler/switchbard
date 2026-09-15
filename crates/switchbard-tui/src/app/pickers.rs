@@ -26,6 +26,7 @@ impl App {
                 ('b', "Assign ball", TaskAction::Ball),
                 ('s', "Status", TaskAction::Status),
                 ('d', "Mark Done", TaskAction::Done),
+                ('c', "Cancel task…", TaskAction::Cancel),
                 ('p', "Link project", TaskAction::Project),
                 ('a', "Link parent task", TaskAction::Parent),
                 ('r', "Top list", TaskAction::TopList),
@@ -61,6 +62,7 @@ impl App {
 
     fn run_task_action(&mut self, action: TaskAction) {
         match action {
+            TaskAction::Cancel => self.open_task_cancellation(),
             TaskAction::New => self.open_new_task(),
             TaskAction::Ball => self.open_ball_picker(),
             TaskAction::Append => self.set_rank(self.top.len() + 1),
@@ -496,6 +498,14 @@ impl App {
     }
 
     pub(super) fn handle_pick_value_key(&mut self, event: KeyEvent) {
+        if self
+            .picker
+            .as_ref()
+            .is_some_and(|p| p.purpose == PickerPurpose::TaskCancel)
+        {
+            self.handle_task_cancel_key(event);
+            return;
+        }
         if self
             .picker
             .as_ref()

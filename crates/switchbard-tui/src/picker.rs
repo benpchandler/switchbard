@@ -55,6 +55,7 @@ pub enum PickerPurpose {
     Ball,
     Merge,
     Task,
+    TaskCancel,
     TaskStatus(String),
     TaskProject(String),
     TaskParent(String),
@@ -143,6 +144,7 @@ impl ColumnAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskAction {
     New,
+    Cancel,
     Ball,
     Append,
     Status,
@@ -210,6 +212,8 @@ pub enum Payload {
     RowSpacing,
     Project(Option<String>),
     Parent(Option<String>),
+    KeepTask,
+    ConfirmTaskCancel,
     CancelMerge,
     Merge(switchbard_core::PrMergeMethod),
 }
@@ -393,6 +397,7 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::Organize => {
             "number or name organizes · the current one again flattens · x off · esc"
         }
+        PickerPurpose::TaskCancel => "c confirms cancellation · Enter/Esc keeps task",
         PickerPurpose::Merge => "number confirms · j/k select · Enter confirms · Esc cancels",
         PickerPurpose::Views if picker.position_of_key('l').is_some() => {
             "l line wrap · ↑↓/jk select · →/Enter open · ←/h back · Esc closes"
