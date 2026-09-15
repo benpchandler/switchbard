@@ -1837,6 +1837,7 @@ impl App {
                         rows.insert(
                             count + 1,
                             crate::group::Row::Heading {
+                                value: "other".to_string(),
                                 text: "Other tasks".to_string(),
                                 depth: 0,
                             },
