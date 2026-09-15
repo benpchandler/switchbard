@@ -3,7 +3,28 @@ use std::path::Path;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use switchbard_core::{fetch_pull_requests_with_limit, PrListRow, PrSnapshot};
+use switchbard_core::{fetch_pull_requests_with_limit, PrLifecycle, PrListRow, PrSnapshot};
+
+/// Poll cadence while a just-merged PR hasn't shown as merged (or gone) yet
+/// (TASK-204). GitHub's list read is eventually consistent, so the routine
+/// `pr_refresh_seconds` cadence (default 60s) would otherwise leave the row
+/// looking untouched for up to a minute after the user watched the merge land.
+const EXPECTED_MERGE_POLL_SECONDS: u64 = 3;
+/// Bound on how long the tightened cadence runs before giving up on this PR
+/// and falling back to the routine cadence with a notification.
+const EXPECTED_MERGE_WINDOW_SECONDS: u64 = 90;
+
+/// One outstanding "this PR should show merged soon" expectation (TASK-204).
+/// Single-slot by design: a second confirmed merge while one is outstanding
+/// replaces it. The traded-off case (two merges landing within the same
+/// window) drops fast-poll tracking for the first PR in favor of the second;
+/// both still converge on the routine cadence at worst.
+struct ExpectedMerge {
+    id: String,
+    head_oid: String,
+    number: u64,
+    since: Instant,
+}
 
 #[derive(Default)]
 pub struct PullRequests {
@@ -26,6 +47,7 @@ pub struct PullRequests {
     completed_at: Option<Instant>,
     remaining_seconds: u64,
     last_open_count: Option<(u64, std::time::SystemTime)>,
+    expected_merge: Option<ExpectedMerge>,
 }
 
 impl PullRequests {
@@ -67,6 +89,9 @@ impl PullRequests {
                     changed = result.is_ok();
                     self.accept(result);
                     self.completed_at = Some(now);
+                    if changed {
+                        self.reconcile_expected_merge();
+                    }
                 }
                 Err(TryRecvError::Disconnected) => {
                     self.pending = None;
@@ -76,18 +101,93 @@ impl PullRequests {
                 Err(TryRecvError::Empty) => {}
             }
         }
+        self.expire_expected_merge(now);
+        let cadence_seconds = if self.expected_merge.is_some() {
+            EXPECTED_MERGE_POLL_SECONDS
+        } else {
+            refresh_seconds
+        };
         let elapsed = self
             .completed_at
             .map(|completed| now.saturating_duration_since(completed));
         self.remaining_seconds = elapsed.map_or(0, |elapsed| {
-            Duration::from_secs(refresh_seconds)
+            Duration::from_secs(cadence_seconds)
                 .saturating_sub(elapsed)
                 .as_secs()
         });
-        if elapsed.is_none_or(|elapsed| elapsed >= Duration::from_secs(refresh_seconds)) {
+        if elapsed.is_none_or(|elapsed| elapsed >= Duration::from_secs(cadence_seconds)) {
             self.refresh(root);
         }
         changed
+    }
+
+    /// Called once GitHub confirms a merge landed (`MergeFlow`'s only write
+    /// into this expectation, never on a rejected or unknown outcome).
+    /// `PullRequests` owns the expectation and the cadence it drives; the
+    /// merge flow only tells it what to expect (single writer, TASK-204).
+    pub fn expect_merge(&mut self, id: String, head_oid: String, since: Instant) {
+        let number = self
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.rows.iter().find(|row| row.id == id))
+            .map_or(0, |row| row.number);
+        self.expected_merge = Some(ExpectedMerge {
+            id,
+            head_oid,
+            number,
+            since,
+        });
+    }
+
+    /// Whether `row` is the one row an outstanding merge expectation covers,
+    /// so rendering can mark it pending without a second copy of the state.
+    pub fn expecting_merge(&self, row: &PrListRow) -> bool {
+        self.expected_merge
+            .as_ref()
+            .is_some_and(|expected| expected.id == row.id && expected.head_oid == row.head_oid)
+    }
+
+    /// Whether the list is on the tightened post-merge cadence, for the
+    /// observation header's refresh label.
+    pub fn syncing_after_merge(&self) -> bool {
+        self.expected_merge.is_some()
+    }
+
+    /// Converged = a refreshed snapshot no longer lists the expected PR as
+    /// open (row absent, or present and merged). Only called after accepting
+    /// a successful refresh.
+    fn reconcile_expected_merge(&mut self) {
+        let Some(expected) = &self.expected_merge else {
+            return;
+        };
+        let Some(snapshot) = &self.snapshot else {
+            return;
+        };
+        let converged = match snapshot.rows.iter().find(|row| row.id == expected.id) {
+            None => true,
+            Some(row) => row.lifecycle == PrLifecycle::Merged,
+        };
+        if converged {
+            self.expected_merge = None;
+        }
+    }
+
+    /// Gives up on an expectation that outlived its window, returning to the
+    /// routine cadence and telling the user GitHub still disagrees.
+    fn expire_expected_merge(&mut self, now: Instant) {
+        let Some(expected) = &self.expected_merge else {
+            return;
+        };
+        if now.saturating_duration_since(expected.since)
+            < Duration::from_secs(EXPECTED_MERGE_WINDOW_SECONDS)
+        {
+            return;
+        }
+        let number = expected.number;
+        self.expected_merge = None;
+        self.notifications.push(format!(
+            "PR #{number} still shows open after merge; check GitHub"
+        ));
     }
 
     fn accept(&mut self, result: Result<PrSnapshot, String>) {
@@ -321,6 +421,8 @@ impl PullRequests {
     pub fn refresh_label(&self) -> String {
         if self.loading() {
             "refreshing".into()
+        } else if self.syncing_after_merge() {
+            format!("syncing {}s", self.remaining_seconds)
         } else {
             format!("{}s", self.remaining_seconds)
         }
@@ -386,5 +488,108 @@ mod tests {
         prs.accept(Ok(snapshot("owner/new", Err("offline".into()))));
 
         assert_eq!(prs.last_open_count(), None);
+    }
+
+    fn pr_row(id: &str, number: u64, head_oid: &str, lifecycle: PrLifecycle) -> PrListRow {
+        PrListRow {
+            id: id.into(),
+            number,
+            title: "A title".into(),
+            url: format!("https://github.com/owner/repo/pull/{number}"),
+            head_oid: head_oid.into(),
+            draft: false,
+            lifecycle,
+            merged_at: None,
+            checks: switchbard_core::PrChecks::Unknown,
+            review: switchbard_core::PrReview::Unknown,
+            merge: switchbard_core::PrMerge::Unknown,
+        }
+    }
+
+    fn snapshot_with_rows(repository: &str, rows: Vec<PrListRow>) -> PrSnapshot {
+        PrSnapshot {
+            rows,
+            ..snapshot(repository, Ok(0))
+        }
+    }
+
+    // (a) an outstanding expectation tightens the refresh cadence and clears
+    // once a refreshed snapshot no longer lists the PR as open.
+    #[test]
+    fn expected_merge_tightens_cadence_and_clears_on_convergence() {
+        let mut prs = PullRequests::default();
+        let row = pr_row("pr-1", 42, "headoid", PrLifecycle::Open);
+        prs.accept(Ok(snapshot_with_rows("owner/repo", vec![row.clone()])));
+        prs.refilter();
+        let root = Path::new("does-not-exist-for-a-unit-test");
+        let base = Instant::now();
+        prs.completed_at = Some(base);
+        prs.expect_merge(row.id.clone(), row.head_oid.clone(), base);
+
+        assert!(prs.syncing_after_merge());
+        assert!(prs.expecting_merge(&row));
+        assert!(prs.refresh_label().contains("syncing"));
+
+        // Well inside the tightened 3s cadence: no refresh triggered yet, and
+        // the countdown reflects the tightened window, not the routine 60s.
+        assert!(!prs.tick(root, 60, base + Duration::from_secs(1)));
+        assert!(!prs.loading());
+        assert_eq!(prs.remaining_seconds, EXPECTED_MERGE_POLL_SECONDS - 1);
+
+        // Still reported open: the expectation survives a refresh.
+        prs.accept(Ok(snapshot_with_rows(
+            "owner/repo",
+            vec![pr_row("pr-1", 42, "headoid", PrLifecycle::Open)],
+        )));
+        prs.reconcile_expected_merge();
+        assert!(prs.syncing_after_merge(), "still open: expectation stays");
+
+        // GitHub now reports it merged: the expectation clears.
+        prs.accept(Ok(snapshot_with_rows(
+            "owner/repo",
+            vec![pr_row("pr-1", 42, "headoid", PrLifecycle::Merged)],
+        )));
+        prs.reconcile_expected_merge();
+        assert!(!prs.syncing_after_merge());
+        assert!(!prs.refresh_label().contains("syncing"));
+    }
+
+    // (a, continued) an absent row also counts as converged.
+    #[test]
+    fn expected_merge_converges_when_the_row_disappears() {
+        let mut prs = PullRequests::default();
+        let row = pr_row("pr-1", 42, "headoid", PrLifecycle::Open);
+        prs.accept(Ok(snapshot_with_rows("owner/repo", vec![row.clone()])));
+        prs.expect_merge(row.id.clone(), row.head_oid.clone(), Instant::now());
+
+        prs.accept(Ok(snapshot_with_rows("owner/repo", Vec::new())));
+        prs.reconcile_expected_merge();
+
+        assert!(!prs.syncing_after_merge());
+    }
+
+    // (b) window expiry clears the expectation and notifies, once, naming
+    // the PR by number.
+    #[test]
+    fn expected_merge_expires_after_its_window_with_a_notification() {
+        let mut prs = PullRequests::default();
+        let row = pr_row("pr-1", 42, "headoid", PrLifecycle::Open);
+        prs.accept(Ok(snapshot_with_rows("owner/repo", vec![row.clone()])));
+        let since = Instant::now();
+        prs.expect_merge(row.id.clone(), row.head_oid.clone(), since);
+
+        prs.expire_expected_merge(since + Duration::from_secs(EXPECTED_MERGE_WINDOW_SECONDS - 1));
+        assert!(
+            prs.syncing_after_merge(),
+            "window has not elapsed; expectation must remain"
+        );
+
+        prs.expire_expected_merge(since + Duration::from_secs(EXPECTED_MERGE_WINDOW_SECONDS));
+        assert!(!prs.syncing_after_merge());
+        assert!(prs
+            .notifications
+            .latest()
+            .is_some_and(|message| message.contains("PR #42")
+                && message.contains("still shows open after merge")));
     }
 }

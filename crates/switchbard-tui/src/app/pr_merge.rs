@@ -1,5 +1,6 @@
 //! One off-thread merge preparation/submission; the shared picker owns explicit confirmation.
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use switchbard_core::{
@@ -63,6 +64,17 @@ impl MergeFlow {
         lines.extend(prepared.readiness_caveat());
         lines.push("Choose a method to confirm this merge. Task status stays unchanged.".into());
         lines
+    }
+
+    /// What to tell `PullRequests` to expect, if anything (TASK-204). Only a
+    /// confirmed merge on the PR this flow targeted should start fast-poll
+    /// tracking; a rejection or an unknown outcome leaves GitHub's own state
+    /// alone rather than guessing at it.
+    fn merge_expectation(&self, result: &PrMergeResult) -> Option<(String, String)> {
+        if result.outcome != PrMergeOutcome::Confirmed {
+            return None;
+        }
+        self.target.clone()
     }
 }
 
@@ -272,6 +284,10 @@ impl App {
                 .push(format!("Merge receipt: {}", path.display()));
         }
         self.pull_requests.notifications.push(self.status.clone());
+        if let Some((id, head_oid)) = self.pr_merge.merge_expectation(&result) {
+            self.pull_requests
+                .expect_merge(id, head_oid, Instant::now());
+        }
         self.pr_merge.last_result = Some(result);
         if self.pull_requests.loading() {
             self.pr_merge.refresh_after_result = true;
@@ -286,5 +302,56 @@ impl App {
         } else {
             self.should_quit = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result(outcome: PrMergeOutcome) -> PrMergeResult {
+        PrMergeResult {
+            outcome,
+            message: "test".into(),
+            receipt_path: None,
+        }
+    }
+
+    fn flow_targeting(id: &str, head_oid: &str) -> MergeFlow {
+        MergeFlow {
+            target: Some((id.into(), head_oid.into())),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn confirmed_outcome_expects_the_prepared_target() {
+        let flow = flow_targeting("pr-1", "abc123");
+        assert_eq!(
+            flow.merge_expectation(&result(PrMergeOutcome::Confirmed)),
+            Some(("pr-1".to_string(), "abc123".to_string()))
+        );
+    }
+
+    #[test]
+    fn rejected_and_unknown_outcomes_expect_nothing() {
+        let flow = flow_targeting("pr-1", "abc123");
+        assert_eq!(
+            flow.merge_expectation(&result(PrMergeOutcome::Rejected)),
+            None
+        );
+        assert_eq!(
+            flow.merge_expectation(&result(PrMergeOutcome::OutcomeUnknown)),
+            None
+        );
+    }
+
+    #[test]
+    fn confirmed_outcome_without_a_captured_target_expects_nothing() {
+        let flow = MergeFlow::default();
+        assert_eq!(
+            flow.merge_expectation(&result(PrMergeOutcome::Confirmed)),
+            None
+        );
     }
 }
