@@ -48,8 +48,10 @@ pub struct Backlog {
     pub goals: Vec<GoalDef>,
     /// Goal headings' facts for the current week, in `goals.yml` order.
     pub goal_summaries: Vec<GoalSummary>,
-    /// The top list: the expedite lane, in order, pruned to tasks that are loaded.
+    /// Planned active work, with the expedite lane retained before activation.
     pub top: Vec<String>,
+    pub legacy_order: bool,
+    pub checklist: HashMap<String, switchbard_core::ChecklistProgress>,
     /// Dependency and sub-task facts, computed once from `backlog_relations`.
     pub relations: TaskRelations,
 }
@@ -173,13 +175,18 @@ pub fn load(root: &Path) -> Result<Backlog> {
         .cloned()
         .collect();
     let relations = TaskRelations::compute(&repo, &tasks);
-    let top: Vec<String> = repo
-        .ranking
-        .expedite
-        .iter()
-        .filter(|id| tasks.iter().any(|task: &BacklogTask| task.id == **id))
-        .cloned()
-        .collect();
+    let legacy_order = repo.ranking.planned.is_none();
+    let top = if legacy_order {
+        repo.ranking
+            .expedite
+            .iter()
+            .filter(|id| tasks.iter().any(|task| &task.id == *id))
+            .cloned()
+            .collect()
+    } else {
+        switchbard_core::planning_order(&repo)
+    };
+    let checklist = switchbard_core::checklist_progress(&repo);
     Ok(Backlog {
         tasks,
         fields: repo.fields.clone(),
@@ -187,6 +194,8 @@ pub fn load(root: &Path) -> Result<Backlog> {
         goals,
         goal_summaries,
         top,
+        legacy_order,
+        checklist,
         relations,
     })
 }

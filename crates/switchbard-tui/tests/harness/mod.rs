@@ -15,6 +15,8 @@ use switchbard_tui::app::{App, AppPaths};
 use switchbard_tui::telemetry::Telemetry;
 use switchbard_tui::view;
 
+pub const LEGACY_VIEWS: &str = "return { { columns = 'id,status,priority,title' }, {filter='status:todo', columns='id,status,priority,title'}, {filter='status:inprogress', columns='id,status,priority,title'}, {filter='label:tui', columns='id,status,priority,title'}, {filter='ball:me', columns='id,status,priority,title'} }\n";
+
 pub struct Harness {
     pub _dir: tempfile::TempDir,
     pub root: PathBuf,
@@ -42,6 +44,8 @@ impl Harness {
         );
         seed_with_priority(&root, "Add dark theme", "To Do", &["ui"], "low");
         seed_with_priority(&root, "Write onboarding guide", "To Do", &["docs"], "high");
+        // Existing users retain their four-column saved arrangement.
+        std::fs::write(root.join("views.lua"), LEGACY_VIEWS).unwrap();
         let config_path = root.join("tui.lua");
         let app = open_app(&root, &config_path);
         let terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();

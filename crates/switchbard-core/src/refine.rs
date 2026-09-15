@@ -853,6 +853,7 @@ mod tests {
 
     fn task() -> BacklogTask {
         BacklogTask {
+            planning: crate::PlanningState::Planned,
             storage_identity: None,
             id: "TASK-44".to_string(),
             title: "Refine task".to_string(),

@@ -122,8 +122,10 @@ pub struct App {
     pub goals: Vec<GoalDef>,
     /// Goal headings' facts for the current week; refreshed with the tasks.
     pub goal_summaries: Vec<GoalSummary>,
-    /// The Top 5 (expedite lane) ids in order; the queue.
+    /// Planned active work in order; the legacy expedite lane before activation.
     pub top: Vec<String>,
+    pub legacy_order: bool,
+    pub checklist: std::collections::HashMap<String, switchbard_core::ChecklistProgress>,
     /// Dependency and sub-task facts, refreshed with the tasks; see
     /// `tasks::TaskRelations`.
     pub relations: tasks::TaskRelations,
@@ -271,6 +273,8 @@ impl App {
             goals: Vec::new(),
             goal_summaries: Vec::new(),
             top: Vec::new(),
+            legacy_order: true,
+            checklist: Default::default(),
             relations: tasks::TaskRelations::default(),
             work: Vec::new(),
             work_dir,
@@ -381,6 +385,7 @@ impl App {
                 .rank_of(task)
                 .map(|n| n.to_string())
                 .unwrap_or_default(),
+            Column::Checklist => self.checklist_text(task),
             Column::Work => "●".repeat(self.working(task).len().min(3)),
             Column::Title => self.title_cell(task),
             other => other.display_text(
@@ -397,6 +402,23 @@ impl App {
     /// sub-tasks (`tasks::TaskRelations::subtasks`, computed once per load
     /// from `switchbard_core::subtask_progress`); a childless task's title is
     /// unchanged. Matches the GUI's own suffix (`ui/backlog/list.rs`).
+    pub(crate) fn checklist_text(&self, task: &BacklogTask) -> String {
+        let Some(progress) = self.checklist.get(&task.id) else {
+            return "Unmeasured".to_string();
+        };
+        let Some(percent) = progress.percentage() else {
+            return "Unmeasured".to_string();
+        };
+        if progress.needs_review(task) {
+            format!(
+                "Review {}/{} {:.0}%",
+                progress.checked, progress.total, percent
+            )
+        } else {
+            format!("{}/{} {:.1}%", progress.checked, progress.total, percent)
+        }
+    }
+
     fn title_cell(&self, task: &BacklogTask) -> String {
         match self.relations.subtasks.get(&task.id) {
             Some((done, total)) => format!("{}  [{done}/{total}]", task.title),
@@ -820,7 +842,22 @@ impl App {
             return;
         };
         let id = task.id.clone();
-        if let Err(error) = switchbard_core::expedite_task_at(&self.repo_root, &id, place) {
+        let others: Vec<_> = self.top.iter().filter(|other| **other != id).collect();
+        let placement = if place <= 1 {
+            switchbard_core::RankPlacement::Top
+        } else if let Some(after) =
+            others.get(place.saturating_sub(2).min(others.len().saturating_sub(1)))
+        {
+            switchbard_core::RankPlacement::After((*after).clone())
+        } else {
+            switchbard_core::RankPlacement::Top
+        };
+        let result = if self.legacy_order {
+            switchbard_core::expedite_task_at(&self.repo_root, &id, place)
+        } else {
+            switchbard_core::rank_planned_task(&self.repo_root, &id, &placement)
+        };
+        if let Err(error) = result {
             self.fail(format!("{id}: {error}"));
             return;
         }
@@ -830,7 +867,12 @@ impl App {
             self.refilter();
         }
         self.select_task(&id);
-        self.status = format!("{id} is #{place} of {}", self.top.len());
+        let actual = self
+            .top
+            .iter()
+            .position(|ranked| ranked == &id)
+            .map_or(place, |index| index + 1);
+        self.status = format!("{id} is #{actual} of {}", self.top.len());
         self.telemetry
             .record("action", format!("rank {place} {id}"));
     }
@@ -841,14 +883,34 @@ impl App {
             return;
         };
         let id = task.id.clone();
-        match switchbard_core::unexpedite_task(&self.repo_root, &id) {
+        let legacy = self.legacy_order;
+        let result = if legacy {
+            switchbard_core::unexpedite_task(&self.repo_root, &id)
+        } else {
+            switchbard_core::set_task_planning(
+                &self.repo_root,
+                &id,
+                switchbard_core::PlanningState::Considering,
+            )
+        };
+        match result {
             Ok(outcome) if outcome.changed() => {
                 self.reload_tasks();
                 self.select_task(&id);
-                self.status = format!("{id} left the top list");
+                self.status = if legacy {
+                    format!("{id} left the top list")
+                } else {
+                    format!("{id} is Considering")
+                };
                 self.telemetry.record("action", format!("unrank {id}"));
             }
-            Ok(_) => self.status = format!("{id} was not in the top list"),
+            Ok(_) => {
+                self.status = if legacy {
+                    format!("{id} was not in the top list")
+                } else {
+                    format!("{id} is already Considering")
+                }
+            }
             Err(error) => self.fail(format!("{id}: {error}")),
         }
     }
@@ -984,7 +1046,7 @@ impl App {
                 PickOption {
                     label: format!("{mark}{label}"),
                     count: 0,
-                    key: None,
+                    key: (grouping == Grouping::by(Column::Planning)).then_some('l'),
                     payload: Payload::Grouping(grouping),
                 }
             })
@@ -1688,15 +1750,39 @@ impl App {
             })
             .collect();
         if let Some(sort) = state.sort {
-            sort::apply(
-                &self.registry,
-                &self.tasks,
-                &mut visible,
-                sort,
-                &self.top,
-                &self.goals,
-                &self.relations.blocked,
-            );
+            if sort.column == Column::Checklist {
+                visible.sort_by(|&a, &b| {
+                    let progress = |index: usize| {
+                        self.checklist
+                            .get(&self.tasks[index].id)
+                            .and_then(|p| p.percentage())
+                    };
+                    let order = match (progress(a), progress(b)) {
+                        (Some(a), Some(b)) => {
+                            let cmp = a.total_cmp(&b);
+                            if sort.order == crate::sort::Order::Descending {
+                                cmp.reverse()
+                            } else {
+                                cmp
+                            }
+                        }
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        _ => std::cmp::Ordering::Equal,
+                    };
+                    order.then_with(|| self.tasks[a].id.cmp(&self.tasks[b].id))
+                });
+            } else {
+                sort::apply(
+                    &self.registry,
+                    &self.tasks,
+                    &mut visible,
+                    sort,
+                    &self.top,
+                    &self.goals,
+                    &self.relations.blocked,
+                );
+            }
         }
         let pinned: &[String] = if state.pin_top { &self.top } else { &[] };
         let headings = group::Headings {
@@ -1721,7 +1807,27 @@ impl App {
         } else {
             state.group.levels().to_vec()
         };
-        let rows = group::rows(&self.tasks, &visible, &levels, &headings, pinned);
+        let mut rows = group::rows(&self.tasks, &visible, &levels, &headings, pinned);
+        if !self.legacy_order {
+            if let Some(crate::group::Row::Heading { text, .. }) = rows.first_mut() {
+                if text.starts_with("top ·") {
+                    let count = pinned
+                        .iter()
+                        .filter(|id| visible.iter().any(|&i| self.tasks[i].id == **id))
+                        .count();
+                    *text = format!("Planned · {count}");
+                    if levels.is_empty() && rows.len() > count + 1 {
+                        rows.insert(
+                            count + 1,
+                            crate::group::Row::Heading {
+                                text: "Other tasks".to_string(),
+                                depth: 0,
+                            },
+                        );
+                    }
+                }
+            }
+        }
         TaskProjection {
             visible,
             rows,
@@ -1920,6 +2026,8 @@ impl App {
                 self.goals = backlog.goals;
                 self.goal_summaries = backlog.goal_summaries;
                 self.top = backlog.top;
+                self.legacy_order = backlog.legacy_order;
+                self.checklist = backlog.checklist;
                 self.relations = backlog.relations;
             }
             Err(error) => {
@@ -1961,6 +2069,7 @@ impl App {
                     matches!(
                         picker.purpose,
                         PickerPurpose::Task
+                            | PickerPurpose::TaskPlanning(_)
                             | PickerPurpose::TaskStatus(_)
                             | PickerPurpose::TaskProject(_)
                             | PickerPurpose::TaskParent(_)

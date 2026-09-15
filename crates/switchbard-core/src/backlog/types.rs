@@ -45,9 +45,12 @@ pub const CANONICAL_STATUS_ORDER: &[&str] = &[
     "Backlog",
     "Icebox",
     "To Do",
+    "Not started",
     "In Progress",
+    "Waiting",
     "In Review",
     "Done",
+    "Canceled",
 ];
 
 /// Every status the scoped projects *actually have* — their declared
@@ -135,7 +138,23 @@ pub fn assignable_statuses(project: &BacklogRepo) -> Vec<String> {
 /// the gap the UI offers to close — see `ordered_status_vocabulary` for why
 /// closing it is now an offer rather than an assumption.
 pub fn missing_standard_statuses(project: &BacklogRepo) -> Vec<String> {
-    STANDARD_STATUSES
+    let standards = if project
+        .configured_statuses
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case("Not started"))
+    {
+        &[
+            "Not started",
+            "In Progress",
+            "Waiting",
+            "In Review",
+            "Done",
+            "Canceled",
+        ][..]
+    } else {
+        STANDARD_STATUSES
+    };
+    standards
         .iter()
         .filter(|standard| {
             !project
@@ -254,6 +273,7 @@ pub struct BacklogStorageIdentity {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BacklogTask {
+    pub planning: super::planning::PlanningState,
     pub storage_identity: Option<BacklogStorageIdentity>,
     pub id: String,
     pub title: String,
@@ -328,6 +348,7 @@ pub struct BacklogChecklistItem {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BacklogTaskPatch {
+    pub planning: Option<super::planning::PlanningState>,
     pub title: Option<String>,
     pub description: Option<String>,
     pub status: Option<String>,
@@ -377,7 +398,8 @@ pub struct BacklogTaskPatch {
 
 impl BacklogTaskPatch {
     pub fn is_empty(&self) -> bool {
-        self.title.is_none()
+        self.planning.is_none()
+            && self.title.is_none()
             && self.description.is_none()
             && self.status.is_none()
             && self.priority.is_none()
@@ -437,6 +459,7 @@ mod tests {
     fn project_names_unions_task_refs_and_defs_sorted() {
         fn task_in(project: Option<&str>) -> BacklogTask {
             BacklogTask {
+                planning: crate::PlanningState::Planned,
                 storage_identity: None,
                 id: "TASK-1".to_string(),
                 title: "Example".to_string(),
@@ -530,6 +553,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(i, status)| BacklogTask {
+                    planning: crate::PlanningState::Planned,
                     storage_identity: None,
                     id: format!("TASK-{}", i + 1),
                     title: "fixture".to_string(),

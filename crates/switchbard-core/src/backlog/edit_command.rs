@@ -6,7 +6,7 @@ use super::{
 use anyhow::{ensure, Result};
 use std::path::Path;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TaskEditRequest {
     pub patch: BacklogTaskPatch,
     pub acceptance_edits: Vec<ChecklistTextEdit>,
@@ -44,6 +44,9 @@ pub fn edit_backlog_task_command(
     id: &str,
     request: &TaskEditRequest,
 ) -> Result<TaskEditResult> {
+    let mut normalized = request.clone();
+    normalized.patch = mutations::normalized_patch(root, &request.patch)?;
+    let request = &normalized;
     ensure!(request.acceptance_removals.is_empty() || !request.checklists.iter().any(|(list, _, _)| matches!(list, TaskChecklist::AcceptanceCriteria)), "acceptance removal cannot be combined with acceptance toggles; run them as separate commands");
     if let Some(status) = &request.patch.status {
         mutations::validate_status(root, status)?;

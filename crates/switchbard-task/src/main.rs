@@ -23,6 +23,7 @@ mod agent_cmd;
 mod field_cmd;
 mod goals_cmd;
 mod hierarchy_cmd;
+mod planning_cmd;
 mod queue_cmd;
 mod rank_cmd;
 mod render;
@@ -128,6 +129,9 @@ enum Command {
     /// install guard reads this to refuse a downgrade; see
     /// `switchbard_core::build_identity`.
     BuildId,
+    /// Independent planning, ordered work and safe migration (JSON output).
+    #[command(subcommand)]
+    Planning(planning_cmd::PlanningCmd),
     /// List tasks, one tab-separated row per task: id, status, priority,
     /// labels (comma-joined), project, title
     List {
@@ -432,6 +436,7 @@ fn run(cli: &Cli) -> Result<()> {
                 sort: sort.as_deref(),
             },
         ),
+        Command::Planning(cmd) => planning_cmd::run(&root, cmd),
         Command::View { id } => view(&root, id),
         Command::Create(args) => create(&root, args),
         Command::Edit(args) => edit(&root, args),
@@ -700,6 +705,7 @@ fn patch_from(args: &EditArgs, set_custom: Vec<(String, String)>) -> Result<Back
         .map(switchbard_core::parse_due_date)
         .transpose()?;
     Ok(BacklogTaskPatch {
+        planning: None,
         title: args.title.clone(),
         description: args.description.clone(),
         status: args.status.clone(),

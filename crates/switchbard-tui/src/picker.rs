@@ -57,6 +57,7 @@ pub enum PickerPurpose {
     Task,
     TaskCancel,
     TaskStatus(String),
+    TaskPlanning(String),
     TaskProject(String),
     TaskParent(String),
     TopList,
@@ -65,6 +66,7 @@ pub enum PickerPurpose {
     /// `Mode::DetailFocus` on close rather than to `Mode::Browse` — see
     /// `PickerPurpose::is_detail`.
     DetailStatus(String),
+    DetailPlanning(String),
     DetailPriority(String),
     DetailProject(String),
     DetailLabels(String),
@@ -86,7 +88,8 @@ impl PickerPurpose {
     pub fn is_detail(&self) -> bool {
         matches!(
             self,
-            Self::DetailStatus(_)
+            Self::DetailPlanning(_)
+                | Self::DetailStatus(_)
                 | Self::DetailPriority(_)
                 | Self::DetailProject(_)
                 | Self::DetailLabels(_)
@@ -148,6 +151,7 @@ pub enum TaskAction {
     Ball,
     Append,
     Status,
+    Planning,
     Project,
     Parent,
     TopList,
@@ -403,6 +407,7 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
             "l line wrap · ↑↓/jk select · →/Enter open · ←/h back · Esc closes"
         }
         PickerPurpose::Task
+        | PickerPurpose::TaskPlanning(_)
         | PickerPurpose::TaskStatus(_)
         | PickerPurpose::TaskProject(_)
         | PickerPurpose::TopList
@@ -417,7 +422,8 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         }
         PickerPurpose::TaskParent(_) => "type ID/title · ↑↓ select · Enter saves · ← back · Esc",
         PickerPurpose::Ball => "number or name picks · new person opens entry · esc",
-        PickerPurpose::DetailStatus(_)
+        PickerPurpose::DetailPlanning(_)
+        | PickerPurpose::DetailStatus(_)
         | PickerPurpose::DetailPriority(_)
         | PickerPurpose::DetailProject(_) => "number or name picks · esc returns to the pane",
         PickerPurpose::DetailLabels(_) => {

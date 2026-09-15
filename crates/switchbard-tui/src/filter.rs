@@ -10,6 +10,7 @@ use crate::columns::{Column, ColumnRegistry, FieldId};
 pub enum FilterField {
     Id,
     Status,
+    Planning,
     Priority,
     Label,
     Project,
@@ -36,6 +37,7 @@ impl FilterField {
         Some(match keyword {
             "id" => FilterField::Id,
             "status" | "lifecycle" => FilterField::Status,
+            "planning" => FilterField::Planning,
             "pri" | "priority" => FilterField::Priority,
             "label" => FilterField::Label,
             "project" => FilterField::Project,
@@ -62,6 +64,7 @@ impl FilterField {
         match self {
             FilterField::Id => "id",
             FilterField::Status => "status",
+            FilterField::Planning => "planning",
             FilterField::Priority => "pri",
             FilterField::Label => "label",
             FilterField::Project => "project",
@@ -86,6 +89,7 @@ impl FilterField {
         match self {
             FilterField::Id => Column::Id,
             FilterField::Status => Column::Status,
+            FilterField::Planning => Column::Planning,
             FilterField::Priority => Column::Priority,
             FilterField::Label => Column::Labels,
             FilterField::Project => Column::Project,

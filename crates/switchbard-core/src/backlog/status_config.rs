@@ -70,7 +70,19 @@ fn with_standard_statuses(original: &str, path: &Path) -> Result<(String, Vec<St
         .ok_or_else(|| anyhow!("{} has no `statuses:` line", path.display()))?;
 
     let mut merged: std::collections::BTreeSet<String> = declared.into_iter().collect();
-    for standard in STANDARD_STATUSES {
+    let standards = if merged.iter().any(|s| s.eq_ignore_ascii_case("Not started")) {
+        &[
+            "Not started",
+            "In Progress",
+            "Waiting",
+            "In Review",
+            "Done",
+            "Canceled",
+        ][..]
+    } else {
+        STANDARD_STATUSES
+    };
+    for standard in standards {
         if !merged.iter().any(|d| d.eq_ignore_ascii_case(standard)) {
             merged.insert((*standard).to_string());
         }

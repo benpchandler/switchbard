@@ -19,8 +19,8 @@ const PRIORITY: usize = 2;
 const PROJECT: usize = 3;
 const DUE_DATE: usize = 4;
 const LABELS: usize = 5;
-const DESCRIPTION: usize = 6;
-const FIRST_ACCEPTANCE: usize = 7;
+const DESCRIPTION: usize = 8;
+const FIRST_ACCEPTANCE: usize = 9;
 
 #[test]
 fn second_open_or_right_focuses_the_pane() {

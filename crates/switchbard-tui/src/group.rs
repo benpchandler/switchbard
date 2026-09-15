@@ -427,6 +427,7 @@ mod tests {
     fn task(id: &str, status: &str, priority: &str, project: Option<&str>) -> BacklogTask {
         BacklogTask {
             storage_identity: None,
+            planning: switchbard_core::PlanningState::Considering,
             id: id.to_string(),
             title: id.to_string(),
             status: status.to_string(),

@@ -33,7 +33,7 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
 - `group.rs` - `Grouping` (0-2 nested levels, `project›goal`): `o` picks it; headings over the filtered, sorted order carry project def status, done/total, or goal week actual/target, pace.
 - `ball.rs` - who holds the ball: `ball:me`/`ball:agent` labels (`dispatching` = agent); `b` cycles. `tg` / `:goal <name>`: attach or detach the task to a goal.
 - Live work (core `work_sessions`, TASK-150): `work` column = one ● per live session (`sb work claim`), the `working` band and the row's text pulse on a soft-clipped sine (`work.period_ms`, `work.frames`, `work.flatten`), title counts `working:N`, detail names sessions; `w` passes the task (ends every claim).
-- Top list = core's expedite lane: `tr` picks position, adds to end, or removes; `t<n>`/`tt`/Delete remain aliases. `vp` shows or hides the section; `#` column.
+- Planning is independent of status: `t l` edits Considering/Planned, `o l` groups by Planning. New views expose Planning and Checklist; saved views keep their columns. Checklist counts own + descendant criteria, excludes canceled branches, and shows Review at 100% until manually Done. `t r` orders Planned open tasks after migration (legacy repos retain expedite); `v p` shows/hides the section, `#` shows position. Planning writes use the core task+ranking boundary with stale-detail guards.
 - `settings.rs` - `,` panel: hide statuses everywhere; per-repo file, `g` promotes to global.
 - `report.rs` - `:bug`/`:idea` => task via core write layer. `telemetry.rs` - JSONL log, trail, `stats`.
 ## Loop

@@ -536,6 +536,7 @@ mod tests {
     #[test]
     fn triage_entry_from_task_defaults_unparseable_age_to_max_not_zero() {
         let task = BacklogTask {
+            planning: crate::PlanningState::Planned,
             storage_identity: None,
             id: "TASK-1".to_string(),
             title: "t".to_string(),
@@ -622,6 +623,7 @@ mod tests {
             .format("%Y-%m-%d")
             .to_string();
         let task = BacklogTask {
+            planning: crate::PlanningState::Planned,
             storage_identity: None,
             id: "TASK-2".to_string(),
             title: "t".to_string(),

@@ -116,7 +116,7 @@ fn full_record_contents_remain_reachable_in_narrow_and_short_viewports() {
     std::fs::write(&task.path, text).unwrap();
     h.app.tick();
     open(&mut h);
-    for _ in 0..6 {
+    for _ in 0..8 {
         h.press(KeyCode::Char('j'));
     }
     for (width, height) in [(180, 100), (60, 12), (32, 8)] {

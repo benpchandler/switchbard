@@ -25,11 +25,20 @@ impl App {
             for (key, label, action) in [
                 ('b', "Assign ball", TaskAction::Ball),
                 ('s', "Status", TaskAction::Status),
+                ('l', "Planning", TaskAction::Planning),
                 ('d', "Mark Done", TaskAction::Done),
                 ('c', "Cancel task…", TaskAction::Cancel),
                 ('p', "Link project", TaskAction::Project),
                 ('a', "Link parent task", TaskAction::Parent),
-                ('r', "Top list", TaskAction::TopList),
+                (
+                    'r',
+                    if self.legacy_order {
+                        "Top list"
+                    } else {
+                        "Planned order"
+                    },
+                    TaskAction::TopList,
+                ),
                 ('g', "Link goals", TaskAction::Goals),
             ] {
                 options.push(PickOption::keyed(key, label, Payload::TaskAction(action)));
@@ -43,12 +52,20 @@ impl App {
         let mut options = vec![
             PickOption::keyed(
                 'a',
-                "Add or move task to end",
+                if self.legacy_order {
+                    "Add or move task to end"
+                } else {
+                    "Plan task or move to end"
+                },
                 Payload::TaskAction(TaskAction::Append),
             ),
             PickOption::keyed(
                 'x',
-                "Remove task from top list",
+                if self.legacy_order {
+                    "Remove task from top list"
+                } else {
+                    "Move task to Considering"
+                },
                 Payload::TaskAction(TaskAction::Drop),
             ),
         ];
@@ -65,8 +82,9 @@ impl App {
             TaskAction::Cancel => self.open_task_cancellation(),
             TaskAction::New => self.open_new_task(),
             TaskAction::Ball => self.open_ball_picker(),
-            TaskAction::Append => self.set_rank(self.top.len() + 1),
+            TaskAction::Append => self.plan_or_append(),
             TaskAction::Status => self.open_task_status_picker(),
+            TaskAction::Planning => self.open_task_planning_picker(),
             TaskAction::Project => self.open_task_project_picker(),
             TaskAction::Parent => self.open_task_parent_picker(),
             TaskAction::TopList => self.open_top_list_picker(),
@@ -81,9 +99,9 @@ impl App {
                     self.select_task(&id);
                 }
                 self.status = if self.state.pin_top {
-                    "top list pinned first"
+                    "Planned order shown first"
                 } else {
-                    "top list unpinned"
+                    "Planned section hidden"
                 }
                 .to_string();
                 self.telemetry
@@ -554,6 +572,7 @@ impl App {
         let legacy_value_initial = matches!(
             picker.purpose,
             PickerPurpose::Filter(_)
+                | PickerPurpose::DetailPlanning(_)
                 | PickerPurpose::DetailStatus(_)
                 | PickerPurpose::DetailPriority(_)
                 | PickerPurpose::DetailProject(_)
@@ -860,8 +879,10 @@ impl App {
                     PickerPurpose::Settings
                         | PickerPurpose::Goals(_)
                         | PickerPurpose::Task
+                        | PickerPurpose::TaskPlanning(_)
                         | PickerPurpose::TaskStatus(_)
                         | PickerPurpose::TaskProject(_)
+                        | PickerPurpose::DetailPlanning(_)
                         | PickerPurpose::DetailStatus(_)
                         | PickerPurpose::DetailPriority(_)
                         | PickerPurpose::DetailProject(_)
@@ -983,6 +1004,12 @@ impl App {
             }
             (PickerPurpose::TaskProject(id), Payload::Project(project)) => {
                 self.change_task_project(&id, project.as_deref())
+            }
+            (PickerPurpose::TaskPlanning(id), Payload::Text(planning)) => {
+                self.change_task_planning(&id, &planning)
+            }
+            (PickerPurpose::DetailPlanning(_), Payload::Text(planning)) => {
+                self.commit_detail_planning(&planning)
             }
             (PickerPurpose::TaskStatus(id), Payload::Text(status)) => {
                 self.change_task_status(&id, &status)

@@ -401,11 +401,8 @@ fn table_title(app: &App) -> String {
     if let Some(sort) = app.state.sort {
         parts.push(sort.label(app.registry()));
     }
-    if app.state.columns != Column::DEFAULT_SHOWN {
-        parts.push(format!(
-            "cols:{}",
-            columns_text(&app.state.columns, app.registry())
-        ));
+    if let Some(label) = app.state.columns_label(app.registry()) {
+        parts.push(label);
     }
     if !app.state.glyph_columns.is_empty() {
         parts.push(format!(
@@ -668,6 +665,11 @@ fn detail_row_text(app: &App, task: &switchbard_core::BacklogTask, row: FieldRow
         FieldRow::Content(section) => format!("{}:", section.label()),
         FieldRow::Title => task.title.clone(),
         FieldRow::Status => format!("status: {}", task.status),
+        FieldRow::Planning => format!("planning: {}", task.planning),
+        FieldRow::Checklist => format!(
+            "checklist: {} (task + descendants)",
+            app.checklist_text(task)
+        ),
         FieldRow::Priority => format!("priority: {}", task.priority),
         FieldRow::Project => format!("project: {}", task.project.as_deref().unwrap_or("Not set")),
         FieldRow::DueDate => format!(
@@ -812,6 +814,12 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
                 .collect::<Vec<_>>()
                 .join(" ");
             (keys, "cycle line wrap".to_string())
+        }))
+        .chain((app.page == Page::Tasks).then(|| {
+            (
+                format!("{} l / r", app.config.bindings_for(&Action::Rank).join(" ")),
+                "planning / Planned order".to_string(),
+            )
         }))
         .chain(std::iter::once((
             "1-9".to_string(),
@@ -1132,6 +1140,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                 ) => app.state.columns.contains(column),
                 (PickerPurpose::TaskParent(id), Payload::Parent(parent)) => app.tasks().iter().any(|task| task.id == *id && task.parent == *parent),
                 (PickerPurpose::TaskProject(id), Payload::Project(project)) => app.tasks().iter().any(|task| task.id == *id && task.project == *project),
+                (PickerPurpose::TaskPlanning(id) | PickerPurpose::DetailPlanning(id), Payload::Text(planning)) => app.tasks().iter().any(|task| task.id == *id && task.planning.as_str().eq_ignore_ascii_case(planning)),
                 (PickerPurpose::TaskStatus(id), Payload::Text(status)) => app.tasks().iter().any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
                 (PickerPurpose::DetailStatus(id), Payload::Text(status)) => app.tasks().iter().any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
                 (PickerPurpose::DetailPriority(id), Payload::Text(priority)) => app.tasks().iter().any(|task| task.id == *id && task.priority.eq_ignore_ascii_case(priority)),
@@ -1230,7 +1239,9 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         .borders(Borders::ALL)
         .border_style(theme.style(Surface::Accent))
         .title_style(title_style)
-        .title(pending + &picker_title(picker, preview.is_some(), app.registry()));
+        .title(
+            pending + &picker_title(picker, preview.is_some(), app.registry(), app.legacy_order),
+        );
     let block = if !matches!(
         picker.purpose,
         PickerPurpose::Merge | PickerPurpose::TaskCancel
@@ -1301,6 +1312,7 @@ fn picker_title(
     picker: &ValuePicker,
     typed_is_color: bool,
     registry: &crate::columns::ColumnRegistry,
+    legacy_order: bool,
 ) -> String {
     let subject = match &picker.purpose {
         PickerPurpose::Filter(field) => field.keyword(registry).to_string(),
@@ -1330,9 +1342,17 @@ fn picker_title(
         PickerPurpose::Merge => "Confirm PR merge".to_string(),
         PickerPurpose::TaskCancel => "Cancel task?".to_string(),
         PickerPurpose::Task => "task".to_string(),
-        PickerPurpose::TopList => "task · top list".to_string(),
+        PickerPurpose::TopList => if legacy_order {
+            "task · top list"
+        } else {
+            "task · Planned order"
+        }
+        .to_string(),
         PickerPurpose::TaskParent(id) => format!("{id} · parent"),
         PickerPurpose::TaskProject(id) => format!("{id} · project"),
+        PickerPurpose::TaskPlanning(id) | PickerPurpose::DetailPlanning(id) => {
+            format!("{id} · planning")
+        }
         PickerPurpose::TaskStatus(id) => format!("{id} · status"),
         PickerPurpose::DetailStatus(id) => format!("{id} · status"),
         PickerPurpose::DetailPriority(id) => format!("{id} · priority"),

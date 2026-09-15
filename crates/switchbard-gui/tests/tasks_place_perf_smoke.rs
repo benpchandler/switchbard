@@ -77,6 +77,7 @@ static PERF_ENV_LOCK: Mutex<()> = Mutex::new(());
 fn task(repo: usize, project: usize, i: usize) -> BacklogTask {
     let id = format!("TASK-{repo}{project}{i:02}");
     BacklogTask {
+        planning: switchbard_core::PlanningState::Planned,
         storage_identity: None,
         title: format!("Task {i} of project {project} in repo {repo}"),
         // Keep all 500 fixture tasks visible under the Tasks place default,

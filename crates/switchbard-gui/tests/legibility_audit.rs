@@ -478,6 +478,7 @@ fn seed_mission_projection(app: &HiveApp) {
 /// covers the parity work, not just the pre-existing views.
 fn legibility_backlog_task() -> BacklogTask {
     BacklogTask {
+            planning: switchbard_core::PlanningState::Planned,
             storage_identity: None,
         id: "TASK-1".to_string(),
         title: "Legibility fixture task".to_string(),

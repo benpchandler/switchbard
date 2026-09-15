@@ -189,3 +189,15 @@ pub use pr_merge::{
     execute_pr_merge, prepare_pr_merge, PrMergeMethod, PrMergeOutcome, PrMergePreparation,
     PrMergeResult, PreparedPrMerge,
 };
+
+pub use backlog::{
+    checklist_progress, planning_order, rank_planned_task, set_task_planning, ChecklistProgress,
+    PlanningState,
+};
+
+pub use backlog::{
+    apply_planning_migration, prepare_planning_migration, PlanningMigrationPreview,
+    PlanningMigrationReceipt, PlanningTaskChange,
+};
+
+pub use backlog::{set_task_planning_expected, set_task_planning_snapshot};

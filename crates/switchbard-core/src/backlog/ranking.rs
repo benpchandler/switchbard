@@ -51,6 +51,7 @@ const MAX_PARENT_HOPS: usize = 8;
 /// to the computed comparator".
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RepoRanking {
+    pub planned: Option<Vec<String>>,
     /// Task ids that jump the entire computed order - the exception lane.
     pub expedite: Vec<String>,
     /// Project names ranked against each other within the repo.
@@ -114,6 +115,8 @@ pub enum RankPlacement {
 #[derive(Deserialize, Default)]
 struct RankingFileSer {
     #[serde(default)]
+    planned: Option<Vec<String>>,
+    #[serde(default)]
     expedite: Vec<String>,
     #[serde(default)]
     projects: Vec<String>,
@@ -142,6 +145,7 @@ pub(super) fn load_ranking(root: &Path, warnings: &mut Vec<String>) -> Result<Re
 fn parse_ranking_text(text: &str, path: &Path, warnings: &mut Vec<String>) -> Result<RepoRanking> {
     match serde_yaml::from_str::<RankingFileSer>(text) {
         Ok(parsed) => Ok(RepoRanking {
+            planned: parsed.planned,
             expedite: parsed.expedite,
             projects: parsed.projects,
             tasks: parsed.tasks,
@@ -954,6 +958,22 @@ fn rename_task_in_ranking_draft(
     let mentions = |list: &[String]| list.iter().any(|id| id == old);
     let mut lines = load_lines_for_edit(edit, root)?;
     let mut changed = false;
+    if let Some(planned) = &ranking.planned {
+        if mentions(planned) {
+            let updated = planned
+                .iter()
+                .map(|id| {
+                    if id == old {
+                        new.to_owned()
+                    } else {
+                        id.clone()
+                    }
+                })
+                .collect::<Vec<_>>();
+            set_top_level_list(&mut lines, &path, "planned", &updated)?;
+            changed = true;
+        }
+    }
     if mentions(&ranking.expedite) {
         let updated: Vec<String> = ranking
             .expedite
@@ -1086,6 +1106,48 @@ fn write_projects(
     set_top_level_list(&mut lines, &path, "projects", updated)?;
     write_lines(edit, &path, &lines)?;
     Ok(WriteOutcome::Changed)
+}
+
+/// Stage the new optional list without rewriting legacy ranking scopes.
+pub(super) fn planned_document(content: Option<&[u8]>, ids: &[String]) -> Result<Vec<u8>> {
+    let mut edit = AggregateEdit::from_document(content);
+    let mut lines = load_lines_for_edit(&mut edit, Path::new("."))?;
+    if top_level_span(&lines, Path::new(RANKING_REL), "planned").is_err() {
+        lines.push("planned: []".into());
+    }
+    set_top_level_list(&mut lines, Path::new(RANKING_REL), "planned", ids)?;
+    Ok(format!("{}\n", lines.join("\n")).into_bytes())
+}
+pub(super) fn rank_planned(
+    root: &Path,
+    id: &str,
+    placement: &RankPlacement,
+) -> Result<WriteOutcome> {
+    aggregate_storage::with_edit(root, "ranking", RANKING_REL, |edit| {
+        let repo = load_backlog_repo(root)?;
+        let task = rankable_task(&repo, id)?;
+        anyhow::ensure!(
+            super::planning::eligible(task),
+            "only Planned open tasks can be ordered"
+        );
+        let mut ids = super::planning::planning_order(&repo);
+        ids.retain(|entry| entry != &task.id);
+        insert_placed(&mut ids, &task.id, placement, "Planned work")?;
+        let path = ranking_path(root);
+        let original = if edit.exists(&path) {
+            Some(edit.text(&path)?)
+        } else {
+            None
+        };
+        let updated = planned_document(original.as_deref().map(str::as_bytes), &ids)?;
+        let updated = String::from_utf8(updated)?;
+        if original.as_deref() == Some(&updated) {
+            return Ok(WriteOutcome::Unchanged);
+        }
+        let lines = updated.lines().map(str::to_owned).collect::<Vec<_>>();
+        write_lines(edit, &path, &lines)?;
+        Ok(WriteOutcome::Changed)
+    })
 }
 
 #[cfg(test)]

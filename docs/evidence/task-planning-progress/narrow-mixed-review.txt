@@ -1,0 +1,14 @@
+ [Tasks]   Pull Requests   ?  Agents  …  Inbox
+┌ fixture     v1 · 3/3 ────────────────────────────────────┐
+│1 id 2 pla 3 sta 4 pri 5 checklist    6 title             │
+│▸ Planned · 2                                             │
+│1    Plann In Pr M     Review 1/1 100 Fix login redirect l│
+│2    Plann To Do L     0/1 0.0%       Add dark theme      │
+│▸ Other tasks                                             │
+│3    Consi To Do H     Unmeasured     Write onboarding gui│
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+reloaded 3 tasks

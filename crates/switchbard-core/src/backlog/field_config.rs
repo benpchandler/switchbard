@@ -33,6 +33,7 @@ use std::path::Path;
 /// keys `super::parse::parse_task_text` reads (`yaml_string`/
 /// `yaml_string_list` calls), which is the sole authority for this list.
 pub const BUILTIN_FIELD_KEYS: &[&str] = &[
+    "planning",
     "id",
     "title",
     "status",
@@ -67,6 +68,8 @@ pub const BUILTIN_FIELD_KEYS: &[&str] = &[
 /// if a built-in column, alias, or filter keyword is ever added without a line
 /// here.
 pub const RESERVED_FIELD_NAMES: &[&str] = &[
+    "planning",
+    "checklist",
     // Built-in column names.
     "ball",
     "blocked",
@@ -788,6 +791,7 @@ mod tests {
         custom: &[(&str, &str)],
     ) -> super::super::types::BacklogTask {
         super::super::types::BacklogTask {
+            planning: crate::PlanningState::Planned,
             storage_identity: None,
             id: id.to_string(),
             title: "Fixture".to_string(),

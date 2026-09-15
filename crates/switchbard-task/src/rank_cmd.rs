@@ -60,7 +60,10 @@ pub struct PlacementArgs {
 impl PlacementArgs {
     /// Build the core placement, canonicalizing an anchor through
     /// `resolve` (identity for project names, id resolution for tasks).
-    fn to_placement(&self, resolve: impl Fn(&str) -> Result<String>) -> Result<RankPlacement> {
+    pub(crate) fn to_placement(
+        &self,
+        resolve: impl Fn(&str) -> Result<String>,
+    ) -> Result<RankPlacement> {
         if let Some(anchor) = &self.before {
             return Ok(RankPlacement::Before(resolve(anchor)?));
         }

@@ -195,7 +195,7 @@ fn group_by_another_column_and_the_command_form_and_saved_views() {
     h.press(KeyCode::Enter);
     assert_eq!(
         h.app.status,
-        "outline by one of status, priority, project, ball, blocked, goal, several of them as a,b,c, auto, or off"
+        "outline by one of status, priority, project, ball, blocked, goal, planning, several of them as a,b,c, auto, or off"
     );
     h.press(KeyCode::Char(':'));
     h.type_text("group project");
@@ -319,8 +319,14 @@ fn outline_auto_drops_columns_with_no_signal_and_names_the_resolved_level() {
     let rows = screen_rows(&h);
     assert_eq!(rows[0], "# To Do", "{rows:?}");
     assert!(rows.contains(&"# In Progress".to_string()), "{rows:?}");
-    assert!(screen.contains("outline:auto (status)"), "{screen}");
-    assert_eq!(h.app.status, "organized by auto (status) · o changes it");
+    assert!(
+        screen.contains("outline:auto (status›planning)"),
+        "{screen}"
+    );
+    assert_eq!(
+        h.app.status,
+        "organized by auto (status›planning) · o changes it"
+    );
 
     // `:group` is still accepted as the same command.
     h.press(KeyCode::Char(':'));

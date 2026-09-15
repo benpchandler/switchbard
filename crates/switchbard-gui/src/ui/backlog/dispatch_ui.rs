@@ -179,6 +179,7 @@ mod tests {
 
     fn task_labelled(labels: &[&str]) -> BacklogTask {
         BacklogTask {
+            planning: switchbard_core::PlanningState::Planned,
             storage_identity: None,
             id: "TASK-1".to_string(),
             title: "Example".to_string(),

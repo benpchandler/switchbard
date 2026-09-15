@@ -50,6 +50,7 @@ fn snapshot(harness: &mut Harness<'_, HiveApp>, name: &str) {
 
 fn sample_task(id: &str, title: &str, status: &str) -> BacklogTask {
     BacklogTask {
+        planning: switchbard_core::PlanningState::Planned,
         storage_identity: None,
         id: id.to_string(),
         title: title.to_string(),
@@ -144,6 +145,7 @@ fn digest_place_app(theme: ThemeChoice) -> HiveApp {
 /// task-by-task, and `BacklogTask` has no builder methods of its own.
 fn task_with(task: BacklogTask, labels: &[&str], notes: &str) -> BacklogTask {
     BacklogTask {
+        planning: switchbard_core::PlanningState::Planned,
         storage_identity: None,
         labels: labels.iter().map(|l| l.to_string()).collect(),
         implementation_notes: notes.to_string(),

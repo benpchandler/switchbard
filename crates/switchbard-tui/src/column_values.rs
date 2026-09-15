@@ -34,6 +34,7 @@ impl ColumnValues for TaskValues<'_> {
         match column {
             Column::Id => vec![task.id.clone()],
             Column::Status => vec![task.status.clone()],
+            Column::Planning => vec![task.planning.to_string()],
             Column::Priority => vec![task.priority.clone()],
             Column::Title => vec![task.title.clone()],
             Column::Filed => crate::date_fields::filed(task.created_date.as_deref()),
@@ -54,7 +55,8 @@ impl ColumnValues for TaskValues<'_> {
             }
             // Rank and work are not on the task: `App::cell` supplies them
             // from the lane and the live session list.
-            Column::Rank
+            Column::Checklist
+            | Column::Rank
             | Column::Work
             | Column::Lifecycle
             | Column::Tasks

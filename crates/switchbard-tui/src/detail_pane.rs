@@ -67,6 +67,8 @@ pub enum FieldRow {
     Content(Section),
     Title,
     Status,
+    Planning,
+    Checklist,
     Priority,
     Project,
     DueDate,
@@ -103,6 +105,7 @@ impl FieldRow {
             self,
             Self::Title
                 | Self::Status
+                | Self::Planning
                 | Self::Priority
                 | Self::Project
                 | Self::DueDate
@@ -125,13 +128,15 @@ pub fn field_rows(task: &BacklogTask, blocked_by: usize, blocks: usize) -> Vec<F
         FieldRow::Project,
         FieldRow::DueDate,
         FieldRow::Labels,
+        FieldRow::Planning,
+        FieldRow::Checklist,
         FieldRow::Description,
     ];
     rows.extend((0..task.acceptance_criteria.len()).map(FieldRow::Acceptance));
     rows.extend((0..blocked_by).map(FieldRow::BlockedBy));
     rows.extend((0..blocks).map(FieldRow::Blocks));
     if task.acceptance_criteria.is_empty() {
-        rows.insert(7, FieldRow::Content(Section::Acceptance));
+        rows.insert(9, FieldRow::Content(Section::Acceptance));
     }
     rows.push(FieldRow::Content(Section::Relations));
     for section in [

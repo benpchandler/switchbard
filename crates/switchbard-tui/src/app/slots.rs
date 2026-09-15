@@ -26,9 +26,9 @@ impl App {
                     options.push(PickOption::keyed(
                         'p',
                         if self.state.pin_top {
-                            "Hide top list section"
+                            "Hide Planned section"
                         } else {
-                            "Show top list section"
+                            "Show Planned section"
                         },
                         Payload::TaskAction(TaskAction::Pin),
                     ));

@@ -376,6 +376,12 @@ impl App {
                 }
             }
             FieldRow::Status => self.open_detail_status_picker(),
+            FieldRow::Planning => self.open_detail_planning_picker(),
+            FieldRow::Checklist => {
+                self.status =
+                    "Checklist counts criteria on this task and descendants; Done is explicit"
+                        .to_string();
+            }
             FieldRow::Priority => self.open_detail_priority_picker(),
             FieldRow::Project => self.open_detail_project_picker(),
             FieldRow::DueDate => {
@@ -622,6 +628,10 @@ impl App {
         };
         let options = switchbard_core::assignable_statuses(&repo)
             .into_iter()
+            .filter(|status| {
+                !status.eq_ignore_ascii_case("Canceled")
+                    && !status.eq_ignore_ascii_case("Cancelled")
+            })
             .map(|status| PickOption::text(status, 0))
             .collect::<Vec<_>>();
         if options.is_empty() {
@@ -830,5 +840,55 @@ impl App {
             self.input.clear();
             self.open_detail_labels_picker();
         }
+    }
+}
+
+impl App {
+    fn open_detail_planning_picker(&mut self) {
+        let Some(id) = self.selected_task().map(|task| task.id.clone()) else {
+            return;
+        };
+        if !self.begin_detail_edit() {
+            return;
+        }
+        self.open_picker(
+            PickerPurpose::DetailPlanning(id),
+            super::task_status::planning_options(),
+        );
+        self.status.clear();
+    }
+
+    pub(super) fn commit_detail_planning(&mut self, value: &str) {
+        let planning = match value.parse::<switchbard_core::PlanningState>() {
+            Ok(state) => state,
+            Err(error) => {
+                self.fail(error.to_string());
+                return;
+            }
+        };
+        let Some(id) = self
+            .detail_draft
+            .as_ref()
+            .map(|draft| draft.task_id.clone())
+        else {
+            self.fail("no active edit; reopen the row and retry".to_string());
+            return;
+        };
+        let result = self.checked_draft(&id).and_then(|draft| {
+            switchbard_core::set_task_planning_snapshot(&self.repo_root, &id, planning, draft)
+                .map_err(|error| error.to_string())
+        });
+        match result {
+            Ok(_) => {
+                self.reload_tasks();
+                self.select_task(&id);
+                self.status = format!("{id} is {planning}; execution status unchanged");
+                self.telemetry
+                    .record("action", format!("detail_planning {id} {planning}"));
+                self.begin_detail_edit();
+            }
+            Err(error) => self.fail(error),
+        }
+        self.mode = Mode::DetailFocus;
     }
 }

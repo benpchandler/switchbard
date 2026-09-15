@@ -56,7 +56,7 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
         "{repo_file}"
     );
     assert!(
-        !h.root.join("views.lua").exists(),
+        std::fs::read_to_string(h.root.join("views.lua")).unwrap() == harness::LEGACY_VIEWS,
         "a repo save must not touch the global file"
     );
 

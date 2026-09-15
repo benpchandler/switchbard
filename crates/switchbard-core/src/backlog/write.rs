@@ -156,7 +156,17 @@ pub struct ChecklistTextEdit {
 }
 
 pub fn set_task_status(path: &Path, status: &str) -> Result<WriteOutcome> {
-    edit_document(path, |draft| set_task_status_draft(draft, status))
+    let patch = super::BacklogTaskPatch {
+        status: Some(status.to_owned()),
+        ..Default::default()
+    };
+    let patch = match super::task_storage::root_for_path(path) {
+        Some(root) => super::mutations::normalized_patch(&root, &patch)?,
+        None => patch,
+    };
+    edit_document(path, |draft| {
+        set_task_status_draft(draft, patch.status.as_deref().expect("status provided"))
+    })
 }
 pub fn set_task_priority(path: &Path, priority: &str) -> Result<WriteOutcome> {
     edit_document(path, |draft| set_task_priority_draft(draft, priority))
@@ -227,8 +237,27 @@ pub fn revise_task_checklist(
 
 pub(super) fn set_task_status_draft(path: &mut TaskDraft, status: &str) -> Result<WriteOutcome> {
     let status = validated_single_line("status", status)?.to_string();
+    let (frontmatter, _) = super::parse::split_frontmatter(&path.text);
+    let status = if status.eq_ignore_ascii_case("To Do")
+        && super::parse::yaml_string(&frontmatter, "status")
+            .is_some_and(|old| old.eq_ignore_ascii_case("Not started"))
+    {
+        "Not started".to_owned()
+    } else {
+        status
+    };
     apply_edit(path, move |fm, _| {
         set_scalar(fm, "status", &yaml_scalar(&status), None);
+        Ok(())
+    })
+}
+
+pub(super) fn set_task_planning_draft(
+    path: &mut TaskDraft,
+    planning: super::planning::PlanningState,
+) -> Result<WriteOutcome> {
+    apply_edit(path, move |fm, _| {
+        set_scalar(fm, "planning", planning.as_str(), None);
         Ok(())
     })
 }
@@ -647,7 +676,18 @@ pub(super) fn new_task_document(
         bail!("task prefix is empty");
     }
     let title = validated_single_line("title", &task.title)?;
-    let text = new_task_text(prefix, id, title, task, &local_stamp())?;
+    let mut task = task.clone();
+    if let Some(root) = tasks_dir.parent().and_then(Path::parent) {
+        let statuses = super::parse::parse_config_statuses(root)?;
+        if (task.status.trim().is_empty() || task.status.eq_ignore_ascii_case("To Do"))
+            && statuses
+                .iter()
+                .any(|status| status.eq_ignore_ascii_case("Not started"))
+        {
+            task.status = "Not started".into();
+        }
+    }
+    let text = new_task_text(prefix, id, title, &task, &local_stamp())?;
     let stem = format!("{}-{id} - ", prefix.to_ascii_lowercase());
     let slug_budget = 255usize
         .checked_sub(stem.len() + ".md".len())
@@ -1401,6 +1441,10 @@ fn new_task_text(
     let status = default_if_blank(&task.status, "To Do");
     let priority = default_if_blank(&task.priority, "medium");
     let mut fm = vec![
+        format!(
+            "planning: {}",
+            super::planning::PlanningState::for_new(status)
+        ),
         format!("id: {prefix}-{id}"),
         format!("title: {}", yaml_scalar(title)),
         format!(
@@ -2443,6 +2487,7 @@ mod tests {
             .to_string();
         let expected = format!(
             "---\n\
+             planning: Considering\n\
              id: TASK-42\n\
              title: 'Ship it: a ''quoted'' title'\n\
              status: To Do\n\
@@ -2474,6 +2519,7 @@ mod tests {
         let parsed = parse_task_file(&path, BacklogTaskSource::Active)
             .expect("reparses")
             .0;
+        assert_eq!(parsed.planning, super::super::PlanningState::Considering);
         assert_eq!(parsed.id, "TASK-42");
         assert_eq!(parsed.title, "Ship it: a 'quoted' title");
         assert_eq!(parsed.parent.as_deref(), Some("TASK-3"));

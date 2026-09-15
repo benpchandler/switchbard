@@ -31,6 +31,7 @@ use switchbard_gui::runtime::{BacklogLens, Place};
 
 fn task(source: BacklogTaskSource) -> BacklogTask {
     BacklogTask {
+        planning: switchbard_core::PlanningState::Planned,
         storage_identity: None,
         id: "TASK-1".to_string(),
         title: "Half-baked card".to_string(),

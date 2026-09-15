@@ -38,7 +38,9 @@ fn central_detail_worker() {
         })
         .collect();
     store
-        .apply_migration(&MigrationPlan::capture(repo, vec!["task".into()], sources).unwrap())
+        .apply_migration(
+            &MigrationPlan::capture(repo, vec!["task".into(), "ranking".into()], sources).unwrap(),
+        )
         .unwrap();
     for path in paths {
         std::fs::remove_file(path).unwrap();
@@ -60,11 +62,30 @@ fn central_detail_worker() {
     let screen = h.press(KeyCode::Enter);
     assert!(screen.contains("title saved"), "{screen}");
     let id = h.app.selected_task().unwrap().id.clone();
-    for _ in 0..7 {
+    for _ in 0..9 {
         h.press(KeyCode::Char('j'));
     }
     let screen = h.press(KeyCode::Char(' '));
     assert!(screen.contains("acceptance #1 checked"), "{screen}");
+    for _ in 0..3 {
+        h.press(KeyCode::Up);
+    }
+    h.press(KeyCode::Enter);
+    h.type_text("Considering");
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("execution status unchanged"), "{screen}");
+    let repo = switchbard_core::load_backlog_repo(&h.root).unwrap();
+    let changed = repo.tasks.iter().find(|task| task.id == id).unwrap();
+    assert_eq!(
+        changed.planning,
+        switchbard_core::PlanningState::Considering
+    );
+    assert_eq!(changed.status, "In Progress");
+    assert!(changed.acceptance_criteria[0].checked);
+    for _ in 0..3 {
+        h.press(KeyCode::Down);
+    }
+
     switchbard_core::edit_backlog_task(
         &h.root,
         &id,

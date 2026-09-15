@@ -195,6 +195,7 @@ mod tests {
     fn task(id: &str, due: Option<&str>) -> BacklogTask {
         BacklogTask {
             storage_identity: None,
+            planning: switchbard_core::PlanningState::Considering,
             id: id.to_string(),
             title: id.to_string(),
             status: "To Do".to_string(),

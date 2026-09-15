@@ -88,6 +88,7 @@ fn label_for(i: usize) -> Option<&'static str> {
 fn task(repo: usize, i: usize) -> BacklogTask {
     let id = format!("TASK-{repo}-{i}");
     BacklogTask {
+        planning: switchbard_core::PlanningState::Planned,
         storage_identity: None,
         title: format!("Task {i} in repo {repo}"),
         status: "To Do".to_string(),

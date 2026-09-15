@@ -119,7 +119,9 @@ impl ViewState {
 
     /// `cols:id,title` when the columns differ from the default set, else nothing.
     pub fn columns_label(&self, registry: &ColumnRegistry) -> Option<String> {
-        if self.columns == Column::DEFAULT_SHOWN {
+        if self.columns == Column::DEFAULT_SHOWN
+            || self.columns == [Column::Id, Column::Status, Column::Priority, Column::Title]
+        {
             return None;
         }
         Some(format!("cols:{}", columns_text(&self.columns, registry)))

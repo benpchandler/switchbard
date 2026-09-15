@@ -24,6 +24,7 @@ pub use field_config::{
     remove_field_decl, tasks_setting_field, valid_field_name, validate_field_value, FieldDecl,
     FieldEditPatch, FieldKind, BUILTIN_FIELD_KEYS, RESERVED_FIELD_NAMES,
 };
+mod checklist_progress;
 mod goals;
 mod hierarchy;
 pub mod migration;
@@ -31,7 +32,16 @@ pub(crate) mod migration_repairs;
 mod mutations;
 mod parent;
 mod parse;
+mod planning;
+mod planning_migration;
+mod planning_write;
+pub use planning_migration::{
+    apply_planning_migration, prepare_planning_migration, PlanningMigrationPreview,
+    PlanningMigrationReceipt, PlanningTaskChange,
+};
 mod ranking;
+pub use checklist_progress::{checklist_progress, ChecklistProgress};
+pub use planning::{planning_order, rank_planned_task, set_task_planning, PlanningState};
 pub mod status_config;
 mod storage_validation;
 mod task_cancel;
@@ -87,3 +97,5 @@ pub use write::{
 };
 
 pub(crate) use parse::parse_task_text;
+
+pub use planning::{set_task_planning_expected, set_task_planning_snapshot};
