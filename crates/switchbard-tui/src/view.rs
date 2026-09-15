@@ -343,14 +343,13 @@ fn draw_task_rows(
                         app.cell_for_view(state, *column, task)
                     };
                     let mut style = theme.column_style(*column);
-                    let role = if task.is_done() && *column == Column::Title {
-                        "quiet+struck"
-                    } else if task.priority.eq_ignore_ascii_case("high")
-                        && matches!(column, Column::Title | Column::Priority)
-                    {
-                        "strong"
-                    } else {
-                        ""
+                    let role = match column {
+                        Column::Title if task.is_done() => "quiet+struck",
+                        Column::Priority if task.is_done() => "quiet",
+                        Column::Title if task.priority.eq_ignore_ascii_case("high") => "strong",
+                        Column::Priority if task.priority.eq_ignore_ascii_case("high") => "alert",
+                        Column::Priority if task.priority.eq_ignore_ascii_case("low") => "quiet",
+                        _ => "",
                     };
                     if let Some(emphasis) = theme.emphasis_style(role, &app.config.palette) {
                         style = style.patch(emphasis);

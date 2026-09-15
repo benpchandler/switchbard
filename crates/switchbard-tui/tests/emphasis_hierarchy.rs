@@ -160,3 +160,75 @@ fn light_popups_keep_the_declared_canvas_after_clearing_the_list() {
         h.app.config.theme.background()
     );
 }
+
+#[test]
+fn priority_cells_distinguish_importance_completion_and_explicit_paint() {
+    use ratatui::style::Color;
+    use switchbard_tui::columns::Column;
+
+    fn priority_cell(h: &Harness, title: &str, glyph: char) -> Cell {
+        let buffer = h.terminal.backend().buffer();
+        for row in buffer.content.chunks(usize::from(buffer.area.width).max(1)) {
+            let text: String = row.iter().map(|cell| cell.symbol()).collect();
+            if text.contains(title) {
+                let offset = text.find(&format!(" {glyph} ")).expect("priority cell") + 1;
+                return row[text[..offset].chars().count()].clone();
+            }
+        }
+        panic!("missing task row {title}");
+    }
+
+    let mut h = Harness::new();
+    seed_with_priority(&h.root, "Completed urgent handoff", "Done", &[], "high");
+    h.app.tick();
+    h.render();
+    let alert = h
+        .app
+        .config
+        .theme
+        .emphasis_style("alert", &h.app.config.palette)
+        .unwrap();
+    let quiet = h
+        .app
+        .config
+        .theme
+        .emphasis_style("quiet", &h.app.config.palette)
+        .unwrap();
+    let high = priority_cell(&h, "Write onboarding", 'H');
+    let low = priority_cell(&h, "Add dark theme", 'L');
+    let done = priority_cell(&h, "Completed urgent handoff", 'H');
+    assert_eq!(Some(high.fg), alert.fg, "open high priority has alert ink");
+    assert!(high.modifier.contains(Modifier::BOLD));
+    assert_eq!(Some(low.fg), quiet.fg, "low priority is quiet");
+    assert!(!low.modifier.contains(Modifier::BOLD));
+    assert_eq!(
+        Some(done.fg),
+        quiet.fg,
+        "completion wins over high priority"
+    );
+    assert!(!done.modifier.contains(Modifier::BOLD));
+    assert!(cell(&h, "Completed urgent handoff")
+        .modifier
+        .contains(Modifier::CROSSED_OUT));
+    assert_eq!(
+        Some(cell(&h, "Write onboarding").fg),
+        h.app.config.theme.column_style(Column::Title).fg,
+        "high title gains weight without alert ink"
+    );
+    assert!(cell(&h, "Write onboarding")
+        .modifier
+        .contains(Modifier::BOLD));
+
+    command(&mut h, "paint column:priority=#123456");
+    for (title, glyph) in [
+        ("Write onboarding", 'H'),
+        ("Add dark theme", 'L'),
+        ("Completed urgent handoff", 'H'),
+    ] {
+        assert_eq!(
+            priority_cell(&h, title, glyph).fg,
+            Color::Rgb(0x12, 0x34, 0x56),
+            "explicit paint overrides default for {title}"
+        );
+    }
+}
