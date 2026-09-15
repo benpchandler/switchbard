@@ -23,7 +23,7 @@ fn now() -> u64 {
 fn entry(h: &Harness, filter: &str, visited_at: u64) -> Value {
     let view = ViewState {
         filter: filter.into(),
-        ..Default::default()
+        ..h.app.state.clone()
     };
     json!({"page":"tasks", "visited_at":visited_at, "lua":view.to_lua(h.app.registry())})
 }

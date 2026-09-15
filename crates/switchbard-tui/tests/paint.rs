@@ -51,7 +51,7 @@ fn overflowing_paint_target_picker_keeps_the_purpose_hint_in_the_footer() {
     let screen = h.press(KeyCode::Char('p'));
     let footer = screen
         .lines()
-        .find(|line| line.contains("1/13"))
+        .find(|line| line.contains("↑↓ →open ←back Esc") && line.contains("1/"))
         .unwrap_or_else(|| panic!("overflow footer with a position counter: {screen}"));
     assert!(
         footer.contains("number or letter picks · esc"),

@@ -185,7 +185,8 @@ fn help_separates_long_key_bindings_from_action_names() {
     );
     assert!(screen.contains("ctrl-d pagedown page_down"), "{screen}");
     assert!(screen.contains("ctrl-u pageup page_up"), "{screen}");
-    assert!(screen.contains(":bug"), "{screen}");
+    let next_page = h.press(KeyCode::PageDown);
+    assert!(next_page.contains(":bug"), "{next_page}");
     assert!(
         !screen.contains("backspace ndismiss_notifications"),
         "{screen}"
