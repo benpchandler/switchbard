@@ -261,6 +261,12 @@ pub(crate) fn draw_row(
             let values = column.pr_values(row, links);
             match column {
                 crate::columns::Column::Id => format!("#{}", row.number),
+                // TASK-204: GitHub's list read is eventually consistent, so a
+                // just-confirmed merge still reads Open here for a while;
+                // name that explicitly rather than showing a stale state.
+                crate::columns::Column::Lifecycle if app.pull_requests.expecting_merge(row) => {
+                    "merging".to_string()
+                }
                 crate::columns::Column::Tasks if values.len() > 1 => {
                     format!("{} linked", values.len())
                 }
