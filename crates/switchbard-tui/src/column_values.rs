@@ -108,7 +108,14 @@ impl ColumnValues for PrValues<'_> {
             Column::Id => vec![row.number.to_string()],
             Column::Title => vec![row.title.clone()],
             Column::Merged => crate::date_fields::merged(row),
-            Column::Lifecycle | Column::Status => vec![row.lifecycle.label().to_string()],
+            Column::Lifecycle => vec![row.status_label().to_string()],
+            Column::Status => {
+                let mut values = vec![row.status_label().to_string()];
+                if row.status_label() != row.lifecycle.label() {
+                    values.push(row.lifecycle.label().to_string());
+                }
+                values
+            }
             Column::Tasks => links.iter().map(|(id, _)| id.clone()).collect(),
             Column::Checks => vec![if row.lifecycle != PrLifecycle::Open {
                 "Not fetched"

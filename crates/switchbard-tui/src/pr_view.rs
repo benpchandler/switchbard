@@ -101,11 +101,13 @@ fn observation(app: &App) -> String {
     } else {
         "all loaded"
     };
-    let suffix = prs
-        .error
-        .as_deref()
-        .or(snapshot.enrichment_warning.as_deref())
-        .unwrap_or("");
+    let suffix = prs.error.as_deref().unwrap_or_else(|| {
+        match (&snapshot.enrichment_warning, &snapshot.queue_warning) {
+            (Some(_), Some(_)) => "Delivery + merge queue details incomplete; Enter for details",
+            (Some(warning), None) | (None, Some(warning)) => warning,
+            (None, None) => "",
+        }
+    });
     format!(
         "{}/{} shown · {}\nfilter: {}{}\n{}",
         prs.visible.len(),
@@ -342,7 +344,7 @@ fn detail_lines(app: &App) -> Vec<Line<'static>> {
             format!(
                 "#{} · {}{}",
                 row.number,
-                row.lifecycle.label(),
+                row.status_label(),
                 if row.draft { " · draft" } else { "" }
             ),
             theme,
@@ -359,11 +361,28 @@ fn detail_lines(app: &App) -> Vec<Line<'static>> {
         )),
         Line::from(format!("Review: {}", row.review.label())),
         Line::from(format!("Merge: {}", row.merge.label())),
+        Line::from(format!(
+            "Merge queue: {}",
+            if row.lifecycle == switchbard_core::PrLifecycle::Open {
+                row.merge_queue.label()
+            } else {
+                "Not applicable"
+            }
+        )),
         Line::from(format!("Head: {}", row.head_oid)),
         Line::from(""),
         crate::detail_pane::section("linked tasks", theme),
     ];
     append_links(&mut lines, app, row);
+    if let Some(snapshot) = &app.pull_requests.snapshot {
+        for warning in [&snapshot.enrichment_warning, &snapshot.queue_warning]
+            .into_iter()
+            .flatten()
+        {
+            lines.push(Line::from(""));
+            lines.push(Line::from(warning.clone()));
+        }
+    }
     lines.push(Line::from(""));
     lines.push(crate::detail_pane::metadata(
         "Required-check coverage unknown. Checks do not prove task completion or continued progress.".into(), theme,

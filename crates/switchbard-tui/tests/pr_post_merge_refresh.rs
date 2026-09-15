@@ -33,6 +33,7 @@ fn row(id: &str, number: u64, head_oid: &str, lifecycle: PrLifecycle) -> PrListR
         head_oid: head_oid.into(),
         draft: false,
         lifecycle,
+        merge_queue: switchbard_core::PrMergeQueue::Unknown,
         merged_at: None,
         checks: PrChecks::Passing,
         review: PrReview::Approved,
@@ -50,6 +51,7 @@ fn snapshot(rows: Vec<PrListRow>) -> PrSnapshot {
         limit: 100,
         open_count: Ok(1),
         enrichment_warning: None,
+        queue_warning: None,
     }
 }
 

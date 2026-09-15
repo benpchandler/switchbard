@@ -327,6 +327,7 @@ fn selection() -> (PrSnapshot, PrListRow) {
         head_oid: "a".repeat(40),
         draft: false,
         lifecycle: crate::PrLifecycle::Open,
+        merge_queue: crate::PrMergeQueue::Unknown,
         merged_at: None,
         checks: crate::PrChecks::Unknown,
         review: crate::PrReview::Unknown,
@@ -341,6 +342,7 @@ fn selection() -> (PrSnapshot, PrListRow) {
         limit: 100,
         open_count: Ok(1),
         enrichment_warning: None,
+        queue_warning: None,
     };
     (snapshot, row)
 }

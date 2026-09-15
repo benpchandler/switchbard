@@ -839,3 +839,7 @@ off main is now an explicit, temporary choice (`--branch`, `--hold`), never
 silent and never itself evidence that a task is done - only origin/main runs
 unattended. sbt reads the receipt and any hold to show a one-line startup
 banner instead of the fleet drifting unnoticed.
+
+## TUI PR merge queue status (owner-directed 2026-09-15)
+
+The Pull Requests State column and detail summary show Queued when GitHub reports a mergeQueueEntry for the same open PR identity and head. Queue membership is independent of lifecycle, checks, review and mergeability; status:open retains queued rows, while status:queued selects queue members. A bounded optional read covers at most 100 loaded open PRs, with unmatched or unavailable observations explicitly unknown. No enqueue/dequeue operations are introduced. See `docs/tui-pr-queued-evidence.md`.

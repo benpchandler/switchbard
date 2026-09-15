@@ -74,6 +74,7 @@ fn recent_merge() -> switchbard_core::PrSnapshot {
             head_oid: "abc".into(),
             draft: false,
             lifecycle: PrLifecycle::Merged,
+            merge_queue: switchbard_core::PrMergeQueue::Unknown,
             merged_at: Some(chrono::Utc::now()),
             checks: PrChecks::Unknown,
             review: PrReview::Unknown,
@@ -83,6 +84,7 @@ fn recent_merge() -> switchbard_core::PrSnapshot {
         limit: 100,
         open_count: Ok(0),
         enrichment_warning: None,
+        queue_warning: None,
     }
 }
 

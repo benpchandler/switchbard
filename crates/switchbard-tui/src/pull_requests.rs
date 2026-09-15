@@ -466,6 +466,7 @@ mod tests {
             limit: 100,
             open_count,
             enrichment_warning: None,
+            queue_warning: None,
         }
     }
 
@@ -499,6 +500,7 @@ mod tests {
             head_oid: head_oid.into(),
             draft: false,
             lifecycle,
+            merge_queue: switchbard_core::PrMergeQueue::Unknown,
             merged_at: None,
             checks: switchbard_core::PrChecks::Unknown,
             review: switchbard_core::PrReview::Unknown,

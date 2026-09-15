@@ -104,6 +104,7 @@ fn row(pr: RawPr, repo_url: &str) -> Result<PrListRow, String> {
         .take(1024)
         .collect();
     Ok(PrListRow {
+        merge_queue: super::PrMergeQueue::Unknown,
         checks: checks(pr.status_check_rollup.as_deref(), &pr.head_ref_oid),
         review: review(pr.review_decision.as_deref()),
         merge: merge(pr.mergeable.as_deref()),

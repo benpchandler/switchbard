@@ -1,6 +1,6 @@
 //! Bounded session alerts derived only from successive repository observations.
 use std::collections::VecDeque;
-use switchbard_core::{PrLifecycle, PrListRow, PrSnapshot};
+use switchbard_core::{PrLifecycle, PrListRow, PrMergeQueue, PrSnapshot};
 
 const MAX_NOTIFICATIONS: usize = 32;
 const MAX_MESSAGE_CHARS: usize = 240;
@@ -68,6 +68,14 @@ impl PrNotifications {
             if old.merge != row.merge {
                 changes.push(format!("merge: {}", row.merge.label()));
             }
+        }
+        if old.lifecycle == PrLifecycle::Open
+            && row.lifecycle == PrLifecycle::Open
+            && old.merge_queue != PrMergeQueue::Unknown
+            && row.merge_queue != PrMergeQueue::Unknown
+            && old.merge_queue != row.merge_queue
+        {
+            changes.push(format!("merge queue: {}", row.merge_queue.label()));
         }
         if old.draft != row.draft {
             changes.push(

@@ -339,7 +339,7 @@ pub static BUILTIN_COLUMNS: [ColumnSpec; 20] = [
         header: Cow::Borrowed("State"),
         width: Some(7),
         field: Some(FilterField::Status),
-        fixed_vocabulary: &["Open", "Closed", "Merged"],
+        fixed_vocabulary: &["Open", "Closed", "Merged", "Queued"],
         groupable: false,
         multi_valued: false,
         numeric: false,

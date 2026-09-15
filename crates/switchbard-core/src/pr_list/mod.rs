@@ -4,6 +4,7 @@ mod enrich;
 mod open_count;
 mod parse;
 pub(crate) mod process;
+mod queue;
 
 use std::path::Path;
 use std::time::SystemTime;
@@ -26,6 +27,7 @@ pub struct PrSnapshot {
     pub open_count: Result<u64, String>,
     /// Metadata succeeded, but optional active-PR delivery observations are incomplete.
     pub enrichment_warning: Option<String>,
+    pub queue_warning: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +39,7 @@ pub struct PrListRow {
     pub head_oid: String,
     pub draft: bool,
     pub lifecycle: PrLifecycle,
+    pub merge_queue: PrMergeQueue,
     /// Authoritative GitHub merge instant, normalized to UTC. Missing or invalid
     /// metadata remains unknown; neither closure nor update time implies a merge.
     pub merged_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -46,6 +49,15 @@ pub struct PrListRow {
 }
 
 impl PrListRow {
+    /// Queue membership refines display status without changing the open lifecycle.
+    pub fn status_label(&self) -> &'static str {
+        if self.lifecycle == PrLifecycle::Open && self.merge_queue == PrMergeQueue::Queued {
+            "Queued"
+        } else {
+            self.lifecycle.label()
+        }
+    }
+
     /// Inspection ordering only, not readiness or ownership of the next action.
     pub fn attention_rank(&self) -> u8 {
         if self.lifecycle != PrLifecycle::Open {
@@ -146,7 +158,7 @@ impl PrMerge {
     }
 }
 
-/// Blocks for at most four bounded `gh` queries. Invoke on a background worker.
+/// Blocks for at most five bounded `gh` queries. Invoke on a background worker.
 /// Auth, malformed data and inaccessible repositories return errors, never empty rows.
 pub fn fetch_pull_requests(repo: &Path) -> Result<PrSnapshot, String> {
     fetch_pull_requests_with_limit(repo, DEFAULT_PULL_REQUEST_LIMIT)
@@ -191,8 +203,10 @@ pub fn fetch_pull_requests_with_limit(repo: &Path, limit: usize) -> Result<PrSna
         limit,
         open_count,
         enrichment_warning: None,
+        queue_warning: None,
     };
     snapshot.enrichment_warning = enrich::fetch(repo, &mut snapshot.rows, &snapshot.repository_url);
+    snapshot.queue_warning = queue::fetch(repo, &mut snapshot.rows);
     Ok(snapshot)
 }
 
@@ -203,4 +217,22 @@ fn validate_limit(limit: usize) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Independent authoritative merge queue observation; unavailable is never not queued.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrMergeQueue {
+    Unknown,
+    NotQueued,
+    Queued,
+}
+
+impl PrMergeQueue {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Unknown => "Unknown",
+            Self::NotQueued => "Not queued",
+            Self::Queued => "Queued",
+        }
+    }
 }
