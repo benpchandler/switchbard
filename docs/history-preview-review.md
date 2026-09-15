@@ -33,4 +33,4 @@ Nine focused E2Es passed, including authenticated PR cards, simultaneous populat
 
 Rendered terminal evidence is available in Visual Review targets `tasks-cards-c9473b60bebc`, `pull-requests-cards-779b38f20f9c` and `tasks-nested-card-3927c26f0196`, owned by this worktree. The corrected renders show independent populated tables and readable unselected titles. Captured terminal buffers and PNGs are under `crates/switchbard-tui/tmp/history-cards/`.
 
-Rendering is bounded to viewport cards, but each visible card still computes its full current-data projection. Large-backlog performance has not been benchmarked. Owner visual acceptance remains open.
+Rendering is bounded to viewport cards, but each visible card still computes its full current-data projection. Large-backlog performance has not been benchmarked. The captured terminal renders were reviewed and approved; installation, CI and merge remain separate delivery gates.

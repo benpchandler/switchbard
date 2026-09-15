@@ -54,8 +54,8 @@ impl HistoryPage {
         match page {
             Page::Tasks => Some(Self::Tasks),
             Page::PullRequests => Some(Self::PullRequests),
-            Page::Agents => None,
             Page::Inbox => None,
+            Page::Agents => None,
         }
     }
 }

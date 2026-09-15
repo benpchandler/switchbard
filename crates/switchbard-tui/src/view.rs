@@ -449,7 +449,7 @@ fn table_title(app: &App) -> String {
 /// its own scroll clamp.
 fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = app.config.theme.clone();
-    let focused = app.detail_focused();
+    let focused = app.detail_edit_focused();
     app.detail_viewport = area.height.saturating_sub(2);
     let Some(task) = app.selected_task().cloned() else {
         crate::detail_pane::draw(frame, &theme, area, vec![Line::from("nothing selected")], 0);
@@ -710,21 +710,28 @@ fn help_entry_rows(
     let columns = (usize::from(width) / 32).max(1);
     let cell_width = usize::from(width) / columns;
     let mut rows = Vec::new();
-    for chunk in entries.chunks(columns) {
-        let cells: Vec<_> = chunk
-            .iter()
-            .map(|(keys, name)| help_entry(keys, name, theme))
-            .collect();
-        if cells.iter().any(|cell| cell.width() + 2 > cell_width) {
-            rows.extend(cells);
+    let mut spans = Vec::new();
+    let mut filled = 0;
+    for (keys, name) in entries {
+        let cell = help_entry(keys, name, theme);
+        if cell.width() + 2 > cell_width {
+            if !spans.is_empty() {
+                rows.push(Line::from(std::mem::take(&mut spans)));
+                filled = 0;
+            }
+            rows.push(cell);
             continue;
         }
-        let mut spans = Vec::new();
-        for cell in cells {
-            let padding = cell_width.saturating_sub(cell.width());
-            spans.extend(cell.spans);
-            spans.push(Span::raw(" ".repeat(padding)));
+        let padding = cell_width.saturating_sub(cell.width());
+        spans.extend(cell.spans);
+        spans.push(Span::raw(" ".repeat(padding)));
+        filled += 1;
+        if filled == columns {
+            rows.push(Line::from(std::mem::take(&mut spans)));
+            filled = 0;
         }
+    }
+    if !spans.is_empty() {
         rows.push(Line::from(spans));
     }
     rows
@@ -973,8 +980,19 @@ fn browse_footer(app: &App) -> Line<'static> {
         .map(|(action, label)| format!("{} {label}", app.config.bindings_for(action).join("/")))
         .collect::<Vec<_>>()
         .join(" · ");
-    if app.page == Page::Tasks && app.pane == Pane::Detail {
-        text.push_str(" · list focused · enter/l focuses the pane");
+    if app.page.has_list_view() && app.pane == Pane::Detail {
+        text.push_str(if app.detail_focused() {
+            " · Detail active"
+        } else {
+            " · List active"
+        });
+        if app.page == Page::Tasks {
+            text.push_str(" · enter/l edits");
+        }
+        text.push_str(&format!(
+            " · {} focus",
+            app.config.bindings_for(&Action::FocusPane).join("/")
+        ));
     }
     Line::from(Span::styled(text, app.config.theme.style(Surface::Hint)))
 }

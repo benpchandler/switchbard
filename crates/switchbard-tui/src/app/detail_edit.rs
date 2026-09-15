@@ -52,11 +52,56 @@ impl App {
     /// Whether the detail pane currently holds input focus: cursor
     /// navigation, a single-line field capture, or one of its own pickers.
     pub fn detail_focused(&self) -> bool {
+        (self.pane == Pane::Detail && self.detail_read_focus && self.mode == Mode::Browse)
+            || self.detail_edit_focused()
+    }
+
+    pub fn detail_edit_focused(&self) -> bool {
         matches!(self.mode, Mode::DetailFocus | Mode::DetailInput(_))
             || self
                 .picker
                 .as_ref()
                 .is_some_and(|picker| picker.purpose.is_detail())
+    }
+
+    pub(super) fn toggle_detail_focus(&mut self) {
+        if self.pane != Pane::Detail {
+            return;
+        }
+        let focused = self.detail_focused();
+        self.mode = Mode::Browse;
+        self.detail_draft = None;
+        self.detail_read_focus = !focused;
+        self.status.clear();
+    }
+
+    /// Reading uses rendered-line offsets, while editing uses field-row navigation.
+    pub(super) fn scroll_detail_reading(&mut self, action: &Action) -> bool {
+        let pr_paging =
+            self.page == Page::PullRequests && matches!(action, Action::PageDown | Action::PageUp);
+        if !self.page.has_list_view()
+            || self.pane != Pane::Detail
+            || (!self.detail_read_focus && !pr_paging)
+        {
+            return false;
+        }
+        let viewport = self.detail_hit.detail_area.height.saturating_sub(2).max(1);
+        let delta = match action {
+            Action::Down => 1,
+            Action::Up => -1,
+            Action::PageDown => i32::from(viewport),
+            Action::PageUp => -i32::from(viewport),
+            Action::Top => -65535,
+            Action::Bottom => 65535,
+            _ => return false,
+        };
+        let scroll = if self.page == Page::PullRequests {
+            &mut self.pull_requests.detail_scroll
+        } else {
+            &mut self.detail_scroll
+        };
+        *scroll = (i32::from(*scroll) + delta).clamp(0, 65535) as u16;
+        true
     }
 
     /// The selected task's field rows in the pane's fixed order; `view` walks
@@ -92,6 +137,7 @@ impl App {
     /// handled by the ordinary `Action::Back`) closes it.
     fn leave_detail_focus(&mut self) {
         self.mode = Mode::Browse;
+        self.detail_read_focus = false;
         self.detail_draft = None;
         self.status.clear();
     }
@@ -99,6 +145,7 @@ impl App {
     /// Close the pane outright and drop every bit of in-progress edit state.
     pub(super) fn close_detail_pane(&mut self) {
         self.pane = Pane::None;
+        self.detail_read_focus = false;
         self.detail_cursor = 0;
         self.detail_scroll = 0;
         self.detail_scroll_anchor = None;
@@ -123,6 +170,11 @@ impl App {
     }
 
     pub(super) fn handle_detail_focus_key(&mut self, event: KeyEvent) {
+        let chord = KeyChord::from_event(&event);
+        if self.config.keys.get(&chord) == Some(&Action::FocusPane) {
+            self.toggle_detail_focus();
+            return;
+        }
         match event.code {
             KeyCode::Tab => self.cancel_detail_and_switch_page(),
             KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => self.leave_detail_focus(),
@@ -190,7 +242,8 @@ impl App {
     fn scroll_at(&mut self, position: Position, direction: i32) {
         if self.pane == Pane::Detail && self.detail_hit.detail_area.contains(position) {
             if self.page == Page::PullRequests {
-                let delta = direction * 3;
+                self.detail_read_focus = true;
+                let delta = direction;
                 self.pull_requests.detail_scroll =
                     (i32::from(self.pull_requests.detail_scroll) + delta).clamp(0, 65535) as u16;
             } else {
@@ -201,6 +254,7 @@ impl App {
         }
         if self.detail_hit.list_area.contains(position) {
             self.mode = Mode::Browse;
+            self.detail_read_focus = false;
             let action = if direction > 0 {
                 Action::Down
             } else {
@@ -211,6 +265,13 @@ impl App {
     }
 
     fn click_at(&mut self, position: Position) {
+        if self.page == Page::PullRequests
+            && self.pane == Pane::Detail
+            && self.detail_hit.detail_area.contains(position)
+        {
+            self.detail_read_focus = true;
+            return;
+        }
         if self.page == Page::Tasks
             && self.pane == Pane::Detail
             && self.detail_hit.detail_area.contains(position)
@@ -223,6 +284,8 @@ impl App {
             if let Some(row) = self.detail_hit.row_at(display_line) {
                 self.detail_cursor = row;
                 self.enter_detail_focus();
+                // Clicking a description body focuses its row without jumping to its heading.
+                self.detail_scroll_anchor = self.selected_task().map(|task| (task.id.clone(), row));
             }
             return;
         }
@@ -233,6 +296,7 @@ impl App {
                 }
             }
             self.mode = Mode::Browse;
+            self.detail_read_focus = false;
         }
     }
 

@@ -171,6 +171,8 @@ pub struct App {
     /// pane's (`pull_requests.detail_scroll`) — the two panes never show at
     /// once, but each remembers its own place.
     pub detail_scroll: u16,
+    /// Browse-mode reading focus; field editing remains owned by Mode::DetailFocus.
+    pub detail_read_focus: bool,
     /// The detail pane's own rendered content height, refreshed every frame
     /// `view::draw_detail` runs; `PageDown`/`PageUp` while focused scroll by
     /// this many lines rather than a hardcoded guess.
@@ -290,6 +292,7 @@ impl App {
             pane: Pane::None,
             detail_cursor: 0,
             detail_scroll: 0,
+            detail_read_focus: false,
             detail_viewport: 0,
             detail_scroll_anchor: None,
             detail_hit: crate::detail_pane::Hit::default(),
@@ -1231,18 +1234,6 @@ impl App {
         ) {
             self.cancel_pr_merge();
         }
-        if self.pane == Pane::Detail {
-            let delta = match action {
-                Action::PageDown => Some(self.page_size as i32),
-                Action::PageUp => Some(-(self.page_size as i32)),
-                _ => None,
-            };
-            if let Some(delta) = delta {
-                self.pull_requests.detail_scroll =
-                    (i32::from(self.pull_requests.detail_scroll) + delta).clamp(0, 65535) as u16;
-                return true;
-            }
-        }
         match action {
             Action::OpenBrowser => self.open_pr_browser(),
             Action::Merge => self.open_pr_merge(),
@@ -1253,6 +1244,7 @@ impl App {
             Action::PageDown => self.pull_requests.step(self.page_size as isize),
             Action::PageUp => self.pull_requests.step(-(self.page_size as isize)),
             Action::Open => {
+                self.detail_read_focus = false;
                 self.pull_requests.detail_scroll = 0;
                 self.pane = if self.pane == Pane::Detail {
                     Pane::None
@@ -1346,6 +1338,9 @@ impl App {
             self.status = "Switch to Tasks or Pull Requests to use list controls".to_string();
             return;
         }
+        if self.scroll_detail_reading(action) {
+            return;
+        }
         if self.page == Page::PullRequests && self.apply_pr_action(action) {
             return;
         }
@@ -1381,6 +1376,8 @@ impl App {
                     self.pane = Pane::Detail;
                     self.detail_cursor = 0;
                     self.detail_scroll = 0;
+                    self.detail_read_focus = true;
+                    self.status.clear();
                 }
             },
             Action::Back => {
@@ -1432,6 +1429,7 @@ impl App {
             }
             Action::Quit => self.request_quit(),
             Action::View => self.open_view_picker(PickerPurpose::Views),
+            Action::FocusPane => self.toggle_detail_focus(),
         }
     }
 
@@ -1863,7 +1861,12 @@ impl App {
         let row = row.min(last);
         let forward = (row..=last).find(|&r| self.task(r).is_some());
         let backward = (0..row).rev().find(|&r| self.task(r).is_some());
-        self.selected = forward.or(backward).unwrap_or(0);
+        let selected = forward.or(backward).unwrap_or(0);
+        if selected != self.selected {
+            self.detail_scroll = 0;
+            self.detail_scroll_anchor = None;
+        }
+        self.selected = selected;
     }
 
     /// Move `delta` task rows, headings not counting.
@@ -1881,6 +1884,10 @@ impl App {
                 None => break,
             }
             remaining -= 1;
+        }
+        if row != self.selected {
+            self.detail_scroll = 0;
+            self.detail_scroll_anchor = None;
         }
         self.selected = row;
     }

@@ -103,6 +103,17 @@ fn live_repository_renders_actual_pull_requests() {
             h.press(KeyCode::Char('k'));
             assert_eq!(h.app.pull_requests.row().unwrap().id, previous);
         }
+        assert!(!h.app.detail_focused(), "PR Enter retains list navigation");
+        h.press(KeyCode::BackTab);
+        assert!(h.app.detail_focused());
+        let selected = h.app.pull_requests.row().unwrap().id.clone();
+        h.press(KeyCode::End);
+        h.press(KeyCode::Down);
+        assert_eq!(h.app.pull_requests.row().unwrap().id, selected);
+        h.press(KeyCode::Home);
+        assert_eq!(h.app.pull_requests.detail_scroll, 0);
+        h.press(KeyCode::BackTab);
+        assert!(!h.app.detail_focused());
         println!("{detail}");
     } else {
         assert!(screen.contains("No PRs match"), "{screen}");
@@ -289,6 +300,7 @@ fn pr_detail_matches_task_pane_frame_and_empty_state() {
         h.terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
         h.press(KeyCode::Enter);
+        h.press(KeyCode::BackTab);
         let task = h.terminal.backend().buffer().clone();
         let task_row = pane_frame_row(&task, width);
         h.next_list_page();
