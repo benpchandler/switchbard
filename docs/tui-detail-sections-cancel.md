@@ -69,3 +69,15 @@ The independent review found no material remaining issue after fixes. Central st
 - Primary checkout remains clean. No Cambridge Kitchens task records were modified.
 
 The guarded installer dry run (`bash scripts/install-switchbard.sh --dry-run --branch --hold sbt`) refused because this branch would drop 17 commits from installed `ed49358`. No binary was replaced and no force override was used. Code commit: `c725b99`. No push, PR or merge is part of this slice.
+
+## Installed-build ancestry reconciliation
+
+The owner requested resolution of the 17-commit install refusal on 2026-09-15. Both checkouts were clean before work. The installed TUI is `ed49358e` from `feat/tui-history-preview`; the feature branch starts from main and retains the validated detail/cancel changes.
+
+The 17 absent commit identities are old feature/integration ancestry, not 17 missing product changes. PR #164 (`3bb50f6e`) explicitly incorporates the older wrapping, detail scroll, filter badge, resume and history work; PR #165 (`1be8678d`) incorporates the miniature history cards. PR #170 and `dd85a704` reconcile the read/edit detail interactions with current main and remove the obsolete `app/detail.rs`. History picker/title/projection sources match the installed build; remaining preview differences adapt to current task-row return values and the added Agents page.
+
+A normal merge of the installed commit was inspected. Its conflicts attempted to restore superseded detail structures, older help layout and older startup behavior. Resolving those to the already-reconciled feature implementation left the complete source tree byte-identical to `dcbcb9f` before this evidence update. The resulting merge records the installed ancestor without bypassing the guard or removing newer main features.
+
+Acceptance: installed commit must be an ancestor, ordinary installer must pass without force, new `sbt build-id` must name this feature build with `dirty=false`, and unrelated primary checkout changes must remain untouched. No remote push or PR merge is authorized by this local installation repair.
+
+Verification: all install-guard regression cases passed; 15 history, history-recognition, preview and installed-compatibility tests passed. Prior complete source validation remains applicable because this reconciliation changes no source code. Independent audit and actual installation results follow.
