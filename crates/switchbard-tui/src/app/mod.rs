@@ -1098,7 +1098,7 @@ impl App {
             return Vec::new();
         }
         let mut names: Vec<String> = [
-            "bug", "idea", "outline", "palette", "theme", "reload", "page", "help", "q",
+            "bug", "idea", "outline", "paint", "palette", "theme", "reload", "page", "help", "q",
         ]
         .iter()
         .map(|name| name.to_string())
@@ -1487,6 +1487,7 @@ impl App {
             "reload" => self.apply(&Action::Reload),
             "open" => self.apply(&Action::OpenBrowser),
             "dismiss" => self.apply(&Action::DismissNotifications),
+            "paint" => self.replace_paint(rest.trim()),
             "palette" => self.choose_palette(rest.trim()),
             "theme" => self.choose_theme(rest.trim()),
             // `:outline` is the word the rest of the app uses (TASK-145);
@@ -1511,6 +1512,22 @@ impl App {
             "idea" => self.file_report(ReportKind::Idea, rest),
             "" => {}
             other => self.fail(format!("unknown command :{other}")),
+        }
+    }
+
+    fn replace_paint(&mut self, text: &str) {
+        if text.is_empty() {
+            self.open_paint_target_picker();
+            return;
+        }
+        let text = if text == "off" { "" } else { text };
+        match crate::paint::try_parse_rules(text, &self.registry) {
+            Ok(rules) => {
+                self.state.paint = rules;
+                self.status = format!("Applied {} paint rules", self.state.paint.len());
+                self.telemetry.record("action", "paint_rules");
+            }
+            Err(error) => self.fail(error),
         }
     }
 

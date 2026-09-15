@@ -25,6 +25,7 @@ pub struct Headings<'a> {
 pub enum Row {
     /// A section heading; `depth` 0 is outermost, 1 is nested inside it.
     Heading {
+        value: String,
         text: String,
         depth: usize,
     },
@@ -240,6 +241,7 @@ pub fn rows(
         .collect();
     if !top.is_empty() {
         rows.push(Row::Heading {
+            value: "top".into(),
             text: format!("top · {}", pinned.len()),
             depth: 0,
         });
@@ -282,6 +284,7 @@ fn sections(
         }
         rows.push(Row::Heading {
             text: heading(column, &key, headings),
+            value: key,
             depth,
         });
         rows.extend(sections(tasks, &members, inner, headings, depth + 1));

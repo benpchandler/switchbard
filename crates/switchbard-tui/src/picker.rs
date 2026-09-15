@@ -20,6 +20,9 @@ pub enum PaintPick {
     Value(Column, String),
     Rows(String),
     Column(Column),
+    Title,
+    Header,
+    Heading(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +37,8 @@ pub enum PickerPurpose {
     MoveColumns(Vec<usize>),
     /// After `p`: what to paint.
     PaintTarget,
+    PaintRowValues,
+    PaintHeadings,
     /// A column's values, one color each.
     PaintValues(Column),
     /// After a target: which color.
@@ -185,6 +190,9 @@ pub enum Payload {
     FilteredRows(String),
     /// Paint: pick a column to color whole.
     WholeColumn,
+    SelectedRowValues,
+    GroupHeadings,
+    PaintScope(PaintPick),
     /// Paint: open the rule hierarchy.
     OrderRules,
     DeleteAllPaint,
@@ -381,9 +389,12 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::Columns => "↑↓/jk select · →/l open · ←/h back · Esc closes",
         PickerPurpose::MoveColumns(_) => "type column numbers in the order you want · enter done",
         PickerPurpose::PaintValues(_) => "value then color · repeats · h back · esc done",
-        PickerPurpose::PaintColumn => "number or name · h back · esc",
+        PickerPurpose::PaintColumn | PickerPurpose::PaintHeadings => {
+            "number or name · h back · esc"
+        }
+        PickerPurpose::PaintRowValues => "paints this value wherever it appears · ← back · esc",
         PickerPurpose::PaintTarget => "number or letter picks · esc",
-        PickerPurpose::PaintColor(_) => "name or #hex · space clears · h back · esc",
+        PickerPurpose::PaintColor(_) => "role+color then Enter · space clears · ← back · esc",
         PickerPurpose::PaintRules | PickerPurpose::ChoosePaintRule(_) => {
             "↑/↓ select · key or Enter picks · h back · Esc closes"
         }

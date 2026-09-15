@@ -18,14 +18,36 @@ fn field_filters_and_v_digit_switch_views() {
     h.press(KeyCode::Enter);
     h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('3'));
-    assert!(screen.contains("v3 · status:inprogress · 1/3"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("1/3 shown")
+                && context.contains(" v3 ")
+                && context.contains("/ status:inprogress")),
+        "{screen}"
+    );
     assert!(screen.contains("Fix login"), "{screen}");
     h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('2'));
-    assert!(screen.contains("v2 · status:todo · 2/3"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("2/3 shown")
+                && context.contains(" v2 ")
+                && context.contains("/ status:todo")),
+        "{screen}"
+    );
     h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('1'));
-    assert!(screen.contains("v1 · 3/3"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("3/3 shown") && context.contains(" v1 ")),
+        "{screen}"
+    );
     h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('9'));
     assert!(screen.contains("no view in slot 9"), "{screen}");
@@ -45,7 +67,13 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
     let screen = h.press(KeyCode::Char('d'));
     assert!(screen.contains("saved v1 for this repo"), "{screen}");
     assert!(
-        screen.contains("v1 · status:!done · ≈pri · 3/3"),
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("3/3 shown")
+                && context.contains(" v1 ")
+                && context.contains("/ status:!done")
+                && context.contains("≈pri")),
         "{screen}"
     );
     let repo_file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
@@ -126,7 +154,15 @@ fn vs_with_the_next_free_slot_appends_without_asking_and_escape_abandons() {
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('s'));
     let screen = h.press(KeyCode::Char('6'));
-    assert!(screen.contains("v6 · label:ui · 1/3"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("1/3 shown")
+                && context.contains(" v6 ")
+                && context.contains("/ label:ui")),
+        "{screen}"
+    );
     h.press(KeyCode::Char('?'));
     let screen = h.render();
     assert!(
@@ -146,7 +182,10 @@ fn vs_with_the_next_free_slot_appends_without_asking_and_escape_abandons() {
     h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('2'));
     assert!(
-        screen.contains("v2 · status:todo"),
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains(" v2 ") && context.contains("/ status:todo")),
         "slot 2 untouched: {screen}"
     );
 }

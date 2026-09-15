@@ -20,103 +20,165 @@ return {
   -- counts); keep it readable on your background.
   -- Surfaces: each named area of the screen and how it is shaded. A bare string
   -- is a foreground color; a table sets fg, bg, bold, underline, italic, dim,
-  -- reverse. Colors: ANSI names follow your terminal palette, hex is exact.
+  -- reverse, strikethrough. Explicit false clears an inherited modifier. Colors: ANSI names follow your terminal palette, hex is exact.
   -- `theme = "<name>"` picks a preset from `themes`; `theme = { ... }` overlays
   -- surfaces on the current preset (put both in your file to pick and tweak).
   -- `:theme <name>` inside sbt switches presets live to try them; it is
   -- in-memory, so write the name here to keep it.
+  -- theme.emphasis defines quiet, strong, alert, band and struck.
+  -- Only band may set bg or reverse=true; the other roles style foreground ink.
+  -- Custom themes can omit roles: hint/accent/working supply safe defaults.
+  -- Paint accepts roles, colors and palette slots joined with + (strong+p2).
+  -- A trailing ! makes that paint rule take precedence over competing rules.
+  -- theme.background is the explicit canvas; leave absent for terminal control.
   theme = "berg",
   themes = {
-    -- Berg (github.com/jx22/berg): the Bloomberg terminal as a reading theme.
-    -- Body text is orange, headings and links blue, chrome gray, the cursor
-    -- cyan; green and red are reserved for meaning. No background bands:
-    -- only the cursor row and chips fill, so it holds on any dark background.
+    -- Exact foregrounds and canvases make each colored preset predictable.
+    -- Quiet ink stays readable without terminal-dependent DIM. Plain delegates
+    -- contrast to the terminal. These presets are not an accessibility certification.
     berg = {
-      title_repo = { fg = "black", bg = "#f49f31", bold = true },
-      title      = { fg = "#acacae" },
-      border     = { fg = "#464646" },
-      header     = { fg = "#9e9e9e" },
-      heading    = { fg = "#569cd6", bold = true },
-      selected   = { bg = "#353f40", bold = true },  -- no fg: paint stays readable on the cursor row
-      label      = { fg = "#acacae" },
-      text       = { fg = "#f49f31" },
-      link       = { fg = "#75beff" },
-      chip       = { fg = "black", bg = "#f49f31" },  -- amber fill = "you can change this" on the Terminal
-      attention_badge= { fg = "black", bg = "#f49f31" },
-      keys       = { fg = "#4dc7f9" },
-      hint       = { fg = "#9e9e9e" },
-      status     = { fg = "#d7d7d7" },
-      accent     = { fg = "#4dc7f9" },
-      working    = { bg = "#2a6b5a", bold = true },  -- mint band at full glow; it fades to black between pulses
-      columns    = { id = "label", project = "link", goal = "link" },
+      background = "#101214",
+      title_repo     = { fg = "#101214", bg = "#f49f31", bold = true },
+      title          = { fg = "#acacae" },
+      navigation_active = { fg = "#85d9f7", bold = true, underline = true },
+      context = { fg = "#acacae" },
+      border         = { fg = "#464646" },
+      header         = { fg = "#b5bbc3", bold = true },
+      heading        = { fg = "#99c6ec", bold = true },
+      selected       = { bg = "#242d2e" },
+      label          = { fg = "#acacae" },
+      text           = { fg = "#ffd190" },
+      link           = { fg = "#99c6ec" },
+      chip           = { fg = "#101214", bg = "#f49f31" },
+      attention_badge= { fg = "#101214", bg = "#f49f31", bold = true },
+      keys           = { fg = "#85d9f7" },
+      hint           = { fg = "#acacae" },
+      status         = { fg = "#acacae" },
+      accent         = { fg = "#85d9f7" },
+      working        = { bg = "#163b30", bold = true },
+      emphasis = {
+        quiet = { fg = "#acacae", dim = false },
+        strong = { bold = true },
+        alert = { fg = "#ffb8aa", bold = true },
+        band = { bg = "#3b3023" },
+        struck = { strikethrough = true },
+      },
+      columns = { id = "label", project = "link", goal = "link" },
     },
-    -- Bloomberg data screen: amber identity chip and labels over white data.
     bloomberg = {
-      title_repo = { fg = "black", bg = "#ffcc00", bold = true },
-      title      = { fg = "#8b949e" },
-      border     = { fg = "#30363d" },
-      header     = { fg = "#8b949e" },
-      heading    = { fg = "#e6edf3", bold = true, underline = true },
-      selected   = { bg = "#163a63", bold = true },
-      label      = { fg = "#ffcc00" },
-      text       = {},
-      link       = { fg = "#58a6ff" },
-      chip       = { fg = "black", bg = "#ffcc00" },
-      attention_badge= { fg = "black", bg = "#ffcc00" },
-      keys       = { fg = "#ffcc00" },
-      hint       = { fg = "#8b949e" },
-      status     = { fg = "#ffcc00" },
-      accent     = { fg = "#ffcc00" },
-      working    = { bg = "#23643f", bold = true },
-      columns    = { id = "label", project = "link", goal = "link" },
+      background = "#111820",
+      title_repo     = { fg = "#111820", bg = "#ffcc00", bold = true },
+      title          = { fg = "#a8afb8" },
+      navigation_active = { fg = "#ffcc00", bold = true, underline = true },
+      context = { fg = "#a8afb8" },
+      border         = { fg = "#394754" },
+      header         = { fg = "#b5bbc3", bold = true },
+      heading        = { fg = "#e6edf3", bold = true },
+      selected       = { bg = "#172d42" },
+      label          = { fg = "#a8afb8" },
+      text           = { fg = "#e6edf3" },
+      link           = { fg = "#99c6ec" },
+      chip           = { fg = "#111820", bg = "#ffcc00" },
+      attention_badge= { fg = "#111820", bg = "#ffcc00", bold = true },
+      keys           = { fg = "#ffcc00" },
+      hint           = { fg = "#a8afb8" },
+      status         = { fg = "#a8afb8" },
+      accent         = { fg = "#ffcc00" },
+      working        = { bg = "#173725", bold = true },
+      emphasis = {
+        quiet = { fg = "#a8afb8", dim = false },
+        strong = { bold = true },
+        alert = { fg = "#ffb8aa", bold = true },
+        band = { bg = "#303b49" },
+        struck = { strikethrough = true },
+      },
+      columns = { id = "label", project = "link", goal = "link" },
     },
-    -- Darkroom: for a dark room with the display at its lowest usable backlight.
-    -- Every color is solved for a target contrast ratio against near-black, not
-    -- picked by eye, and the targets are the design. Body text sits at 10:1 and
-    -- everything else between 1.6:1 and 8.6:1 -- ordinary dark themes run 12-16:1,
-    -- which in an unlit room is a glare source, because the screen is the only
-    -- light in it and your eyes are dark-adapted to nothing. Warm carries more
-    -- of the weight than cool: long wavelengths cost the least dark adaptation,
-    -- which is the darkroom safelight the name comes from. Pairs with the
-    -- Darkroom WezTerm scheme, but stands alone on any near-black background.
     darkroom = {
-      title_repo = { fg = "#D0C7BB", bg = "#634921", bold = true },  -- dim amber fill, not a lamp
-      title      = { fg = "#8D7D6C" },
-      border     = { fg = "#483D34" },
-      header     = { fg = "#958472" },
-      heading    = { fg = "#CEA765", bold = true },
-      selected   = { bg = "#413223", bold = true },  -- no fg: paint stays >= 4.1:1 on the cursor row
-      label      = { fg = "#C89A49" },
-      text       = { fg = "#C3B7A6" },
-      link       = { fg = "#9FB6D2" },
-      chip       = { fg = "#D0C7BB", bg = "#634921" },
-      attention_badge= { fg = "#D0C7BB", bg = "#634921" },
-      keys       = { fg = "#77B5B5" },
-      hint       = { fg = "#837667" },
-      status     = { fg = "#B0A394" },
-      accent     = { fg = "#CEA765" },
-      working    = { bg = "#345A5C", bold = true },  -- teal band at full glow, the only cool fill
-      columns    = { id = "label", project = "link", goal = "link" },
+      background = "#12100e",
+      title_repo     = { fg = "#e3ddd3", bg = "#634921", bold = true },
+      title          = { fg = "#b3aa9e" },
+      navigation_active = { fg = "#b7d1cd", bold = true, underline = true },
+      context = { fg = "#b3aa9e" },
+      border         = { fg = "#51483f" },
+      header         = { fg = "#c0b2a0", bold = true },
+      heading        = { fg = "#e4bd7e", bold = true },
+      selected       = { bg = "#302820" },
+      label          = { fg = "#b3aa9e" },
+      text           = { fg = "#e3ddd3" },
+      link           = { fg = "#a9c7e7" },
+      chip           = { fg = "#e3ddd3", bg = "#634921" },
+      attention_badge= { fg = "#e3ddd3", bg = "#634921", bold = true },
+      keys           = { fg = "#b7d1cd" },
+      hint           = { fg = "#b3aa9e" },
+      status         = { fg = "#b3aa9e" },
+      accent         = { fg = "#b7d1cd" },
+      working        = { bg = "#253c3c", bold = true },
+      emphasis = {
+        quiet = { fg = "#b3aa9e", dim = false },
+        strong = { bold = true },
+        alert = { fg = "#eebbb0", bold = true },
+        band = { bg = "#393026" },
+        struck = { strikethrough = true },
+      },
+      columns = { id = "label", project = "link", goal = "link" },
     },
-    -- Your terminal's own colors, nothing forced.
+    light = {
+      background = "#f5f2eb",
+      title_repo     = { fg = "#f5f2eb", bg = "#355b7b", bold = true },
+      title          = { fg = "#59616b" },
+      navigation_active = { fg = "#315f65", bold = true, underline = true },
+      context = { fg = "#59616b" },
+      border         = { fg = "#a3a9ae" },
+      header         = { fg = "#3d4d5e", bold = true },
+      heading        = { fg = "#334b63", bold = true },
+      selected       = { bg = "#e1e5e9" },
+      label          = { fg = "#59616b" },
+      text           = { fg = "#1f2830" },
+      link           = { fg = "#355b7b" },
+      chip           = { fg = "#f5f2eb", bg = "#355b7b" },
+      attention_badge= { fg = "#f5f2eb", bg = "#355b7b", bold = true },
+      keys           = { fg = "#315f65" },
+      hint           = { fg = "#59616b" },
+      status         = { fg = "#59616b" },
+      accent         = { fg = "#315f65" },
+      working        = { bg = "#dfe9e2", bold = true },
+      emphasis = {
+        quiet = { fg = "#59616b", dim = false },
+        strong = { bold = true },
+        alert = { fg = "#8a302d", bold = true },
+        band = { bg = "#e5ddd0" },
+        struck = { strikethrough = true },
+      },
+      columns = { id = "label", project = "link", goal = "link" },
+    },
+    -- Your terminal owns its colors and background.
     plain = {
       title_repo = { bold = true },
-      header     = { fg = "gray" },
-      heading    = { bold = true, underline = true },
-      selected   = { reverse = true },
-      hint       = { fg = "gray" },
-      chip       = { reverse = true },
-      attention_badge= { reverse = true },
-      keys       = { bold = true },
-      working    = { bold = true, underline = true },
+      navigation_active = { bold = true, underline = true },
+      context = {},
+      header = { bold = true },
+      heading = { bold = true, underline = true },
+      selected = { reverse = true },
+      chip = { reverse = true },
+      attention_badge = { reverse = true },
+      keys = { bold = true },
+      working = { bold = true, underline = true },
+      emphasis = {
+        quiet = { dim = true },
+        strong = { bold = true },
+        alert = { bold = true, underline = true },
+        band = { reverse = true },
+        struck = { strikethrough = true },
+      },
     },
   },
 
   -- Rows a live agent session is working (`sb work claim`) pulse: the
-  -- `working` band follows a sine over period_ms, brightest at the start,
+  -- `working` band breathes gently over period_ms, brightest at the start,
   -- with its tops and bottoms flattened by `flatten` (0 = pure sine, larger
-  -- holds full and dark longer), redrawn frames times per period. period_ms
-  -- = 0 keeps them lit. The `work` column (`c`) shows one ● per session; `w`
+  -- holds peak and trough longer), redrawn frames times per period. period_ms
+  -- = 0 keeps them steady; the band never disappears. The `work` column (`c`) shows one ● per session; `w`
   -- passes the task.
   -- PR reads refresh while the page is visible (30-3600 seconds); failures require r.
   pr_refresh_seconds = 60,
@@ -139,6 +201,7 @@ return {
     -- blue, sky next; green and red last because they read as up/down.
     berg      = { "#f49f31", "#c6c5fe", "#4af6c3", "#ff73fd", "#e0c010", "#0b85df", "#96cbfe", "#a8ff60", "#ff6c60", "#acacae" },
     bloomberg = { "#c9d1d9", "#ffcc00", "#2ea043", "#58a6ff", "#f0883e", "#f85149", "#d29922", "#8b949e" },
+    light = { "#1f2830", "#355b7b", "#653459", "#315f50", "#6b4427", "#8a302d" },
     muted    = { "#c9b07a", "#7fa6bd", "#8db58d", "#c08a84", "#a692bd", "#7fb5ae", "#c49c7a", "#b98da0" },
     balanced = { "#ffd166", "#4fc3f7", "#7ee787", "#ff7b72", "#c792ea", "#5ee6d8", "#ffa657", "#f78da7" },
     vivid    = { "#ffcc00", "#00bfff", "#33ff66", "#ff4d4d", "#c060ff", "#00e5cc", "#ff8800", "#ff66b3" },
