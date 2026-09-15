@@ -79,7 +79,7 @@ Use `sb --repo /path/to/repo storage status` to inspect authority. `storage migr
 
 ## Terminal views
 
-`sbt` resumes the last view for each repo. Use `sbt --fresh` for the saved default, `v h` to browse automatic history, and `v s <number>` to keep a restored arrangement in a slot. History retains 30 days with count and byte ceilings; auto-painted colors follow the current palette. See [resume and history](docs/tui-view-history.md) for controls, limits, and recovery.
+`sbt` resumes the last view for each repo. Use `sbt --fresh` for the saved default, `v h` to browse automatic history, and `v s <number>` to keep a restored arrangement in a slot. History retains 30 days with count and byte ceilings; auto-painted colors follow the current palette. See [resume and history](docs/tui-view-history.md) for controls, limits, and recovery, and [formatting and emphasis roles](docs/emphasis-roles/guide.md) for scan hierarchy and paint controls.
 
 ## Install
 
