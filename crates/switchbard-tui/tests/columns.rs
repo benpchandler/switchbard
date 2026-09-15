@@ -64,7 +64,12 @@ fn hidden_columns_are_listed_after_shown_ones_and_stay_filterable_and_sortable()
     assert!(screen.contains("┌ pri ─"), "{screen}");
     let screen = h.type_text("h");
     assert!(
-        screen.contains("pri:high · cols:id,status,title · 1/3"),
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("1/3 shown")
+                && context.contains("/ pri:high")
+                && context.contains("cols:id,status,title")),
         "{screen}"
     );
     h.press(KeyCode::Char('s'));
@@ -145,7 +150,13 @@ fn g_in_the_columns_picker_shows_priority_as_glyphs_and_saves_with_the_view() {
         .find(|l| l.contains("Fix login"))
         .unwrap_or_default();
     assert!(row.contains(" · "), "medium: {row}");
-    assert!(screen.contains("glyphs:priority ·"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("glyphs:priority")),
+        "{screen}"
+    );
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('s'));
     h.press(KeyCode::Char('d'));

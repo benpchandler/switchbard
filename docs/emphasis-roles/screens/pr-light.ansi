@@ -1,0 +1,36 @@
+[38;2;89;97;107m[48;2;245;242;235m Tasks  [1;4m[38;2;49;95;101m [Pull Requests] [0m[38;2;89;97;107m[48;2;245;242;235m [1m[38;2;245;242;235m[48;2;53;91;123m 1 [0m[38;2;89;97;107m[48;2;245;242;235m  Agents  [1m[38;2;245;242;235m[48;2;53;91;123m 1 [0m[38;2;89;97;107m[48;2;245;242;235m  Inbox  [38;2;49;95;101m tab switch page[38;2;89;97;107m
+[38;2;163;169;174m┌[38;2;89;97;107m Pull Requests [38;2;163;169;174m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│[38;2;89;97;107mbenpchandler/switchbard · Observed 58s[38;2;31;40;48m                                                                                                    [38;2;163;169;174m│
+│[38;2;89;97;107m100/100 shown · PARTIAL · :more                                                                                                           [38;2;163;169;174m│
+│[38;2;89;97;107mfilter: all                                                                                                                               [38;2;163;169;174m│
+│[38;2;89;97;107m                                                                                                                                          [38;2;163;169;174m│
+│[1m[38;2;61;77;94m1 id    2 State 3 Tasks      4 Checks       5 title                                                                                       [0m[38;2;163;169;174m[48;2;245;242;235m│
+│[38;2;89;97;107m#173   [38;2;31;40;48m Open    -            Pending        agents: live status-line title, drop a session's own codex helpers                            [38;2;163;169;174m│
+│[38;2;89;97;107m[48;2;225;229;233m#172   [38;2;31;40;48m Merged  -            NF             docs: restore historical TUI evidence wording                                                 [38;2;163;169;174m[48;2;245;242;235m│
+│[38;2;89;97;107m#171   [38;2;31;40;48m Merged  -            NF             gui: sweep container surfaces onto the elevation scale (TASK-79)                              [38;2;163;169;174m│
+│[38;2;89;97;107m#170   [38;2;31;40;48m Merged  -            NF             Preserve detail reading, mouse navigation, and readable Help alongside editing                [38;2;163;169;174m│
+│[38;2;89;97;107m#169   [38;2;31;40;48m Merged  -            NF             sbt: fast-poll and mark the row pending after a confirmed PR merge (TASK-204)                 [38;2;163;169;174m│
+│[38;2;89;97;107m#168   [38;2;31;40;48m Merged  -            NF             Fix flaky board-drag GUI tests racing egui tooltip settle frames                              [38;2;163;169;174m│
+│[38;2;89;97;107m#167   [38;2;31;40;48m Merged  -            NF             Make origin/main authoritative for live sbt updates (TASK-227)                                [38;2;163;169;174m│
+│[38;2;89;97;107m#166   [38;2;31;40;48m Merged  -            NF             build: standardize Rust warning policy and build profiles                                     [38;2;163;169;174m│
+│[38;2;89;97;107m#165   [38;2;31;40;48m Merged  -            NF             sbt: history cards with miniature table previews (TASK-154)                                   [38;2;163;169;174m│
+│[38;2;89;97;107m#164   [38;2;31;40;48m Merged  -            NF             Reconcile the installed sbt integration branch with main (detail pane, mouse, description body[38;2;163;169;174m│
+│[38;2;89;97;107m#163   [38;2;31;40;48m Merged  TASK-225     NF             feat(tui): add repository-scoped Agents page                                                  [38;2;163;169;174m│
+│[38;2;89;97;107m#162   [38;2;31;40;48m Merged  -            NF             Count skipped and neutral check runs as passing PR checks                                     [38;2;163;169;174m│
+│[38;2;89;97;107m#161   [38;2;31;40;48m Merged  -            NF             sbt: editable task detail pane for structured fields (TASK-222)                               [38;2;163;169;174m│
+│[38;2;89;97;107m#160   [38;2;31;40;48m Merged  -            NF             Resume the last view and keep recognizable view history                                       [38;2;163;169;174m│
+│[38;2;89;97;107m#159   [38;2;31;40;48m Merged  -            NF             Show value counts beside filtered columns                                                     [38;2;163;169;174m│
+│[38;2;89;97;107m#158   [38;2;31;40;48m Merged  -            NF             Add configurable task title wrapping and row spacing                                          [38;2;163;169;174m│
+│[38;2;89;97;107m#157   [38;2;31;40;48m Merged  -            NF             docs(tui): formatting, legibility and visual ergonomics reference                             [38;2;163;169;174m│
+│[38;2;89;97;107m#156   [38;2;31;40;48m Merged  -            NF             Board model: due date, blocked surfacing, custom fields, smart outline (TASK-209)             [38;2;163;169;174m│
+│[38;2;89;97;107m#155   [38;2;31;40;48m Merged  -            NF             test(tui): wait out the storage-reload throttle in the live PR links journey                  [38;2;163;169;174m│
+│[38;2;89;97;107m#154   [38;2;31;40;48m Closed  -            NF             Probe: sbt merge confirmation evidence (do not merge)                                         [38;2;163;169;174m│
+│[38;2;89;97;107m#153   [38;2;31;40;48m Merged  -            NF             Add four-level GUI elevation tokens                                                           [38;2;163;169;174m│
+│[38;2;89;97;107m#152   [38;2;31;40;48m Merged  -            NF             Keep installed sb and sbt in step with origin/main (launchd auto-install)                     [38;2;163;169;174m│
+│[38;2;89;97;107m#151   [38;2;31;40;48m Merged  -            NF             sbt: named view slots - save, load, delete (TASK-207)                                         [38;2;163;169;174m│
+│[38;2;89;97;107m#150   [38;2;31;40;48m Merged  -            NF             Land the central task storage cutover (TASK-147/201/202/203)                                  [38;2;163;169;174m│
+│[38;2;89;97;107m#149   [38;2;31;40;48m Merged  -            NF             Stamp every binary's build commit and refuse install downgrades                               [38;2;163;169;174m│
+│[38;2;89;97;107m#148   [38;2;31;40;48m Merged  -            NF             Salvage the backlog records stranded on feat/tui-live-work                                    [38;2;163;169;174m│
+│[38;2;89;97;107m#147   [38;2;31;40;48m Merged  -            NF             Give each worktree its own Cargo target dir; read one clock for the backlog day               [38;2;163;169;174m│
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+[38;2;89;97;107mv views · ? keys[38;2;31;40;48m

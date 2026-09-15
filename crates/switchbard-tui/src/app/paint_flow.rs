@@ -27,6 +27,38 @@ impl App {
                 Payload::ThisRow(id),
             ));
         }
+        options.extend([
+            PickOption::keyed('t', "title band", Payload::PaintScope(PaintPick::Title)),
+            PickOption::keyed(
+                'h',
+                "column headings",
+                Payload::PaintScope(PaintPick::Header),
+            ),
+        ]);
+        let has_selected_row = if self.page == crate::page::Page::PullRequests {
+            self.pull_requests.row().is_some()
+        } else {
+            self.selected_task().is_some()
+        };
+        if has_selected_row {
+            options.push(PickOption::keyed(
+                'e',
+                "selected row values",
+                Payload::SelectedRowValues,
+            ));
+        }
+        if self.page == crate::page::Page::Tasks
+            && self
+                .rows
+                .iter()
+                .any(|row| matches!(row, crate::group::Row::Heading { .. }))
+        {
+            options.push(PickOption::keyed(
+                'g',
+                "current group headings",
+                Payload::GroupHeadings,
+            ));
+        }
         let filter = self.state.filter.trim().to_string();
         if !filter.is_empty() {
             options.push(PickOption::keyed(
@@ -64,6 +96,49 @@ impl App {
         self.telemetry.record("action", "paint");
     }
 
+    pub(super) fn open_paint_row_values(&mut self) {
+        use crate::column_values::ColumnValues;
+        let mut options = Vec::new();
+        for column in &self.state.columns {
+            let values = if self.page == crate::page::Page::PullRequests {
+                self.pull_requests
+                    .row()
+                    .map(|row| self.pull_requests.column_adapter(row).values(*column))
+                    .unwrap_or_default()
+            } else {
+                self.selected_task()
+                    .map(|task| {
+                        column.values(&self.registry, task, &self.goals, &self.relations.blocked)
+                    })
+                    .unwrap_or_default()
+            };
+            for value in values {
+                options.push(PickOption::numbered(
+                    format!("{}: {value}", column.name(&self.registry)),
+                    Payload::PaintScope(PaintPick::Value(*column, value)),
+                ));
+            }
+        }
+        self.open_picker(PickerPurpose::PaintRowValues, options);
+    }
+
+    pub(super) fn open_paint_headings(&mut self) {
+        let mut headings = Vec::new();
+        for row in self.rows.iter().take(self.selected.saturating_add(1)) {
+            if let crate::group::Row::Heading { value, text, depth } = row {
+                headings.truncate(*depth);
+                headings.push((value.clone(), text.clone()));
+            }
+        }
+        let options = headings
+            .into_iter()
+            .map(|(value, text)| {
+                PickOption::numbered(text, Payload::PaintScope(PaintPick::Heading(value)))
+            })
+            .collect();
+        self.open_picker(PickerPurpose::PaintHeadings, options);
+    }
+
     pub(super) fn is_categorical(&self, column: Column) -> bool {
         column.filter_field(&self.registry).is_some() && !self.column_values(column).is_empty()
     }
@@ -95,10 +170,20 @@ impl App {
     }
 
     pub(super) fn open_paint_color_picker(&mut self, pick: PaintPick) {
-        let mut options: Vec<PickOption> = NAMED_COLORS
-            .iter()
-            .map(|name| PickOption::text(*name, 0))
-            .collect();
+        let mut options: Vec<PickOption> = [
+            ('Q', "quiet"),
+            ('S', "strong"),
+            ('A', "alert"),
+            ('B', "band"),
+            ('X', "struck"),
+        ]
+        .into_iter()
+        .map(|(key, role)| PickOption::keyed(key, role, Payload::Text(role.into())))
+        .collect();
+        options.extend(NAMED_COLORS.iter().map(|name| PickOption::text(*name, 0)));
+        options.extend(
+            (1..=self.config.palette.len()).map(|index| PickOption::text(format!("p{index}"), 0)),
+        );
         options.push(PickOption::numbered("none", Payload::NoColor));
         self.open_picker(PickerPurpose::PaintColor(pick), options);
     }
@@ -183,10 +268,16 @@ impl App {
         let Some(_) = column.filter_field(&self.registry) else {
             return;
         };
+        let mut rules = self.state.paint.clone();
         for (index, (value, _)) in self.column_values(column).iter().enumerate() {
             let token = format!("p{}", index + 1);
-            paint::set_value_color(&mut self.state.paint, column, value, Some(&token));
+            paint::set_value_color(&mut rules, column, value, Some(&token));
         }
+        if let Err(error) = paint::validate_rules(&rules, &self.registry) {
+            self.fail(error);
+            return;
+        }
+        self.state.paint = rules;
         self.status = format!("painted every {} value", column.name(&self.registry));
         self.telemetry.record(
             "action",
@@ -203,28 +294,50 @@ impl App {
 
     pub(super) fn apply_paint(&mut self, pick: PaintPick, color: &str) {
         let cleared = color == "none";
+        let mut rules = self.state.paint.clone();
         match &pick {
-            PaintPick::Value(column, value) => paint::set_value_color(
-                &mut self.state.paint,
-                *column,
-                value,
-                (!cleared).then_some(color),
-            ),
+            PaintPick::Value(column, value) => {
+                paint::set_value_color(&mut rules, *column, value, (!cleared).then_some(color))
+            }
             PaintPick::Rows(filter) => paint::set_rule(
-                &mut self.state.paint,
+                &mut rules,
                 PaintRule::Rows {
                     filter: filter.clone(),
                     color: color.to_string(),
                 },
             ),
             PaintPick::Column(column) => paint::set_rule(
-                &mut self.state.paint,
+                &mut rules,
                 PaintRule::Column {
                     column: *column,
                     color: color.to_string(),
                 },
             ),
+            PaintPick::Title => paint::set_rule(
+                &mut rules,
+                PaintRule::Title {
+                    color: color.into(),
+                },
+            ),
+            PaintPick::Header => paint::set_rule(
+                &mut rules,
+                PaintRule::Header {
+                    color: color.into(),
+                },
+            ),
+            PaintPick::Heading(value) => paint::set_rule(
+                &mut rules,
+                PaintRule::Heading {
+                    value: value.clone(),
+                    color: color.into(),
+                },
+            ),
         }
+        if let Err(error) = paint::validate_rules(&rules, &self.registry) {
+            self.fail(error);
+            return;
+        }
+        self.state.paint = rules;
         self.status = if cleared {
             "paint cleared".to_string()
         } else {
@@ -243,7 +356,13 @@ impl App {
             && target >= 0
             && (target as usize) < self.state.paint.len()
         {
-            self.state.paint.swap(index, target as usize);
+            let mut rules = self.state.paint.clone();
+            rules.swap(index, target as usize);
+            if let Err(error) = paint::validate_rules(&rules, &self.registry) {
+                self.fail(error);
+                return index;
+            }
+            self.state.paint = rules;
             self.telemetry.record("action", "paint_reorder");
             return target as usize;
         }

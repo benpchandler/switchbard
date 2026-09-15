@@ -662,7 +662,10 @@ impl ViewState {
                 *column = canonical(*column);
                 catalog.contains(column)
             }
-            PaintRule::Rows { .. } => true,
+            PaintRule::Rows { .. }
+            | PaintRule::Header { .. }
+            | PaintRule::Title { .. }
+            | PaintRule::Heading { .. } => true,
         });
         if !scope.supports_row_layout() {
             self.row_layout = crate::row_layout::RowLayout::default();
@@ -737,18 +740,20 @@ fn parse_view(
     // Which of this view's declared-field references the repo has since
     // dropped. Everything that resolves stays; see `prune_filter` for why the
     // filter is pruned against this list rather than judged on its own.
-    let orphans = undeclared_fields_in(
+    let mut orphans = undeclared_fields_in(
         &[
             columns.as_str(),
             glyphs.as_str(),
             &sort,
             &group,
-            &paint,
             abbreviated.as_deref().unwrap_or_default(),
         ]
         .join(" "),
         registry,
     );
+    orphans.extend(paint_column_orphans(&paint, registry));
+    orphans.sort();
+    orphans.dedup();
     for name in &orphans {
         if !dropped.contains(name) {
             dropped.push(name.clone());
@@ -762,7 +767,14 @@ fn parse_view(
             .split(',')
             .filter_map(|name| registry.parse(name))
             .collect(),
-        paint: parse_rules(&paint, registry),
+        paint: parse_rules(
+            &paint
+                .split(';')
+                .filter(|rule| !paint_names_orphan(rule, registry, &orphans))
+                .collect::<Vec<_>>()
+                .join(";"),
+            registry,
+        ),
         group: prune_group(&group, registry).unwrap_or_default(),
         pin_top: entry
             .get::<Option<bool>>("pin")
@@ -897,13 +909,26 @@ fn validate_view_rules(entry: &Table, registry: &ColumnRegistry) -> Result<(), S
     if prune_group(&group, registry).is_none() {
         return Err("unsupported saved grouping".into());
     }
-    if field("paint")?
+    let paint = field("paint")?;
+    let mut orphans = paint_column_orphans(&paint, registry);
+    for key in ["columns", "glyphs", "sort", "group", "abbreviated"] {
+        orphans.extend(undeclared_fields_in(&field(key)?, registry));
+    }
+    if paint
         .split(';')
-        .filter(|s| !s.trim().is_empty())
-        .any(|s| !valid_saved_paint(s, registry) && !names_an_undeclared_field(s, registry))
+        .filter(|rule| !rule.trim().is_empty())
+        .any(|rule| {
+            !valid_saved_paint(rule, registry) && !paint_names_orphan(rule, registry, &orphans)
+        })
     {
         return Err("unsupported saved paint".into());
     }
+    let retained_paint = paint
+        .split(';')
+        .filter(|rule| !rule.trim().is_empty() && !paint_names_orphan(rule, registry, &orphans))
+        .collect::<Vec<_>>()
+        .join(";");
+    crate::paint::try_parse_rules(&retained_paint, registry)?;
     Ok(())
 }
 
@@ -913,6 +938,40 @@ fn validate_view_rules(entry: &Table, registry: &ColumnRegistry) -> Result<(), S
 /// both hide their column name between a prefix and a separator.
 fn names_an_undeclared_field(text: &str, registry: &ColumnRegistry) -> bool {
     !undeclared_fields_in(text, registry).is_empty()
+}
+
+/// Only structural column targets identify removed fields. Heading names and
+/// filter values may legitimately contain the literal text `field:name`.
+fn paint_column_orphans(text: &str, registry: &ColumnRegistry) -> Vec<String> {
+    text.split(';')
+        .filter_map(|rule| {
+            let (target, _) = rule.trim().split_once('=')?;
+            target
+                .strip_prefix("by:")
+                .or_else(|| target.strip_prefix("column:"))
+        })
+        .filter(|target| registry.unknown_field_name(target.trim()))
+        .flat_map(|target| undeclared_fields_in(target.trim(), registry))
+        .collect()
+}
+
+fn paint_names_orphan(rule: &str, registry: &ColumnRegistry, orphans: &[String]) -> bool {
+    if !paint_column_orphans(rule, registry).is_empty() {
+        return true;
+    }
+    let Some((target, _)) = rule.trim().split_once('=') else {
+        return false;
+    };
+    let Some(filter) = target.strip_prefix("rows:") else {
+        return false;
+    };
+    filter.split_whitespace().any(|word| {
+        word.split_once(':').is_some_and(|(keyword, _)| {
+            orphans
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(keyword))
+        })
+    })
 }
 
 fn valid_saved_paint(text: &str, registry: &ColumnRegistry) -> bool {
@@ -948,7 +1007,10 @@ impl ViewState {
                 PaintRule::ByColumn { column, .. } | PaintRule::Column { column, .. } => {
                     unsupported(*column)
                 }
-                PaintRule::Rows { .. } => false,
+                PaintRule::Rows { .. } | PaintRule::Header { .. } | PaintRule::Title { .. } => {
+                    false
+                }
+                PaintRule::Heading { .. } => !scope.supports_grouping(),
             })
     }
 }

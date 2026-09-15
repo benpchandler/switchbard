@@ -5,6 +5,8 @@ design basis for rule-based ("conditional") formatting. Two halves: what the res
 says (sections 1-4), then what sbt has today and how it should grow (sections 5-7).
 Sources are at the end.
 
+Current implementation and user behavior: [Emphasis Roles guide](emphasis-roles/guide.md). The proposals and research discussion below are retained as the design record; the guide owns current syntax, preset behavior and scope.
+
 The palette-token prerequisite from TASK-152 is implemented. Remaining related backlog:
 TASK-175/176/177
 (header, tab bar, second-row differentiation), TASK-200 (paint any cell, inherit its

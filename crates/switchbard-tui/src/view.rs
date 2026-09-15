@@ -5,8 +5,6 @@ mod history_picker;
 mod history_preview;
 pub(crate) mod history_title;
 
-use std::str::FromStr;
-
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -26,6 +24,10 @@ use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    frame.render_widget(
+        Paragraph::new("").style(app.config.theme.canvas_style()),
+        frame.area(),
+    );
     let footer_height = match app.mode {
         Mode::NewTask => 3,
         Mode::DetailInput(_) => 2,
@@ -107,9 +109,45 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_default();
+    let budget = usize::from(area.width / 3).clamp(3, 24);
+    let repo = if repo.chars().count() > budget {
+        format!(
+            "{}…",
+            repo.chars()
+                .take(budget.saturating_sub(1))
+                .collect::<String>()
+        )
+    } else {
+        repo
+    };
+    let title_paint = paint::scoped_style(
+        &app.state.paint,
+        &theme,
+        &app.config.palette,
+        paint::PaintScope::Title,
+    );
     let title = Line::from(vec![
         Span::styled(format!(" {repo} "), theme.style(Surface::TitleRepo)),
-        Span::styled(table_title(app), theme.style(Surface::Title)),
+        Span::styled(
+            format!(" {}/{} shown ", app.visible.len(), app.total_tasks()),
+            theme.style(Surface::Header),
+        ),
+        Span::styled(
+            format!(" {} ", app.view_label()),
+            theme.style(Surface::Title).patch(title_paint),
+        ),
+        Span::styled(
+            if app.state.filter.is_empty() {
+                String::new()
+            } else {
+                format!(" / {} ", app.state.filter)
+            },
+            theme.style(Surface::Context),
+        ),
+        Span::styled(
+            table_title(app),
+            theme.style(Surface::Hint).patch(title_paint),
+        ),
     ]);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -183,8 +221,25 @@ fn draw_task_rows(
         header_area,
         &cells,
         &headers,
-        theme.style(Surface::Header),
+        theme.style(Surface::Header).patch(paint::scoped_style(
+            &state.paint,
+            theme,
+            &app.config.palette,
+            paint::PaintScope::Header,
+        )),
     );
+    if let Some(sort) = state.sort {
+        if let Some(index) = state
+            .columns
+            .iter()
+            .position(|column| *column == sort.column)
+        {
+            frame.buffer_mut().set_style(
+                cells[index],
+                Style::default().add_modifier(Modifier::UNDERLINED | Modifier::BOLD),
+            );
+        }
+    }
     let heading =
         cursor.selected > 0 && matches!(rows.get(cursor.selected - 1), Some(Row::Heading { .. }));
     let title_width = state
@@ -247,9 +302,15 @@ fn draw_task_rows(
             + usize::from(matches!(row, Row::Task(_)) && state.row_layout.spaced);
         let selected = cursor.highlight && cursor.scroll + line == cursor.selected;
         match row {
-            Row::Heading { text, depth } => frame.render_widget(
-                Paragraph::new(format!("{}▸ {text}", "  ".repeat(*depth)))
-                    .style(theme.style(Surface::Heading)),
+            Row::Heading { text, depth, value } => frame.render_widget(
+                Paragraph::new(format!("{}▸ {text}", "  ".repeat(*depth))).style(
+                    theme.style(Surface::Heading).patch(paint::scoped_style(
+                        &state.paint,
+                        theme,
+                        &app.config.palette,
+                        paint::PaintScope::Heading(value),
+                    )),
+                ),
                 row_area,
             ),
             Row::Task(index) => {
@@ -282,20 +343,30 @@ fn draw_task_rows(
                         app.cell_for_view(state, *column, task)
                     };
                     let mut style = theme.column_style(*column);
+                    let role = if task.is_done() && *column == Column::Title {
+                        "quiet+struck"
+                    } else if task.priority.eq_ignore_ascii_case("high")
+                        && matches!(column, Column::Title | Column::Priority)
+                    {
+                        "strong"
+                    } else {
+                        ""
+                    };
+                    if let Some(emphasis) = theme.emphasis_style(role, &app.config.palette) {
+                        style = style.patch(emphasis);
+                    }
                     if blocked {
                         style = style.patch(theme.style(Surface::Hint));
                     }
-                    if let Some(color) = paint::cell_color(
+                    style = style.patch(paint::cell_style(
                         &state.paint,
-                        &app.config.palette,
+                        &app.config,
                         registry,
                         task,
                         *column,
                         &app.goals,
                         &app.relations.blocked,
-                    ) {
-                        style = style.fg(color);
-                    }
+                    ));
                     if selected {
                         style = style.patch(theme.style(Surface::Selected));
                     }
@@ -394,10 +465,7 @@ fn fitted_width(
 }
 
 fn table_title(app: &App) -> String {
-    let mut parts: Vec<String> = vec![app.view_label()];
-    if !app.state.filter.is_empty() {
-        parts.push(app.state.filter.clone());
-    }
+    let mut parts: Vec<String> = Vec::new();
     if let Some(sort) = app.state.sort {
         parts.push(sort.label(app.registry()));
     }
@@ -436,7 +504,7 @@ fn table_title(app: &App) -> String {
         0 => {}
         n => parts.push(format!("working:{n}")),
     }
-    parts.push(format!("{}/{}", app.visible.len(), app.total_tasks()));
+
     format!(" {} ", parts.join(" · "))
 }
 
@@ -578,7 +646,7 @@ fn build_detail_lines(
             for body_line in task.description.lines() {
                 lines.push(Line::from(Span::styled(
                     body_line.to_string(),
-                    theme.style(Surface::Hint),
+                    theme.style(Surface::Text),
                 )));
             }
         }
@@ -842,6 +910,10 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
         (":bug <doing>", "file a bug with this screen"),
         (":idea <want>", "file an idea with this screen"),
         (":theme <name>", "how sbt itself looks"),
+        (
+            ":paint <rules>",
+            "replace rules; + combines roles, ! stops; off clears",
+        ),
         (":palette <name>", "colors `auto` paints with"),
         (":view <name>  :reload  :q", ""),
         ("f/s <col#>", "filter/sort by column"),
@@ -1161,6 +1233,9 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                     PaintPick::Column(column) => app.state.paint.iter().any(|rule| {
                         matches!(rule, PaintRule::Column { column: col, color: c } if col == column && c == color)
                     }),
+                    PaintPick::Header => app.state.paint.iter().any(|rule| matches!(rule, PaintRule::Header { color: c } if c == color)),
+                    PaintPick::Title => app.state.paint.iter().any(|rule| matches!(rule, PaintRule::Title { color: c } if c == color)),
+                    PaintPick::Heading(value) => app.state.paint.iter().any(|rule| matches!(rule, PaintRule::Heading { value: v, color: c } if v == value && c == color)),
                 },
                 _ => false,
             };
@@ -1175,20 +1250,20 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
             match (&picker.purpose, &option.payload) {
                 // Show the color itself: this is what the painted text will look like.
                 (PickerPurpose::PaintColor(_), Payload::Text(color)) => {
-                    if let Ok(color) = ratatui::style::Color::from_str(color) {
-                        style = style.fg(color);
+                    if let Some(emphasis) = theme.emphasis_style(color, &app.config.palette) {
+                        style = style.patch(emphasis);
                     }
                 }
                 (PickerPurpose::PaintValues(column), Payload::Text(value)) => {
-                    if let Some(color) = paint::value_color(&app.state.paint, *column, value)
-                        .and_then(|color| paint::resolve_color(&color, &app.config.palette))
+                    if let Some(emphasis) = paint::value_color(&app.state.paint, *column, value)
+                        .and_then(|roles| theme.emphasis_style(&roles, &app.config.palette))
                     {
-                        style = style.fg(color);
+                        style = style.patch(emphasis);
                     }
                 }
                 (PickerPurpose::PaintRules, Payload::Rule(rule)) => {
-                    if let Some(color) = app.state.paint.get(*rule).and_then(|rule| rule.swatch(&app.config.palette)) {
-                        style = style.fg(color);
+                    if let Some(roles) = app.state.paint.get(*rule).and_then(|rule| rule.role_lists().first().copied()) {
+                        style = style.patch(paint::resolve_style(roles, theme, &app.config.palette));
                     }
                 }
                 _ => {}
@@ -1228,14 +1303,14 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         format!("{}▏", picker.number)
     };
     let preview = match picker.purpose {
-        PickerPurpose::PaintColor(_) => ratatui::style::Color::from_str(picker.typed.trim()).ok(),
+        PickerPurpose::PaintColor(_) => {
+            theme.emphasis_style(picker.typed.trim(), &app.config.palette)
+        }
         _ => None,
     };
-    let title_style = match preview {
-        Some(color) => Style::default().fg(color).add_modifier(Modifier::BOLD),
-        None => Style::default(),
-    };
+    let title_style = preview.unwrap_or_default();
     let block = Block::default()
+        .style(theme.canvas_style())
         .borders(Borders::ALL)
         .border_style(theme.style(Surface::Accent))
         .title_style(title_style)
@@ -1331,6 +1406,8 @@ fn picker_title(
         PickerPurpose::PaintValues(column) => format!("by {}", column.name(registry)),
         PickerPurpose::PaintColumn => "paint which column".to_string(),
         PickerPurpose::PaintTarget => "paint".to_string(),
+        PickerPurpose::PaintRowValues => "selected row values".to_string(),
+        PickerPurpose::PaintHeadings => "paint group heading".to_string(),
         PickerPurpose::PaintColor(_) => "color".to_string(),
         PickerPurpose::PaintRules => "paint rules · top is the base".to_string(),
         PickerPurpose::ChoosePaintRule(action) => format!("{action:?} paint rule"),
