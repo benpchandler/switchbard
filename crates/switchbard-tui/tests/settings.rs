@@ -86,7 +86,7 @@ fn theme_command_switches_surfaces_reports_unknown_names_and_yields_to_reload() 
     let dark_border = h.app.config.theme.style(Surface::Border).fg;
     assert_eq!(
         dark_border,
-        Some(Color::Rgb(0x48, 0x3D, 0x34)),
+        Some(Color::Rgb(0x51, 0x48, 0x3f)),
         "border takes the darkroom preset's value"
     );
     assert_ne!(
@@ -110,7 +110,7 @@ fn theme_command_switches_surfaces_reports_unknown_names_and_yields_to_reload() 
         h.type_text(typed);
         h.press(KeyCode::Enter);
         assert_eq!(
-            h.app.status, "theme: one of berg, bloomberg, darkroom, plain",
+            h.app.status, "theme: one of berg, bloomberg, darkroom, light, plain",
             "`:{typed}` should list the presets"
         );
     }

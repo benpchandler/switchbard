@@ -5,7 +5,8 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 
-use ratatui::style::Color;
+use crate::config::Theme;
+use ratatui::style::{Color, Style};
 use switchbard_core::{BacklogTask, GoalDef};
 
 use crate::columns::{Column, ColumnRegistry};
@@ -20,9 +21,25 @@ pub enum PaintRule {
         colors: Vec<(String, String)>,
     },
     /// Every row the filter matches, whole row, wherever it sits.
-    Rows { filter: String, color: String },
+    Rows {
+        filter: String,
+        color: String,
+    },
     /// A whole column, one color, wherever it sits.
-    Column { column: Column, color: String },
+    Column {
+        column: Column,
+        color: String,
+    },
+    Heading {
+        value: String,
+        color: String,
+    },
+    Header {
+        color: String,
+    },
+    Title {
+        color: String,
+    },
 }
 
 /// Distinct colors handed out by `auto`, most common value first.
@@ -72,6 +89,9 @@ impl PaintRule {
                     .join(",")
             ),
             PaintRule::Rows { filter, color } => format!("rows:{filter}={color}"),
+            PaintRule::Heading { value, color } => format!("heading:{value}={color}"),
+            PaintRule::Header { color } => format!("header={color}"),
+            PaintRule::Title { color } => format!("title={color}"),
             PaintRule::Column { column, color } => {
                 format!("column:{}={color}", column.save_name(registry))
             }
@@ -79,36 +99,71 @@ impl PaintRule {
     }
 
     pub fn parse(text: &str, registry: &ColumnRegistry) -> Option<PaintRule> {
-        let (target, rhs) = text.trim().split_once('=')?;
+        Self::try_parse(text, registry).ok()
+    }
+
+    pub fn try_parse(text: &str, registry: &ColumnRegistry) -> Result<PaintRule, String> {
+        let (target, rhs) = text.trim().split_once('=').ok_or("expected target=roles")?;
         if let Some(column) = target.strip_prefix("by:") {
-            let colors = rhs
-                .split(',')
-                .filter_map(|pair| {
-                    let (value, color) = pair.rsplit_once(':')?;
-                    resolve_color(color, &[])?;
-                    Some((value.to_string(), color.to_string()))
-                })
-                .collect();
-            return Some(PaintRule::ByColumn {
-                column: registry.parse(column.trim())?,
+            let colors = parse_value_roles(rhs)?;
+            return Ok(Self::ByColumn {
+                column: registry
+                    .parse(column.trim())
+                    .ok_or("unknown paint column")?,
                 colors,
             });
         }
-        resolve_color(rhs.trim(), &[])?;
+        validate_roles(rhs.trim())?;
         let color = rhs.trim().to_string();
         if let Some(filter) = target.strip_prefix("rows:") {
-            Some(PaintRule::Rows {
+            Ok(Self::Rows {
                 filter: filter.trim().to_string(),
                 color,
             })
         } else if let Some(column) = target.strip_prefix("column:") {
-            Some(PaintRule::Column {
-                column: registry.parse(column.trim())?,
+            Ok(Self::Column {
+                column: registry
+                    .parse(column.trim())
+                    .ok_or("unknown paint column")?,
+                color,
+            })
+        } else if let Some(value) = target.strip_prefix("heading:") {
+            Ok(Self::Heading {
+                value: value.trim().to_string(),
                 color,
             })
         } else {
-            None
+            match target.trim() {
+                "header" => Ok(Self::Header { color }),
+                "title" => Ok(Self::Title { color }),
+                _ => Err("unknown paint target".into()),
+            }
         }
+    }
+
+    pub fn role_lists(&self) -> Vec<&str> {
+        match self {
+            Self::ByColumn { colors, .. } => {
+                colors.iter().map(|(_, roles)| roles.as_str()).collect()
+            }
+            Self::Rows { color, .. }
+            | Self::Column { color, .. }
+            | Self::Heading { color, .. }
+            | Self::Header { color }
+            | Self::Title { color } => vec![color],
+        }
+    }
+
+    pub fn stops(&self) -> bool {
+        let roles = match self {
+            Self::ByColumn { colors, .. } => colors.last().map(|(_, roles)| roles.as_str()),
+            Self::Rows { color, .. }
+            | Self::Column { color, .. }
+            | Self::Heading { color, .. }
+            | Self::Header { color }
+            | Self::Title { color } => Some(color.as_str()),
+        };
+        roles.is_some_and(|roles| roles.trim_end().ends_with('!'))
     }
 
     /// How the rule reads in the hierarchy list.
@@ -118,6 +173,9 @@ impl PaintRule {
                 format!("by {} ({} values)", column.name(registry), colors.len())
             }
             PaintRule::Rows { filter, color } => format!("rows {filter} → {color}"),
+            PaintRule::Heading { value, color } => format!("heading {value} → {color}"),
+            PaintRule::Header { color } => format!("header → {color}"),
+            PaintRule::Title { color } => format!("title → {color}"),
             PaintRule::Column { column, color } => {
                 format!("column {} → {color}", column.name(registry))
             }
@@ -126,14 +184,12 @@ impl PaintRule {
 
     /// A representative color for the list: the first value's, or the rule's own.
     pub fn swatch(&self, palette: &[String]) -> Option<Color> {
-        match self {
-            PaintRule::ByColumn { colors, .. } => colors
-                .first()
-                .and_then(|(_, color)| resolve_color(color, palette)),
-            PaintRule::Rows { color, .. } | PaintRule::Column { color, .. } => {
-                resolve_color(color, palette)
-            }
-        }
+        self.role_lists().first().and_then(|roles| {
+            roles
+                .trim_end_matches('!')
+                .split('+')
+                .find_map(|token| resolve_color(token.trim(), palette))
+        })
     }
 }
 
@@ -232,9 +288,19 @@ pub fn set_value_color(
         }
     };
     if let PaintRule::ByColumn { colors, .. } = &mut rules[index] {
+        let stop = colors.last().is_some_and(|(_, roles)| roles.ends_with('!'))
+            || color.is_some_and(|roles| roles.ends_with('!'));
+        if let Some((_, roles)) = colors.last_mut() {
+            *roles = roles.trim_end_matches('!').to_string();
+        }
         colors.retain(|(known, _)| *known != key);
         if let Some(color) = color {
-            colors.push((key, color.to_string()));
+            colors.push((key, color.trim_end_matches('!').to_string()));
+        }
+        if stop {
+            if let Some((_, roles)) = colors.last_mut() {
+                roles.push('!');
+            }
         }
     }
     if matches!(&rules[index], PaintRule::ByColumn { colors, .. } if colors.is_empty()) {
@@ -247,10 +313,17 @@ pub fn set_rule(rules: &mut Vec<PaintRule>, rule: PaintRule) {
     let same_target = |existing: &PaintRule| match (existing, &rule) {
         (PaintRule::Rows { filter: a, .. }, PaintRule::Rows { filter: b, .. }) => a == b,
         (PaintRule::Column { column: a, .. }, PaintRule::Column { column: b, .. }) => a == b,
+        (PaintRule::Heading { value: a, .. }, PaintRule::Heading { value: b, .. }) => a == b,
+        (PaintRule::Header { .. }, PaintRule::Header { .. })
+        | (PaintRule::Title { .. }, PaintRule::Title { .. }) => true,
         _ => false,
     };
     let color = match &rule {
-        PaintRule::Rows { color, .. } | PaintRule::Column { color, .. } => color.clone(),
+        PaintRule::Rows { color, .. }
+        | PaintRule::Column { color, .. }
+        | PaintRule::Heading { color, .. }
+        | PaintRule::Header { color }
+        | PaintRule::Title { color } => color.clone(),
         PaintRule::ByColumn { .. } => String::new(),
     };
     match rules.iter().position(same_target) {
@@ -272,7 +345,152 @@ pub fn rules_text(rules: &[PaintRule], registry: &ColumnRegistry) -> String {
 }
 
 pub fn parse_rules(text: &str, registry: &ColumnRegistry) -> Vec<PaintRule> {
-    text.split(';')
-        .filter_map(|rule| PaintRule::parse(rule, registry))
+    try_parse_rules(text, registry).unwrap_or_default()
+}
+
+pub fn try_parse_rules(text: &str, registry: &ColumnRegistry) -> Result<Vec<PaintRule>, String> {
+    if text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    if text.len() > 65_536 {
+        return Err("paint rules exceed 64 KiB".into());
+    }
+    let rules = text
+        .split(';')
+        .filter(|rule| !rule.trim().is_empty())
+        .enumerate()
+        .map(|(index, text)| {
+            PaintRule::try_parse(text, registry)
+                .map_err(|error| format!("paint rule {}: {error}", index + 1))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_rules(&rules, registry)?;
+    Ok(rules)
+}
+
+fn parse_value_roles(rhs: &str) -> Result<Vec<(String, String)>, String> {
+    if rhs.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let pairs: Vec<_> = rhs.split(',').collect();
+    pairs
+        .iter()
+        .enumerate()
+        .map(|(index, pair)| {
+            let (value, roles) = pair.rsplit_once(':').ok_or("expected value:roles")?;
+            if value.trim().is_empty() {
+                return Err("paint value cannot be empty".into());
+            }
+            validate_roles(roles.trim())?;
+            if roles.contains('!') && index + 1 != pairs.len() {
+                return Err("stop marker ! must end the entire rule".into());
+            }
+            Ok((value.trim().to_string(), roles.trim().to_string()))
+        })
         .collect()
+}
+
+pub fn validate_roles(roles: &str) -> Result<(), String> {
+    let roles = roles.trim().strip_suffix('!').unwrap_or(roles.trim());
+    for token in roles.split('+') {
+        let token = token.trim();
+        if !crate::config::EMPHASIS_ROLES.contains(&token) && resolve_color(token, &[]).is_none() {
+            return Err(format!("unknown emphasis role or color: {token}"));
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_rules(rules: &[PaintRule], registry: &ColumnRegistry) -> Result<(), String> {
+    crate::paint_eval::validate_rules(rules, registry)
+}
+
+pub fn resolve_style(roles: &str, theme: &Theme, palette: &[String]) -> Style {
+    roles
+        .trim_end_matches('!')
+        .split('+')
+        .fold(Style::default(), |style, token| {
+            style.patch(
+                theme
+                    .emphasis_style(token.trim(), palette)
+                    .unwrap_or_default(),
+            )
+        })
+}
+
+pub fn cell_style_with(
+    rules: &[PaintRule],
+    palette: &[String],
+    theme: &Theme,
+    column: Column,
+    registry: &ColumnRegistry,
+    values: impl Fn(Column) -> Vec<String>,
+    matches: impl Fn(&Filter) -> bool,
+) -> Style {
+    let mut style = Style::default();
+    crate::paint_eval::visit_cell_tokens(rules, column, registry, values, matches, |token| {
+        style = resolve_style(token, theme, palette).patch(style);
+    });
+    style
+}
+
+pub fn cell_style(
+    rules: &[PaintRule],
+    config: &crate::config::Config,
+    registry: &ColumnRegistry,
+    task: &BacklogTask,
+    column: Column,
+    goals: &[GoalDef],
+    blocked: &HashSet<String>,
+) -> Style {
+    cell_style_with(
+        rules,
+        &config.palette,
+        &config.theme,
+        column,
+        registry,
+        |target| {
+            let values = target.values(registry, task, goals, blocked);
+            if target.is_date() {
+                values
+            } else {
+                values.into_iter().take(1).collect()
+            }
+        },
+        |filter| filter.matches(registry, task, goals, blocked),
+    )
+}
+
+pub enum PaintScope<'a> {
+    Heading(&'a str),
+    Header,
+    Title,
+}
+
+pub fn scoped_style(
+    rules: &[PaintRule],
+    theme: &Theme,
+    palette: &[String],
+    scope: PaintScope<'_>,
+) -> Style {
+    let mut style = Style::default();
+    for rule in rules.iter().rev() {
+        let roles = match (rule, &scope) {
+            (PaintRule::Heading { value, color }, PaintScope::Heading(heading))
+                if value == "*" || Filter::loose_key(value) == Filter::loose_key(heading) =>
+            {
+                Some(color)
+            }
+            (PaintRule::Header { color }, PaintScope::Header)
+            | (PaintRule::Title { color }, PaintScope::Title) => Some(color),
+            _ => None,
+        };
+        if let Some(roles) = roles {
+            style = resolve_style(roles, theme, palette).patch(style);
+            if rule.stops() {
+                break;
+            }
+        }
+    }
+    style
 }

@@ -12,15 +12,14 @@ use ratatui::style::{Color, Modifier, Style};
 use crate::columns::{Column, ColumnRegistry};
 
 const DEFAULT_LUA: &str = include_str!("default.lua");
+pub const EMPHASIS_ROLES: [&str; 5] = ["quiet", "strong", "alert", "band", "struck"];
 /// A working row pulses: bright, fading out, fading back in, once per period,
 /// redrawn `frames` times per period.
 const DEFAULT_WORK_PERIOD_MS: u64 = 3000;
 const DEFAULT_WORK_FRAMES: u64 = 30;
-/// How far the text on a working row is lifted toward white at the peak of the
-/// pulse: 1 would reach pure white. The trough is the text's own rest colour.
-/// It is never pushed the other way: darkening a warm foreground is what makes
-/// a colour brown, and a row that browns reads as broken, not as breathing.
-const WORKING_TEXT_LIFT: f64 = 0.55;
+/// A small lift toward the theme's ink pole accompanies the working band.
+/// Dark canvases lift toward white; light canvases deepen toward black.
+const WORKING_TEXT_LIFT: f64 = 0.12;
 /// How hard the pulse is clipped: 0 is a pure sine, larger holds the peak and the dark longer.
 const DEFAULT_WORK_FLATTEN: f64 = 2.0;
 
@@ -95,6 +94,8 @@ pub enum Surface {
     TitleRepo,
     /// The rest of the title: view, filter, sort, counts.
     Title,
+    NavigationActive,
+    Context,
     Border,
     /// The numbered column header row.
     Header,
@@ -120,7 +121,7 @@ pub enum Surface {
     Status,
     /// Picker highlight, cursors, checkmarks.
     Accent,
-    /// A row a live agent session is working, on the lit half of the blink.
+    /// A row a live agent session is working, visible throughout its pulse.
     Working,
 }
 
@@ -129,6 +130,8 @@ impl Surface {
         Some(match name {
             "title_repo" => Surface::TitleRepo,
             "title" => Surface::Title,
+            "navigation_active" => Surface::NavigationActive,
+            "context" => Surface::Context,
             "border" => Surface::Border,
             "header" => Surface::Header,
             "heading" => Surface::Heading,
@@ -152,42 +155,92 @@ impl Surface {
 pub struct Theme {
     styles: HashMap<Surface, Style>,
     columns: HashMap<Column, Surface>,
+    emphasis: HashMap<String, Style>,
+    background: Option<Color>,
 }
 
 impl Theme {
-    /// The `working` surface at `glow` brightness (0 dark, 1 full): an RGB
-    /// background fades toward black and disappears when nearly dark; a
-    /// surface without an RGB background is simply on above half brightness.
+    fn fill_emphasis_defaults(&mut self) {
+        for role in EMPHASIS_ROLES {
+            let configured = self.emphasis.get(role).copied().unwrap_or_default();
+            let base = match role {
+                "quiet" => match configured.fg.or(self.style(Surface::Hint).fg) {
+                    Some(fg) => Style::default().fg(fg),
+                    None => Style::default().add_modifier(Modifier::DIM),
+                },
+                "strong" => Style::default().add_modifier(Modifier::BOLD),
+                "alert" => {
+                    let mut style = Style::default().add_modifier(Modifier::BOLD);
+                    style.fg = self.style(Surface::Accent).fg;
+                    style
+                }
+                "band" => match configured.bg.or(self.style(Surface::Working).bg) {
+                    Some(bg) => Style::default().bg(bg),
+                    None => Style::default().add_modifier(Modifier::REVERSED),
+                },
+                "struck" => Style::default().add_modifier(Modifier::CROSSED_OUT),
+                _ => unreachable!("the emphasis role vocabulary is fixed"),
+            };
+            self.emphasis
+                .insert(role.to_string(), base.patch(configured));
+        }
+    }
+
+    /// The declared canvas color. Plain themes leave the terminal in control.
+    pub fn background(&self) -> Option<Color> {
+        self.background
+    }
+
+    pub fn canvas_style(&self) -> Style {
+        let style = self.style(Surface::Text);
+        self.background
+            .map_or(style, |background| style.bg(background))
+    }
+
+    /// Compose semantic roles and legacy colors in order. The paint layer owns
+    /// the trailing importance marker; it does not change a role's appearance.
+    pub fn emphasis_style(&self, token: &str, palette: &[String]) -> Option<Style> {
+        let mut style = Style::default();
+        for part in token.split('+') {
+            let part = part.trim().trim_end_matches('!');
+            let next = self.emphasis.get(part).copied().or_else(|| {
+                crate::paint::resolve_color(part, palette).map(|color| Style::default().fg(color))
+            })?;
+            style = style.patch(next);
+        }
+        Some(style)
+    }
+
+    /// A claimed row keeps its band and modifiers throughout the cycle. Its
+    /// linear-light luminance changes by 20%, never disappearing at the trough.
     pub fn working_style(&self, glow: f64) -> Style {
         let full = self.style(Surface::Working);
         match full.bg {
             Some(Color::Rgb(r, g, b)) => {
-                if glow < 0.04 {
-                    return Style::default();
-                }
-                let scale = |channel: u8| (f64::from(channel) * glow).round() as u8;
-                full.bg(Color::Rgb(scale(r), scale(g), scale(b)))
+                let scale = (0.8 + 0.2 * glow.clamp(0.0, 1.0)).powf(1.0 / 2.4);
+                let channel = |value: u8| (f64::from(value) * scale).round() as u8;
+                full.bg(Color::Rgb(channel(r), channel(g), channel(b)))
             }
-            _ if glow >= 0.5 => full,
-            _ => Style::default(),
+            _ => full,
         }
     }
 
-    /// The text colour on a working row at `glow`: an RGB colour is lifted
-    /// toward white as the band brightens and sits at its own rest colour in
-    /// the trough; anything else is left alone. `None` (terminal default) is
-    /// taken as a mid gray so the breathing still shows. The band carries the
-    /// dark half of the pulse on its own, so the text never goes below rest.
+    /// Preserve rest ink at the trough, then increase its contrast gently.
+    /// Terminal-owned foregrounds remain terminal-owned throughout the cycle.
     pub fn working_fg(&self, rest: Option<Color>, glow: f64) -> Color {
         let (r, g, b) = match rest {
             Some(Color::Rgb(r, g, b)) => (r, g, b),
             Some(other) => return other,
-            None => (0xb0, 0xb0, 0xb0),
+            None => return Color::Reset,
         };
         let lift = glow.clamp(0.0, 1.0) * WORKING_TEXT_LIFT;
+        let target = match self.background {
+            Some(Color::Rgb(r, g, b)) if u32::from(r) + u32::from(g) + u32::from(b) > 384 => 0.0,
+            _ => 255.0,
+        };
         let channel = |value: u8| {
             let value = f64::from(value);
-            (value + (255.0 - value) * lift).round() as u8
+            (value + (target - value) * lift).round() as u8
         };
         Color::Rgb(channel(r), channel(g), channel(b))
     }
@@ -218,14 +271,26 @@ type RawTheme = (HashMap<String, RawStyle>, HashMap<String, String>);
 struct RawStyle {
     fg: Option<String>,
     bg: Option<String>,
-    bold: bool,
-    underline: bool,
-    italic: bool,
-    dim: bool,
-    reverse: bool,
+    bold: Option<bool>,
+    underline: Option<bool>,
+    italic: Option<bool>,
+    dim: Option<bool>,
+    reverse: Option<bool>,
+    strikethrough: Option<bool>,
 }
 
 impl RawStyle {
+    fn overlay(&mut self, other: RawStyle) {
+        self.fg = other.fg.or(self.fg.take());
+        self.bg = other.bg.or(self.bg.take());
+        self.bold = other.bold.or(self.bold);
+        self.underline = other.underline.or(self.underline);
+        self.italic = other.italic.or(self.italic);
+        self.dim = other.dim.or(self.dim);
+        self.reverse = other.reverse.or(self.reverse);
+        self.strikethrough = other.strikethrough.or(self.strikethrough);
+    }
+
     fn from_value(value: Value) -> mlua::Result<RawStyle> {
         match value {
             Value::String(text) => Ok(RawStyle {
@@ -235,11 +300,12 @@ impl RawStyle {
             Value::Table(table) => Ok(RawStyle {
                 fg: table.get::<Option<String>>("fg")?,
                 bg: table.get::<Option<String>>("bg")?,
-                bold: table.get::<Option<bool>>("bold")?.unwrap_or(false),
-                underline: table.get::<Option<bool>>("underline")?.unwrap_or(false),
-                italic: table.get::<Option<bool>>("italic")?.unwrap_or(false),
-                dim: table.get::<Option<bool>>("dim")?.unwrap_or(false),
-                reverse: table.get::<Option<bool>>("reverse")?.unwrap_or(false),
+                bold: table.get::<Option<bool>>("bold")?,
+                underline: table.get::<Option<bool>>("underline")?,
+                italic: table.get::<Option<bool>>("italic")?,
+                dim: table.get::<Option<bool>>("dim")?,
+                reverse: table.get::<Option<bool>>("reverse")?,
+                strikethrough: table.get::<Option<bool>>("strikethrough")?,
             }),
             other => Err(mlua::Error::runtime(format!(
                 "a theme entry is a color string or a table, not {}",
@@ -272,9 +338,12 @@ impl RawStyle {
             (self.italic, Modifier::ITALIC),
             (self.dim, Modifier::DIM),
             (self.reverse, Modifier::REVERSED),
+            (self.strikethrough, Modifier::CROSSED_OUT),
         ] {
-            if on {
-                style = style.add_modifier(modifier);
+            match on {
+                Some(true) => style = style.add_modifier(modifier),
+                Some(false) => style = style.remove_modifier(modifier),
+                None => {}
             }
         }
         style
@@ -370,7 +439,15 @@ pub fn load(user_path: Option<&Path>, registry: &ColumnRegistry) -> Config {
             Err(error) => warnings.push(format!("{}: {error}", path.display())),
         }
     }
-    raw.into_config(warnings, registry)
+    let mut config = raw.into_config(warnings, registry);
+    if let Some(path) = user_path {
+        for warning in &mut config.warnings {
+            if !warning.starts_with(&path.display().to_string()) {
+                *warning = format!("{}: {warning}", path.display());
+            }
+        }
+    }
+    config
 }
 
 /// `work = { <key> = <ms> }`, absent when the table or key is missing.
@@ -505,7 +582,9 @@ impl RawConfig {
             },
             None => (HashMap::new(), HashMap::new()),
         };
-        raw_styles.extend(self.theme);
+        for (name, style) in self.theme {
+            raw_styles.entry(name).or_default().overlay(style);
+        }
         raw_columns.extend(self.theme_columns);
 
         // Every preset is resolved, not just the selected one, so `:theme` can
@@ -638,7 +717,34 @@ fn resolve_theme(
     registry: &ColumnRegistry,
 ) -> Theme {
     let mut styles = HashMap::new();
-    for (name, raw) in raw_styles {
+    let mut emphasis = HashMap::new();
+    let mut background = None;
+    for (name, mut raw) in raw_styles {
+        if name == "background" {
+            background = raw.into_style(&name, warnings).fg;
+            continue;
+        }
+        if let Some(role) = name.strip_prefix("emphasis.") {
+            if EMPHASIS_ROLES.contains(&role) {
+                if role != "band" {
+                    if raw.bg.take().is_some() {
+                        warnings.push(format!(
+                            "theme.emphasis.{role}.bg is reserved for the band role"
+                        ));
+                    }
+                    if raw.reverse == Some(true) {
+                        raw.reverse = None;
+                        warnings.push(format!(
+                            "theme.emphasis.{role}.reverse is reserved for the band role"
+                        ));
+                    }
+                }
+                emphasis.insert(role.to_string(), raw.into_style(&name, warnings));
+            } else {
+                warnings.push(format!("unknown theme.emphasis.{role}"));
+            }
+            continue;
+        }
         match Surface::parse(&name) {
             Some(surface) => {
                 styles.insert(surface, raw.into_style(&name, warnings));
@@ -657,7 +763,14 @@ fn resolve_theme(
             )),
         }
     }
-    Theme { styles, columns }
+    let mut theme = Theme {
+        styles,
+        columns,
+        emphasis,
+        background,
+    };
+    theme.fill_emphasis_defaults();
+    theme
 }
 
 /// `theme = { surface = "color" | { fg=, bg=, bold= ... }, columns = { id = "label" } }`.
@@ -676,7 +789,20 @@ fn surface_map(theme: &Table) -> mlua::Result<HashMap<String, RawStyle>> {
         if name == "columns" {
             continue;
         }
-        out.insert(name, RawStyle::from_value(value)?);
+        if name == "emphasis" {
+            let Value::Table(roles) = value else {
+                return Err(mlua::Error::runtime("theme.emphasis must be a table"));
+            };
+            for pair in roles.pairs::<String, Value>() {
+                let (role, value) = pair?;
+                let style = RawStyle::from_value(value).map_err(|error| {
+                    mlua::Error::runtime(format!("theme.emphasis.{role}: {error}"))
+                })?;
+                out.insert(format!("emphasis.{role}"), style);
+            }
+        } else {
+            out.insert(name, RawStyle::from_value(value)?);
+        }
     }
     Ok(out)
 }

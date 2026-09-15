@@ -62,6 +62,10 @@ fn draw_header(
         picker.typed
     );
     frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new("").style(app.config.theme.canvas_style()),
+        area,
+    );
     if area.height < 9 {
         frame.render_widget(
             Paragraph::new(title).style(app.config.theme.style(Surface::Accent)),

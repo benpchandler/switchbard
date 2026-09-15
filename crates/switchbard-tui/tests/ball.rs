@@ -56,7 +56,10 @@ fn ball_filters_sorts_and_the_starter_view_is_my_inbox() {
     let mine = h.app.selected_task().unwrap().title.clone();
     h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('5'));
-    assert!(screen.contains("v5 · ball:me · 1/3"), "{screen}");
+    assert!(
+        screen.contains("v5") && screen.contains("/ ball:me") && screen.contains("1/3 shown"),
+        "{screen}"
+    );
     assert!(screen.contains(&mine), "{screen}");
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('1'));

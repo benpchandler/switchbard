@@ -40,7 +40,7 @@ fn p_lists_columns_first_then_row_filtered_column_and_hidden_fields() {
 }
 
 /// TASK-209 wave-1 finding: with both `blocked` and `due` added, the paint
-/// target picker lists 13 entries, which overflows the 100x20 test
+/// target picker lists 16 entries, which overflows the 100x20 test
 /// terminal's box — the in-box "number or letter picks · esc" hint line
 /// scrolls off with the option rows. The overflow footer (`↑↓ →open ←back
 /// Esc · pos/total`) must keep the hint reachable rather than silently
@@ -69,7 +69,7 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
     h.press(KeyCode::Char('1'));
     let screen = h.press(KeyCode::Esc);
     assert!(
-        screen.contains("paint:1 ·"),
+        screen.contains("paint:1"),
         "one rule holds every status color: {screen}"
     );
     assert_eq!(
@@ -97,7 +97,7 @@ fn p11_paints_rows_by_status_and_h21_layers_priority_on_its_own_cells() {
         "h goes back to the target list: {screen}"
     );
     let screen = h.press(KeyCode::Esc);
-    assert!(screen.contains("paint:2 ·"), "{screen}");
+    assert!(screen.contains("paint:2"), "{screen}");
     assert_eq!(
         cell_fg(&h, "Add dark theme"),
         Some(Color::Rgb(0xf4, 0x9f, 0x31)),
@@ -198,7 +198,7 @@ fn hand_picked_values_row_and_column_and_hex_and_clearing() {
     assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Green));
     assert_eq!(
         cell_fg(&h, "Fix login"),
-        Some(Color::Rgb(0xf4, 0x9f, 0x31)),
+        Some(Color::Rgb(0xff, 0xd1, 0x90)),
         "In Progress unpainted: the theme's text surface"
     );
 
@@ -346,7 +346,7 @@ fn palette_presets_swap_live_and_recolor_auto_painted_values() {
     h.press(KeyCode::Enter);
     assert_eq!(
         h.app.status,
-        "palette: one of balanced, berg, bloomberg, darkroom, muted, vivid"
+        "palette: one of balanced, berg, bloomberg, darkroom, light, muted, vivid"
     );
 }
 

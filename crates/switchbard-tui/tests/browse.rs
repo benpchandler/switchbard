@@ -13,7 +13,13 @@ fn lists_every_task_with_repo_name_and_count() {
     let screen = h.render();
     assert!(screen.contains("Fix login redirect loop"), "{screen}");
     assert!(screen.contains("Add dark theme"), "{screen}");
-    assert!(screen.contains("v1 · 3/3"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("3/3 shown") && context.contains(" v1 ")),
+        "{screen}"
+    );
 }
 
 #[test]
@@ -109,7 +115,13 @@ fn a_view_survives_a_restart_into_a_build_with_a_field_this_one_lacks() {
     h.type_text("labels:ui");
     h.press(KeyCode::Enter);
     let live = h.render();
-    assert!(live.contains("custom · status:todo labels:ui"), "{live}");
+    assert!(
+        live.lines()
+            .nth(1)
+            .is_some_and(|context| context.contains(" custom ")
+                && context.contains("/ status:todo labels:ui")),
+        "{live}"
+    );
 
     // The next build writes the same named record plus one field of its own.
     let record = h.app.resume_state();

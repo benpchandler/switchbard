@@ -18,7 +18,13 @@ fn s_then_column_offers_semantic_and_plain_orders() {
     assert!(screen.contains("2  ascending"), "{screen}");
     assert!(screen.contains("4 ✓none"), "{screen}");
     let screen = h.press(KeyCode::Char('1'));
-    assert!(screen.contains("≈pri · 3/3"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("3/3 shown") && context.contains("≈pri")),
+        "{screen}"
+    );
     assert_eq!(
         visible_titles(&h),
         [
@@ -35,7 +41,10 @@ fn s_then_column_offers_semantic_and_plain_orders() {
     h.press(KeyCode::Char('s'));
     h.press(KeyCode::Char('3'));
     let screen = h.type_text("n");
-    assert!(!screen.contains("pri ·"), "sort cleared: {screen}");
+    assert!(
+        !screen.contains("≈pri") && !screen.contains("↑pri") && !screen.contains("↓pri"),
+        "sort cleared: {screen}"
+    );
     assert_eq!(visible_titles(&h)[0], "Fix login redirect loop");
 }
 
@@ -51,7 +60,13 @@ fn sort_survives_filtering_and_title_sorts_alphabetically() {
     h.press(KeyCode::Enter);
     let screen = h.render();
     assert!(
-        screen.contains("custom · status:todo · ↑title · 2/3"),
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("2/3 shown")
+                && context.contains(" custom ")
+                && context.contains("/ status:todo")
+                && context.contains("↑title")),
         "{screen}"
     );
     assert_eq!(

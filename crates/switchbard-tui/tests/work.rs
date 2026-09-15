@@ -73,7 +73,7 @@ fn a_live_session_lights_its_row_and_a_dead_one_is_forgotten() {
     );
     assert_eq!(
         cell_bg(&h, &title),
-        Some(ratatui::style::Color::Rgb(0x2a, 0x6b, 0x5a)),
+        Some(ratatui::style::Color::Rgb(0x16, 0x3b, 0x30)),
         "the row wears the berg working band at full glow"
     );
     let rest = cell_fg(&h, "Write onboarding guide").unwrap();
@@ -262,6 +262,28 @@ fn the_band_pulses_through_brightness_levels_and_help_lists_pass() {
     assert!(
         seen.len() >= 4,
         "the band fades through several levels: {seen:?}"
+    );
+    let canvas = h.app.config.theme.background().unwrap();
+    assert!(
+        seen.iter()
+            .all(|color| color.is_some_and(|value| value != canvas)),
+        "every frame must retain the working band: {seen:?}"
+    );
+    let luminance = |color: &Option<ratatui::style::Color>| match color {
+        Some(ratatui::style::Color::Rgb(r, g, b)) => {
+            [(*r, 0.2126729), (*g, 0.7151522), (*b, 0.0721750)]
+                .into_iter()
+                .map(|(channel, weight)| (f64::from(channel) / 255.0).powf(2.4) * weight)
+                .sum::<f64>()
+        }
+        other => panic!("expected exact band color, got {other:?}"),
+    };
+    let minimum = seen.iter().map(luminance).fold(f64::INFINITY, f64::min);
+    let maximum = seen.iter().map(luminance).fold(0.0, f64::max);
+    let swing = 1.0 - minimum / maximum;
+    assert!(
+        (0.15..=0.25).contains(&swing),
+        "band luminance swing {swing}"
     );
     let help = h.press(KeyCode::Char('?'));
     assert!(help.contains("pass"), "{help}");

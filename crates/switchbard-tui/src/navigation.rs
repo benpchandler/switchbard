@@ -22,6 +22,15 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         (Page::Agents, "Agents"),
         (Page::Inbox, "Inbox"),
     ];
+    let theme = &app.config.theme;
+    let title_style = theme
+        .style(Surface::Title)
+        .patch(crate::paint::scoped_style(
+            &app.state.paint,
+            theme,
+            &app.config.palette,
+            crate::paint::PaintScope::Title,
+        ));
     let mut spans = Vec::with_capacity(10);
     for (page, label) in labels {
         let active = page == app.page;
@@ -31,9 +40,11 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 format!(" {label} ")
             },
-            app.config
-                .theme
-                .style(if active { Surface::Chip } else { Surface::Hint }),
+            if active {
+                title_style.patch(theme.style(Surface::NavigationActive))
+            } else {
+                title_style
+            },
         ));
         if page == Page::PullRequests {
             spans.push(Span::raw(" "));
@@ -53,7 +64,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         line.spans
             .push(Span::styled(hint, app.config.theme.style(Surface::Keys)));
     }
-    frame.render_widget(Paragraph::new(line), area);
+    frame.render_widget(Paragraph::new(line).style(title_style), area);
 }
 
 /// Sessions in this repo waiting on the reader, on the attention surface

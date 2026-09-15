@@ -24,7 +24,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 fn draw_list(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Pull Requests ")
+        .title(ratatui::text::Span::styled(
+            " Pull Requests ",
+            app.config
+                .theme
+                .style(Surface::Title)
+                .patch(crate::paint::scoped_style(
+                    &app.state.paint,
+                    &app.config.theme,
+                    &app.config.palette,
+                    crate::paint::PaintScope::Title,
+                )),
+        ))
         .border_style(app.config.theme.style(Surface::Border));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -217,7 +228,28 @@ fn draw_cells(
 ) {
     let widths = column_widths(app, &app.state, rect.width);
     let cells = crate::list_presentation::cells(rect, &widths);
+    let style = style.patch(crate::paint::scoped_style(
+        &app.state.paint,
+        &app.config.theme,
+        &app.config.palette,
+        crate::paint::PaintScope::Header,
+    ));
     crate::list_presentation::header(frame, rect, &cells, texts, style);
+    if let Some(sort) = app.state.sort {
+        if let Some(index) = app
+            .state
+            .columns
+            .iter()
+            .position(|column| *column == sort.column)
+        {
+            frame.buffer_mut().set_style(
+                cells[index],
+                ratatui::style::Style::default().add_modifier(
+                    ratatui::style::Modifier::UNDERLINED | ratatui::style::Modifier::BOLD,
+                ),
+            );
+        }
+    }
 }
 
 pub(crate) fn column_widths(
@@ -303,16 +335,15 @@ pub(crate) fn draw_row(
     let cells = crate::list_presentation::cells(rect, &column_widths(app, state, rect.width));
     for ((column, text), cell) in state.columns.iter().zip(&texts).zip(cells.iter()) {
         let mut style = app.config.theme.column_style(*column);
-        if let Some(color) = crate::paint::cell_color_with(
+        style = style.patch(crate::paint::cell_style_with(
             &state.paint,
             &app.config.palette,
+            &app.config.theme,
             *column,
             app.registry(),
             |column| app.pull_requests.values(column, row),
             |filter| app.pull_requests.matches(filter, row),
-        ) {
-            style = style.fg(color);
-        }
+        ));
         if selected {
             style = style.patch(app.config.theme.style(Surface::Selected));
         }
