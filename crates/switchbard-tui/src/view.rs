@@ -1,10 +1,9 @@
 //! Rendering. Reads `App`, writes a frame, and leaves a text copy of the screen behind.
 
+mod detail_content;
 mod history_picker;
 mod history_preview;
 pub(crate) mod history_title;
-
-use std::str::FromStr;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -25,6 +24,10 @@ use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    frame.render_widget(
+        Paragraph::new("").style(app.config.theme.canvas_style()),
+        frame.area(),
+    );
     let footer_height = match app.mode {
         Mode::NewTask => 3,
         Mode::DetailInput(_) => 2,
@@ -62,6 +65,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     draw_footer(frame, app, footer);
     app.pr_merge.confirmation_visible = false;
+    app.task_cancel.confirmation_visible = false;
     if let Some(picker) = app.picker.clone() {
         draw_picker(frame, app, &picker, body);
     }
@@ -105,9 +109,45 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_default();
+    let budget = usize::from(area.width / 3).clamp(3, 24);
+    let repo = if repo.chars().count() > budget {
+        format!(
+            "{}…",
+            repo.chars()
+                .take(budget.saturating_sub(1))
+                .collect::<String>()
+        )
+    } else {
+        repo
+    };
+    let title_paint = paint::scoped_style(
+        &app.state.paint,
+        &theme,
+        &app.config.palette,
+        paint::PaintScope::Title,
+    );
     let title = Line::from(vec![
         Span::styled(format!(" {repo} "), theme.style(Surface::TitleRepo)),
-        Span::styled(table_title(app), theme.style(Surface::Title)),
+        Span::styled(
+            format!(" {}/{} shown ", app.visible.len(), app.total_tasks()),
+            theme.style(Surface::Header),
+        ),
+        Span::styled(
+            format!(" {} ", app.view_label()),
+            theme.style(Surface::Title).patch(title_paint),
+        ),
+        Span::styled(
+            if app.state.filter.is_empty() {
+                String::new()
+            } else {
+                format!(" / {} ", app.state.filter)
+            },
+            theme.style(Surface::Context),
+        ),
+        Span::styled(
+            table_title(app),
+            theme.style(Surface::Hint).patch(title_paint),
+        ),
     ]);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -181,8 +221,25 @@ fn draw_task_rows(
         header_area,
         &cells,
         &headers,
-        theme.style(Surface::Header),
+        theme.style(Surface::Header).patch(paint::scoped_style(
+            &state.paint,
+            theme,
+            &app.config.palette,
+            paint::PaintScope::Header,
+        )),
     );
+    if let Some(sort) = state.sort {
+        if let Some(index) = state
+            .columns
+            .iter()
+            .position(|column| *column == sort.column)
+        {
+            frame.buffer_mut().set_style(
+                cells[index],
+                Style::default().add_modifier(Modifier::UNDERLINED | Modifier::BOLD),
+            );
+        }
+    }
     let heading =
         cursor.selected > 0 && matches!(rows.get(cursor.selected - 1), Some(Row::Heading { .. }));
     let title_width = state
@@ -245,9 +302,15 @@ fn draw_task_rows(
             + usize::from(matches!(row, Row::Task(_)) && state.row_layout.spaced);
         let selected = cursor.highlight && cursor.scroll + line == cursor.selected;
         match row {
-            Row::Heading { text, depth } => frame.render_widget(
-                Paragraph::new(format!("{}▸ {text}", "  ".repeat(*depth)))
-                    .style(theme.style(Surface::Heading)),
+            Row::Heading { text, depth, value } => frame.render_widget(
+                Paragraph::new(format!("{}▸ {text}", "  ".repeat(*depth))).style(
+                    theme.style(Surface::Heading).patch(paint::scoped_style(
+                        &state.paint,
+                        theme,
+                        &app.config.palette,
+                        paint::PaintScope::Heading(value),
+                    )),
+                ),
                 row_area,
             ),
             Row::Task(index) => {
@@ -280,20 +343,29 @@ fn draw_task_rows(
                         app.cell_for_view(state, *column, task)
                     };
                     let mut style = theme.column_style(*column);
+                    let role = match column {
+                        Column::Title if task.is_done() => "quiet+struck",
+                        Column::Priority if task.is_done() => "quiet",
+                        Column::Title if task.priority.eq_ignore_ascii_case("high") => "strong",
+                        Column::Priority if task.priority.eq_ignore_ascii_case("high") => "alert",
+                        Column::Priority if task.priority.eq_ignore_ascii_case("low") => "quiet",
+                        _ => "",
+                    };
+                    if let Some(emphasis) = theme.emphasis_style(role, &app.config.palette) {
+                        style = style.patch(emphasis);
+                    }
                     if blocked {
                         style = style.patch(theme.style(Surface::Hint));
                     }
-                    if let Some(color) = paint::cell_color(
+                    style = style.patch(paint::cell_style(
                         &state.paint,
-                        &app.config.palette,
+                        &app.config,
                         registry,
                         task,
                         *column,
                         &app.goals,
                         &app.relations.blocked,
-                    ) {
-                        style = style.fg(color);
-                    }
+                    ));
                     if selected {
                         style = style.patch(theme.style(Surface::Selected));
                     }
@@ -392,10 +464,7 @@ fn fitted_width(
 }
 
 fn table_title(app: &App) -> String {
-    let mut parts: Vec<String> = vec![app.view_label()];
-    if !app.state.filter.is_empty() {
-        parts.push(app.state.filter.clone());
-    }
+    let mut parts: Vec<String> = Vec::new();
     if let Some(sort) = app.state.sort {
         parts.push(sort.label(app.registry()));
     }
@@ -437,7 +506,7 @@ fn table_title(app: &App) -> String {
         0 => {}
         n => parts.push(format!("working:{n}")),
     }
-    parts.push(format!("{}/{}", app.visible.len(), app.total_tasks()));
+
     format!(" {} ", parts.join(" · "))
 }
 
@@ -458,12 +527,19 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     };
     let rows = app.detail_rows();
-    let (lines, row_lines) =
-        build_detail_lines(app, &task, &theme, focused, app.detail_cursor, &rows);
+    let DetailLines {
+        lines,
+        row_lines,
+        section_lines,
+    } = build_detail_lines(app, &task, &theme, focused, app.detail_cursor, &rows);
     let width = area.width.saturating_sub(2);
     app.detail_hit.row_starts = row_lines
         .iter()
         .map(|&line_index| wrapped_offset(&lines, line_index, width))
+        .collect();
+    app.detail_hit.section_starts = section_lines
+        .into_iter()
+        .map(|(line, section)| (wrapped_offset(&lines, line, width), section))
         .collect();
     if focused {
         adjust_detail_scroll(app, &lines, &row_lines, &rows, &task.id, area);
@@ -479,6 +555,12 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
 /// cursor row when focused. `row_lines[n]` is the index into the returned
 /// `lines` for `FieldRow` number `n`, since a section header or a body line
 /// is not itself a navigable row.
+struct DetailLines {
+    lines: Vec<Line<'static>>,
+    row_lines: Vec<usize>,
+    section_lines: Vec<(usize, crate::detail_pane::Section)>,
+}
+
 fn build_detail_lines(
     app: &App,
     task: &switchbard_core::BacklogTask,
@@ -486,9 +568,10 @@ fn build_detail_lines(
     focused: bool,
     cursor: usize,
     rows: &[FieldRow],
-) -> (Vec<Line<'static>>, Vec<usize>) {
+) -> DetailLines {
     let mut lines: Vec<Line> = Vec::new();
     let mut row_lines: Vec<usize> = Vec::new();
+    let mut section_lines = Vec::new();
     let mut header = task.id.clone();
     if !task.editable() {
         header.push_str(" · read-only");
@@ -507,31 +590,50 @@ fn build_detail_lines(
         )));
     }
     lines.push(Line::from(""));
-    let (mut acceptance_seen, mut blocked_seen, mut blocks_seen) = (false, false, false);
+    let mut previous_section = None;
     for (index, row) in rows.iter().enumerate() {
-        match row {
-            FieldRow::Acceptance(_) if !acceptance_seen => {
-                acceptance_seen = true;
-                lines.push(Line::from(""));
-                lines.push(crate::detail_pane::section("acceptance", theme));
+        let section = row.section();
+        if previous_section != Some(section) {
+            section_lines.push((lines.len(), section));
+            let marker = if app.detail_collapsed.contains(&section) {
+                ">"
+            } else {
+                "v"
+            };
+            let mut style = theme.style(Surface::Accent);
+            if focused && index == cursor && matches!(row, FieldRow::Section(_)) {
+                style = theme.style(Surface::Selected).patch(style);
             }
-            FieldRow::BlockedBy(_) if !blocked_seen => {
-                blocked_seen = true;
-                lines.push(Line::from(""));
-                lines.push(crate::detail_pane::section("blocked by", theme));
+            lines.push(Line::from(Span::styled(
+                format!("{marker} {}", section.label()),
+                style,
+            )));
+            previous_section = Some(section);
+        }
+        if matches!(row, FieldRow::Section(_)) {
+            row_lines.push(lines.len() - 1);
+            continue;
+        }
+        if let FieldRow::Content(section) = row {
+            row_lines.push(lines.len());
+            let style = if focused && index == cursor {
+                theme.style(Surface::Selected)
+            } else {
+                theme.style(Surface::Hint)
+            };
+            for text in detail_content::lines(app, task, *section) {
+                for line in text.lines() {
+                    lines.push(Line::from(Span::styled(line.to_string(), style)));
+                }
             }
-            FieldRow::Blocks(_) if !blocks_seen => {
-                blocks_seen = true;
-                lines.push(Line::from(""));
-                lines.push(crate::detail_pane::section("blocks", theme));
-            }
-            _ => {}
+            continue;
         }
         let text = detail_row_text(app, task, *row);
         let mut style = match row {
-            FieldRow::Description | FieldRow::BlockedBy(_) | FieldRow::Blocks(_) => {
-                theme.style(Surface::Hint)
-            }
+            FieldRow::Description
+            | FieldRow::Content(_)
+            | FieldRow::BlockedBy(_)
+            | FieldRow::Blocks(_) => theme.style(Surface::Hint),
             _ => Style::default(),
         };
         if *row == FieldRow::Title {
@@ -546,12 +648,16 @@ fn build_detail_lines(
             for body_line in task.description.lines() {
                 lines.push(Line::from(Span::styled(
                     body_line.to_string(),
-                    theme.style(Surface::Hint),
+                    theme.style(Surface::Text),
                 )));
             }
         }
     }
-    (lines, row_lines)
+    DetailLines {
+        lines,
+        row_lines,
+        section_lines,
+    }
 }
 
 /// Keep the cursor row's own line inside the viewport, scrolling up or down
@@ -583,7 +689,10 @@ fn adjust_detail_scroll(
     let anchor = (task_id.to_string(), app.detail_cursor);
     let settled = app.detail_scroll_anchor.as_ref() == Some(&anchor);
     app.detail_scroll_anchor = Some(anchor);
-    let long_content = matches!(rows.get(app.detail_cursor), Some(FieldRow::Description));
+    let long_content = matches!(
+        rows.get(app.detail_cursor),
+        Some(FieldRow::Description | FieldRow::Content(_))
+    );
     if offset < app.detail_scroll {
         if !(long_content && settled) {
             app.detail_scroll = offset;
@@ -622,25 +731,27 @@ fn wrapped_offset(lines: &[Line<'_>], upto: usize, width: u16) -> u16 {
 /// as extra, non-navigable lines directly beneath this row's line.
 fn detail_row_text(app: &App, task: &switchbard_core::BacklogTask, row: FieldRow) -> String {
     match row {
+        FieldRow::Section(section) => section.label().to_string(),
+        FieldRow::Content(section) => format!("{}:", section.label()),
         FieldRow::Title => task.title.clone(),
         FieldRow::Status => format!("status: {}", task.status),
         FieldRow::Priority => format!("priority: {}", task.priority),
-        FieldRow::Project => format!(
-            "project: {}",
-            task.project.as_deref().unwrap_or("(unassigned)")
+        FieldRow::Project => format!("project: {}", task.project.as_deref().unwrap_or("Not set")),
+        FieldRow::DueDate => format!(
+            "due date: {}",
+            task.due_date.as_deref().unwrap_or("Not set")
         ),
-        FieldRow::DueDate => format!("due date: {}", task.due_date.as_deref().unwrap_or("(none)")),
         FieldRow::Labels => format!(
             "labels: {}",
             if task.labels.is_empty() {
-                "(none)".to_string()
+                "Not set".to_string()
             } else {
                 task.labels.join(", ")
             }
         ),
         FieldRow::Description => {
             if task.description.trim().is_empty() {
-                "description: (none)".to_string()
+                "description: Not set".to_string()
             } else {
                 "description:".to_string()
             }
@@ -664,7 +775,7 @@ fn detail_row_text(app: &App, task: &switchbard_core::BacklogTask, row: FieldRow
                      many blocked_by entries — detail_pane::field_rows built this list from \
                      the same relations",
                 );
-            format!("{id} {title}")
+            format!("blocked by: {id} {title}")
         }
         FieldRow::Blocks(index) => {
             let (id, title, done) = app
@@ -677,7 +788,10 @@ fn detail_row_text(app: &App, task: &switchbard_core::BacklogTask, row: FieldRow
                      blocks entries — detail_pane::field_rows built this list from the same \
                      relations",
                 );
-            format!("{id} {title} ({})", if *done { "done" } else { "open" })
+            format!(
+                "blocks: {id} {title} ({})",
+                if *done { "done" } else { "open" }
+            )
         }
     }
 }
@@ -787,6 +901,10 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
         (":bug <doing>", "file a bug with this screen"),
         (":idea <want>", "file an idea with this screen"),
         (":theme <name>", "how sbt itself looks"),
+        (
+            ":paint <rules>",
+            "replace rules; + combines roles, ! stops; off clears",
+        ),
         (":palette <name>", "colors `auto` paints with"),
         (":view <name>  :reload  :q", ""),
         ("f/s <col#>", "filter/sort by column"),
@@ -801,6 +919,18 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(format!("{command}  "), theme.style(Surface::Accent)),
             Span::raw(description),
         ]));
+    }
+    if app.page == Page::Tasks {
+        lines.push(help_entry(
+            "t c c",
+            "cancel task with confirmation; Esc keeps it",
+            theme,
+        ));
+        lines.push(help_entry(
+            "z/Z/A",
+            "detail: toggle section / collapse all / expand all",
+            theme,
+        ));
     }
     if app.page == Page::PullRequests {
         lines.push(Line::from("PR fields: status/lifecycle, id, title, tasks, checks, review, merge, draft; PR views use .prs.lua files."));
@@ -883,7 +1013,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Mode::DetailFocus => Line::from(vec![
             Span::styled(" pane focused ", theme.style(Surface::Accent)),
             Span::styled(
-                "j/k move · enter/l edit · space toggles AC · esc/h back",
+                "j/k move · enter edit · space check · z fold · Z fold all · A expand all · esc back",
                 theme.style(Surface::Hint),
             ),
         ]),
@@ -1030,7 +1160,10 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         .unwrap_or(20)
         .max(60)
         .min(body.width.saturating_sub(4) as usize) as u16;
-    let width = if picker.purpose == PickerPurpose::Merge {
+    let width = if matches!(
+        picker.purpose,
+        PickerPurpose::Merge | PickerPurpose::TaskCancel
+    ) {
         body.width.saturating_sub(4)
     } else {
         width
@@ -1090,6 +1223,9 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                     PaintPick::Column(column) => app.state.paint.iter().any(|rule| {
                         matches!(rule, PaintRule::Column { column: col, color: c } if col == column && c == color)
                     }),
+                    PaintPick::Header => app.state.paint.iter().any(|rule| matches!(rule, PaintRule::Header { color: c } if c == color)),
+                    PaintPick::Title => app.state.paint.iter().any(|rule| matches!(rule, PaintRule::Title { color: c } if c == color)),
+                    PaintPick::Heading(value) => app.state.paint.iter().any(|rule| matches!(rule, PaintRule::Heading { value: v, color: c } if v == value && c == color)),
                 },
                 _ => false,
             };
@@ -1104,20 +1240,20 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
             match (&picker.purpose, &option.payload) {
                 // Show the color itself: this is what the painted text will look like.
                 (PickerPurpose::PaintColor(_), Payload::Text(color)) => {
-                    if let Ok(color) = ratatui::style::Color::from_str(color) {
-                        style = style.fg(color);
+                    if let Some(emphasis) = theme.emphasis_style(color, &app.config.palette) {
+                        style = style.patch(emphasis);
                     }
                 }
                 (PickerPurpose::PaintValues(column), Payload::Text(value)) => {
-                    if let Some(color) = paint::value_color(&app.state.paint, *column, value)
-                        .and_then(|color| paint::resolve_color(&color, &app.config.palette))
+                    if let Some(emphasis) = paint::value_color(&app.state.paint, *column, value)
+                        .and_then(|roles| theme.emphasis_style(&roles, &app.config.palette))
                     {
-                        style = style.fg(color);
+                        style = style.patch(emphasis);
                     }
                 }
                 (PickerPurpose::PaintRules, Payload::Rule(rule)) => {
-                    if let Some(color) = app.state.paint.get(*rule).and_then(|rule| rule.swatch(&app.config.palette)) {
-                        style = style.fg(color);
+                    if let Some(roles) = app.state.paint.get(*rule).and_then(|rule| rule.role_lists().first().copied()) {
+                        style = style.patch(paint::resolve_style(roles, theme, &app.config.palette));
                     }
                 }
                 _ => {}
@@ -1157,20 +1293,22 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         format!("{}▏", picker.number)
     };
     let preview = match picker.purpose {
-        PickerPurpose::PaintColor(_) => ratatui::style::Color::from_str(picker.typed.trim()).ok(),
+        PickerPurpose::PaintColor(_) => {
+            theme.emphasis_style(picker.typed.trim(), &app.config.palette)
+        }
         _ => None,
     };
-    let title_style = match preview {
-        Some(color) => Style::default().fg(color).add_modifier(Modifier::BOLD),
-        None => Style::default(),
-    };
+    let title_style = preview.unwrap_or_default();
     let block = Block::default()
+        .style(theme.canvas_style())
         .borders(Borders::ALL)
         .border_style(theme.style(Surface::Accent))
         .title_style(title_style)
         .title(pending + &picker_title(picker, preview.is_some(), app.registry()));
-    let block = if picker.purpose != PickerPurpose::Merge
-        && rows.len().saturating_add(4) > height as usize
+    let block = if !matches!(
+        picker.purpose,
+        PickerPurpose::Merge | PickerPurpose::TaskCancel
+    ) && rows.len().saturating_add(4) > height as usize
     {
         let navigation = if matches!(picker.purpose, PickerPurpose::TaskParent(_)) && width >= 28 {
             "↑↓ Enter saves Esc"
@@ -1198,20 +1336,23 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
     } else {
         block
     };
-    if picker.purpose == PickerPurpose::Merge {
-        let mut confirmation: Vec<Line> = app
-            .pr_merge
-            .confirmation_lines()
-            .into_iter()
-            .map(Line::from)
-            .collect();
+    if matches!(
+        picker.purpose,
+        PickerPurpose::Merge | PickerPurpose::TaskCancel
+    ) {
+        let confirmation_lines = if picker.purpose == PickerPurpose::TaskCancel {
+            app.task_cancel.confirmation_lines()
+        } else {
+            app.pr_merge.confirmation_lines()
+        };
+        let mut confirmation: Vec<Line> = confirmation_lines.into_iter().map(Line::from).collect();
         confirmation.push(Line::from(""));
         confirmation.extend(lines);
         let area = Rect {
             height: body.height.saturating_sub(2),
             ..area
         };
-        app.pr_merge.confirmation_visible = crate::list_presentation::picker(
+        let visible = crate::list_presentation::picker(
             frame,
             area,
             block,
@@ -1219,6 +1360,11 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
             picker.selected,
             true,
         );
+        if picker.purpose == PickerPurpose::TaskCancel {
+            app.task_cancel.confirmation_visible = visible;
+        } else {
+            app.pr_merge.confirmation_visible = visible;
+        }
     } else {
         crate::list_presentation::picker(frame, area, block, lines, picker.selected, false);
     }
@@ -1247,6 +1393,8 @@ fn picker_title(
         PickerPurpose::PaintValues(column) => format!("by {}", column.name(registry)),
         PickerPurpose::PaintColumn => "paint which column".to_string(),
         PickerPurpose::PaintTarget => "paint".to_string(),
+        PickerPurpose::PaintRowValues => "selected row values".to_string(),
+        PickerPurpose::PaintHeadings => "paint group heading".to_string(),
         PickerPurpose::PaintColor(_) => "color".to_string(),
         PickerPurpose::PaintRules => "paint rules · top is the base".to_string(),
         PickerPurpose::ChoosePaintRule(action) => format!("{action:?} paint rule"),
@@ -1256,6 +1404,7 @@ fn picker_title(
         PickerPurpose::Organize => "organize by".to_string(),
         PickerPurpose::Ball => "ball".to_string(),
         PickerPurpose::Merge => "Confirm PR merge".to_string(),
+        PickerPurpose::TaskCancel => "Cancel task?".to_string(),
         PickerPurpose::Task => "task".to_string(),
         PickerPurpose::TopList => "task · top list".to_string(),
         PickerPurpose::TaskParent(id) => format!("{id} · parent"),

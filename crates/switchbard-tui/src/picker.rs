@@ -20,6 +20,9 @@ pub enum PaintPick {
     Value(Column, String),
     Rows(String),
     Column(Column),
+    Title,
+    Header,
+    Heading(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +37,8 @@ pub enum PickerPurpose {
     MoveColumns(Vec<usize>),
     /// After `p`: what to paint.
     PaintTarget,
+    PaintRowValues,
+    PaintHeadings,
     /// A column's values, one color each.
     PaintValues(Column),
     /// After a target: which color.
@@ -55,6 +60,7 @@ pub enum PickerPurpose {
     Ball,
     Merge,
     Task,
+    TaskCancel,
     TaskStatus(String),
     TaskProject(String),
     TaskParent(String),
@@ -143,6 +149,7 @@ impl ColumnAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskAction {
     New,
+    Cancel,
     Ball,
     Append,
     Status,
@@ -185,6 +192,9 @@ pub enum Payload {
     FilteredRows(String),
     /// Paint: pick a column to color whole.
     WholeColumn,
+    SelectedRowValues,
+    GroupHeadings,
+    PaintScope(PaintPick),
     /// Paint: open the rule hierarchy.
     OrderRules,
     DeleteAllPaint,
@@ -210,6 +220,8 @@ pub enum Payload {
     RowSpacing,
     Project(Option<String>),
     Parent(Option<String>),
+    KeepTask,
+    ConfirmTaskCancel,
     CancelMerge,
     Merge(switchbard_core::PrMergeMethod),
 }
@@ -381,9 +393,12 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::Columns => "↑↓/jk select · →/l open · ←/h back · Esc closes",
         PickerPurpose::MoveColumns(_) => "type column numbers in the order you want · enter done",
         PickerPurpose::PaintValues(_) => "value then color · repeats · h back · esc done",
-        PickerPurpose::PaintColumn => "number or name · h back · esc",
+        PickerPurpose::PaintColumn | PickerPurpose::PaintHeadings => {
+            "number or name · h back · esc"
+        }
+        PickerPurpose::PaintRowValues => "paints this value wherever it appears · ← back · esc",
         PickerPurpose::PaintTarget => "number or letter picks · esc",
-        PickerPurpose::PaintColor(_) => "name or #hex · space clears · h back · esc",
+        PickerPurpose::PaintColor(_) => "role+color then Enter · space clears · ← back · esc",
         PickerPurpose::PaintRules | PickerPurpose::ChoosePaintRule(_) => {
             "↑/↓ select · key or Enter picks · h back · Esc closes"
         }
@@ -393,6 +408,7 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::Organize => {
             "number or name organizes · the current one again flattens · x off · esc"
         }
+        PickerPurpose::TaskCancel => "c confirms cancellation · Enter/Esc keeps task",
         PickerPurpose::Merge => "number confirms · j/k select · Enter confirms · Esc cancels",
         PickerPurpose::Views if picker.position_of_key('l').is_some() => {
             "l line wrap · ↑↓/jk select · →/Enter open · ←/h back · Esc closes"

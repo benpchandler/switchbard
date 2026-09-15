@@ -349,3 +349,31 @@ fn task_cutover_all_lifecycles_read_and_edit_after_source_files_disappear() {
         assert!(!root.join("backlog").exists());
     });
 }
+
+#[test]
+fn confirmed_cancellation_checks_revision_and_preserves_central_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("repo");
+    fs::create_dir_all(root.join("backlog/tasks")).unwrap();
+    let locator = "backlog/tasks/task-7 - Original.md";
+    fs::write(root.join(locator), RAW).unwrap();
+    let db = temp.path().join("state.sqlite3");
+    with_test_database(&db, || {
+        migrate(&root, &db, &[locator]);
+        let prepared = prepare_task_cancellation(&root, "TASK-7").unwrap();
+        set_backlog_acceptance_checked(&root, "7", 1, true).unwrap();
+        assert!(cancel_task_expected(&root, prepared).is_err());
+        let before = load_backlog_repo(&root).unwrap().tasks.remove(0);
+        assert_eq!(before.source, BacklogTaskSource::Active);
+        let prepared = prepare_task_cancellation(&root, "TASK-7").unwrap();
+        cancel_task_expected(&root, prepared).unwrap();
+        let after = load_backlog_repo(&root).unwrap().tasks.remove(0);
+        assert_eq!(after.source, BacklogTaskSource::Archived);
+        assert_eq!(
+            before.storage_identity.unwrap().record_id,
+            after.storage_identity.unwrap().record_id
+        );
+        assert_eq!(fs::read_to_string(root.join(locator)).unwrap(), RAW);
+        assert!(!root.join("backlog/archive").exists());
+    });
+}

@@ -1,0 +1,12 @@
+ [Tasks]   Pull Requests   …  Agents  …  Inbox
+┌ .tmp6Jpv3Q  v1 · 3/3 ──────┐┌ Detail ────────────────────┐
+│1  2 3  4 title             ││Fix login redirect loop     │
+│1  I M  Fix login redirect l││status: In Progress         │
+│3  T H  Write onboarding gui││priority: medium            │
+│2  T L  Add dark theme      ││project: Not set            │
+│                            ││due date: Not set           │
+│                            ││labels: auth, bug           │
+│                            ││v Description               │
+│                            ││description:                │
+└────────────────────────────┘└────────────────────────────┘
+ pane focused j/k move · enter edit · space check · z fold ·

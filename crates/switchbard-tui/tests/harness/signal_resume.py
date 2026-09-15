@@ -27,6 +27,23 @@ def wait_screen(fd, text):
     raise AssertionError(f"missing {text!r}: {screen[-4000:]!r}")
 
 
+def wait_exit(child, master):
+    """Keep acting as a terminal while the app flushes and restores its screen."""
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        status = child.poll()
+        if status is not None:
+            return status
+        ready, _, _ = select.select([master], [], [], 0.05)
+        if ready:
+            try:
+                os.read(master, 65536)
+            except OSError as error:
+                if error.errno != 5:  # A closed PTY reports EIO on some platforms.
+                    raise
+    raise AssertionError("signal quit did not finish within 5 seconds")
+
+
 def run_session(binary, repo, env, args, expected, ending, edit=None):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
@@ -41,7 +58,7 @@ def run_session(binary, repo, env, args, expected, ending, edit=None):
             os.write(master, b"/" + edit.encode() + b"\r")
             wait_screen(master, edit.encode())
         child.send_signal(ending)
-        assert child.wait(timeout=5) == 0, "signal quit failed"
+        assert wait_exit(child, master) == 0, "signal quit failed"
     finally:
         if child.poll() is None:
             child.kill()

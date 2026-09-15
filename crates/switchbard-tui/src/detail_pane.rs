@@ -9,6 +9,51 @@ use ratatui::{
 };
 use switchbard_core::BacklogTask;
 
+/// Fixed groups share one collapse state between keyboard and pointer input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Section {
+    Properties,
+    Description,
+    Acceptance,
+    Relations,
+    Plan,
+    Notes,
+    Summary,
+    DefinitionOfDone,
+    References,
+    Metadata,
+}
+
+impl Section {
+    pub const ALL: [Self; 10] = [
+        Self::Properties,
+        Self::Description,
+        Self::Acceptance,
+        Self::Relations,
+        Self::Plan,
+        Self::Notes,
+        Self::Summary,
+        Self::DefinitionOfDone,
+        Self::References,
+        Self::Metadata,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Properties => "Properties",
+            Self::Description => "Description",
+            Self::Acceptance => "Acceptance criteria",
+            Self::Relations => "Relations",
+            Self::Plan => "Implementation plan",
+            Self::Notes => "Implementation notes",
+            Self::Summary => "Final summary",
+            Self::DefinitionOfDone => "Definition of Done",
+            Self::References => "References",
+            Self::Metadata => "Metadata (read-only)",
+        }
+    }
+}
+
 /// One navigable row of the editable task detail pane (TASK-222), in the
 /// fixed order the pane always renders them: structured fields first, then
 /// the read-only description row (its full body renders as extra lines
@@ -18,6 +63,8 @@ use switchbard_core::BacklogTask;
 /// so the two can never disagree about what row 4 is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldRow {
+    Section(Section),
+    Content(Section),
     Title,
     Status,
     Priority,
@@ -38,6 +85,16 @@ pub enum FieldRow {
 }
 
 impl FieldRow {
+    pub fn section(self) -> Section {
+        match self {
+            Self::Section(section) | Self::Content(section) => section,
+            Self::Description => Section::Description,
+            Self::Acceptance(_) => Section::Acceptance,
+            Self::BlockedBy(_) | Self::Blocks(_) => Section::Relations,
+            _ => Section::Properties,
+        }
+    }
+
     /// Whether Enter/Space on this row can ever mutate the task — governs
     /// both the read-only-task refusal and which rows the read-only
     /// relation/description sections are excluded from.
@@ -73,7 +130,41 @@ pub fn field_rows(task: &BacklogTask, blocked_by: usize, blocks: usize) -> Vec<F
     rows.extend((0..task.acceptance_criteria.len()).map(FieldRow::Acceptance));
     rows.extend((0..blocked_by).map(FieldRow::BlockedBy));
     rows.extend((0..blocks).map(FieldRow::Blocks));
+    if task.acceptance_criteria.is_empty() {
+        rows.insert(7, FieldRow::Content(Section::Acceptance));
+    }
+    rows.push(FieldRow::Content(Section::Relations));
+    for section in [
+        Section::Plan,
+        Section::Notes,
+        Section::Summary,
+        Section::DefinitionOfDone,
+        Section::References,
+        Section::Metadata,
+    ] {
+        rows.push(FieldRow::Content(section));
+    }
     rows
+}
+
+pub fn visible_rows(
+    rows: Vec<FieldRow>,
+    collapsed: &std::collections::BTreeSet<Section>,
+) -> Vec<FieldRow> {
+    let mut visible = Vec::with_capacity(rows.len());
+    let mut previous = None;
+    for row in rows {
+        let section = row.section();
+        if collapsed.contains(&section) {
+            if previous != Some(section) {
+                visible.push(FieldRow::Section(section));
+            }
+        } else {
+            visible.push(row);
+        }
+        previous = Some(section);
+    }
+    visible
 }
 
 pub fn split(area: Rect) -> [Rect; 2] {
@@ -139,6 +230,7 @@ pub struct Hit {
     /// Each Tasks `FieldRow`'s own first wrapped display line, in the same
     /// coordinate space `App::detail_scroll` uses.
     pub row_starts: Vec<u16>,
+    pub section_starts: Vec<(u16, Section)>,
 }
 
 impl Hit {
@@ -151,6 +243,7 @@ impl Hit {
             self.list_area = body;
             self.detail_area = Rect::default();
             self.row_starts.clear();
+            self.section_starts.clear();
         }
     }
 

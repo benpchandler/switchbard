@@ -1,15 +1,17 @@
 # sbt formatting, legibility and visual ergonomics
 
 Reference for anyone changing how `sbt` colors, weights, or highlights text, and the
-design basis for rule-based ("conditional") formatting. Two halves: what the research
-says (sections 1-4), then what sbt has today and how it should grow (sections 5-7).
+design basis for rule-based ("conditional") formatting. Sections 1-4 record the
+research; sections 5-7 retain the baseline and design record that led to the current
+implementation.
 Sources are at the end.
 
-The palette-token prerequisite from TASK-152 is implemented. Remaining related backlog:
-TASK-175/176/177
-(header, tab bar, second-row differentiation), TASK-200 (paint any cell, inherit its
-hierarchy). Related docs: `docs/tui-abstraction-boundaries.md`,
-`docs/tui-date-paint-evidence.md`.
+Current implementation and user behavior: [Emphasis Roles guide](emphasis-roles/guide.md). The proposals and research discussion below are retained as the design record; the guide owns current syntax, preset behavior and scope.
+
+The palette-token prerequisite from TASK-152 and the Emphasis Roles work are implemented.
+Continuous `scale:` rules remain deferred. Current syntax, scopes, presets and limits
+are owned by the [Emphasis Roles guide](emphasis-roles/guide.md). Related docs:
+`docs/tui-abstraction-boundaries.md`, `docs/tui-date-paint-evidence.md`.
 
 ## 1. The formatting vocabulary a terminal actually gives you
 
@@ -47,7 +49,8 @@ The ladder, quiet to loud:
 
 Rules that follow:
 
-- **One bg tier per screen.** sbt today spends it on `selected` and `working`. Any new
+- **One bg tier per screen.** sbt reserves the rule-owned `band` tier alongside
+  `selected` and `working`. Any new
   "alert" fill has to displace or share with those, never stack a third.
 - **Hue is identity, luminance is severity.** A rule that means "more urgent" should
   step luminance and weight, not switch hue. That survives grayscale, colorblindness,
@@ -94,9 +97,9 @@ What lazygit, gitui, k9s, btop and the Bloomberg terminal converge on:
   about 26% faster with fewer errors on dark-on-light. Dilated pupils on dark screens
   reduce acuity. Dark mode wins in dim rooms, on OLED, and for photophobia. A true light
   preset is a real feature for eight-hour reading, not a courtesy.
-- **Near-black, not black.** Backgrounds in #121212-#1a1a1a. sbt does not paint a
-  background (it inherits the terminal's), so this is guidance for the WezTerm/kitty
-  scheme a preset pairs with, and a reason presets must hold on any near-black.
+- **Near-black, not black.** Backgrounds in #121212-#1a1a1a. Colored presets declare
+  and paint their canvas; `plain` intentionally inherits terminal colors. User-supplied
+  colors remain outside the preset contrast guarantee.
 - **Blue and red read softer than they measure at night.** Sparse S-cones and chromatic
   aberration make saturated blue small text the worst performer on dark backgrounds;
   rods barely respond to red. Darkroom trades saturation for luminance on both. Berg's
@@ -115,7 +118,10 @@ What lazygit, gitui, k9s, btop and the Bloomberg terminal converge on:
   semantic color vary L only. Gruvbox ships hard/medium/soft because contrast depends on
   the room; a contrast level setting is a first-class feature.
 
-## 5. What sbt has today
+## 5. Baseline before Emphasis Roles
+
+The following describes the pre-Emphasis Roles baseline retained to explain the design
+pressure. It is not a current-feature inventory; see the guide for current behavior.
 
 Two independent layers, both fg-centric:
 
@@ -140,7 +146,7 @@ Gaps against the research:
    are hand-verified in comments.
 6. Continuous facts (age, staleness) are only expressible as discrete threshold filters.
 
-## 6. Proposed model: styles are roles, rules bind facts to roles
+## 6. Implemented model: styles are roles, rules bind facts to roles
 
 Keep the three rule kinds and the hierarchy. Change what a rule produces and where the
 color comes from.
@@ -206,7 +212,7 @@ title=<roles>                     -- tab bar / title line
 picker flow is the existing `p` menu with one new entry, "this cell", which reads the
 cursor's scope (cell, heading, header, title) and pre-fills the target.
 
-### 6.4 Continuous facts
+### 6.4 Continuous facts (deferred)
 
 One new rule kind for dates and counts, mapping a range to a lightness ramp of one hue:
 
@@ -225,7 +231,7 @@ computes APCA Lc against a declared preset background (a new `theme.background` 
 only by the test and by `scale:`), and fails on body below Lc 75, secondary below Lc 45,
 and any role above Lc 100. Presets keep their contrast claims, but a test owns them.
 
-## 7. Immediate, low-cost fixes this doc argues for
+## 7. Immediate, low-cost fixes recorded by this design
 
 - `working` pulse should trough at roughly 40% of full band, not black, and stay within
   the 15-25% lightness swing guidance. One constant in `working_style`.

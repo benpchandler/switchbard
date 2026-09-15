@@ -1,0 +1,20 @@
+ [Tasks]   Pull Requests   ?  Agents  …  Inbox   tab switch page
+┌ .tmpSNJAl7  v1 · 3/3 ────────────────────────────────────────────────────────────────────────────┐
+│1 id 2 status    3 pri 4 title                                                                    │
+│1┌ Cancel task? ────────────────────────────────────────────────────────────────────────────────┐ │
+│3│Cancel TASK-1?                                                                                │ │
+│2│Fix login redirect loop                                                                       │ │
+│ │Only this task is canceled. Subtasks remain unchanged.                                        │ │
+│ │The record is archived. Running agents and claims remain unchanged.                           │ │
+│ │                                                                                              │ │
+│ │k  Keep task                                                                                  │ │
+│ │c  Confirm cancellation                                                                       │ │
+│ │                                                                                              │ │
+│ │ c confirms cancellation · Enter/Esc keeps task                                               │ │
+│ │                                                                                              │ │
+│ │                                                                                              │ │
+│ │                                                                                              │ │
+│ │                                                                                              │ │
+│ │                                                                                              │ │
+└─└──────────────────────────────────────────────────────────────────────────────────────────────┘─┘
+

@@ -213,7 +213,10 @@ fn sparse_repo_slot_keeps_nine_in_picker_help_load_save_and_restart() {
     .unwrap();
     h.app = open_app(&h.root, &h.config_path);
     let screen = h.type_text("v9");
-    assert!(screen.contains("v9 · label:auth"), "{screen}");
+    assert!(
+        screen.contains("v9") && screen.contains("/ label:auth"),
+        "{screen}"
+    );
     let screen = h.press(KeyCode::Char('?'));
     assert!(
         screen.contains("v9") && screen.contains("label:auth [repo]"),
@@ -226,7 +229,11 @@ fn sparse_repo_slot_keeps_nine_in_picker_help_load_save_and_restart() {
     assert!(source.contains("[9]"), "{source}");
     assert!(!source.contains("[6]"), "{source}");
     h.app = open_app(&h.root, &h.config_path);
-    assert!(h.type_text("v9").contains("v9 · label:auth"));
+    let screen = h.type_text("v9");
+    assert!(
+        screen.contains("v9") && screen.contains("/ label:auth"),
+        "{screen}"
+    );
     let screen = h.type_text("v6");
     assert!(screen.contains("no view in slot 6"), "{screen}");
 }

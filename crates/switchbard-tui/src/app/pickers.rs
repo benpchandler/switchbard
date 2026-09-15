@@ -1,7 +1,5 @@
 //! Column, filter, and sort pickers, and the one key handler every picker shares.
 
-use std::str::FromStr;
-
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Mode};
@@ -26,6 +24,7 @@ impl App {
                 ('b', "Assign ball", TaskAction::Ball),
                 ('s', "Status", TaskAction::Status),
                 ('d', "Mark Done", TaskAction::Done),
+                ('c', "Cancel task…", TaskAction::Cancel),
                 ('p', "Link project", TaskAction::Project),
                 ('a', "Link parent task", TaskAction::Parent),
                 ('r', "Top list", TaskAction::TopList),
@@ -61,6 +60,7 @@ impl App {
 
     fn run_task_action(&mut self, action: TaskAction) {
         match action {
+            TaskAction::Cancel => self.open_task_cancellation(),
             TaskAction::New => self.open_new_task(),
             TaskAction::Ball => self.open_ball_picker(),
             TaskAction::Append => self.set_rank(self.top.len() + 1),
@@ -499,6 +499,14 @@ impl App {
         if self
             .picker
             .as_ref()
+            .is_some_and(|p| p.purpose == PickerPurpose::TaskCancel)
+        {
+            self.handle_task_cancel_key(event);
+            return;
+        }
+        if self
+            .picker
+            .as_ref()
             .is_some_and(|p| p.purpose == PickerPurpose::Merge)
         {
             self.handle_merge_picker_key(event);
@@ -871,7 +879,13 @@ impl App {
                     && matches
                         .first()
                         .is_some_and(|option| matches!(option.payload, Payload::Column(_)));
-                if matches.len() == 1 && (!toggles || legacy_column_pick) {
+                let composing_roles = matches!(purpose, PickerPurpose::PaintColor(_))
+                    && (["quiet", "strong", "alert", "band", "struck"]
+                        .iter()
+                        .any(|role| role.starts_with(&picker.typed))
+                        || picker.typed.contains('+')
+                        || picker.typed.starts_with('p'));
+                if matches.len() == 1 && (!toggles || legacy_column_pick) && !composing_roles {
                     self.apply_picked_value();
                 }
             }
@@ -947,7 +961,7 @@ impl App {
         self.mode = Mode::Browse;
         let typed = picker.typed.trim().to_string();
         let picked = picker.highlighted().or_else(|| match picker.purpose {
-            PickerPurpose::PaintColor(_) if ratatui::style::Color::from_str(&typed).is_ok() => {
+            PickerPurpose::PaintColor(_) if crate::paint::validate_roles(&typed).is_ok() => {
                 Some(PickOption::text(typed.clone(), 0))
             }
             _ => None,
@@ -1078,6 +1092,19 @@ impl App {
                         self.state.columns.len()
                     );
                 }
+            }
+            (PickerPurpose::PaintTarget, Payload::SelectedRowValues) => {
+                self.open_paint_row_values()
+            }
+            (PickerPurpose::PaintTarget, Payload::GroupHeadings) => self.open_paint_headings(),
+            (
+                PickerPurpose::PaintTarget
+                | PickerPurpose::PaintRowValues
+                | PickerPurpose::PaintHeadings,
+                Payload::PaintScope(pick),
+            ) => {
+                self.paint_return = None;
+                self.open_paint_color_picker(pick);
             }
             (PickerPurpose::PaintTarget, Payload::DeleteAllPaint) => self.clear_all_paint(),
             (PickerPurpose::PaintTarget, Payload::OrderRules) => self.open_paint_rules_picker(),

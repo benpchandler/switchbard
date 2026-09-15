@@ -9,6 +9,7 @@ pub mod pr_merge;
 pub mod resume;
 mod session;
 mod slots;
+mod task_cancel;
 mod task_parent;
 mod task_project;
 mod task_status;
@@ -171,6 +172,7 @@ pub struct App {
     /// Cursor row inside the focused detail pane (`detail_edit`'s `FieldRow`
     /// list for the selected task); meaningless while `pane != Pane::Detail`.
     pub detail_cursor: usize,
+    pub detail_collapsed: std::collections::BTreeSet<crate::detail_pane::Section>,
     /// The detail pane's own scroll offset, kept independent of the PR
     /// pane's (`pull_requests.detail_scroll`) — the two panes never show at
     /// once, but each remembers its own place.
@@ -202,6 +204,7 @@ pub struct App {
     pub picker: Option<ValuePicker>,
     picker_parents: Vec<ValuePicker>,
     pub pr_merge: pr_merge::MergeFlow,
+    pub task_cancel: task_cancel::CancelFlow,
     pub column_purpose: ColumnPurpose,
     pub status: String,
     pub last_screen: String,
@@ -297,6 +300,7 @@ impl App {
             input: String::new(),
             pane: Pane::None,
             detail_cursor: 0,
+            detail_collapsed: std::collections::BTreeSet::new(),
             detail_scroll: 0,
             detail_read_focus: false,
             detail_viewport: 0,
@@ -315,6 +319,7 @@ impl App {
             telemetry,
             should_quit: false,
             pr_merge: pr_merge::MergeFlow::default(),
+            task_cancel: task_cancel::CancelFlow::default(),
         };
         app.reload_tasks();
         app.reload_work();
@@ -1098,7 +1103,7 @@ impl App {
             return Vec::new();
         }
         let mut names: Vec<String> = [
-            "bug", "idea", "outline", "palette", "theme", "reload", "page", "help", "q",
+            "bug", "idea", "outline", "paint", "palette", "theme", "reload", "page", "help", "q",
         ]
         .iter()
         .map(|name| name.to_string())
@@ -1487,6 +1492,7 @@ impl App {
             "reload" => self.apply(&Action::Reload),
             "open" => self.apply(&Action::OpenBrowser),
             "dismiss" => self.apply(&Action::DismissNotifications),
+            "paint" => self.replace_paint(rest.trim()),
             "palette" => self.choose_palette(rest.trim()),
             "theme" => self.choose_theme(rest.trim()),
             // `:outline` is the word the rest of the app uses (TASK-145);
@@ -1511,6 +1517,22 @@ impl App {
             "idea" => self.file_report(ReportKind::Idea, rest),
             "" => {}
             other => self.fail(format!("unknown command :{other}")),
+        }
+    }
+
+    fn replace_paint(&mut self, text: &str) {
+        if text.is_empty() {
+            self.open_paint_target_picker();
+            return;
+        }
+        let text = if text == "off" { "" } else { text };
+        match crate::paint::try_parse_rules(text, &self.registry) {
+            Ok(rules) => {
+                self.state.paint = rules;
+                self.status = format!("Applied {} paint rules", self.state.paint.len());
+                self.telemetry.record("action", "paint_rules");
+            }
+            Err(error) => self.fail(error),
         }
     }
 
