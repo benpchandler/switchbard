@@ -89,6 +89,9 @@ pub struct AppPaths {
     pub repo_settings: Option<PathBuf>,
     /// The live-work session store (`switchbard_core::default_work_dir`).
     pub work_dir: Option<PathBuf>,
+    /// Where the auto-install receipt/hold live (`auto_install::state_dir`).
+    /// `None` skips the startup banner entirely (tests, or no home directory).
+    pub auto_install_dir: Option<PathBuf>,
 }
 
 pub(crate) struct TaskProjection {
@@ -126,6 +129,7 @@ pub struct App {
     /// Live agent sessions holding tasks in this repo; refreshed every tick.
     pub work: Vec<WorkSession>,
     work_dir: Option<PathBuf>,
+    auto_install_dir: Option<PathBuf>,
     /// When the app opened: the working-row blink counts from here.
     opened: Instant,
     /// Filtered and sorted task indices, the truth grouping projects from.
@@ -226,6 +230,7 @@ impl App {
             global_settings,
             repo_settings,
             work_dir,
+            auto_install_dir,
         } = paths;
         let registry = Arc::new(ColumnRegistry::for_repo(repo_root));
         let resume_store = resume::ResumeStore::load(repo_views.as_deref());
@@ -266,6 +271,7 @@ impl App {
             relations: tasks::TaskRelations::default(),
             work: Vec::new(),
             work_dir,
+            auto_install_dir,
             opened: Instant::now(),
             visible: Vec::new(),
             rows: Vec::new(),

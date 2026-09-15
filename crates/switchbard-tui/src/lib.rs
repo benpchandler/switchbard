@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod app;
+pub mod auto_install;
 pub mod ball;
 pub mod columns;
 pub mod config;

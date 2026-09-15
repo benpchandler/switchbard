@@ -27,4 +27,4 @@ sed -e "s|__SCRIPT__|$SCRIPT|g" -e "s|__HOME__|$HOME|g" \
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 launchctl bootstrap "$DOMAIN" "$PLIST"
 launchctl kickstart -k "$DOMAIN/$LABEL"
-echo "auto-install enabled: every 5 minutes, origin/main -> sb + sbt (log: $STATE_DIR/auto-install.log)"
+echo "auto-install enabled: every minute, origin/main -> sb + sbt (log: $STATE_DIR/auto-install.log)"

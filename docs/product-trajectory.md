@@ -822,3 +822,20 @@ TASK-193 establishes the Inbox destination before its content or collapsible bot
 ## Board model: due date, blocked, repo-declared fields, smart outline (TASK-209, owner-directed 2026-09-11)
 
 Motivated by a deal backlog whose projects are counterparties and whose work products serve several of them. Four facts each get exactly one home: the initiative is the goal, the project is the workstream or counterparty, `ball` is whose turn, and `dependencies` say whether the turn can be taken. Blocked is computed from `backlog_relations` and never stored; `status: Waiting` is retired where a dependency can carry the fact. `due_date` is the one universal date field. Any other per-repo attribute is a custom field declared in `backlog/config.yml` under `fields:` (text, enum, date, person; optional `groupable`) and written only through `sb field` and `sb --set/--unset`; undeclared frontmatter keys stay opaque and round-trip untouched. sbt reads one runtime column registry, so a declared field is a column, filter, sort key, paint target, and outline level with no per-field code. The outline nests up to four levels; `auto` ranks groupable columns by distinct-value count over the filtered rows and is persisted only as the word `auto`. Folding counterparty projects into workstreams, and a separate counterparty built-in, are owner decisions deferred until the outline has been used; do not pre-build them.
+
+## Main-authoritative live update (TASK-227, owner-directed 2026-09-14)
+
+The owner dogfoods sbt all day and cannot tell a bug from stale software. A
+running sbt already re-execs the moment its binary changes; what was missing
+was making sure the *right* binary always lands within about a minute of
+merging to main, with no manual step and no way for a feature-branch install to
+silently stall the fleet (2026-09-13: a feature-branch install left auto-install
+refusing main for ten hours, visible only in a log nobody was watching).
+`scripts/install-switchbard.sh --main-authority` (used only by the launchd agent,
+which now polls every minute instead of five) makes origin/main's own tip
+authoritative: it never refuses on ancestry, only replaces a running build main
+doesn't contain and prints/receipts exactly what was dropped. A manual install
+off main is now an explicit, temporary choice (`--branch`, `--hold`), never
+silent and never itself evidence that a task is done - only origin/main runs
+unattended. sbt reads the receipt and any hold to show a one-line startup
+banner instead of the fleet drifting unnoticed.

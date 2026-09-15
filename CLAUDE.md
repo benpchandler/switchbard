@@ -52,24 +52,55 @@ CI and Linux release builds materialize that same pinned revision from the sub-m
 
 ## Installing `sb` and `sbt`
 
-Install through `mise run install` (or `scripts/install-switchbard.sh`), never a
-bare `cargo install --path`. Both binaries are installed from whatever worktree
-someone is standing in, and a running `sbt` re-execs itself the moment the file
-on disk changes - so an install from a worktree that predates a feature deletes
-that feature from every live session at once. That is TASK-172, and it happened
-twice. The guard refuses any install whose target tree does not contain the
-commit the installed binary was built from; `--force` overrides and prints what
-is being dropped. Every binary stamps its own commit and branch at compile time
+**origin/main is the only build that runs unattended.** `mise run auto-install-enable`
+(macOS) installs a launchd agent that fetches origin/main every minute into a
+private checkout under `~/.switchbard/auto-install` and installs it there
+whenever it differs from the running binary - the owner runs this once; nobody
+should ever need to install main by hand. Installing a feature branch by hand is
+never evidence that a change is done and is never an acceptance criterion for a
+task: the agent decides what actually ends up running, and it only ever trusts
+main. Branch only from origin/main, never from a worktree that was itself
+installed or that descends from another integration branch - that is how a
+worktree that predates a feature ends up reinstalled over one that has it
+(TASK-172, twice).
+
+Install through `mise run install` (both binaries) or `scripts/install-switchbard.sh`
+directly, never a bare `cargo install --path`; both re-exec a running `sbt` the
+moment the file on disk changes. On `main`, that install just needs to move
+forward and refuses otherwise (`--force` overrides and prints what is being
+dropped). Off `main`, it is gated behind explicit intent (TASK-227): pass
+`--branch` to acknowledge "this is deliberately not main", and `--hold [30m|2h|...]`
+(default 2h, **capped at 24h, and refused on `main`** - there is nothing to hold
+main back from) to tell the auto-install agent to leave that install alone for a
+while - it is temporary by construction and the agent reclaims it the moment the
+hold lapses (or immediately, if it ever finds a hold naming `main` - that can only
+be stale or hand-edited), printing/receipting exactly what it drops. There is no
+separate "TUI install" task; `crates/switchbard-tui/CLAUDE.md`'s per-slice loop
+uses this same guard with `--branch --hold`, re-run each slice.
+
+Every `sb`/`sbt` build is committed **both-or-neither**: `install-switchbard.sh`
+builds every named target into a scratch root first (a same-filesystem `mv` into
+`~/.cargo/bin` only once *all* of them build cleanly), so a compile error in one
+binary can never leave the other newer than it. A build failure writes a `failed`
+receipt naming which binary and why, and exits 1 without touching either binary -
+`failed` joins `installed`/`refused`/`held` as a receipt outcome and something
+sbt's startup banner surfaces. Every wait on the network or an external binary
+(`git fetch`, `git clone`, `build-id`) is timeout-bounded; a `--main-authority`
+fetch that fails or times out refuses closed with its own receipt rather than
+silently treating an unreachable origin as "nothing to update". The receipt and
+hold files are themselves written atomically (temp file + `mv` in the same
+directory), so a reader can never observe a half-written one.
+
+Every binary stamps its own commit and branch at compile time
 (`switchbard-core/build.rs` -> `switchbard_core::build_identity`), surfaced by
 `--version`, by the `build-id` subcommand, and in sbt's `session_start` event -
-so "which build am I on" is always answerable.
-
-`mise run auto-install-enable` (macOS) installs a launchd agent that, every five
-minutes, fetches origin/main into a private checkout under
-`~/.switchbard/auto-install` and runs the same guarded install when the installed
-build is not that commit. It never passes `--force`, so a deliberately installed
-feature branch stays put until main contains it. `--disable` removes the agent;
-the log is `~/.switchbard/auto-install/auto-install.log`.
+so "which build am I on" is always answerable. Every install attempt (installed,
+refused, held, failed) leaves a receipt at `~/.switchbard/auto-install/last-install.json`
+(`SWITCHBARD_AUTO_INSTALL_DIR` overrides the directory); sbt reads it and any
+active hold to show a one-line startup banner rather than letting either drift
+unnoticed the way a silent refusal did for ten hours on 2026-09-13 (TASK-227).
+`--disable` on `auto-install-enable` removes the launchd agent; the log is
+`~/.switchbard/auto-install/auto-install.log`.
 
 ## Live app ownership
 
