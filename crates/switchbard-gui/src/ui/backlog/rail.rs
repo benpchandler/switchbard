@@ -65,9 +65,7 @@ pub(crate) fn render_detail_rail(
         .size_range(MIN_WIDTH..=MAX_WIDTH)
         .frame(frame)
         .show(ui, |ui| {
-            egui::Frame::default()
-                .fill(theme::card_bg())
-                .stroke(theme::surface_stroke())
+            theme::frame(theme::Elevation::Card)
                 .corner_radius(7.0)
                 .inner_margin(egui::Margin::symmetric(10, 7))
                 .show(ui, |ui| {

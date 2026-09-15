@@ -104,10 +104,10 @@ fn paint_sticky_repo_header(ui: &egui::Ui, scroll_rect: egui::Rect, label: Optio
     }
     let rect = egui::Rect::from_min_size(scroll_rect.min, egui::vec2(scroll_rect.width(), 30.0));
     let painter = ui.painter();
-    painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
+    painter.rect_filled(rect, 0.0, theme::elevation(theme::Elevation::Panel).fill);
     painter.line_segment(
         [rect.left_bottom(), rect.right_bottom()],
-        egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+        theme::surface_stroke(),
     );
     painter.text(
         rect.left_center() + egui::vec2(10.0, 0.0),
@@ -150,7 +150,8 @@ fn render_global_card(ui: &mut egui::Ui, app: &mut HiveApp, snap: &Snapshot) {
         return;
     }
     let warnings = items.iter().filter(|i| i.warning.is_some()).count();
-    egui::Frame::group(ui.style())
+    theme::frame(theme::Elevation::Card)
+        .corner_radius(5.0)
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -300,7 +301,8 @@ fn render_repo(
         return ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover());
     }
 
-    egui::Frame::group(ui.style())
+    theme::frame(theme::Elevation::Card)
+        .corner_radius(5.0)
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -446,8 +448,7 @@ fn render_effective_stack(
 ) {
     let stack = effective_instruction_items(map, agent, cwd);
     let estimate = estimate_items(stack.iter().copied());
-    egui::Frame::NONE
-        .fill(ui.visuals().faint_bg_color)
+    theme::frame(theme::Elevation::Well)
         .inner_margin(egui::Margin::symmetric(6, 4))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

@@ -48,6 +48,7 @@ pub(crate) fn render_overlay(app: &mut HiveApp, ctx: &egui::Context, snap: &Snap
         .open(&mut open)
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 80.0))
         .fixed_size(egui::vec2(560.0, 420.0))
+        .frame(theme::modal_frame())
         .show(ctx, |ui| render_contents(app, ui, snap));
     if !open {
         app.backlog_view.search.open = false;

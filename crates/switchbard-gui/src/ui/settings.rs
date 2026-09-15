@@ -29,6 +29,7 @@ pub fn render_settings_window(app: &mut HiveApp, ui: &mut egui::Ui) {
         .collapsible(false)
         .resizable(true)
         .default_width(420.0)
+        .frame(theme::modal_frame())
         .show(ctx, |ui| {
             ui.heading("Tracked repos");
             ui.label(

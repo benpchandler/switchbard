@@ -457,6 +457,7 @@ fn render_remove_worktree_modal(app: &mut HiveApp, ui: &mut egui::Ui) {
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .frame(theme::modal_frame())
         .show(ctx, |ui| {
             ui.set_max_width(540.0);
             ui.label(
@@ -639,6 +640,7 @@ fn render_kill_all_modal(app: &mut HiveApp, ui: &mut egui::Ui) {
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .frame(theme::modal_frame())
         .show(ctx, |ui| {
             ui.label(format!(
                 "Send SIGTERM (then SIGKILL after 3s) to {n} unique process group{} in \

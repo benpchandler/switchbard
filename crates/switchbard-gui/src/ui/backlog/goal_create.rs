@@ -80,6 +80,7 @@ pub(crate) fn render_goal_modal(
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .frame(theme::modal_frame())
         .show(ctx, |ui| {
             if fixed_target {
                 ui.label(egui::RichText::new(&target_label).color(theme::muted_text()));

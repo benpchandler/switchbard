@@ -87,6 +87,44 @@ pub fn elevation(level: Elevation) -> ElevationTokens {
     }
 }
 
+/// A `Frame` pre-loaded with `level`'s complete fill/stroke/shadow triad —
+/// the one constructor every container surface in `ui/**` should build on
+/// (TASK-79). Callers chain their own `.corner_radius(...)`/
+/// `.inner_margin(...)` exactly as before: this sweep collapses the
+/// fill/stroke/shadow authority onto `elevation()`, not spacing, which
+/// stays a per-call-site decision.
+pub fn frame(level: Elevation) -> egui::Frame {
+    let tokens = elevation(level);
+    egui::Frame::NONE
+        .fill(tokens.fill)
+        .stroke(tokens.stroke)
+        .shadow(tokens.shadow)
+}
+
+/// The shared frame for every `egui::Window` modal (Settings, the
+/// remove/kill/rename/create confirm dialogs, onboarding's welcome window,
+/// the goal editors and attach picker, search). `Elevation::Overlay` is
+/// exactly the "floating above the workspace" role these windows already
+/// play; `corner_radius`/`inner_margin` reproduce the values `apply()`
+/// already sets on `Visuals::window_corner_radius` /
+/// `Style::spacing.window_margin` (kept literal here — `Frame` has no way to
+/// read them back from a `Style` after the fact) so passing this explicitly
+/// changes only the fill/stroke source, not the window's geometry.
+pub fn modal_frame() -> egui::Frame {
+    frame(Elevation::Overlay)
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::same(10))
+}
+
+/// Full-viewport dimming behind a modal window (onboarding's welcome
+/// overlay) — egui has no true modal primitive, so a painted backdrop plus a
+/// centered `Window` is the idiomatic approximation. Centralized so the one
+/// black-alpha literal this app paints lives in `theme.rs` like every other
+/// surface color, not inline at the call site.
+pub fn modal_scrim() -> Color32 {
+    Color32::from_black_alpha(120)
+}
+
 const OVERLAY_SHADOW: egui::epaint::Shadow = egui::epaint::Shadow {
     offset: [0, 8],
     blur: 20,

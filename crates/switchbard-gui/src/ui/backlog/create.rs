@@ -60,6 +60,7 @@ pub(crate) fn render_create_modal(
         .collapsible(false)
         .resizable(true)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .frame(theme::modal_frame())
         .show(ctx, |ui| {
             if fixed_target {
                 ui.label(

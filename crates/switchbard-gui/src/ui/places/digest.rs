@@ -45,8 +45,7 @@ use switchbard_core::{AttributedListener, BacklogTask, DispatchOptions, Repo, Wo
 
 pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     let read_state = app.tasks_read_state_snapshot();
-    let frame = egui::Frame::central_panel(&ui.ctx().style_of(ui.ctx().theme()))
-        .inner_margin(egui::Margin::same(12));
+    let frame = theme::frame(theme::Elevation::Panel).inner_margin(egui::Margin::same(12));
     egui::CentralPanel::default().frame(frame).show(ui, |ui| {
         // No clone just to check emptiness — `backlog_repos_snapshot()`
         // deep-clones every task's full body (description, plan, notes),
@@ -129,9 +128,13 @@ fn render_in_flight(app: &mut HiveApp, ui: &mut egui::Ui, rows: &[InFlightRow]) 
 }
 
 fn render_in_flight_row(app: &mut HiveApp, ui: &mut egui::Ui, row: &InFlightRow) {
+    // TASK-79: was `ui.visuals().widgets.noninteractive.bg_stroke` — an
+    // untuned stock gray, not this file's own `feed_row_frame()` sibling
+    // convention (a dense list row is deliberately borderless). Matches that
+    // convention instead of tuning a border this row never meant to have.
     let frame = egui::Frame::default()
         .fill(theme::card_bg())
-        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+        .stroke(egui::Stroke::NONE)
         .corner_radius(3.0)
         .inner_margin(egui::Margin::symmetric(10, 6));
     let resp = frame

@@ -47,16 +47,12 @@ pub(super) fn render_task_detail(
         .id_salt("backlog_task_detail")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            egui::Frame::default()
-                .fill(theme::card_bg())
-                .stroke(theme::surface_stroke())
+            theme::frame(theme::Elevation::Card)
                 .corner_radius(7.0)
                 .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| render_detail_header(app, ui, repo, task, editable));
             ui.add_space(8.0);
-            egui::Frame::default()
-                .fill(theme::card_bg())
-                .stroke(theme::surface_stroke())
+            theme::frame(theme::Elevation::Card)
                 .corner_radius(7.0)
                 .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
@@ -382,13 +378,16 @@ fn render_description_editor(app: &mut HiveApp, ui: &mut egui::Ui) {
     } else if app.backlog_view.editor.description.trim().is_empty() {
         ui.label(egui::RichText::new("No description").color(theme::muted_text()));
     } else {
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            CommonMarkViewer::new().show(
-                ui,
-                &mut app.commonmark_cache,
-                &app.backlog_view.editor.description,
-            );
-        });
+        theme::frame(theme::Elevation::Well)
+            .corner_radius(5.0)
+            .inner_margin(6.0)
+            .show(ui, |ui| {
+                CommonMarkViewer::new().show(
+                    ui,
+                    &mut app.commonmark_cache,
+                    &app.backlog_view.editor.description,
+                );
+            });
     }
 }
 

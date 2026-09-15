@@ -88,8 +88,7 @@ pub(crate) fn render_goals_place(app: &mut HiveApp, ui: &mut egui::Ui) {
     let repos = all_goal_repos(app);
     reconcile_selected_goal(app, &repos);
 
-    let frame =
-        egui::Frame::central_panel(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(12));
+    let frame = theme::frame(theme::Elevation::Panel).inner_margin(egui::Margin::same(12));
     egui::CentralPanel::default().frame(frame).show(ui, |ui| {
         egui::ScrollArea::vertical()
             .id_salt("goals_place")
@@ -159,9 +158,7 @@ fn render_index(app: &mut HiveApp, ui: &mut egui::Ui, repos: &[GoalRepoRow]) {
     }
     let show_repo_dot = scoped_rows.len() > 1;
 
-    egui::Frame::default()
-        .fill(theme::card_bg())
-        .stroke(theme::surface_stroke())
+    theme::frame(theme::Elevation::Card)
         .corner_radius(6.0)
         .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
@@ -344,6 +341,7 @@ fn render_edit_target_modal(app: &mut HiveApp, ctx: &egui::Context) {
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .frame(theme::modal_frame())
         .show(ctx, |ui| {
             ui.label(egui::RichText::new(&goal_name).strong());
             ui.label(
@@ -446,6 +444,7 @@ fn render_attach_input_modal(app: &mut HiveApp, ctx: &egui::Context, repos: &[Go
         .resizable(false)
         .default_width(380.0)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .frame(theme::modal_frame())
         .show(ctx, |ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut app.goals_view.attach_input.query)
@@ -623,9 +622,7 @@ fn render_this_week_card(
     let sunday = monday
         .checked_add_days(chrono::Days::new(6))
         .unwrap_or(monday);
-    egui::Frame::default()
-        .fill(theme::card_bg())
-        .stroke(theme::surface_stroke())
+    theme::frame(theme::Elevation::Card)
         .corner_radius(6.0)
         .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
@@ -702,9 +699,7 @@ fn render_history_card(
     repo: &BacklogRepo,
     today: chrono::NaiveDate,
 ) {
-    egui::Frame::default()
-        .fill(theme::card_bg())
-        .stroke(theme::surface_stroke())
+    theme::frame(theme::Elevation::Card)
         .corner_radius(6.0)
         .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
@@ -796,9 +791,7 @@ fn render_inputs_card(
     goal_def: &GoalDef,
     week: &str,
 ) {
-    egui::Frame::default()
-        .fill(theme::card_bg())
-        .stroke(theme::surface_stroke())
+    theme::frame(theme::Elevation::Card)
         .corner_radius(6.0)
         .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {

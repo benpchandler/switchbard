@@ -309,7 +309,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     }
 
     let workspace_frame =
-        egui::Frame::central_panel(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(12));
+        theme::frame(theme::Elevation::Panel).inner_margin(egui::Margin::same(12));
     egui::CentralPanel::default()
         .frame(workspace_frame)
         .show(ui, |ui| {

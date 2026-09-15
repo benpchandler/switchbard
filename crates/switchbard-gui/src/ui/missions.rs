@@ -214,8 +214,8 @@ fn render_primary_control(
 }
 
 fn render_queue_form(ui: &mut egui::Ui, model: &mut MissionControlModel) -> Option<ControlAction> {
-    egui::Frame::group(ui.style())
-        .fill(theme::card_bg())
+    theme::frame(theme::Elevation::Card)
+        .corner_radius(5.0)
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
             ui.label(egui::RichText::new("Queue a mission for contract review").strong());
@@ -287,8 +287,8 @@ fn render_contract_review(
         .as_ref()
         .expect("checked pending contract");
     let resume_answer = &mut model.resume_answer;
-    egui::Frame::group(ui.style())
-        .fill(theme::card_bg())
+    theme::frame(theme::Elevation::Card)
+        .corner_radius(5.0)
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -397,9 +397,7 @@ fn render_unsupported(ui: &mut egui::Ui, path: &std::path::Path, found: &str) {
 }
 
 fn state_card(ui: &mut egui::Ui, title: &str, path: &std::path::Path, detail: &str) {
-    egui::Frame::group(ui.style())
-        .fill(theme::card_bg())
-        .stroke(theme::surface_stroke())
+    theme::frame(theme::Elevation::Card)
         .corner_radius(8.0)
         .inner_margin(egui::Margin::same(14))
         .show(ui, |ui| {
@@ -516,8 +514,8 @@ fn render_freshness(ui: &mut egui::Ui, freshness: &ProjectionFreshness) {
 }
 
 fn render_empty(ui: &mut egui::Ui, portfolio_id: &str) {
-    egui::Frame::group(ui.style())
-        .fill(theme::card_bg())
+    theme::frame(theme::Elevation::Card)
+        .corner_radius(5.0)
         .inner_margin(egui::Margin::same(14))
         .show(ui, |ui| {
             ui.label(egui::RichText::new("Queue is empty").strong());
@@ -526,12 +524,9 @@ fn render_empty(ui: &mut egui::Ui, portfolio_id: &str) {
 }
 
 fn render_mission(ui: &mut egui::Ui, mission: &ProjectedMission) {
-    egui::Frame::group(ui.style())
-        .fill(theme::card_bg())
-        .stroke(theme::surface_stroke())
+    theme::frame(theme::Elevation::Card)
         .corner_radius(8.0)
         .inner_margin(egui::Margin::same(12))
-        .shadow(theme::card_shadow())
         .show(ui, |ui| {
             render_mission_header(ui, mission);
             render_progress(ui, mission);
@@ -659,8 +654,7 @@ fn render_feedback_attention(ui: &mut egui::Ui, mission: &ProjectedMission) {
 }
 
 fn attention_line(ui: &mut egui::Ui, label: &str, text: &str) {
-    egui::Frame::NONE
-        .fill(theme::faint_bg())
+    theme::frame(theme::Elevation::Well)
         .inner_margin(egui::Margin::symmetric(8, 5))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

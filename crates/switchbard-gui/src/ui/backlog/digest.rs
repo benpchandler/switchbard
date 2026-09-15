@@ -176,9 +176,7 @@ fn render_zero_goal_state(
     scoped_roots: &[std::path::PathBuf],
 ) {
     let ctx = ui.ctx().clone();
-    let frame = egui::Frame::default()
-        .fill(theme::card_bg())
-        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+    let frame = theme::frame(theme::Elevation::Card)
         .corner_radius(3.0)
         .inner_margin(egui::Margin::symmetric(14, 12));
     frame.show(ui, |ui| {
@@ -462,9 +460,7 @@ fn render_compact_goal_card(
     status: &switchbard_core::GoalStatus,
     width: f32,
 ) {
-    let frame = egui::Frame::default()
-        .fill(theme::card_bg())
-        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+    let frame = theme::frame(theme::Elevation::Card)
         .corner_radius(4.0)
         .inner_margin(egui::Margin::symmetric(10, 8));
     frame.show(ui, |ui| {
@@ -516,9 +512,7 @@ fn render_goal_card(
     status: &switchbard_core::GoalStatus,
     pending: &mut Pending,
 ) {
-    let frame = egui::Frame::default()
-        .fill(theme::card_bg())
-        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+    let frame = theme::frame(theme::Elevation::Card)
         .corner_radius(3.0)
         .inner_margin(egui::Margin::symmetric(10, 6));
     frame.show(ui, |ui| {
@@ -679,9 +673,7 @@ fn render_strip(app: &mut HiveApp, ui: &mut egui::Ui, row: &DigestRow<'_>) {
     let key = crate::runtime::BacklogTaskKey::for_task(&row.repo.key, row.task);
     // `theme::card_bg()`, not `ui.visuals().extreme_bg_color` — the owner UX
     // pass repointed that egui slot to input fields (see theme.rs's doc).
-    let frame = egui::Frame::default()
-        .fill(theme::card_bg())
-        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+    let frame = theme::frame(theme::Elevation::Card)
         .corner_radius(3.0)
         .inner_margin(egui::Margin::symmetric(10, 6));
     let resp = frame

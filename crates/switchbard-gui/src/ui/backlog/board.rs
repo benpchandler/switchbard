@@ -886,16 +886,18 @@ fn paint_card(
         // shared accessor is what makes that a guarantee instead of a
         // coincidence). Width stays 2.0, the card's own pre-existing weight.
         _ if selected => egui::Stroke::new(2.0, theme::selected_row_stroke().color),
-        _ => ui.visuals().widgets.noninteractive.bg_stroke,
+        // TASK-79: was `ui.visuals().widgets.noninteractive.bg_stroke` — an
+        // untuned stock-egui gray never routed through `apply()`, so an
+        // at-rest card's border silently drifted from every other card's
+        // `theme::surface_stroke()`. One authority now.
+        _ => theme::surface_stroke(),
     };
     // `Frame::outer_rect` adds both 8px inner margins and the stroke on
     // each edge. Subtract the actual stroke here so normal, selected, and
     // landing cards all occupy the same 148px outer slot.
     let card_content_height = CARD_HEIGHT - 16.0 - 2.0 * stroke.width;
-    let mut frame = egui::Frame::default()
-        .fill(theme::card_bg())
+    let mut frame = theme::frame(theme::Elevation::Card)
         .stroke(stroke)
-        .shadow(theme::card_shadow())
         .corner_radius(6.0)
         .inner_margin(egui::Margin::symmetric(10, 8));
     if motion == CardMotion::Saving {

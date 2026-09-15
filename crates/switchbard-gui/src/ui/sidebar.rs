@@ -34,6 +34,7 @@ pub(crate) fn render_remove_confirmation(app: &mut HiveApp, ui: &mut egui::Ui) {
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .frame(theme::modal_frame())
         .show(ctx, |ui| {
             ui.label(
                 egui::RichText::new(format!("Stop tracking '{name}' in Switchbard?")).strong(),
