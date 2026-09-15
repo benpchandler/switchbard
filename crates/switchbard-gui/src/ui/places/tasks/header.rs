@@ -24,8 +24,7 @@ pub(super) fn render(
     let group = &groups[index];
     let expanded = app.tasks_place.expanded_groups.contains(&group.key);
     ui.allocate_ui(egui::vec2(ui.available_width(), row_height), |ui| {
-        egui::Frame::default()
-            .fill(theme::faint_bg())
+        theme::frame(theme::Elevation::Well)
             .inner_margin(egui::Margin::symmetric(6, 4))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -63,8 +62,7 @@ pub(super) fn render(
 /// list_body::ROW_HEIGHT`].
 pub(super) fn render_summary(ui: &mut egui::Ui, group: &Group<'_>, row_height: f32) {
     ui.allocate_ui(egui::vec2(ui.available_width(), row_height), |ui| {
-        egui::Frame::default()
-            .fill(theme::faint_bg())
+        theme::frame(theme::Elevation::Well)
             .inner_margin(egui::Margin::symmetric(6, 4))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {

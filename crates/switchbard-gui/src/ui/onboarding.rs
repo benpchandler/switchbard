@@ -172,7 +172,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
         .fixed_pos(screen_rect.min)
         .show(ctx, |ui| {
             ui.painter()
-                .rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(120));
+                .rect_filled(screen_rect, 0.0, theme::modal_scrim());
         });
 
     egui::Window::new("Welcome to Switchbard")
@@ -180,6 +180,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
         .collapsible(false)
         .resizable(false)
         .default_width(560.0)
+        .frame(theme::modal_frame())
         .show(ctx, |ui| {
             ui.label(egui::RichText::new("Let's set up your workspace.").strong());
             ui.add_space(6.0);

@@ -126,9 +126,7 @@ pub(crate) fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
     let mut standardize = false;
     let mut decline = false;
 
-    egui::Frame::NONE
-        .fill(theme::card_bg())
-        .stroke(theme::surface_stroke())
+    theme::frame(theme::Elevation::Card)
         .inner_margin(egui::Margin::symmetric(10, 8))
         .corner_radius(6.0)
         .show(ui, |ui| {

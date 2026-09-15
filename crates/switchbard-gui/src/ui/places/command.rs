@@ -104,9 +104,7 @@ pub fn render(app: &mut HiveApp, ui: &mut egui::Ui) {
 }
 
 fn render_section_switcher(app: &mut HiveApp, ui: &mut egui::Ui) {
-    egui::Frame::NONE
-        .fill(theme::card_bg())
-        .stroke(theme::surface_stroke())
+    theme::frame(theme::Elevation::Card)
         .corner_radius(6.0)
         .inner_margin(egui::Margin::symmetric(6, 4))
         .show(ui, |ui| {
@@ -858,9 +856,7 @@ fn render_support_card(app: &mut HiveApp, ui: &mut egui::Ui, row: &CommandRow, n
     else {
         return;
     };
-    egui::Frame::default()
-        .fill(theme::card_bg())
-        .stroke(theme::surface_stroke())
+    theme::frame(theme::Elevation::Card)
         .corner_radius(6.0)
         .inner_margin(egui::Margin::same(10))
         .show(ui, |ui| {

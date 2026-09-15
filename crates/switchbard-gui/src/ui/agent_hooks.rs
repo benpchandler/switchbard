@@ -113,8 +113,7 @@ fn hooks_filters_active(app: &HiveApp, snap: &Snapshot) -> bool {
 /// card - without it the body below the summary line would render nothing at
 /// all, indistinguishable from a broken view.
 fn render_no_matching_repos(ui: &mut egui::Ui) {
-    egui::Frame::NONE
-        .fill(ui.visuals().faint_bg_color)
+    theme::frame(theme::Elevation::Well)
         .inner_margin(egui::Margin::symmetric(10, 10))
         .show(ui, |ui| {
             ui.label(
@@ -180,7 +179,8 @@ fn render_repo(
     ) {
         return false;
     }
-    egui::Frame::group(ui.style())
+    theme::frame(theme::Elevation::Card)
+        .corner_radius(5.0)
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             render_repo_header(ui, app, repo, worktree, map, hook_filter);
@@ -323,8 +323,7 @@ fn render_empty(ui: &mut egui::Ui, agent: AgentContextAgent, filters_active: boo
             agent.label()
         )
     };
-    egui::Frame::NONE
-        .fill(ui.visuals().faint_bg_color)
+    theme::frame(theme::Elevation::Well)
         .inner_margin(egui::Margin::symmetric(10, 10))
         .show(ui, |ui| {
             ui.label(egui::RichText::new(message).color(theme::muted_text()));
@@ -339,9 +338,7 @@ fn render_empty(ui: &mut egui::Ui, agent: AgentContextAgent, filters_active: boo
 }
 
 fn render_hook(ui: &mut egui::Ui, hook: &AgentHook) {
-    egui::Frame::NONE
-        .fill(ui.visuals().faint_bg_color)
-        .stroke(theme::surface_stroke())
+    theme::frame(theme::Elevation::Well)
         .corner_radius(5.0)
         .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {

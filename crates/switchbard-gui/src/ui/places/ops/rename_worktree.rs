@@ -16,6 +16,7 @@ pub fn render_modal(app: &mut HiveApp, ctx: &egui::Context) {
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .frame(theme::modal_frame())
         .show(ctx, |ui| {
             ui.set_max_width(440.0);
             ui.label(

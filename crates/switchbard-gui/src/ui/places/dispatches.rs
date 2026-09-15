@@ -669,9 +669,7 @@ fn render_empty(ui: &mut egui::Ui) {
 /// `ui::places::command`'s fleet rows use for the same field, so the two
 /// surfaces can never disagree about how stale a run's last activity is).
 fn render_detail_card(ui: &mut egui::Ui, row: &DispatchRow, now: u64) {
-    egui::Frame::default()
-        .fill(theme::card_bg())
-        .stroke(theme::surface_stroke())
+    theme::frame(theme::Elevation::Card)
         .corner_radius(6.0)
         .inner_margin(egui::Margin::same(10))
         .show(ui, |ui| {
