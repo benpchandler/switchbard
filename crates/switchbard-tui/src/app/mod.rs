@@ -9,6 +9,7 @@ pub mod pr_merge;
 pub mod resume;
 mod session;
 mod slots;
+mod task_cancel;
 mod task_parent;
 mod task_project;
 mod task_status;
@@ -171,6 +172,7 @@ pub struct App {
     /// Cursor row inside the focused detail pane (`detail_edit`'s `FieldRow`
     /// list for the selected task); meaningless while `pane != Pane::Detail`.
     pub detail_cursor: usize,
+    pub detail_collapsed: std::collections::BTreeSet<crate::detail_pane::Section>,
     /// The detail pane's own scroll offset, kept independent of the PR
     /// pane's (`pull_requests.detail_scroll`) — the two panes never show at
     /// once, but each remembers its own place.
@@ -202,6 +204,7 @@ pub struct App {
     pub picker: Option<ValuePicker>,
     picker_parents: Vec<ValuePicker>,
     pub pr_merge: pr_merge::MergeFlow,
+    pub task_cancel: task_cancel::CancelFlow,
     pub column_purpose: ColumnPurpose,
     pub status: String,
     pub last_screen: String,
@@ -297,6 +300,7 @@ impl App {
             input: String::new(),
             pane: Pane::None,
             detail_cursor: 0,
+            detail_collapsed: std::collections::BTreeSet::new(),
             detail_scroll: 0,
             detail_read_focus: false,
             detail_viewport: 0,
@@ -315,6 +319,7 @@ impl App {
             telemetry,
             should_quit: false,
             pr_merge: pr_merge::MergeFlow::default(),
+            task_cancel: task_cancel::CancelFlow::default(),
         };
         app.reload_tasks();
         app.reload_work();

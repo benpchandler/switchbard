@@ -622,7 +622,7 @@ fn zero_and_many_labels_render_as_none_or_a_joined_list() {
 
     select_task_titled(&mut h, "No labels here");
     let screen = h.press(KeyCode::Enter);
-    assert!(screen.contains("labels: (none)"), "{screen}");
+    assert!(screen.contains("labels: Not set"), "{screen}");
     h.press(KeyCode::Esc);
 
     select_task_titled(&mut h, "Many labels here");
@@ -635,8 +635,8 @@ fn empty_project_and_due_date_show_placeholders() {
     let mut h = Harness::new();
     select_task_titled(&mut h, "Add dark theme");
     let screen = h.press(KeyCode::Enter);
-    assert!(screen.contains("project: (unassigned)"), "{screen}");
-    assert!(screen.contains("due date: (none)"), "{screen}");
+    assert!(screen.contains("project: Not set"), "{screen}");
+    assert!(screen.contains("due date: Not set"), "{screen}");
 }
 
 #[test]
@@ -749,7 +749,7 @@ fn long_description_pages_into_the_acceptance_section_without_moving_cursor_or_s
             break;
         }
     }
-    assert!(screen.contains("acceptance"), "{screen}");
+    assert!(screen.contains("Acceptance criteria"), "{screen}");
     assert!(screen.contains("End of long description"), "{screen}");
     assert_eq!(
         h.app.detail_cursor, DESCRIPTION,
@@ -897,7 +897,7 @@ fn wheel_scrolls_the_detail_pane_and_is_bounded_without_touching_focus_or_select
         h.mouse(MouseEventKind::ScrollDown, 75, 10);
     }
     let bottom = h.render();
-    assert!(bottom.contains("End of wheel task"), "{bottom}");
+    assert!(bottom.contains("custom fields: Not set"), "{bottom}");
 
     let mut top = String::new();
     for _ in 0..500 {
@@ -915,7 +915,8 @@ fn clicking_a_pane_row_moves_the_cursor_there_and_focuses_the_pane() {
     let selected = h.selected_title();
     // Status is the pane's second row; see the fixed row order in the
     // module-level `STATUS` constant.
-    let screen = h.mouse(MouseEventKind::Down(MouseButton::Left), 55, 5);
+    let y = h.app.detail_hit.detail_inner().y + h.app.detail_hit.row_starts[STATUS];
+    let screen = h.mouse(MouseEventKind::Down(MouseButton::Left), 55, y);
     assert_eq!(h.app.mode, Mode::DetailFocus);
     assert_eq!(h.app.detail_cursor, STATUS);
     assert!(screen.contains("status:"), "{screen}");
@@ -926,7 +927,8 @@ fn clicking_a_pane_row_moves_the_cursor_there_and_focuses_the_pane() {
     );
 
     // A different row: due date, two rows further down.
-    let screen = h.mouse(MouseEventKind::Down(MouseButton::Left), 55, 8);
+    let y = h.app.detail_hit.detail_inner().y + h.app.detail_hit.row_starts[DUE_DATE];
+    let screen = h.mouse(MouseEventKind::Down(MouseButton::Left), 55, y);
     assert_eq!(h.app.detail_cursor, DUE_DATE);
     assert!(screen.contains("due date:"), "{screen}");
 }
