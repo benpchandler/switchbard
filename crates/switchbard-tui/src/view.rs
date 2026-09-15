@@ -238,7 +238,9 @@ fn draw_task_rows(
             height: content_height.min((window - used) as u16),
             ..body
         };
-        list_rows.push((row_area.y, app.scroll + line));
+        if cursor.highlight {
+            list_rows.push((row_area.y, cursor.scroll + line));
+        }
         used += usize::from(content_height)
             + usize::from(matches!(row, Row::Task(_)) && state.row_layout.spaced);
         let selected = cursor.highlight && cursor.scroll + line == cursor.selected;

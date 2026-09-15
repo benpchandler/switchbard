@@ -9,6 +9,9 @@ repository.workspace = true
 homepage.workspace = true
 description = "Terminal and agent write path for Backlog-format tasks (switchbard's native task layer)"
 
+[lints]
+workspace = true
+
 [dependencies]
 switchbard-core = { path = "../switchbard-core" }
 anyhow.workspace = true

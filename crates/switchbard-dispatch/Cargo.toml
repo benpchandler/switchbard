@@ -11,6 +11,9 @@ description = "Headless drain of Switchbard's dispatch queue — no GUI, meant t
 keywords = ["devtools", "git", "worktree", "automation"]
 categories = ["development-tools"]
 
+[lints]
+workspace = true
+
 [dependencies]
 switchbard-core = { path = "../switchbard-core" }
 
