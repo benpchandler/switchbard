@@ -251,7 +251,7 @@ impl Filter {
     pub fn matches_row(&self, row: &impl crate::column_values::ColumnValues) -> bool {
         let text = row.text();
         let text: Vec<&str> = text.iter().map(String::as_str).collect();
-        self.matches_values(&text, |field| row.values(field.column()))
+        self.matches_values(&text, |field| row.query_values(field.column()))
     }
 
     /// Shared filter grammar; each page supplies the values its fields mean.

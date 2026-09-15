@@ -9,6 +9,11 @@ use switchbard_core::{goals_feeding, BacklogTask, GoalDef, PrListRow};
 
 pub trait ColumnValues {
     fn values(&self, column: Column) -> Vec<String>;
+    /// Values accepted by field queries; unlike `values`, this may include
+    /// narrowly-scoped compatibility aliases.
+    fn query_values(&self, column: Column) -> Vec<String> {
+        self.values(column)
+    }
     fn numeric_key(&self, column: Column) -> u64;
     fn identity(&self) -> &str;
     fn text(&self) -> Vec<String> {
@@ -33,16 +38,7 @@ impl ColumnValues for TaskValues<'_> {
         let Self { task, goals, .. } = self;
         match column {
             Column::Id => vec![task.id.clone()],
-            Column::Status => {
-                let mut values = vec![task.status.clone()];
-                match task.planning {
-                    switchbard_core::PlanningState::Planned => values.push("To Do".into()),
-                    switchbard_core::PlanningState::Considering => {
-                        values.extend(["Icebox".into(), "Backlog".into()]);
-                    }
-                }
-                values
-            }
+            Column::Status => vec![task.status.clone()],
             Column::Planning => vec![task.planning.to_string()],
             Column::Priority => vec![task.priority.clone()],
             Column::Title => vec![task.title.clone()],
@@ -89,6 +85,18 @@ impl ColumnValues for TaskValues<'_> {
                 .into_iter()
                 .collect(),
         }
+    }
+    fn query_values(&self, column: Column) -> Vec<String> {
+        let mut values = self.values(column);
+        if column == Column::Status && self.task.status == "Not started" {
+            match self.task.planning {
+                switchbard_core::PlanningState::Planned => values.push("To Do".into()),
+                switchbard_core::PlanningState::Considering => {
+                    values.extend(["Icebox".into(), "Backlog".into()]);
+                }
+            }
+        }
+        values
     }
     fn numeric_key(&self, column: Column) -> u64 {
         match column {
