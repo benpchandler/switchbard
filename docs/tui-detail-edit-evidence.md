@@ -213,9 +213,9 @@ cancel-on-disappearance branch `reload_tasks` already runs for `TaskStatus`/
   temporarily disabling the new refresh and confirming
   `background_reload_refreshes_the_stale_guard_while_cursor_focused` fails
   against it, reproducing the exact dead-end refusal reported.
-- `mise run fmt`, `mise run clippy` (workspace, `RUSTFLAGS=-D warnings`), and
-  `mise run test` (full workspace suite) all pass unpiped with exit code 0
-  on the final tree.
+- `mise run fmt`, `mise run clippy` (workspace, with warnings denied by the
+  workspace lint policy), and `mise run test` (full workspace suite) all pass
+  unpiped with exit code 0 on the final tree.
 
 ## Reconciliation with TASK-221 (2026-09-14)
 

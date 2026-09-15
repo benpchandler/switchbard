@@ -21,13 +21,11 @@ description = "Check Rust formatting"
 run = "cargo fmt --all -- --check"
 
 [tasks.clippy]
-description = "Run clippy with CI warning policy"
-env = { RUSTFLAGS = "-D warnings" }
-run = "cargo clippy --workspace --all-targets -- -D warnings"
+description = "Run clippy on every workspace target (warnings denied by [workspace.lints] in Cargo.toml)"
+run = "cargo clippy --workspace --all-targets"
 
 [tasks.test]
-description = "Run the full workspace test suite"
-env = { RUSTFLAGS = "-D warnings" }
+description = "Run the full workspace test suite (warnings denied by [workspace.lints] in Cargo.toml)"
 run = "cargo test --workspace --all-targets"
 
 [tasks.ci]
@@ -69,10 +67,10 @@ depends = ["ci"]
 run = "bash scripts/package-dmg.sh"
 
 [tasks.tui]
-description = "Check only the TUI crate (no RUSTFLAGS so the workspace build cache stays warm)"
+description = "Check only the TUI crate; same flags as ci, so it shares ci's dependency builds"
 run = [
   "cargo fmt --all -- --check",
-  "cargo clippy -p switchbard-tui --all-targets -- -D warnings",
+  "cargo clippy -p switchbard-tui --all-targets",
   "cargo test -p switchbard-tui",
 ]
 
