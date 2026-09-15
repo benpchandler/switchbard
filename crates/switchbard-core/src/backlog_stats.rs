@@ -617,6 +617,7 @@ mod tests {
 
     fn task(id: &str, status: &str, priority: &str, source: BacklogTaskSource) -> BacklogTask {
         BacklogTask {
+            planning: crate::PlanningState::Planned,
             storage_identity: None,
             id: id.to_string(),
             title: id.to_string(),

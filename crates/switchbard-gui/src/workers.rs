@@ -1510,6 +1510,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(i, title)| BacklogTask {
+                    planning: switchbard_core::PlanningState::Planned,
                     storage_identity: None,
                     id: format!("TASK-{}", i + 1),
                     title: title.to_string(),

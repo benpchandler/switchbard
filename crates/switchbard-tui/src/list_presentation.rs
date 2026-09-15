@@ -112,7 +112,7 @@ fn confirmation(frame: &mut Frame, area: Rect, block: Block<'_>, lines: Vec<Line
         frame.render_widget(paragraph.block(block), area);
     } else {
         frame.render_widget(
-            Paragraph::new("Enlarge terminal to confirm merge. Esc cancels.")
+            Paragraph::new("Enlarge terminal to see the full confirmation. Esc goes back.")
                 .wrap(Wrap { trim: false })
                 .block(block),
             area,

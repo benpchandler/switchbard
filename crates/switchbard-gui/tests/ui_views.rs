@@ -26,6 +26,7 @@ use switchbard_gui::ui::places::tasks::state::TasksViewMode;
 
 fn seeded_backlog_task() -> BacklogTask {
     BacklogTask {
+        planning: switchbard_core::PlanningState::Planned,
         storage_identity: None,
         id: "TASK-1".to_string(),
         title: "Seeded Backlog Task".to_string(),
@@ -736,6 +737,7 @@ fn backlog_all_projects_scope_merges_repos_with_a_repo_badge() {
             BacklogRepo {
                 root: repo_path(repo_name),
                 tasks: vec![BacklogTask {
+                    planning: switchbard_core::PlanningState::Planned,
                     storage_identity: None,
                     id: "TASK-1".to_string(),
                     title: title.to_string(),

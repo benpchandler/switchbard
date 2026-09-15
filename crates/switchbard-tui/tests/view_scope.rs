@@ -51,7 +51,9 @@ fn malformed_and_future_records_are_preserved_on_save_and_promotion() {
         let screen = h.type_text("vgd");
         assert!(screen.contains("repair file and reopen"), "{screen}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
-        assert!(!h.root.join("views.lua").exists());
+        assert!(
+            std::fs::read_to_string(h.root.join("views.lua")).unwrap() == harness::LEGACY_VIEWS
+        );
     }
 }
 

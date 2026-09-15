@@ -948,6 +948,7 @@ mod tests {
             origin: CommandOrigin::Dispatch {
                 repo_root: std::path::PathBuf::from("/repo"),
                 task: Box::new(switchbard_core::BacklogTask {
+                    planning: switchbard_core::PlanningState::Planned,
                     storage_identity: None,
                     id: "TASK-1".to_string(),
                     title: "demo".to_string(),

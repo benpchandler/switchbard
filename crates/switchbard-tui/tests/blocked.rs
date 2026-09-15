@@ -87,6 +87,7 @@ fn blocked_row_renders_in_the_hint_style() {
 #[test]
 fn detail_pane_lists_blocked_by_and_blocks() {
     let mut h = Harness::new();
+    h.terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 28)).unwrap();
     seed_with_deps(&h.root, "Ship checkout", "To Do", &["TASK-2"]);
     h.press(KeyCode::Char('r'));
 

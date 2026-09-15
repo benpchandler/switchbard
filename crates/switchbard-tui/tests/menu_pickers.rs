@@ -82,7 +82,7 @@ fn view_open_save_and_global_are_picker_menus() {
     assert_eq!(h.app.mode, Mode::PickValue);
     assert!(h.app.picker.is_some());
     h.press(KeyCode::Esc);
-    assert!(!h.root.join("views.lua").exists());
+    assert!(std::fs::read_to_string(h.root.join("views.lua")).unwrap() == harness::LEGACY_VIEWS);
 }
 
 #[test]

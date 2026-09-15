@@ -56,6 +56,8 @@ pub fn edit_backlog_task(
     task_id: &str,
     patch: &BacklogTaskPatch,
 ) -> Result<String> {
+    let normalized = normalized_patch(project_root, patch)?;
+    let patch = &normalized;
     if patch.is_empty() {
         return Ok("no changes".to_string());
     }
@@ -79,6 +81,8 @@ pub fn edit_backlog_task_expected(
     patch: &BacklogTaskPatch,
     expected: Option<&super::BacklogStorageIdentity>,
 ) -> Result<String> {
+    let normalized = normalized_patch(project_root, patch)?;
+    let patch = &normalized;
     let Some(expected) = expected else {
         anyhow::ensure!(
             super::task_storage::active(project_root)?.is_none(),
@@ -136,6 +140,10 @@ pub(super) fn apply_patch_draft(
     patch: &BacklogTaskPatch,
 ) -> Result<bool> {
     let mut changed = false;
+    anyhow::ensure!(
+        patch.planning.is_none(),
+        "planning changes require set_task_planning so order commits atomically"
+    );
     if let Some(title) = &patch.title {
         changed |= super::write::set_task_title_draft(draft, title)?.changed();
     }
@@ -546,7 +554,13 @@ fn filename_matches_id(path: &Path, key: &str, prefix: &str) -> bool {
 /// statuses (missing or minimal `config.yml`) constrains nothing.
 pub(super) fn validate_status(project_root: &Path, status: &str) -> Result<()> {
     let declared = parse_config_statuses(project_root)?;
-    if declared.is_empty() || declared.iter().any(|s| s.eq_ignore_ascii_case(status)) {
+    if declared.is_empty()
+        || declared.iter().any(|s| s.eq_ignore_ascii_case(status))
+        || (status.eq_ignore_ascii_case("To Do")
+            && declared
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case("Not started")))
+    {
         return Ok(());
     }
     bail!(
@@ -572,6 +586,22 @@ fn move_task_file(from: &Path, dest_dir: &Path) -> Result<()> {
     fs::rename(from, &dest)
         .with_context(|| format!("moving {} to {}", from.display(), dest.display()))?;
     Ok(())
+}
+
+/// Legacy callers can still send To Do after a repository adopts Not started.
+pub(super) fn normalized_patch(root: &Path, patch: &BacklogTaskPatch) -> Result<BacklogTaskPatch> {
+    let mut patch = patch.clone();
+    if patch
+        .status
+        .as_deref()
+        .is_some_and(|status| status.eq_ignore_ascii_case("To Do"))
+        && parse_config_statuses(root)?
+            .iter()
+            .any(|status| status.eq_ignore_ascii_case("Not started"))
+    {
+        patch.status = Some("Not started".into());
+    }
+    Ok(patch)
 }
 
 #[cfg(test)]

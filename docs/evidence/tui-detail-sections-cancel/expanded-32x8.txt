@@ -1,0 +1,8 @@
+ [Tasks]   PRs   …  Agents  …  I
+┌ .tmp6Jpv3Q  v┐┌ Detail ──────┐
+│   4 title    ││labels: auth, │
+│   Fix login r││bug           │
+│   Write onboa││v Description │
+│   Add dark th││description:  │
+└──────────────┘└──────────────┘
+ pane focused j/k move · enter e

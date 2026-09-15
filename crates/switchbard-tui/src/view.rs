@@ -1,5 +1,6 @@
 //! Rendering. Reads `App`, writes a frame, and leaves a text copy of the screen behind.
 
+mod detail_content;
 mod history_picker;
 mod history_preview;
 pub(crate) mod history_title;
@@ -62,6 +63,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     draw_footer(frame, app, footer);
     app.pr_merge.confirmation_visible = false;
+    app.task_cancel.confirmation_visible = false;
     if let Some(picker) = app.picker.clone() {
         draw_picker(frame, app, &picker, body);
     }
@@ -399,11 +401,8 @@ fn table_title(app: &App) -> String {
     if let Some(sort) = app.state.sort {
         parts.push(sort.label(app.registry()));
     }
-    if app.state.columns != Column::DEFAULT_SHOWN {
-        parts.push(format!(
-            "cols:{}",
-            columns_text(&app.state.columns, app.registry())
-        ));
+    if let Some(label) = app.state.columns_label(app.registry()) {
+        parts.push(label);
     }
     if !app.state.glyph_columns.is_empty() {
         parts.push(format!(
@@ -458,12 +457,19 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     };
     let rows = app.detail_rows();
-    let (lines, row_lines) =
-        build_detail_lines(app, &task, &theme, focused, app.detail_cursor, &rows);
+    let DetailLines {
+        lines,
+        row_lines,
+        section_lines,
+    } = build_detail_lines(app, &task, &theme, focused, app.detail_cursor, &rows);
     let width = area.width.saturating_sub(2);
     app.detail_hit.row_starts = row_lines
         .iter()
         .map(|&line_index| wrapped_offset(&lines, line_index, width))
+        .collect();
+    app.detail_hit.section_starts = section_lines
+        .into_iter()
+        .map(|(line, section)| (wrapped_offset(&lines, line, width), section))
         .collect();
     if focused {
         adjust_detail_scroll(app, &lines, &row_lines, &rows, &task.id, area);
@@ -479,6 +485,12 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
 /// cursor row when focused. `row_lines[n]` is the index into the returned
 /// `lines` for `FieldRow` number `n`, since a section header or a body line
 /// is not itself a navigable row.
+struct DetailLines {
+    lines: Vec<Line<'static>>,
+    row_lines: Vec<usize>,
+    section_lines: Vec<(usize, crate::detail_pane::Section)>,
+}
+
 fn build_detail_lines(
     app: &App,
     task: &switchbard_core::BacklogTask,
@@ -486,9 +498,10 @@ fn build_detail_lines(
     focused: bool,
     cursor: usize,
     rows: &[FieldRow],
-) -> (Vec<Line<'static>>, Vec<usize>) {
+) -> DetailLines {
     let mut lines: Vec<Line> = Vec::new();
     let mut row_lines: Vec<usize> = Vec::new();
+    let mut section_lines = Vec::new();
     let mut header = task.id.clone();
     if !task.editable() {
         header.push_str(" · read-only");
@@ -507,31 +520,50 @@ fn build_detail_lines(
         )));
     }
     lines.push(Line::from(""));
-    let (mut acceptance_seen, mut blocked_seen, mut blocks_seen) = (false, false, false);
+    let mut previous_section = None;
     for (index, row) in rows.iter().enumerate() {
-        match row {
-            FieldRow::Acceptance(_) if !acceptance_seen => {
-                acceptance_seen = true;
-                lines.push(Line::from(""));
-                lines.push(crate::detail_pane::section("acceptance", theme));
+        let section = row.section();
+        if previous_section != Some(section) {
+            section_lines.push((lines.len(), section));
+            let marker = if app.detail_collapsed.contains(&section) {
+                ">"
+            } else {
+                "v"
+            };
+            let mut style = theme.style(Surface::Accent);
+            if focused && index == cursor && matches!(row, FieldRow::Section(_)) {
+                style = theme.style(Surface::Selected).patch(style);
             }
-            FieldRow::BlockedBy(_) if !blocked_seen => {
-                blocked_seen = true;
-                lines.push(Line::from(""));
-                lines.push(crate::detail_pane::section("blocked by", theme));
+            lines.push(Line::from(Span::styled(
+                format!("{marker} {}", section.label()),
+                style,
+            )));
+            previous_section = Some(section);
+        }
+        if matches!(row, FieldRow::Section(_)) {
+            row_lines.push(lines.len() - 1);
+            continue;
+        }
+        if let FieldRow::Content(section) = row {
+            row_lines.push(lines.len());
+            let style = if focused && index == cursor {
+                theme.style(Surface::Selected)
+            } else {
+                theme.style(Surface::Hint)
+            };
+            for text in detail_content::lines(app, task, *section) {
+                for line in text.lines() {
+                    lines.push(Line::from(Span::styled(line.to_string(), style)));
+                }
             }
-            FieldRow::Blocks(_) if !blocks_seen => {
-                blocks_seen = true;
-                lines.push(Line::from(""));
-                lines.push(crate::detail_pane::section("blocks", theme));
-            }
-            _ => {}
+            continue;
         }
         let text = detail_row_text(app, task, *row);
         let mut style = match row {
-            FieldRow::Description | FieldRow::BlockedBy(_) | FieldRow::Blocks(_) => {
-                theme.style(Surface::Hint)
-            }
+            FieldRow::Description
+            | FieldRow::Content(_)
+            | FieldRow::BlockedBy(_)
+            | FieldRow::Blocks(_) => theme.style(Surface::Hint),
             _ => Style::default(),
         };
         if *row == FieldRow::Title {
@@ -551,7 +583,11 @@ fn build_detail_lines(
             }
         }
     }
-    (lines, row_lines)
+    DetailLines {
+        lines,
+        row_lines,
+        section_lines,
+    }
 }
 
 /// Keep the cursor row's own line inside the viewport, scrolling up or down
@@ -583,7 +619,10 @@ fn adjust_detail_scroll(
     let anchor = (task_id.to_string(), app.detail_cursor);
     let settled = app.detail_scroll_anchor.as_ref() == Some(&anchor);
     app.detail_scroll_anchor = Some(anchor);
-    let long_content = matches!(rows.get(app.detail_cursor), Some(FieldRow::Description));
+    let long_content = matches!(
+        rows.get(app.detail_cursor),
+        Some(FieldRow::Description | FieldRow::Content(_))
+    );
     if offset < app.detail_scroll {
         if !(long_content && settled) {
             app.detail_scroll = offset;
@@ -622,25 +661,32 @@ fn wrapped_offset(lines: &[Line<'_>], upto: usize, width: u16) -> u16 {
 /// as extra, non-navigable lines directly beneath this row's line.
 fn detail_row_text(app: &App, task: &switchbard_core::BacklogTask, row: FieldRow) -> String {
     match row {
+        FieldRow::Section(section) => section.label().to_string(),
+        FieldRow::Content(section) => format!("{}:", section.label()),
         FieldRow::Title => task.title.clone(),
         FieldRow::Status => format!("status: {}", task.status),
-        FieldRow::Priority => format!("priority: {}", task.priority),
-        FieldRow::Project => format!(
-            "project: {}",
-            task.project.as_deref().unwrap_or("(unassigned)")
+        FieldRow::Planning => format!("planning: {}", task.planning),
+        FieldRow::Checklist => format!(
+            "checklist: {} (task + descendants)",
+            app.checklist_text(task)
         ),
-        FieldRow::DueDate => format!("due date: {}", task.due_date.as_deref().unwrap_or("(none)")),
+        FieldRow::Priority => format!("priority: {}", task.priority),
+        FieldRow::Project => format!("project: {}", task.project.as_deref().unwrap_or("Not set")),
+        FieldRow::DueDate => format!(
+            "due date: {}",
+            task.due_date.as_deref().unwrap_or("Not set")
+        ),
         FieldRow::Labels => format!(
             "labels: {}",
             if task.labels.is_empty() {
-                "(none)".to_string()
+                "Not set".to_string()
             } else {
                 task.labels.join(", ")
             }
         ),
         FieldRow::Description => {
             if task.description.trim().is_empty() {
-                "description: (none)".to_string()
+                "description: Not set".to_string()
             } else {
                 "description:".to_string()
             }
@@ -664,7 +710,7 @@ fn detail_row_text(app: &App, task: &switchbard_core::BacklogTask, row: FieldRow
                      many blocked_by entries — detail_pane::field_rows built this list from \
                      the same relations",
                 );
-            format!("{id} {title}")
+            format!("blocked by: {id} {title}")
         }
         FieldRow::Blocks(index) => {
             let (id, title, done) = app
@@ -677,7 +723,10 @@ fn detail_row_text(app: &App, task: &switchbard_core::BacklogTask, row: FieldRow
                      blocks entries — detail_pane::field_rows built this list from the same \
                      relations",
                 );
-            format!("{id} {title} ({})", if *done { "done" } else { "open" })
+            format!(
+                "blocks: {id} {title} ({})",
+                if *done { "done" } else { "open" }
+            )
         }
     }
 }
@@ -766,6 +815,12 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
                 .join(" ");
             (keys, "cycle line wrap".to_string())
         }))
+        .chain((app.page == Page::Tasks).then(|| {
+            (
+                format!("{} l / r", app.config.bindings_for(&Action::Rank).join(" ")),
+                "planning / Planned order".to_string(),
+            )
+        }))
         .chain(std::iter::once((
             "1-9".to_string(),
             "column actions".to_string(),
@@ -801,6 +856,18 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(format!("{command}  "), theme.style(Surface::Accent)),
             Span::raw(description),
         ]));
+    }
+    if app.page == Page::Tasks {
+        lines.push(help_entry(
+            "t c c",
+            "cancel task with confirmation; Esc keeps it",
+            theme,
+        ));
+        lines.push(help_entry(
+            "z/Z/A",
+            "detail: toggle section / collapse all / expand all",
+            theme,
+        ));
     }
     if app.page == Page::PullRequests {
         lines.push(Line::from("PR fields: status/lifecycle, id, title, tasks, checks, review, merge, draft; PR views use .prs.lua files."));
@@ -883,7 +950,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Mode::DetailFocus => Line::from(vec![
             Span::styled(" pane focused ", theme.style(Surface::Accent)),
             Span::styled(
-                "j/k move · enter/l edit · space toggles AC · esc/h back",
+                "j/k move · enter edit · space check · z fold · Z fold all · A expand all · esc back",
                 theme.style(Surface::Hint),
             ),
         ]),
@@ -1030,7 +1097,10 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         .unwrap_or(20)
         .max(60)
         .min(body.width.saturating_sub(4) as usize) as u16;
-    let width = if picker.purpose == PickerPurpose::Merge {
+    let width = if matches!(
+        picker.purpose,
+        PickerPurpose::Merge | PickerPurpose::TaskCancel
+    ) {
         body.width.saturating_sub(4)
     } else {
         width
@@ -1070,6 +1140,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                 ) => app.state.columns.contains(column),
                 (PickerPurpose::TaskParent(id), Payload::Parent(parent)) => app.tasks().iter().any(|task| task.id == *id && task.parent == *parent),
                 (PickerPurpose::TaskProject(id), Payload::Project(project)) => app.tasks().iter().any(|task| task.id == *id && task.project == *project),
+                (PickerPurpose::TaskPlanning(id) | PickerPurpose::DetailPlanning(id), Payload::Text(planning)) => app.tasks().iter().any(|task| task.id == *id && task.planning.as_str().eq_ignore_ascii_case(planning)),
                 (PickerPurpose::TaskStatus(id), Payload::Text(status)) => app.tasks().iter().any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
                 (PickerPurpose::DetailStatus(id), Payload::Text(status)) => app.tasks().iter().any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
                 (PickerPurpose::DetailPriority(id), Payload::Text(priority)) => app.tasks().iter().any(|task| task.id == *id && task.priority.eq_ignore_ascii_case(priority)),
@@ -1168,9 +1239,13 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         .borders(Borders::ALL)
         .border_style(theme.style(Surface::Accent))
         .title_style(title_style)
-        .title(pending + &picker_title(picker, preview.is_some(), app.registry()));
-    let block = if picker.purpose != PickerPurpose::Merge
-        && rows.len().saturating_add(4) > height as usize
+        .title(
+            pending + &picker_title(picker, preview.is_some(), app.registry(), app.legacy_order),
+        );
+    let block = if !matches!(
+        picker.purpose,
+        PickerPurpose::Merge | PickerPurpose::TaskCancel
+    ) && rows.len().saturating_add(4) > height as usize
     {
         let navigation = if matches!(picker.purpose, PickerPurpose::TaskParent(_)) && width >= 28 {
             "↑↓ Enter saves Esc"
@@ -1198,20 +1273,23 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
     } else {
         block
     };
-    if picker.purpose == PickerPurpose::Merge {
-        let mut confirmation: Vec<Line> = app
-            .pr_merge
-            .confirmation_lines()
-            .into_iter()
-            .map(Line::from)
-            .collect();
+    if matches!(
+        picker.purpose,
+        PickerPurpose::Merge | PickerPurpose::TaskCancel
+    ) {
+        let confirmation_lines = if picker.purpose == PickerPurpose::TaskCancel {
+            app.task_cancel.confirmation_lines()
+        } else {
+            app.pr_merge.confirmation_lines()
+        };
+        let mut confirmation: Vec<Line> = confirmation_lines.into_iter().map(Line::from).collect();
         confirmation.push(Line::from(""));
         confirmation.extend(lines);
         let area = Rect {
             height: body.height.saturating_sub(2),
             ..area
         };
-        app.pr_merge.confirmation_visible = crate::list_presentation::picker(
+        let visible = crate::list_presentation::picker(
             frame,
             area,
             block,
@@ -1219,6 +1297,11 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
             picker.selected,
             true,
         );
+        if picker.purpose == PickerPurpose::TaskCancel {
+            app.task_cancel.confirmation_visible = visible;
+        } else {
+            app.pr_merge.confirmation_visible = visible;
+        }
     } else {
         crate::list_presentation::picker(frame, area, block, lines, picker.selected, false);
     }
@@ -1229,6 +1312,7 @@ fn picker_title(
     picker: &ValuePicker,
     typed_is_color: bool,
     registry: &crate::columns::ColumnRegistry,
+    legacy_order: bool,
 ) -> String {
     let subject = match &picker.purpose {
         PickerPurpose::Filter(field) => field.keyword(registry).to_string(),
@@ -1256,10 +1340,19 @@ fn picker_title(
         PickerPurpose::Organize => "organize by".to_string(),
         PickerPurpose::Ball => "ball".to_string(),
         PickerPurpose::Merge => "Confirm PR merge".to_string(),
+        PickerPurpose::TaskCancel => "Cancel task?".to_string(),
         PickerPurpose::Task => "task".to_string(),
-        PickerPurpose::TopList => "task · top list".to_string(),
+        PickerPurpose::TopList => if legacy_order {
+            "task · top list"
+        } else {
+            "task · Planned order"
+        }
+        .to_string(),
         PickerPurpose::TaskParent(id) => format!("{id} · parent"),
         PickerPurpose::TaskProject(id) => format!("{id} · project"),
+        PickerPurpose::TaskPlanning(id) | PickerPurpose::DetailPlanning(id) => {
+            format!("{id} · planning")
+        }
         PickerPurpose::TaskStatus(id) => format!("{id} · status"),
         PickerPurpose::DetailStatus(id) => format!("{id} · status"),
         PickerPurpose::DetailPriority(id) => format!("{id} · priority"),

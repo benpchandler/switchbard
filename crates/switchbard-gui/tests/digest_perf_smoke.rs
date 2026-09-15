@@ -98,6 +98,7 @@ fn task(repo: usize, i: usize) -> BacklogTask {
         ("To Do", vec![], String::new())
     };
     BacklogTask {
+        planning: switchbard_core::PlanningState::Planned,
         storage_identity: None,
         title: format!("Task {i} in repo {repo}"),
         status: status.to_string(),

@@ -40,6 +40,7 @@ fn current_week() -> String {
 
 fn backlog_task(id: &str, title: &str, status: &str, project: Option<&str>) -> BacklogTask {
     BacklogTask {
+        planning: switchbard_core::PlanningState::Planned,
         storage_identity: None,
         id: id.to_string(),
         title: title.to_string(),

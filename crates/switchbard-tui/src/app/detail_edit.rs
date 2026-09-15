@@ -4,24 +4,15 @@
 //! here, edited with `sb edit`; the description body renders in full but is
 //! likewise not inline-editable — `sb edit <id> --description` is its path.
 //!
-//! Every write goes through `switchbard_core`'s native write layer
-//! (`edit_backlog_task_expected` / `set_backlog_acceptance_checked`), gated
-//! by [`DetailDraft`]'s own stale-check: `edit_backlog_task_expected`'s
-//! revision guard only fires for a centrally-stored task (see its own doc
-//! comment), so a raw byte-for-byte compare against the file read when the
-//! edit opened is the "or equivalent stale-check" that also catches a plain
-//! filesystem edit landing between focus and save — the shape every sbt
-//! fixture actually exercises (`tests/harness` never stands up a central
-//! store).
-
-use std::path::PathBuf;
+//! Drafts read from the authoritative task store. Revision/content checks protect
+//! both field saves and checkbox toggles from concurrent edits.
 
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Position;
 
-use switchbard_core::{BacklogStorageIdentity, BacklogTaskPatch};
+use switchbard_core::BacklogTaskPatch;
 
 use super::{App, DetailInputKind, Mode, Pane};
 use crate::config::{Action, KeyChord};
@@ -30,16 +21,7 @@ use crate::page::Page;
 use crate::picker::{Payload, PickOption, PickerPurpose};
 use crate::tasks;
 
-/// The pre-write snapshot a detail-pane save checks itself against; see the
-/// module doc for why this exists alongside `edit_backlog_task_expected`'s
-/// own central-storage revision guard.
-#[derive(Debug, Clone)]
-pub(super) struct DetailDraft {
-    task_id: String,
-    path: PathBuf,
-    snapshot: String,
-    identity: Option<BacklogStorageIdentity>,
-}
+pub(super) type DetailDraft = switchbard_core::BacklogTaskSnapshot;
 
 fn detail_input_cap(kind: DetailInputKind) -> usize {
     match kind {
@@ -109,10 +91,13 @@ impl App {
     /// about what row is what (Rule 2: one owning definition).
     pub fn detail_rows(&self) -> Vec<FieldRow> {
         match self.selected_task() {
-            Some(task) => detail_pane::field_rows(
-                task,
-                self.relations.blocked_by.get(&task.id).map_or(0, Vec::len),
-                self.relations.blocks.get(&task.id).map_or(0, Vec::len),
+            Some(task) => detail_pane::visible_rows(
+                detail_pane::field_rows(
+                    task,
+                    self.relations.blocked_by.get(&task.id).map_or(0, Vec::len),
+                    self.relations.blocks.get(&task.id).map_or(0, Vec::len),
+                ),
+                &self.detail_collapsed,
             ),
             None => Vec::new(),
         }
@@ -181,9 +166,45 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => self.move_detail_cursor(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_detail_cursor(-1),
             KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => self.activate_detail_row(),
+            KeyCode::Char('z') => {
+                if let Some(row) = self.detail_rows().get(self.detail_cursor) {
+                    self.toggle_detail_section(row.section());
+                }
+            }
+            KeyCode::Char('Z') => self.set_detail_sections_collapsed(true),
+            KeyCode::Char('A') => self.set_detail_sections_collapsed(false),
             KeyCode::Char(' ') => self.toggle_detail_acceptance_at_cursor(),
             _ => self.handle_detail_scroll_key(&event),
         }
+    }
+
+    fn toggle_detail_section(&mut self, section: detail_pane::Section) {
+        if !self.detail_collapsed.remove(&section) {
+            self.detail_collapsed.insert(section);
+        }
+        self.focus_detail_section(section);
+    }
+
+    fn set_detail_sections_collapsed(&mut self, collapsed: bool) {
+        let section = self
+            .detail_rows()
+            .get(self.detail_cursor)
+            .map_or(detail_pane::Section::Properties, |row| row.section());
+        self.detail_collapsed = if collapsed {
+            detail_pane::Section::ALL.into_iter().collect()
+        } else {
+            Default::default()
+        };
+        self.focus_detail_section(section);
+    }
+
+    fn focus_detail_section(&mut self, section: detail_pane::Section) {
+        self.detail_cursor = self
+            .detail_rows()
+            .iter()
+            .position(|row| row.section() == section)
+            .unwrap_or(0);
+        self.detail_scroll_anchor = None;
     }
 
     /// The physical `PageDown`/`PageUp` keys, or whatever the user's own
@@ -281,6 +302,17 @@ impl App {
                 .y
                 .saturating_sub(inner.y)
                 .saturating_add(self.detail_scroll);
+            if let Some((_, section)) = self
+                .detail_hit
+                .section_starts
+                .iter()
+                .find(|(line, _)| *line == display_line)
+                .copied()
+            {
+                self.enter_detail_focus();
+                self.toggle_detail_section(section);
+                return;
+            }
             if let Some(row) = self.detail_hit.row_at(display_line) {
                 self.detail_cursor = row;
                 self.enter_detail_focus();
@@ -332,6 +364,10 @@ impl App {
             return;
         }
         match row {
+            FieldRow::Section(section) => self.toggle_detail_section(section),
+            FieldRow::Content(_) => {
+                self.status = "read-only detail; use sb edit for supported fields".to_string();
+            }
             FieldRow::Title => {
                 if self.begin_detail_edit() {
                     self.input = title;
@@ -340,6 +376,12 @@ impl App {
                 }
             }
             FieldRow::Status => self.open_detail_status_picker(),
+            FieldRow::Planning => self.open_detail_planning_picker(),
+            FieldRow::Checklist => {
+                self.status =
+                    "Checklist counts criteria on this task and descendants; Done is explicit"
+                        .to_string();
+            }
             FieldRow::Priority => self.open_detail_priority_picker(),
             FieldRow::Project => self.open_detail_project_picker(),
             FieldRow::DueDate => {
@@ -363,18 +405,20 @@ impl App {
 
     fn toggle_detail_acceptance_at_cursor(&mut self) {
         let rows = self.detail_rows();
-        if let Some(FieldRow::Acceptance(index)) = rows.get(self.detail_cursor).copied() {
-            self.toggle_detail_acceptance(index);
+        match rows.get(self.detail_cursor).copied() {
+            Some(FieldRow::Acceptance(index)) => self.toggle_detail_acceptance(index),
+            Some(FieldRow::Section(section)) => self.toggle_detail_section(section),
+            _ => {}
         }
     }
 
     /// `Space` (or Enter) on an acceptance row: flip its checked state
-    /// through `set_backlog_acceptance_checked`, gated by the same
+    /// through `set_backlog_acceptance_checked_expected`, gated by the same
     /// stale-draft compare as every other detail-pane save.
     ///
     /// Deliberately does **not** call `begin_detail_edit` here: unlike every
     /// other row, a toggle opens and commits in the same keystroke, so
-    /// re-snapshotting immediately beforehand would compare the file against
+    /// re-snapshotting immediately beforehand would compare the record against
     /// itself and the stale-draft guard would never fire. The snapshot this
     /// checks against is whichever one is already current — taken when focus
     /// entered the pane, or refreshed after this task's last successful
@@ -484,33 +528,21 @@ impl App {
             return false;
         }
         let id = task.id.clone();
-        let path = task.path.clone();
-        let identity = task.storage_identity.clone();
-        let snapshot = match std::fs::read_to_string(&path) {
-            Ok(text) => text,
+        let snapshot = match switchbard_core::read_backlog_task_snapshot(&self.repo_root, &id) {
+            Ok(snapshot) => snapshot,
             Err(error) => {
-                self.fail(format!("{id}: could not read task file: {error}"));
+                self.fail(format!("{id}: could not read task: {error}"));
                 return false;
             }
         };
-        self.detail_draft = Some(DetailDraft {
-            task_id: id,
-            path,
-            snapshot,
-            identity,
-        });
+        self.detail_draft = Some(snapshot);
         true
     }
 
     fn save_detail_patch(&self, id: &str, patch: &BacklogTaskPatch) -> Result<String, String> {
         let draft = self.checked_draft(id)?;
-        switchbard_core::edit_backlog_task_expected(
-            &self.repo_root,
-            id,
-            patch,
-            draft.identity.as_ref(),
-        )
-        .map_err(|error| error.to_string())
+        switchbard_core::edit_backlog_task_snapshot(&self.repo_root, id, patch, draft)
+            .map_err(|error| error.to_string())
     }
 
     fn save_detail_checklist(
@@ -519,38 +551,32 @@ impl App {
         index: usize,
         checked: bool,
     ) -> Result<String, String> {
-        self.checked_draft(id)?;
-        switchbard_core::set_backlog_acceptance_checked(&self.repo_root, id, index, checked)
-            .map_err(|error| error.to_string())
+        let draft = self.checked_draft(id)?;
+        switchbard_core::set_backlog_acceptance_checked_expected(
+            &self.repo_root,
+            id,
+            index,
+            checked,
+            draft,
+        )
+        .map_err(|error| error.to_string())
     }
 
-    /// The stale-draft guard every detail-pane save runs first: the draft
-    /// must belong to the task being saved, and the file it snapshotted must
-    /// still read back byte-for-byte the same.
+    /// Every save verifies the authoritative identity and content captured at edit start.
     fn checked_draft(&self, id: &str) -> Result<&DetailDraft, String> {
-        let Some(draft) = self
+        let draft = self
             .detail_draft
             .as_ref()
             .filter(|draft| draft.task_id == id)
-        else {
-            return Err("no active edit; reopen the row and retry".to_string());
-        };
-        match std::fs::read_to_string(&draft.path) {
-            Ok(current) if current == draft.snapshot => Ok(draft),
-            // Names the actual gesture rather than a generic "reload and
-            // retry": one `Esc` always returns to plain `Mode::DetailFocus`
-            // (from a picker, from a capture, or already there), and `Enter`
-            // on the same row re-activates it with a fresh snapshot —
-            // `reload_tasks` also refreshes the snapshot on its own the
-            // moment a background file change lands while already in
-            // `Mode::DetailFocus`, so this message is a fallback for the
-            // window right after a stale save is refused, not the only way
-            // to recover.
-            Ok(_) => Err(format!(
-                "{id} changed on disk; press Esc then Enter to reload"
-            )),
-            Err(error) => Err(format!("{id}: could not verify draft: {error}")),
-        }
+            .ok_or_else(|| "no active edit; reopen the row and retry".to_string())?;
+        switchbard_core::validate_backlog_task_snapshot(&self.repo_root, draft).map_err(
+            |error| {
+                format!(
+                    "{id} changed on disk or in storage; press Esc then Enter to reload: {error}"
+                )
+            },
+        )?;
+        Ok(draft)
     }
 
     /// Save a patch, reload, keep the pane on the same task, and refresh the
@@ -602,6 +628,10 @@ impl App {
         };
         let options = switchbard_core::assignable_statuses(&repo)
             .into_iter()
+            .filter(|status| {
+                !status.eq_ignore_ascii_case("Canceled")
+                    && !status.eq_ignore_ascii_case("Cancelled")
+            })
             .map(|status| PickOption::text(status, 0))
             .collect::<Vec<_>>();
         if options.is_empty() {
@@ -810,5 +840,55 @@ impl App {
             self.input.clear();
             self.open_detail_labels_picker();
         }
+    }
+}
+
+impl App {
+    fn open_detail_planning_picker(&mut self) {
+        let Some(id) = self.selected_task().map(|task| task.id.clone()) else {
+            return;
+        };
+        if !self.begin_detail_edit() {
+            return;
+        }
+        self.open_picker(
+            PickerPurpose::DetailPlanning(id),
+            super::task_status::planning_options(),
+        );
+        self.status.clear();
+    }
+
+    pub(super) fn commit_detail_planning(&mut self, value: &str) {
+        let planning = match value.parse::<switchbard_core::PlanningState>() {
+            Ok(state) => state,
+            Err(error) => {
+                self.fail(error.to_string());
+                return;
+            }
+        };
+        let Some(id) = self
+            .detail_draft
+            .as_ref()
+            .map(|draft| draft.task_id.clone())
+        else {
+            self.fail("no active edit; reopen the row and retry".to_string());
+            return;
+        };
+        let result = self.checked_draft(&id).and_then(|draft| {
+            switchbard_core::set_task_planning_snapshot(&self.repo_root, &id, planning, draft)
+                .map_err(|error| error.to_string())
+        });
+        match result {
+            Ok(_) => {
+                self.reload_tasks();
+                self.select_task(&id);
+                self.status = format!("{id} is {planning}; execution status unchanged");
+                self.telemetry
+                    .record("action", format!("detail_planning {id} {planning}"));
+                self.begin_detail_edit();
+            }
+            Err(error) => self.fail(error),
+        }
+        self.mode = Mode::DetailFocus;
     }
 }

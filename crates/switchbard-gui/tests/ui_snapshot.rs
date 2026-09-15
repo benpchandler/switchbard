@@ -132,6 +132,7 @@ fn agents_hooks_active_filters_narrow_snapshot() {
 
 fn task_in_flight() -> BacklogTask {
     BacklogTask {
+        planning: switchbard_core::PlanningState::Planned,
         storage_identity: None,
         id: "TASK-83".to_string(),
         title: "rank / expedite verbs".to_string(),
@@ -160,6 +161,7 @@ fn task_in_flight() -> BacklogTask {
 
 fn task_failed() -> BacklogTask {
     BacklogTask {
+        planning: switchbard_core::PlanningState::Planned,
         storage_identity: None,
         id: "TASK-61".to_string(),
         title: "gh timeout retry".to_string(),

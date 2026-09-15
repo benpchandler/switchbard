@@ -29,7 +29,7 @@ fn cold_launch_restores_both_pages_and_every_view_field() {
     h.next_list_page();
     assert_eq!(h.app.state, task);
     assert!(!h.root.join("views-repo.lua").exists());
-    assert!(!h.root.join("views.lua").exists());
+    assert!(std::fs::read_to_string(h.root.join("views.lua")).unwrap() == harness::LEGACY_VIEWS);
 }
 
 #[test]

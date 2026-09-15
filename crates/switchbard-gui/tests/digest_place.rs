@@ -30,6 +30,7 @@ use switchbard_gui::runtime::{Place, TasksView, WorktreeMeta};
 
 fn task(id: &str, title: &str, status: &str, labels: &[&str], notes: &str) -> BacklogTask {
     BacklogTask {
+        planning: switchbard_core::PlanningState::Planned,
         storage_identity: None,
         id: id.to_string(),
         title: title.to_string(),

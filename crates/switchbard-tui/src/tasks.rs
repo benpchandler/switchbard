@@ -48,10 +48,21 @@ pub struct Backlog {
     pub goals: Vec<GoalDef>,
     /// Goal headings' facts for the current week, in `goals.yml` order.
     pub goal_summaries: Vec<GoalSummary>,
-    /// The top list: the expedite lane, in order, pruned to tasks that are loaded.
+    /// Planned active work, with the expedite lane retained before activation.
     pub top: Vec<String>,
+    pub legacy_order: bool,
+    pub checklist: HashMap<String, switchbard_core::ChecklistProgress>,
     /// Dependency and sub-task facts, computed once from `backlog_relations`.
     pub relations: TaskRelations,
+}
+
+/// A direct child remains visible in its parent's details after filing or archiving.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChildSummary {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub source: BacklogTaskSource,
 }
 
 /// Dependency and sub-task facts derived once per load from
@@ -74,11 +85,27 @@ pub struct TaskRelations {
     pub blocks: HashMap<String, Vec<(String, String, bool)>>,
     /// (done, total) direct sub-tasks, by parent id; absent when childless.
     pub subtasks: HashMap<String, (usize, usize)>,
+    /// All direct children, including historical records, keyed by parent ID.
+    pub children: HashMap<String, Vec<ChildSummary>>,
 }
 
 impl TaskRelations {
     fn compute(repo: &BacklogRepo, tasks: &[BacklogTask]) -> TaskRelations {
         let mut relations = TaskRelations::default();
+        for child in &repo.tasks {
+            if let Some(parent) = &child.parent {
+                relations
+                    .children
+                    .entry(parent.clone())
+                    .or_default()
+                    .push(ChildSummary {
+                        id: child.id.clone(),
+                        title: child.title.clone(),
+                        status: child.status.clone(),
+                        source: child.source,
+                    });
+            }
+        }
         for task in tasks {
             if !task.is_done() && is_blocked(task, repo) {
                 relations.blocked.insert(task.id.clone());
@@ -148,13 +175,18 @@ pub fn load(root: &Path) -> Result<Backlog> {
         .cloned()
         .collect();
     let relations = TaskRelations::compute(&repo, &tasks);
-    let top: Vec<String> = repo
-        .ranking
-        .expedite
-        .iter()
-        .filter(|id| tasks.iter().any(|task: &BacklogTask| task.id == **id))
-        .cloned()
-        .collect();
+    let legacy_order = repo.ranking.planned.is_none();
+    let top = if legacy_order {
+        repo.ranking
+            .expedite
+            .iter()
+            .filter(|id| tasks.iter().any(|task| &task.id == *id))
+            .cloned()
+            .collect()
+    } else {
+        switchbard_core::planning_order(&repo)
+    };
+    let checklist = switchbard_core::checklist_progress(&repo);
     Ok(Backlog {
         tasks,
         fields: repo.fields.clone(),
@@ -162,6 +194,8 @@ pub fn load(root: &Path) -> Result<Backlog> {
         goals,
         goal_summaries,
         top,
+        legacy_order,
+        checklist,
         relations,
     })
 }

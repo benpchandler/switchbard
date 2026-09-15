@@ -180,6 +180,7 @@ mod tests {
 
     fn task(id: &str, status: &str, deps: &[&str], parent: Option<&str>) -> BacklogTask {
         BacklogTask {
+            planning: crate::PlanningState::Planned,
             storage_identity: None,
             id: id.to_string(),
             title: id.to_string(),

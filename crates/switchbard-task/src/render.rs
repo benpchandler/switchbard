@@ -28,6 +28,7 @@ pub fn list_row(task: &BacklogTask) -> String {
 pub fn task_view(task: &BacklogTask, fields: &[FieldDecl]) -> String {
     let mut out = String::new();
     out.push_str(&format!("{} - {}\n", task.id, task.title));
+    push_field(&mut out, "Planning", task.planning.as_str());
     push_field(&mut out, "Status", &task.status);
     push_field(&mut out, "Priority", &task.priority);
     push_field(&mut out, "Due", task.due_date.as_deref().unwrap_or(""));
@@ -107,6 +108,7 @@ mod tests {
 
     fn task() -> BacklogTask {
         BacklogTask {
+            planning: switchbard_core::PlanningState::Planned,
             storage_identity: None,
             id: "TASK-7".to_string(),
             title: "Render me".to_string(),

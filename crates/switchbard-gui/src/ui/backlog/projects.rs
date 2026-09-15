@@ -480,6 +480,7 @@ mod tests {
 
     fn task(id: &str, project: Option<&str>, done: bool) -> BacklogTask {
         BacklogTask {
+            planning: switchbard_core::PlanningState::Planned,
             storage_identity: None,
             id: id.to_string(),
             title: id.to_string(),

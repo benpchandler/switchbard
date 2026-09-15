@@ -1,0 +1,28 @@
+ [Tasks]   Pull Requests   ?  Agents  …  Inbox   tab switch page
+┌ fixture     v1 · 3/3 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│1 id 2 planning  3 status    4 pri 5 checklist     6 title                                                                                │
+│▸ Planned · 2                                                                                                                             │
+│1    Planned     In Progress M     Review 1/1 100% Fix login redirect loop                                                                │
+│2    Planned     To Do       L     0/1 0.0%        Add dark theme                                                                         │
+│▸ Other tasks                                                                                                                             │
+│3    Considering To Do       H     Unmeasured      Write onboarding guide                                                                 │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+reloaded 3 tasks

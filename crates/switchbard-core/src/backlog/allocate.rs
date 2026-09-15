@@ -137,11 +137,25 @@ pub fn create_task_allocating_id(
     let _repository_lock = crate::storage::RepositoryLock::acquire(repo_root)?;
     if let Some((mut store, repo)) = super::task_storage::active(repo_root)? {
         let prefix = configured_task_prefix(repo_root)?;
-        return store.mutate_kind_with_history(&repo, "task", None, |documents, history| {
+        let sequence = store.change_sequence()?;
+        let loaded = super::load_backlog_repo(repo_root)?;
+        let ordered = loaded.ranking.planned.is_some();
+        let ranking_central = store.authority(&repo, "ranking")?;
+        anyhow::ensure!(
+            !ordered || ranking_central,
+            "task creation spans partially migrated planning order; migrate ranking first"
+        );
+        let kinds = if ordered {
+            vec!["task", "ranking"]
+        } else {
+            vec!["task"]
+        };
+        let initial_order = super::planning::planning_order(&loaded);
+        return store.mutate_kinds(&repo, &kinds, Some(sequence), |documents, history| {
             for document in documents.iter() {
                 document.ensure_understood()?;
             }
-            let id = central_candidate(history, task.parent.as_deref(), &prefix)?;
+            let id = central_candidate(&history["task"], task.parent.as_deref(), &prefix)?;
             let (path, text) = super::write::new_task_document(
                 &repo_root.join("backlog/tasks"),
                 &prefix,
@@ -153,6 +167,21 @@ pub fn create_task_allocating_id(
                 .to_str()
                 .context("non-UTF-8 task locator")?
                 .to_string();
+            let parsed =
+                super::parse::parse_task_text(&path, super::BacklogTaskSource::Active, &text)?.0;
+            if ordered && super::planning::eligible(&parsed) {
+                let mut ids = initial_order.clone();
+                ids.push(parsed.id);
+                let ranking = documents
+                    .iter_mut()
+                    .find(|document| {
+                        document.kind == "ranking"
+                            && document.locator == "backlog/ranking.yml"
+                            && !document.deleted
+                    })
+                    .context("planned ranking disappeared")?;
+                ranking.content = super::ranking::planned_document(Some(&ranking.content), &ids)?;
+            }
             documents.push(crate::storage::Document {
                 content_version: 1,
                 id: String::new(),
@@ -180,6 +209,27 @@ pub fn create_task_allocating_id(
     }
     let claimed = claim_task_id(repo_root, task.parent.as_deref())?;
     let path = write_new_task_file(&tasks_dir, &prefix, &claimed.id, &task)?;
+    let loaded = super::load_backlog_repo(repo_root)?;
+    if loaded.ranking.planned.is_some() {
+        let full_id = format!("{prefix}-{}", claimed.id);
+        let created = loaded
+            .tasks
+            .iter()
+            .find(|task| task.id == full_id)
+            .context("created task disappeared")?;
+        if super::planning::eligible(created) {
+            if let Err(error) = super::planning_write::set(
+                repo_root,
+                &full_id,
+                super::PlanningState::Planned,
+                Some(created),
+            ) {
+                fs::remove_file(&path)
+                    .context("rolling back new task after planning order failure")?;
+                return Err(error);
+            }
+        }
+    }
     Ok((claimed.id, path))
 }
 

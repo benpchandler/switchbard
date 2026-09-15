@@ -68,6 +68,15 @@ pub fn load_backlog_repo(root: &Path) -> Result<BacklogRepo> {
         }
     }
 
+    let mut identities = std::collections::HashSet::new();
+    for task in &tasks {
+        if !identities.insert(task.id.to_ascii_lowercase()) {
+            warnings.push(format!(
+                "duplicate task identity {}; reconcile records before editing",
+                task.id
+            ));
+        }
+    }
     super::parent::normalize_parent_links(&mut tasks, &configured_task_prefix(root)?);
     let ranking = super::ranking::load_ranking(root, &mut warnings)?;
     super::ranking::sort_tasks(&mut tasks, &ranking);
@@ -221,6 +230,13 @@ pub(super) fn parse_task_text_with_fields(
     }
 
     let task = BacklogTask {
+        planning: match frontmatter.get(serde_yaml::Value::String("planning".into())) {
+            Some(value) => value
+                .as_str()
+                .context("planning must be Considering or Planned")?
+                .parse()?,
+            None => super::planning::PlanningState::legacy(&status, source),
+        },
         storage_identity: None,
         id,
         title,
@@ -724,7 +740,7 @@ pub(super) fn source_rank(source: BacklogTaskSource) -> usize {
 pub(super) fn status_rank(status: &str) -> usize {
     match status.to_ascii_lowercase().as_str() {
         "in progress" => 0,
-        "to do" => 1,
+        "to do" | "not started" => 1,
         "done" => 2,
         "draft" => 3,
         "archived" => 4,

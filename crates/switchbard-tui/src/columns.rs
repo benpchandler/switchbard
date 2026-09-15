@@ -46,6 +46,8 @@ pub struct FieldId(usize);
 pub enum Column {
     Id,
     Status,
+    Planning,
+    Checklist,
     Priority,
     Title,
     Labels,
@@ -163,7 +165,35 @@ impl ColumnSpec {
 /// A `static` rather than a `const`: `ColumnSpec` now owns heap types for the
 /// custom case, and a `const` would materialize (and drop) the whole table at
 /// every use site. Every row is a built-in: `decl: None`, always `declared`.
-pub static BUILTIN_COLUMNS: [ColumnSpec; 20] = [
+pub static BUILTIN_COLUMNS: [ColumnSpec; 22] = [
+    ColumnSpec {
+        column: Column::Planning,
+        name: Cow::Borrowed("planning"),
+        alias: None,
+        header: Cow::Borrowed("planning"),
+        width: Some(11),
+        field: Some(FilterField::Planning),
+        fixed_vocabulary: &["Planned", "Considering"],
+        groupable: true,
+        multi_valued: false,
+        numeric: false,
+        decl: None,
+        declared: true,
+    },
+    ColumnSpec {
+        column: Column::Checklist,
+        name: Cow::Borrowed("checklist"),
+        alias: None,
+        header: Cow::Borrowed("checklist"),
+        width: Some(23),
+        field: None,
+        fixed_vocabulary: &[],
+        groupable: false,
+        multi_valued: false,
+        numeric: true,
+        decl: None,
+        declared: true,
+    },
     ColumnSpec {
         column: Column::Id,
         name: Cow::Borrowed("id"),
@@ -665,7 +695,7 @@ pub const FIELD_PREFIX: &str = "field:";
 
 /// The built-in task columns, in catalog order. The registry appends the repo's
 /// own fields after them; a shown set is a user-ordered subset of both.
-const BUILTIN_TASK_COLUMNS: [Column; 13] = [
+const BUILTIN_TASK_COLUMNS: [Column; 15] = [
     Column::Id,
     Column::Status,
     Column::Priority,
@@ -679,6 +709,8 @@ const BUILTIN_TASK_COLUMNS: [Column; 13] = [
     Column::Goal,
     Column::Work,
     Column::Filed,
+    Column::Planning,
+    Column::Checklist,
 ];
 
 impl Column {
@@ -702,8 +734,14 @@ impl Column {
         Column::Title,
     ];
 
-    pub const DEFAULT_SHOWN: [Column; 4] =
-        [Column::Id, Column::Status, Column::Priority, Column::Title];
+    pub const DEFAULT_SHOWN: [Column; 6] = [
+        Column::Id,
+        Column::Planning,
+        Column::Status,
+        Column::Priority,
+        Column::Checklist,
+        Column::Title,
+    ];
 
     /// The `· hidden` tag picker lists add to a column that is not showing.
     pub const HIDDEN_TAG: &str = HIDDEN_TAG;

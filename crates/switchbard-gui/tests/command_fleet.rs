@@ -27,6 +27,7 @@ use switchbard_gui::runtime::{AgentsSection, CommandFacet, DispatchesFacet, Plac
 
 fn task(id: &str, labels: &[&str], notes: &str) -> BacklogTask {
     BacklogTask {
+        planning: switchbard_core::PlanningState::Planned,
         storage_identity: None,
         id: id.to_string(),
         title: format!("{id} work"),

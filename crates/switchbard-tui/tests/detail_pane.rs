@@ -134,7 +134,7 @@ fn boundaries_resize_and_multiline_content_remain_scrollable() {
         }
         let bottom = h.render();
         if width >= 100 {
-            assert!(bottom.contains("End of long detail"), "{bottom}");
+            assert!(bottom.contains("custom fields: Not set"), "{bottom}");
         }
         h.press(KeyCode::Home);
         for _ in 0..5 {
@@ -203,7 +203,10 @@ fn empty_and_short_details_clamp_and_page_switch_closes_focus() {
     let mut h = Harness::new();
     h.press(KeyCode::Enter);
     h.press(KeyCode::End);
-    assert_eq!(h.app.detail_scroll, 0);
+    let bottom = h.app.detail_scroll;
+    assert!(bottom > 0, "complete fields extend past the viewport");
+    h.press(KeyCode::PageDown);
+    assert_eq!(h.app.detail_scroll, bottom);
     h.next_list_page();
     assert!(!h.app.detail_focused());
     assert_eq!(h.app.pane, switchbard_tui::app::Pane::None);
@@ -234,7 +237,7 @@ fn reading_editing_and_pointer_focus_compose_without_losing_the_task() {
     assert!(h.app.detail_scroll > 0);
     h.press(KeyCode::Enter);
     assert_eq!(h.app.mode, Mode::DetailFocus);
-    assert!(h.render().contains("enter/l edit"));
+    assert!(h.render().contains("enter edit"));
     h.press(KeyCode::Esc);
     assert_eq!(h.app.mode, Mode::Browse);
     assert!(!h.app.detail_focused());
