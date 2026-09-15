@@ -68,4 +68,4 @@ The independent review found no material remaining issue after fixes. Central st
 - Independent review: no remaining material findings.
 - Primary checkout remains clean. No Cambridge Kitchens task records were modified.
 
-Installation is withheld because installed `ed49358` is not an ancestor of this branch. The guarded installer will be run without a force override; the currently running feature lineage must be preserved. No push, PR or merge is part of this slice.
+The guarded installer dry run (`bash scripts/install-switchbard.sh --dry-run --branch --hold sbt`) refused because this branch would drop 17 commits from installed `ed49358`. No binary was replaced and no force override was used. Code commit: `c725b99`. No push, PR or merge is part of this slice.
