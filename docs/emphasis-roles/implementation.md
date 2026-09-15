@@ -64,3 +64,7 @@ The owner installation at `94df3d04` belongs to a different feature lineage and 
 ### Delivery closeout
 
 Final source passed `cargo fmt --all --check`, `cargo clippy -p switchbard-tui --all-targets -- -D warnings`, and `cargo test -p switchbard-tui`: 393 passed, 0 failed, 22 pre-existing ignored tests. Final test log: `/tmp/sbt-emphasis-final-tests.log`. Independent review rechecked the three original findings and found no remaining blocker in those scopes. Tasks 215-218 and 175-177/200 are In Review, work claims released; task 219 retains the deferred scale criterion and its light-preset criterion is checked. Primary checkout was clean at closeout; its initial core edits were not touched by this work.
+
+## Integration follow-through (2026-09-15)
+
+Owner feedback: the roles were not visible in the everyday app. Objective now includes integrating the installed feature lineage and delivering the combined build, with default scanning cues visible without paint setup. Merge 0423eb25 preserves installed sbt 94df3d04 and installed sb 37846fd0; guarded installer dry-run allows both with no dropped commits. The baseline worktree and primary checkout were clean. The installed detail sections/cancellation features are retained, and their tests join the emphasis matrix. No unrelated branches are included merely because they exist. Default cue review, combined gates, live dogfood and installed build readback are required before closeout. A feature install remains temporary under the auto-install hold; upstream merge is not claimed by a local install.
