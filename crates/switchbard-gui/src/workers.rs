@@ -406,9 +406,22 @@ fn spawn_agent_sessions(ctx: egui::Context, ch: Channels, initial_delay: Duratio
             let wts = ch.worktrees.lock().unwrap().clone();
             if let Ok(scan) = scan_agent_sessions() {
                 let mut sessions = attribute_agent_sessions(&scan.rows, &wts);
+                // The status-line records carry each session's live name;
+                // read them so the fleet titles a session the way sbt does.
+                let now = switchbard_core::dispatch_inspect::now_unix();
+                let statuses = switchbard_core::default_agent_status_dir()
+                    .and_then(|dir| switchbard_core::load_agent_statuses(&dir, now).ok())
+                    .unwrap_or_default();
                 switchbard_core::entitle_sessions(
                     &mut sessions,
                     claude_home.as_deref(),
+                    |session| {
+                        session
+                            .session_id
+                            .as_deref()
+                            .and_then(|id| statuses.get(id))
+                            .and_then(|status| status.session_name.clone())
+                    },
                     |_| None,
                     &mut prompt_cache,
                 );
