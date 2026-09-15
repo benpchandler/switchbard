@@ -1,6 +1,8 @@
+use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -10,7 +12,7 @@ use crossterm::event::{self, Event};
 use switchbard_tui::app::{App, AppPaths};
 use switchbard_tui::settings;
 use switchbard_tui::telemetry::{self, Telemetry};
-use switchbard_tui::{config, view, views};
+use switchbard_tui::{config, tty, view, views};
 
 #[derive(Parser)]
 #[command(
@@ -121,20 +123,42 @@ fn run(repo_root: PathBuf, fresh: bool) -> Result<()> {
     let prev_build = std::env::var(switchbard_tui::auto_install::PREV_BUILD_ENV).ok();
     app.show_startup_banner(resumed.is_some(), prev_build.as_deref());
     let shutdown = ShutdownSignals::register()?;
-    let mut terminal = ratatui::init();
-    let outcome = crossterm::execute!(std::io::stdout(), event::EnableMouseCapture)
+    let hung_up = Arc::new(AtomicBool::new(false));
+    tty::spawn_hangup_watch(Arc::clone(&hung_up), Arc::clone(&shutdown.requested))?;
+    let mut terminal = init_terminal()?;
+    let outcome = tty::spawn_event_reader()
         .map_err(anyhow::Error::from)
-        .and_then(|()| drive(&mut terminal, &mut app, &shutdown.requested));
-    let mouse_restore = crossterm::execute!(std::io::stdout(), event::DisableMouseCapture);
-    ratatui::restore();
+        .and_then(|events| {
+            drive(
+                &mut terminal,
+                &mut app,
+                &events,
+                Stop {
+                    requested: &shutdown.requested,
+                    hung_up: &hung_up,
+                },
+            )
+        });
+    let restore = restore_terminal();
+    // The cursor is already shown by `restore_terminal`; `Terminal`'s own
+    // `Drop` would try again and `eprintln!` on failure, which after a
+    // hangup is a panic inside the exit path. Nothing is leaked that the
+    // process end does not reclaim.
+    std::mem::forget(terminal);
     if let Err(error) = app.checkpoint_session() {
-        eprintln!("{error}");
+        // Never `eprintln!` here: after a hangup stderr is the dead pty and
+        // a failed print would panic on the way out.
+        let _ = writeln!(std::io::stderr(), "{error}");
     }
     app.telemetry.finish();
-    // The run's own error is the one worth reporting; a failed mouse
-    // restore only matters when the run itself was clean.
+    // The run's own error is the one worth reporting; a failed terminal
+    // restore only matters when the terminal is still ours. After a hangup
+    // or a signal there may be nothing left to restore, and reporting that
+    // would itself write to the dead terminal.
     let exit = outcome?;
-    mouse_restore?;
+    if !hung_up.load(Ordering::Relaxed) && !shutdown.requested.load(Ordering::Relaxed) {
+        restore?;
+    }
     match exit {
         Exit::Quit => Ok(()),
         Exit::Restart => restart_into_new_binary(&app),
@@ -146,33 +170,109 @@ enum Exit {
     Restart,
 }
 
+/// What `ratatui::init` does - raw mode, alternate screen, a panic hook
+/// that restores the terminal first - plus mouse capture, minus every
+/// `eprintln!`: ratatui's hook and `Terminal::drop` print their restore
+/// failures, and once the terminal is gone (TASK-232) that print is itself
+/// a panic, which inside a panic hook aborts the process. The hook here
+/// restores silently and then defers to the hook that was installed before.
+fn init_terminal() -> std::io::Result<ratatui::DefaultTerminal> {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = restore_terminal();
+        previous(info);
+    }));
+    crossterm::terminal::enable_raw_mode()?;
+    crossterm::execute!(
+        std::io::stdout(),
+        crossterm::terminal::EnterAlternateScreen,
+        event::EnableMouseCapture
+    )?;
+    ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))
+}
+
+/// The inverse of [`init_terminal`], without ratatui's `eprintln!` on
+/// failure. Every step is attempted; the first error is returned for the
+/// caller to judge, since after a hangup failure is the expected outcome.
+fn restore_terminal() -> std::io::Result<()> {
+    let mouse = crossterm::execute!(std::io::stdout(), event::DisableMouseCapture);
+    let raw = crossterm::terminal::disable_raw_mode();
+    let screen = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::terminal::LeaveAlternateScreen,
+        crossterm::cursor::Show
+    );
+    mouse.and(raw).and(screen)
+}
+
+/// Why the loop should stop, besides the app asking to: a signal flipped
+/// `requested`, or the terminal hung up. Both are observed once per loop
+/// iteration, which is why the loop must never block anywhere else - see
+/// `switchbard_tui::tty`.
+struct Stop<'a> {
+    requested: &'a AtomicBool,
+    hung_up: &'a AtomicBool,
+}
+
+/// How long a failed draw waits for a stop request to explain it.
+const DRAW_FAILURE_GRACE: Duration = Duration::from_millis(200);
+
+impl Stop<'_> {
+    fn asked(&self) -> bool {
+        self.requested.load(Ordering::Relaxed) || self.hung_up.load(Ordering::Relaxed)
+    }
+
+    /// `asked`, re-checked every few milliseconds for up to `grace`.
+    fn asked_within(&self, grace: Duration) -> bool {
+        let deadline = Instant::now() + grace;
+        while !self.asked() {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        true
+    }
+}
+
 fn drive(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut App,
-    shutdown: &AtomicBool,
+    events: &Receiver<Event>,
+    stop: Stop<'_>,
 ) -> Result<Exit> {
     let binary = InstalledBinary::current();
     app.tick();
     let mut last_tick = Instant::now();
-    while !app.should_quit && !shutdown.load(Ordering::Relaxed) {
+    while !app.should_quit && !stop.asked() {
         let started = Instant::now();
-        terminal.draw(|frame| view::draw(frame, app))?;
+        if let Err(error) = terminal.draw(|frame| view::draw(frame, app)) {
+            // A write to a terminal that has just gone away fails before
+            // the hangup watch or SIGHUP has necessarily flagged it; give
+            // them one bounded moment before calling it a real error.
+            if stop.asked_within(DRAW_FAILURE_GRACE) {
+                return Ok(Exit::Quit);
+            }
+            return Err(error.into());
+        }
         app.telemetry.record_render(started);
         let wait = app
             .next_blink()
             .unwrap_or(Duration::from_millis(500))
             .min(Duration::from_millis(500));
-        let input_ready = match event::poll(wait) {
-            Ok(ready) => ready,
-            Err(_) if shutdown.load(Ordering::Relaxed) => return Ok(Exit::Quit),
-            Err(error) => return Err(error.into()),
-        };
-        if input_ready {
-            match event::read()? {
-                Event::Key(key) => app.handle_key(key),
-                Event::Mouse(mouse) => app.handle_mouse(mouse),
-                _ => {}
+        let input = match events.recv_timeout(wait) {
+            Ok(event) => Some(event),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) if stop.asked() => return Ok(Exit::Quit),
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(anyhow::anyhow!("terminal event reader stopped"))
             }
+        };
+        let input_ready = input.is_some();
+        match input {
+            Some(Event::Key(key)) => app.handle_key(key),
+            Some(Event::Mouse(mouse)) => app.handle_mouse(mouse),
+            _ => {}
         }
         if !input_ready || last_tick.elapsed() >= Duration::from_millis(500) {
             app.tick();
