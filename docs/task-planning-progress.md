@@ -46,3 +46,9 @@ Agents use `sb planning list` for JSON planning, order and checklist observation
 ## Rollout
 
 Install the updated CLI and TUI together before applying live previews. The previous main build does not understand the migrated planning/status contract; the automatic main installer must not replace the new build with it. Every repository receives an exact preview, backup and atomic apply receipt, followed by conservation and idempotency checks. Historical Done records are preserved even when their criteria remain unchecked.
+
+## Rehearsal evidence (2026-09-15)
+
+Read-only schema-2 previews cover all seven configured repositories with task data: budget (936), matterline (103), MusicProduction (558), switchbard (253), visual-review (8), hub (23), and CambridgeKitchens (86). Five other configured repositories have no task data and are skipped. Total: 1,967 records, 588 legacy execution-status mappings, 600 Planned open tasks, zero unknown statuses. Conservation checks preserve criteria/body bytes, other task fields, timestamps, identities, history, unrelated config and old ranking content. Live migration has not yet run. Private previews and diffs are stored outside the repository under `~/.switchbard/backups/planning-20260915T211622Z/rehearsal-20260915T212639Z`. Fresh previews must be regenerated immediately before apply.
+
+The complete core suite passed 744 tests (2 ignored); the CLI suite passed 72. Independent review passed 7 migration tests and 8 real-key TUI planning tests with no remaining implementation blockers. Formatting and workspace lint passed. Full workspace validation is tracked separately before release. [Terminal buffer evidence](evidence/task-planning-progress/README.md) covers wide, narrow, mixed checklist and detail states. GUI edits are fixture initializers for the added model field, with no GUI render-path behavior change.
