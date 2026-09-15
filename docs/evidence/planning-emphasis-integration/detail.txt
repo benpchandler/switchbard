@@ -1,0 +1,29 @@
+ [Tasks]   Pull Requests   ?  Agents  …  Inbox   tab switch page
+┌ fixture     3/3 shown  custom  paint:2 ────────────────────────────┐┌ Detail ────────────────────────────────────────────────────────────┐
+│1 id 2 planning 3 status  4 pri 5 checklist     6 title             ││TASK-2                                                              │
+│▸ Planned · 2                                                       ││                                                                    │
+│2    Planned    To Do     L     Review 1/1 100% Add dark theme      ││v Properties                                                        │
+│3    Planned    To Do     H     0/1 0.0%        Write onboarding gui││Add dark theme                                                      │
+│▸ Other tasks                                                       ││status: To Do                                                       │
+│1    Considerin In Progre M     0/1 0.0%        Fix login redirect l││priority: low                                                       │
+│                                                                    ││project: Not set                                                    │
+│                                                                    ││due date: Not set                                                   │
+│                                                                    ││labels: ui                                                          │
+│                                                                    ││planning: Planned                                                   │
+│                                                                    ││checklist: Review 1/1 100% (task + descendants)                     │
+│                                                                    ││v Description                                                       │
+│                                                                    ││description:                                                        │
+│                                                                    ││Description of Add dark theme.                                      │
+│                                                                    ││v Acceptance criteria                                               │
+│                                                                    ││[x] It works                                                        │
+│                                                                    ││v Relations                                                         │
+│                                                                    ││parent: Not set                                                     │
+│                                                                    ││dependencies: Not set                                               │
+│                                                                    ││subtasks: Not set                                                   │
+│                                                                    ││blocked by: Not set                                                 │
+│                                                                    ││blocks: Not set                                                     │
+│                                                                    ││v Implementation plan                                               │
+│                                                                    ││Not set                                                             │
+└────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────────────────────┘
+t tasks · v views · ? keys · Detail active · enter/l edits · shift-tab focus
+

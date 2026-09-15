@@ -1,0 +1,15 @@
+ [Tasks]   Pull Requests   ?  Agents  …  Inbox
+┌ fixture     3/3 shown  custom  paint:2 ──────────────────┐
+│1 id 2 pla 3 sta 4 pri 5 checklist    6 title             │
+│▸ Planned · 2                                             │
+│2    Plann To Do L     Review 1/1 100 Add dark theme      │
+│3    Plann To Do H     0/1 0.0%       Write onboarding gui│
+│▸ Other tasks                                             │
+│1    Consi In Pr M     0/1 0.0%       Fix login redirect l│
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+Applied 2 paint rules
+

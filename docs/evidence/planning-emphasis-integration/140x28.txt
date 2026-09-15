@@ -1,0 +1,29 @@
+ [Tasks]   Pull Requests   ?  Agents  …  Inbox   tab switch page
+┌ fixture     3/3 shown  custom  paint:2 ──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│1 id 2 planning  3 status    4 pri 5 checklist     6 title                                                                                │
+│▸ Planned · 2                                                                                                                             │
+│2    Planned     To Do       L     Review 1/1 100% Add dark theme                                                                         │
+│3    Planned     To Do       H     0/1 0.0%        Write onboarding guide                                                                 │
+│▸ Other tasks                                                                                                                             │
+│1    Considering In Progress M     0/1 0.0%        Fix login redirect loop                                                                │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+│                                                                                                                                          │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Applied 2 paint rules
+
