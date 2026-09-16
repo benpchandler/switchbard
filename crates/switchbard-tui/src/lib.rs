@@ -36,3 +36,5 @@ pub mod list_settings;
 pub mod row_layout;
 
 pub mod view_history;
+
+pub mod progress;

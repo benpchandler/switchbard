@@ -123,6 +123,9 @@ pub enum Surface {
     Accent,
     /// A row a live agent session is working, visible throughout its pulse.
     Working,
+    ProgressFill,
+    ProgressEmpty,
+    ProgressShell,
 }
 
 impl Surface {
@@ -146,6 +149,9 @@ impl Surface {
             "status" => Surface::Status,
             "accent" => Surface::Accent,
             "working" => Surface::Working,
+            "progress_fill" => Surface::ProgressFill,
+            "progress_empty" => Surface::ProgressEmpty,
+            "progress_shell" => Surface::ProgressShell,
             _ => return None,
         })
     }
@@ -356,6 +362,7 @@ pub struct Config {
     pub theme: Theme,
     /// Column -> loose value -> glyph, for columns shown in glyph mode.
     pub glyphs: HashMap<Column, HashMap<String, String>>,
+    pub progress_style: crate::progress::ProgressStyle,
     /// What `p <col> 1` (auto) hands out, in order: the chosen preset or a user list.
     pub palette: Vec<String>,
     /// The presets `:palette <name>` and `palette = "<name>"` choose from.
@@ -477,6 +484,7 @@ struct RawConfig {
     theme_name: Option<String>,
     themes: HashMap<String, RawTheme>,
     glyphs: HashMap<String, HashMap<String, String>>,
+    progress_style: Option<String>,
     palette: Vec<String>,
     palette_name: Option<String>,
     report_repo: Option<String>,
@@ -498,6 +506,7 @@ impl RawConfig {
             theme_name: table.get::<Option<String>>("theme").ok().flatten(),
             themes: theme_presets(&table)?,
             glyphs: nested_string_map(&table, "glyphs")?,
+            progress_style: table.get("progress_style")?,
             palette: string_list(&table, "palette")?,
             palette_name: table.get::<Option<String>>("palette").ok().flatten(),
             report_repo: table.get::<Option<String>>("report_repo").ok().flatten(),
@@ -522,6 +531,11 @@ impl RawConfig {
         self.theme.extend(over.theme);
         self.theme_columns.extend(over.theme_columns);
         self.themes.extend(over.themes);
+        if over.progress_style.is_some() {
+            self.progress_style = over.progress_style;
+        } else if over.glyphs.contains_key("progress") {
+            self.progress_style = Some("icons".into());
+        }
         for (column, map) in over.glyphs {
             self.glyphs.entry(column).or_default().extend(map);
         }
@@ -652,8 +666,11 @@ impl RawConfig {
             }
         }
         let report_repo = self.report_repo.map(|text| expand_home(&text));
+        let progress_style =
+            crate::progress::ProgressStyle::parse(self.progress_style.as_deref(), &mut warnings);
         Config {
             keys,
+            progress_style,
             theme,
             glyphs,
             palette,
