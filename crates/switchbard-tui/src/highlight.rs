@@ -35,14 +35,22 @@ pub fn slot_index(token: &str) -> Option<usize> {
         return None;
     }
     let index = digits.parse::<usize>().ok()?;
+    debug_assert_eq!(
+        SLOT_TOKENS.len(),
+        MAX_SLOTS,
+        "every slot has exactly one spelling"
+    );
     (1..=MAX_SLOTS).contains(&index).then_some(index)
 }
 
-/// How slot `index` is written in a rule and in `theme.highlights`.
+/// Every slot as it is written in a rule and in `theme.highlights`. Resolved
+/// per painted cell per frame, so the spellings are static rather than built.
+const SLOT_TOKENS: [&str; MAX_SLOTS] = ["h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9"];
+
+/// How slot `index` is written, one-based. `None` for a position no slot has.
 #[must_use]
-pub fn slot_token(index: usize) -> String {
-    debug_assert!((1..=MAX_SLOTS).contains(&index), "slots are one-based");
-    format!("h{index}")
+pub fn slot_token(index: usize) -> Option<&'static str> {
+    SLOT_TOKENS.get(index.checked_sub(1)?).copied()
 }
 
 /// The fill for a slot the preset does not declare: the palette color's hue and

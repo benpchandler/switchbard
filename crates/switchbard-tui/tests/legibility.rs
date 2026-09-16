@@ -39,6 +39,28 @@ fn measure(foreground: Color, background: Color) -> f64 {
     })
 }
 
+/// The pulse at its trough and at its peak over a cell as it actually rendered.
+/// `App::work_glow` is a function of elapsed wall-clock time, so the endpoints
+/// are reached through the two shipped functions the row renderer composes
+/// (`working_style` for the band, `working_fg` for the lift) rather than by
+/// sampling frames until they happen to appear. Call it before the row is
+/// claimed, so the ink it starts from is the painted ink and not an
+/// already-lifted frame of the cycle.
+fn gate_pulse_over(h: &Harness, needle: &str, minimum: f64, context: &str) {
+    let rest_fg = cell_fg(h, needle).unwrap_or_else(|| panic!("missing {needle} in {context}"));
+    let rest_bg = cell_bg(h, needle).unwrap();
+    let theme = &h.app.config.theme;
+    for glow in [0.0, 1.0] {
+        let background = theme.working_style(glow).bg.unwrap_or(rest_bg);
+        let foreground = theme.working_fg(Some(rest_fg), glow);
+        let value = measure(foreground, background).abs();
+        assert!(
+            (minimum..=100.0).contains(&value),
+            "{context} at glow {glow}: {foreground:?}/{background:?} = Lc {value:.2}, expected {minimum}..100"
+        );
+    }
+}
+
 fn gate(h: &Harness, needle: &str, minimum: f64, context: &str) {
     let foreground = cell_fg(h, needle).unwrap_or_else(|| {
         panic!(
@@ -128,6 +150,16 @@ fn working_cycle_preserves_readability_and_disable_keeps_a_steady_band() {
         )
         .unwrap();
         h.app.tick();
+        // The working band replaces a painted fill, so the ink a fill rule
+        // chose has to survive the whole pulse over that cell too.
+        command(&mut h, "paint column:title=h1+alert");
+        gate_pulse_over(
+            &h,
+            "Fix login",
+            60.0,
+            &format!("{name} working over h1+alert"),
+        );
+        command(&mut h, "paint off");
         let id = h.app.selected_task().unwrap().id.clone();
         claim_work(
             &h.root.join("work"),
@@ -141,18 +173,10 @@ fn working_cycle_preserves_readability_and_disable_keeps_a_steady_band() {
         )
         .unwrap();
         h.app.tick();
-        // The working band replaces a painted fill, so the ink a fill rule
-        // chose has to survive the whole pulse over that cell too.
-        command(&mut h, "paint column:title=h1+alert");
         let mut backgrounds = std::collections::HashSet::new();
         for _ in 0..100 {
             h.render();
-            gate(
-                &h,
-                "Fix login",
-                60.0,
-                &format!("{name} working over h1+alert"),
-            );
+            gate(&h, "Fix login", 75.0, &format!("{name} working"));
             backgrounds.insert(cell_bg(&h, "Fix login"));
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
@@ -160,13 +184,6 @@ fn working_cycle_preserves_readability_and_disable_keeps_a_steady_band() {
             backgrounds.len() > 2,
             "motion endpoints rendered for {name}"
         );
-        command(&mut h, "paint off");
-        for _ in 0..100 {
-            h.render();
-            gate(&h, "Fix login", 75.0, &format!("{name} working"));
-            backgrounds.insert(cell_bg(&h, "Fix login"));
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
         std::fs::write(
             &h.config_path,
             format!("return {{ theme = '{name}', work = {{ period_ms = 0 }} }}"),
@@ -274,6 +291,7 @@ fn a_pink_fill_with_alert_ink_reads_at_rest_selected_and_while_working() {
     assert_eq!(cell_bg(&h, "Write onboarding guide"), fill, "the pink fill");
     gate(&h, "Write onboarding guide", 60.0, "berg pink alert");
     gate(&h, "Fix login", 60.0, "berg pink alert selected");
+    gate_pulse_over(&h, "Fix login", 60.0, "berg pink alert working");
     let id = h.app.selected_task().unwrap().id.clone();
     claim_work(
         &h.root.join("work"),
@@ -287,17 +305,13 @@ fn a_pink_fill_with_alert_ink_reads_at_rest_selected_and_while_working() {
     )
     .unwrap();
     h.app.tick();
-    let mut backgrounds = std::collections::HashSet::new();
-    for _ in 0..100 {
-        h.render();
-        gate(&h, "Fix login", 60.0, "berg pink alert working");
-        backgrounds.insert(cell_bg(&h, "Fix login"));
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    assert!(
-        backgrounds.len() > 2,
-        "the pulse was sampled across its range: {backgrounds:?}"
+    h.render();
+    assert_ne!(
+        cell_bg(&h, "Fix login"),
+        fill,
+        "a claimed row wears the working band over the fill"
     );
+    gate(&h, "Fix login", 60.0, "berg pink alert working frame");
     std::fs::write(
         &h.config_path,
         "return { theme = 'berg', work = { period_ms = 0 } }",

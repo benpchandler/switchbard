@@ -21,7 +21,7 @@ Continuous gradients in TASK-219 remain outside this slice: the canonical trajec
 | Default, active selection, grouped and flat lists | Real app buffer tests and terminal dogfood |
 | Empty, one, many, long/wrapped and Unicode titles | Existing list stress suite plus emphasis render coverage |
 | Tasks and PRs; read-only PR facts; navigation badges | Rendered keyboard journeys; legacy page/navigation tests |
-| Role combinations, specific overrides, stop-if-true, duplicate band | E2E commands, rendered cell styles, refused mutation status |
+| Role combinations, specific overrides, stop-if-true, two fills on one cell | E2E commands, rendered cell styles, refused mutation status |
 | Existing literal colors and palette-token views | Existing paint/persistence suite plus role save/reopen tests |
 | Invalid role/config/saved rule, external view edits | Warning and persistence tests, no silent overwrite |
 | Narrow 40x8, normal 100x24, wide 160x40, zero-sized | Real terminal buffers; clipping/no-panic checks |
@@ -47,7 +47,7 @@ Live use exposed a light-theme popup canvas bug: terminal Clear reset the menu t
 ### Evidence map
 
 - `tests/emphasis_hierarchy.rs`: priority/completion hierarchy without color alone, active tab versus badge, sort underline, raw group values, title scopes on both pages, light popup/history canvas; terminal grids 0x0, 1x1, 40x8, 100x24 and 160x40, long Unicode titles and empty filters.
-- `tests/emphasis_rules.rs`: composition, precedence, stop, singleton band, persistence, invalid rules, custom-field cleanup and legacy no-op compatibility.
+- `tests/emphasis_rules.rs`: composition, precedence, stop, coexisting fills and per-cell fill precedence, persistence, invalid rules, custom-field cleanup and legacy no-op compatibility.
 - `tests/emphasis_controls.rs`: actual paint key journeys, context choices, cancellation and atomic refusal.
 - `tests/emphasis_theme.rs` and `tests/legibility.rs`: configuration diagnostics, fallback roles, preset rendering, published APCA reference pairs, detail text, selection, working trough/peak and disabled motion.
 - Existing full-suite coverage exercises navigation, PR data states, reload, history, custom fields, filter/column controls and persistence. The PTY signal/resume driver now drains rendered output while waiting for exit so terminal backpressure cannot create a false shutdown timeout.

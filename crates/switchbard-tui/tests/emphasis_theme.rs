@@ -188,6 +188,41 @@ fn highlight_slots_come_from_the_preset_and_missing_ones_derive_from_the_palette
     );
 }
 
+/// plain owns its colors, so its slots are declared rather than derived. The
+/// reverse-video fallback must not leak into them: a slot that declares its own
+/// fill renders exactly that, and only the slot that asks for reverse gets it.
+#[test]
+fn declared_slots_on_a_terminal_owned_theme_keep_the_fallback_out() {
+    let mut h = Harness::new();
+    std::fs::write(&h.config_path, "return { theme = 'plain' }").unwrap();
+    h.app.tick();
+    for (slot, fill, ink) in [
+        (2, Color::Blue, Color::White),
+        (3, Color::Magenta, Color::Black),
+    ] {
+        let style = h
+            .app
+            .config
+            .theme
+            .highlight_style(slot, &h.app.config.palette)
+            .unwrap_or_else(|| panic!("plain declares h{slot}"));
+        assert_eq!(style.bg, Some(fill), "h{slot} fill");
+        assert_eq!(style.fg, Some(ink), "h{slot} ink");
+        command(&mut h, &format!("paint column:title=h{slot}"));
+        assert_eq!(cell_bg(&h, "Write onboarding guide"), Some(fill));
+        assert_eq!(cell_fg(&h, "Write onboarding guide"), Some(ink));
+        assert!(
+            !modifiers(&h, "Write onboarding guide").contains(Modifier::REVERSED),
+            "h{slot} renders its own colors, not inverted ones"
+        );
+    }
+    command(&mut h, "paint column:title=h1");
+    assert!(
+        modifiers(&h, "Write onboarding guide").contains(Modifier::REVERSED),
+        "h1 asks for reverse video and keeps it"
+    );
+}
+
 /// A slot that names no position is reported, and the rest of the theme loads.
 #[test]
 fn an_unknown_highlight_slot_is_reported_without_losing_the_board() {

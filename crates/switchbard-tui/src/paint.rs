@@ -253,16 +253,23 @@ pub fn value_color(rules: &[PaintRule], column: Column, value: &str) -> Option<S
 pub fn resolve_color(token: &str, palette: &[String]) -> Option<Color> {
     if let Some(slot) = token.strip_prefix('p') {
         if !slot.is_empty() && slot.bytes().all(|byte| byte.is_ascii_digit()) {
-            let index = slot.parse::<usize>().ok()?.checked_sub(1)?;
-            let color = if palette.is_empty() {
-                AUTO_PALETTE[index % AUTO_PALETTE.len()]
-            } else {
-                palette[index % palette.len()].as_str()
-            };
-            return Color::from_str(color).ok();
+            return palette_color(slot.parse::<usize>().ok()?, palette);
         }
     }
     Color::from_str(token).ok()
+}
+
+/// The color in one-based palette slot `index`, the same cycling `p<n>` uses.
+/// Taking the number rather than its spelling keeps the callers that already
+/// have one, the highlight slots among them, off the allocation path.
+pub fn palette_color(index: usize, palette: &[String]) -> Option<Color> {
+    let index = index.checked_sub(1)?;
+    let color = if palette.is_empty() {
+        AUTO_PALETTE[index % AUTO_PALETTE.len()]
+    } else {
+        palette[index % palette.len()].as_str()
+    };
+    Color::from_str(color).ok()
 }
 
 /// Sets (or with `None`, clears) one value's color on `column`'s by-column rule,
@@ -364,7 +371,7 @@ pub fn try_parse_rules(text: &str, registry: &ColumnRegistry) -> Result<Vec<Pain
                 .map_err(|error| format!("paint rule {}: {error}", index + 1))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    validate_rules(&rules, registry)?;
+    validate_rules(&rules)?;
     Ok(rules)
 }
 
@@ -414,7 +421,7 @@ pub fn validate_roles(roles: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn validate_rules(rules: &[PaintRule], _registry: &ColumnRegistry) -> Result<(), String> {
+pub fn validate_rules(rules: &[PaintRule]) -> Result<(), String> {
     crate::paint_eval::validate_rules(rules)
 }
 

@@ -188,7 +188,8 @@ impl App {
                 .theme
                 .highlight_slots()
                 .into_iter()
-                .map(|slot| PickOption::text(crate::highlight::slot_token(slot), 0)),
+                .filter_map(crate::highlight::slot_token)
+                .map(|token| PickOption::text(token, 0)),
         );
         options.extend(NAMED_COLORS.iter().map(|name| PickOption::text(*name, 0)));
         options.extend(
@@ -283,7 +284,7 @@ impl App {
             let token = format!("p{}", index + 1);
             paint::set_value_color(&mut rules, column, value, Some(&token));
         }
-        if let Err(error) = paint::validate_rules(&rules, &self.registry) {
+        if let Err(error) = paint::validate_rules(&rules) {
             self.fail(error);
             return;
         }
@@ -343,7 +344,7 @@ impl App {
                 },
             ),
         }
-        if let Err(error) = paint::validate_rules(&rules, &self.registry) {
+        if let Err(error) = paint::validate_rules(&rules) {
             self.fail(error);
             return;
         }
@@ -368,7 +369,7 @@ impl App {
         {
             let mut rules = self.state.paint.clone();
             rules.swap(index, target as usize);
-            if let Err(error) = paint::validate_rules(&rules, &self.registry) {
+            if let Err(error) = paint::validate_rules(&rules) {
                 self.fail(error);
                 return index;
             }

@@ -271,8 +271,7 @@ impl Theme {
     /// nothing, which is how an invalid rule is caught.
     fn token_kind(&self, token: &str, palette: &[String]) -> Option<TokenKind> {
         let style = self.token_style(token, palette)?;
-        let fills = style.bg.is_some() || style.add_modifier.contains(Modifier::REVERSED);
-        Some(if fills {
+        Some(if carries_fill(&style) {
             TokenKind::Fill
         } else {
             TokenKind::Ink
@@ -291,30 +290,37 @@ impl Theme {
         crate::paint::resolve_color(token, palette).map(|color| Style::default().fg(color))
     }
 
-    /// Slot `index`'s fill and default ink: what the preset declares, over a
-    /// fill derived from the matching palette color for the slots it does not.
-    /// A theme with no declared canvas has no lightness to derive against and
-    /// reverses the terminal's own colors instead.
+    /// Slot `index` exactly as the theme declares it. Only a slot that declares
+    /// no fill of its own borrows one, so a declared fill is never merged with
+    /// the fallback, whose reverse video would otherwise invert it.
     pub fn highlight_style(&self, index: usize, palette: &[String]) -> Option<Style> {
-        if !(1..=crate::highlight::MAX_SLOTS).contains(&index) {
-            return None;
+        let declared = self
+            .highlights
+            .get(crate::highlight::slot_token(index)?)
+            .copied();
+        if let Some(declared) = declared.filter(carries_fill) {
+            return Some(declared);
         }
-        let declared = self.highlights.get(&crate::highlight::slot_token(index));
-        let derived = self
-            .background
-            .and_then(|canvas| {
-                let seed = crate::paint::resolve_color(&format!("p{index}"), palette)?;
-                crate::highlight::derive_fill(seed, canvas)
-            })
-            .map(|fill| {
-                let ink = self.style(Surface::Text);
-                ink.bg(fill)
-            })
-            .unwrap_or_else(|| Style::default().add_modifier(Modifier::REVERSED));
+        let derived = self.derived_fill(index, palette);
         Some(match declared {
-            Some(declared) => derived.patch(*declared),
+            Some(declared) => derived.patch(declared),
             None => derived,
         })
+    }
+
+    /// The fill a slot borrows when it declares none: the matching palette color
+    /// moved to a fixed step off the canvas, wearing the body ink. It is
+    /// computed per frame, which is what lets `:palette` retint those slots
+    /// live. A theme with no declared canvas has no lightness to step from and
+    /// reverses the terminal's own colors instead.
+    fn derived_fill(&self, index: usize, palette: &[String]) -> Style {
+        self.background
+            .and_then(|canvas| {
+                let seed = crate::paint::palette_color(index, palette)?;
+                crate::highlight::derive_fill(seed, canvas)
+            })
+            .map(|fill| self.style(Surface::Text).bg(fill))
+            .unwrap_or_else(|| Style::default().add_modifier(Modifier::REVERSED))
     }
 
     /// The slots the picker offers: everything declared, and always the first
@@ -382,6 +388,12 @@ impl Theme {
     pub fn column_style(&self, column: Column) -> Style {
         self.style(self.columns.get(&column).copied().unwrap_or(Surface::Text))
     }
+}
+
+/// Whether a style paints the cell behind the text, by color or by reversing
+/// the terminal's own.
+fn carries_fill(style: &Style) -> bool {
+    style.bg.is_some() || style.add_modifier.contains(Modifier::REVERSED)
 }
 
 /// Whether a fill is measurable and no measurable ink clears the readable
@@ -876,12 +888,9 @@ fn resolve_theme(
             continue;
         }
         if let Some(slot) = name.strip_prefix("highlights.") {
-            match crate::highlight::slot_index(slot) {
-                Some(index) => {
-                    highlights.insert(
-                        crate::highlight::slot_token(index),
-                        raw.into_style(&name, warnings),
-                    );
+            match crate::highlight::slot_index(slot).and_then(crate::highlight::slot_token) {
+                Some(token) => {
+                    highlights.insert(token.to_string(), raw.into_style(&name, warnings));
                 }
                 None => warnings.push(format!(
                     "theme.highlights.{slot} names no slot: h1 to h{}",
