@@ -48,6 +48,7 @@ pub enum Column {
     Status,
     Planning,
     Checklist,
+    Progress,
     Priority,
     Title,
     Labels,
@@ -165,7 +166,7 @@ impl ColumnSpec {
 /// A `static` rather than a `const`: `ColumnSpec` now owns heap types for the
 /// custom case, and a `const` would materialize (and drop) the whole table at
 /// every use site. Every row is a built-in: `decl: None`, always `declared`.
-pub static BUILTIN_COLUMNS: [ColumnSpec; 22] = [
+pub static BUILTIN_COLUMNS: [ColumnSpec; 23] = [
     ColumnSpec {
         column: Column::Planning,
         name: Cow::Borrowed("planning"),
@@ -186,6 +187,20 @@ pub static BUILTIN_COLUMNS: [ColumnSpec; 22] = [
         alias: None,
         header: Cow::Borrowed("checklist"),
         width: Some(23),
+        field: None,
+        fixed_vocabulary: &[],
+        groupable: false,
+        multi_valued: false,
+        numeric: true,
+        decl: None,
+        declared: true,
+    },
+    ColumnSpec {
+        column: Column::Progress,
+        name: Cow::Borrowed("progress"),
+        alias: None,
+        header: Cow::Borrowed("%"),
+        width: Some(3),
         field: None,
         fixed_vocabulary: &[],
         groupable: false,
@@ -695,7 +710,7 @@ pub const FIELD_PREFIX: &str = "field:";
 
 /// The built-in task columns, in catalog order. The registry appends the repo's
 /// own fields after them; a shown set is a user-ordered subset of both.
-const BUILTIN_TASK_COLUMNS: [Column; 15] = [
+const BUILTIN_TASK_COLUMNS: [Column; 16] = [
     Column::Id,
     Column::Status,
     Column::Priority,
@@ -711,6 +726,7 @@ const BUILTIN_TASK_COLUMNS: [Column; 15] = [
     Column::Filed,
     Column::Planning,
     Column::Checklist,
+    Column::Progress,
 ];
 
 impl Column {
@@ -734,10 +750,11 @@ impl Column {
         Column::Title,
     ];
 
-    pub const DEFAULT_SHOWN: [Column; 6] = [
+    pub const DEFAULT_SHOWN: [Column; 7] = [
         Column::Id,
         Column::Planning,
         Column::Status,
+        Column::Progress,
         Column::Priority,
         Column::Checklist,
         Column::Title,

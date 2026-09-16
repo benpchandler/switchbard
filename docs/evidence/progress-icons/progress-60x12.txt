@@ -1,0 +1,12 @@
+ [Tasks]   Pull Requests   ?  Agents  …  Inbox              
+┌ .tmpcIvNRk  6/6 shown  v1   ─────────────────────────────┐
+│1 i 2 p 3 s 4 % 5 pri 6 checklist     7 title             │
+│1   Pla In  ●   M     Review 1/1 100% Fix login redirect l│
+│4   Pla In  ○   M     0/1 0.0%        No checked outcomes │
+│5   Pla In  ◑   M     1/2 50.0%       Half checked outcome│
+│6   Pla In  ◕   M     3/4 75.0%       Mostly checked outco│
+│3   Con To  -   H     Unmeasured      Write onboarding gui│
+│2   Con To  ◔   L     1/8 12.5%       Add dark theme      │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+reloaded 6 tasks                                            

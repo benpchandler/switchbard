@@ -191,12 +191,15 @@ fn draw_task_rows(
     let widths: Vec<Constraint> = state
         .columns
         .iter()
-        .map(|column| match column {
+        .enumerate()
+        .map(|(index, column)| match column {
             _ if state.glyph_columns.contains(column) => {
                 Constraint::Length((2 + app.glyph_legend(*column).chars().count()).max(3) as u16)
             }
             column => match column.max_width(registry) {
-                Some(max) => Constraint::Length(fitted_width(app, state, rows, *column, max)),
+                Some(max) => {
+                    Constraint::Length(fitted_width(app, state, rows, *column, max, index + 1))
+                }
                 None => Constraint::Min(20),
             },
         })
@@ -446,8 +449,9 @@ fn fitted_width(
     rows: &[Row],
     column: Column,
     max: u16,
+    position: usize,
 ) -> u16 {
-    let header = column.header(app.registry()).chars().count() + 2;
+    let header = column.header(app.registry()).chars().count() + position.to_string().len() + 1;
     let widest = rows
         .iter()
         .filter_map(|row| match row {

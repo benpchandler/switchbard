@@ -70,6 +70,7 @@ pub const BUILTIN_FIELD_KEYS: &[&str] = &[
 pub const RESERVED_FIELD_NAMES: &[&str] = &[
     "planning",
     "checklist",
+    "progress",
     // Built-in column names.
     "ball",
     "blocked",

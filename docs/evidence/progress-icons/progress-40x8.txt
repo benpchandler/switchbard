@@ -1,0 +1,8 @@
+ [Tasks]   PRs   ?  Agents  …  Inbox    
+┌ .tmpcIvNRk  6/6 shown  v1   ─────────┐
+│1  2  3  4  5  6  7 title             │
+│1  Pl In ●  M  Re Fix login redirect l│
+│4  Pl In ○  M  0/ No checked outcomes │
+│5  Pl In ◑  M  1/ Half checked outcome│
+└──────────────────────────────────────┘
+reloaded 6 tasks                        
