@@ -457,9 +457,17 @@ fn restyling_a_stopped_rule_keeps_its_stop() {
         h.press(KeyCode::Down);
     }
     let screen = h.render();
+    let title = screen
+        .lines()
+        .find(|line| line.contains("← this is how it looks"))
+        .unwrap_or_else(|| panic!("the title previews the pick: {screen}"));
     assert!(
-        screen.contains("red! ← this is how it looks"),
-        "the marker is part of what the title previews: {screen}"
+        title.contains("red!"),
+        "the marker is part of what the title previews: {title}"
+    );
+    assert!(
+        !title.contains("green"),
+        "the preview is the rule Enter writes, not the old ink joined to it: {title}"
     );
     h.press(KeyCode::Enter);
     assert!(

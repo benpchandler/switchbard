@@ -87,6 +87,34 @@ impl PaintDraft {
             None => self.add_ink(token),
         }
     }
+
+    /// The ink picking `token` on the text step would leave: ink gathered with
+    /// Space joins it, ink that merely came from the existing rule is replaced,
+    /// `keep default ink` (`None`) drops it, and a token that would not fit is
+    /// not there. Borrowed, because this runs once per row per frame.
+    fn ink_after<'a>(&'a self, token: Option<&'a str>) -> impl Iterator<Item = &'a str> + 'a {
+        let joins = token.is_some() && self.gathered;
+        let drafted = joins
+            .then(|| self.ink.iter().map(String::as_str))
+            .into_iter()
+            .flatten();
+        let held = token.is_some_and(|token| self.ink.iter().any(|known| known == token));
+        let room = !joins || self.ink.len() < MAX_DRAFT_INK;
+        let extra = token.filter(|_| !(joins && held) && room);
+        drafted.chain(extra)
+    }
+
+    /// The rule text picking `token` on the text step would write. The title
+    /// preview and Enter both go through this, so a preview cannot promise a
+    /// rule the pick would not write.
+    pub fn roles_after(&self, token: Option<&str>) -> String {
+        crate::paint_eval::compose_text(self.fill.as_deref(), self.ink_after(token), self.stop)
+    }
+
+    /// Whether picking `token` would leave it out, which only the cap does.
+    fn would_drop(&self, token: Option<&str>) -> bool {
+        token.is_some_and(|token| !self.ink_after(Some(token)).any(|known| known == token))
+    }
 }
 
 impl App {
@@ -371,31 +399,18 @@ impl App {
     /// then apply everything drafted. Adding is idempotent, so picking a row
     /// already gathered with Space just applies.
     pub(super) fn apply_paint_draft(&mut self, ink: Option<&str>) {
-        let Some(mut draft) = self.paint_draft.take() else {
+        let Some(draft) = self.paint_draft.take() else {
             return;
         };
-        let added = match ink {
-            Some(token) => {
-                if !draft.gathered {
-                    draft.ink.clear();
-                }
-                draft.add_ink(token)
-            }
-            // `keep default ink` is the absence of ink, including the ink the
-            // scope already wore when the picker opened.
-            None => {
-                draft.ink.clear();
-                true
-            }
-        };
-        let roles = draft.roles();
+        let dropped = draft.would_drop(ink);
+        let roles = draft.roles_after(ink);
         let roles = if roles.is_empty() {
             "none"
         } else {
             roles.as_str()
         };
         self.apply_paint(draft.pick, roles);
-        if !added {
+        if dropped {
             self.status = format!(
                 "{} · ink limit reached: {MAX_DRAFT_INK} text tokens",
                 self.status
@@ -441,22 +456,9 @@ impl App {
             PickerPurpose::PaintHighlight => {
                 crate::paint_eval::compose_text(token, drafted, draft.stop)
             }
-            PickerPurpose::PaintText => {
-                // The `keep default ink` row previews the fill alone; every
-                // other row previews itself joining what is already drafted.
-                let (drafted, extra) = match token {
-                    Some(token) => (
-                        Some(drafted),
-                        (!draft.ink.iter().any(|known| known == token)).then_some(token),
-                    ),
-                    None => (None, None),
-                };
-                crate::paint_eval::compose_text(
-                    draft.fill.as_deref(),
-                    drafted.into_iter().flatten().chain(extra),
-                    draft.stop,
-                )
-            }
+            // Exactly the rule Enter would write on this row, from the one
+            // function that answers that.
+            PickerPurpose::PaintText => draft.roles_after(token),
             _ => return None,
         };
         (!roles.is_empty()).then_some(roles)
