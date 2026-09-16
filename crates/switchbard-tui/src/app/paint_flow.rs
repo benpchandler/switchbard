@@ -169,6 +169,9 @@ impl App {
         self.open_picker(PickerPurpose::PaintValues(column), options);
     }
 
+    /// Roles first, then the theme's highlight slots as swatches (each row is
+    /// drawn in its own fill and default ink), then colors and palette slots.
+    /// Typing composes across all of them: `h2+alert`, `band+red`, `alert+p3`.
     pub(super) fn open_paint_color_picker(&mut self, pick: PaintPick) {
         let mut options: Vec<PickOption> = [
             ('Q', "quiet"),
@@ -180,6 +183,13 @@ impl App {
         .into_iter()
         .map(|(key, role)| PickOption::keyed(key, role, Payload::Text(role.into())))
         .collect();
+        options.extend(
+            self.config
+                .theme
+                .highlight_slots()
+                .into_iter()
+                .map(|slot| PickOption::text(crate::highlight::slot_token(slot), 0)),
+        );
         options.extend(NAMED_COLORS.iter().map(|name| PickOption::text(*name, 0)));
         options.extend(
             (1..=self.config.palette.len()).map(|index| PickOption::text(format!("p{index}"), 0)),

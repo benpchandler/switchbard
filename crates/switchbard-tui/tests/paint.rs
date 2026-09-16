@@ -209,12 +209,12 @@ fn hand_picked_values_row_and_column_and_hex_and_clearing() {
         screen.contains("1▏ color"),
         "first digit waits when 10+ exist: {screen}"
     );
-    h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('5'));
     let selected_title = h.selected_title();
     assert_eq!(
         cell_fg(&h, &selected_title),
         Some(Color::LightBlue),
-        "12 picks lightblue"
+        "15 picks lightblue, after the roles and the highlight swatches"
     );
     assert!(h
         .app
@@ -318,7 +318,7 @@ fn palette_presets_swap_live_and_recolor_auto_painted_values() {
     h.press(KeyCode::Char('p'));
     h.press(KeyCode::Char('3'));
     h.press(KeyCode::Char('2'));
-    h.press(KeyCode::Char('5'));
+    h.press(KeyCode::Char('8'));
     h.press(KeyCode::Esc);
     h.press(KeyCode::Char(':'));
     h.type_text("palette vivid");

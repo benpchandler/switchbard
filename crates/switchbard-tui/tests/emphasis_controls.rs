@@ -53,19 +53,83 @@ fn roles_require_enter_for_composition_and_cancel_leaves_rules_unchanged() {
     assert!(screen.contains("painted strong+struck"), "{screen}");
 }
 
+/// A fill belongs to the cells a rule claims, not to the view, so a second one
+/// is an ordinary rule (TASK-237). The refusal this replaces named which rule
+/// owned the single band.
 #[test]
-fn a_second_band_is_refused_without_changing_existing_paint() {
+fn a_second_fill_is_accepted_and_both_rules_keep_their_own_scope() {
     let mut h = Harness::new();
     h.type_text("prB");
-    let before = h.app.state.paint.clone();
-    assert_eq!(before.len(), 1);
+    assert_eq!(h.app.state.paint.len(), 1);
     h.type_text("phB");
+    h.press(KeyCode::Char('j'));
     let screen = h.render();
-    assert!(screen.contains("band already belongs"), "{screen}");
+    assert!(!screen.contains("band already belongs"), "{screen}");
+    assert_eq!(h.app.state.paint.len(), 2, "both fills are kept: {screen}");
+    let fill = h
+        .app
+        .config
+        .theme
+        .emphasis_style("band", &h.app.config.palette)
+        .and_then(|style| style.bg);
     assert_eq!(
-        h.app.state.paint, before,
-        "rejected formatting is transactional"
+        cell_bg(&h, "Fix login"),
+        fill,
+        "the row rule keeps its fill"
     );
+    assert_eq!(
+        cell_bg(&h, "4 title"),
+        fill,
+        "the header rule keeps its own"
+    );
+}
+
+/// The owner's ask: pick a highlight, or a highlight and an ink, without
+/// leaving the picker (TASK-237).
+#[test]
+fn the_style_picker_shows_highlight_swatches_and_previews_a_typed_combination() {
+    let mut h = Harness::new();
+    h.type_text("pr");
+    let screen = h.render();
+    for slot in ["h1", "h2", "h3"] {
+        assert!(screen.contains(slot), "{slot} is offered: {screen}");
+    }
+    let slot = h
+        .app
+        .config
+        .theme
+        .highlight_style(2, &h.app.config.palette)
+        .expect("berg declares h2");
+    assert_eq!(cell_bg(&h, "h2"), slot.bg, "the row wears its own fill");
+    assert_eq!(cell_fg(&h, "h2"), slot.fg, "and its own default ink");
+    h.type_text("h2+alert");
+    let screen = h.render();
+    assert!(
+        screen.contains("h2+alert"),
+        "the title previews it: {screen}"
+    );
+    let composed = h
+        .app
+        .config
+        .theme
+        .emphasis_style("h2+alert", &h.app.config.palette)
+        .expect("the combination resolves");
+    assert_eq!(composed.bg, slot.bg, "fill from the slot");
+    assert_eq!(
+        composed.fg,
+        h.app
+            .config
+            .theme
+            .emphasis_style("alert", &h.app.config.palette)
+            .and_then(|style| style.fg),
+        "ink from the role"
+    );
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("painted h2+alert"), "{screen}");
+    h.press(KeyCode::Char('j'));
+    h.render();
+    assert_eq!(cell_bg(&h, "Fix login"), composed.bg);
+    assert_eq!(cell_fg(&h, "Fix login"), composed.fg);
 }
 
 #[test]
