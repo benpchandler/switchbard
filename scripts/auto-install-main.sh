@@ -16,14 +16,13 @@
 #   never from a worktree a person or agent is editing.
 # - It installs only origin/main, and only when the installed build's commit is
 #   not already that commit.
-# - It delegates to scripts/install-switchbard.sh with --main-authority
-#   (TASK-227): since this checkout is always origin/main's own tip, that flag
-#   makes main authoritative rather than refusing on ancestry - a running
-#   build main doesn't contain (a feature branch installed on purpose) gets
-#   replaced, with exactly what was dropped printed and receipted, instead of
-#   auto-install refusing silently for hours (2026-09-13, 116 refusals).
-#   A manual `--hold` on that branch still defers this cycle; see the guard's
-#   own header for the receipt/hold contract sbt's startup banner reads.
+# - It delegates to scripts/install-switchbard.sh with --main-authority.
+#   Installs are a one-way street (TASK-272): a running build main does not
+#   contain (a feature branch installed on purpose) is left alone until that
+#   branch is merged or deleted on origin, then replaced within a minute with
+#   exactly what was dropped printed and receipted. sbt's startup banner
+#   reads the same receipt, so a wait is never silent (2026-09-13's ten
+#   silent hours were a refusal nobody could see, not a refusal per se).
 # - A lock directory prevents two runs from overlapping.
 #
 #   checkout: ~/.switchbard/auto-install/checkout
@@ -110,7 +109,6 @@ RECEIPT="$STATE_DIR/last-install.json"
 OUTCOME="$(sed -n 's/.*"outcome": *"\([^"]*\)".*/\1/p' "$RECEIPT" 2>/dev/null | head -1)"
 case "$OUTCOME" in
     installed) log "installed $(git rev-parse --short "$TARGET")" ;;
-    held)      ;; # the guard already logged "holding <branch> until <time>"
     refused)   log "install refused; see above. Nothing changed." ;;
     failed)    log "build failed; nothing replaced. See above and the receipt's reason." ;;
     *)         log "install exited $GUARD_STATUS with no readable receipt; see above." ;;

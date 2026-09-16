@@ -1,6 +1,7 @@
-//! sbt's one-line startup banner (TASK-227): what `App::show_startup_banner`
-//! renders on screen from a real `scripts/install-switchbard.sh` receipt or
-//! hold file, and that it says nothing when there is nothing to say.
+//! sbt's one-line startup banner (TASK-227, TASK-272): what
+//! `App::show_startup_banner` renders on screen from a real
+//! `scripts/install-switchbard.sh` receipt, and that it says nothing when
+//! there is nothing to say.
 
 mod harness;
 
@@ -24,20 +25,21 @@ fn an_ordinary_launch_with_no_receipt_shows_no_banner() {
 }
 
 #[test]
-fn an_active_hold_names_the_branch_and_a_resolving_command() {
+fn a_wait_for_merge_names_the_branch_and_reads_as_waiting() {
     let mut h = Harness::new();
     let dir = tempfile::tempdir().unwrap();
-    let until = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
     write(
         dir.path(),
-        "hold.json",
-        &format!(r#"{{"branch": "feat/live-preview", "until": "{until}"}}"#),
+        "last-install.json",
+        r#"{"outcome": "refused", "reason": "main does not yet contain 1234abcd (branch 'feat/live-preview', still open on origin); merge or delete it", "from_branch": "feat/live-preview"}"#,
     );
     h.app = open_app_with_auto_install(&h.root, &h.config_path, Some(dir.path().to_path_buf()));
     h.app.restore_session(None, false);
     h.app.show_startup_banner(false, None);
     assert!(
-        h.app.status.contains("feat/live-preview"),
+        h.app
+            .status
+            .contains("waiting for feat/live-preview to merge"),
         "{}",
         h.app.status
     );

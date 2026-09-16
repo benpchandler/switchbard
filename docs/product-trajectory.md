@@ -844,10 +844,13 @@ merging to main, with no manual step and no way for a feature-branch install to
 silently stall the fleet (2026-09-13: a feature-branch install left auto-install
 refusing main for ten hours, visible only in a log nobody was watching).
 `scripts/install-switchbard.sh --main-authority` (used only by the launchd agent,
-which now polls every minute instead of five) makes origin/main's own tip
-authoritative: it never refuses on ancestry, only replaces a running build main
-doesn't contain and prints/receipts exactly what was dropped. A manual install
-off main is now an explicit, temporary choice (`--branch`, `--hold`), never
-silent and never itself evidence that a task is done - only origin/main runs
-unattended. sbt reads the receipt and any hold to show a one-line startup
-banner instead of the fleet drifting unnoticed.
+which now polls every minute instead of five) installs origin/main's own tip.
+Since TASK-272 (owner-directed 2026-09-16) every install is a one-way street: a
+candidate must contain the running build, or the running build's branch must be
+delivered (PR merged - the repo squash-merges - or deleted on origin); otherwise
+it refuses, receipts what it would drop, and sbt's banner reads "waiting for
+<branch> to merge". TASK-227's timed `--hold` is gone: it let one session's
+branch install block every other session's merged work for hours, and the
+ancestry rule needs no timer. A manual install off main is still an explicit
+choice (`--branch`), never silent and never itself evidence that a task is
+done - only origin/main runs unattended.

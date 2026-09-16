@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Proves scripts/install-switchbard.sh refuses the install that caused
-# TASK-172, and the TASK-227 additions on top of it: --main-authority drops
-# instead of refusing, a manual non-main install needs --branch, a --hold
-# blocks auto-install until it expires, and every attempt leaves a receipt.
+# TASK-172, that a manual non-main install needs --branch (TASK-227), that
+# --main-authority is a one-way street - main replaces a running branch build
+# only once that branch is merged or deleted on origin (TASK-272) - and that
+# every attempt leaves a receipt.
 #
 # Each case builds a throwaway repository with a real divergent history and a
 # stub binary on PATH that answers `build-id` the way an installed sbt does, so
@@ -170,117 +171,111 @@ fi
 [[ "$(receipt_field outcome)" == refused ]] || fail "receipt not marked refused for the atomic-refusal case"
 rm -f "$BIN/sb"
 
-# --- TASK-227: --main-authority drops instead of refusing, and receipts it -
-stub_reports "$STALE_UNRELATED" stale
-set +e
-output="$(cd "$CHECKOUT" && PATH="$BIN:$PATH" bash "$GUARD" --dry-run --main-authority sbt 2>&1)"
-status=$?
-set -e
-if [[ "$status" -ne 0 ]]; then
-    fail "main-authority should install, not refuse, a diverged branch" "$output"
-elif [[ "$output" != *"unrelated work"* ]]; then
-    fail "main-authority did not print the dropped commit" "$output"
-else
-    echo "ok: main-authority installs over a diverged branch and prints what it drops"
-fi
-[[ "$(receipt_field outcome)" == installed ]] || fail "receipt not marked installed for the main-authority drop case"
-grep -q "unrelated work" "$RECEIPT" || fail "receipt's dropped list is missing the dropped commit"
-
-# An installed commit unreachable from this repository is dropped the same way.
-stub_reports "0000000000000000000000000000000000000000" ghost
-set +e
-output="$(cd "$CHECKOUT" && PATH="$BIN:$PATH" bash "$GUARD" --dry-run --main-authority sbt 2>&1)"
-status=$?
-set -e
-[[ "$status" -eq 0 ]] || fail "main-authority should install over an unknown commit, not refuse" "$output"
-
-# --- TASK-227: an unexpired hold blocks auto-install; an expired one sweeps -
-portable_iso() {
-    local mins="$1" sign iso
-    if [[ "$mins" == -* ]]; then sign="-"; mins="${mins#-}"; else sign="+"; fi
-    iso="$(date -u -d "${sign}${mins} minutes" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" && { echo "$iso"; return; }
-    date -u -j -v"${sign}${mins}M" +%Y-%m-%dT%H:%M:%SZ
+# --- TASK-272: --main-authority is a one-way street ----------------------
+# A running build main does not contain is left alone until its branch is
+# delivered: merged as a PR (this repo squash-merges, so the branch commit is
+# never an ancestor of main) or deleted on origin. `stale` is still pushed and
+# open on origin here, and no `gh` on PATH knows of a merged PR.
+ma_check() {
+    local name="$1" expected="$2"
+    shift 2
+    local output status
+    set +e
+    output="$(cd "$CHECKOUT" && PATH="$BIN:$PATH" bash "$GUARD" --dry-run --main-authority sbt "$@" 2>&1)"
+    status=$?
+    set -e
+    if [[ "$status" -ne "$expected" ]]; then
+        fail "$name (expected exit $expected, got $status)" "$output"
+        return 1
+    fi
+    echo "ok: $name"
+    printf '%s' "$output" > "$WORK/last-ma-output"
 }
-FUTURE="$(portable_iso 30)"
-mkdir -p "$SWITCHBARD_AUTO_INSTALL_DIR"
-printf '{"branch": "feat/x", "until": "%s"}' "$FUTURE" > "$HOLD_FILE"
-stub_reports "$BASE" x
-set +e
-output="$(cd "$CHECKOUT" && PATH="$BIN:$PATH" bash "$GUARD" --dry-run --main-authority sbt 2>&1)"
-status=$?
-set -e
-if [[ "$status" -ne 0 ]]; then
-    fail "an unexpired hold should not fail the run" "$output"
-elif [[ "$output" != *"holding feat/x until"* ]]; then
-    fail "unexpired hold did not log 'holding feat/x until ...'" "$output"
-elif [[ "$(receipt_field outcome)" != held ]]; then
-    fail "receipt not marked held while a hold is active"
-elif [[ ! -f "$HOLD_FILE" ]]; then
-    fail "an unexpired hold must not be swept"
-else
-    echo "ok: an unexpired hold blocks main-authority and receipts 'held'"
-fi
+last_ma_output() { cat "$WORK/last-ma-output" 2>/dev/null; }
 
-PAST="$(portable_iso -30)"
-printf '{"branch": "feat/x", "until": "%s"}' "$PAST" > "$HOLD_FILE"
-set +e
-output="$(cd "$CHECKOUT" && PATH="$BIN:$PATH" bash "$GUARD" --dry-run --main-authority sbt 2>&1)"
-status=$?
-set -e
-if [[ "$status" -ne 0 ]]; then
-    fail "an expired hold must not block the install" "$output"
-elif [[ -f "$HOLD_FILE" ]]; then
-    fail "an expired hold must be swept"
-elif [[ "$(receipt_field outcome)" != installed ]]; then
-    fail "receipt not marked installed once the hold expired"
-else
-    echo "ok: an expired hold is swept and main-authority proceeds"
+stub_reports "$STALE_UNRELATED" stale
+ma_check "main-authority refuses over a branch still open on origin" 1
+if [[ "$(last_ma_output)" != *"main does not yet contain"* || "$(last_ma_output)" != *"unrelated work"* ]]; then
+    fail "refusal must name the wait and print what would be dropped" "$(last_ma_output)"
 fi
+[[ "$(receipt_field outcome)" == refused ]] || fail "receipt not marked refused for the open-branch case"
+[[ "$(receipt_field from_branch)" == stale ]] || fail "refused receipt does not name the installed branch"
+grep -q "unrelated work" "$RECEIPT" || fail "refused receipt's dropped list is missing the commit"
 
-# --- audit follow-ups: --hold on main, the 24h cap, an invalid main hold, --
-# --- and a fetch that fails must fail closed, not `|| true` ----------------
-stub_reports "$BASE"
+# --force is the one override, and it says what it drops.
+ma_check "main-authority --force installs over the open branch" 0 --force
+[[ "$(last_ma_output)" == *"unrelated work"* ]] || fail "--force did not print the dropped commit" "$(last_ma_output)"
+[[ "$(receipt_field outcome)" == installed ]] || fail "receipt not marked installed after --force"
+
+# A merged PR for that branch (squash-merged: the commit is still not an
+# ancestor) delivers it. `gh` is stubbed on PATH to answer as GitHub would.
+cat > "$BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+[[ "$1" == "pr" && "$2" == "list" ]] || exit 1
+echo "${TEST_GH_MERGED_PR:-}"
+STUB
+chmod +x "$BIN/gh"
+export TEST_GH_MERGED_PR=77
+ma_check "main-authority installs once the branch's PR is merged (squash)" 0
+[[ "$(last_ma_output)" == *"merged as PR #77"* ]] || fail "install did not name the merged PR" "$(last_ma_output)"
+[[ "$(receipt_field outcome)" == installed ]] || fail "receipt not marked installed after the merged-PR case"
+grep -q "unrelated work" "$RECEIPT" || fail "installed receipt's dropped list is missing the superseded commit"
+export TEST_GH_MERGED_PR=""
+ma_check "an unmerged PR (gh answers nothing) still refuses" 1
+rm -f "$BIN/gh"
+
+# The branch merged as a real merge commit: plain ancestry, no gh needed.
 git -C "$REPO" checkout -q main
+git -C "$REPO" merge -q --no-edit stale
+git -C "$REPO" push -q "$ORIGIN" main
+git -C "$CHECKOUT" fetch -q origin
+git -C "$CHECKOUT" checkout -q --detach origin/main
+ma_check "main-authority installs once main contains the installed commit" 0
+[[ "$(receipt_field outcome)" == installed ]] || fail "receipt not marked installed after the merge"
+
+# A branch deleted on origin has nothing left to protect: install, print the
+# drop. The commit is unknown to this checkout too, exactly like a branch
+# that was deleted before the agent ever saw it.
+stub_reports "0000000000000000000000000000000000000000" ghost
+ma_check "main-authority installs over a branch deleted on origin" 0
+[[ "$(last_ma_output)" == *"no longer exists on origin"* ]] || fail "deleted-branch install did not say so" "$(last_ma_output)"
+[[ "$(receipt_field outcome)" == installed ]] || fail "receipt not marked installed for the deleted-branch case"
+
+# No branch name at all cannot be verified: refuse closed.
+stub_reports "0000000000000000000000000000000000000000" HEAD
+ma_check "main-authority refuses an unknown commit with no branch to ask about" 1
+[[ "$(last_ma_output)" == *"cannot verify"* ]] || fail "unverifiable install did not say 'cannot verify'" "$(last_ma_output)"
+
+# origin/main behind the running build (a force-push) is a rewind: refuse.
+git -C "$REPO" push -q --force "$ORIGIN" "$BASE:refs/heads/main"
+git -C "$CHECKOUT" fetch -q origin
+git -C "$CHECKOUT" checkout -q --detach origin/main
+stub_reports "$FEATURE" main
+ma_check "main-authority refuses a rewind of main" 1
+[[ "$(last_ma_output)" == *"rewind"* ]] || fail "rewind refusal did not say 'rewind'" "$(last_ma_output)"
+git -C "$REPO" push -q --force "$ORIGIN" main
+git -C "$CHECKOUT" fetch -q origin
+git -C "$CHECKOUT" checkout -q --detach origin/main
+
+# --hold is gone; asking for it is an error, not a silent no-op.
 set +e
 output="$(cd "$REPO" && PATH="$BIN:$PATH" bash "$GUARD" --dry-run --hold sbt 2>&1)"
 status=$?
 set -e
-if [[ "$status" -ne 1 ]]; then
-    fail "--hold on main should refuse (got exit $status)" "$output"
+if [[ "$status" -ne 1 || "$output" != *"--hold was removed"* ]]; then
+    fail "--hold should be refused as removed (got exit $status)" "$output"
 else
-    echo "ok: --hold on main refuses"
-fi
-[[ "$(receipt_field outcome)" == refused ]] || fail "receipt not marked refused for --hold on main"
-
-git -C "$REPO" checkout -q stale
-set +e
-output="$(cd "$REPO" && PATH="$BIN:$PATH" bash "$GUARD" --dry-run --branch --hold 48h sbt 2>&1)"
-status=$?
-set -e
-if [[ "$status" -ne 1 ]]; then
-    fail "--hold 48h should refuse the 24h cap (got exit $status)" "$output"
-else
-    echo "ok: --hold is capped at 24h"
+    echo "ok: --hold is refused as removed"
 fi
 
-# A hold file naming "main" (stale, or hand-edited) must never block
-# main-authority - it is dropped and logged, not honored.
-stub_reports "$BASE" x
-FUTURE="$(portable_iso 30)"
-printf '{"branch": "main", "until": "%s"}' "$FUTURE" > "$HOLD_FILE"
-set +e
-output="$(cd "$CHECKOUT" && PATH="$BIN:$PATH" bash "$GUARD" --dry-run --main-authority sbt 2>&1)"
-status=$?
-set -e
-if [[ "$status" -ne 0 ]]; then
-    fail "main-authority should drop an invalid main hold and proceed" "$output"
-elif [[ -f "$HOLD_FILE" ]]; then
-    fail "an invalid main hold must be deleted, not left in place"
-elif [[ "$(receipt_field outcome)" != installed ]]; then
-    fail "receipt not marked installed once the invalid main hold was dropped"
-else
-    echo "ok: main-authority drops an invalid hold on main and installs anyway"
-fi
+# A leftover TASK-227 hold file is swept, never honored.
+mkdir -p "$SWITCHBARD_AUTO_INSTALL_DIR"
+echo '{"branch": "stale", "until": "2999-01-01T00:00:00Z"}' > "$HOLD_FILE"
+stub_reports "$BASE" main
+ma_check "a leftover hold file neither blocks nor survives main-authority" 0
+[[ -f "$HOLD_FILE" ]] && fail "legacy hold file was not swept"
+
+# --- a fetch that fails must fail closed, not `|| true` -------------------
 
 # A fetch that fails must refuse closed, not silently proceed as if main were
 # unreachable-but-fine (the `|| true` this replaced would have let it through).
