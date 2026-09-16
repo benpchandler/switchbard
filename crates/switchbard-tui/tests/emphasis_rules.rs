@@ -3,12 +3,26 @@ mod harness;
 
 use crossterm::event::KeyCode;
 use harness::*;
-use ratatui::style::{Color, Modifier};
+use ratatui::style::{Color, Modifier, Style};
+use switchbard_tui::config::Surface;
 
 fn paint(h: &mut Harness, rules: &str) -> String {
     h.press(KeyCode::Char(':'));
     h.type_text(&format!("paint {rules}"));
     h.press(KeyCode::Enter)
+}
+
+/// The style a role list composes in the harness's current theme.
+fn composed(h: &Harness, roles: &str) -> Style {
+    h.app
+        .config
+        .theme
+        .emphasis_style(roles, &h.app.config.palette)
+        .unwrap_or_else(|| panic!("{roles} resolves in this theme"))
+}
+
+fn fill(h: &Harness, roles: &str) -> Option<Color> {
+    composed(h, roles).bg
 }
 
 fn modifiers(h: &Harness, needle: &str) -> Modifier {
@@ -51,16 +65,122 @@ fn stop_is_cell_scoped_and_by_column_stop_applies_to_every_mapped_value() {
 }
 
 #[test]
-fn malformed_rule_and_second_band_preserve_previous_arrangement() {
+fn malformed_rule_preserves_the_previous_arrangement() {
     let mut h = Harness::new();
     paint(&mut h, "rows:status:todo=red");
     let before = h.app.state.paint.clone();
     let screen = paint(&mut h, "by:status=todo:green,inprogress:unknown-role");
     assert!(screen.contains("unknown"), "{screen}");
     assert_eq!(h.app.state.paint, before);
-    let screen = paint(&mut h, "rows:status:todo=band;column:title=band");
-    assert!(screen.contains("band already belongs"), "{screen}");
-    assert_eq!(h.app.state.paint, before);
+}
+
+/// Fills belong to cells, not to the view (TASK-237): two rules may each carry
+/// one, and a cell both claim resolves like ink, to the lower rule.
+#[test]
+fn two_fills_coexist_on_different_scopes_and_the_lower_rule_wins_one_cell() {
+    let mut h = Harness::new();
+    let screen = paint(&mut h, "rows:status:todo=band;column:title=h2");
+    assert!(!screen.contains("already belongs"), "{screen}");
+    assert_eq!(h.app.state.paint.len(), 2);
+    let band = fill(&h, "band");
+    let slot = fill(&h, "h2");
+    assert_ne!(band, slot, "the fixture needs two distinguishable fills");
+    assert_eq!(
+        cell_bg(&h, "To Do"),
+        band,
+        "the rows rule fills its own cells"
+    );
+    assert_eq!(
+        cell_bg(&h, "Add dark theme"),
+        slot,
+        "the more specific column rule wins the cell both claim"
+    );
+    assert_eq!(
+        cell_bg(&h, "Fix login"),
+        h.app.config.theme.style(Surface::Selected).bg,
+        "selection still patches over a fill"
+    );
+}
+
+/// The four shapes the grammar has to carry, each on a real cell, then all four
+/// at once on their own scopes, saved and reopened (TASK-237).
+#[test]
+fn fill_and_ink_combinations_render_and_survive_save_and_restart() {
+    let mut h = Harness::new();
+    std::fs::write(
+        &h.config_path,
+        r##"return { theme = { emphasis = { alert = { fg = "#8a1c24", bg = "#f6c8d4" } } } }"##,
+    )
+    .unwrap();
+    h.app.tick();
+    for roles in ["h2", "h2+alert", "band+red", "alert+p3"] {
+        paint(&mut h, &format!("column:title={roles}"));
+        let composed = composed(&h, roles);
+        assert!(composed.bg.is_some(), "{roles} composes a fill");
+        assert_eq!(cell_bg(&h, "Add dark theme"), composed.bg, "{roles} fill");
+        assert_eq!(cell_fg(&h, "Add dark theme"), composed.fg, "{roles} ink");
+    }
+    assert_eq!(
+        composed(&h, "band+red").fg,
+        Some(Color::Red),
+        "a bare color after a fill is ink"
+    );
+    assert_eq!(composed(&h, "band+red").bg, fill(&h, "band"));
+    assert_eq!(
+        composed(&h, "red+band"),
+        composed(&h, "band+red"),
+        "the fill is the fill wherever it is written"
+    );
+    assert_eq!(
+        composed(&h, "alert+p3").bg,
+        fill(&h, "alert"),
+        "a role may own the fill"
+    );
+    paint(
+        &mut h,
+        "rows:status:todo=h2;column:title=h2+alert;column:status=band+red;column:pri=alert+p3",
+    );
+    assert_eq!(h.app.state.paint.len(), 4);
+    for (needle, roles) in [("To Do", "band+red"), ("Add dark theme", "h2+alert")] {
+        let composed = composed(&h, roles);
+        assert_eq!(cell_bg(&h, needle), composed.bg, "{roles} fill on {needle}");
+        assert_eq!(cell_fg(&h, needle), composed.fg, "{roles} ink on {needle}");
+    }
+    h.press(KeyCode::Char('v'));
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char('d'));
+    let before = h.app.state.paint.clone();
+    h.app = open_app(&h.root, &h.config_path);
+    h.render();
+    assert_eq!(h.app.state.paint, before, "roles are saved as written");
+    assert_eq!(cell_bg(&h, "Add dark theme"), composed(&h, "h2+alert").bg);
+    assert_eq!(cell_fg(&h, "Add dark theme"), composed(&h, "h2+alert").fg);
+}
+
+/// A view saved before highlight slots existed keeps the exact cells and colors
+/// it had: band is still the neutral fill, and nothing else in the rule moved.
+#[test]
+fn a_legacy_band_view_renders_exactly_as_it_did() {
+    let mut h = Harness::new();
+    std::fs::write(
+        h.root.join("views-repo.lua"),
+        "return { [1] = { columns='id,status,pri,title', paint='rows:=quiet;rows:status:todo=band+strong' } }",
+    )
+    .unwrap();
+    h.app = open_app(&h.root, &h.config_path);
+    h.render();
+    assert_eq!(cell_bg(&h, "Add dark theme"), fill(&h, "band"));
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        composed(&h, "quiet").fg,
+        "the base rule still supplies the ink"
+    );
+    assert!(modifiers(&h, "Add dark theme").contains(Modifier::BOLD));
+    assert_eq!(
+        cell_bg(&h, "4 title"),
+        h.app.config.theme.background(),
+        "the fill stays inside the rule's scope"
+    );
 }
 
 #[test]
@@ -87,10 +207,10 @@ fn specific_quiet_stop_blocks_base_bold() {
 }
 
 #[test]
-fn invalid_saved_roles_and_duplicate_band_remain_intact_on_save() {
+fn invalid_saved_roles_remain_intact_on_save() {
     for rules in [
         "rows:=strong;column:title=quiet+unknown",
-        "rows:=band;header=band",
+        "rows:=band;header=h99",
         "by:status=todo:quiet!,inprogress:strong",
     ] {
         let mut h = Harness::new();

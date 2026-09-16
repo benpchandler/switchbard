@@ -49,9 +49,9 @@ The ladder, quiet to loud:
 
 Rules that follow:
 
-- **One bg tier per screen.** sbt reserves the rule-owned `band` tier alongside
-  `selected` and `working`. Any new
-  "alert" fill has to displace or share with those, never stack a third.
+- **One fill per cell.** A cell wears one rule-owned fill, never two stacked:
+  `band` or a `theme.highlights` slot, whichever the most specific rule names
+  (TASK-237). `selected` and `working` patch over it for the cells they claim.
 - **Hue is identity, luminance is severity.** A rule that means "more urgent" should
   step luminance and weight, not switch hue. That survives grayscale, colorblindness,
   and a quantized terminal.
@@ -193,10 +193,12 @@ Excel's model, which users already know:
   blend.
 - A per-rule `!` suffix is "stop if true": `rows:status:done=quiet!` prevents anything
   above it from adding weight to done rows.
-- `band` is a **singleton tier**: the evaluator accepts at most one rule producing `band`
-  per view and refuses the second with a status-line message naming the first. `selected`
-  patches over `band`, `working` patches over both. This is the structural ceiling from
-  section 2, enforced in `paint_eval`, not in a comment.
+- A fill is **per cell, not per view** (TASK-237): every rule may name one, and a cell two
+  rules claim takes the lower rule's, exactly as ink already resolved. What a rule cannot do
+  is stack two fills on one cell, which `paint_eval::compose` makes structural rather than a
+  refusal: it splits a rule into its fill and the ink over it. `selected` patches over the
+  fill, `working` patches over both. That is the ceiling from section 2, enforced in
+  `paint_eval`, not in a comment.
 
 ### 6.3 Scopes beyond cells
 

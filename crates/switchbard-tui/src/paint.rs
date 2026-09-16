@@ -253,16 +253,23 @@ pub fn value_color(rules: &[PaintRule], column: Column, value: &str) -> Option<S
 pub fn resolve_color(token: &str, palette: &[String]) -> Option<Color> {
     if let Some(slot) = token.strip_prefix('p') {
         if !slot.is_empty() && slot.bytes().all(|byte| byte.is_ascii_digit()) {
-            let index = slot.parse::<usize>().ok()?.checked_sub(1)?;
-            let color = if palette.is_empty() {
-                AUTO_PALETTE[index % AUTO_PALETTE.len()]
-            } else {
-                palette[index % palette.len()].as_str()
-            };
-            return Color::from_str(color).ok();
+            return palette_color(slot.parse::<usize>().ok()?, palette);
         }
     }
     Color::from_str(token).ok()
+}
+
+/// The color in one-based palette slot `index`, the same cycling `p<n>` uses.
+/// Taking the number rather than its spelling keeps the callers that already
+/// have one, the highlight slots among them, off the allocation path.
+pub fn palette_color(index: usize, palette: &[String]) -> Option<Color> {
+    let index = index.checked_sub(1)?;
+    let color = if palette.is_empty() {
+        AUTO_PALETTE[index % AUTO_PALETTE.len()]
+    } else {
+        palette[index % palette.len()].as_str()
+    };
+    Color::from_str(color).ok()
 }
 
 /// Sets (or with `None`, clears) one value's color on `column`'s by-column rule,
@@ -364,7 +371,7 @@ pub fn try_parse_rules(text: &str, registry: &ColumnRegistry) -> Result<Vec<Pain
                 .map_err(|error| format!("paint rule {}: {error}", index + 1))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    validate_rules(&rules, registry)?;
+    validate_rules(&rules)?;
     Ok(rules)
 }
 
@@ -390,32 +397,39 @@ fn parse_value_roles(rhs: &str) -> Result<Vec<(String, String)>, String> {
         .collect()
 }
 
+/// Every token in a rule must name an emphasis role, a highlight slot or a
+/// color. Which of them fills the cell and which writes on it is the theme's
+/// answer (`paint_eval::compose`); saved rules stay valid across theme changes,
+/// so this check is deliberately theme-independent.
 pub fn validate_roles(roles: &str) -> Result<(), String> {
     let roles = roles.trim().strip_suffix('!').unwrap_or(roles.trim());
-    for token in roles.split('+') {
-        let token = token.trim();
-        if !crate::config::EMPHASIS_ROLES.contains(&token) && resolve_color(token, &[]).is_none() {
+    let tokens: Vec<&str> = roles.split('+').map(str::trim).collect();
+    if tokens.len() > crate::paint_eval::MAX_ROLE_TOKENS {
+        return Err(format!(
+            "a paint rule composes at most {} roles",
+            crate::paint_eval::MAX_ROLE_TOKENS
+        ));
+    }
+    for token in tokens {
+        let known = crate::config::EMPHASIS_ROLES.contains(&token)
+            || crate::highlight::slot_index(token).is_some()
+            || resolve_color(token, &[]).is_some();
+        if !known {
             return Err(format!("unknown emphasis role or color: {token}"));
         }
     }
     Ok(())
 }
 
-pub fn validate_rules(rules: &[PaintRule], registry: &ColumnRegistry) -> Result<(), String> {
-    crate::paint_eval::validate_rules(rules, registry)
+pub fn validate_rules(rules: &[PaintRule]) -> Result<(), String> {
+    crate::paint_eval::validate_rules(rules)
 }
 
+/// One rule's roles as a terminal style: the theme composes fill and ink, this
+/// layer only decides what to do when a token names nothing it knows, which
+/// only an externally edited saved view can produce.
 pub fn resolve_style(roles: &str, theme: &Theme, palette: &[String]) -> Style {
-    roles
-        .trim_end_matches('!')
-        .split('+')
-        .fold(Style::default(), |style, token| {
-            style.patch(
-                theme
-                    .emphasis_style(token.trim(), palette)
-                    .unwrap_or_default(),
-            )
-        })
+    theme.emphasis_style(roles, palette).unwrap_or_default()
 }
 
 pub fn cell_style_with(

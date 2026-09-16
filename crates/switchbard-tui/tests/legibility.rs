@@ -1,5 +1,6 @@
 //! Contrast gates over rendered sRGB cells, not inferred terminal colors.
-//! APCA-W3 0.0.98G-4g math: https://apcaw3.myndex.com/docs/APCA-W3-LaTeX.html
+//! The APCA-W3 0.0.98G-4g math is the shipped one (`switchbard_tui::legibility`),
+//! so these gates and the theme's own fill refusal answer from one implementation.
 //! These are project design thresholds, not accessibility compliance claims.
 mod harness;
 
@@ -7,42 +8,56 @@ use crossterm::event::KeyCode;
 use harness::*;
 use ratatui::style::{Color, Modifier};
 use switchbard_core::{claim_work, WorkIdentity};
+use switchbard_tui::legibility::contrast;
+
+/// The ink a preset owns, and the Lc each one owes on any fill it lands on.
+/// Palette tokens are deliberately absent: a palette is chosen independently of
+/// the preset (`:palette light` pairs one with the light canvas on purpose), so
+/// categorical hues carry no preset contrast claim, on a fill or off it.
+const INK_FLOORS: [(&str, f64); 4] = [
+    ("quiet", 45.0),
+    ("strong", 75.0),
+    ("alert", 60.0),
+    ("struck", 75.0),
+];
+
+/// Every fill the presets can put under that ink: the neutral band, each
+/// declared highlight slot, and one slot no preset declares, which exercises
+/// the fill derived from the palette at a fixed step off the canvas.
+const FILLS: [&str; 5] = ["band", "h1", "h2", "h3", "h7"];
+
+const COLORED_PRESETS: [&str; 4] = ["berg", "bloomberg", "darkroom", "light"];
 
 fn command(h: &mut Harness, text: &str) {
     h.type_text(&format!(":{text}"));
     h.press(KeyCode::Enter);
 }
 
-fn luminance(color: Color) -> f64 {
-    let Color::Rgb(r, g, b) = color else {
-        panic!("contrast requires declared sRGB, got {color:?}")
-    };
-    let value: f64 = [(r, 0.2126729), (g, 0.7151522), (b, 0.0721750)]
-        .into_iter()
-        .map(|(c, weight)| (f64::from(c) / 255.0).powf(2.4) * weight)
-        .sum();
-    if value < 0.022 {
-        value + (0.022 - value).powf(1.414)
-    } else {
-        value
-    }
+fn measure(foreground: Color, background: Color) -> f64 {
+    contrast(foreground, background).unwrap_or_else(|| {
+        panic!("contrast requires declared sRGB, got {foreground:?} on {background:?}")
+    })
 }
 
-fn contrast(foreground: Color, background: Color) -> f64 {
-    let text = luminance(foreground);
-    let canvas = luminance(background);
-    if (text - canvas).abs() < 0.0005 {
-        return 0.0;
-    }
-    let raw = if canvas > text {
-        (canvas.powf(0.56) - text.powf(0.57)) * 1.14
-    } else {
-        (canvas.powf(0.65) - text.powf(0.62)) * 1.14
-    };
-    if raw.abs() < 0.1 {
-        0.0
-    } else {
-        (raw - raw.signum() * 0.027) * 100.0
+/// The pulse at its trough and at its peak over a cell as it actually rendered.
+/// `App::work_glow` is a function of elapsed wall-clock time, so the endpoints
+/// are reached through the two shipped functions the row renderer composes
+/// (`working_style` for the band, `working_fg` for the lift) rather than by
+/// sampling frames until they happen to appear. Call it before the row is
+/// claimed, so the ink it starts from is the painted ink and not an
+/// already-lifted frame of the cycle.
+fn gate_pulse_over(h: &Harness, needle: &str, minimum: f64, context: &str) {
+    let rest_fg = cell_fg(h, needle).unwrap_or_else(|| panic!("missing {needle} in {context}"));
+    let rest_bg = cell_bg(h, needle).unwrap();
+    let theme = &h.app.config.theme;
+    for glow in [0.0, 1.0] {
+        let background = theme.working_style(glow).bg.unwrap_or(rest_bg);
+        let foreground = theme.working_fg(Some(rest_fg), glow);
+        let value = measure(foreground, background).abs();
+        assert!(
+            (minimum..=100.0).contains(&value),
+            "{context} at glow {glow}: {foreground:?}/{background:?} = Lc {value:.2}, expected {minimum}..100"
+        );
     }
 }
 
@@ -70,13 +85,13 @@ fn gate(h: &Harness, needle: &str, minimum: f64, context: &str) {
             "{context}: the Lc60 threshold requires bold text"
         );
     }
-    let value = contrast(foreground, background).abs();
+    let value = measure(foreground, background).abs();
     assert!((minimum..=100.0).contains(&value), "{context}: {needle}, {foreground:?}/{background:?} = Lc {value:.2}, expected {minimum}..100");
 }
 
 #[test]
 fn every_colored_preset_keeps_body_secondary_and_roles_readable_on_rendered_bands() {
-    for name in ["berg", "bloomberg", "darkroom", "light"] {
+    for name in COLORED_PRESETS {
         let mut h = Harness::new();
         command(&mut h, &format!("theme {name}"));
         gate(&h, "Fix login", 75.0, &format!("{name} selected"));
@@ -85,13 +100,7 @@ fn every_colored_preset_keeps_body_secondary_and_roles_readable_on_rendered_band
         command(&mut h, "group status");
         gate(&h, "▸ To Do", 60.0, &format!("{name} heading"));
         command(&mut h, "group off");
-        for (role, floor) in [
-            ("quiet", 45.0),
-            ("strong", 75.0),
-            ("alert", 60.0),
-            ("band", 75.0),
-            ("struck", 75.0),
-        ] {
+        for (role, floor) in INK_FLOORS {
             command(&mut h, &format!("paint column:title={role}"));
             gate(&h, "Fix login", floor, &format!("{name} {role} selected"));
             gate(
@@ -101,12 +110,39 @@ fn every_colored_preset_keeps_body_secondary_and_roles_readable_on_rendered_band
                 &format!("{name} {role}"),
             );
         }
+        // Every composed ink on every composed fill, plus each fill's own
+        // default ink, and the selected row's patch over the same cell.
+        for fill in FILLS {
+            command(&mut h, &format!("paint column:title={fill}"));
+            gate(
+                &h,
+                "Write onboarding guide",
+                75.0,
+                &format!("{name} {fill}"),
+            );
+            gate(&h, "Fix login", 75.0, &format!("{name} {fill} selected"));
+            for (ink, floor) in INK_FLOORS {
+                command(&mut h, &format!("paint column:title={fill}+{ink}"));
+                gate(
+                    &h,
+                    "Write onboarding guide",
+                    floor,
+                    &format!("{name} {fill}+{ink}"),
+                );
+                gate(
+                    &h,
+                    "Fix login",
+                    floor,
+                    &format!("{name} {fill}+{ink} selected"),
+                );
+            }
+        }
     }
 }
 
 #[test]
 fn working_cycle_preserves_readability_and_disable_keeps_a_steady_band() {
-    for name in ["berg", "bloomberg", "darkroom", "light"] {
+    for name in COLORED_PRESETS {
         let mut h = Harness::new();
         std::fs::write(
             &h.config_path,
@@ -114,6 +150,16 @@ fn working_cycle_preserves_readability_and_disable_keeps_a_steady_band() {
         )
         .unwrap();
         h.app.tick();
+        // The working band replaces a painted fill, so the ink a fill rule
+        // chose has to survive the whole pulse over that cell too.
+        command(&mut h, "paint column:title=h1+alert");
+        gate_pulse_over(
+            &h,
+            "Fix login",
+            60.0,
+            &format!("{name} working over h1+alert"),
+        );
+        command(&mut h, "paint off");
         let id = h.app.selected_task().unwrap().id.clone();
         claim_work(
             &h.root.join("work"),
@@ -156,7 +202,7 @@ fn working_cycle_preserves_readability_and_disable_keeps_a_steady_band() {
 
 #[test]
 fn details_inherit_declared_body_ink_on_every_colored_canvas() {
-    for name in ["berg", "bloomberg", "darkroom", "light"] {
+    for name in COLORED_PRESETS {
         let mut h = Harness::new();
         command(&mut h, &format!("theme {name}"));
         h.press(KeyCode::Enter);
@@ -180,7 +226,7 @@ fn rendered_reference_pairs_match_published_apca_values() {
         )).unwrap();
         h.app.tick();
         h.render();
-        let actual = contrast(
+        let actual = measure(
             cell_fg(&h, "Write onboarding guide").unwrap(),
             cell_bg(&h, "Write onboarding guide").unwrap(),
         );
@@ -193,7 +239,7 @@ fn rendered_reference_pairs_match_published_apca_values() {
 
 #[test]
 fn navigation_context_identity_links_and_hints_stay_readable() {
-    for name in ["berg", "bloomberg", "darkroom", "light"] {
+    for name in COLORED_PRESETS {
         let mut h = Harness::new();
         seed_in_project(&h.root, "Ship Atlas", "To Do", "Atlas", None);
         std::fs::write(
@@ -221,4 +267,77 @@ fn navigation_context_identity_links_and_hints_stay_readable() {
         h.press(KeyCode::Enter);
         gate(&h, "/ login", 45.0, &format!("{name} filter context"));
     }
+}
+
+/// The owner's example (TASK-237): a pink fill with red ink for alert, on the
+/// preset they actually use, readable at rest, under the cursor, and through a
+/// working row's whole pulse.
+#[test]
+fn a_pink_fill_with_alert_ink_reads_at_rest_selected_and_while_working() {
+    let mut h = Harness::new();
+    std::fs::write(
+        &h.config_path,
+        "return { theme = 'berg', work = { period_ms = 40, frames = 40 } }",
+    )
+    .unwrap();
+    h.app.tick();
+    command(&mut h, "paint column:title=h3+alert");
+    let fill = h
+        .app
+        .config
+        .theme
+        .highlight_style(3, &h.app.config.palette)
+        .and_then(|style| style.bg);
+    assert_eq!(cell_bg(&h, "Write onboarding guide"), fill, "the pink fill");
+    gate(&h, "Write onboarding guide", 60.0, "berg pink alert");
+    gate(&h, "Fix login", 60.0, "berg pink alert selected");
+    gate_pulse_over(&h, "Fix login", 60.0, "berg pink alert working");
+    let id = h.app.selected_task().unwrap().id.clone();
+    claim_work(
+        &h.root.join("work"),
+        &WorkIdentity {
+            session_id: "contrast-pink".into(),
+            pid: std::process::id(),
+            agent: "codex".into(),
+        },
+        &h.root,
+        &id,
+    )
+    .unwrap();
+    h.app.tick();
+    h.render();
+    assert_ne!(
+        cell_bg(&h, "Fix login"),
+        fill,
+        "a claimed row wears the working band over the fill"
+    );
+    gate(&h, "Fix login", 60.0, "berg pink alert working frame");
+    std::fs::write(
+        &h.config_path,
+        "return { theme = 'berg', work = { period_ms = 0 } }",
+    )
+    .unwrap();
+    h.app.tick();
+    h.render();
+    gate(&h, "Fix login", 60.0, "berg pink alert working peak");
+}
+
+/// A fill a user supplies is their own choice, outside the preset guarantee.
+/// This one still has to read where it is painted.
+#[test]
+fn a_user_supplied_light_fill_reads_with_the_ink_declared_beside_it() {
+    let mut h = Harness::new();
+    std::fs::write(
+        &h.config_path,
+        r##"return { theme = { emphasis = { alert = { fg = "#8a1c24", bg = "#f6c8d4" } } } }"##,
+    )
+    .unwrap();
+    h.app.tick();
+    command(&mut h, "paint column:title=alert");
+    assert_eq!(
+        cell_bg(&h, "Write onboarding guide"),
+        Some(Color::Rgb(0xf6, 0xc8, 0xd4)),
+        "the declared fill survives load"
+    );
+    gate(&h, "Write onboarding guide", 60.0, "user pink alert");
 }

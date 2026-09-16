@@ -6,7 +6,7 @@ Make SBT easier to scan: distinguish navigation, view context, column headings, 
 
 ## Scope and decisions
 
-1. Theme-defined quiet, strong, alert, band and struck roles compose with palette tokens and legacy colors. Preserve saved views and most-specific-rule precedence, add stop-if-true, validate one rule-owned band.
+1. Theme-defined quiet, strong, alert, band and struck roles compose with palette tokens and legacy colors. Preserve saved views and most-specific-rule precedence, add stop-if-true. Fills are per cell: a rule composes one fill and the ink over it, any number of rules may carry a fill, and the one-band-per-view refusal is gone (TASK-237).
 2. Improve default header weight, active-tab identity, filter context and active sort affordance. Keep factual labels and glyphs so color is supplementary.
 3. Extend painting to title, header and group headings. Offer selected-row context and its grouping values through the existing paint menu, plus keyboard access to any displayed column value. Do not invent a second navigation model that makes ordinary task browsing slower.
 4. Declare preset backgrounds, check rendered legibility, support a light preset, and keep working indicators visible through their pulse.
@@ -21,7 +21,7 @@ Continuous gradients in TASK-219 remain outside this slice: the canonical trajec
 | Default, active selection, grouped and flat lists | Real app buffer tests and terminal dogfood |
 | Empty, one, many, long/wrapped and Unicode titles | Existing list stress suite plus emphasis render coverage |
 | Tasks and PRs; read-only PR facts; navigation badges | Rendered keyboard journeys; legacy page/navigation tests |
-| Role combinations, specific overrides, stop-if-true, duplicate band | E2E commands, rendered cell styles, refused mutation status |
+| Role combinations, specific overrides, stop-if-true, two fills on one cell | E2E commands, rendered cell styles, refused mutation status |
 | Existing literal colors and palette-token views | Existing paint/persistence suite plus role save/reopen tests |
 | Invalid role/config/saved rule, external view edits | Warning and persistence tests, no silent overwrite |
 | Narrow 40x8, normal 100x24, wide 160x40, zero-sized | Real terminal buffers; clipping/no-panic checks |
@@ -47,7 +47,7 @@ Live use exposed a light-theme popup canvas bug: terminal Clear reset the menu t
 ### Evidence map
 
 - `tests/emphasis_hierarchy.rs`: priority/completion hierarchy without color alone, active tab versus badge, sort underline, raw group values, title scopes on both pages, light popup/history canvas; terminal grids 0x0, 1x1, 40x8, 100x24 and 160x40, long Unicode titles and empty filters.
-- `tests/emphasis_rules.rs`: composition, precedence, stop, singleton band, persistence, invalid rules, custom-field cleanup and legacy no-op compatibility.
+- `tests/emphasis_rules.rs`: composition, precedence, stop, coexisting fills and per-cell fill precedence, persistence, invalid rules, custom-field cleanup and legacy no-op compatibility.
 - `tests/emphasis_controls.rs`: actual paint key journeys, context choices, cancellation and atomic refusal.
 - `tests/emphasis_theme.rs` and `tests/legibility.rs`: configuration diagnostics, fallback roles, preset rendering, published APCA reference pairs, detail text, selection, working trough/peak and disabled motion.
 - Existing full-suite coverage exercises navigation, PR data states, reload, history, custom fields, filter/column controls and persistence. The PTY signal/resume driver now drains rendered output while waiting for exit so terminal backpressure cannot create a false shutdown timeout.
@@ -72,3 +72,43 @@ Owner feedback: the roles were not visible in the everyday app. Objective now in
 The default priority follow-through maps open High priority cells to alert, Low priority cells to quiet, and completed priority cells to quiet before explicit paint. Titles retain strong for open High and quiet+struck for completed tasks. The added real-app regression first reproduced the missing alert foreground, then all six hierarchy tests passed. Live binary 979a7499 was exercised against real task data in the isolated terminal: the combined high/low cues and expandable task details are visible together in `screens/integrated.png` and `screens/integrated-detail.png`, with raw ANSI companions. Visual Review target `integrated-0d08f7725e95`, revision `revision-1cf5a6b012859600202a`, owns this follow-through review. These images remain terminal-output rasterizations rather than OS-window captures.
 
 Combined validation passed: `mise run ci` (`/tmp/sbt-emphasis-integrated-ci.log`), final TUI fmt/clippy and all 407 tests with 22 pre-existing ignored (`/tmp/sbt-emphasis-integrated-tui.log`). Guarded installation of both sbt and sb succeeded at 2026-09-15T22:22:41Z, revision b7657dbc, clean build identity and no dropped commits. Both installed binaries report that revision; three running sessions logged reload into it. Hold expires 2026-09-16T00:22:41Z. Visual Review has no unresolved annotations; reporter approval remains open. The branch is being prepared for upstream review so the temporary install is not confused with durable main delivery.
+
+## Highlight slots and fill-and-ink rules (TASK-237)
+
+Owner review of the installed build found the fill system too narrow to say
+"pink highlight, red text for alert" or "these rows yellow, those blue": `band`
+was the only fill, its color was fixed per preset, one rule per view could use
+it, and no other role could set a background.
+
+Decisions taken: highlight slots are explicit hex per preset (`theme.highlights`,
+at least `h1`, `h2` and `h3` everywhere, warm paper fills on light, reverse video
+and terminal colors on plain), with a computed fallback for a slot a theme omits
+that moves the matching palette color to a fixed OKLCH lightness step from the
+canvas (`highlight::derive_fill`, one named function). Any role may own a fill;
+role validation refuses only a fill no ink in the theme can be read on, measured
+with the shipped APCA implementation (`legibility.rs`) rather than a blanket ban
+on backgrounds. `paint_eval::compose` is the single authority for which token in
+a rule is the fill and which is ink, so `h2`, `h2+alert`, `band+red` and
+`alert+p3` all resolve one way, and a fill is the fill wherever it is written in
+the list. Fill conflicts between rules resolve exactly like ink conflicts, to the
+lower and more specific rule.
+
+Two consequences worth naming. The style picker lists the slots as swatches
+between the roles and the colors, so the color numbers shift by the number of
+slots; typing a color name or its unique prefix is unaffected. Palette tokens as
+ink stay outside the preset contrast guarantee, as the guide already states: the
+palette is chosen independently of the theme, and `darkroom`'s first hue is
+deliberately close to its body text, so gating it on a fill would assert a claim
+the project does not make.
+
+Evidence: `tests/emphasis_rules.rs` covers the four grammar shapes on real cells,
+coexistence on different scopes, most-specific-wins on one cell, a legacy `band`
+view rendering unchanged, and save/reopen. `tests/emphasis_theme.rs` covers a
+declared role fill reaching cells, an unreadable fill refused with a warning,
+declared and derived slots per preset, plain's terminal-owned slot, and an
+unknown slot name. `tests/emphasis_controls.rs` covers the picker journey: two
+fills accepted where one was refused, swatches drawn in their own fill and ink,
+and a typed `h2+alert` previewed and applied. `tests/legibility.rs` gates every
+role ink over every preset fill, unselected and selected, and the owner's pink
+fill with alert ink at rest, under the cursor, through a working pulse and at its
+steady peak.

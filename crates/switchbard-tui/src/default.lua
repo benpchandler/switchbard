@@ -25,10 +25,16 @@ return {
   -- surfaces on the current preset (put both in your file to pick and tweak).
   -- `:theme <name>` inside sbt switches presets live to try them; it is
   -- in-memory, so write the name here to keep it.
-  -- theme.emphasis defines quiet, strong, alert, band and struck.
-  -- Only band may set bg or reverse=true; the other roles style foreground ink.
+  -- theme.emphasis defines quiet, strong, alert, band and struck; theme.highlights
+  -- defines the named fills h1, h2, h3 ... (bg plus the ink that reads on it).
+  -- Any role may take a bg too (alert = { fg = "#8a1c24", bg = "#f6c8d4" }); a
+  -- fill no ink in the theme can be read on is dropped with a warning. A slot a
+  -- theme leaves out is derived from the matching palette color at a fixed
+  -- distance from the background.
   -- Custom themes can omit roles: hint/accent/working supply safe defaults.
-  -- Paint accepts roles, colors and palette slots joined with + (strong+p2).
+  -- Paint accepts roles, highlight slots, colors and palette slots joined with +
+  -- (strong+p2, h2, h2+alert, band+red): the fill comes from the slot or the
+  -- role that has one, the ink from everything else.
   -- A trailing ! makes that paint rule take precedence over competing rules.
   -- theme.background is the explicit canvas; leave absent for terminal control.
   -- pill requires Powerline rounded caps; ascii uses parentheses; icons keeps glyphs.progress.
@@ -69,6 +75,11 @@ return {
         band = { bg = "#3b3023" },
         struck = { strikethrough = true },
       },
+      highlights = {
+        h1 = { bg = "#3f3020", fg = "#ffd190" },
+        h2 = { bg = "#14343a", fg = "#ffd190" },
+        h3 = { bg = "#3d2531", fg = "#ffd190" },
+      },
       columns = { id = "label", project = "link", goal = "link" },
     },
     bloomberg = {
@@ -100,6 +111,11 @@ return {
         alert = { fg = "#ffb8aa", bold = true },
         band = { bg = "#303b49" },
         struck = { strikethrough = true },
+      },
+      highlights = {
+        h1 = { bg = "#3d3520", fg = "#e6edf3" },
+        h2 = { bg = "#23394f", fg = "#e6edf3" },
+        h3 = { bg = "#3a2a44", fg = "#e6edf3" },
       },
       columns = { id = "label", project = "link", goal = "link" },
     },
@@ -133,6 +149,11 @@ return {
         band = { bg = "#393026" },
         struck = { strikethrough = true },
       },
+      highlights = {
+        h1 = { bg = "#43331e", fg = "#e3ddd3" },
+        h2 = { bg = "#26351f", fg = "#e3ddd3" },
+        h3 = { bg = "#22303f", fg = "#e3ddd3" },
+      },
       columns = { id = "label", project = "link", goal = "link" },
     },
     light = {
@@ -165,6 +186,11 @@ return {
         band = { bg = "#e5ddd0" },
         struck = { strikethrough = true },
       },
+      highlights = {
+        h1 = { bg = "#f1e2c4", fg = "#1f2830" },
+        h2 = { bg = "#f6dcdc", fg = "#1f2830" },
+        h3 = { bg = "#e4e9d6", fg = "#1f2830" },
+      },
       columns = { id = "label", project = "link", goal = "link" },
     },
     -- Your terminal owns its colors and background.
@@ -188,6 +214,12 @@ return {
         alert = { bold = true, underline = true },
         band = { reverse = true },
         struck = { strikethrough = true },
+      },
+      -- Your terminal's own palette, so these carry no measured contrast.
+      highlights = {
+        h1 = { reverse = true },
+        h2 = { bg = "blue", fg = "white" },
+        h3 = { bg = "magenta", fg = "black" },
       },
     },
   },

@@ -563,13 +563,15 @@ impl App {
                 _ => picker.preview_scroll = 0,
             }
         }
-        // Detail-pane pickers hit the same collision `Filter` already solved:
-        // `high`/`low` (priority), and any status/project/label starting
-        // with h/l, would otherwise be swallowed by the picker-wide
-        // "h/l with nothing typed yet" back/open convention below.
-        let legacy_value_initial = matches!(
+        // Pickers whose own rows start with h or l hit the same collision
+        // `Filter` already solved: `high`/`low` (priority), any status,
+        // project or label starting with h/l, and the highlight slots `h1`,
+        // `h2`, ... in the style picker would otherwise be swallowed by the
+        // picker-wide "h/l with nothing typed yet" back/open convention below.
+        let row_initial = matches!(
             picker.purpose,
             PickerPurpose::Filter(_)
+                | PickerPurpose::PaintColor(_)
                 | PickerPurpose::DetailPlanning(_)
                 | PickerPurpose::DetailStatus(_)
                 | PickerPurpose::DetailPriority(_)
@@ -585,7 +587,7 @@ impl App {
         if event.code == KeyCode::Left
             || (event.code == KeyCode::Char('h')
                 && picker.typed.is_empty()
-                && !legacy_value_initial
+                && !row_initial
                 && picker.position_of_key('h').is_none()
                 && picker.purpose != PickerPurpose::History)
         {
@@ -595,7 +597,7 @@ impl App {
         if event.code == KeyCode::Right
             || (event.code == KeyCode::Char('l')
                 && picker.typed.is_empty()
-                && !legacy_value_initial
+                && !row_initial
                 && picker.position_of_key('l').is_none()
                 && picker.purpose != PickerPurpose::History)
         {
@@ -901,11 +903,12 @@ impl App {
                         .first()
                         .is_some_and(|option| matches!(option.payload, Payload::Column(_)));
                 let composing_roles = matches!(purpose, PickerPurpose::PaintColor(_))
-                    && (["quiet", "strong", "alert", "band", "struck"]
+                    && (crate::config::EMPHASIS_ROLES
                         .iter()
                         .any(|role| role.starts_with(&picker.typed))
                         || picker.typed.contains('+')
-                        || picker.typed.starts_with('p'));
+                        || picker.typed.starts_with('p')
+                        || crate::highlight::slot_index(&picker.typed).is_some());
                 if matches.len() == 1 && (!toggles || legacy_column_pick) && !composing_roles {
                     self.apply_picked_value();
                 }

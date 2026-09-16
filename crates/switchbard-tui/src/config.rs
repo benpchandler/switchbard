@@ -10,6 +10,7 @@ use mlua::{Lua, Table, Value};
 use ratatui::style::{Color, Modifier, Style};
 
 use crate::columns::{Column, ColumnRegistry};
+use crate::paint_eval::TokenKind;
 
 const DEFAULT_LUA: &str = include_str!("default.lua");
 pub const EMPHASIS_ROLES: [&str; 5] = ["quiet", "strong", "alert", "band", "struck"];
@@ -162,6 +163,10 @@ pub struct Theme {
     styles: HashMap<Surface, Style>,
     columns: HashMap<Column, Surface>,
     emphasis: HashMap<String, Style>,
+    /// `theme.highlights`: the fills a rule names directly, keyed `h1`, `h2`,
+    /// ... A slot a preset leaves out is derived from the palette on demand,
+    /// so the table holds only what the theme actually declares.
+    highlights: HashMap<String, Style>,
     background: Option<Color>,
 }
 
@@ -192,6 +197,51 @@ impl Theme {
         }
     }
 
+    /// Any role or slot may carry a fill. What is refused is a fill no ink in
+    /// this theme can be read on: whatever a rule wrote over it would be
+    /// unreadable, so the fill is dropped and the cells keep their canvas. A
+    /// fill only some inks carry is kept, because choosing that ink is the
+    /// point of a fill-and-ink rule. Terminal-owned colors support no numeric
+    /// claim and are never refused.
+    fn refuse_unreadable_fills(&mut self, warnings: &mut Vec<String>) {
+        let inks = self.declared_inks();
+        let mut refused: Vec<(&'static str, String)> = Vec::new();
+        for (table, styles) in [
+            ("emphasis", &self.emphasis),
+            ("highlights", &self.highlights),
+        ] {
+            for (key, style) in styles {
+                if style.bg.is_some_and(|fill| no_ink_reads(fill, &inks)) {
+                    refused.push((table, key.clone()));
+                }
+            }
+        }
+        refused.sort();
+        for (table, key) in refused {
+            let styles = if table == "emphasis" {
+                &mut self.emphasis
+            } else {
+                &mut self.highlights
+            };
+            if let Some(style) = styles.get_mut(&key) {
+                style.bg = None;
+            }
+            warnings.push(format!(
+                "theme.{table}.{key}.bg: no ink in this theme reads on that fill, so it was dropped"
+            ));
+        }
+    }
+
+    /// Every ink this theme can put on a fill, for the readability check above.
+    fn declared_inks(&self) -> Vec<Color> {
+        self.style(Surface::Text)
+            .fg
+            .into_iter()
+            .chain(self.emphasis.values().filter_map(|style| style.fg))
+            .chain(self.highlights.values().filter_map(|style| style.fg))
+            .collect()
+    }
+
     /// The declared canvas color. Plain themes leave the terminal in control.
     pub fn background(&self) -> Option<Color> {
         self.background
@@ -203,18 +253,89 @@ impl Theme {
             .map_or(style, |background| style.bg(background))
     }
 
-    /// Compose semantic roles and legacy colors in order. The paint layer owns
-    /// the trailing importance marker; it does not change a role's appearance.
+    /// Compose one rule's roles, highlight slots and legacy colors into the
+    /// style a cell wears: the fill first, then every ink over it
+    /// (`paint_eval::compose` owns which is which). `None` when a token names
+    /// nothing this theme knows. The paint layer owns the trailing importance
+    /// marker; it does not change how a rule looks.
     pub fn emphasis_style(&self, token: &str, palette: &[String]) -> Option<Style> {
+        let composition = crate::paint_eval::compose(token, |part| self.token_kind(part, palette))?;
         let mut style = Style::default();
-        for part in token.split('+') {
-            let part = part.trim().trim_end_matches('!');
-            let next = self.emphasis.get(part).copied().or_else(|| {
-                crate::paint::resolve_color(part, palette).map(|color| Style::default().fg(color))
-            })?;
-            style = style.patch(next);
+        for part in composition.fill().into_iter().chain(composition.ink()) {
+            style = style.patch(self.token_style(part, palette)?);
         }
         Some(style)
+    }
+
+    /// What one token does to a cell: fills it, or writes on it. `None` names
+    /// nothing, which is how an invalid rule is caught.
+    fn token_kind(&self, token: &str, palette: &[String]) -> Option<TokenKind> {
+        let style = self.token_style(token, palette)?;
+        Some(if carries_fill(&style) {
+            TokenKind::Fill
+        } else {
+            TokenKind::Ink
+        })
+    }
+
+    /// The style behind one token: an emphasis role, a highlight slot, or a
+    /// color used as ink.
+    fn token_style(&self, token: &str, palette: &[String]) -> Option<Style> {
+        if let Some(role) = self.emphasis.get(token) {
+            return Some(*role);
+        }
+        if let Some(slot) = crate::highlight::slot_index(token) {
+            return self.highlight_style(slot, palette);
+        }
+        crate::paint::resolve_color(token, palette).map(|color| Style::default().fg(color))
+    }
+
+    /// Slot `index` exactly as the theme declares it. Only a slot that declares
+    /// no fill of its own borrows one, so a declared fill is never merged with
+    /// the fallback, whose reverse video would otherwise invert it.
+    pub fn highlight_style(&self, index: usize, palette: &[String]) -> Option<Style> {
+        let declared = self
+            .highlights
+            .get(crate::highlight::slot_token(index)?)
+            .copied();
+        if let Some(declared) = declared.filter(carries_fill) {
+            return Some(declared);
+        }
+        let derived = self.derived_fill(index, palette);
+        Some(match declared {
+            Some(declared) => derived.patch(declared),
+            None => derived,
+        })
+    }
+
+    /// The fill a slot borrows when it declares none: the matching palette color
+    /// moved to a fixed step off the canvas, wearing the body ink. It is
+    /// computed per frame, which is what lets `:palette` retint those slots
+    /// live. A theme with no declared canvas has no lightness to step from and
+    /// reverses the terminal's own colors instead.
+    fn derived_fill(&self, index: usize, palette: &[String]) -> Style {
+        self.background
+            .and_then(|canvas| {
+                let seed = crate::paint::palette_color(index, palette)?;
+                crate::highlight::derive_fill(seed, canvas)
+            })
+            .map(|fill| self.style(Surface::Text).bg(fill))
+            .unwrap_or_else(|| Style::default().add_modifier(Modifier::REVERSED))
+    }
+
+    /// The slots the picker offers: everything declared, and always the first
+    /// few, which a theme that declares none still gets by derivation.
+    pub fn highlight_slots(&self) -> Vec<usize> {
+        let declared = self
+            .highlights
+            .keys()
+            .filter_map(|key| crate::highlight::slot_index(key));
+        let mut slots: Vec<usize> = (1..=crate::highlight::MINIMUM_SLOTS)
+            .chain(declared)
+            .collect();
+        slots.sort_unstable();
+        slots.dedup();
+        slots
     }
 
     /// A claimed row keeps its band and modifiers throughout the cycle. Its
@@ -267,6 +388,22 @@ impl Theme {
     pub fn column_style(&self, column: Column) -> Style {
         self.style(self.columns.get(&column).copied().unwrap_or(Surface::Text))
     }
+}
+
+/// Whether a style paints the cell behind the text, by color or by reversing
+/// the terminal's own.
+fn carries_fill(style: &Style) -> bool {
+    style.bg.is_some() || style.add_modifier.contains(Modifier::REVERSED)
+}
+
+/// Whether a fill is measurable and no measurable ink clears the readable
+/// floor on it. An unmeasurable pairing makes no claim in either direction.
+fn no_ink_reads(fill: Color, inks: &[Color]) -> bool {
+    let judged: Vec<bool> = inks
+        .iter()
+        .filter_map(|ink| crate::legibility::reads_on(*ink, fill))
+        .collect();
+    !judged.is_empty() && !judged.contains(&true)
 }
 
 /// A preset's surfaces and its column-to-surface map, before validation.
@@ -735,30 +872,30 @@ fn resolve_theme(
 ) -> Theme {
     let mut styles = HashMap::new();
     let mut emphasis = HashMap::new();
+    let mut highlights = HashMap::new();
     let mut background = None;
-    for (name, mut raw) in raw_styles {
+    for (name, raw) in raw_styles {
         if name == "background" {
             background = raw.into_style(&name, warnings).fg;
             continue;
         }
         if let Some(role) = name.strip_prefix("emphasis.") {
             if EMPHASIS_ROLES.contains(&role) {
-                if role != "band" {
-                    if raw.bg.take().is_some() {
-                        warnings.push(format!(
-                            "theme.emphasis.{role}.bg is reserved for the band role"
-                        ));
-                    }
-                    if raw.reverse == Some(true) {
-                        raw.reverse = None;
-                        warnings.push(format!(
-                            "theme.emphasis.{role}.reverse is reserved for the band role"
-                        ));
-                    }
-                }
                 emphasis.insert(role.to_string(), raw.into_style(&name, warnings));
             } else {
                 warnings.push(format!("unknown theme.emphasis.{role}"));
+            }
+            continue;
+        }
+        if let Some(slot) = name.strip_prefix("highlights.") {
+            match crate::highlight::slot_index(slot).and_then(crate::highlight::slot_token) {
+                Some(token) => {
+                    highlights.insert(token.to_string(), raw.into_style(&name, warnings));
+                }
+                None => warnings.push(format!(
+                    "theme.highlights.{slot} names no slot: h1 to h{}",
+                    crate::highlight::MAX_SLOTS
+                )),
             }
             continue;
         }
@@ -784,9 +921,11 @@ fn resolve_theme(
         styles,
         columns,
         emphasis,
+        highlights,
         background,
     };
     theme.fill_emphasis_defaults();
+    theme.refuse_unreadable_fills(warnings);
     theme
 }
 
@@ -806,16 +945,18 @@ fn surface_map(theme: &Table) -> mlua::Result<HashMap<String, RawStyle>> {
         if name == "columns" {
             continue;
         }
-        if name == "emphasis" {
-            let Value::Table(roles) = value else {
-                return Err(mlua::Error::runtime("theme.emphasis must be a table"));
+        if name == "emphasis" || name == "highlights" {
+            let Value::Table(entries) = value else {
+                return Err(mlua::Error::runtime(format!(
+                    "theme.{name} must be a table"
+                )));
             };
-            for pair in roles.pairs::<String, Value>() {
-                let (role, value) = pair?;
+            for pair in entries.pairs::<String, Value>() {
+                let (key, value) = pair?;
                 let style = RawStyle::from_value(value).map_err(|error| {
-                    mlua::Error::runtime(format!("theme.emphasis.{role}: {error}"))
+                    mlua::Error::runtime(format!("theme.{name}.{key}: {error}"))
                 })?;
-                out.insert(format!("emphasis.{role}"), style);
+                out.insert(format!("{name}.{key}"), style);
             }
         } else {
             out.insert(name, RawStyle::from_value(value)?);
