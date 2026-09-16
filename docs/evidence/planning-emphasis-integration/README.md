@@ -1,0 +1,30 @@
+# Local planning and emphasis integration
+
+This integration originally combined published planning release `5ab1d047` with installed emphasis build `b7657dbc` for a local installation. Main now includes both features and the later agent-session and terminal-hangup fixes at `ed4c6bb3`; the emphasis pull request is already merged. This branch preserves the semantic planning-heading correction and its regression evidence for publication on that main. All ancestry is retained. Core, task CLI, GUI and terminal-hangup sources remain byte-equivalent to current main; the production difference is limited to the TUI planning-heading values.
+
+## Integration changes
+
+The only textual merge conflict was the paint-picker footer test: retain the semantic navigation/footer assertion instead of a fixed menu count. Compilation then exposed the planning section's missing raw heading value after emphasis added that field. Planned and Other tasks now carry raw values separately from their displayed text/counts so heading paint targets work. No task-writing or migration implementation is changed.
+
+## State and stress evidence
+
+| State | Evidence |
+| --- | --- |
+| Planned and other work, default planning/checklist columns, criterion completion pending manual Done | `140x28.txt`; `tests/planning_emphasis.rs` |
+| Narrow terminal, clipped columns, Review still visible | `60x14.txt`; same real-key test |
+| Detail section exposes Planning and checklist without changing execution | `detail.txt`; same test |
+| Style targets raw heading names without display counts | Same test asserts actual terminal cell modifiers on both headings |
+| Paint menu survives combined controls | Same test drives the menu and checks its heading action |
+| Empty/tiny terminals, long and multilingual content, light/selected/working styles | Existing emphasis hierarchy/theme/legibility suites |
+| Historical Done, no criteria, descendant progress, stale edits, saved views, cancellation | Existing planning/detail/cancellation suites |
+| Web zoom, touch, remote authorization | Not applicable to this local terminal integration |
+
+The text files are actual terminal cell buffers produced by the real renderer against synthetic task files and real key events. Temporary directory names are normalized. They do not preserve colors or native terminal font appearance; cell style assertions verify the combined heading behavior. No human visual approval is claimed.
+
+## Historical local validation
+
+Full `mise run ci` passed on the combined production source, including workspace tests and developer gates (`/tmp/switchbard-planning-install-integration-ci.log`). The initial attempt reproduced the missing heading field at compile time. The additional combined real-render regression passed separately (`/tmp/switchbard-planning-emphasis-render.log`); final workspace/all-target clippy and formatting also passed with that test present. No product source changed after the successful full gate began. Core/task/GUI parity against accepted main `0a4c537f` was verified before closeout. Native font appearance and human visual approval remain explicit gaps.
+
+## Publication integration
+
+Main `ed4c6bb3` was merged into this branch, retaining the agent-session and terminal-hangup fixes. The heading-value conflict preserves `Planned` and `Other tasks` as semantic paint targets, separate from display counts; the two emphasis documentation conflicts take current main verbatim. Focused planning/emphasis checks passed all 42 tests across seven suites (`/tmp/switchbard-integration-main-focused.log`). Both real-PTY terminal-hangup cases passed (`/tmp/switchbard-integration-main-hangup.log`): EOF exits cleanly with a resume record, and SIGTERM still exits while the reader spins on EOF. Formatting passed. Full publication validation and installation remain separate root-owned steps.

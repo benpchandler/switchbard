@@ -611,6 +611,7 @@ fn unix_now_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::with_test_database;
 
     fn plain_project(dir: &Path, files: &[(&str, &str)]) {
         for (rel_dir, name) in files {
@@ -994,8 +995,11 @@ mod tests {
             .map(|i| {
                 let root = root.clone();
                 std::thread::spawn(move || {
-                    create_task_allocating_id(&root, &new_task(&format!("Racer {i}")))
-                        .expect("create succeeds")
+                    let database = root.join(format!(".switchbard-test-{i}.sqlite3"));
+                    with_test_database(&database, || {
+                        create_task_allocating_id(&root, &new_task(&format!("Racer {i}")))
+                            .expect("create succeeds")
+                    })
                 })
             })
             .collect();
