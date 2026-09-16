@@ -995,6 +995,8 @@ mod tests {
             .map(|i| {
                 let root = root.clone();
                 std::thread::spawn(move || {
+                    // Database overrides are thread-local; each racer must stay
+                    // in legacy mode without opening the host's default store.
                     let database = root.join(format!(".switchbard-test-{i}.sqlite3"));
                     with_test_database(&database, || {
                         create_task_allocating_id(&root, &new_task(&format!("Racer {i}")))
@@ -1016,6 +1018,9 @@ mod tests {
             .expect("tasks dir reads")
             .count();
         assert_eq!(on_disk, 5, "seed + four racers, nothing overwritten");
+        for i in 0..4 {
+            assert!(!root.join(format!(".switchbard-test-{i}.sqlite3")).exists());
+        }
     }
 
     /// The reservation dir for a git repo lives in the *common* dir, so a
