@@ -1342,10 +1342,12 @@ impl App {
                 | Action::PageUp
         ) {
             self.cancel_pr_merge();
+            self.cancel_pr_merge_queue("cursor moved");
         }
         match action {
             Action::OpenBrowser => self.open_pr_browser(),
             Action::Merge => self.open_pr_merge(),
+            Action::Mark => self.toggle_pr_mark(),
             Action::Down => self.pull_requests.step(1),
             Action::Up => self.pull_requests.step(-1),
             Action::Top => self.pull_requests.step(isize::MIN),
@@ -1458,10 +1460,14 @@ impl App {
         }
         match action {
             Action::Merge => self.status = "Switch to Pull Requests to merge a PR".into(),
+            Action::Mark => {
+                self.status = "Switch to Pull Requests to mark PRs for bulk merge".into()
+            }
             Action::OpenBrowser => self.status = "Switch to Pull Requests to open a PR".into(),
             Action::DismissNotifications => self.pull_requests.dismiss_notifications(),
             Action::Page => {
                 self.cancel_pr_merge();
+                self.cancel_pr_merge_queue("left the PR list");
                 self.switch_page(self.page.toggle());
                 if self.page == Page::PullRequests {
                     self.refresh_pr_state();
@@ -1491,10 +1497,15 @@ impl App {
             },
             Action::Back => {
                 self.cancel_pr_merge();
+                self.cancel_pr_merge_queue("Esc");
                 if self.pane != Pane::None {
                     self.close_detail_pane();
                 } else if self.page.has_list_view() && !self.filter_text().is_empty() {
                     self.set_filter(String::new());
+                } else if self.page == Page::PullRequests && !self.pull_requests.marked.is_empty() {
+                    self.pull_requests.clear_marks();
+                    self.status = "Marks cleared".into();
+                    return;
                 }
                 self.status.clear();
             }

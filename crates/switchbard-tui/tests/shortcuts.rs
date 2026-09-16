@@ -137,6 +137,7 @@ fn remapped_list_actions_cannot_mutate_hidden_lists_from_inbox() {
         "task",
         "open_browser",
         "merge",
+        "mark",
         "view",
     ] {
         std::fs::write(

@@ -13,6 +13,8 @@ pub enum Action {
     FocusPane,
     OpenBrowser,
     Merge,
+    /// Toggle the cursor row's bulk-merge mark (PR page).
+    Mark,
     DismissNotifications,
     NewTask,
     Back,
@@ -73,6 +75,7 @@ const ACTIONS: &[(Action, &str, Availability)] = &[
     (Action::Reload, "reload", Availability::Everywhere),
     (Action::OpenBrowser, "open_browser", Availability::Lists),
     (Action::Merge, "merge", Availability::Lists),
+    (Action::Mark, "mark", Availability::Lists),
     (
         Action::DismissNotifications,
         "dismiss_notifications",
