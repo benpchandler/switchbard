@@ -292,6 +292,13 @@ fn observe(
                 session
                     .session_id
                     .as_deref()
+                    .and_then(|id| statuses.get(id))
+                    .and_then(|status| status.session_name.clone())
+            },
+            |session| {
+                session
+                    .session_id
+                    .as_deref()
                     .and_then(|id| held.get(id).cloned())
             },
             &mut cache,

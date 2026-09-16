@@ -352,7 +352,11 @@ fn malformed_lua_is_bounded_and_visible_without_executing_external_commands() {
             .stderr(Stdio::piped())
             .spawn()
             .expect("bounded E2E child");
-        let deadline = Instant::now() + Duration::from_secs(10);
+        // The bound proves the parser *terminates* (its own limit is ten
+        // thousand Lua instructions, microseconds); the budget is generous
+        // because the child's five harness reopens run beside every other
+        // test in this binary on a loaded machine, where ten seconds flaked.
+        let deadline = Instant::now() + Duration::from_secs(60);
         while Instant::now() < deadline {
             if child.try_wait().expect("child status").is_some() {
                 let output = child.wait_with_output().expect("child output");
@@ -367,7 +371,7 @@ fn malformed_lua_is_bounded_and_visible_without_executing_external_commands() {
         }
         child.kill().expect("stop unbounded parser");
         child.wait().expect("reap parser");
-        panic!("parser prevented an E2E child from responding within ten seconds");
+        panic!("parser prevented an E2E child from responding within sixty seconds");
     }
     for record in [
         "(function() while true do end end)()".to_string(),

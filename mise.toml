@@ -25,8 +25,11 @@ description = "Run clippy on every workspace target (warnings denied by [workspa
 run = "cargo clippy --workspace --all-targets"
 
 [tasks.test]
-description = "Run the full workspace test suite (warnings denied by [workspace.lints] in Cargo.toml)"
-run = "cargo test --workspace --all-targets"
+description = "Run the full workspace test suite (warnings denied by [workspace.lints] in Cargo.toml), then the sbt tty-hangup proof against a real pty"
+run = [
+  "cargo test --workspace --all-targets",
+  { task = "test-sbt-hangup" },
+]
 
 [tasks.ci]
 description = "Run the complete local quality gate"
@@ -40,6 +43,10 @@ run = [
 [tasks.test-dev-gates]
 description = "Exercise Git hooks and CI routing contracts"
 run = "bash scripts/test-developer-gates.sh"
+
+[tasks.test-sbt-hangup]
+description = "Prove sbt exits when its terminal goes away: pty EOF and SIGTERM-after-EOF against a real pty (TASK-232)"
+run = "python3 scripts/test-sbt-tty-hangup.py"
 
 [tasks.preflight]
 description = "Run the complete local gate before a push"
