@@ -50,6 +50,12 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             spans.push(Span::raw(" "));
             spans.extend(pr_count_spans(app));
         }
+        if page == Page::Inbox && app.inbox.attention() > 0 {
+            spans.push(Span::styled(
+                format!(" {} ", app.inbox.attention()),
+                theme.style(Surface::AttentionBadge),
+            ));
+        }
         if page == Page::Agents {
             spans.extend(idle_agents_spans(app));
         }

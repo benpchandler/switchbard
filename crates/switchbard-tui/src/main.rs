@@ -33,6 +33,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Supervise one durable bug run, detached from the terminal.
+    #[command(hide = true)]
+    RunBug {
+        #[arg(long)]
+        store: PathBuf,
+        #[arg(long)]
+        run: String,
+    },
     /// Summarize the local event log: what is used, what is slow, what failed
     Stats,
     /// Print where the config and event log live
@@ -46,6 +54,9 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Some(Command::RunBug { store, run }) => {
+            switchbard_core::bug_run::run_supervisor(&store, &run)
+        }
         Some(Command::Stats) => {
             let Some(path) = telemetry::default_log_path() else {
                 bail!("no home directory");
@@ -279,6 +290,8 @@ fn drive(
             last_tick = Instant::now();
             if app.mode == switchbard_tui::app::Mode::Browse
                 && !app.pr_merge.is_submitting()
+                && !app.inbox.editing
+                && app.inbox.publish_confirmation.is_none()
                 && binary.was_replaced()
             {
                 app.telemetry

@@ -182,6 +182,11 @@ return {
   -- passes the task.
   -- PR reads refresh while the page is visible (30-3600 seconds); failures require r.
   pr_refresh_seconds = 60,
+  -- Bug reports file first, then start Codex; Inbox holds questions and review.
+  bug_codex_binary = "codex",
+  inbox_keys = { d = "diff", p = "publish", r = "retry", R = "reconcile" },
+  -- Runs in the isolated bug worktree before publishing its PR.
+  bug_gate_command = "mise run ci",
 
   work = { period_ms = 3000, frames = 30, flatten = 2 },
 

@@ -150,6 +150,7 @@ Re-exports are **explicit in `src/lib.rs`** (no glob re-exports). Module map:
 - `classify` — heuristic `Server` / `Maybe` / `NotServer` verdict per entry point.
 - `expected_port`, `resolve` — port inference; clusters listeners + services into `ResolvedService`.
 - `dispatch` — headless `claude -p` pipeline: dispatch-labeled task → worktree → agent run → PR.
+- `bug_run` - durable Codex bug runs, isolated worktrees, exact-thread Inbox replies, pinned review and owner-requested PR publication. Separate from the legacy dispatch queue.
 - `refine` — the grooming step upstream of `dispatch`: a read-only headless run that fills a task's description/ACs/plan, applied additively through the native write layer.
 - `mission_projection` - read-only adapter for xplan's optional Mission Command snapshot (`~/.xplan/mission-command-snapshot.json`, `XPLAN_MISSION_SNAPSHOT` override): strict versioned validation, bounded size/row caps, explicit missing/malformed/stale states.
 - `mission_sidecar_protocol` - typed frames for the strict helper protocol (`hello`, `queue_mission`, `get_pending_decision`, `resume_decision`); the UI never builds mission JSON directly.

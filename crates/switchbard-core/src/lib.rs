@@ -7,6 +7,7 @@ pub mod backlog_relations;
 pub mod backlog_stats;
 pub mod backlog_triage;
 pub mod boot_time;
+pub mod bug_run;
 pub mod build_identity;
 pub mod classify;
 pub mod config;
