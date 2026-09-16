@@ -147,15 +147,20 @@ fn light_popups_keep_the_declared_canvas_after_clearing_the_list() {
         h.app.config.theme.background()
     );
     h.press(KeyCode::Char('h'));
+    let selected = h
+        .app
+        .config
+        .theme
+        .style(switchbard_tui::config::Surface::Selected)
+        .bg;
+    assert_eq!(Some(cell(&h, "none").bg), selected, "step 1 cursor row");
+    h.press(KeyCode::Char('N'));
     assert_eq!(
-        Some(cell(&h, "quiet").bg),
-        h.app
-            .config
-            .theme
-            .style(switchbard_tui::config::Surface::Selected)
-            .bg
+        Some(cell(&h, "keep default ink").bg),
+        selected,
+        "step 2 cursor row"
     );
-    assert_eq!(Some(cell(&h, "strong").bg), h.app.config.theme.background());
+    assert_eq!(Some(cell(&h, "quiet").bg), h.app.config.theme.background());
     h.press(KeyCode::Esc);
     h.type_text("vh");
     assert_eq!(

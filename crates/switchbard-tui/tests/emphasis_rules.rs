@@ -252,6 +252,8 @@ fn editing_a_category_color_keeps_the_rule_stop_at_its_end() {
     h.press(KeyCode::Char('p'));
     h.press(KeyCode::Char('2'));
     h.press(KeyCode::Char('2'));
+    // No highlight, then the text style (TASK-245).
+    h.press(KeyCode::Char('N'));
     h.type_text("gre");
     h.press(KeyCode::Esc);
     assert_eq!(cell_fg(&h, "To Do"), Some(Color::Green));

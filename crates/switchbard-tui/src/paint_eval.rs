@@ -72,6 +72,17 @@ pub fn compose<'a>(
     Some(Composition { roles, fill })
 }
 
+/// The rule text for a fill and the ink over it: the inverse of [`compose`], and
+/// the only place a composed rule is written. What the two-step style picker
+/// builds is therefore the same grammar `:paint` takes and a view saves.
+pub fn compose_text(fill: Option<&str>, ink: &[String]) -> String {
+    fill.into_iter()
+        .chain(ink.iter().map(String::as_str))
+        .take(MAX_ROLE_TOKENS)
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
 /// The tokens of a role list, trimmed, with the rule's trailing stop marker off.
 fn tokens(roles: &str) -> impl Iterator<Item = &str> + '_ {
     let roles = roles.trim();

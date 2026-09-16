@@ -15,8 +15,12 @@ fn paint_exposes_roles_and_structural_scopes_without_losing_row_selection() {
         assert!(screen.contains(label), "{label}: {screen}");
     }
     let screen = h.press(KeyCode::Char('h'));
-    for role in ["quiet", "strong", "alert", "band", "struck"] {
-        assert!(screen.contains(role), "{role}: {screen}");
+    for fill in ["none", "band", "h1", "h2", "h3"] {
+        assert!(screen.contains(fill), "step 1 offers {fill}: {screen}");
+    }
+    let screen = h.press(KeyCode::Char('N'));
+    for role in ["keep default ink", "quiet", "strong", "alert", "struck"] {
+        assert!(screen.contains(role), "step 2 offers {role}: {screen}");
     }
     h.type_text("strong+p2");
     let screen = h.press(KeyCode::Enter);
@@ -59,9 +63,9 @@ fn roles_require_enter_for_composition_and_cancel_leaves_rules_unchanged() {
 #[test]
 fn a_second_fill_is_accepted_and_both_rules_keep_their_own_scope() {
     let mut h = Harness::new();
-    h.type_text("prB");
+    h.type_text("prBK");
     assert_eq!(h.app.state.paint.len(), 1);
-    h.type_text("phB");
+    h.type_text("phBK");
     h.press(KeyCode::Char('j'));
     let screen = h.render();
     assert!(!screen.contains("band already belongs"), "{screen}");
@@ -146,6 +150,7 @@ fn selected_values_and_actual_group_headings_are_reachable_and_preserve_facts() 
     assert!(screen.contains("status:"), "{screen}");
     assert!(screen.contains("paints this value wherever"), "{screen}");
     h.press(KeyCode::Char('2'));
+    h.press(KeyCode::Char('N'));
     h.press(KeyCode::Char('Q'));
     h.press(KeyCode::Char(':'));
     h.type_text("outline status");
@@ -157,6 +162,7 @@ fn selected_values_and_actual_group_headings_are_reachable_and_preserve_facts() 
         "{screen}"
     );
     h.press(KeyCode::Enter);
+    h.press(KeyCode::Char('N'));
     h.press(KeyCode::Char('S'));
     assert!(h
         .app
@@ -185,7 +191,7 @@ fn pr_structural_paint_is_available_without_rows_and_isolated_from_tasks() {
         !screen.contains("selected row values"),
         "no selected PR: {screen}"
     );
-    h.type_text("hS");
+    h.type_text("hNS");
     assert!(h.render().contains("painted strong"));
     assert!(h
         .app
@@ -204,4 +210,145 @@ fn invalid_typed_roles_are_reported_without_mutating_rules() {
     let screen = h.press(KeyCode::Enter);
     assert!(screen.contains("nothing matches"), "{screen}");
     assert!(h.app.state.paint.is_empty());
+}
+
+/// The owner's ask (TASK-245): a highlight and a text style, brought together
+/// without typing either of them.
+#[test]
+fn a_highlight_and_a_text_style_are_chosen_in_two_steps() {
+    let mut h = Harness::new();
+    let selected = h.app.selected_task().unwrap().id.clone();
+    h.type_text("pr");
+    let screen = h.render();
+    assert!(screen.contains("highlight · step 1 of 2"), "{screen}");
+    let screen = h.type_text("h3");
+    assert!(
+        screen.contains("highlight · h3 ← this is how it looks"),
+        "step 1 names itself and previews the fill it would apply: {screen}"
+    );
+    h.press(KeyCode::Enter);
+    let screen = h.render();
+    assert!(
+        screen.contains("text · h3 ← this is how it looks"),
+        "step 2 opens naming itself and previewing the fill already chosen: {screen}"
+    );
+    let screen = h.type_text("alert");
+    assert!(
+        screen.contains("h3+alert ← this is how it looks"),
+        "the composition is previewed before Enter: {screen}"
+    );
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("painted h3+alert"), "{screen}");
+    assert!(
+        h.app.state.paint.iter().any(|rule| matches!(
+            rule,
+            PaintRule::Rows { filter, color } if filter == &format!("id:{selected}") && color == "h3+alert"
+        )),
+        "the saved rule is the same grammar as before: {:?}",
+        h.app.state.paint
+    );
+    h.press(KeyCode::Char('j'));
+    h.render();
+    let composed = h
+        .app
+        .config
+        .theme
+        .emphasis_style("h3+alert", &h.app.config.palette)
+        .expect("the composition resolves");
+    assert_eq!(cell_bg(&h, "Fix login"), composed.bg, "fill from step 1");
+    assert_eq!(cell_fg(&h, "Fix login"), composed.fg, "ink from step 2");
+}
+
+/// The text step is additive: Space gathers tokens and the title shows the
+/// composition growing before Enter applies it (TASK-245).
+#[test]
+fn the_text_step_gathers_several_tokens_before_applying() {
+    let mut h = Harness::new();
+    h.type_text("prN");
+    h.type_text("strong");
+    let screen = h.press(KeyCode::Char(' '));
+    assert!(
+        screen.contains("strong ← this is how it looks"),
+        "the first token is held, not applied: {screen}"
+    );
+    assert!(h.app.state.paint.is_empty(), "nothing is applied yet");
+    for _ in 0.."strong".len() {
+        h.press(KeyCode::Backspace);
+    }
+    h.type_text("p2");
+    let screen = h.press(KeyCode::Char(' '));
+    assert!(
+        screen.contains("strong+p2 ← this is how it looks"),
+        "both tokens compose in the title: {screen}"
+    );
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("painted strong+p2"), "{screen}");
+    assert!(
+        h.app
+            .state
+            .paint
+            .iter()
+            .any(|rule| rule.role_lists().contains(&"strong+p2")),
+        "{:?}",
+        h.app.state.paint
+    );
+}
+
+/// Esc cancels at either step, Left returns to the highlight with the fill
+/// still marked, and a rule typed in full still lands at either step (TASK-245).
+#[test]
+fn esc_cancels_and_left_steps_back_through_the_style_picker() {
+    let mut h = Harness::new();
+    h.type_text("pr");
+    h.press(KeyCode::Esc);
+    assert!(
+        h.app.state.paint.is_empty(),
+        "esc at step 1 applies nothing"
+    );
+    h.type_text("prh2");
+    h.press(KeyCode::Enter);
+    assert!(h.render().contains("text · h2 ←"), "{}", h.render());
+    h.press(KeyCode::Left);
+    let screen = h.render();
+    assert!(screen.contains("highlight ·"), "back at step 1: {screen}");
+    assert!(
+        screen.contains("✓h2"),
+        "the fill chosen is still marked: {screen}"
+    );
+    h.press(KeyCode::Esc);
+    assert!(
+        h.app.state.paint.is_empty(),
+        "esc at step 2 applies nothing"
+    );
+    h.type_text("prband+red");
+    let screen = h.press(KeyCode::Enter);
+    assert!(
+        screen.contains("painted band+red"),
+        "typed at step 1: {screen}"
+    );
+    h.type_text("prN");
+    h.type_text("quiet+struck");
+    let screen = h.press(KeyCode::Enter);
+    assert!(
+        screen.contains("painted quiet+struck"),
+        "typed at step 2: {screen}"
+    );
+}
+
+/// Both steps stay usable where the list is narrowest (TASK-245).
+#[test]
+fn the_two_steps_work_on_a_narrow_terminal() {
+    let mut h = Harness::new();
+    h.terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 12)).unwrap();
+    h.render();
+    h.type_text("pr");
+    let screen = h.render();
+    assert!(screen.contains("highlight"), "{screen}");
+    h.type_text("h1");
+    h.press(KeyCode::Enter);
+    let screen = h.render();
+    assert!(screen.contains("text"), "{screen}");
+    h.type_text("quiet");
+    let screen = h.press(KeyCode::Enter);
+    assert!(screen.contains("painted h1+quiet"), "{screen}");
 }

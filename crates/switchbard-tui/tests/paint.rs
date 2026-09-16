@@ -184,6 +184,8 @@ fn hand_picked_values_row_and_column_and_hex_and_clearing() {
     h.press(KeyCode::Char('p'));
     h.press(KeyCode::Char('2'));
     h.press(KeyCode::Char('2'));
+    // No highlight, then the text style (TASK-245).
+    h.press(KeyCode::Char('N'));
     let screen = h.type_text("gre");
     assert!(
         screen.contains("┌ by status ─"),
@@ -204,17 +206,18 @@ fn hand_picked_values_row_and_column_and_hex_and_clearing() {
 
     h.press(KeyCode::Char('p'));
     h.type_text("r");
+    h.press(KeyCode::Char('N'));
     let screen = h.press(KeyCode::Char('1'));
     assert!(
-        screen.contains("1▏ color"),
+        screen.contains("1▏ text"),
         "first digit waits when 10+ exist: {screen}"
     );
-    h.press(KeyCode::Char('5'));
+    h.press(KeyCode::Char('2'));
     let selected_title = h.selected_title();
     assert_eq!(
         cell_fg(&h, &selected_title),
         Some(Color::LightBlue),
-        "15 picks lightblue, after the roles and the highlight swatches"
+        "12 picks lightblue among the text colors"
     );
     assert!(h
         .app
@@ -238,12 +241,15 @@ fn hand_picked_values_row_and_column_and_hex_and_clearing() {
     h.press(KeyCode::Char('p'));
     h.type_text("c");
     h.type_text("t");
-    let screen = h.press(KeyCode::Char(' '));
+    // No fill and no ink is how a rule is cleared now (TASK-245).
+    h.press(KeyCode::Char('N'));
+    let screen = h.press(KeyCode::Char('K'));
     assert!(screen.contains("paint cleared"), "{screen}");
     assert_eq!(cell_fg(&h, "Add dark theme"), Some(Color::Green));
 
     h.press(KeyCode::Char('p'));
     h.type_text("r");
+    h.press(KeyCode::Char('N'));
     assert_eq!(
         cell_fg(&h, "green"),
         Some(Color::Green),
@@ -277,6 +283,7 @@ fn paint_rules_round_trip_through_the_view_file() {
     h.press(KeyCode::Char('1'));
     h.press(KeyCode::Char('h'));
     h.type_text("r");
+    h.press(KeyCode::Char('N'));
     h.type_text("gre");
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('s'));
@@ -318,7 +325,8 @@ fn palette_presets_swap_live_and_recolor_auto_painted_values() {
     h.press(KeyCode::Char('p'));
     h.press(KeyCode::Char('3'));
     h.press(KeyCode::Char('2'));
-    h.press(KeyCode::Char('8'));
+    h.press(KeyCode::Char('N'));
+    h.press(KeyCode::Char('5'));
     h.press(KeyCode::Esc);
     h.press(KeyCode::Char(':'));
     h.type_text("palette vivid");

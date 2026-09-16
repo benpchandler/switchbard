@@ -154,7 +154,11 @@ fn highlight_slots_come_from_the_preset_and_missing_ones_derive_from_the_palette
         command(&mut h, &format!("theme {name}"));
         let theme = &h.app.config.theme;
         let slots = theme.highlight_slots();
-        assert!(slots.len() >= 3, "{name} offers {slots:?}");
+        assert_eq!(
+            slots,
+            (1..=9).collect::<Vec<usize>>(),
+            "{name} has a canvas, so every slot resolves and the picker offers all of them"
+        );
         let mut fills = std::collections::HashSet::new();
         for slot in &slots {
             let style = theme
@@ -162,9 +166,31 @@ fn highlight_slots_come_from_the_preset_and_missing_ones_derive_from_the_palette
                 .unwrap_or_else(|| panic!("{name} h{slot} resolves"));
             assert!(style.bg.is_some(), "{name} h{slot} is a fill");
             assert!(style.fg.is_some(), "{name} h{slot} carries default ink");
+            assert_ne!(
+                style.bg,
+                theme.background(),
+                "{name} h{slot} reads as a fill"
+            );
             fills.insert(format!("{:?}", style.bg));
         }
-        assert_eq!(fills.len(), slots.len(), "{name} slots are distinguishable");
+        // The three a preset declares are its own; the six derived ones follow
+        // the palette, where two close hues can land on one fill.
+        let declared: std::collections::HashSet<String> = (1..=3)
+            .map(|slot| {
+                format!(
+                    "{:?}",
+                    theme
+                        .highlight_style(slot, &h.app.config.palette)
+                        .and_then(|style| style.bg)
+                )
+            })
+            .collect();
+        assert_eq!(declared.len(), 3, "{name} declares three distinct fills");
+        assert!(
+            fills.len() >= 6,
+            "{name} offers {} distinct fills",
+            fills.len()
+        );
         let derived = theme
             .highlight_style(7, &h.app.config.palette)
             .expect("an undeclared slot still resolves");
@@ -176,15 +202,18 @@ fn highlight_slots_come_from_the_preset_and_missing_ones_derive_from_the_palette
     }
     std::fs::write(&h.config_path, "return { theme = 'plain' }").unwrap();
     h.app.tick();
-    let style = h
-        .app
-        .config
-        .theme
+    let theme = &h.app.config.theme;
+    let style = theme
         .highlight_style(1, &h.app.config.palette)
         .expect("plain declares a terminal-owned slot");
     assert!(
         style.add_modifier.contains(Modifier::REVERSED),
         "plain reverses the terminal's own colors: {style:?}"
+    );
+    assert_eq!(
+        theme.highlight_slots(),
+        vec![1, 2, 3],
+        "with no canvas to derive against, plain offers only what it declares"
     );
 }
 

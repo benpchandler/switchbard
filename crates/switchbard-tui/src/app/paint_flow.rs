@@ -2,8 +2,60 @@
 
 use crate::app::App;
 use crate::columns::Column;
+use crate::config::Theme;
 use crate::paint::{self, PaintRule, NAMED_COLORS};
 use crate::picker::{PaintPick, PaintRuleAction, Payload, PickOption, PickerPurpose};
+
+/// Tokens one drafted rule may gather, one under the rule cap so the fill
+/// always fits beside them.
+const MAX_DRAFT_INK: usize = crate::paint_eval::MAX_ROLE_TOKENS - 1;
+
+/// What the two-step style picker is composing: the scope it will land on, the
+/// fill chosen in step one, and the ink gathered in step two. The draft is the
+/// one authority while those pickers are open, and the text it produces is the
+/// same grammar `:paint` parses and a view saves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaintDraft {
+    pub pick: PaintPick,
+    pub fill: Option<String>,
+    pub ink: Vec<String>,
+}
+
+impl PaintDraft {
+    /// Reopening a scope starts from what it already wears: the rule on it,
+    /// split back into a fill and its ink by the theme that composed it.
+    pub fn from_roles(
+        pick: PaintPick,
+        roles: Option<&str>,
+        theme: &Theme,
+        palette: &[String],
+    ) -> PaintDraft {
+        let (fill, ink) = roles
+            .and_then(|roles| theme.split_roles(roles, palette))
+            .unwrap_or((None, Vec::new()));
+        PaintDraft { pick, fill, ink }
+    }
+
+    /// The rule text this draft applies.
+    pub fn roles(&self) -> String {
+        crate::paint_eval::compose_text(self.fill.as_deref(), &self.ink)
+    }
+
+    pub fn add_ink(&mut self, token: &str) {
+        if !self.ink.iter().any(|known| known == token) && self.ink.len() < MAX_DRAFT_INK {
+            self.ink.push(token.to_string());
+        }
+    }
+
+    pub fn toggle_ink(&mut self, token: &str) {
+        match self.ink.iter().position(|known| known == token) {
+            Some(index) => {
+                self.ink.remove(index);
+            }
+            None => self.add_ink(token),
+        }
+    }
+}
 
 impl App {
     /// Mirrors the header: shown columns first (so `p2` is column 2), then the
@@ -148,7 +200,7 @@ impl App {
         if self.is_categorical(column) {
             self.open_paint_values_picker(column);
         } else {
-            self.open_paint_color_picker(PaintPick::Column(column));
+            self.open_paint_highlight_picker(PaintPick::Column(column));
         }
     }
 
@@ -169,20 +221,22 @@ impl App {
         self.open_picker(PickerPurpose::PaintValues(column), options);
     }
 
-    /// Roles first, then the theme's highlight slots as swatches (each row is
-    /// drawn in its own fill and default ink), then colors and palette slots.
-    /// Typing composes across all of them: `h2+alert`, `band+red`, `alert+p3`.
-    pub(super) fn open_paint_color_picker(&mut self, pick: PaintPick) {
-        let mut options: Vec<PickOption> = [
-            ('Q', "quiet"),
-            ('S', "strong"),
-            ('A', "alert"),
-            ('B', "band"),
-            ('X', "struck"),
-        ]
-        .into_iter()
-        .map(|(key, role)| PickOption::keyed(key, role, Payload::Text(role.into())))
-        .collect();
+    /// Step one: the fill. `none`, the neutral `band`, then the theme's
+    /// highlight slots as swatches, each row drawn in the fill it would apply
+    /// under the ink already drafted. Picking one opens step two rather than
+    /// applying, so a highlight and a text style are chosen without typing.
+    pub(super) fn open_paint_highlight_picker(&mut self, pick: PaintPick) {
+        let roles = self.painted_roles(&pick);
+        self.paint_draft = Some(PaintDraft::from_roles(
+            pick,
+            roles.as_deref(),
+            &self.config.theme,
+            &self.config.palette,
+        ));
+        let mut options = vec![
+            PickOption::keyed('N', "none", Payload::NoColor),
+            PickOption::keyed('B', "band", Payload::Text("band".into())),
+        ];
         options.extend(
             self.config
                 .theme
@@ -191,12 +245,180 @@ impl App {
                 .filter_map(crate::highlight::slot_token)
                 .map(|token| PickOption::text(token, 0)),
         );
+        self.open_picker(PickerPurpose::PaintHighlight, options);
+    }
+
+    /// Step two: the ink over that fill. `keep default ink` leaves the cell's
+    /// own text color alone; the rest are additive, so Space gathers several
+    /// (`strong` and `p2`) and Enter applies what the title previews.
+    pub(super) fn open_paint_text_picker(&mut self) {
+        let mut options = vec![PickOption::keyed('K', "keep default ink", Payload::NoColor)];
+        options.extend(
+            [
+                ('Q', "quiet"),
+                ('S', "strong"),
+                ('A', "alert"),
+                ('X', "struck"),
+            ]
+            .into_iter()
+            .map(|(key, role)| PickOption::keyed(key, role, Payload::Text(role.into()))),
+        );
         options.extend(NAMED_COLORS.iter().map(|name| PickOption::text(*name, 0)));
         options.extend(
             (1..=self.config.palette.len()).map(|index| PickOption::text(format!("p{index}"), 0)),
         );
-        options.push(PickOption::numbered("none", Payload::NoColor));
-        self.open_picker(PickerPurpose::PaintColor(pick), options);
+        self.open_picker(PickerPurpose::PaintText, options);
+    }
+
+    /// The rule this scope already wears, so reopening the picker starts from
+    /// what is on screen instead of from nothing.
+    fn painted_roles(&self, pick: &PaintPick) -> Option<String> {
+        let rules = &self.state.paint;
+        match pick {
+            PaintPick::Value(column, value) => paint::value_color(rules, *column, value),
+            PaintPick::Rows(filter) => rules.iter().find_map(|rule| match rule {
+                PaintRule::Rows {
+                    filter: known,
+                    color,
+                } if known == filter => Some(color.clone()),
+                _ => None,
+            }),
+            PaintPick::Column(column) => rules.iter().find_map(|rule| match rule {
+                PaintRule::Column {
+                    column: known,
+                    color,
+                } if known == column => Some(color.clone()),
+                _ => None,
+            }),
+            PaintPick::Heading(value) => rules.iter().find_map(|rule| match rule {
+                PaintRule::Heading {
+                    value: known,
+                    color,
+                } if known == value => Some(color.clone()),
+                _ => None,
+            }),
+            PaintPick::Header => rules.iter().find_map(|rule| match rule {
+                PaintRule::Header { color } => Some(color.clone()),
+                _ => None,
+            }),
+            PaintPick::Title => rules.iter().find_map(|rule| match rule {
+                PaintRule::Title { color } => Some(color.clone()),
+                _ => None,
+            }),
+        }
+    }
+
+    /// Step one picked: remember the fill and move to the ink.
+    pub(super) fn choose_paint_highlight(&mut self, fill: Option<&str>) {
+        if let Some(draft) = self.paint_draft.as_mut() {
+            draft.fill = fill.map(str::to_string);
+        }
+        self.open_paint_text_picker();
+    }
+
+    /// `keep default ink` with Space: drop every token gathered so far.
+    pub(super) fn clear_paint_ink(&mut self) {
+        if let Some(draft) = self.paint_draft.as_mut() {
+            draft.ink.clear();
+        }
+    }
+
+    /// Space in step two: add or remove one ink token, leaving the picker open
+    /// so the title shows the composition growing.
+    pub(super) fn toggle_paint_ink(&mut self, token: &str) {
+        if let Some(draft) = self.paint_draft.as_mut() {
+            draft.toggle_ink(token);
+        }
+    }
+
+    /// Enter, a number or a letter in step two: add the row that was picked,
+    /// then apply everything drafted. Adding is idempotent, so picking a row
+    /// already gathered with Space just applies.
+    pub(super) fn apply_paint_draft(&mut self, ink: Option<&str>) {
+        let Some(mut draft) = self.paint_draft.take() else {
+            return;
+        };
+        match ink {
+            Some(token) => draft.add_ink(token),
+            // `keep default ink` is the absence of ink, including the ink the
+            // scope already wore when the picker opened.
+            None => draft.ink.clear(),
+        }
+        let roles = draft.roles();
+        let roles = if roles.is_empty() {
+            "none"
+        } else {
+            roles.as_str()
+        };
+        self.apply_paint(draft.pick, roles);
+    }
+
+    /// A rule typed in full at either step replaces the whole composition.
+    pub(super) fn apply_typed_paint(&mut self, roles: &str) {
+        let Some(draft) = self.paint_draft.take() else {
+            return;
+        };
+        self.apply_paint(draft.pick, roles);
+    }
+
+    /// What the title previews: what Enter would produce right now. A rule
+    /// typed in full lands whole, so it previews alone; otherwise the row under
+    /// the cursor is previewed composed with the rest of the draft, which is
+    /// what picking it would apply.
+    pub fn paint_preview(&self, picker: &crate::picker::ValuePicker) -> Option<String> {
+        let typed = picker.typed.trim();
+        let highlighted = picker.highlighted();
+        if highlighted.is_none() && !typed.is_empty() && paint::validate_roles(typed).is_ok() {
+            return Some(typed.to_string());
+        }
+        let token = match highlighted.as_ref().map(|option| &option.payload) {
+            Some(Payload::Text(token)) => Some(token.clone()),
+            _ => None,
+        };
+        self.paint_row_preview(&picker.purpose, token.as_deref())
+    }
+
+    /// How one row of either step would look if it were picked: the row's own
+    /// token composed with the rest of the draft.
+    pub fn paint_row_preview(
+        &self,
+        purpose: &PickerPurpose,
+        token: Option<&str>,
+    ) -> Option<String> {
+        let draft = self.paint_draft.as_ref()?;
+        let roles = match purpose {
+            PickerPurpose::PaintHighlight => crate::paint_eval::compose_text(token, &draft.ink),
+            PickerPurpose::PaintText => {
+                let mut ink = match token {
+                    Some(_) => draft.ink.clone(),
+                    // The `keep default ink` row previews the fill alone.
+                    None => Vec::new(),
+                };
+                if let Some(token) = token {
+                    if !ink.iter().any(|known| known == token) {
+                        ink.push(token.to_string());
+                    }
+                }
+                crate::paint_eval::compose_text(draft.fill.as_deref(), &ink)
+            }
+            _ => return None,
+        };
+        (!roles.is_empty()).then_some(roles)
+    }
+
+    /// Whether the row for `token` is part of the draft, which is the mark the
+    /// picker shows beside it.
+    pub fn paint_draft_holds(&self, purpose: &PickerPurpose, token: Option<&str>) -> bool {
+        let Some(draft) = self.paint_draft.as_ref() else {
+            return false;
+        };
+        match (purpose, token) {
+            (PickerPurpose::PaintHighlight, Some(token)) => draft.fill.as_deref() == Some(token),
+            (PickerPurpose::PaintHighlight, None) => draft.fill.is_none(),
+            (PickerPurpose::PaintText, Some(token)) => draft.ink.iter().any(|known| known == token),
+            (PickerPurpose::PaintText, None) => draft.ink.is_empty(),
+            _ => false,
+        }
     }
 
     pub(super) fn open_paint_column_picker(&mut self) {
@@ -349,6 +571,15 @@ impl App {
             return;
         }
         self.state.paint = rules;
+        // A finished style is not a step to go back to: drop both of its
+        // pickers from the back stack so `←` from whatever reopens next
+        // returns to the scope list.
+        self.picker_parents.retain(|parent| {
+            !matches!(
+                parent.purpose,
+                PickerPurpose::PaintHighlight | PickerPurpose::PaintText
+            )
+        });
         self.status = if cleared {
             "paint cleared".to_string()
         } else {
