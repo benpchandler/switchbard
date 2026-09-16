@@ -21,12 +21,12 @@ Owner screenshot shows a saved Budget view with columns id/status/priority/title
 
 ## Evidence
 
-Reproduction, changes, checks and installed readback will be recorded after observation. Human screenshot is the reported failure; an isolated deterministic reproduction is required before either fix.
+The human screenshot is the reported failure; the isolated deterministic reproduction and installed readback are recorded below.
 
 The filter access check found no missing field: `f` lists visible columns first, then hidden fields. With the reported saved layout, Planning is in the hidden section. The direct name path is `f` then `pl`, followed by `p` for Planned or `c` for Considering (the non-planned state). No filter-menu implementation change is justified; regressions protect hidden/shown access and narrow scrolling/cancellation.
 
 Live installed-build reproduction in this repository confirmed `outline:project` alongside an ungrouped Planned61 section (`docs/evidence/planning-filter-outline/before.txt`). The fix keeps Planned at the top, applies the requested outline inside it and inside remaining tasks, preserves canonical order within each leaf, and returns to exact planned order with outline off. This is a read-only presentation change, not a reorder or migration of task data.
 
-Real-data dogfood now shows project headings nested beneath Planned, including no-project tasks, with Project still selected in the context line. `docs/evidence/planning-filter-outline/after.ansi` records the real terminal output at140x32; `after.png` is its Menlo rasterization, not a native OS screenshot. Visual Review target after-be93fdb62e03 owns revision revision-a95c912f6b593a165f98. Independent source review found no blocker in task partitioning, heading depth/raw paint keys, legacy mode or flat-order restoration. Final test and installation results remain pending.
+Real-data dogfood now shows project headings nested beneath Planned, including no-project tasks, with Project still selected in the context line. `docs/evidence/planning-filter-outline/after.ansi` records the real terminal output at 140x32; `after.png` is its Menlo rasterization, not a native OS screenshot. Visual Review target after-be93fdb62e03 owns revision revision-a95c912f6b593a165f98. Independent source review found no blocker in task partitioning, heading depth/raw paint keys, legacy mode or flat-order restoration.
 
 Focused verification passed: 3 filter-access E2Es, 26 grouping/planning/rank tests, and a fresh 3-test outline rerun covering final review assertions. Coverage includes wrappers/depth, exact task identity multiset, selection through project/off, raw heading paint, mixed planning/project outlines, narrow navigation and byte-identical task/ranking snapshots. No filter production code changed. Full TUI sweep remains the install gate.
