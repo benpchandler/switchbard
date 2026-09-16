@@ -34,6 +34,7 @@ pub mod spawn;
 pub mod storage;
 mod task_model_context;
 pub mod types;
+pub mod work_history;
 pub mod work_sessions;
 pub mod workflow;
 pub mod worktree;
@@ -165,6 +166,9 @@ pub use session_title::{
 };
 pub use spawn::{spawn_in_session, wait_for_exit, SpawnedRun, WaitOutcome};
 pub use types::{AttributedListener, LocalListener, Repo, WorktreeAlias, WorktreeRef};
+pub use work_history::{
+    append_work_events, read_work_history, WorkEvent, WorkEventKind, WORK_HISTORY_FILE,
+};
 pub use work_sessions::{
     abandon_work_session, claim_work, default_work_dir, end_work_session, held_ids,
     list_work_sessions, load_work_session, pass_work, pid_alive, record_stop_block, release_work,
