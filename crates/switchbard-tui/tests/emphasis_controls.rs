@@ -413,6 +413,18 @@ fn each_fill_and_ink_shape_is_reachable_without_typing_a_rule() {
     assert_eq!(header_rule(&h), "h2");
 }
 
+/// The modifiers the first cell of `needle` renders with.
+fn modifiers(h: &Harness, needle: &str) -> Modifier {
+    let buffer = h.terminal.backend().buffer();
+    for cells in buffer.content.chunks(usize::from(buffer.area.width).max(1)) {
+        let line: String = cells.iter().map(|cell| cell.symbol()).collect();
+        if let Some(index) = line.find(needle) {
+            return cells[line[..index].chars().count()].modifier;
+        }
+    }
+    panic!("missing rendered text: {needle}")
+}
+
 /// The rule on the column headings, or `none` when there is none.
 fn header_rule(h: &Harness) -> String {
     h.app
@@ -424,4 +436,74 @@ fn header_rule(h: &Harness) -> String {
             _ => None,
         })
         .unwrap_or_else(|| "none".to_string())
+}
+
+/// A rule's stop marker belongs to the rule, not to the roles it wears
+/// (TASK-245). Restyling a stopped rule through the picker must not quietly
+/// unstop it and change how the rules above it render.
+#[test]
+fn restyling_a_stopped_rule_keeps_its_stop() {
+    let mut h = Harness::new();
+    h.type_text(":paint rows:=strong;column:title=green!");
+    h.press(KeyCode::Enter);
+    assert!(
+        !modifiers(&h, "Add dark theme").contains(Modifier::BOLD),
+        "the stop holds the base rule off the title to begin with"
+    );
+    h.type_text("pct");
+    h.press(KeyCode::Char('N'));
+    // keep, quiet, strong, alert, struck, then the colors: five Downs reach red.
+    for _ in 0..5 {
+        h.press(KeyCode::Down);
+    }
+    let screen = h.render();
+    assert!(
+        screen.contains("red! ← this is how it looks"),
+        "the marker is part of what the title previews: {screen}"
+    );
+    h.press(KeyCode::Enter);
+    assert!(
+        h.app.state.paint.iter().any(|rule| matches!(
+            rule,
+            PaintRule::Column { color, .. } if color == "red!"
+        )),
+        "the stop survives the restyle: {:?}",
+        h.app.state.paint
+    );
+    assert!(
+        !modifiers(&h, "Add dark theme").contains(Modifier::BOLD),
+        "and still holds the base rule off"
+    );
+    assert_eq!(
+        cell_fg(&h, "Add dark theme"),
+        Some(ratatui::style::Color::Red),
+        "picking an ink replaces the one the rule wore rather than joining it"
+    );
+}
+
+/// The draft is bounded, and reaching the bound is said out loud rather than
+/// swallowing the token (TASK-245).
+#[test]
+fn the_ink_limit_is_reported_rather_than_dropping_a_token() {
+    let mut h = Harness::new();
+    h.type_text("prN");
+    // Fifteen tokens fit beside the fill; gather them from the rows below the
+    // cursor, one Down and one Space each.
+    for _ in 0..15 {
+        h.press(KeyCode::Down);
+        h.press(KeyCode::Char(' '));
+    }
+    assert!(
+        !h.app.status.contains("limit"),
+        "fifteen fit: {}",
+        h.app.status
+    );
+    h.press(KeyCode::Down);
+    let screen = h.press(KeyCode::Char(' '));
+    assert!(
+        screen.contains("ink limit reached: 15 text tokens"),
+        "the sixteenth is refused out loud: {screen}"
+    );
+    h.press(KeyCode::Esc);
+    assert!(h.app.state.paint.is_empty());
 }

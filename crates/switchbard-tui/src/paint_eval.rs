@@ -72,15 +72,33 @@ pub fn compose<'a>(
     Some(Composition { roles, fill })
 }
 
-/// The rule text for a fill and the ink over it: the inverse of [`compose`], and
-/// the only place a composed rule is written. What the two-step style picker
-/// builds is therefore the same grammar `:paint` takes and a view saves.
-pub fn compose_text(fill: Option<&str>, ink: &[String]) -> String {
-    fill.into_iter()
-        .chain(ink.iter().map(String::as_str))
+/// The rule text for a fill, the ink over it and whether the rule stops the
+/// rules above it: the inverse of [`compose`], and the only place a composed
+/// rule is written. What the two-step style picker builds is therefore the same
+/// grammar `:paint` takes and a view saves, marker included. A rule with no
+/// tokens is empty whatever the marker says, because a stop with nothing to
+/// stop is not a rule.
+pub fn compose_text<'a>(
+    fill: Option<&'a str>,
+    ink: impl IntoIterator<Item = &'a str>,
+    stop: bool,
+) -> String {
+    let roles = fill
+        .into_iter()
+        .chain(ink)
         .take(MAX_ROLE_TOKENS)
         .collect::<Vec<_>>()
-        .join("+")
+        .join("+");
+    match (roles.is_empty(), stop) {
+        (true, _) => roles,
+        (false, true) => roles + "!",
+        (false, false) => roles,
+    }
+}
+
+/// Whether a rule's roles end in the stop marker.
+pub fn stops(roles: &str) -> bool {
+    roles.trim_end().ends_with('!')
 }
 
 /// The tokens of a role list, trimmed, with the rule's trailing stop marker off.

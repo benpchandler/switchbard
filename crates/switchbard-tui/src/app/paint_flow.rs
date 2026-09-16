@@ -19,6 +19,15 @@ pub struct PaintDraft {
     pub pick: PaintPick,
     pub fill: Option<String>,
     pub ink: Vec<String>,
+    /// Whether the rule being edited ends in `!`. Restyling a scope must not
+    /// silently unstop it: the marker belongs to the rule rather than to the
+    /// roles, and losing it changes how every rule above renders.
+    pub stop: bool,
+    /// Whether Space has been used to gather ink in this visit. Picking a row
+    /// joins what was gathered, but replaces ink that merely came from the rule
+    /// the scope already wore, so restyling green to red writes `red` and not
+    /// `green+red`.
+    gathered: bool,
 }
 
 impl PaintDraft {
@@ -33,24 +42,47 @@ impl PaintDraft {
         let (fill, ink) = roles
             .and_then(|roles| theme.split_roles(roles, palette))
             .unwrap_or((None, Vec::new()));
-        PaintDraft { pick, fill, ink }
-    }
-
-    /// The rule text this draft applies.
-    pub fn roles(&self) -> String {
-        crate::paint_eval::compose_text(self.fill.as_deref(), &self.ink)
-    }
-
-    pub fn add_ink(&mut self, token: &str) {
-        if !self.ink.iter().any(|known| known == token) && self.ink.len() < MAX_DRAFT_INK {
-            self.ink.push(token.to_string());
+        let stop = roles.is_some_and(crate::paint_eval::stops);
+        PaintDraft {
+            pick,
+            fill,
+            ink,
+            stop,
+            gathered: false,
         }
     }
 
-    pub fn toggle_ink(&mut self, token: &str) {
+    /// The rule text this draft applies, stop marker included.
+    pub fn roles(&self) -> String {
+        crate::paint_eval::compose_text(
+            self.fill.as_deref(),
+            self.ink.iter().map(String::as_str),
+            self.stop,
+        )
+    }
+
+    /// Adds one ink token. `false` when the draft is already full, which the
+    /// caller reports rather than dropping the token in silence.
+    #[must_use]
+    pub fn add_ink(&mut self, token: &str) -> bool {
+        if self.ink.iter().any(|known| known == token) {
+            return true;
+        }
+        if self.ink.len() >= MAX_DRAFT_INK {
+            return false;
+        }
+        self.ink.push(token.to_string());
+        true
+    }
+
+    /// Adds or removes one ink token. `false` only when adding hit the cap.
+    #[must_use]
+    pub fn toggle_ink(&mut self, token: &str) -> bool {
+        self.gathered = true;
         match self.ink.iter().position(|known| known == token) {
             Some(index) => {
                 self.ink.remove(index);
+                true
             }
             None => self.add_ink(token),
         }
@@ -326,8 +358,12 @@ impl App {
     /// Space in step two: add or remove one ink token, leaving the picker open
     /// so the title shows the composition growing.
     pub(super) fn toggle_paint_ink(&mut self, token: &str) {
-        if let Some(draft) = self.paint_draft.as_mut() {
-            draft.toggle_ink(token);
+        let added = self
+            .paint_draft
+            .as_mut()
+            .is_none_or(|draft| draft.toggle_ink(token));
+        if !added {
+            self.status = format!("ink limit reached: {MAX_DRAFT_INK} text tokens");
         }
     }
 
@@ -338,12 +374,20 @@ impl App {
         let Some(mut draft) = self.paint_draft.take() else {
             return;
         };
-        match ink {
-            Some(token) => draft.add_ink(token),
+        let added = match ink {
+            Some(token) => {
+                if !draft.gathered {
+                    draft.ink.clear();
+                }
+                draft.add_ink(token)
+            }
             // `keep default ink` is the absence of ink, including the ink the
             // scope already wore when the picker opened.
-            None => draft.ink.clear(),
-        }
+            None => {
+                draft.ink.clear();
+                true
+            }
+        };
         let roles = draft.roles();
         let roles = if roles.is_empty() {
             "none"
@@ -351,6 +395,12 @@ impl App {
             roles.as_str()
         };
         self.apply_paint(draft.pick, roles);
+        if !added {
+            self.status = format!(
+                "{} · ink limit reached: {MAX_DRAFT_INK} text tokens",
+                self.status
+            );
+        }
     }
 
     /// A rule typed in full at either step replaces the whole composition.
@@ -386,20 +436,26 @@ impl App {
         token: Option<&str>,
     ) -> Option<String> {
         let draft = self.paint_draft.as_ref()?;
+        let drafted = draft.ink.iter().map(String::as_str);
         let roles = match purpose {
-            PickerPurpose::PaintHighlight => crate::paint_eval::compose_text(token, &draft.ink),
+            PickerPurpose::PaintHighlight => {
+                crate::paint_eval::compose_text(token, drafted, draft.stop)
+            }
             PickerPurpose::PaintText => {
-                let mut ink = match token {
-                    Some(_) => draft.ink.clone(),
-                    // The `keep default ink` row previews the fill alone.
-                    None => Vec::new(),
+                // The `keep default ink` row previews the fill alone; every
+                // other row previews itself joining what is already drafted.
+                let (drafted, extra) = match token {
+                    Some(token) => (
+                        Some(drafted),
+                        (!draft.ink.iter().any(|known| known == token)).then_some(token),
+                    ),
+                    None => (None, None),
                 };
-                if let Some(token) = token {
-                    if !ink.iter().any(|known| known == token) {
-                        ink.push(token.to_string());
-                    }
-                }
-                crate::paint_eval::compose_text(draft.fill.as_deref(), &ink)
+                crate::paint_eval::compose_text(
+                    draft.fill.as_deref(),
+                    drafted.into_iter().flatten().chain(extra),
+                    draft.stop,
+                )
             }
             _ => return None,
         };

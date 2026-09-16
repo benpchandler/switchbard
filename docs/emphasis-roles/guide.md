@@ -16,6 +16,8 @@ Press `p` from Tasks or Pull Requests:
 
 The style picker then asks two questions. **Highlight** comes first: `none`, the neutral `band`, or one of the theme's highlight slots, each drawn as a swatch in the fill it would apply. **Text** comes second: `keep default ink`, then `quiet`, `strong`, `alert`, `struck`, the colors and the palette slots. Space adds a text token and leaves the picker open, so `strong` and `p2` can go on together; Enter applies what the title is previewing. Both steps preview the composed cell live, and the rows preview themselves the same way.
 
+Reopening a scope starts from the rule it already wears, marked on both steps. Picking a text style replaces the ink that rule had; tokens gathered with Space join each other instead. A rule's trailing `!` survives a restyle, because the marker belongs to the rule rather than to the roles. The text step holds at most fifteen tokens and says so rather than dropping one.
+
 Typing still works at either step: a whole rule such as `h2+alert`, `band+red` or `strong+p2` applies on Enter wherever you type it. Esc cancels; Left returns to the highlight with the fill you picked still marked. Choosing `none` and then `keep default ink` clears the rule on that scope. Color numbers and unique color-prefix shortcuts still work, on the text step where the colors live.
 
 ## Roles and precedence

@@ -144,9 +144,22 @@ The picker's color numbering returns to what it was before TASK-237, because
 the colors now sit on their own step with no swatches above them: `12` is
 lightblue again, `5` is magenta.
 
+Review caught three things after the first pass. The stop marker was being
+dropped on a round trip, because `compose` strips it before the split and
+`set_rule` replaces a rule wholesale: the draft now carries it and
+`compose_text` writes it back, so restyling `column:title=green!` keeps the
+`!` and the rules above it keep being stopped. Picking a text style now
+replaces ink that merely came from the existing rule while still joining ink
+gathered with Space, so restyling green to red writes `red` rather than
+`green+red`. The ink cap reports itself on the status line instead of
+swallowing the token, and the row preview borrows the drafted ink rather than
+cloning it per row per frame.
+
 Evidence: `tests/emphasis_controls.rs` covers the two-step journey end to end
 (highlight, then text, producing `h3+alert` and rendering fill and ink), the
 additive text step (`strong` and `p2` gathered with Space and previewed before
 Enter), Esc at either step, `←` back to a still-marked fill, a rule typed in
-full at either step, and both steps at 40 columns. Every existing paint journey
-was updated to walk through the highlight step and still passes.
+full at either step, and both steps at 40 columns, plus a stopped rule restyled without losing its
+marker and the ink cap reporting itself. `tests/legibility.rs` gates all ten
+fills the step now offers, the six derived ones included. Every existing paint
+journey was updated to walk through the highlight step and still passes.
