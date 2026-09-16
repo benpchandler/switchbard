@@ -344,7 +344,7 @@ fn draw_task_rows(
                     };
                     let mut style = theme.column_style(*column);
                     let role = match column {
-                        Column::Title if task.is_done() => "quiet+struck",
+                        Column::Title if task.is_done() => "quiet",
                         Column::Priority if task.is_done() => "quiet",
                         Column::Title if task.priority.eq_ignore_ascii_case("high") => "strong",
                         Column::Priority if task.priority.eq_ignore_ascii_case("high") => "alert",

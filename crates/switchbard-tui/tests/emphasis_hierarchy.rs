@@ -31,9 +31,12 @@ fn priority_completion_navigation_and_sort_are_distinct_without_color_alone() {
         .modifier
         .contains(Modifier::BOLD));
     assert!(!cell(&h, "Add dark theme").modifier.contains(Modifier::BOLD));
-    assert!(cell(&h, "Completed handoff")
-        .modifier
-        .contains(Modifier::CROSSED_OUT));
+    assert!(
+        !cell(&h, "Completed handoff")
+            .modifier
+            .contains(Modifier::CROSSED_OUT),
+        "done titles are quiet, never struck (owner review 2026-09-16)"
+    );
     assert!(cell(&h, "[Tasks]")
         .modifier
         .contains(Modifier::UNDERLINED | Modifier::BOLD));
@@ -207,7 +210,7 @@ fn priority_cells_distinguish_importance_completion_and_explicit_paint() {
         "completion wins over high priority"
     );
     assert!(!done.modifier.contains(Modifier::BOLD));
-    assert!(cell(&h, "Completed urgent handoff")
+    assert!(!cell(&h, "Completed urgent handoff")
         .modifier
         .contains(Modifier::CROSSED_OUT));
     assert_eq!(
