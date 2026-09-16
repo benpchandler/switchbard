@@ -144,6 +144,33 @@ fn a_filter_longer_than_the_width_wraps_instead_of_being_cut() {
 }
 
 #[test]
+fn a_filter_that_matches_but_wraps_past_the_row_budget_still_leaves_a_task_row_and_a_cut_cue() {
+    let mut h = Harness::new();
+    resize(&mut h, 40, 8);
+    h.press(KeyCode::Char('/'));
+    // Repeating the same term is still a match (it just ANDs with itself)
+    // but is comfortably longer than the frame's 2-row filter budget at this
+    // size (inner height 4, minus 1 for the header, minus 1 to guarantee a
+    // task row survives).
+    let long_filter = "label:ui ".repeat(20);
+    let long_filter = long_filter.trim_end();
+    h.type_text(long_filter);
+    let screen = h.press(KeyCode::Enter);
+    assert!(
+        screen.lines().any(|line| line.contains("1 id")),
+        "the header must survive a long filter: {screen}"
+    );
+    assert!(
+        screen.contains("Add dark theme"),
+        "the one match must still get a task row, not be starved off screen: {screen}"
+    );
+    assert!(
+        screen.contains('…'),
+        "a filter cut short of fitting needs a visible cue that it was cut: {screen}"
+    );
+}
+
+#[test]
 fn filter_editing_still_opens_with_slash_and_the_footer_shows_the_live_draft() {
     let mut h = Harness::new();
     h.press(KeyCode::Char('/'));

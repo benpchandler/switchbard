@@ -169,15 +169,42 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
 /// The active filter's own full-width line inside the list frame, directly
 /// below the title border and above the header row: wraps at `inner`'s width,
 /// omitted (no reserved row) when there is no filter. Returns the remaining
-/// area for the header and task rows. `/` still opens the same filter for
-/// editing (`draw_footer`'s `Mode::Filter` line); this is only the read view.
+/// area for the header and task rows. `app.state.filter` updates on every
+/// keystroke while `/` is open (`Mode::Filter`), so this line already mirrors
+/// a live edit in progress, not only the last committed filter — it is the
+/// same value `draw_footer`'s `Mode::Filter` line echoes.
+///
+/// Capped to `inner.height - 2` so the header and at least one task row
+/// always survive a long filter: a filter that still doesn't fit is cut with
+/// a trailing ellipsis rather than starving every task row off screen (a
+/// filter matching a task could hide it with no visible cue why).
 fn draw_filter_line(frame: &mut Frame, app: &App, theme: &Theme, inner: Rect) -> Rect {
     if app.state.filter.is_empty() {
         return inner;
     }
     let text = format!("/ {}", app.state.filter);
-    let height =
-        wrapped_height(&Line::from(text.as_str()), inner.width).min(inner.height.saturating_sub(1));
+    let budget = inner.height.saturating_sub(2);
+    let full_height = wrapped_height(&Line::from(text.as_str()), inner.width);
+    let (text, height) = if full_height <= budget {
+        (text, full_height)
+    } else {
+        // Bounded shrink search (Power-of-10 rule 2): nothing longer than
+        // `budget * inner.width` characters can possibly fit in `budget` rows
+        // regardless of where word-wrap breaks it, so start there instead of
+        // at the filter's full length — tests exercise filters up to 64 KiB
+        // (persistence_edges.rs), and starting the search at the full length
+        // turned this into a multi-minute O(length²) scan.
+        let max_visible = usize::from(budget).saturating_mul(usize::from(inner.width));
+        let mut chars = text.chars().count().min(max_visible);
+        loop {
+            let candidate = truncate_with_ellipsis(&text, chars);
+            let fits = wrapped_height(&Line::from(candidate.as_str()), inner.width) <= budget;
+            if fits || chars == 0 {
+                break (candidate, budget);
+            }
+            chars -= 1;
+        }
+    };
     let [filter_area, table_area] =
         Layout::vertical([Constraint::Length(height), Constraint::Min(0)]).areas(inner);
     if height > 0 {

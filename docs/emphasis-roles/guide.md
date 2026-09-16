@@ -10,7 +10,7 @@ Press `p` from Tasks or Pull Requests:
 - `r` paints the selected row; `f` paints the active filter.
 - `e` lists values on the selected row. Selecting a value formats matching values wherever they appear. As before, the first categorical rule is the whole-row base; later categorical rules affect their own column.
 - `g` offers the selected task's current group headings, including the top section. Ordinary task navigation still skips group headings.
-- `h` paints column headings; `t` paints navigation and the list title. The filter and attention badges keep their own surfaces.
+- `h` paints column headings; `t` paints navigation and the list title. The filter, the footer's view-settings summary and attention badges keep their own surfaces — `t`'s title paint covers the title line only (repo chip, shown count, view name), not the settings that moved to the footer hint bar (TASK-235): those are facts about the view, not part of the title, and stay on `Surface::Hint`.
 - `c` paints a whole column; `o` manages rule order; `d` clears all paint.
 
 The style picker offers `quiet`, `strong`, `alert`, `band`, and `struck`, then the theme's highlight slots as swatches drawn in their own fill and default ink, then colors and palette slots. Type a combination such as `strong+p2`, `h2+alert` or `band+red` and press Enter. The typed picker title previews the composition. Esc cancels; Left returns to the prior picker. Color numbers and unique color-prefix shortcuts still work; the swatches sit between the roles and the colors, so the colors are numbered after them.
