@@ -1,6 +1,6 @@
 # Local planning and emphasis integration
 
-This local-only installation branch combines published planning release `5ab1d047` with installed emphasis build `b7657dbc`. It does not merge or publish the emphasis pull request. Both histories are retained. Core, task CLI and GUI source trees must remain byte-equivalent to the planning release.
+This integration originally combined published planning release `5ab1d047` with installed emphasis build `b7657dbc` for a local installation. Main now includes both features and the later agent-session and terminal-hangup fixes at `ed4c6bb3`; the emphasis pull request is already merged. This branch preserves the semantic planning-heading correction and its regression evidence for publication on that main. All ancestry is retained. Core, task CLI, GUI and terminal-hangup sources remain byte-equivalent to current main; the production difference is limited to the TUI planning-heading values.
 
 ## Integration changes
 
@@ -21,6 +21,10 @@ The only textual merge conflict was the paint-picker footer test: retain the sem
 
 The text files are actual terminal cell buffers produced by the real renderer against synthetic task files and real key events. Temporary directory names are normalized. They do not preserve colors or native terminal font appearance; cell style assertions verify the combined heading behavior. No human visual approval is claimed.
 
-## Validation
+## Historical local validation
 
 Full `mise run ci` passed on the combined production source, including workspace tests and developer gates (`/tmp/switchbard-planning-install-integration-ci.log`). The initial attempt reproduced the missing heading field at compile time. The additional combined real-render regression passed separately (`/tmp/switchbard-planning-emphasis-render.log`); final workspace/all-target clippy and formatting also passed with that test present. No product source changed after the successful full gate began. Core/task/GUI parity against accepted main `0a4c537f` was verified before closeout. Native font appearance and human visual approval remain explicit gaps.
+
+## Publication integration
+
+Main `ed4c6bb3` was merged into this branch, retaining the agent-session and terminal-hangup fixes. The heading-value conflict preserves `Planned` and `Other tasks` as semantic paint targets, separate from display counts; the two emphasis documentation conflicts take current main verbatim. Focused planning/emphasis and terminal-hangup checks are rerun for this combined revision, with final results recorded in the release handoff. Full publication validation and installation remain separate root-owned steps.
