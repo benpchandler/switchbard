@@ -352,3 +352,76 @@ fn the_two_steps_work_on_a_narrow_terminal() {
     let screen = h.press(KeyCode::Enter);
     assert!(screen.contains("painted h1+quiet"), "{screen}");
 }
+
+/// Every fill-and-ink shape reachable by moving the cursor and pressing keys,
+/// with no rule typed (TASK-245): no fill or a fill, and no ink, one ink or
+/// several. The rule text is the same grammar a view has always saved.
+#[test]
+fn each_fill_and_ink_shape_is_reachable_without_typing_a_rule() {
+    let mut h = Harness::new();
+    // Step two lists keep, quiet, strong, alert, struck, then the colors, so
+    // two Downs reach strong and a third reaches alert.
+    let gather_strong_and_alert = |h: &mut Harness| {
+        for _ in 0..2 {
+            h.press(KeyCode::Down);
+        }
+        h.press(KeyCode::Char(' '));
+        h.press(KeyCode::Down);
+        h.press(KeyCode::Char(' '));
+        h.press(KeyCode::Enter);
+    };
+    // Each case starts from a bare scope, because reopening one deliberately
+    // starts from the rule it already wears.
+    let clear = |h: &mut Harness| {
+        h.type_text(":paint off");
+        h.press(KeyCode::Enter);
+    };
+    for (fill_key, expected) in [('B', "band"), ('N', "none")] {
+        clear(&mut h);
+        h.type_text("ph");
+        h.press(KeyCode::Char(fill_key));
+        h.press(KeyCode::Char('K'));
+        assert_eq!(header_rule(&h), expected, "{fill_key} with no ink");
+    }
+    for (fill_key, expected) in [('B', "band+strong+alert"), ('N', "strong+alert")] {
+        clear(&mut h);
+        h.type_text("ph");
+        h.press(KeyCode::Char(fill_key));
+        gather_strong_and_alert(&mut h);
+        assert_eq!(header_rule(&h), expected, "{fill_key} with two inks");
+    }
+    // A slot composes the same way, and on its own is a fill wearing the
+    // theme's default ink.
+    clear(&mut h);
+    h.type_text("ph");
+    h.type_text("h2");
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Char('K'));
+    assert_eq!(header_rule(&h), "h2");
+    clear(&mut h);
+    h.type_text("ph");
+    h.type_text("h2");
+    h.press(KeyCode::Enter);
+    gather_strong_and_alert(&mut h);
+    assert_eq!(header_rule(&h), "h2+strong+alert");
+    // Reopening starts from that rule: the fill stays chosen, and dropping the
+    // ink leaves the fill behind rather than clearing the rule.
+    h.type_text("ph");
+    h.type_text("h2");
+    h.press(KeyCode::Enter);
+    h.press(KeyCode::Char('K'));
+    assert_eq!(header_rule(&h), "h2");
+}
+
+/// The rule on the column headings, or `none` when there is none.
+fn header_rule(h: &Harness) -> String {
+    h.app
+        .state
+        .paint
+        .iter()
+        .find_map(|rule| match rule {
+            PaintRule::Header { color } => Some(color.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "none".to_string())
+}
