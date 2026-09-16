@@ -25,11 +25,15 @@ mise run preflight                    # complete local gate before push
 mise run ci                           # same complete local gate
 mise run bundle                       # macOS: Switchbard.app in this worktree's Cargo target
 mise run package                      # macOS: DMG + sha256 in this worktree's Cargo target
-mise run test                         # full test suite (~0.1s)
+mise run test                         # full workspace suite (~4 min warm, serial)
 mise run target-prune                 # list Cargo target dirs no live worktree owns (--yes removes)
 mise run install                      # install sb + sbt from this worktree (refuses a downgrade)
 cargo test -p switchbard-core <pat>   # single test by name substring
 ```
+
+Run the narrowest test that proves your change (`cargo test -p <crate> <pattern>`).
+Do not run `mise run preflight` by hand before pushing: the pre-push hook runs it on
+every push (and the `no-mistakes` pipeline runs it for pushes to that remote).
 
 Prefer plain Cargo? Each `mise` task maps to the obvious `cargo fmt` / `cargo clippy` / `cargo test` / `cargo build --release`.
 

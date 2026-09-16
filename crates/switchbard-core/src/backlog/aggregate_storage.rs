@@ -5,7 +5,6 @@ use anyhow::{ensure, Context, Result};
 use std::path::Path;
 
 struct CentralEdit {
-    _repository_lock: RepositoryLock,
     store: Store,
     repo: RepositoryId,
     original: Option<Document>,
@@ -71,7 +70,7 @@ impl AggregateEdit {
     }
 
     fn begin(root: &Path, kind: &'static str, locator: &'static str) -> Result<Self> {
-        let mut repository_lock = Some(RepositoryLock::acquire(root)?);
+        let repository_lock = RepositoryLock::fence(root, &[kind])?;
         let central = if let Some(store) = Store::open_existing_default()? {
             if let Some(repo) = store.authority_for_root(root, kind)? {
                 let original = store.read(&repo, kind, locator)?;
@@ -83,7 +82,6 @@ impl AggregateEdit {
                     .filter(|doc| !doc.deleted)
                     .map(|doc| doc.content.clone());
                 Some(CentralEdit {
-                    _repository_lock: repository_lock.take().expect("repository lock present"),
                     store,
                     repo,
                     original,

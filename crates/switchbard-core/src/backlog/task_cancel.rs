@@ -22,7 +22,7 @@ impl PreparedTaskCancellation {
 
 pub fn prepare_task_cancellation(root: &Path, id: &str) -> Result<PreparedTaskCancellation> {
     let root = root.canonicalize()?;
-    let _lock = crate::storage::RepositoryLock::acquire(&root)?;
+    let _lock = crate::storage::RepositoryLock::fence(&root, &["task"])?;
     let task = super::load_backlog_repo(&root)?
         .tasks
         .into_iter()
@@ -46,7 +46,7 @@ pub fn cancel_task_expected(root: &Path, prepared: PreparedTaskCancellation) -> 
         root.canonicalize()? == prepared.root,
         "repository changed; reopen confirmation"
     );
-    let _lock = crate::storage::RepositoryLock::acquire(&prepared.root)?;
+    let _lock = crate::storage::RepositoryLock::fence(&prepared.root, &["task"])?;
     let current = prepare_task_cancellation(&prepared.root, prepared.id())?;
     ensure!(
         current.task == prepared.task && current.content == prepared.content,

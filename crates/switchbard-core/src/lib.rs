@@ -15,6 +15,7 @@ pub mod dispatch;
 pub mod dispatch_inspect;
 pub mod dispatch_kill;
 pub mod expected_port;
+pub mod git_common_dir;
 mod git_env;
 pub mod git_probe;
 pub mod instance_lock;

@@ -27,6 +27,9 @@ pub(super) fn command_store(root: &Path, kinds: &[&str]) -> Result<Option<(Store
     Ok(Some((store, repo)))
 }
 
+/// Every record kind a task move reads or writes.
+pub(super) const MOVE_KINDS: [&str; 3] = ["task", "goals", "ranking"];
+
 pub(super) fn move_task(
     root: &Path,
     task_id: &str,
@@ -44,8 +47,8 @@ pub(super) fn move_task_with_edit(
     new_parent: Option<&str>,
     edit: impl FnOnce(&str) -> Result<(String, bool)>,
 ) -> Result<Option<(Option<String>, bool)>> {
-    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
-    let kinds = ["task", "goals", "ranking"];
+    let _repository_lock = crate::storage::RepositoryLock::fence(root, &MOVE_KINDS)?;
+    let kinds = MOVE_KINDS;
     let Some((mut store, repo)) = command_store(root, &kinds)? else {
         return Ok(None);
     };
