@@ -826,6 +826,23 @@ pub fn backlog_day_of<Tz: chrono::TimeZone>(instant: chrono::DateTime<Tz>) -> i6
         .div_euclid(86_400)
 }
 
+/// Explicit initial stage, if declared; caller validates membership in statuses.
+pub(super) fn configured_default_status(root: &Path) -> Result<Option<String>> {
+    let Some(text) = super::status_config::read_config(root)? else {
+        return Ok(None);
+    };
+    let Ok(value) = serde_yaml::from_str::<Value>(&text) else {
+        return Ok(None);
+    };
+    Ok(value
+        .as_mapping()
+        .and_then(|mapping| mapping.get(Value::String("default_status".into())))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

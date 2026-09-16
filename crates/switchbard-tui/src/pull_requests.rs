@@ -48,6 +48,8 @@ pub struct PullRequests {
     remaining_seconds: u64,
     last_open_count: Option<(u64, std::time::SystemTime)>,
     expected_merge: Option<ExpectedMerge>,
+    /// PR ids marked for a bulk merge (`mark`); consumed in visible order by `m`.
+    pub marked: std::collections::BTreeSet<String>,
 }
 
 impl PullRequests {
@@ -209,6 +211,12 @@ impl PullRequests {
                 if self.pending_selection.is_none() {
                     self.pending_selection = self.row().map(|row| row.id.clone());
                 }
+                self.marked.retain(|id| {
+                    snapshot
+                        .rows
+                        .iter()
+                        .any(|row| &row.id == id && row.lifecycle == PrLifecycle::Open)
+                });
                 self.snapshot = Some(snapshot);
                 self.error = None;
                 // App refreshes task links before projecting the accepted snapshot.
@@ -301,6 +309,65 @@ impl PullRequests {
 
     pub fn restore_selection(&mut self, id: Option<String>) {
         self.pending_selection = id;
+    }
+
+    /// Move the cursor to `id` if it is visible; false when it is not.
+    pub fn select_id(&mut self, id: &str) -> bool {
+        let Some(snapshot) = &self.snapshot else {
+            return false;
+        };
+        let position = self
+            .visible
+            .iter()
+            .position(|index| snapshot.rows.get(*index).is_some_and(|row| row.id == id));
+        match position {
+            Some(position) => {
+                if position != self.selected {
+                    self.detail_scroll = 0;
+                }
+                self.selected = position;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Flip the cursor row's bulk-merge mark. Only open PRs can be marked.
+    pub fn toggle_mark(&mut self) -> Result<bool, &'static str> {
+        let Some(row) = self.row() else {
+            return Err("No PR selected");
+        };
+        if row.lifecycle != PrLifecycle::Open {
+            return Err("Only open PRs can be marked for merge");
+        }
+        let id = row.id.clone();
+        if self.marked.remove(&id) {
+            Ok(false)
+        } else {
+            self.marked.insert(id);
+            Ok(true)
+        }
+    }
+
+    /// Marked PR ids in the order the list shows them: the bulk-merge order.
+    pub fn marked_in_view_order(&self) -> Vec<String> {
+        let Some(snapshot) = &self.snapshot else {
+            return Vec::new();
+        };
+        self.visible
+            .iter()
+            .filter_map(|index| snapshot.rows.get(*index))
+            .filter(|row| self.marked.contains(&row.id))
+            .map(|row| row.id.clone())
+            .collect()
+    }
+
+    pub fn is_marked(&self, row: &PrListRow) -> bool {
+        self.marked.contains(&row.id)
+    }
+
+    pub fn clear_marks(&mut self) {
+        self.marked.clear();
     }
 
     pub fn values(&self, column: crate::columns::Column, row: &PrListRow) -> Vec<String> {

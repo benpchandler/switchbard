@@ -212,6 +212,9 @@ pub(super) fn validate_rename(root: &Path, old_path: &Path, new: &str) -> Result
 
 /// A rename cannot straddle filesystem and SQLite writers: no rollback can
 /// span those stores. Require completion of the affected cutovers first.
+/// Every record kind a project rename reads or writes.
+pub(super) const RENAME_KINDS: [&str; 4] = ["project", "task", "goals", "ranking"];
+
 pub(super) fn require_complete_rename_authority(root: &Path) -> Result<()> {
     let Some(store) = Store::open_existing_default()? else {
         return Ok(());
@@ -221,7 +224,7 @@ pub(super) fn require_complete_rename_authority(root: &Path) -> Result<()> {
     };
     let mut central = Vec::new();
     let mut legacy = Vec::new();
-    for kind in ["project", "task", "goals", "ranking"] {
+    for kind in RENAME_KINDS {
         if store.authority(&repo, kind)? {
             central.push(kind);
         } else {

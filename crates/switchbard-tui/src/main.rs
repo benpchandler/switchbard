@@ -21,18 +21,36 @@ use switchbard_tui::{config, tty, view, views};
     about = "Terminal UI for switchbard"
 )]
 struct Cli {
-    /// Repository root holding a backlog/ directory (default: current directory)
-    #[arg(long)]
+    /// Repository scope in the centralized database (default: current directory)
+    #[arg(long, global = true)]
     repo: Option<PathBuf>,
     /// Open the saved default view instead of the last session (self-restarts still resume)
     #[arg(long)]
     fresh: bool,
+    /// Set up this repository before opening the UI
+    #[arg(long)]
+    setup: bool,
+    /// Accept supplied setup settings or suggested defaults without a prompt (requires --setup)
+    #[arg(long, requires = "setup")]
+    yes: bool,
+    /// Task ID prefix for setup, e.g. IW produces IW-1
+    #[arg(long, global = true)]
+    task_prefix: Option<String>,
+    /// Setup workflow stage; repeat in order (first is where new tasks start)
+    #[arg(long = "status", global = true)]
+    statuses: Vec<String>,
     #[command(subcommand)]
     command: Option<Command>,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Register this repository in the centralized database without opening the UI
+    Init {
+        /// Accept supplied setup settings or suggested defaults without a prompt
+        #[arg(long)]
+        yes: bool,
+    },
     /// Summarize the local event log: what is used, what is slow, what failed
     Stats,
     /// Print where the config and event log live
@@ -45,7 +63,19 @@ enum Command {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if cli.setup && cli.command.is_some() {
+        bail!("--setup opens the UI; use sbt init --yes for setup without the UI");
+    }
+    let choices = setup_choices(&cli)?;
     match cli.command {
+        Some(Command::Init { yes }) => {
+            let root = cli
+                .repo
+                .unwrap_or(std::env::current_dir()?)
+                .canonicalize()?;
+            switchbard_tui::onboarding::ensure_workspace(&root, true, yes, choices)?;
+            Ok(())
+        }
         Some(Command::Stats) => {
             let Some(path) = telemetry::default_log_path() else {
                 bail!("no home directory");
@@ -92,14 +122,26 @@ fn main() -> Result<()> {
             print!("{}", switchbard_core::build_id_report());
             Ok(())
         }
-        None => run(cli.repo.unwrap_or(std::env::current_dir()?), cli.fresh),
+        None => run(
+            cli.repo.unwrap_or(std::env::current_dir()?),
+            cli.fresh,
+            cli.setup,
+            cli.yes,
+            choices,
+        ),
     }
 }
 
-fn run(repo_root: PathBuf, fresh: bool) -> Result<()> {
+fn run(
+    repo_root: PathBuf,
+    fresh: bool,
+    setup: bool,
+    yes: bool,
+    choices: Option<switchbard_core::RepositorySetupOptions>,
+) -> Result<()> {
     let repo_root = repo_root.canonicalize()?;
-    if !switchbard_core::backlog_repo_available(&repo_root)? {
-        bail!("{} has no backlog/ directory", repo_root.display());
+    if !switchbard_tui::onboarding::ensure_workspace(&repo_root, setup, yes, choices)? {
+        return Ok(());
     }
     let telemetry = match telemetry::default_log_path() {
         Some(path) => Telemetry::to_file(&path),
@@ -360,4 +402,21 @@ fn restart_into_new_binary(app: &App) -> Result<()> {
         )
         .exec();
     Err(error.into())
+}
+
+fn setup_choices(cli: &Cli) -> Result<Option<switchbard_core::RepositorySetupOptions>> {
+    if cli.task_prefix.is_none() && cli.statuses.is_empty() {
+        return Ok(None);
+    }
+    if !cli.setup && !matches!(cli.command, Some(Command::Init { .. })) {
+        bail!("--task-prefix and --status require sbt init or --setup");
+    }
+    let mut options = switchbard_core::RepositorySetupOptions::default();
+    if let Some(prefix) = &cli.task_prefix {
+        options.task_prefix = prefix.clone();
+    }
+    if !cli.statuses.is_empty() {
+        options.statuses = cli.statuses.clone();
+    }
+    Ok(Some(options.validated()?))
 }

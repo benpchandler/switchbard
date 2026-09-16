@@ -279,13 +279,7 @@ pub(super) fn repository_binding(root: &Path) -> Result<String> {
 fn binding_parts(root: &Path) -> Result<(String, PathBuf)> {
     let root = root.canonicalize().context("resolve repository path")?;
     ensure!(root.is_dir(), "repository path is not a directory");
-    let output = crate::git_cmd()
-        .arg("-C")
-        .arg(&root)
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .output()?;
-    if output.status.success() {
-        let common = PathBuf::from(String::from_utf8(output.stdout)?.trim()).canonicalize()?;
+    if let Some(common) = crate::git_common_dir::resolve(&root) {
         return Ok((
             format!(
                 "git:{}",

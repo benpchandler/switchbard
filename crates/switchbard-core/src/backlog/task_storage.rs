@@ -127,11 +127,19 @@ pub(super) fn lock_for_path(path: &Path) -> Result<RepositoryLock> {
     RepositoryLock::acquire(root.as_deref().unwrap_or(parent))
 }
 
+/// [`lock_for_path`], skipped once the containing repository's tasks are central.
+pub(super) fn fence_for_path(path: &Path) -> Result<Option<RepositoryLock>> {
+    match root_for_path(path) {
+        Some(root) => RepositoryLock::fence(&root, &["task"]),
+        None => lock_for_path(path).map(Some),
+    }
+}
+
 pub(super) fn edit<T>(
     path: &Path,
     transform: impl FnOnce(&str) -> Result<(String, T)>,
 ) -> Result<T> {
-    let _repository_lock = lock_for_path(path)?;
+    let _repository_lock = fence_for_path(path)?;
     if let Some(root) = root_for_path(path) {
         if let Some((mut store, repo)) = active(&root)? {
             let locator = path
@@ -165,7 +173,7 @@ pub(super) fn create(path: &Path, text: &str) -> Result<bool> {
     let Some(root) = root_for_path(path) else {
         return Ok(false);
     };
-    let _repository_lock = RepositoryLock::acquire(&root)?;
+    let _repository_lock = RepositoryLock::fence(&root, &["task"])?;
     let Some((mut store, repo)) = active(&root)? else {
         return Ok(false);
     };
@@ -227,7 +235,7 @@ pub(super) fn rehome(
     let Some(root) = root_for_path(path) else {
         return Ok(false);
     };
-    let _repository_lock = RepositoryLock::acquire(&root)?;
+    let _repository_lock = RepositoryLock::fence(&root, &["task"])?;
     let Some((mut store, repo)) = active(&root)? else {
         return Ok(false);
     };

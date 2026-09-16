@@ -363,7 +363,8 @@ pub fn move_backlog_task(
     task_id: &str,
     new_parent: Option<&str>,
 ) -> Result<Option<String>> {
-    let _repository_lock = crate::storage::RepositoryLock::acquire(project_root)?;
+    let _repository_lock =
+        crate::storage::RepositoryLock::fence(project_root, &super::central_commands::MOVE_KINDS)?;
     if let Some(result) = super::central_commands::move_task(project_root, task_id, new_parent)? {
         return Ok(result);
     }
@@ -572,7 +573,7 @@ pub(super) fn validate_status(project_root: &Path, status: &str) -> Result<()> {
 fn move_task_file(from: &Path, dest_dir: &Path) -> Result<()> {
     let root =
         super::task_storage::root_for_path(from).context("task path is outside a repository")?;
-    let _repository_lock = crate::storage::RepositoryLock::acquire(&root)?;
+    let _repository_lock = crate::storage::RepositoryLock::fence(&root, &["task"])?;
     let destination = dest_dir.join(from.file_name().context("task path has no filename")?);
     if super::task_storage::rehome(from, &destination, None)? {
         return Ok(());

@@ -1,6 +1,6 @@
 # sbt - switchbard terminal UI
 
-Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths`. Install off a feature branch: `bash scripts/install-switchbard.sh --branch --hold sbt` (guarded, holds this build from the 60s auto-install sweep for 2h; TASK-227).
+Binary `sbt` (this crate). Run in a configured repository: `sbt`, `sbt stats`, `sbt paths`. First launch explains task references and stages, then offers suggested settings or customization; `sbt init --yes --task-prefix IW --status Inbox --status Done` configures without opening the UI. Install off a feature branch: `bash scripts/install-switchbard.sh --branch sbt` (guarded; stays installed until the branch is merged or deleted on origin, then main replaces it within a minute; TASK-272).
 
 ## Standing commitments (owner-set, 2026-09-02)
 1. Everything the user might tune lives in Lua (`~/.switchbard/tui.lua`, hot reload). New feature => new config surface only if a user would plausibly change it.
@@ -38,7 +38,7 @@ Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths
 - `settings.rs` - `,` panel: hide statuses everywhere; per-repo file, `g` promotes to global.
 - `report.rs` - `:bug`/`:idea` => task via core write layer. `telemetry.rs` - JSONL log, trail, `stats`.
 ## Loop
-Slice => commit on a `feat/tui-*` branch => gate below, then `bash scripts/install-switchbard.sh --branch --hold sbt` => running sbt re-execs (`main.rs::InstalledBinary`, resumes view/filter/row) => user drives it => drain `label:tui`. Re-running `--hold` each slice refreshes the window; the auto-install agent replaces this build with main within a minute once it lapses - re-hold instead of fighting it.
+Slice => commit on a `feat/tui-*` branch => gate below, then `bash scripts/install-switchbard.sh --branch sbt` => running sbt re-execs (`main.rs::InstalledBinary`, resumes view/filter/row) => user drives it => drain `label:tui`. The install is a one-way street (TASK-272): each slice must contain the installed commit (build on the same branch, or rebase onto it), and the auto-install agent replaces the build with main only once the branch is merged or deleted on origin.
 ## Gates
 Per slice: `cargo fmt -p switchbard-tui -- --check && cargo clippy -p switchbard-tui --all-targets && cargo test -p switchbard-tui`, then the install above.
 `mise run ci` uses the same flags (warnings denied by `[workspace.lints]` in `Cargo.toml`), so alternating with it reuses dependency builds; only crates whose features differ under `-p` rebuild. It runs every crate's tests, so run it once before merge.

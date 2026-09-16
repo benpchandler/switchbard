@@ -1,4 +1,5 @@
 //! One off-thread merge preparation/submission; the shared picker owns explicit confirmation.
+use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Instant;
 
@@ -19,6 +20,39 @@ enum Reply {
     Submitted(PrMergeResult),
 }
 
+/// A bulk merge in flight (TASK-250): the marked PRs still to merge, in list
+/// order, and the one method the human confirmed for all of them. Each next
+/// PR is re-prepared after the previous merge lands and refreshes the list,
+/// and only a plainly CLEAN one is submitted without asking again.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct MergeQueue {
+    /// (id, number) of every PR not yet started, front first.
+    pub remaining: VecDeque<(String, u64)>,
+    /// Confirmed once, applied to every PR in the queue.
+    pub method: Option<PrMergeMethod>,
+    pub total: usize,
+    pub merged: usize,
+}
+
+impl MergeQueue {
+    fn summary(&self) -> String {
+        let numbers: Vec<String> = self
+            .remaining
+            .iter()
+            .map(|(_, number)| format!("#{number}"))
+            .collect();
+        format!(
+            "Bulk merge: {} PRs in list order; after this one: {}",
+            self.total,
+            if numbers.is_empty() {
+                "none".to_string()
+            } else {
+                numbers.join(", ")
+            }
+        )
+    }
+}
+
 #[derive(Default)]
 pub struct MergeFlow {
     pending: Option<Receiver<Reply>>,
@@ -27,6 +61,9 @@ pub struct MergeFlow {
     dismissed: bool,
     submitting: bool,
     refresh_after_result: bool,
+    /// Set when a confirmed bulk merge should continue once the list refresh lands.
+    advance_after_refresh: bool,
+    pub queue: Option<MergeQueue>,
     pub confirmation_visible: bool,
     pub last_result: Option<PrMergeResult>,
 }
@@ -43,26 +80,45 @@ impl MergeFlow {
             Some("Merge submitting; waiting for verified result")
         } else if self.pending.is_some() && !self.dismissed {
             Some("Preparing merge; Esc cancels")
+        } else if self.advance_after_refresh {
+            Some("Bulk merge: waiting for the list to refresh before the next PR; Esc stops")
         } else {
             None
         }
+    }
+    /// The queue is live while there are PRs left after the current one.
+    pub fn queue_active(&self) -> bool {
+        self.queue.as_ref().is_some_and(|q| !q.remaining.is_empty())
     }
     pub fn confirmation_lines(&self) -> Vec<String> {
         let Some(prepared) = &self.prepared else {
             return Vec::new();
         };
-        let mut lines = vec![
+        let mut lines = Vec::new();
+        if let Some(queue) = &self.queue {
+            lines.push(queue.summary());
+        }
+        lines.extend([
             format!("{} #{}", prepared.repository(), prepared.number()),
             prepared.title().to_string(),
             format!("Head: {}", prepared.head_oid()),
             format!("Base: {} ({})", prepared.base_ref(), prepared.base_oid()),
             format!("Signed in as: {}", prepared.viewer()),
             prepared.url().to_string(),
-        ];
+        ]);
         // A merge GitHub allows but does not call green is confirmed with the
         // reason in front of the choice, never behind it (TASK-171).
         lines.extend(prepared.readiness_caveat());
-        lines.push("Choose a method to confirm this merge. Task status stays unchanged.".into());
+        if self.queue.is_some() {
+            lines.push(
+                "Each following PR is re-checked after the previous merge lands; one that is not CLEAN stops the queue."
+                    .into(),
+            );
+            lines.push("Choose a method to confirm it for every PR in the queue. Task status stays unchanged.".into());
+        } else {
+            lines
+                .push("Choose a method to confirm this merge. Task status stays unchanged.".into());
+        }
         lines
     }
 
@@ -95,12 +151,87 @@ impl App {
         if self.pr_merge.prepared.is_some() {
             return;
         }
+        if !self.pull_requests.marked.is_empty() {
+            let ids = self.pull_requests.marked_in_view_order();
+            let Some(first) = ids.first().cloned() else {
+                self.status =
+                    "Marked PRs are filtered out of view; clear the filter or the marks".into();
+                return;
+            };
+            let numbered: Vec<(String, u64)> = ids
+                .iter()
+                .filter_map(|id| {
+                    let snapshot = self.pull_requests.snapshot.as_ref()?;
+                    let row = snapshot.rows.iter().find(|row| &row.id == id)?;
+                    Some((row.id.clone(), row.number))
+                })
+                .collect();
+            self.pr_merge.queue = Some(MergeQueue {
+                total: numbered.len(),
+                remaining: numbered.into_iter().skip(1).collect(),
+                method: None,
+                merged: 0,
+            });
+            self.pull_requests.select_id(&first);
+        } else {
+            self.pr_merge.queue = None;
+        }
         let Some(row) = self.pull_requests.row().cloned() else {
             self.status = "No PR selected".into();
             return;
         };
+        self.prepare_pr_merge_row(row);
+    }
+
+    pub(super) fn toggle_pr_mark(&mut self) {
+        match self.pull_requests.toggle_mark() {
+            Ok(true) => {
+                let count = self.pull_requests.marked.len();
+                self.status =
+                    format!("Marked for merge ({count}); m merges all in list order, Esc clears");
+                self.pull_requests.step(1);
+            }
+            Ok(false) => {
+                let count = self.pull_requests.marked.len();
+                self.status = format!("Unmarked ({count} marked)");
+            }
+            Err(reason) => self.status = reason.into(),
+        }
+    }
+
+    /// Stop a bulk merge before its next PR starts. Never interrupts a merge
+    /// that is already submitting; that one finishes and reports on its own.
+    pub(super) fn cancel_pr_merge_queue(&mut self, reason: &str) {
+        let Some(queue) = self.pr_merge.queue.take() else {
+            self.pr_merge.advance_after_refresh = false;
+            return;
+        };
+        self.pr_merge.advance_after_refresh = false;
+        if queue.method.is_some() || queue.merged > 0 {
+            let left: Vec<String> = queue
+                .remaining
+                .iter()
+                .map(|(_, number)| format!("#{number}"))
+                .collect();
+            let line = format!(
+                "Bulk merge stopped ({reason}): {} of {} merged; not merged: {}",
+                queue.merged,
+                queue.total,
+                if left.is_empty() {
+                    "none".to_string()
+                } else {
+                    left.join(", ")
+                }
+            );
+            self.pull_requests.notifications.push(line.clone());
+            self.status = line;
+        }
+    }
+
+    fn prepare_pr_merge_row(&mut self, row: switchbard_core::PrListRow) {
         let Some(snapshot) = self.pull_requests.snapshot.clone() else {
             self.status = "Merge unavailable: refresh the PR list first".into();
+            self.pr_merge.queue = None;
             return;
         };
         let root = self.repo_root.clone();
@@ -129,6 +260,15 @@ impl App {
         self.pr_merge.dismissed = true;
         self.pr_merge.prepared = None;
         self.pr_merge.confirmation_visible = false;
+        // A queue nobody confirmed a method for is just the marks; drop it.
+        if self
+            .pr_merge
+            .queue
+            .as_ref()
+            .is_some_and(|q| q.method.is_none())
+        {
+            self.pr_merge.queue = None;
+        }
         if self
             .picker
             .as_ref()
@@ -153,6 +293,15 @@ impl App {
         if self.pr_merge.refresh_after_result && !self.pull_requests.loading() {
             self.pr_merge.refresh_after_result = false;
             self.pull_requests.refresh(&self.repo_root);
+        }
+        if self.pr_merge.advance_after_refresh
+            && !self.pull_requests.loading()
+            && !self.pr_merge.refresh_after_result
+            && self.pr_merge.pending.is_none()
+        {
+            self.pr_merge.advance_after_refresh = false;
+            self.advance_merge_queue();
+            return;
         }
         if !self.merge_target_current() {
             self.cancel_pr_merge();
@@ -184,7 +333,65 @@ impl App {
         }
     }
 
+    /// Start the next queued PR after the previous merge landed and the list
+    /// refreshed. The cursor follows the queue so every guard that reads the
+    /// selected row keeps meaning what it means for a single merge.
+    fn advance_merge_queue(&mut self) {
+        let Some(next) = self
+            .pr_merge
+            .queue
+            .as_mut()
+            .and_then(|queue| queue.remaining.pop_front())
+        else {
+            let merged = self.pr_merge.queue.take().map(|q| (q.merged, q.total));
+            if let Some((merged, total)) = merged {
+                self.status = format!("Bulk merge complete: {merged} of {total} merged");
+                self.pull_requests.notifications.push(self.status.clone());
+            }
+            return;
+        };
+        if self.mode != Mode::Browse || self.page != Page::PullRequests {
+            if let Some(queue) = self.pr_merge.queue.as_mut() {
+                queue.remaining.push_front(next);
+            }
+            self.cancel_pr_merge_queue("left the PR list");
+            return;
+        }
+        if !self.pull_requests.select_id(&next.0) {
+            if let Some(queue) = self.pr_merge.queue.as_mut() {
+                queue.remaining.push_front(next);
+            }
+            self.cancel_pr_merge_queue("next PR is no longer listed as open");
+            return;
+        }
+        let Some(row) = self.pull_requests.row().cloned() else {
+            self.cancel_pr_merge_queue("next PR is no longer listed");
+            return;
+        };
+        self.prepare_pr_merge_row(row);
+    }
+
     fn accept_merge_preparation(&mut self, result: Result<PrMergePreparation, String>) {
+        let queued_method = self.pr_merge.queue.as_ref().and_then(|queue| queue.method);
+        if let Some(method) = queued_method {
+            match result {
+                Ok(PrMergePreparation::Ready(prepared)) => {
+                    if let Some(caveat) = prepared.readiness_caveat() {
+                        self.cancel_pr_merge_queue(&format!("#{} {caveat}", prepared.number()));
+                        return;
+                    }
+                    if self.mode != Mode::Browse || !self.merge_target_current() {
+                        self.cancel_pr_merge_queue("selection changed");
+                        return;
+                    }
+                    self.spawn_pr_merge_submit(prepared, method);
+                }
+                Ok(PrMergePreparation::Disabled(reason)) | Err(reason) => {
+                    self.cancel_pr_merge_queue(&reason);
+                }
+            }
+            return;
+        }
         match result {
             Ok(PrMergePreparation::Ready(prepared)) => {
                 // Never interrupt a filter, command, or other picker opened during preparation.
@@ -204,6 +411,7 @@ impl App {
             Ok(PrMergePreparation::Disabled(reason)) | Err(reason) => {
                 self.status = format!("Merge unavailable: {reason}");
                 self.pull_requests.notifications.push(self.status.clone());
+                self.pr_merge.queue = None;
             }
         }
     }
@@ -250,6 +458,13 @@ impl App {
         let Some(prepared) = self.pr_merge.prepared.take() else {
             return;
         };
+        if let Some(queue) = self.pr_merge.queue.as_mut() {
+            queue.method = Some(method);
+        }
+        self.spawn_pr_merge_submit(prepared, method);
+    }
+
+    fn spawn_pr_merge_submit(&mut self, prepared: PreparedPrMerge, method: PrMergeMethod) {
         let root = self.repo_root.clone();
         let (tx, rx) = mpsc::sync_channel(1);
         match std::thread::Builder::new()
@@ -287,6 +502,24 @@ impl App {
         if let Some((id, head_oid)) = self.pr_merge.merge_expectation(&result) {
             self.pull_requests
                 .expect_merge(id, head_oid, Instant::now());
+        }
+        if let Some(queue) = self.pr_merge.queue.as_mut() {
+            if result.outcome == PrMergeOutcome::Confirmed {
+                queue.merged += 1;
+                if let Some((id, _)) = &self.pr_merge.target {
+                    self.pull_requests.marked.remove(id);
+                }
+                self.pr_merge.advance_after_refresh = true;
+            } else {
+                self.pr_merge.last_result = Some(result);
+                self.cancel_pr_merge_queue("merge did not confirm");
+                if self.pull_requests.loading() {
+                    self.pr_merge.refresh_after_result = true;
+                } else {
+                    self.pull_requests.refresh(&self.repo_root);
+                }
+                return;
+            }
         }
         self.pr_merge.last_result = Some(result);
         if self.pull_requests.loading() {

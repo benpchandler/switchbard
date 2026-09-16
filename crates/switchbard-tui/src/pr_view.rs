@@ -256,6 +256,9 @@ pub(crate) fn column_widths(
         .columns
         .iter()
         .map(|column| match column {
+            crate::columns::Column::Id if !app.pull_requests.marked.is_empty() => {
+                Constraint::Length(11)
+            }
             crate::columns::Column::Id => Constraint::Length(7),
             crate::columns::Column::Tasks if width < 70 => Constraint::Length(10),
             crate::columns::Column::Checks if width < 70 => Constraint::Length(4),
@@ -287,6 +290,14 @@ pub(crate) fn draw_row(
         .map(|column| {
             let values = column.pr_values(row, links);
             match column {
+                crate::columns::Column::Id if !app.pull_requests.marked.is_empty() => {
+                    let mark = if app.pull_requests.is_marked(row) {
+                        "[x]"
+                    } else {
+                        "[ ]"
+                    };
+                    format!("{mark} #{}", row.number)
+                }
                 crate::columns::Column::Id => format!("#{}", row.number),
                 // TASK-204: GitHub's list read is eventually consistent, so a
                 // just-confirmed merge still reads Open here for a while;

@@ -83,7 +83,7 @@ pub fn planning_order(repo: &BacklogRepo) -> Vec<String> {
         .collect()
 }
 pub fn set_task_planning(root: &Path, id: &str, state: PlanningState) -> Result<WriteOutcome> {
-    super::planning_write::set(root, id, state, None)
+    super::planning_write::set(root, id, state, None, None)
 }
 pub fn rank_planned_task(root: &Path, id: &str, placement: &RankPlacement) -> Result<WriteOutcome> {
     super::ranking::rank_planned(root, id, placement)
@@ -95,7 +95,7 @@ pub fn set_task_planning_expected(
     state: PlanningState,
     expected: &super::BacklogTask,
 ) -> Result<WriteOutcome> {
-    super::planning_write::set(root, id, state, Some(expected))
+    super::planning_write::set(root, id, state, Some(expected), None)
 }
 
 /// Change planning while the complete captured document is still current.
@@ -105,10 +105,12 @@ pub fn set_task_planning_snapshot(
     state: PlanningState,
     snapshot: &super::BacklogTaskSnapshot,
 ) -> Result<WriteOutcome> {
-    let _lock = crate::storage::RepositoryLock::acquire(root)?;
+    let _lock = crate::storage::RepositoryLock::fence(root, &["task", "ranking"])?;
     anyhow::ensure!(snapshot.task_id == id, "task selection changed; reload");
     super::validate_backlog_task_snapshot(root, snapshot)?;
-    super::planning_write::set(root, id, state, None)
+    // Without a held fence the snapshot can go stale after validation; the
+    // write rechecks the captured content inside its own transaction.
+    super::planning_write::set(root, id, state, None, Some(&snapshot.content))
 }
 
 #[cfg(test)]

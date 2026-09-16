@@ -15,6 +15,7 @@ pub mod dispatch;
 pub mod dispatch_inspect;
 pub mod dispatch_kill;
 pub mod expected_port;
+pub mod git_common_dir;
 mod git_env;
 pub mod git_probe;
 pub mod instance_lock;
@@ -205,3 +206,10 @@ pub use backlog::{
 };
 
 pub use backlog::{set_task_planning_expected, set_task_planning_snapshot};
+
+pub mod onboarding;
+pub use onboarding::{repository_onboarding_status, setup_repository, RepositoryOnboardingStatus};
+
+mod onboarding_options;
+pub use onboarding::setup_repository_with_options;
+pub use onboarding_options::RepositorySetupOptions;
