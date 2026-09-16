@@ -390,32 +390,39 @@ fn parse_value_roles(rhs: &str) -> Result<Vec<(String, String)>, String> {
         .collect()
 }
 
+/// Every token in a rule must name an emphasis role, a highlight slot or a
+/// color. Which of them fills the cell and which writes on it is the theme's
+/// answer (`paint_eval::compose`); saved rules stay valid across theme changes,
+/// so this check is deliberately theme-independent.
 pub fn validate_roles(roles: &str) -> Result<(), String> {
     let roles = roles.trim().strip_suffix('!').unwrap_or(roles.trim());
-    for token in roles.split('+') {
-        let token = token.trim();
-        if !crate::config::EMPHASIS_ROLES.contains(&token) && resolve_color(token, &[]).is_none() {
+    let tokens: Vec<&str> = roles.split('+').map(str::trim).collect();
+    if tokens.len() > crate::paint_eval::MAX_ROLE_TOKENS {
+        return Err(format!(
+            "a paint rule composes at most {} roles",
+            crate::paint_eval::MAX_ROLE_TOKENS
+        ));
+    }
+    for token in tokens {
+        let known = crate::config::EMPHASIS_ROLES.contains(&token)
+            || crate::highlight::slot_index(token).is_some()
+            || resolve_color(token, &[]).is_some();
+        if !known {
             return Err(format!("unknown emphasis role or color: {token}"));
         }
     }
     Ok(())
 }
 
-pub fn validate_rules(rules: &[PaintRule], registry: &ColumnRegistry) -> Result<(), String> {
-    crate::paint_eval::validate_rules(rules, registry)
+pub fn validate_rules(rules: &[PaintRule], _registry: &ColumnRegistry) -> Result<(), String> {
+    crate::paint_eval::validate_rules(rules)
 }
 
+/// One rule's roles as a terminal style: the theme composes fill and ink, this
+/// layer only decides what to do when a token names nothing it knows, which
+/// only an externally edited saved view can produce.
 pub fn resolve_style(roles: &str, theme: &Theme, palette: &[String]) -> Style {
-    roles
-        .trim_end_matches('!')
-        .split('+')
-        .fold(Style::default(), |style, token| {
-            style.patch(
-                theme
-                    .emphasis_style(token.trim(), palette)
-                    .unwrap_or_default(),
-            )
-        })
+    theme.emphasis_style(roles, palette).unwrap_or_default()
 }
 
 pub fn cell_style_with(

@@ -97,40 +97,118 @@ fn presets_switch_live_and_plain_does_not_force_a_canvas() {
     }
 }
 
+/// Any role may own a fill (TASK-237). What is refused is a fill no ink in the
+/// theme can be read on, which is checked, not assumed.
 #[test]
-fn only_band_can_fill_a_row_even_when_custom_roles_request_backgrounds() {
+fn a_role_fill_reaches_cells_and_a_fill_no_ink_reads_on_is_refused() {
     let mut h = Harness::new();
     std::fs::write(
         &h.config_path,
         r##"return { theme = { emphasis = {
-        strong = { bg = "#abcdef" }, quiet = { reverse = true }
+        alert = { fg = "#8a1c24", bg = "#f6c8d4" }, quiet = { bg = "#a89c94" }
     } } }"##,
     )
     .unwrap();
     h.app.tick();
-    command(&mut h, "paint column:title=strong");
-    assert!(modifiers(&h, "Write onboarding guide").contains(Modifier::BOLD));
+    command(&mut h, "paint column:title=alert");
     assert_eq!(
         cell_bg(&h, "Write onboarding guide"),
-        h.app.config.theme.background()
+        Some(Color::Rgb(0xf6, 0xc8, 0xd4)),
+        "the declared fill reaches the cell"
     );
-    command(&mut h, "paint column:title=quiet");
-    assert!(!modifiers(&h, "Write onboarding guide").contains(Modifier::REVERSED));
     assert_eq!(
         cell_fg(&h, "Write onboarding guide"),
-        Some(Color::Rgb(0xac, 0xac, 0xae))
+        Some(Color::Rgb(0x8a, 0x1c, 0x24)),
+        "with the ink declared beside it"
     );
-    for key in ["theme.emphasis.strong.bg", "theme.emphasis.quiet.reverse"] {
+    command(&mut h, "paint column:title=quiet");
+    assert_eq!(
+        cell_bg(&h, "Write onboarding guide"),
+        h.app.config.theme.background(),
+        "a fill every ink fails on is dropped, not rendered"
+    );
+    assert!(
+        h.app.config.warnings.iter().any(|warning| {
+            warning.contains("tui.lua") && warning.contains("theme.emphasis.quiet.bg")
+        }),
+        "{:?}",
+        h.app.config.warnings
+    );
+    assert!(
+        !h.app
+            .config
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("theme.emphasis.alert.bg")),
+        "a readable fill draws no warning: {:?}",
+        h.app.config.warnings
+    );
+}
+
+/// Every colored preset declares its own slots; a slot a theme omits is derived
+/// from the matching palette color at a fixed distance from the canvas.
+#[test]
+fn highlight_slots_come_from_the_preset_and_missing_ones_derive_from_the_palette() {
+    let mut h = Harness::new();
+    for name in ["berg", "bloomberg", "darkroom", "light"] {
+        command(&mut h, &format!("theme {name}"));
+        let theme = &h.app.config.theme;
+        let slots = theme.highlight_slots();
+        assert!(slots.len() >= 3, "{name} offers {slots:?}");
+        let mut fills = std::collections::HashSet::new();
+        for slot in &slots {
+            let style = theme
+                .highlight_style(*slot, &h.app.config.palette)
+                .unwrap_or_else(|| panic!("{name} h{slot} resolves"));
+            assert!(style.bg.is_some(), "{name} h{slot} is a fill");
+            assert!(style.fg.is_some(), "{name} h{slot} carries default ink");
+            fills.insert(format!("{:?}", style.bg));
+        }
+        assert_eq!(fills.len(), slots.len(), "{name} slots are distinguishable");
+        let derived = theme
+            .highlight_style(7, &h.app.config.palette)
+            .expect("an undeclared slot still resolves");
         assert!(
-            h.app
-                .config
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("tui.lua") && warning.contains(key)),
-            "missing warning for {key}: {:?}",
-            h.app.config.warnings
+            matches!(derived.bg, Some(Color::Rgb(..))),
+            "{name} derives h7 from the palette: {derived:?}"
         );
+        assert_ne!(derived.bg, theme.background(), "{name} h7 reads as a fill");
     }
+    std::fs::write(&h.config_path, "return { theme = 'plain' }").unwrap();
+    h.app.tick();
+    let style = h
+        .app
+        .config
+        .theme
+        .highlight_style(1, &h.app.config.palette)
+        .expect("plain declares a terminal-owned slot");
+    assert!(
+        style.add_modifier.contains(Modifier::REVERSED),
+        "plain reverses the terminal's own colors: {style:?}"
+    );
+}
+
+/// A slot that names no position is reported, and the rest of the theme loads.
+#[test]
+fn an_unknown_highlight_slot_is_reported_without_losing_the_board() {
+    let mut h = Harness::new();
+    std::fs::write(
+        &h.config_path,
+        r##"return { theme = { highlights = { h99 = { bg = "#3b3023" } } } }"##,
+    )
+    .unwrap();
+    h.app.tick();
+    let screen = h.render();
+    assert!(screen.contains("Fix login"), "{screen}");
+    assert!(
+        h.app
+            .config
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("theme.highlights.h99")),
+        "{:?}",
+        h.app.config.warnings
+    );
 }
 
 #[test]
@@ -176,6 +254,11 @@ fn legacy_custom_themes_gain_safe_roles_and_invalid_overrides_keep_the_fallback(
         .warnings
         .iter()
         .any(|warning| warning.contains("theme.emphasis.strong.bg")));
+    command(&mut h, "paint column:title=h1");
+    assert!(
+        matches!(cell_bg(&h, "Write onboarding guide"), Some(Color::Rgb(..))),
+        "a theme that declares no slots still derives them"
+    );
 }
 
 #[test]
