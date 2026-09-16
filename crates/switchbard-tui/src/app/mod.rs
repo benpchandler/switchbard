@@ -386,6 +386,7 @@ impl App {
                 .map(|n| n.to_string())
                 .unwrap_or_default(),
             Column::Checklist => self.checklist_text(task),
+            Column::Progress => self.progress_icon(task),
             Column::Work => "●".repeat(self.working(task).len().min(3)),
             Column::Title => self.title_cell(task),
             other => other.display_text(
@@ -417,6 +418,19 @@ impl App {
         } else {
             format!("{}/{} {:.1}%", progress.checked, progress.total, percent)
         }
+    }
+
+    fn progress_icon(&self, task: &BacklogTask) -> String {
+        let progress = self.checklist.get(&task.id);
+        let value = match progress.and_then(|progress| progress.percentage()) {
+            None => "unmeasured",
+            Some(_) if progress.is_some_and(|p| p.checked == p.total) => "complete",
+            Some(0.0) => "empty",
+            Some(percent) if percent < 34.0 => "low",
+            Some(percent) if percent < 67.0 => "medium",
+            Some(_) => "high",
+        };
+        self.config.glyph(Column::Progress, value)
     }
 
     fn title_cell(&self, task: &BacklogTask) -> String {
@@ -1767,7 +1781,7 @@ impl App {
             })
             .collect();
         if let Some(sort) = state.sort {
-            if sort.column == Column::Checklist {
+            if matches!(sort.column, Column::Checklist | Column::Progress) {
                 visible.sort_by(|&a, &b| {
                     let progress = |index: usize| {
                         self.checklist

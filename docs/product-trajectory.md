@@ -45,6 +45,8 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 
 ## Recently implemented
 
+- **Compact task progress (owner-directed 2026-09-16).** A visual Progress column sits immediately after Status in new default TUI views. Progress uses the existing retained-criterion rollup; zero, partial, full and unmeasured icons remain independent of manual Done. Existing saved arrangements remain intact. Contract and evidence: `docs/tui-progress-icons.md`.
+
 - **Views that keep themselves (TASK-152/153/154).** `sbt` resumes the last per-repository view, captures bounded deduplicated history automatically, and keeps deliberate slots separate. `--fresh`, `v h`, and `v s <number>` are documented in `docs/tui-view-history.md`; the palette-token prerequisite is included.
 
 - **Separate planning, priority order and checklist progress (owner-approved 2026-09-15).** Considering / Planned is independent from execution status, Planned open tasks have an ordered list, and checklist progress counts retained criteria across descendants with explicit manual Done and a 100%-needs-review signal. Migration is exposed through core-owned preview, backup and stale-guarded apply commands. Contract and evidence: `docs/task-planning-progress.md`.

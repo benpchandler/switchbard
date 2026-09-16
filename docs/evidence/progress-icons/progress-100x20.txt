@@ -1,0 +1,20 @@
+ [Tasks]   Pull Requests   ?  Agents  …  Inbox   tab switch page                                    
+┌ .tmpcIvNRk  6/6 shown  v1   ─────────────────────────────────────────────────────────────────────┐
+│1 id 2 planning  3 status    4 % 5 pri 6 checklist     7 title                                    │
+│1    Planned     In Progress ●   M     Review 1/1 100% Fix login redirect loop                    │
+│4    Planned     In Progress ○   M     0/1 0.0%        No checked outcomes                        │
+│5    Planned     In Progress ◑   M     1/2 50.0%       Half checked outcomes                      │
+│6    Planned     In Progress ◕   M     3/4 75.0%       Mostly checked outcomes                    │
+│3    Considering To Do       -   H     Unmeasured      Write onboarding guide                     │
+│2    Considering To Do       ◔   L     1/8 12.5%       Add dark theme                             │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+reloaded 6 tasks                                                                                    

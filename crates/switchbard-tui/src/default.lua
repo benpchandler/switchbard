@@ -217,6 +217,9 @@ return {
   -- Glyphs shown when a column is in glyph mode (`c`, then `g` on the column).
   -- Keys are the column's values; a value without a glyph shows its first letter.
   glyphs = {
+    -- Progress is always visual: 0, >0-<34, 34-<67, 67-<100, exactly 100%.
+    -- No retained criteria (including canceled tasks) is unmeasured.
+    progress = { empty = "○", low = "◔", medium = "◑", high = "◕", complete = "●", unmeasured = "-" },
     priority = { high = "↑", medium = "·", low = "↓" },
     status = { icebox = "❄", todo = "○", inprogress = "◐", inreview = "◑", done = "●" },
     ball = { me = "●", agent = "◌" },

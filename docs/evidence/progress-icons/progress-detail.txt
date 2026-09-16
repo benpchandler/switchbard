@@ -1,0 +1,24 @@
+ [Tasks]   Pull Requests   ?  Agents  …  Inbox   tab switch page                                                                            
+┌ .tmpcIvNRk  1/6 shown  custom  / Fix login redirect loop   ────────┐┌ Detail ────────────────────────────────────────────────────────────┐
+│1 id 2 planni 3 statu 4 % 5 pri 6 checklist     7 title             ││TASK-1                                                              │
+│1    Planned  In Prog ●   M     Review 1/1 100% Fix login redirect l││                                                                    │
+│                                                                    ││v Properties                                                        │
+│                                                                    ││Fix login redirect loop                                             │
+│                                                                    ││status: In Progress                                                 │
+│                                                                    ││priority: medium                                                    │
+│                                                                    ││project: Not set                                                    │
+│                                                                    ││due date: Not set                                                   │
+│                                                                    ││labels: auth, bug                                                   │
+│                                                                    ││planning: Planned                                                   │
+│                                                                    ││checklist: Review 1/1 100% (task + descendants)                     │
+│                                                                    ││v Description                                                       │
+│                                                                    ││description:                                                        │
+│                                                                    ││Description of Fix login redirect loop.                             │
+│                                                                    ││v Acceptance criteria                                               │
+│                                                                    ││[x] Outcome 0                                                       │
+│                                                                    ││v Relations                                                         │
+│                                                                    ││parent: Not set                                                     │
+│                                                                    ││dependencies: Not set                                               │
+│                                                                    ││subtasks: Not set                                                   │
+└────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────────────────────┘
+t tasks · v views · ? keys · Detail active · enter/l edits · shift-tab focus                                                                

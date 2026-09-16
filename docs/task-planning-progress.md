@@ -39,7 +39,7 @@ No browser/touch/remote loading states apply to these local terminal controls. L
 
 ## Controls and agent commands
 
-In the TUI, `t l` changes Planning, `t r` orders Planned work, and `o l` groups by Planning. Existing saved views keep their columns; new views show ID, Planning, Status, Priority, Checklist and Title. Detail sections expose the available modeled fields and support folding. `t c c` opens cancellation confirmation. Done remains an explicit status action.
+In the TUI, `t l` changes Planning, `t r` orders Planned work, and `o l` groups by Planning. Existing saved views keep their columns; new views show ID, Planning, Status, Progress, Priority, Checklist and Title. Progress's icon thresholds, Lua overrides, and state/stress contract are authoritative in [`docs/tui-progress-icons.md`](tui-progress-icons.md). Detail sections expose the available modeled fields and support folding. `t c c` opens cancellation confirmation. Done remains an explicit status action.
 
 Agents use `sb planning list` for JSON planning, order and checklist observations, `sb planning set ID Planned` or `Considering` for planning, and `sb planning rank ID --top|--before ID|--after ID` for order. Planning changes never check criteria or change execution status. Existing `sb list` TSV stays compatible. Use `sb planning preview --out PATH` then `sb planning apply --plan PATH --backup-dir DIR` for migration; preview and receipt files contain private task content and belong outside the repository.
 

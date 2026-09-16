@@ -61,6 +61,7 @@ impl ColumnValues for TaskValues<'_> {
             // Rank and work are not on the task: `App::cell` supplies them
             // from the lane and the live session list.
             Column::Checklist
+            | Column::Progress
             | Column::Rank
             | Column::Work
             | Column::Lifecycle
