@@ -603,7 +603,7 @@ fn list(frame: &mut Frame, app: &mut App, area: Rect) {
     app.agents.scroll = viewport.scroll;
     let header = Rect { height: 1, ..area };
     let cells = crate::list_presentation::cells(header, &layout.widths);
-    let labels: Vec<String> = layout.labels.iter().map(|s| s.to_string()).collect();
+    let labels: Vec<Line<'static>> = layout.labels.iter().map(|s| Line::from(*s)).collect();
     crate::list_presentation::header(
         frame,
         header,

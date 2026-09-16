@@ -18,13 +18,15 @@ fn s_then_column_offers_semantic_and_plain_orders() {
     assert!(screen.contains("2  ascending"), "{screen}");
     assert!(screen.contains("4 ✓none"), "{screen}");
     let screen = h.press(KeyCode::Char('1'));
+    // TASK-235 moved the sort label into the footer's view-settings summary.
     assert!(
         screen
             .lines()
             .nth(1)
-            .is_some_and(|context| context.contains("3/3 shown") && context.contains("≈pri")),
+            .is_some_and(|context| context.contains("3/3 shown")),
         "{screen}"
     );
+    assert!(screen.contains("≈pri"), "{screen}");
     assert_eq!(
         visible_titles(&h),
         [
@@ -63,12 +65,17 @@ fn sort_survives_filtering_and_title_sorts_alphabetically() {
         screen
             .lines()
             .nth(1)
-            .is_some_and(|context| context.contains("2/3 shown")
-                && context.contains(" custom ")
-                && context.contains("/ status:todo")
-                && context.contains("↑title")),
+            .is_some_and(|context| context.contains("2/3 shown") && context.contains(" custom ")),
         "{screen}"
     );
+    assert!(
+        screen
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ status:todo")),
+        "{screen}"
+    );
+    assert!(screen.contains("↑title"), "{screen}");
     assert_eq!(
         visible_titles(&h),
         ["Add dark theme", "Write onboarding guide"]

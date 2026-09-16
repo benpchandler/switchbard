@@ -115,11 +115,19 @@ fn a_view_survives_a_restart_into_a_build_with_a_field_this_one_lacks() {
     h.type_text("labels:ui");
     h.press(KeyCode::Enter);
     let live = h.render();
+    // TASK-235 moved the filter off the title line onto its own line inside
+    // the frame; the title (line 1) keeps only the view name, the filter now
+    // renders on line 2.
     assert!(
         live.lines()
             .nth(1)
-            .is_some_and(|context| context.contains(" custom ")
-                && context.contains("/ status:todo labels:ui")),
+            .is_some_and(|context| context.contains(" custom ")),
+        "{live}"
+    );
+    assert!(
+        live.lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ status:todo labels:ui")),
         "{live}"
     );
 

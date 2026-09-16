@@ -63,15 +63,23 @@ fn hidden_columns_are_listed_after_shown_ones_and_stay_filterable_and_sortable()
     let screen = h.press(KeyCode::Char('4'));
     assert!(screen.contains("┌ pri ─"), "{screen}");
     let screen = h.type_text("h");
+    // TASK-235: the filter is its own line (2); the columns label moved into
+    // the footer's view-settings summary.
     assert!(
         screen
             .lines()
             .nth(1)
-            .is_some_and(|context| context.contains("1/3 shown")
-                && context.contains("/ pri:high")
-                && context.contains("cols:id,status,title")),
+            .is_some_and(|context| context.contains("1/3 shown")),
         "{screen}"
     );
+    assert!(
+        screen
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ pri:high")),
+        "{screen}"
+    );
+    assert!(screen.contains("cols:id,status,title"), "{screen}");
     h.press(KeyCode::Char('s'));
     let screen = h.type_text("p");
     assert!(
@@ -150,13 +158,8 @@ fn g_in_the_columns_picker_shows_priority_as_glyphs_and_saves_with_the_view() {
         .find(|l| l.contains("Fix login"))
         .unwrap_or_default();
     assert!(row.contains(" · "), "medium: {row}");
-    assert!(
-        screen
-            .lines()
-            .nth(1)
-            .is_some_and(|context| context.contains("glyphs:priority")),
-        "{screen}"
-    );
+    // TASK-235 moved the glyph-mode label into the footer's settings summary.
+    assert!(screen.contains("glyphs:priority"), "{screen}");
     h.press(KeyCode::Char('v'));
     h.press(KeyCode::Char('s'));
     h.press(KeyCode::Char('d'));

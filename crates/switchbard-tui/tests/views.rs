@@ -18,13 +18,19 @@ fn field_filters_and_v_digit_switch_views() {
     h.press(KeyCode::Enter);
     h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('3'));
+    // TASK-235: the filter renders on its own line (2), below the title (1).
     assert!(
         screen
             .lines()
             .nth(1)
-            .is_some_and(|context| context.contains("1/3 shown")
-                && context.contains(" v3 ")
-                && context.contains("/ status:inprogress")),
+            .is_some_and(|context| context.contains("1/3 shown") && context.contains(" v3 ")),
+        "{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ status:inprogress")),
         "{screen}"
     );
     assert!(screen.contains("Fix login"), "{screen}");
@@ -34,9 +40,14 @@ fn field_filters_and_v_digit_switch_views() {
         screen
             .lines()
             .nth(1)
-            .is_some_and(|context| context.contains("2/3 shown")
-                && context.contains(" v2 ")
-                && context.contains("/ status:todo")),
+            .is_some_and(|context| context.contains("2/3 shown") && context.contains(" v2 ")),
+        "{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ status:todo")),
         "{screen}"
     );
     h.press(KeyCode::Char('v'));
@@ -66,16 +77,22 @@ fn vsd_saves_for_this_repo_and_vgd_extends_it_to_every_repo() {
     h.press(KeyCode::Char('s'));
     let screen = h.press(KeyCode::Char('d'));
     assert!(screen.contains("saved v1 for this repo"), "{screen}");
+    // TASK-235: filter on line 2; sort label in the footer's settings summary.
     assert!(
         screen
             .lines()
             .nth(1)
-            .is_some_and(|context| context.contains("3/3 shown")
-                && context.contains(" v1 ")
-                && context.contains("/ status:!done")
-                && context.contains("≈pri")),
+            .is_some_and(|context| context.contains("3/3 shown") && context.contains(" v1 ")),
         "{screen}"
     );
+    assert!(
+        screen
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ status:!done")),
+        "{screen}"
+    );
+    assert!(screen.contains("≈pri"), "{screen}");
     let repo_file = std::fs::read_to_string(h.root.join("views-repo.lua")).unwrap();
     assert!(
         repo_file.contains(
@@ -158,9 +175,14 @@ fn vs_with_the_next_free_slot_appends_without_asking_and_escape_abandons() {
         screen
             .lines()
             .nth(1)
-            .is_some_and(|context| context.contains("1/3 shown")
-                && context.contains(" v6 ")
-                && context.contains("/ label:ui")),
+            .is_some_and(|context| context.contains("1/3 shown") && context.contains(" v6 ")),
+        "{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ label:ui")),
         "{screen}"
     );
     h.press(KeyCode::Char('?'));
@@ -185,7 +207,14 @@ fn vs_with_the_next_free_slot_appends_without_asking_and_escape_abandons() {
         screen
             .lines()
             .nth(1)
-            .is_some_and(|context| context.contains(" v2 ") && context.contains("/ status:todo")),
+            .is_some_and(|context| context.contains(" v2 ")),
+        "slot 2 untouched: {screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ status:todo")),
         "slot 2 untouched: {screen}"
     );
 }
