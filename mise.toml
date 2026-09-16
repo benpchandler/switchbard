@@ -25,9 +25,11 @@ description = "Run clippy on every workspace target (warnings denied by [workspa
 run = "cargo clippy --workspace --all-targets"
 
 [tasks.test]
+# Keep timing-sensitive repository fixtures from competing for host scheduling
+# while preserving concurrency inside each fixture.
 description = "Run the full workspace test suite (warnings denied by [workspace.lints] in Cargo.toml), then the sbt tty-hangup proof against a real pty"
 run = [
-  "cargo test --workspace --all-targets",
+  "cargo test --workspace --all-targets -- --test-threads=1",
   { task = "test-sbt-hangup" },
 ]
 
