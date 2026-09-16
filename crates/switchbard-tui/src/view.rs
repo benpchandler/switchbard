@@ -385,7 +385,37 @@ fn draw_task_rows(
                         height: row_area.height,
                         ..*cell
                     };
-                    if *column == Column::Title {
+                    if *column == Column::Progress
+                        && app.config.progress_style != crate::progress::ProgressStyle::Icons
+                    {
+                        frame.render_widget(
+                            Paragraph::new(if cell_area.width < 6 {
+                                ratatui::text::Line::styled(
+                                    if app.config.progress_style
+                                        == crate::progress::ProgressStyle::Ascii
+                                    {
+                                        crate::progress::compact_ascii(app.checklist.get(&task.id))
+                                            .to_string()
+                                    } else {
+                                        crate::progress::compact_pill(app.checklist.get(&task.id))
+                                            .to_string()
+                                    },
+                                    style,
+                                )
+                            } else {
+                                crate::progress::pill(
+                                    app.checklist.get(&task.id),
+                                    theme,
+                                    style,
+                                    app.config.progress_style,
+                                )
+                            }),
+                            Rect {
+                                height: 1,
+                                ..cell_area
+                            },
+                        );
+                    } else if *column == Column::Title {
                         draw_task_title(frame, &text, state.row_layout, style, cell_area);
                     } else {
                         frame.render_widget(

@@ -200,7 +200,7 @@ pub static BUILTIN_COLUMNS: [ColumnSpec; 23] = [
         name: Cow::Borrowed("progress"),
         alias: None,
         header: Cow::Borrowed("%"),
-        width: Some(3),
+        width: Some(6),
         field: None,
         fixed_vocabulary: &[],
         groupable: false,

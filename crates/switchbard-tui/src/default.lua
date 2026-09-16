@@ -31,12 +31,18 @@ return {
   -- Paint accepts roles, colors and palette slots joined with + (strong+p2).
   -- A trailing ! makes that paint rule take precedence over competing rules.
   -- theme.background is the explicit canvas; leave absent for terminal control.
+  -- pill requires Powerline rounded caps; ascii uses parentheses; icons keeps glyphs.progress.
+  -- Explicit glyphs.progress overrides select icons unless progress_style is also set.
+  progress_style = "pill",
   theme = "berg",
   themes = {
     -- Exact foregrounds and canvases make each colored preset predictable.
     -- Quiet ink stays readable without terminal-dependent DIM. Plain delegates
     -- contrast to the terminal. These presets are not an accessibility certification.
     berg = {
+      progress_fill = { fg = "#ff565f" },
+      progress_empty = { fg = "#af4852" },
+      progress_shell = { fg = "#55212c" },
       background = "#101214",
       title_repo     = { fg = "#101214", bg = "#f49f31", bold = true },
       title          = { fg = "#acacae" },
@@ -66,6 +72,9 @@ return {
       columns = { id = "label", project = "link", goal = "link" },
     },
     bloomberg = {
+      progress_fill = { fg = "#ff565f" },
+      progress_empty = { fg = "#af4852" },
+      progress_shell = { fg = "#55212c" },
       background = "#111820",
       title_repo     = { fg = "#111820", bg = "#ffcc00", bold = true },
       title          = { fg = "#a8afb8" },
@@ -95,6 +104,9 @@ return {
       columns = { id = "label", project = "link", goal = "link" },
     },
     darkroom = {
+      progress_fill = { fg = "#ff565f" },
+      progress_empty = { fg = "#af4852" },
+      progress_shell = { fg = "#55212c" },
       background = "#12100e",
       title_repo     = { fg = "#e3ddd3", bg = "#634921", bold = true },
       title          = { fg = "#b3aa9e" },
@@ -124,6 +136,9 @@ return {
       columns = { id = "label", project = "link", goal = "link" },
     },
     light = {
+      progress_fill = { fg = "#b81e35" },
+      progress_empty = { fg = "#a66c77" },
+      progress_shell = { fg = "#edd1d6" },
       background = "#f5f2eb",
       title_repo     = { fg = "#f5f2eb", bg = "#355b7b", bold = true },
       title          = { fg = "#59616b" },
@@ -154,6 +169,9 @@ return {
     },
     -- Your terminal owns its colors and background.
     plain = {
+      progress_fill = {},
+      progress_empty = {},
+      progress_shell = {},
       title_repo = { bold = true },
       navigation_active = { bold = true, underline = true },
       context = {},
@@ -217,7 +235,8 @@ return {
   -- Glyphs shown when a column is in glyph mode (`c`, then `g` on the column).
   -- Keys are the column's values; a value without a glyph shows its first letter.
   glyphs = {
-    -- Progress is always visual: 0, >0-<34, 34-<67, 67-<100, exactly 100%.
+    -- Icons mode: 0, >0-<34, 34-<67, 67-<100, exactly 100%.
+    -- Pill mode has fixed compact symbols when fewer than six cells fit.
     -- No retained criteria (including canceled tasks) is unmeasured.
     progress = { empty = "○", low = "◔", medium = "◑", high = "◕", complete = "●", unmeasured = "-" },
     priority = { high = "↑", medium = "·", low = "↓" },

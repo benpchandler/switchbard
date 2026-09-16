@@ -422,14 +422,21 @@ impl App {
 
     fn progress_icon(&self, task: &BacklogTask) -> String {
         let progress = self.checklist.get(&task.id);
-        let value = match progress.and_then(|progress| progress.percentage()) {
-            None => "unmeasured",
-            Some(_) if progress.is_some_and(|p| p.checked == p.total) => "complete",
-            Some(0.0) => "empty",
-            Some(percent) if percent < 34.0 => "low",
-            Some(percent) if percent < 67.0 => "medium",
-            Some(_) => "high",
-        };
+        if self.config.progress_style != crate::progress::ProgressStyle::Icons {
+            return crate::progress::pill(
+                progress,
+                &self.config.theme,
+                ratatui::style::Style::default(),
+                self.config.progress_style,
+            )
+            .to_string();
+        }
+        self.compact_progress_icon(task)
+    }
+
+    fn compact_progress_icon(&self, task: &BacklogTask) -> String {
+        let progress = self.checklist.get(&task.id);
+        let value = crate::progress::icon_state(progress);
         self.config.glyph(Column::Progress, value)
     }
 

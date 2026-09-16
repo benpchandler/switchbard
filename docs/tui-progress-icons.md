@@ -1,5 +1,7 @@
 # Task progress icons
 
+The default Progress display now uses the [Matrix pill](tui-matrix-pill.md). This page documents the optional `progress_style = "icons"` display and its original evidence. Existing explicit `glyphs.progress` overrides retain icons unless `progress_style` is set explicitly.
+
 Progress is a compact, read-only column beside Status in new default task views. It uses the same cached acceptance-criteria rollup as Checklist: each retained criterion on the task or its descendants has equal weight, and canceled branches are excluded. It does not estimate time or effort.
 
 | Icon | Criteria checked |

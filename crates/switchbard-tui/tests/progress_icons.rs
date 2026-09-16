@@ -61,7 +61,10 @@ fn show_progress(h: &mut Harness) {
 
 fn row_icon(h: &mut Harness, title: &str, icon: &str) {
     let screen = h.render();
-    let row = screen.lines().find(|line| line.contains(title)).unwrap();
+    let row = screen
+        .lines()
+        .find(|line| line.starts_with('│') && line.contains(title))
+        .unwrap();
     assert!(row.contains(icon), "expected {icon}: {row}");
 }
 
@@ -72,14 +75,14 @@ fn measured_boundaries_render_without_rounding_to_empty_or_complete() {
     coverage(&h, "TASK-1", 100, 0);
     let mut checked = 0;
     for (target, icon) in [
-        (0, "○"),
-        (1, "◔"),
-        (33, "◔"),
-        (34, "◑"),
-        (66, "◑"),
-        (67, "◕"),
-        (99, "◕"),
-        (100, "●"),
+        (0, "░░░░"),
+        (1, "▏░░░"),
+        (33, "█▎░░"),
+        (34, "█▎░░"),
+        (66, "██▋░"),
+        (67, "██▋░"),
+        (99, "███▉"),
+        (100, "████"),
     ] {
         for index in checked + 1..=target {
             set_backlog_acceptance_checked(&h.root, "TASK-1", index, true).unwrap();
@@ -109,11 +112,11 @@ fn measured_boundaries_render_without_rounding_to_empty_or_complete() {
     )
     .unwrap();
     h.press(KeyCode::Char('r'));
-    row_icon(&mut h, "Fix login", "◕");
+    row_icon(&mut h, "Fix login", "███▉");
     coverage(&h, "TASK-2", 201, 1);
     coverage(&h, "TASK-3", 0, 0);
     h.press(KeyCode::Char('r'));
-    row_icon(&mut h, "Add dark", "◔");
+    row_icon(&mut h, "Add dark", "▏░░░");
     h.type_text("vp");
     h.type_text("sprog");
     h.press(KeyCode::Char('a'));
@@ -175,8 +178,8 @@ fn descendants_canceled_and_manual_done_share_checklist_truth() {
     )
     .unwrap();
     h.press(KeyCode::Char('r'));
-    row_icon(&mut h, "Fix login", "◔");
-    row_icon(&mut h, "Add dark", "○");
+    row_icon(&mut h, "Fix login", "▌░░░");
+    row_icon(&mut h, "Add dark", "░░░░");
     row_icon(&mut h, "Write onboarding", "-");
     row_icon(&mut h, "Canceled outcomes", "-");
     select_task_titled(&mut h, "Fix login redirect loop");
@@ -236,7 +239,7 @@ fn default_adjacency_saved_view_picker_custom_glyph_and_layouts() {
     for (width, height) in [(140, 24), (100, 20), (60, 12), (40, 8)] {
         h.terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let screen = h.render();
-        assert!(screen.contains("●"), "{screen}");
+        assert!(screen.contains("████") || screen.contains("●"), "{screen}");
         evidence(&h, &format!("progress-{width}x{height}"));
         println!("EVIDENCE progress {width}x{height}\n{screen}\nEND EVIDENCE");
     }
@@ -258,5 +261,124 @@ fn compact_progress_header_keeps_percent_at_two_digit_positions() {
     h.terminal = Terminal::new(TestBackend::new(180, 20)).unwrap();
     let screen = h.press(KeyCode::Char('r'));
     assert!(harness::header_line(&screen).contains("10 %"), "{screen}");
-    row_icon(&mut h, "Fix login", "○");
+    row_icon(&mut h, "Fix login", "░░░░");
+}
+
+#[test]
+fn pill_theme_selection_working_and_ascii_fallback() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    show_progress(&mut h);
+    coverage(&h, "TASK-1", 8, 4);
+    h.press(KeyCode::Char('r'));
+    select_task_titled(&mut h, "Fix login redirect loop");
+    for (theme, color) in [
+        ("berg", Color::Rgb(255, 86, 95)),
+        ("light", Color::Rgb(184, 30, 53)),
+        ("plain", Color::Reset),
+    ] {
+        h.type_text(&format!(":theme {theme}"));
+        h.press(KeyCode::Enter);
+        row_icon(&mut h, "Fix login", "\u{e0b6}██░░\u{e0b4}");
+        let buffer = h.terminal.backend().buffer();
+        let index = buffer
+            .content
+            .iter()
+            .position(|c| c.symbol() == "\u{e0b6}")
+            .unwrap();
+        assert_eq!(buffer.content[index].fg, color);
+        assert_eq!(buffer.content[index].bg, buffer.content[index - 1].bg);
+        evidence(&h, &format!("pill-{theme}-selected"));
+    }
+    std::fs::write(
+        &h.config_path,
+        "return { progress_style = 'ascii', work = { period_ms = 0 } }",
+    )
+    .unwrap();
+    h.app.tick();
+    row_icon(&mut h, "Fix login", "(##..)");
+    switchbard_core::claim_work(
+        &h.root.join("work"),
+        &switchbard_core::WorkIdentity {
+            session_id: "pill-working".into(),
+            pid: std::process::id(),
+            agent: "claude".into(),
+        },
+        &h.root,
+        "TASK-1",
+    )
+    .unwrap();
+    h.app.tick();
+    let screen = h.render();
+    assert_eq!(h.app.working_sessions(), 1, "{screen}");
+    assert_eq!(
+        harness::cell_bg(&h, "(##..)"),
+        Some(Color::Rgb(0x16, 0x3b, 0x30))
+    );
+    evidence(&h, "pill-ascii-working");
+    std::fs::write(
+        &h.config_path,
+        "return { progress_style = 'pill', glyphs = { progress = { empty = 'x' } } }",
+    )
+    .unwrap();
+    h.app.tick();
+    row_icon(&mut h, "Fix login", "\u{e0b6}██░░\u{e0b4}");
+    evidence(&h, "pill-working");
+}
+
+#[test]
+fn unmeasured_only_view_stays_a_dash_when_column_is_compact() {
+    let mut h = Harness::new();
+    show_progress(&mut h);
+    std::fs::write(&h.config_path, "return { progress_style = 'pill', glyphs = { progress = { unmeasured = 'X', complete = 'X' } } }").unwrap();
+    h.app.tick();
+    for id in ["TASK-1", "TASK-2", "TASK-3"] {
+        coverage(&h, id, 0, 0);
+    }
+    h.press(KeyCode::Char('r'));
+    for width in [100, 40] {
+        h.terminal = Terminal::new(TestBackend::new(width, 12)).unwrap();
+        let screen = h.render();
+        let buffer = h.terminal.backend().buffer();
+        assert_eq!(
+            buffer
+                .content
+                .iter()
+                .filter(|cell| cell.symbol() == "-")
+                .count(),
+            3,
+            "{screen}"
+        );
+        assert!(
+            !screen.contains('\u{e0b6}')
+                && !screen
+                    .lines()
+                    .filter(|line| line.starts_with('│'))
+                    .any(|line| line.contains('X')),
+            "{screen}"
+        );
+        evidence(&h, &format!("pill-unmeasured-{width}"));
+    }
+}
+
+#[test]
+fn ascii_compact_fallback_uses_ascii_endpoints() {
+    let mut h = Harness::new();
+    show_progress(&mut h);
+    std::fs::write(&h.config_path, "return { progress_style = 'ascii' }").unwrap();
+    h.app.tick();
+    coverage(&h, "TASK-1", 2, 1);
+    coverage(&h, "TASK-2", 1, 0);
+    coverage(&h, "TASK-3", 1, 1);
+    h.press(KeyCode::Char('r'));
+    h.terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+    let screen = h.render();
+    row_icon(&mut h, "Fix login", "+");
+    row_icon(&mut h, "Add dark", "0");
+    row_icon(&mut h, "Write onboarding", "#");
+    assert!(
+        !screen.contains('◑') && !screen.contains('●') && !screen.contains('○'),
+        "{screen}"
+    );
+    evidence(&h, "pill-ascii-narrow");
 }
