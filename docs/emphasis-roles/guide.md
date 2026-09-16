@@ -12,8 +12,13 @@ Press `p` from Tasks or Pull Requests:
 - `g` offers the selected task's current group headings, including the top section. Ordinary task navigation still skips group headings.
 - `h` paints column headings; `t` paints navigation and the list title. The filter, the footer's view-settings summary and attention badges keep their own surfaces — `t`'s title paint covers the title line only (repo chip, shown count, view name), not the settings that moved to the footer hint bar (TASK-235): those are facts about the view, not part of the title, and stay on `Surface::Hint`.
 - `c` paints a whole column; `o` manages rule order; `d` clears all paint.
+- Whatever the scope, the highlight and the text are chosen in that order, and the rule they compose is the same text `:paint` takes.
 
-The style picker offers `quiet`, `strong`, `alert`, `band`, and `struck`, then the theme's highlight slots as swatches drawn in their own fill and default ink, then colors and palette slots. Type a combination such as `strong+p2`, `h2+alert` or `band+red` and press Enter. The typed picker title previews the composition. Esc cancels; Left returns to the prior picker. Color numbers and unique color-prefix shortcuts still work; the swatches sit between the roles and the colors, so the colors are numbered after them.
+The style picker then asks two questions. **Highlight** comes first: `none`, the neutral `band`, or one of the theme's highlight slots, each drawn as a swatch in the fill it would apply. **Text** comes second: `keep default ink`, then `quiet`, `strong`, `alert`, `struck`, the colors and the palette slots. Space adds a text token and leaves the picker open, so `strong` and `p2` can go on together; Enter applies what the title is previewing. Both steps preview the composed cell live, and the rows preview themselves the same way.
+
+Reopening a scope starts from the rule it already wears, marked on both steps. Picking a text style replaces the ink that rule had; tokens gathered with Space join each other instead. A rule's trailing `!` survives a restyle, because the marker belongs to the rule rather than to the roles. The text step holds at most fifteen tokens and says so rather than dropping one.
+
+Typing still works at either step: a whole rule such as `h2+alert`, `band+red` or `strong+p2` applies on Enter wherever you type it. Esc cancels; Left returns to the highlight with the fill you picked still marked. Choosing `none` and then `keep default ink` clears the rule on that scope. Color numbers and unique color-prefix shortcuts still work, on the text step where the colors live.
 
 ## Roles and precedence
 

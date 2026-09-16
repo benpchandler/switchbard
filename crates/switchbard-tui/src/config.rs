@@ -269,6 +269,22 @@ impl Theme {
         Some(style)
     }
 
+    /// A rule's roles as the theme reads them: the fill it paints, and the ink
+    /// written over it. The style picker composes against this, so what it
+    /// shows and what `emphasis_style` renders can never disagree. `None` when
+    /// a token names nothing this theme knows.
+    pub fn split_roles(
+        &self,
+        roles: &str,
+        palette: &[String],
+    ) -> Option<(Option<String>, Vec<String>)> {
+        let composition = crate::paint_eval::compose(roles, |part| self.token_kind(part, palette))?;
+        Some((
+            composition.fill().map(str::to_string),
+            composition.ink().map(str::to_string).collect(),
+        ))
+    }
+
     /// What one token does to a cell: fills it, or writes on it. `None` names
     /// nothing, which is how an invalid rule is caught.
     fn token_kind(&self, token: &str, palette: &[String]) -> Option<TokenKind> {
@@ -325,19 +341,20 @@ impl Theme {
             .unwrap_or_else(|| Style::default().add_modifier(Modifier::REVERSED))
     }
 
-    /// The slots the picker offers: everything declared, and always the first
-    /// few, which a theme that declares none still gets by derivation.
+    /// The slots the picker offers: every slot that resolves to a fill of its
+    /// own. A theme with a canvas derives the ones it does not declare, so all
+    /// of them are offered and six of the nine carry palette hues. A theme
+    /// whose colors belong to the terminal can only offer what it declares,
+    /// because the rest would all be the same reverse video.
     pub fn highlight_slots(&self) -> Vec<usize> {
-        let declared = self
-            .highlights
-            .keys()
-            .filter_map(|key| crate::highlight::slot_index(key));
-        let mut slots: Vec<usize> = (1..=crate::highlight::MINIMUM_SLOTS)
-            .chain(declared)
-            .collect();
-        slots.sort_unstable();
-        slots.dedup();
-        slots
+        let derives = self.background.is_some();
+        (1..=crate::highlight::MAX_SLOTS)
+            .filter(|index| {
+                derives
+                    || crate::highlight::slot_token(*index)
+                        .is_some_and(|token| self.highlights.contains_key(token))
+            })
+            .collect()
     }
 
     /// A claimed row keeps its band and modifiers throughout the cycle. Its

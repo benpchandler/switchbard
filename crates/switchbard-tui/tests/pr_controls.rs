@@ -259,6 +259,8 @@ fn live_pr_paint_links_and_saved_view_survive_page_switch_and_restart() {
         "linked task filter uses real disk references"
     );
     h.type_text("pr");
+    // The style picker asks for a highlight first (TASK-245).
+    pick(&mut h, "none");
     pick(&mut h, "red");
     if h.app.picker.is_some() {
         h.press(KeyCode::Esc);
@@ -271,11 +273,15 @@ fn live_pr_paint_links_and_saved_view_survive_page_switch_and_restart() {
     );
     h.type_text("pc");
     pick(&mut h, "title");
+    // The style picker asks for a highlight first (TASK-245).
+    pick(&mut h, "none");
     pick(&mut h, "blue");
     if h.app.picker.is_some() {
         h.press(KeyCode::Esc);
     }
     h.type_text("pf");
+    // The style picker asks for a highlight first (TASK-245).
+    pick(&mut h, "none");
     pick(&mut h, "green");
     assert_eq!(
         cell_fg(&h, &format!("#{number}")),
@@ -438,6 +444,8 @@ fn live_pr_historical_facets_and_paint_rule_order_use_shared_controls() {
     let painted = cell_fg(&h, &format!("#{number}")).unwrap();
     h.type_text("p4");
     pick(&mut h, "Not fetched");
+    // The style picker asks for a highlight first (TASK-245).
+    pick(&mut h, "none");
     pick(&mut h, "blue");
     h.press(KeyCode::Esc);
     assert_eq!(cell_fg(&h, &format!("#{number}")), Some(painted));

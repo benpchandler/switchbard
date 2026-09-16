@@ -4,7 +4,7 @@
 mod detail_edit;
 mod filter_completion;
 mod new_task;
-mod paint_flow;
+pub mod paint_flow;
 mod pickers;
 pub mod pr_merge;
 pub mod resume;
@@ -158,6 +158,9 @@ pub struct App {
     move_origin: Option<Vec<Column>>,
     /// Which values list to return to after a color is picked.
     paint_return: Option<Column>,
+    /// The fill and ink the two-step style picker is composing, live while
+    /// either of its steps is open (TASK-245).
+    pub(crate) paint_draft: Option<crate::app::paint_flow::PaintDraft>,
     /// The slot `v n` is naming, while `Mode::RenameView` is active.
     rename_slot: Option<usize>,
     pub history: crate::view_history::HistoryStore,
@@ -296,6 +299,7 @@ impl App {
             calendar_day: crate::date_fields::today(),
             move_origin: None,
             paint_return: None,
+            paint_draft: None,
             rename_slot: None,
             views,
             history,

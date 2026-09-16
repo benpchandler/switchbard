@@ -18,8 +18,8 @@ use crate::config::{Action, Surface, Theme};
 use crate::detail_pane::FieldRow;
 use crate::group::Row;
 use crate::page::Page;
-use crate::paint::{self, PaintRule};
-use crate::picker::{self, ColumnPurpose, PaintPick, Payload, PickerPurpose, ValuePicker};
+use crate::paint::{self};
+use crate::picker::{self, ColumnPurpose, Payload, PickerPurpose, ValuePicker};
 use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
@@ -1019,6 +1019,10 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
             ":paint <rules>",
             "replace rules; + combines roles, ! stops; off clears",
         ),
+        (
+            "p <scope>",
+            "highlight, then text: space adds a token, Enter applies, ← back",
+        ),
         (":palette <name>", "colors `auto` paints with"),
         (":view <name>  :reload  :q", ""),
         ("f/s <col#>", "filter/sort by column"),
@@ -1362,8 +1366,12 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         .iter()
         .enumerate()
         .map(|(index, option)| {
-            let value = picker.options.iter().position(|candidate| candidate == option)
-                .map(|position| labels[position].as_str()).unwrap_or(&option.label);
+            let value = picker
+                .options
+                .iter()
+                .position(|candidate| candidate == option)
+                .map(|position| labels[position].as_str())
+                .unwrap_or(&option.label);
             let shown = match (&picker.purpose, &option.payload) {
                 (PickerPurpose::Filter(field), Payload::Text(value)) => {
                     Filter::field_allows(app.filter_text(), *field, value, app.registry())
@@ -1379,33 +1387,55 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                     | PickerPurpose::PaintTarget,
                     Payload::Column(column),
                 ) => app.state.columns.contains(column),
-                (PickerPurpose::TaskParent(id), Payload::Parent(parent)) => app.tasks().iter().any(|task| task.id == *id && task.parent == *parent),
-                (PickerPurpose::TaskProject(id), Payload::Project(project)) => app.tasks().iter().any(|task| task.id == *id && task.project == *project),
-                (PickerPurpose::TaskPlanning(id) | PickerPurpose::DetailPlanning(id), Payload::Text(planning)) => app.tasks().iter().any(|task| task.id == *id && task.planning.as_str().eq_ignore_ascii_case(planning)),
-                (PickerPurpose::TaskStatus(id), Payload::Text(status)) => app.tasks().iter().any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
-                (PickerPurpose::DetailStatus(id), Payload::Text(status)) => app.tasks().iter().any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
-                (PickerPurpose::DetailPriority(id), Payload::Text(priority)) => app.tasks().iter().any(|task| task.id == *id && task.priority.eq_ignore_ascii_case(priority)),
-                (PickerPurpose::DetailProject(id), Payload::Project(project)) => app.tasks().iter().any(|task| task.id == *id && task.project == *project),
-                (PickerPurpose::DetailLabels(id), Payload::Text(label)) => app.tasks().iter().any(|task| task.id == *id && task.labels.iter().any(|l| l.eq_ignore_ascii_case(label))),
+                (PickerPurpose::TaskParent(id), Payload::Parent(parent)) => app
+                    .tasks()
+                    .iter()
+                    .any(|task| task.id == *id && task.parent == *parent),
+                (PickerPurpose::TaskProject(id), Payload::Project(project)) => app
+                    .tasks()
+                    .iter()
+                    .any(|task| task.id == *id && task.project == *project),
+                (
+                    PickerPurpose::TaskPlanning(id) | PickerPurpose::DetailPlanning(id),
+                    Payload::Text(planning),
+                ) => app.tasks().iter().any(|task| {
+                    task.id == *id && task.planning.as_str().eq_ignore_ascii_case(planning)
+                }),
+                (PickerPurpose::TaskStatus(id), Payload::Text(status)) => app
+                    .tasks()
+                    .iter()
+                    .any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
+                (PickerPurpose::DetailStatus(id), Payload::Text(status)) => app
+                    .tasks()
+                    .iter()
+                    .any(|task| task.id == *id && task.status.eq_ignore_ascii_case(status)),
+                (PickerPurpose::DetailPriority(id), Payload::Text(priority)) => app
+                    .tasks()
+                    .iter()
+                    .any(|task| task.id == *id && task.priority.eq_ignore_ascii_case(priority)),
+                (PickerPurpose::DetailProject(id), Payload::Project(project)) => app
+                    .tasks()
+                    .iter()
+                    .any(|task| task.id == *id && task.project == *project),
+                (PickerPurpose::DetailLabels(id), Payload::Text(label)) => {
+                    app.tasks().iter().any(|task| {
+                        task.id == *id && task.labels.iter().any(|l| l.eq_ignore_ascii_case(label))
+                    })
+                }
                 (PickerPurpose::MoveColumns(placed), _) => placed.contains(&(index + 1)),
                 (PickerPurpose::PaintRules, Payload::Rule(rule)) => *rule == 0,
                 (PickerPurpose::PaintValues(column), Payload::Text(value)) => {
                     paint::value_color(&app.state.paint, *column, value).is_some()
                 }
-                (PickerPurpose::PaintColor(pick), Payload::Text(color)) => match pick {
-                    PaintPick::Value(column, painted) => {
-                        paint::value_color(&app.state.paint, *column, painted).as_deref() == Some(color)
-                    }
-                    PaintPick::Rows(filter) => app.state.paint.iter().any(|rule| {
-                        matches!(rule, PaintRule::Rows { filter: f, color: c } if f == filter && c == color)
-                    }),
-                    PaintPick::Column(column) => app.state.paint.iter().any(|rule| {
-                        matches!(rule, PaintRule::Column { column: col, color: c } if col == column && c == color)
-                    }),
-                    PaintPick::Header => app.state.paint.iter().any(|rule| matches!(rule, PaintRule::Header { color: c } if c == color)),
-                    PaintPick::Title => app.state.paint.iter().any(|rule| matches!(rule, PaintRule::Title { color: c } if c == color)),
-                    PaintPick::Heading(value) => app.state.paint.iter().any(|rule| matches!(rule, PaintRule::Heading { value: v, color: c } if v == value && c == color)),
-                },
+                // Both style steps mark what the draft holds, which starts as
+                // the rule the scope already wears.
+                (
+                    PickerPurpose::PaintHighlight | PickerPurpose::PaintText,
+                    Payload::Text(token),
+                ) => app.paint_draft_holds(&picker.purpose, Some(token)),
+                (PickerPurpose::PaintHighlight | PickerPurpose::PaintText, Payload::NoColor) => {
+                    app.paint_draft_holds(&picker.purpose, None)
+                }
                 _ => false,
             };
             let mut style = if index == picker.selected {
@@ -1417,9 +1447,25 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                 style = style.patch(theme.style(Surface::Hint));
             }
             match (&picker.purpose, &option.payload) {
-                // Show the color itself: this is what the painted text will look like.
-                (PickerPurpose::PaintColor(_), Payload::Text(color)) => {
-                    if let Some(emphasis) = theme.emphasis_style(color, &app.config.palette) {
+                // Every row of either step is drawn as the cell would look if
+                // that row were picked: its own token composed with the rest of
+                // the draft, so a swatch shows the fill under the drafted ink.
+                (
+                    PickerPurpose::PaintHighlight | PickerPurpose::PaintText,
+                    Payload::Text(token),
+                ) => {
+                    if let Some(emphasis) = app
+                        .paint_row_preview(&picker.purpose, Some(token))
+                        .and_then(|roles| theme.emphasis_style(&roles, &app.config.palette))
+                    {
+                        style = style.patch(emphasis);
+                    }
+                }
+                (PickerPurpose::PaintHighlight | PickerPurpose::PaintText, Payload::NoColor) => {
+                    if let Some(emphasis) = app
+                        .paint_row_preview(&picker.purpose, None)
+                        .and_then(|roles| theme.emphasis_style(&roles, &app.config.palette))
+                    {
                         style = style.patch(emphasis);
                     }
                 }
@@ -1431,8 +1477,14 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                     }
                 }
                 (PickerPurpose::PaintRules, Payload::Rule(rule)) => {
-                    if let Some(roles) = app.state.paint.get(*rule).and_then(|rule| rule.role_lists().first().copied()) {
-                        style = style.patch(paint::resolve_style(roles, theme, &app.config.palette));
+                    if let Some(roles) = app
+                        .state
+                        .paint
+                        .get(*rule)
+                        .and_then(|rule| rule.role_lists().first().copied())
+                    {
+                        style =
+                            style.patch(paint::resolve_style(roles, theme, &app.config.palette));
                     }
                 }
                 _ => {}
@@ -1440,11 +1492,21 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
             let mark = if shown { "✓" } else { " " };
             Line::from(vec![
                 Span::styled(
-                    format!("{:<2}", if matches!(picker.purpose, PickerPurpose::TaskParent(_)) { String::new() } else { keys.get(index).cloned().unwrap_or_default() }),
+                    format!(
+                        "{:<2}",
+                        if matches!(picker.purpose, PickerPurpose::TaskParent(_)) {
+                            String::new()
+                        } else {
+                            keys.get(index).cloned().unwrap_or_default()
+                        }
+                    ),
                     theme.style(Surface::Accent),
                 ),
                 Span::styled(
-                    format!("{mark}{value:<width$}", width = (width as usize).saturating_sub(9)),
+                    format!(
+                        "{mark}{value:<width$}",
+                        width = (width as usize).saturating_sub(9)
+                    ),
                     style,
                 ),
                 Span::styled(
@@ -1471,20 +1533,30 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
     } else {
         format!("{}▏", picker.number)
     };
-    let preview = match picker.purpose {
-        PickerPurpose::PaintColor(_) => {
-            theme.emphasis_style(picker.typed.trim(), &app.config.palette)
-        }
+    // The title previews the composed cell live: what has been typed while it
+    // is a valid rule, else the fill and ink drafted so far.
+    let previewed = match picker.purpose {
+        PickerPurpose::PaintHighlight | PickerPurpose::PaintText => app.paint_preview(picker),
         _ => None,
     };
+    let preview = previewed
+        .as_ref()
+        .and_then(|roles| theme.emphasis_style(roles, &app.config.palette));
     let title_style = preview.unwrap_or_default();
+    let previewed = previewed.filter(|_| preview.is_some());
     let block = Block::default()
         .style(theme.canvas_style())
         .borders(Borders::ALL)
         .border_style(theme.style(Surface::Accent))
         .title_style(title_style)
         .title(
-            pending + &picker_title(picker, preview.is_some(), app.registry(), app.legacy_order),
+            pending
+                + &picker_title(
+                    picker,
+                    previewed.as_deref(),
+                    app.registry(),
+                    app.legacy_order,
+                ),
         );
     let block = if !matches!(
         picker.purpose,
@@ -1554,7 +1626,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
 /// What is being picked, plus any typed text. Key hints live in the footer.
 fn picker_title(
     picker: &ValuePicker,
-    typed_is_color: bool,
+    previewed: Option<&str>,
     registry: &crate::columns::ColumnRegistry,
     legacy_order: bool,
 ) -> String {
@@ -1577,7 +1649,8 @@ fn picker_title(
         PickerPurpose::PaintTarget => "paint".to_string(),
         PickerPurpose::PaintRowValues => "selected row values".to_string(),
         PickerPurpose::PaintHeadings => "paint group heading".to_string(),
-        PickerPurpose::PaintColor(_) => "color".to_string(),
+        PickerPurpose::PaintHighlight => "highlight · step 1 of 2".to_string(),
+        PickerPurpose::PaintText => "text · step 2 of 2".to_string(),
         PickerPurpose::PaintRules => "paint rules · top is the base".to_string(),
         PickerPurpose::ChoosePaintRule(action) => format!("{action:?} paint rule"),
         PickerPurpose::ColumnActions(column) => column.name(registry).to_string(),
@@ -1612,12 +1685,17 @@ fn picker_title(
         PickerPurpose::DeleteView => "delete which view".to_string(),
         PickerPurpose::ChooseColumnAction(action) => action.label().to_string(),
     };
-    if picker.typed.is_empty() {
-        format!(" {subject} ")
-    } else if typed_is_color {
-        format!(" {} ← this is how it looks · enter applies ", picker.typed)
-    } else {
-        format!(" {subject}: {}▏", picker.typed)
+    // A preview never replaces the step it belongs to: at 40 columns the title
+    // truncates, and which step this is has to survive that.
+    let step = match picker.purpose {
+        PickerPurpose::PaintHighlight => "highlight · ",
+        PickerPurpose::PaintText => "text · ",
+        _ => "",
+    };
+    match previewed {
+        Some(roles) => format!(" {step}{roles} ← this is how it looks · enter applies "),
+        None if picker.typed.is_empty() => format!(" {subject} "),
+        None => format!(" {subject}: {}▏", picker.typed),
     }
 }
 

@@ -9,10 +9,6 @@ use ratatui::style::Color;
 /// and bounds the picker.
 pub const MAX_SLOTS: usize = 9;
 
-/// Slots every theme offers, declared or derived, so the picker always has
-/// swatches to show.
-pub const MINIMUM_SLOTS: usize = 3;
-
 /// How far a derived fill sits from a dark canvas, in OKLCH lightness. Far
 /// enough to read as a fill, near enough that body ink still carries.
 const STEP_ON_DARK: f64 = 0.10;

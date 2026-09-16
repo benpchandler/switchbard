@@ -21,10 +21,10 @@ const INK_FLOORS: [(&str, f64); 4] = [
     ("struck", 75.0),
 ];
 
-/// Every fill the presets can put under that ink: the neutral band, each
-/// declared highlight slot, and one slot no preset declares, which exercises
-/// the fill derived from the palette at a fixed step off the canvas.
-const FILLS: [&str; 5] = ["band", "h1", "h2", "h3", "h7"];
+/// Every fill the presets can put under that ink: the neutral band, the three
+/// highlight slots each preset declares, and the six it derives from the
+/// palette, which the picker now offers alongside them.
+const FILLS: [&str; 10] = ["band", "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9"];
 
 const COLORED_PRESETS: [&str; 4] = ["berg", "bloomberg", "darkroom", "light"];
 

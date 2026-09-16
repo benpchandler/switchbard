@@ -112,3 +112,54 @@ and a typed `h2+alert` previewed and applied. `tests/legibility.rs` gates every
 role ink over every preset fill, unselected and selected, and the owner's pink
 fill with alert ink at rest, under the cursor, through a working pulse and at its
 steady peak.
+
+## Two-step style picker (TASK-245)
+
+The owner tried the highlight-slot check on installed main 5a9e9ae8 and found
+the combination unreachable: one row of the style picker applied one token, so
+`h3+alert` existed only as typed text. The picker now asks for the highlight
+first and the text second.
+
+Decisions: the draft being composed (`App::paint_draft`) is the one authority
+while either step is open, so the purposes carry no state and `←` keeps meaning
+"back a step" rather than "undo a toggle". `paint_eval::compose_text` writes the
+rule and is the inverse of `compose`, which reads it, so the picker can only
+produce grammar `:paint` already parses and a view already saves. Reopening a
+scope seeds the draft from the rule it wears, split by the theme that composed
+it, which is also what marks the rows. Space is additive on the text step only;
+`keep default ink` is the absence of ink and clears what was gathered, so
+`none` then `keep default ink` is how a rule is removed. A rule typed in full
+lands whole at either step.
+
+One deviation from the brief, deliberately: step one lists `none`, `band` and
+the highlight slots, not the named colors. A bare color is ink in the saved
+grammar, and `compose` classifies a token by the style behind it, so offering
+"red as a fill" would need either a new token, which is reserved, or a
+positional reinterpretation that would change how existing saved rules such as
+`struck+red` render. The nine slots cover colored fills instead: a theme with a
+canvas derives the six it does not declare from the palette, so the step offers
+ten fills without touching the grammar.
+
+The picker's color numbering returns to what it was before TASK-237, because
+the colors now sit on their own step with no swatches above them: `12` is
+lightblue again, `5` is magenta.
+
+Review caught three things after the first pass. The stop marker was being
+dropped on a round trip, because `compose` strips it before the split and
+`set_rule` replaces a rule wholesale: the draft now carries it and
+`compose_text` writes it back, so restyling `column:title=green!` keeps the
+`!` and the rules above it keep being stopped. Picking a text style now
+replaces ink that merely came from the existing rule while still joining ink
+gathered with Space, so restyling green to red writes `red` rather than
+`green+red`. The ink cap reports itself on the status line instead of
+swallowing the token, and the row preview borrows the drafted ink rather than
+cloning it per row per frame.
+
+Evidence: `tests/emphasis_controls.rs` covers the two-step journey end to end
+(highlight, then text, producing `h3+alert` and rendering fill and ink), the
+additive text step (`strong` and `p2` gathered with Space and previewed before
+Enter), Esc at either step, `←` back to a still-marked fill, a rule typed in
+full at either step, and both steps at 40 columns, plus a stopped rule restyled without losing its
+marker and the ink cap reporting itself. `tests/legibility.rs` gates all ten
+fills the step now offers, the six derived ones included. Every existing paint
+journey was updated to walk through the highlight step and still passes.

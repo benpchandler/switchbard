@@ -571,7 +571,8 @@ impl App {
         let row_initial = matches!(
             picker.purpose,
             PickerPurpose::Filter(_)
-                | PickerPurpose::PaintColor(_)
+                | PickerPurpose::PaintHighlight
+                | PickerPurpose::PaintText
                 | PickerPurpose::DetailPlanning(_)
                 | PickerPurpose::DetailStatus(_)
                 | PickerPurpose::DetailPriority(_)
@@ -617,6 +618,7 @@ impl App {
                     Mode::Browse
                 };
                 self.paint_return = None;
+                self.paint_draft = None;
                 self.move_origin = None;
             }
             KeyCode::Down => picker.selected = (picker.selected + 1).min(last),
@@ -795,13 +797,14 @@ impl App {
                     picker.selected = moved_to;
                 }
             }
-            KeyCode::Char(' ') if matches!(purpose, PickerPurpose::PaintColor(_)) => {
-                let PickerPurpose::PaintColor(pick) = purpose else {
-                    return;
-                };
-                self.picker = None;
-                self.mode = Mode::Browse;
-                self.apply_paint(pick, "none");
+            KeyCode::Char(' ') if purpose == PickerPurpose::PaintText => {
+                match picker.highlighted().map(|option| option.payload) {
+                    Some(Payload::Text(token)) => self.toggle_paint_ink(&token),
+                    // `keep default ink` is the absence of ink, so it clears
+                    // what has been gathered rather than joining it.
+                    Some(Payload::NoColor) => self.clear_paint_ink(),
+                    _ => {}
+                }
             }
             KeyCode::Char(' ') if purpose == PickerPurpose::History => {
                 if picker.typed.len() < 256 {
@@ -902,13 +905,15 @@ impl App {
                     && matches
                         .first()
                         .is_some_and(|option| matches!(option.payload, Payload::Column(_)));
-                let composing_roles = matches!(purpose, PickerPurpose::PaintColor(_))
-                    && (crate::config::EMPHASIS_ROLES
-                        .iter()
-                        .any(|role| role.starts_with(&picker.typed))
-                        || picker.typed.contains('+')
-                        || picker.typed.starts_with('p')
-                        || crate::highlight::slot_index(&picker.typed).is_some());
+                let composing_roles = matches!(
+                    purpose,
+                    PickerPurpose::PaintHighlight | PickerPurpose::PaintText
+                ) && (crate::config::EMPHASIS_ROLES
+                    .iter()
+                    .any(|role| role.starts_with(&picker.typed))
+                    || picker.typed.contains('+')
+                    || picker.typed.starts_with('p')
+                    || crate::highlight::slot_index(&picker.typed).is_some());
                 if matches.len() == 1 && (!toggles || legacy_column_pick) && !composing_roles {
                     self.apply_picked_value();
                 }
@@ -984,13 +989,19 @@ impl App {
         };
         self.mode = Mode::Browse;
         let typed = picker.typed.trim().to_string();
-        let picked = picker.highlighted().or_else(|| match picker.purpose {
-            PickerPurpose::PaintColor(_) if crate::paint::validate_roles(&typed).is_ok() => {
-                Some(PickOption::text(typed.clone(), 0))
-            }
-            _ => None,
-        });
-        let Some(picked) = picked else {
+        // A rule typed in full lands whole, at either step: it names its own
+        // fill and ink, so there is nothing left for the other step to add.
+        if matches!(
+            picker.purpose,
+            PickerPurpose::PaintHighlight | PickerPurpose::PaintText
+        ) && picker.highlighted().is_none()
+            && crate::paint::validate_roles(&typed).is_ok()
+        {
+            self.picker_parents.clear();
+            self.apply_typed_paint(&typed);
+            return;
+        }
+        let Some(picked) = picker.highlighted() else {
             self.status = format!("nothing matches '{typed}'");
             return;
         };
@@ -1134,7 +1145,7 @@ impl App {
                 Payload::PaintScope(pick),
             ) => {
                 self.paint_return = None;
-                self.open_paint_color_picker(pick);
+                self.open_paint_highlight_picker(pick);
             }
             (PickerPurpose::PaintTarget, Payload::DeleteAllPaint) => self.clear_all_paint(),
             (PickerPurpose::PaintTarget, Payload::OrderRules) => self.open_paint_rules_picker(),
@@ -1143,26 +1154,28 @@ impl App {
                 self.paint_column_entry(column)
             }
             (PickerPurpose::PaintTarget, Payload::ThisRow(id)) => {
-                self.open_paint_color_picker(PaintPick::Rows(format!("id:{id}")))
+                self.open_paint_highlight_picker(PaintPick::Rows(format!("id:{id}")))
             }
             (PickerPurpose::PaintTarget, Payload::FilteredRows(filter)) => {
-                self.open_paint_color_picker(PaintPick::Rows(filter))
+                self.open_paint_highlight_picker(PaintPick::Rows(filter))
             }
             (PickerPurpose::PaintColumn, Payload::Column(column)) => {
                 self.paint_return = None;
-                self.open_paint_color_picker(PaintPick::Column(column));
+                self.open_paint_highlight_picker(PaintPick::Column(column));
             }
             (PickerPurpose::PaintValues(column), Payload::Auto) => {
                 self.paint_auto(column);
                 self.open_paint_values_picker(column);
             }
             (PickerPurpose::PaintValues(column), Payload::Text(value)) => {
-                self.open_paint_color_picker(PaintPick::Value(column, value))
+                self.open_paint_highlight_picker(PaintPick::Value(column, value))
             }
-            (PickerPurpose::PaintColor(pick), Payload::Text(color)) => {
-                self.apply_paint(pick, &color)
+            (PickerPurpose::PaintHighlight, Payload::Text(fill)) => {
+                self.choose_paint_highlight(Some(&fill))
             }
-            (PickerPurpose::PaintColor(pick), Payload::NoColor) => self.apply_paint(pick, "none"),
+            (PickerPurpose::PaintHighlight, Payload::NoColor) => self.choose_paint_highlight(None),
+            (PickerPurpose::PaintText, Payload::Text(ink)) => self.apply_paint_draft(Some(&ink)),
+            (PickerPurpose::PaintText, Payload::NoColor) => self.apply_paint_draft(None),
             (PickerPurpose::Settings, Payload::Text(status)) => {
                 // apply_picked_value took the picker; toggle_setting reopens it.
                 self.toggle_setting(&status)

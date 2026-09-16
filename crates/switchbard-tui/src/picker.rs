@@ -41,8 +41,13 @@ pub enum PickerPurpose {
     PaintHeadings,
     /// A column's values, one color each.
     PaintValues(Column),
-    /// After a target: which color.
-    PaintColor(PaintPick),
+    /// Step one of the style picker: the fill the cells wear. What is being
+    /// composed lives in `App::paint_draft`, not here, so toggling ink in step
+    /// two never rewrites this purpose and `←` keeps meaning "back a step".
+    PaintHighlight,
+    /// Step two: the ink written over that fill. Space adds a token, Enter
+    /// applies what the title is previewing.
+    PaintText,
     /// After `p c`: which column to paint whole.
     PaintColumn,
     /// `p o`: the rule hierarchy, top is the base.
@@ -402,7 +407,10 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         }
         PickerPurpose::PaintRowValues => "paints this value wherever it appears · ← back · esc",
         PickerPurpose::PaintTarget => "number or letter picks · esc",
-        PickerPurpose::PaintColor(_) => "role+color then Enter · space clears · ← back · esc",
+        PickerPurpose::PaintHighlight => {
+            "the fill · none leaves the cell bare · name or number picks · ← back · esc"
+        }
+        PickerPurpose::PaintText => "space adds a token · enter applies · ← back to the fill · esc",
         PickerPurpose::PaintRules | PickerPurpose::ChoosePaintRule(_) => {
             "↑/↓ select · key or Enter picks · h back · Esc closes"
         }

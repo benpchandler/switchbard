@@ -58,6 +58,8 @@ fn paint(h: &mut Harness, bucket: &str, color: &str) {
     h.press(KeyCode::Char('p'));
     pick(h, "When task filed");
     pick(h, bucket);
+    // The style picker asks for a highlight before the text (TASK-245).
+    pick(h, "none");
     pick(h, color);
     h.press(KeyCode::Esc);
 }
@@ -117,6 +119,8 @@ fn independent_date_rules_follow_existing_row_column_precedence_and_restart() {
     assert!(!menu.contains("When task filed"), "{menu}");
     pick(&mut h, "When merged");
     pick(&mut h, "last 30 days");
+    // The style picker asks for a highlight first (TASK-245).
+    pick(&mut h, "none");
     pick(&mut h, "blue");
     h.press(KeyCode::Esc);
     h.type_text("vsd");
@@ -142,6 +146,8 @@ fn date_picker_is_available_with_zero_rows_and_at_narrow_and_wide_sizes() {
         let screen = h.render();
         assert!(screen.contains("last 7 days"), "{screen}");
         pick(&mut h, "future");
+        // The style picker asks for a highlight first (TASK-245).
+        pick(&mut h, "none");
         pick(&mut h, "blue");
         h.press(KeyCode::Esc);
         assert_eq!(
@@ -187,6 +193,8 @@ fn authoritative_live_merge_dates_paint_real_pr_rows_and_survive_restart() {
     h.press(KeyCode::Char('p'));
     pick(&mut h, "When merged");
     pick(&mut h, "last 30 days");
+    // The style picker asks for a highlight first (TASK-245).
+    pick(&mut h, "none");
     pick(&mut h, "green");
     h.press(KeyCode::Esc);
     h.type_text("/status:merged merged:last30days");
