@@ -2,6 +2,7 @@
 //! Submodules extend `App` by concept: `pickers`, `paint_flow`, `slots`.
 
 mod detail_edit;
+mod filter_completion;
 mod new_task;
 mod paint_flow;
 mod pickers;
@@ -13,6 +14,8 @@ mod task_cancel;
 mod task_parent;
 mod task_project;
 mod task_status;
+
+pub use filter_completion::FilterCompletionHint;
 
 use crate::page::Page;
 
@@ -170,6 +173,10 @@ pub struct App {
     inactive_view: usize,
     pub mode: Mode,
     pub input: String,
+    /// What the filter read the moment `/` was pressed (before the trailing
+    /// space `Action::Filter` adds for convenience): restored verbatim on
+    /// Esc, so live typing or a completion never outlives a canceled edit.
+    filter_before_edit: String,
     pub pane: Pane,
     /// Cursor row inside the focused detail pane (`detail_edit`'s `FieldRow`
     /// list for the selected task); meaningless while `pane != Pane::Detail`.
@@ -302,6 +309,7 @@ impl App {
             config,
             mode: Mode::Browse,
             input: String::new(),
+            filter_before_edit: String::new(),
             pane: Pane::None,
             detail_cursor: 0,
             detail_collapsed: std::collections::BTreeSet::new(),
@@ -1245,6 +1253,8 @@ impl App {
         match event.code {
             KeyCode::Esc => {
                 self.mode = Mode::Browse;
+                let restored = std::mem::take(&mut self.filter_before_edit);
+                self.set_filter(restored);
                 self.telemetry.record("action", "filter_cancel");
             }
             KeyCode::Enter => {
@@ -1257,6 +1267,7 @@ impl App {
                 text.pop();
                 self.set_filter(text);
             }
+            KeyCode::Tab => self.complete_filter_word(),
             KeyCode::Char(c) => {
                 let mut text = self.filter_text().to_string();
                 text.push(c);
@@ -1486,7 +1497,8 @@ impl App {
             Action::Filter => {
                 self.mode = Mode::Filter;
                 self.status.clear();
-                let text = self.filter_text();
+                let text = self.filter_text().to_string();
+                self.filter_before_edit = text.clone();
                 if !text.is_empty() && !text.ends_with(' ') {
                     self.set_filter(format!("{text} "));
                 }
