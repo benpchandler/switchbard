@@ -140,10 +140,18 @@ fn working_cycle_preserves_readability_and_disable_keeps_a_steady_band() {
         )
         .unwrap();
         h.app.tick();
+        // The working band replaces a painted fill, so the ink a fill rule
+        // chose has to survive the whole pulse over that cell too.
+        command(&mut h, "paint column:title=h1+alert");
         let mut backgrounds = std::collections::HashSet::new();
         for _ in 0..100 {
             h.render();
-            gate(&h, "Fix login", 75.0, &format!("{name} working"));
+            gate(
+                &h,
+                "Fix login",
+                60.0,
+                &format!("{name} working over h1+alert"),
+            );
             backgrounds.insert(cell_bg(&h, "Fix login"));
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
@@ -151,6 +159,13 @@ fn working_cycle_preserves_readability_and_disable_keeps_a_steady_band() {
             backgrounds.len() > 2,
             "motion endpoints rendered for {name}"
         );
+        command(&mut h, "paint off");
+        for _ in 0..100 {
+            h.render();
+            gate(&h, "Fix login", 75.0, &format!("{name} working"));
+            backgrounds.insert(cell_bg(&h, "Fix login"));
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
         std::fs::write(
             &h.config_path,
             format!("return {{ theme = '{name}', work = {{ period_ms = 0 }} }}"),
