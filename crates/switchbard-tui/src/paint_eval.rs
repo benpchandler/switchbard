@@ -25,13 +25,29 @@ pub enum TokenKind {
     Ink,
 }
 
-/// One rule's role list split into the fill it paints and the ink over it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One rule's role list, with the token that fills the cell singled out. This
+/// is resolved once per painted cell per frame, so it borrows the rule text and
+/// allocates nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Composition<'a> {
+    roles: &'a str,
+    fill: Option<usize>,
+}
+
+impl<'a> Composition<'a> {
     /// The rightmost fill in the list; an earlier fill is painted over.
-    pub fill: Option<&'a str>,
+    pub fn fill(&self) -> Option<&'a str> {
+        self.fill.and_then(|index| tokens(self.roles).nth(index))
+    }
+
     /// Every other token, in written order, whichever side of the fill it sits.
-    pub ink: Vec<&'a str>,
+    pub fn ink(&self) -> impl Iterator<Item = &'a str> + '_ {
+        let fill = self.fill;
+        tokens(self.roles)
+            .enumerate()
+            .filter(move |(index, _)| Some(*index) != fill)
+            .map(|(_, token)| token)
+    }
 }
 
 /// Split `roles` into the fill it paints and the ink written over it. The
@@ -44,26 +60,25 @@ pub fn compose<'a>(
     roles: &'a str,
     kind: impl Fn(&str) -> Option<TokenKind>,
 ) -> Option<Composition<'a>> {
-    let roles = roles.trim();
-    let roles = roles.strip_suffix('!').unwrap_or(roles);
-    let tokens: Vec<&str> = roles
-        .split('+')
-        .map(|token| token.trim().trim_end_matches('!'))
-        .collect();
-    if tokens.len() > MAX_ROLE_TOKENS {
-        return None;
-    }
-    let mut composition = Composition {
-        fill: None,
-        ink: Vec::new(),
-    };
-    for token in tokens {
-        match kind(token)? {
-            TokenKind::Fill => composition.fill = Some(token),
-            TokenKind::Ink => composition.ink.push(token),
+    let mut fill = None;
+    for (index, token) in tokens(roles).enumerate() {
+        if index >= MAX_ROLE_TOKENS {
+            return None;
+        }
+        if kind(token)? == TokenKind::Fill {
+            fill = Some(index);
         }
     }
-    Some(composition)
+    Some(Composition { roles, fill })
+}
+
+/// The tokens of a role list, trimmed, with the rule's trailing stop marker off.
+fn tokens(roles: &str) -> impl Iterator<Item = &str> + '_ {
+    let roles = roles.trim();
+    let roles = roles.strip_suffix('!').unwrap_or(roles);
+    roles
+        .split('+')
+        .map(|token| token.trim().trim_end_matches('!'))
 }
 
 pub fn cell_token<'a>(

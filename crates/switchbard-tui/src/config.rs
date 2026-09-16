@@ -261,7 +261,7 @@ impl Theme {
     pub fn emphasis_style(&self, token: &str, palette: &[String]) -> Option<Style> {
         let composition = crate::paint_eval::compose(token, |part| self.token_kind(part, palette))?;
         let mut style = Style::default();
-        for part in composition.fill.into_iter().chain(composition.ink) {
+        for part in composition.fill().into_iter().chain(composition.ink()) {
             style = style.patch(self.token_style(part, palette)?);
         }
         Some(style)
