@@ -230,61 +230,135 @@ fn the_pulse_never_darkens_a_working_rows_text_below_its_rest_colour() {
     );
 }
 
-#[test]
-fn the_band_pulses_through_brightness_levels_and_help_lists_pass() {
-    let mut h = Harness::new();
-    std::fs::write(
-        &h.config_path,
-        "return { work = { period_ms = 40, frames = 40 } }",
-    )
-    .unwrap();
-    h.app.tick();
-    let id = h.app.selected_task().unwrap().id.clone();
-    let title = h.selected_title();
-    claim_work(
-        &h.root.join("work"),
-        &session("aaaa1111-1", std::process::id()),
-        &h.root,
-        &id,
-    )
-    .unwrap();
-    h.app.tick();
-    assert!(
-        h.app.next_blink().is_some(),
-        "a working row schedules a redraw"
-    );
-    let mut seen = std::collections::HashSet::new();
-    for _ in 0..200 {
-        h.render();
-        seen.insert(cell_bg(&h, &title));
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    assert!(
-        seen.len() >= 4,
-        "the band fades through several levels: {seen:?}"
-    );
-    let canvas = h.app.config.theme.background().unwrap();
-    assert!(
-        seen.iter()
-            .all(|color| color.is_some_and(|value| value != canvas)),
-        "every frame must retain the working band: {seen:?}"
-    );
-    let luminance = |color: &Option<ratatui::style::Color>| match color {
-        Some(ratatui::style::Color::Rgb(r, g, b)) => {
-            [(*r, 0.2126729), (*g, 0.7151522), (*b, 0.0721750)]
-                .into_iter()
-                .map(|(channel, weight)| (f64::from(channel) / 255.0).powf(2.4) * weight)
-                .sum::<f64>()
-        }
-        other => panic!("expected exact band color, got {other:?}"),
+/// OKLab lightness of a declared sRGB color (Björn Ottosson's OKLab, the
+/// same construction as `src/oklch.rs`, kept independent here the way
+/// `tests/legibility.rs` keeps its own APCA luminance/contrast: two
+/// implementations that must agree catch more than one that just gets
+/// trusted).
+fn oklab_lightness(color: ratatui::style::Color) -> f64 {
+    let ratatui::style::Color::Rgb(r, g, b) = color else {
+        panic!("expected an rgb colour, got {color:?}")
     };
-    let minimum = seen.iter().map(luminance).fold(f64::INFINITY, f64::min);
-    let maximum = seen.iter().map(luminance).fold(0.0, f64::max);
-    let swing = 1.0 - minimum / maximum;
-    assert!(
-        (0.15..=0.25).contains(&swing),
-        "band luminance swing {swing}"
-    );
+    let linear = |channel: u8| {
+        let c = f64::from(channel) / 255.0;
+        if c <= 0.040_45 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let (r, g, b) = (linear(r), linear(g), linear(b));
+    let l = 0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b;
+    let m = 0.211_903_498_2 * r + 0.680_699_545_1 * g + 0.107_396_956_6 * b;
+    let s = 0.088_302_461_9 * r + 0.281_718_837_6 * g + 0.629_978_700_5 * b;
+    0.210_454_255_3 * l.cbrt() + 0.793_617_785_0 * m.cbrt() - 0.004_072_046_8 * s.cbrt()
+}
+
+/// APCA Lc between declared sRGB colors, independently of `tests/legibility.rs`'s
+/// copy: this file only needs it to prove the trough itself clears the
+/// working-row floor, not to re-audit every surface.
+fn apca_lc(foreground: ratatui::style::Color, background: ratatui::style::Color) -> f64 {
+    let luminance = |color: ratatui::style::Color| {
+        let ratatui::style::Color::Rgb(r, g, b) = color else {
+            panic!("expected an rgb colour, got {color:?}")
+        };
+        let value: f64 = [(r, 0.2126729), (g, 0.7151522), (b, 0.0721750)]
+            .into_iter()
+            .map(|(c, weight)| (f64::from(c) / 255.0).powf(2.4) * weight)
+            .sum();
+        if value < 0.022 {
+            value + (0.022 - value).powf(1.414)
+        } else {
+            value
+        }
+    };
+    let (text, canvas) = (luminance(foreground), luminance(background));
+    let raw = if canvas > text {
+        (canvas.powf(0.56) - text.powf(0.57)) * 1.14
+    } else {
+        (canvas.powf(0.65) - text.powf(0.62)) * 1.14
+    };
+    if raw.abs() < 0.1 {
+        0.0
+    } else {
+        (raw - raw.signum() * 0.027) * 100.0
+    }
+}
+
+/// TASK-241: raw sRGB luminance compresses a small perceptual swing into a
+/// larger-looking channel-value change (and vice versa), which is exactly
+/// how the old scale-based pulse read as a 20% luminance swing while still
+/// being reported "barely perceptible" on darkroom. Sampling OKLab
+/// lightness instead is the one metric this test trusts for the swing; the
+/// trough's own APCA Lc proves the TASK-218 never-full-off floor holds at
+/// the darkest (or, on `light`, the least-saturated) point of the cycle.
+#[test]
+fn the_band_pulses_through_an_oklab_lightness_swing_on_every_preset() {
+    for name in ["berg", "bloomberg", "darkroom", "light"] {
+        let mut h = Harness::new();
+        // A slower period than the other pulse tests: this one measures the
+        // true min/max lightness by dense sampling rather than checking a
+        // handful of distinct levels, so it needs fine phase resolution
+        // across one full cycle rather than many coarsely-sampled ones.
+        std::fs::write(
+            &h.config_path,
+            format!("return {{ theme = '{name}', work = {{ period_ms = 200, frames = 40 }} }}"),
+        )
+        .unwrap();
+        h.app.tick();
+        let id = h.app.selected_task().unwrap().id.clone();
+        let title = h.selected_title();
+        claim_work(
+            &h.root.join("work"),
+            &session("aaaa1111-1", std::process::id()),
+            &h.root,
+            &id,
+        )
+        .unwrap();
+        h.app.tick();
+        assert!(
+            h.app.next_blink().is_some(),
+            "{name}: a working row schedules a redraw"
+        );
+        let mut seen = std::collections::HashSet::new();
+        let mut frames = Vec::new();
+        for _ in 0..300 {
+            h.render();
+            let bg = cell_bg(&h, &title).unwrap_or_else(|| panic!("{name}: band renders"));
+            let fg = cell_fg(&h, &title).unwrap_or_else(|| panic!("{name}: band renders"));
+            seen.insert(bg);
+            frames.push((oklab_lightness(bg), bg, fg));
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(
+            seen.len() >= 4,
+            "{name}: the band fades through several levels: {seen:?}"
+        );
+        let canvas = h.app.config.theme.background().unwrap();
+        assert!(
+            seen.iter().all(|color| *color != canvas),
+            "{name}: every frame must retain the working band: {seen:?}"
+        );
+        let (trough_l, trough_bg, trough_fg) = *frames
+            .iter()
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .expect("200 frames were sampled");
+        let (peak_l, ..) = *frames
+            .iter()
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .expect("200 frames were sampled");
+        let swing = peak_l - trough_l;
+        assert!(
+            (0.14..=0.26).contains(&swing),
+            "{name}: OKLab lightness swing {swing:.3} (trough {trough_l:.3}, peak {peak_l:.3})"
+        );
+        let floor = apca_lc(trough_fg, trough_bg).abs();
+        assert!(
+            floor >= 75.0,
+            "{name}: trough Lc {floor:.2} below the working-row floor ({trough_fg:?}/{trough_bg:?})"
+        );
+    }
+    let mut h = Harness::new();
     let help = h.press(KeyCode::Char('?'));
     assert!(help.contains("pass"), "{help}");
 }

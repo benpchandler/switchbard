@@ -18,9 +18,12 @@ pub const EMPHASIS_ROLES: [&str; 5] = ["quiet", "strong", "alert", "band", "stru
 /// redrawn `frames` times per period.
 const DEFAULT_WORK_PERIOD_MS: u64 = 3000;
 const DEFAULT_WORK_FRAMES: u64 = 30;
-/// A small lift toward the theme's ink pole accompanies the working band.
-/// Dark canvases lift toward white; light canvases deepen toward black.
-const WORKING_TEXT_LIFT: f64 = 0.12;
+/// A lift toward the theme's ink pole accompanies the working band, at its
+/// strongest at the pulse peak. Dark canvases lift toward white; light
+/// canvases deepen toward black. Sized so the light preset's peak (closest
+/// to its own ink; see `oklch::PulseDirection`) still clears the Lc 75
+/// working-row floor (TASK-241).
+const WORKING_TEXT_LIFT: f64 = 0.45;
 /// How hard the pulse is clipped: 0 is a pure sine, larger holds the peak and the dark longer.
 const DEFAULT_WORK_FLATTEN: f64 = 2.0;
 
@@ -357,21 +360,34 @@ impl Theme {
             .collect()
     }
 
-    /// A claimed row keeps its band and modifiers throughout the cycle. Its
-    /// linear-light luminance changes by 20%, never disappearing at the trough.
-    pub fn working_style(&self, glow: f64) -> Style {
-        let full = self.style(Surface::Working);
-        match full.bg {
-            Some(Color::Rgb(r, g, b)) => {
-                let scale = (0.8 + 0.2 * glow.clamp(0.0, 1.0)).powf(1.0 / 2.4);
-                let channel = |value: u8| (f64::from(value) * scale).round() as u8;
-                full.bg(Color::Rgb(channel(r), channel(g), channel(b)))
-            }
-            _ => full,
-        }
+    /// The declared canvas reads as a light background (WCAG-adjacent sum
+    /// threshold already used for the working-ink pole): the one place this
+    /// decides which way the pulse and the ink compensation lean, shared by
+    /// `working_style` and `working_fg` so the two can never disagree.
+    fn canvas_is_light(&self) -> bool {
+        matches!(self.background, Some(Color::Rgb(r, g, b))
+            if u32::from(r) + u32::from(g) + u32::from(b) > 384)
     }
 
-    /// Preserve rest ink at the trough, then increase its contrast gently.
+    /// A claimed row keeps its band and modifiers throughout the cycle,
+    /// pulsing between the declared peak (`glow` 1) and a trough
+    /// `oklch::WORK_LIGHTNESS_SWING` away in OKLCH lightness (`glow` 0),
+    /// never disappearing (TASK-218) and never swinging in hue (TASK-241).
+    pub fn working_style(&self, glow: f64) -> Style {
+        let full = self.style(Surface::Working);
+        let Some(bg) = full.bg else { return full };
+        let direction = if self.canvas_is_light() {
+            crate::oklch::PulseDirection::Lighten
+        } else {
+            crate::oklch::PulseDirection::Darken
+        };
+        full.bg(crate::oklch::pulse_lightness(bg, direction, glow))
+    }
+
+    /// Preserve rest ink at the trough (already the higher-contrast end of
+    /// the swing; see `working_style`), then lift it toward the theme's ink
+    /// pole as the pulse nears its peak, which is the lower-contrast end on
+    /// every preset and needs the help to clear the working-row floor.
     /// Terminal-owned foregrounds remain terminal-owned throughout the cycle.
     pub fn working_fg(&self, rest: Option<Color>, glow: f64) -> Color {
         let (r, g, b) = match rest {
@@ -380,10 +396,7 @@ impl Theme {
             None => return Color::Reset,
         };
         let lift = glow.clamp(0.0, 1.0) * WORKING_TEXT_LIFT;
-        let target = match self.background {
-            Some(Color::Rgb(r, g, b)) if u32::from(r) + u32::from(g) + u32::from(b) > 384 => 0.0,
-            _ => 255.0,
-        };
+        let target = if self.canvas_is_light() { 0.0 } else { 255.0 };
         let channel = |value: u8| {
             let value = f64::from(value);
             (value + (target - value) * lift).round() as u8
