@@ -1,6 +1,6 @@
 # Formatting that helps you scan
 
-SBT separates navigation, view context, headings and task content. The active tab is bold and underlined; attention counts keep their own badge. The view context leads with the number of tasks shown, then the view and editable filter. Numbered column headings are bold, with an underline on the active sort. Open high-priority titles use `strong`, while their priority cells use `alert`; low-priority cells use `quiet`. Completed titles use `quiet+struck` and their priority cells stay quiet, regardless of their former priority. Labels and glyphs still communicate the underlying facts.
+SBT separates navigation, view context, headings and task content. The active tab is bold and underlined; attention counts keep their own badge. The view context leads with the number of tasks shown, then the view and editable filter. Numbered column headings are bold, with an underline on the active sort. Open high-priority titles use `strong`, while their priority cells use `alert`; low-priority cells use `quiet`. Completed titles use `quiet` and their priority cells stay quiet, regardless of their former priority. Labels and glyphs still communicate the underlying facts.
 
 ## Paint from where you are
 
