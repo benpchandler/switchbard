@@ -31,6 +31,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let footer_height = match app.mode {
         Mode::NewTask => 3,
         Mode::DetailInput(_) => 2,
+        Mode::Filter if app.filter_completion_hint().is_some() => 2,
         _ => 1,
     };
     let [navigation, notification, body, footer] = Layout::vertical([
@@ -950,6 +951,10 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
         (":palette <name>", "colors `auto` paints with"),
         (":view <name>  :reload  :q", ""),
         ("f/s <col#>", "filter/sort by column"),
+        (
+            "/ … Tab",
+            "complete a filter key or value; Esc keeps it as typed",
+        ),
         ("v<n>", "open view; vs<n> save it (vsd = default)"),
         ("v h", "view history; Enter restores; vs<n> saves a slot"),
         (
@@ -1014,13 +1019,19 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
     let theme = &app.config.theme;
-    let line = match app.mode {
-        Mode::Filter => Line::from(vec![
-            Span::styled("/", theme.style(Surface::Accent)),
-            Span::raw(app.filter_text().to_string()),
-            Span::styled("▏", theme.style(Surface::Accent)),
-        ]),
-        Mode::Command => Line::from(vec![
+    let lines: Vec<Line> = match app.mode {
+        Mode::Filter => {
+            let mut lines = vec![Line::from(vec![
+                Span::styled("/", theme.style(Surface::Accent)),
+                Span::raw(app.filter_text().to_string()),
+                Span::styled("▏", theme.style(Surface::Accent)),
+            ])];
+            if let Some(hint) = app.filter_completion_hint() {
+                lines.push(filter_completion_line(theme, &hint, area.width));
+            }
+            lines
+        }
+        Mode::Command => vec![Line::from(vec![
             Span::styled(":", theme.style(Surface::Accent)),
             Span::raw(app.input.clone()),
             Span::styled("▏", theme.style(Surface::Accent)),
@@ -1028,44 +1039,67 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 format!("   {}", app.command_completions().join("  ")),
                 theme.style(Surface::Hint),
             ),
-        ]),
+        ])],
         Mode::PickValue if app.picker.is_some() => {
-            Line::from(Span::styled(app.status.clone(), theme.style(Surface::Hint)))
+            vec![Line::from(Span::styled(
+                app.status.clone(),
+                theme.style(Surface::Hint),
+            ))]
         }
-        Mode::NewTask | Mode::PickValue => Line::from(Span::styled(
+        Mode::NewTask | Mode::PickValue => vec![Line::from(Span::styled(
             app.status.clone(),
             theme.style(Surface::Status),
-        )),
-        Mode::BallName => Line::from(vec![
+        ))],
+        Mode::BallName => vec![Line::from(vec![
             Span::styled(" ball person: ", theme.style(Surface::Accent)),
             Span::raw(app.input.clone()),
             Span::styled("▏", theme.style(Surface::Accent)),
-        ]),
-        Mode::RenameView => Line::from(vec![
+        ])],
+        Mode::RenameView => vec![Line::from(vec![
             Span::styled(" view name: ", theme.style(Surface::Accent)),
             Span::raw(app.input.clone()),
             Span::styled("▏", theme.style(Surface::Accent)),
-        ]),
+        ])],
         // Handled by `draw_detail_input` above; unreachable via this match.
-        Mode::DetailInput(_) => Line::default(),
-        Mode::DetailFocus if !app.status.is_empty() => Line::from(Span::styled(
+        Mode::DetailInput(_) => vec![Line::default()],
+        Mode::DetailFocus if !app.status.is_empty() => vec![Line::from(Span::styled(
             app.status.clone(),
             theme.style(Surface::Status),
-        )),
-        Mode::DetailFocus => Line::from(vec![
+        ))],
+        Mode::DetailFocus => vec![Line::from(vec![
             Span::styled(" pane focused ", theme.style(Surface::Accent)),
             Span::styled(
                 "j/k move · enter edit · space check · z fold · Z fold all · A expand all · esc back",
                 theme.style(Surface::Hint),
             ),
-        ]),
-        Mode::Browse if !app.status.is_empty() => Line::from(Span::styled(
+        ])],
+        Mode::Browse if !app.status.is_empty() => vec![Line::from(Span::styled(
             app.status.clone(),
             theme.style(Surface::Status),
-        )),
-        Mode::Browse => browse_footer(app),
+        ))],
+        Mode::Browse => vec![browse_footer(app)],
     };
-    frame.render_widget(Paragraph::new(line), area);
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// The `/` editor's Tab-completion candidates, one line beneath the filter
+/// text: bounded to what `filter_completion_hint` already capped, then
+/// further trimmed so a narrow terminal never wraps or panics on width.
+fn filter_completion_line(
+    theme: &Theme,
+    hint: &crate::app::FilterCompletionHint,
+    width: u16,
+) -> Line<'static> {
+    let mut text = hint.items.join("  ");
+    if hint.more > 0 {
+        text.push_str(&format!("  +{} more", hint.more));
+    }
+    let room = usize::from(width).saturating_sub(1);
+    if text.chars().count() > room {
+        let truncated: String = text.chars().take(room.saturating_sub(1)).collect();
+        text = format!("{truncated}…");
+    }
+    Line::from(Span::styled(format!(" {text}"), theme.style(Surface::Hint)))
 }
 
 /// Keep the end of the bounded UTF-8 draft and its cursor visible while typing.
