@@ -1824,29 +1824,11 @@ impl App {
         } else {
             state.group.levels().to_vec()
         };
-        let mut rows = group::rows(&self.tasks, &visible, &levels, &headings, pinned);
-        if !self.legacy_order {
-            if let Some(crate::group::Row::Heading { value, text, .. }) = rows.first_mut() {
-                if text.starts_with("top ·") {
-                    let count = pinned
-                        .iter()
-                        .filter(|id| visible.iter().any(|&i| self.tasks[i].id == **id))
-                        .count();
-                    *value = "Planned".to_string();
-                    *text = format!("Planned · {count}");
-                    if levels.is_empty() && rows.len() > count + 1 {
-                        rows.insert(
-                            count + 1,
-                            crate::group::Row::Heading {
-                                value: "Other tasks".to_string(),
-                                text: "Other tasks".to_string(),
-                                depth: 0,
-                            },
-                        );
-                    }
-                }
-            }
-        }
+        let rows = if self.legacy_order {
+            group::rows(&self.tasks, &visible, &levels, &headings, pinned)
+        } else {
+            group::planned_rows(&self.tasks, &visible, &levels, &headings, pinned)
+        };
         TaskProjection {
             visible,
             rows,

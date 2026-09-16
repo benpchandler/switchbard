@@ -632,7 +632,9 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
   sort inside them, section order is stack rank for projects and vocabulary rank
   otherwise, empty sections are omitted, tasks without a value land last, and a
   sub-issue sits under its parent when both are in the section (a filtered-out
-  parent is never resurrected). Only project gets the rich heading (name, def
+  parent is never resurrected). The ordered Planned section is itself outlined
+  when an explicit outline is selected; each leaf preserves canonical planned
+  order, while flat mode restores the complete planned sequence. Only project gets the rich heading (name, def
   status, done/total) with the initiative in the title bar; other columns use the
   value as the heading. Headings are ordinary rows the cursor skips. Decisions:
   `o` (outline) so `g`/`G` stay top/bottom; `o` toggles between flat and the last

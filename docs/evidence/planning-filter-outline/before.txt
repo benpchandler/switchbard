@@ -1,0 +1,32 @@
+ [Tasks]   Pull Requests    Agents   1   Inbox   tab switch page
+┌ switchbard-planning-fil…  86/206 shown  custom  hide:done · outline:project ─────────────────────────────────────────────────────────────┐
+│1 id 2 planning  3 status    4 pri 5 checklist       6 title                                                                              │
+│▸ Planned · 61                                                                                                                            │
+│203  Planned     In Progress H     0/2 0.0%          TASK-147: flexible single-file collaboration and final migration verification        │
+│158  Planned     In Progress M     Review 5/5 100%   Support named Ball holders in sbt                                                    │
+│80.3 Planned     Not started H     0/6 0.0%          Build the Task Queue GitHub delivery backend                                         │
+│39   Planned     Not started M     0/2 0.0%          Reap dispatch runs orphaned by an app restart                                        │
+│81   Planned     Not started M     0/5 0.0%          RemovalAuthorization: make the force gate a domain type, not a caller-supplied bool  │
+│61   Planned     Not started L     Unmeasured        Landing worker: gh probe has no subprocess timeout                                   │
+│31   Planned     Not started L     Unmeasured        Tombstone filename collides on same-second consecutive wipes                         │
+│68   Planned     Not started L     0/4 0.0%          Format fork: diverge on named wins                                                   │
+│116  Planned     Not started H     0/5 0.0%          Extend GitHub delivery observations for repository pull-request operations           │
+│118  Planned     Not started H     0/5 0.0%          Add guarded pull-request review operations                                           │
+│119  Planned     Not started H     0/5 0.0%          Add guarded CI, branch-update, and merge operations                                  │
+│137  Planned     Not started H     0/4 0.0%          Owner cannot discover what is waiting on them without being told in chat             │
+│226  Planned     Not started H     0/5 0.0%          Computed fields: a per-repo field kind evaluated from a filter expression            │
+│93   Planned     Not started M     Unmeasured        Give SB ability to detect refactoring candidates                                     │
+│94   Planned     Not started M     Unmeasured        Enable "integrations' vs hardcoded / config.                                         │
+│104  Planned     Not started M     0/3 0.0%          Create sprint from tasks / goals / projects                                          │
+│113  Planned     Not started M     0/4 0.0%          Support-request store for Command (NEEDS_DECISION/SITREP)                            │
+│136  Planned     Not started M     0/1 0.0%          sbt: prior text on screen shows after terminal app quit and reload                   │
+│143  Planned     Not started M     0/1 0.0%          sbt idea: when an idea comes in just start building it                               │
+│145  Planned     Not started M     Review 1/1 100%   sbt idea: rename group to outline app wide to match o                                │
+│146  Planned     Not started M     0/1 0.0%          sbt idea: make evidence visisble                                                     │
+│148  Planned     Not started M     0/1 0.0%          sbt idea: when ranking a task, keep the cursor where the task was rather than moving │
+│149  Planned     Not started M     0/1 0.0%          sbt idea: add a PR column ties to the tasks so u can see what's going on with the wor│
+│151  Planned     Not started M     0/1 0.0%          sbt idea: migrate agents to graph                                                    │
+│156  Planned     Not started M     0/1 0.0%          sbt idea: improve onboarding                                                         │
+│169  Planned     Not started M     0/5 0.0%          Sent review feedback does not resume Codex after its turn ends                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+organized by project · o changes it
