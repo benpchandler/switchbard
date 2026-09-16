@@ -47,7 +47,7 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 
 - **Matrix-style progress capsule (owner-directed 2026-09-16).** The existing Progress column becomes a compact rounded red pill that fills with retained-criterion coverage. It preserves manual Done, exact numeric details, saved column identity and configurable fallback rendering. State and visual evidence: `docs/tui-matrix-pill.md`.
 
-- **Compact task progress (owner-directed 2026-09-16).** A visual Progress column sits immediately after Status in new default TUI views. Progress uses the existing retained-criterion rollup; zero, partial, full and unmeasured icons remain independent of manual Done. Existing saved arrangements remain intact. Contract and evidence: `docs/tui-progress-icons.md`.
+- **Compact task progress (owner-directed 2026-09-16).** The Progress column and its retained-criterion contract were introduced with the optional icon display; the current default pill and all display-mode details live in `docs/tui-matrix-pill.md`.
 
 - **Views that keep themselves (TASK-152/153/154).** `sbt` resumes the last per-repository view, captures bounded deduplicated history automatically, and keeps deliberate slots separate. `--fresh`, `v h`, and `v s <number>` are documented in `docs/tui-view-history.md`; the palette-token prerequisite is included.
 
