@@ -74,10 +74,10 @@ fn a_live_session_lights_its_row_and_a_dead_one_is_forgotten() {
     );
     // TASK-241: berg's declared `working.bg` (#163b30) is the dark-canvas
     // floor (TASK-218) the pulse never dims below; full glow is the
-    // brighter peak `WORK_LIGHTNESS_SWING` above it in OKLCH lightness.
+    // brighter peak `WORK_LIGHTNESS_SWING_DARK` above it in OKLCH lightness.
     assert_eq!(
         cell_bg(&h, &title),
-        Some(ratatui::style::Color::Rgb(0x37, 0x5c, 0x4f)),
+        Some(ratatui::style::Color::Rgb(0x4d, 0x72, 0x66)),
         "the row wears the berg working band's peak at full glow"
     );
     let rest = cell_fg(&h, "Write onboarding guide").unwrap();
@@ -352,13 +352,18 @@ fn the_band_pulses_through_an_oklab_lightness_swing_on_every_preset() {
             .max_by(|a, b| a.0.total_cmp(&b.0))
             .expect("300 frames were sampled");
         let swing = peak_l - trough_l;
-        // `oklch::WORK_LIGHTNESS_SWING` (0.12) is proven the largest swing
-        // that still clears every legibility bound on `light` (see its doc
-        // comment); gamut mapping can shrink the realized value further
-        // still there, so the tolerance covers a real preset landing below
-        // the nominal value, not just above it.
+        // `oklch::WORK_LIGHTNESS_SWING_DARK` (0.20) and `_LIGHT` (0.12) are
+        // each the largest swing verified to still clear every legibility
+        // bound on their canvases (see their doc comments); gamut mapping
+        // can shrink the realized value further on `light` still, so its
+        // tolerance covers landing below the nominal value, not just above.
+        let bounds = if name == "light" {
+            0.08..=0.14
+        } else {
+            0.17..=0.21
+        };
         assert!(
-            (0.08..=0.14).contains(&swing),
+            bounds.contains(&swing),
             "{name}: OKLab lightness swing {swing:.3} (trough {trough_l:.3}, peak {peak_l:.3})"
         );
         // TASK-218: the declared `working.bg` is the floor the pulse never
