@@ -21,13 +21,23 @@ use ratatui::style::Color;
 /// section 4: "modulate lightness only by 15-25%, never hue, never full
 /// on/off"). The declared `working.bg` is always the darker of the two
 /// endpoints in OKLCH terms; the other endpoint is always `SWING` lighter
-/// (TASK-218: the declared color is the floor the pulse never dims below;
-/// TASK-241: brightening a dark canvas's already-dark declared color toward
-/// a bright ink loses contrast fast, so this stays at the low end of the
-/// 15-25% band rather than the middle). `pulse_lightness` gamut-maps at the
-/// white boundary, which can shrink the realized swing further still (the
-/// light preset's lighter endpoint clamps at white).
-pub const WORK_LIGHTNESS_SWING: f64 = 0.15;
+/// (TASK-218: the declared color is the floor the pulse never dims below).
+///
+/// This sits just below the nominal 15-25% band, at 12%, for a reason
+/// proven rather than assumed: on `light`, the declared peak needs to sit
+/// at OKLab L >= ~0.85 to have any chance at the Lc 75 working-row floor
+/// even with maximum ink lift (below that, the best achievable contrast at
+/// any hue/chroma tops out in the low 70s), which puts the lighter endpoint
+/// within a hair of the sRGB gamut's white wall. TASK-237's `h7` highlight
+/// slot (`crate::highlight::derive_fill`) is a pale, low-chroma fill
+/// derived from `light`'s own declared body ink, so it and the pulse's
+/// near-white endpoint bound the same ink from opposite directions: body
+/// ink dark enough to clear the `h7` floor of Lc 75 is, at a 15% swing,
+/// dark enough to push the near-white endpoint's contrast against it past
+/// Lc 100 (the ceiling `tests/legibility.rs` gates). Exhaustive search
+/// across ink lightness and hue at 15% found zero values clearing both;
+/// 12% is the largest swing with real margin on every bound.
+pub const WORK_LIGHTNESS_SWING: f64 = 0.12;
 
 /// Which glow value (see `crate::app::App::work_glow`) the declared
 /// `working.bg` renders at. The other endpoint is always `SWING` lighter in

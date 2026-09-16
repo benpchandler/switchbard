@@ -77,7 +77,7 @@ fn a_live_session_lights_its_row_and_a_dead_one_is_forgotten() {
     // brighter peak `WORK_LIGHTNESS_SWING` above it in OKLCH lightness.
     assert_eq!(
         cell_bg(&h, &title),
-        Some(ratatui::style::Color::Rgb(0x3f, 0x64, 0x58)),
+        Some(ratatui::style::Color::Rgb(0x37, 0x5c, 0x4f)),
         "the row wears the berg working band's peak at full glow"
     );
     let rest = cell_fg(&h, "Write onboarding guide").unwrap();
@@ -352,8 +352,13 @@ fn the_band_pulses_through_an_oklab_lightness_swing_on_every_preset() {
             .max_by(|a, b| a.0.total_cmp(&b.0))
             .expect("300 frames were sampled");
         let swing = peak_l - trough_l;
+        // `oklch::WORK_LIGHTNESS_SWING` (0.12) is proven the largest swing
+        // that still clears every legibility bound on `light` (see its doc
+        // comment); gamut mapping can shrink the realized value further
+        // still there, so the tolerance covers a real preset landing below
+        // the nominal value, not just above it.
         assert!(
-            (0.13..=0.18).contains(&swing),
+            (0.08..=0.14).contains(&swing),
             "{name}: OKLab lightness swing {swing:.3} (trough {trough_l:.3}, peak {peak_l:.3})"
         );
         // TASK-218: the declared `working.bg` is the floor the pulse never

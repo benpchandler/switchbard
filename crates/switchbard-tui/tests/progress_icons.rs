@@ -349,9 +349,11 @@ fn pill_theme_selection_working_and_ascii_fallback() {
     h.app.tick();
     let screen = h.render();
     assert_eq!(h.app.working_sessions(), 1, "{screen}");
+    // TASK-241: full glow (period_ms = 0) is berg's brightened working-pulse
+    // peak, not its declared rest color (`oklch::WORK_LIGHTNESS_SWING`).
     assert_eq!(
         harness::cell_bg(&h, "(##..)"),
-        Some(Color::Rgb(0x16, 0x3b, 0x30))
+        Some(Color::Rgb(0x37, 0x5c, 0x4f))
     );
     evidence(&h, "pill-ascii-working");
     std::fs::write(

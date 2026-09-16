@@ -179,7 +179,7 @@ return {
       heading        = { fg = "#334b63", bold = true },
       selected       = { bg = "#e5ddcd" },
       label          = { fg = "#59616b" },
-      text           = { fg = "#3a362d" },
+      text           = { fg = "#2b271f" },
       link           = { fg = "#355b7b" },
       chip           = { fg = "#ece4d3", bg = "#355b7b" },
       attention_badge= { fg = "#ece4d3", bg = "#355b7b", bold = true },
@@ -187,7 +187,7 @@ return {
       hint           = { fg = "#59616b" },
       status         = { fg = "#59616b" },
       accent         = { fg = "#315f65" },
-      working        = { bg = "#b7d7c7", bold = true },
+      working        = { bg = "#badaca", bold = true },
       emphasis = {
         quiet = { fg = "#59616b", dim = false },
         strong = { bold = true },
