@@ -678,14 +678,7 @@ pub(super) fn new_task_document(
     let title = validated_single_line("title", &task.title)?;
     let mut task = task.clone();
     if let Some(root) = tasks_dir.parent().and_then(Path::parent) {
-        let statuses = super::parse::parse_config_statuses(root)?;
-        if (task.status.trim().is_empty() || task.status.eq_ignore_ascii_case("To Do"))
-            && statuses
-                .iter()
-                .any(|status| status.eq_ignore_ascii_case("Not started"))
-        {
-            task.status = "Not started".into();
-        }
+        task.status = initial_task_status(root, &task.status)?;
     }
     let text = new_task_text(prefix, id, title, &task, &local_stamp())?;
     let stem = format!("{}-{id} - ", prefix.to_ascii_lowercase());
@@ -1590,6 +1583,48 @@ fn default_if_blank<'v>(value: &'v str, default: &'v str) -> &'v str {
     } else {
         value
     }
+}
+
+fn initial_task_status(root: &Path, requested: &str) -> Result<String> {
+    let statuses = super::parse::parse_config_statuses(root)?;
+    if requested.trim().is_empty() {
+        if let Some(default) = super::parse::configured_default_status(root)? {
+            if statuses.is_empty() {
+                return Ok(default);
+            }
+            return statuses
+                .iter()
+                .find(|status| status.eq_ignore_ascii_case(&default))
+                .cloned()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "configured default_status is not one of the declared workflow stages"
+                    )
+                });
+        }
+        return Ok(legacy_initial_status(&statuses));
+    }
+    if requested.eq_ignore_ascii_case("To Do")
+        && statuses
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case("Not started"))
+    {
+        return Ok("Not started".into());
+    }
+    Ok(requested.to_string())
+}
+
+fn legacy_initial_status(statuses: &[String]) -> String {
+    ["Not started", "To Do"]
+        .iter()
+        .find_map(|standard| {
+            statuses
+                .iter()
+                .find(|status| status.eq_ignore_ascii_case(standard))
+                .cloned()
+        })
+        .or_else(|| statuses.first().cloned())
+        .unwrap_or_else(|| "To Do".into())
 }
 
 #[cfg(test)]

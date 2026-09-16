@@ -202,3 +202,10 @@ pub use backlog::{
 };
 
 pub use backlog::{set_task_planning_expected, set_task_planning_snapshot};
+
+pub mod onboarding;
+pub use onboarding::{repository_onboarding_status, setup_repository, RepositoryOnboardingStatus};
+
+mod onboarding_options;
+pub use onboarding::setup_repository_with_options;
+pub use onboarding_options::RepositorySetupOptions;

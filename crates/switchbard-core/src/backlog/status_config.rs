@@ -89,14 +89,11 @@ fn with_standard_statuses(original: &str, path: &Path) -> Result<(String, Vec<St
     }
     let ordered = order_statuses_public(merged);
 
-    let rendered = format!(
-        "statuses: [{}]",
-        ordered
-            .iter()
-            .map(|s| format!("\"{s}\""))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
+    let encoded = ordered
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let rendered = format!("statuses: [{}]", encoded.join(", "));
     let mut lines: Vec<&str> = original.lines().collect();
     lines[line_idx] = &rendered;
     let mut out = lines.join("\n");
@@ -108,21 +105,14 @@ fn with_standard_statuses(original: &str, path: &Path) -> Result<(String, Vec<St
 
 /// The `statuses:` line's index and the values it declares.
 ///
-/// Deliberately not a YAML parse: rewriting the file through a serializer
-/// would reformat every other key and strip comments, turning a one-line
-/// change into an unreviewable diff in someone else's repo.
+/// Parse only the inline YAML value, retaining all other lines verbatim.
 fn parse_statuses_line(config: &str) -> Option<(usize, Vec<String>)> {
     let (idx, line) = config
         .lines()
         .enumerate()
         .find(|(_, l)| l.trim_start().starts_with("statuses:"))?;
     let body = line.split_once(':')?.1.trim();
-    let inner = body.strip_prefix('[')?.strip_suffix(']')?;
-    let values = inner
-        .split(',')
-        .map(|v| v.trim().trim_matches(['"', '\'']).to_string())
-        .filter(|v| !v.is_empty())
-        .collect();
+    let values = serde_yaml::from_str::<Vec<String>>(body).ok()?;
     Some((idx, values))
 }
 
