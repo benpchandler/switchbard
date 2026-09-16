@@ -12,8 +12,9 @@ pub(super) fn set(
     id: &str,
     state: PlanningState,
     expected: Option<&super::BacklogTask>,
+    expected_content: Option<&str>,
 ) -> Result<WriteOutcome> {
-    let _lock = RepositoryLock::acquire(root)?;
+    let _lock = RepositoryLock::fence(root, &["task", "ranking"])?;
     let central = super::central_commands::command_store(root, &["task", "ranking"])?;
     let sequence = central
         .as_ref()
@@ -32,6 +33,10 @@ pub(super) fn set(
     );
     ensure!(task.editable(), "historical task is read-only");
     let original = super::task_storage::read(&path)?;
+    ensure!(
+        expected_content.is_none_or(|expected| expected == original),
+        "task changed; reload before changing planning"
+    );
     let (updated, changed) = super::write::edit_text(&original, |draft| {
         super::write::set_task_planning_draft(draft, state)
     })?;

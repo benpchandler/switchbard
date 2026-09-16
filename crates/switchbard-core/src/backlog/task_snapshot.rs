@@ -12,7 +12,7 @@ pub struct BacklogTaskSnapshot {
 }
 
 pub fn read_backlog_task_snapshot(root: &Path, id: &str) -> Result<BacklogTaskSnapshot> {
-    let _lock = crate::storage::RepositoryLock::acquire(root)?;
+    let _lock = crate::storage::RepositoryLock::fence(root, &["task"])?;
     let task = super::load_backlog_repo(root)?
         .tasks
         .into_iter()
@@ -42,7 +42,7 @@ pub fn set_backlog_acceptance_checked_expected(
     snapshot: &BacklogTaskSnapshot,
 ) -> Result<String> {
     ensure!(snapshot.task_id == id, "draft belongs to a different task");
-    let _lock = crate::storage::RepositoryLock::acquire(root)?;
+    let _lock = crate::storage::RepositoryLock::fence(root, &["task"])?;
     validate_backlog_task_snapshot(root, snapshot)?;
     let Some(expected) = &snapshot.identity else {
         return super::set_backlog_acceptance_checked(root, id, index, checked);
@@ -93,7 +93,7 @@ pub fn edit_backlog_task_snapshot(
     snapshot: &BacklogTaskSnapshot,
 ) -> Result<String> {
     ensure!(snapshot.task_id == id, "draft belongs to a different task");
-    let _lock = crate::storage::RepositoryLock::acquire(root)?;
+    let _lock = crate::storage::RepositoryLock::fence(root, &["task"])?;
     validate_backlog_task_snapshot(root, snapshot)?;
     super::edit_backlog_task_expected(root, id, patch, snapshot.identity.as_ref())
 }

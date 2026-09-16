@@ -134,7 +134,7 @@ pub fn create_task_allocating_id(
     repo_root: &Path,
     task: &NewBacklogTask,
 ) -> Result<(String, PathBuf)> {
-    let _repository_lock = crate::storage::RepositoryLock::acquire(repo_root)?;
+    let _repository_lock = crate::storage::RepositoryLock::fence(repo_root, &["task", "ranking"])?;
     if let Some((mut store, repo)) = super::task_storage::active(repo_root)? {
         let prefix = configured_task_prefix(repo_root)?;
         let sequence = store.change_sequence()?;
@@ -223,6 +223,7 @@ pub fn create_task_allocating_id(
                 &full_id,
                 super::PlanningState::Planned,
                 Some(created),
+                None,
             ) {
                 fs::remove_file(&path)
                     .context("rolling back new task after planning order failure")?;

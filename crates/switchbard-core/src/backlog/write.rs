@@ -650,7 +650,7 @@ pub fn write_new_task_file(
     task: &NewBacklogTask,
 ) -> Result<PathBuf> {
     let (path, text) = new_task_document(tasks_dir, prefix, id, task)?;
-    let _repository_lock = super::task_storage::lock_for_path(&path)?;
+    let _repository_lock = super::task_storage::fence_for_path(&path)?;
     if super::task_storage::create(&path, &text)? {
         return Ok(path);
     }
@@ -714,7 +714,7 @@ pub fn rehome_task_file(
     new_id: &str,
     new_parent: Option<&str>,
 ) -> Result<PathBuf> {
-    let _repository_lock = super::task_storage::lock_for_path(path)?;
+    let _repository_lock = super::task_storage::fence_for_path(path)?;
     let original = super::task_storage::read(path)?;
     let (new_path, text) = rehome_document(path, &original, prefix, new_id, new_parent)?;
     if super::task_storage::rehome(path, &new_path, Some((&original, &text)))? {

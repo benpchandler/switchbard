@@ -40,6 +40,27 @@ impl RepositoryLock {
         Ok(crate::git_common_dir::resolve(root).unwrap_or_else(|| root.to_path_buf()))
     }
 
+    /// The fence a native write in `root` needs when it touches `kinds`.
+    ///
+    /// Returns `None` once every kind is centrally authoritative. Central writes
+    /// are serialized by SQLite and recheck authority, revisions and sequences
+    /// inside their own transaction, and authority is only ever granted (by
+    /// migration and import), never revoked, so a kind observed central stays
+    /// central. A write that sees any file-authoritative kind takes the lock that
+    /// migration and import hold, exactly as before. List every kind the
+    /// operation may read or write: an omitted legacy kind would be written
+    /// without the fence.
+    pub fn fence(root: &Path, kinds: &[&str]) -> Result<Option<Self>> {
+        assert!(
+            !kinds.is_empty(),
+            "invariant: a fence names its record kinds"
+        );
+        if all_central(root, kinds)? {
+            return Ok(None);
+        }
+        Self::acquire(root).map(Some)
+    }
+
     pub fn acquire(root: &Path) -> Result<Self> {
         let common = Self::identity(root)?;
         let path = common.join(".switchbard-storage.lock");
@@ -120,6 +141,21 @@ impl Drop for RepositoryLock {
     }
 }
 
+fn all_central(root: &Path, kinds: &[&str]) -> Result<bool> {
+    let Some(store) = super::Store::open_existing_default()? else {
+        return Ok(false);
+    };
+    let Some(repo) = store.repository(root)? else {
+        return Ok(false);
+    };
+    for kind in kinds {
+        if !store.authority(&repo, kind)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::RepositoryLock;
@@ -151,5 +187,32 @@ mod tests {
         assert!(child.try_wait().unwrap().is_none());
         drop(inner);
         assert!(child.wait().unwrap().success());
+    }
+
+    #[test]
+    fn fence_is_skipped_only_when_every_kind_is_central() {
+        let data = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let database = data.path().join("switchbard.sqlite3");
+        super::super::with_test_database(&database, || {
+            assert!(RepositoryLock::fence(root.path(), &["task"])
+                .unwrap()
+                .is_some());
+            let mut store = super::super::Store::open(&database).unwrap();
+            assert!(RepositoryLock::fence(root.path(), &["task"])
+                .unwrap()
+                .is_some());
+            let repo = store.bind_repository(root.path()).unwrap();
+            store
+                .connection
+                .execute("INSERT INTO authority VALUES (?1,'task')", [&repo.0])
+                .unwrap();
+            assert!(RepositoryLock::fence(root.path(), &["task"])
+                .unwrap()
+                .is_none());
+            assert!(RepositoryLock::fence(root.path(), &["task", "ranking"])
+                .unwrap()
+                .is_some());
+        });
     }
 }

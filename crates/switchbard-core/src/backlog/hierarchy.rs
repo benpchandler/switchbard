@@ -251,7 +251,7 @@ struct DefSpec<'a> {
 /// the repo already claims (whatever its slug), and refuses a slug collision
 /// — including a case-variant one — before touching the filesystem.
 pub fn create_project_def(root: &Path, def: &NewProjectDef) -> Result<PathBuf> {
-    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
+    let _repository_lock = crate::storage::RepositoryLock::fence(root, &["project"])?;
     let mut fields: Vec<(&str, Option<&str>)> = vec![
         ("initiative", def.initiative.as_deref()),
         ("lead", def.lead.as_deref()),
@@ -272,7 +272,7 @@ pub fn create_project_def(root: &Path, def: &NewProjectDef) -> Result<PathBuf> {
 }
 
 pub fn create_initiative_def(root: &Path, def: &NewInitiativeDef) -> Result<PathBuf> {
-    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
+    let _repository_lock = crate::storage::RepositoryLock::fence(root, &["initiative"])?;
     create_def(
         root,
         DefSpec {
@@ -373,7 +373,7 @@ fn slug_collision(dir: &Path, slug: &str) -> Option<PathBuf> {
 }
 
 pub fn edit_project_def(root: &Path, name: &str, patch: &ProjectDefPatch) -> Result<WriteOutcome> {
-    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
+    let _repository_lock = crate::storage::RepositoryLock::fence(root, &["project"])?;
     let path = resolve_def_file(root, PROJECTS_DIR, "project", name)?;
     apply_def_edit(root, &path, |fm, body| {
         if let Some(status) = &patch.status {
@@ -421,7 +421,7 @@ pub fn edit_initiative_def(
     name: &str,
     patch: &InitiativeDefPatch,
 ) -> Result<WriteOutcome> {
-    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
+    let _repository_lock = crate::storage::RepositoryLock::fence(root, &["initiative"])?;
     let path = resolve_def_file(root, INITIATIVES_DIR, "initiative", name)?;
     apply_def_edit(root, &path, |fm, body| {
         if let Some(status) = &patch.status {
@@ -478,7 +478,7 @@ pub struct ProjectRename {
 /// kinds commit the complete rename in one SQLite transaction; mixed authority
 /// refuses before any effect.
 pub fn rename_project(root: &Path, old: &str, new: &str) -> Result<ProjectRename> {
-    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
+    let _repository_lock = crate::storage::RepositoryLock::fence(root, &storage::RENAME_KINDS)?;
     storage::require_complete_rename_authority(root)?;
     let old = validated_single_line("project", old)?;
     let new = validated_single_line("project", new)?;
