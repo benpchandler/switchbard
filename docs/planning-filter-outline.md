@@ -2,7 +2,7 @@
 
 ## Objective and boundaries
 
-Owner screenshot shows a saved Budget view with columns id/status/priority/title/ball, 62 tasks under a single Planned heading despite `outline:project`. Planning must be discoverable through `f`, and choosing Project must actually expose project structure. Preserve task planning values, canonical planned order, saved layouts and existing paint rules. Work only in the isolated feat/tui-planning-outline worktree; the primary checkout was clean. Current main and installed 3da2730a ancestry are reconciled in 88e87fa. Real repository use is read-only except this repository's authorized tracker entries. No task migration or Budget content edits are needed.
+Owner screenshot shows a saved Budget view with columns id/status/priority/title/ball, 62 tasks under a single Planned heading despite `outline:project`. Planning must be discoverable through `f`, and choosing Project must actually expose project structure. Preserve task planning values, canonical planned order, saved layouts and existing paint rules. Work only in the isolated feat/tui-planning-outline worktree; the primary checkout was clean. The guarded installation ef50e871 completed without dropped commits. Real repository use is read-only except this repository's authorized tracker entries. No task migration or Budget content edits are needed.
 
 ## State and stress matrix
 
