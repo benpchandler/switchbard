@@ -8,6 +8,10 @@
 //! chroma exactly fixed (WCAG 2.3.1: "never hue") while making the lightness
 //! swing the one deliberate, tunable knob.
 //!
+//! The declared `working.bg` is always the darker OKLCH endpoint (TASK-218:
+//! the row must never dim below its own rest color); `DeclaredEndpoint` only
+//! decides whether that declared color plays `glow` 0.0 or `glow` 1.0.
+//!
 //! Reference: Björn Ottosson, <https://bottosson.github.io/posts/oklab/>.
 
 use ratatui::style::Color;
@@ -15,40 +19,47 @@ use ratatui::style::Color;
 /// Trough-to-peak swing of the working pulse, an absolute OKLCH lightness
 /// delta on the 0.0-1.0 `L` scale (`docs/tui-formatting-legibility.md`
 /// section 4: "modulate lightness only by 15-25%, never hue, never full
-/// on/off"). `PulseDirection` decides which side of the declared peak the
-/// trough falls on; `pulse_lightness` clamps at the sRGB gamut edge, which
-/// can shrink the realized swing below this nominal value (the light preset
-/// clamps at white, landing at the low end of the 15-25% band).
-pub const WORK_LIGHTNESS_SWING: f64 = 0.20;
+/// on/off"). The declared `working.bg` is always the darker of the two
+/// endpoints in OKLCH terms; the other endpoint is always `SWING` lighter
+/// (TASK-218: the declared color is the floor the pulse never dims below;
+/// TASK-241: brightening a dark canvas's already-dark declared color toward
+/// a bright ink loses contrast fast, so this stays at the low end of the
+/// 15-25% band rather than the middle). `pulse_lightness` gamut-maps at the
+/// white boundary, which can shrink the realized swing further still (the
+/// light preset's lighter endpoint clamps at white).
+pub const WORK_LIGHTNESS_SWING: f64 = 0.15;
 
-/// Which way the trough recedes from the declared peak color. The peak is
-/// always the color closest to the row's ink (built once from the theme's
-/// `working.bg`), so receding further from the ink is always the direction
-/// that gains contrast headroom.
+/// Which glow value (see `crate::app::App::work_glow`) the declared
+/// `working.bg` renders at. The other endpoint is always `SWING` lighter in
+/// OKLCH `L`, so this is the one thing that decides which way the pulse
+/// reads: rising from a dim declared color (dark canvases, whose declared
+/// color already sits close to a bright ink) or dimming from a declared
+/// color that is itself the closest-to-ink point (light canvases).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PulseDirection {
-    /// Dark canvases: the peak already sits close to a bright ink, so the
-    /// trough deepens toward black.
-    Darken,
-    /// Light canvases: the peak sits close to a dark ink, so the trough
-    /// lifts toward white.
-    Lighten,
+pub enum DeclaredEndpoint {
+    /// Dark canvases: the declared color is the `glow` 0.0 trough (the
+    /// TASK-218 floor), and the pulse brightens toward `glow` 1.0.
+    Trough,
+    /// Light canvases: the declared color is the `glow` 1.0 peak (closest to
+    /// a dark ink), and the pulse brightens toward `glow` 0.0.
+    Peak,
 }
 
-/// Interpolate `peak`'s OKLCH lightness between the declared value (`glow`
-/// 1.0) and a trough `WORK_LIGHTNESS_SWING` away in `direction` (`glow`
-/// 0.0), holding chroma and hue fixed. `peak` must be a declared sRGB color;
-/// a terminal-owned color (no preset background) passes through unchanged
-/// since there is nothing to interpolate.
-pub fn pulse_lightness(peak: Color, direction: PulseDirection, glow: f64) -> Color {
-    let Color::Rgb(r, g, b) = peak else {
-        return peak;
+/// Interpolate `declared`'s OKLCH lightness between itself and an endpoint
+/// `WORK_LIGHTNESS_SWING` lighter, holding chroma and hue fixed, placing
+/// `declared` at `glow` 0.0 or 1.0 per `endpoint`. `declared` must be a
+/// declared sRGB color; a terminal-owned color (no preset background)
+/// passes through unchanged since there is nothing to interpolate.
+pub fn pulse_lightness(declared: Color, endpoint: DeclaredEndpoint, glow: f64) -> Color {
+    let Color::Rgb(r, g, b) = declared else {
+        return declared;
     };
-    let (peak_l, chroma, hue) = rgb_to_oklch(r, g, b);
-    debug_assert!((0.0..=1.0).contains(&peak_l), "OKLab L is normalized");
-    let trough_l = match direction {
-        PulseDirection::Darken => (peak_l - WORK_LIGHTNESS_SWING).max(0.0),
-        PulseDirection::Lighten => (peak_l + WORK_LIGHTNESS_SWING).min(1.0),
+    let (declared_l, chroma, hue) = rgb_to_oklch(r, g, b);
+    debug_assert!((0.0..=1.0).contains(&declared_l), "OKLab L is normalized");
+    let lighter_l = (declared_l + WORK_LIGHTNESS_SWING).min(1.0);
+    let (trough_l, peak_l) = match endpoint {
+        DeclaredEndpoint::Trough => (declared_l, lighter_l),
+        DeclaredEndpoint::Peak => (lighter_l, declared_l),
     };
     let l = trough_l + (peak_l - trough_l) * glow.clamp(0.0, 1.0);
     oklch_to_rgb(l, chroma, hue)

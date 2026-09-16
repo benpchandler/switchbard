@@ -8,6 +8,7 @@ mod harness;
 use crossterm::event::KeyCode;
 use harness::*;
 use switchbard_core::{claim_work, WorkIdentity};
+use switchbard_tui::config::Surface;
 
 fn session(id: &str, pid: u32) -> WorkIdentity {
     WorkIdentity {
@@ -71,10 +72,13 @@ fn a_live_session_lights_its_row_and_a_dead_one_is_forgotten() {
         !row.contains("●●"),
         "the dead session does not count: {row}"
     );
+    // TASK-241: berg's declared `working.bg` (#163b30) is the dark-canvas
+    // floor (TASK-218) the pulse never dims below; full glow is the
+    // brighter peak `WORK_LIGHTNESS_SWING` above it in OKLCH lightness.
     assert_eq!(
         cell_bg(&h, &title),
-        Some(ratatui::style::Color::Rgb(0x16, 0x3b, 0x30)),
-        "the row wears the berg working band at full glow"
+        Some(ratatui::style::Color::Rgb(0x3f, 0x64, 0x58)),
+        "the row wears the berg working band's peak at full glow"
     );
     let rest = cell_fg(&h, "Write onboarding guide").unwrap();
     let lit = cell_fg(&h, &title).unwrap();
@@ -342,15 +346,32 @@ fn the_band_pulses_through_an_oklab_lightness_swing_on_every_preset() {
         let (trough_l, trough_bg, trough_fg) = *frames
             .iter()
             .min_by(|a, b| a.0.total_cmp(&b.0))
-            .expect("200 frames were sampled");
+            .expect("300 frames were sampled");
         let (peak_l, ..) = *frames
             .iter()
             .max_by(|a, b| a.0.total_cmp(&b.0))
-            .expect("200 frames were sampled");
+            .expect("300 frames were sampled");
         let swing = peak_l - trough_l;
         assert!(
-            (0.14..=0.26).contains(&swing),
+            (0.13..=0.18).contains(&swing),
             "{name}: OKLab lightness swing {swing:.3} (trough {trough_l:.3}, peak {peak_l:.3})"
+        );
+        // TASK-218: the declared `working.bg` is the floor the pulse never
+        // dims below, whichever glow value it plays (`oklch::
+        // DeclaredEndpoint`). Reading it straight from the theme, rather
+        // than assuming which sampled extreme is "declared", checks that
+        // floor without duplicating the endpoint-selection logic under test.
+        let declared = h
+            .app
+            .config
+            .theme
+            .style(Surface::Working)
+            .bg
+            .unwrap_or_else(|| panic!("{name}: working surface declares a background"));
+        let declared_l = oklab_lightness(declared);
+        assert!(
+            trough_l >= declared_l - 0.002,
+            "{name}: trough lightness {trough_l:.4} dims below the declared working.bg {declared_l:.4} ({declared:?})"
         );
         let floor = apca_lc(trough_fg, trough_bg).abs();
         assert!(

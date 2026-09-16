@@ -20,10 +20,11 @@ const DEFAULT_WORK_PERIOD_MS: u64 = 3000;
 const DEFAULT_WORK_FRAMES: u64 = 30;
 /// A lift toward the theme's ink pole accompanies the working band, at its
 /// strongest at the pulse peak. Dark canvases lift toward white; light
-/// canvases deepen toward black. Sized so the light preset's peak (closest
-/// to its own ink; see `oklch::PulseDirection`) still clears the Lc 75
-/// working-row floor (TASK-241).
-const WORKING_TEXT_LIFT: f64 = 0.45;
+/// canvases deepen toward black. Every preset's peak sits `oklch::
+/// WORK_LIGHTNESS_SWING` away from its declared color and toward the ink
+/// (`oklch::DeclaredEndpoint`), so this is sized to keep every preset's
+/// peak clearing the Lc 75 working-row floor, not just light's (TASK-241).
+const WORKING_TEXT_LIFT: f64 = 0.62;
 /// How hard the pulse is clipped: 0 is a pure sine, larger holds the peak and the dark longer.
 const DEFAULT_WORK_FLATTEN: f64 = 2.0;
 
@@ -369,25 +370,29 @@ impl Theme {
             if u32::from(r) + u32::from(g) + u32::from(b) > 384)
     }
 
-    /// A claimed row keeps its band and modifiers throughout the cycle,
-    /// pulsing between the declared peak (`glow` 1) and a trough
-    /// `oklch::WORK_LIGHTNESS_SWING` away in OKLCH lightness (`glow` 0),
-    /// never disappearing (TASK-218) and never swinging in hue (TASK-241).
+    /// A claimed row keeps its band and modifiers throughout the cycle. The
+    /// declared `working.bg` never dims (TASK-218's floor): on a dark canvas
+    /// it plays the `glow` 0 trough and the pulse brightens from there; on a
+    /// light canvas (already closest to the ink) it plays the `glow` 1 peak
+    /// and the pulse brightens toward `glow` 0 instead. Either way the swing
+    /// is `oklch::WORK_LIGHTNESS_SWING` in OKLCH lightness only, never hue
+    /// (TASK-241).
     pub fn working_style(&self, glow: f64) -> Style {
         let full = self.style(Surface::Working);
         let Some(bg) = full.bg else { return full };
-        let direction = if self.canvas_is_light() {
-            crate::oklch::PulseDirection::Lighten
+        let endpoint = if self.canvas_is_light() {
+            crate::oklch::DeclaredEndpoint::Peak
         } else {
-            crate::oklch::PulseDirection::Darken
+            crate::oklch::DeclaredEndpoint::Trough
         };
-        full.bg(crate::oklch::pulse_lightness(bg, direction, glow))
+        full.bg(crate::oklch::pulse_lightness(bg, endpoint, glow))
     }
 
-    /// Preserve rest ink at the trough (already the higher-contrast end of
-    /// the swing; see `working_style`), then lift it toward the theme's ink
-    /// pole as the pulse nears its peak, which is the lower-contrast end on
-    /// every preset and needs the help to clear the working-row floor.
+    /// Preserve rest ink at the trough, then lift it toward the theme's ink
+    /// pole as the pulse nears its peak: brightening the declared color by
+    /// `oklch::WORK_LIGHTNESS_SWING` (`working_style`) trades away some of
+    /// its contrast on every preset, and this buys it back where the peak
+    /// needs it most.
     /// Terminal-owned foregrounds remain terminal-owned throughout the cycle.
     pub fn working_fg(&self, rest: Option<Color>, glow: f64) -> Color {
         let (r, g, b) = match rest {
