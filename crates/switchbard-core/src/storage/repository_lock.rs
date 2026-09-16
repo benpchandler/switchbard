@@ -37,7 +37,7 @@ impl RepositoryLock {
         } else {
             &root
         };
-        Ok(git_common_dir(root).unwrap_or_else(|_| root.to_path_buf()))
+        Ok(crate::git_common_dir::resolve(root).unwrap_or_else(|| root.to_path_buf()))
     }
 
     pub fn acquire(root: &Path) -> Result<Self> {
@@ -118,18 +118,6 @@ impl Drop for RepositoryLock {
             }
         });
     }
-}
-
-fn git_common_dir(root: &Path) -> Result<PathBuf> {
-    let output = crate::git_cmd()
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .output()?;
-    if !output.status.success() {
-        anyhow::bail!("cannot resolve Git common directory for {}", root.display());
-    }
-    Ok(PathBuf::from(String::from_utf8(output.stdout)?.trim()).canonicalize()?)
 }
 
 #[cfg(test)]

@@ -4,7 +4,7 @@
 //! worktrees view should always render even when half the worktrees have
 //! unusual git state.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::git_cmd;
@@ -438,19 +438,13 @@ pub fn probe_recent_commits(path: &Path, limit: usize) -> Option<Vec<CommitSumma
 
 /// Unix epoch seconds of the last `git fetch` against this repo, derived from
 /// the mtime of `<git-common-dir>/FETCH_HEAD`. Worktrees share the parent
-/// repo's gitdir so we resolve via `rev-parse --git-common-dir` instead of
+/// repo's gitdir so we resolve the common dir (see [`crate::git_common_dir`]) instead of
 /// assuming `.git/` lives in the worktree itself.
 ///
 /// Returns None if the file doesn't exist yet (a never-fetched clone), or if
 /// the git/stat calls fail.
 pub fn probe_fetch_age(path: &Path) -> Option<u64> {
-    let common_dir = git(path, &["rev-parse", "--git-common-dir"])?;
-    let common_dir = common_dir.trim();
-    let common_path: PathBuf = if Path::new(common_dir).is_absolute() {
-        PathBuf::from(common_dir)
-    } else {
-        path.join(common_dir)
-    };
+    let common_path = crate::git_common_dir::resolve(path)?;
     let fetch_head = common_path.join("FETCH_HEAD");
     let modified = std::fs::metadata(&fetch_head).ok()?.modified().ok()?;
     modified
@@ -567,6 +561,7 @@ fn git(path: &Path, args: &[&str]) -> Option<String> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     #[test]

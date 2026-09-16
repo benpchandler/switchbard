@@ -508,28 +508,9 @@ fn dir_has_task_id(tasks_dir: &Path, prefix: &str, id: &str) -> Result<bool> {
 /// `backlog/` (invisible to the task loader, which only reads `*.md` from
 /// the four task dirs).
 fn reservation_dir(repo_root: &Path) -> PathBuf {
-    git_common_dir(repo_root)
+    crate::git_common_dir::resolve(repo_root)
         .map(|common| common.join("switchbard"))
         .unwrap_or_else(|| repo_root.join("backlog/.id-reservations"))
-}
-
-fn git_common_dir(repo_root: &Path) -> Option<PathBuf> {
-    let root = repo_root.to_str()?;
-    let output = git_cmd()
-        .args(["-C", root, "rev-parse", "--git-common-dir"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let path = PathBuf::from(text.trim());
-    let absolute = if path.is_absolute() {
-        path
-    } else {
-        repo_root.join(path)
-    };
-    Some(absolute)
 }
 
 /// An exclusive claim on one task id, released (best-effort) on drop.
