@@ -80,11 +80,11 @@ fn short_filter_menus_scroll_to_planning_and_cancel_preserves_the_saved_view() {
         let saved = std::fs::read_to_string(h.root.join("views.lua")).unwrap();
         let screen = h.press(KeyCode::Char('f'));
         assert!(
-            screen.contains("↓") && screen.contains("/15"),
+            screen.contains("↓") && screen.contains("/16"),
             "scroll affordance: {screen}"
         );
         let mut screen = screen;
-        for _ in 0..15 {
+        for _ in 0..16 {
             if screen.contains("planning · hidden") {
                 break;
             }
