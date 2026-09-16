@@ -45,7 +45,7 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 
 ## Recently implemented
 
-- **Matrix-style progress capsule (owner-directed 2026-09-16).** The existing Progress column becomes a compact rounded red pill that fills with retained-criterion coverage. It preserves manual Done, exact numeric details, saved column identity and configurable fallback rendering. State and visual evidence: `docs/tui-matrix-pill.md`.
+- **Matrix-style progress capsule (owner-directed 2026-09-16).** The existing Progress column becomes a compact rounded blue pill that fills with retained-criterion coverage and turns red at exactly 100%, with a smooth empty surface and matching caps. It preserves manual Done, exact numeric details, saved column identity and configurable fallback rendering. State and visual evidence: `docs/tui-matrix-pill.md`.
 
 - **Compact task progress (owner-directed 2026-09-16).** The Progress column and its retained-criterion contract were introduced with the optional icon display; the current default pill and all display-mode details live in `docs/tui-matrix-pill.md`.
 

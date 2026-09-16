@@ -125,6 +125,7 @@ pub enum Surface {
     /// A row a live agent session is working, visible throughout its pulse.
     Working,
     ProgressFill,
+    ProgressComplete,
     ProgressEmpty,
     ProgressShell,
 }
@@ -151,6 +152,7 @@ impl Surface {
             "accent" => Surface::Accent,
             "working" => Surface::Working,
             "progress_fill" => Surface::ProgressFill,
+            "progress_complete" => Surface::ProgressComplete,
             "progress_empty" => Surface::ProgressEmpty,
             "progress_shell" => Surface::ProgressShell,
             _ => return None,
@@ -375,10 +377,10 @@ impl Theme {
     pub fn style(&self, surface: Surface) -> Style {
         self.styles
             .get(&surface)
-            .or_else(|| {
-                (surface == Surface::AttentionBadge)
-                    .then(|| self.styles.get(&Surface::Chip))
-                    .flatten()
+            .or_else(|| match surface {
+                Surface::AttentionBadge => self.styles.get(&Surface::Chip),
+                Surface::ProgressComplete => self.styles.get(&Surface::ProgressFill),
+                _ => None,
             })
             .copied()
             .unwrap_or_default()

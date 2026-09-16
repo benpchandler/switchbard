@@ -47,7 +47,12 @@ pub(crate) fn pill(
         return Line::from(Span::styled("-", row));
     };
     let units = fill_units(progress);
-    let fill = row.patch(theme.style(Surface::ProgressFill));
+    let fill_surface = if progress.checked == progress.total {
+        Surface::ProgressComplete
+    } else {
+        Surface::ProgressFill
+    };
+    let fill = row.patch(theme.style(fill_surface));
     let empty = row.patch(theme.style(Surface::ProgressEmpty));
     let shell = theme.style(Surface::ProgressShell).fg;
     let cap_empty = shell.map_or(empty, |color| row.fg(color));
@@ -63,19 +68,7 @@ pub(crate) fn pill(
     ));
     for index in 0..4 {
         let amount = units.saturating_sub(index * 8).min(8);
-        let symbol = if mode == ProgressStyle::Ascii {
-            match amount {
-                0 => ".",
-                8 => "#",
-                _ => "+",
-            }
-        } else {
-            ["░", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"][amount]
-        };
-        let mut style = if amount == 0 { empty } else { fill };
-        if let Some(bg) = shell {
-            style = style.bg(bg);
-        }
+        let (symbol, style) = body_cell(amount, mode, fill, empty, cap_empty, shell);
         spans.push(Span::styled(symbol, style));
     }
     spans.push(Span::styled(
@@ -83,6 +76,36 @@ pub(crate) fn pill(
         if units == 32 { fill } else { cap_empty },
     ));
     Line::from(spans)
+}
+
+fn body_cell(
+    amount: usize,
+    mode: ProgressStyle,
+    fill: Style,
+    empty: Style,
+    cap_empty: Style,
+    shell: Option<ratatui::style::Color>,
+) -> (&'static str, Style) {
+    if mode == ProgressStyle::Ascii {
+        return match amount {
+            0 => (".", empty),
+            8 => ("#", fill),
+            _ => ("+", fill),
+        };
+    }
+    if amount == 0 {
+        return if shell.is_some() {
+            ("█", cap_empty)
+        } else {
+            ("░", empty)
+        };
+    }
+    let style = if amount < 8 {
+        shell.map_or(fill, |color| fill.bg(color))
+    } else {
+        fill
+    };
+    (["", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"][amount], style)
 }
 
 /// One-cell ASCII fallback when the complete capsule cannot fit.

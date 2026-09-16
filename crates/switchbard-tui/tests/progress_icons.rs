@@ -50,7 +50,7 @@ fn coverage(h: &Harness, id: &str, total: usize, checked: usize) {
 }
 
 fn show_progress(h: &mut Harness) {
-    h.type_text("cprogr");
+    h.type_text("cprog");
     h.press(KeyCode::Esc);
     assert!(h.app.state.columns.contains(&Column::Progress));
     // Move the appended Progress next to Status, keeping Title at the end.
@@ -75,12 +75,12 @@ fn measured_boundaries_render_without_rounding_to_empty_or_complete() {
     coverage(&h, "TASK-1", 100, 0);
     let mut checked = 0;
     for (target, icon) in [
-        (0, "░░░░"),
-        (1, "▏░░░"),
-        (33, "█▎░░"),
-        (34, "█▎░░"),
-        (66, "██▋░"),
-        (67, "██▋░"),
+        (0, "████"),
+        (1, "▏███"),
+        (33, "█▎██"),
+        (34, "█▎██"),
+        (66, "██▋█"),
+        (67, "██▋█"),
         (99, "███▉"),
         (100, "████"),
     ] {
@@ -90,6 +90,33 @@ fn measured_boundaries_render_without_rounding_to_empty_or_complete() {
         checked = target;
         h.press(KeyCode::Char('r'));
         row_icon(&mut h, "Fix login", icon);
+        let screen = h.render();
+        let y = screen
+            .lines()
+            .position(|line| line.contains("Fix login"))
+            .unwrap() as u16;
+        let buffer = h.terminal.backend().buffer();
+        let x = (0..buffer.area.width)
+            .find(|x| buffer[(*x, y)].symbol() == "\u{e0b6}")
+            .unwrap();
+        let fill = if target == 100 {
+            ratatui::style::Color::Rgb(255, 86, 95)
+        } else {
+            ratatui::style::Color::Rgb(82, 143, 255)
+        };
+        let shell = ratatui::style::Color::Rgb(38, 62, 97);
+        assert_eq!(buffer[(x, y)].fg, if target == 0 { shell } else { fill });
+        assert_eq!(
+            buffer[(x + 5, y)].fg,
+            if target == 100 { fill } else { shell }
+        );
+        if target == 0 || target == 100 {
+            for offset in 1..5 {
+                assert_eq!(buffer[(x + offset, y)].fg, buffer[(x, y)].fg);
+                assert_eq!(buffer[(x + offset, y)].bg, buffer[(x, y)].bg);
+            }
+        }
+        evidence(&h, &format!("pill-boundary-{target}"));
     }
     assert_eq!(
         load_backlog_repo(&h.root)
@@ -116,7 +143,7 @@ fn measured_boundaries_render_without_rounding_to_empty_or_complete() {
     coverage(&h, "TASK-2", 201, 1);
     coverage(&h, "TASK-3", 0, 0);
     h.press(KeyCode::Char('r'));
-    row_icon(&mut h, "Add dark", "▏░░░");
+    row_icon(&mut h, "Add dark", "▏███");
     h.type_text("vp");
     h.type_text("sprog");
     h.press(KeyCode::Char('a'));
@@ -178,8 +205,8 @@ fn descendants_canceled_and_manual_done_share_checklist_truth() {
     )
     .unwrap();
     h.press(KeyCode::Char('r'));
-    row_icon(&mut h, "Fix login", "▌░░░");
-    row_icon(&mut h, "Add dark", "░░░░");
+    row_icon(&mut h, "Fix login", "▌███");
+    row_icon(&mut h, "Add dark", "████");
     row_icon(&mut h, "Write onboarding", "-");
     row_icon(&mut h, "Canceled outcomes", "-");
     select_task_titled(&mut h, "Fix login redirect loop");
@@ -261,7 +288,7 @@ fn compact_progress_header_keeps_percent_at_two_digit_positions() {
     h.terminal = Terminal::new(TestBackend::new(180, 20)).unwrap();
     let screen = h.press(KeyCode::Char('r'));
     assert!(harness::header_line(&screen).contains("10 %"), "{screen}");
-    row_icon(&mut h, "Fix login", "░░░░");
+    row_icon(&mut h, "Fix login", "████");
 }
 
 #[test]
@@ -273,13 +300,18 @@ fn pill_theme_selection_working_and_ascii_fallback() {
     h.press(KeyCode::Char('r'));
     select_task_titled(&mut h, "Fix login redirect loop");
     for (theme, color) in [
-        ("berg", Color::Rgb(255, 86, 95)),
-        ("light", Color::Rgb(184, 30, 53)),
+        ("berg", Color::Rgb(82, 143, 255)),
+        ("light", Color::Rgb(36, 93, 204)),
         ("plain", Color::Reset),
     ] {
         h.type_text(&format!(":theme {theme}"));
         h.press(KeyCode::Enter);
-        row_icon(&mut h, "Fix login", "\u{e0b6}██░░\u{e0b4}");
+        let body = if theme == "plain" {
+            "██░░"
+        } else {
+            "████"
+        };
+        row_icon(&mut h, "Fix login", &format!("\u{e0b6}{body}\u{e0b4}"));
         let buffer = h.terminal.backend().buffer();
         let index = buffer
             .content
@@ -322,7 +354,7 @@ fn pill_theme_selection_working_and_ascii_fallback() {
     )
     .unwrap();
     h.app.tick();
-    row_icon(&mut h, "Fix login", "\u{e0b6}██░░\u{e0b4}");
+    row_icon(&mut h, "Fix login", "\u{e0b6}████\u{e0b4}");
     evidence(&h, "pill-working");
 }
 
@@ -381,4 +413,66 @@ fn ascii_compact_fallback_uses_ascii_endpoints() {
         "{screen}"
     );
     evidence(&h, "pill-ascii-narrow");
+}
+
+#[test]
+fn complete_color_and_clean_shell_preserve_painted_rows() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    show_progress(&mut h);
+    select_task_titled(&mut h, "Fix login redirect loop");
+    h.type_text(":paint rows:id:TASK-1=h2");
+    h.press(KeyCode::Enter);
+    for (theme, complete) in [
+        ("berg", Color::Rgb(255, 86, 95)),
+        ("light", Color::Rgb(184, 30, 53)),
+    ] {
+        h.type_text(&format!(":theme {theme}"));
+        h.press(KeyCode::Enter);
+        for checked in [0, 1] {
+            coverage(&h, "TASK-1", 1, checked);
+            h.press(KeyCode::Char('r'));
+            h.type_text(&format!(":theme {theme}"));
+            h.press(KeyCode::Enter);
+            row_icon(&mut h, "Fix login", "\u{e0b6}████\u{e0b4}");
+            let buffer = h.terminal.backend().buffer();
+            let index = buffer
+                .content
+                .iter()
+                .position(|c| c.symbol() == "\u{e0b6}")
+                .unwrap();
+            let cap = &buffer.content[index];
+            assert_eq!(cap.bg, buffer.content[index - 1].bg);
+            for offset in 1..6 {
+                assert_eq!(buffer.content[index + offset].fg, cap.fg);
+                assert_eq!(buffer.content[index + offset].bg, cap.bg);
+            }
+            if checked == 1 {
+                assert_eq!(cap.fg, complete);
+            }
+            evidence(&h, &format!("pill-{theme}-painted-{checked}"));
+        }
+    }
+}
+
+#[test]
+fn legacy_custom_theme_retains_fill_unless_completion_is_configured() {
+    use ratatui::style::Color;
+    let mut h = Harness::new();
+    show_progress(&mut h);
+    coverage(&h, "TASK-1", 1, 1);
+    select_task_titled(&mut h, "Fix login redirect loop");
+    for (completion, expected) in [
+        ("", Color::Rgb(10, 80, 150)),
+        (
+            ", progress_complete = { fg = '#dd2233' }",
+            Color::Rgb(221, 34, 51),
+        ),
+        (", progress_complete = {}", Color::Reset),
+    ] {
+        std::fs::write(&h.config_path, format!("return {{ theme = 'custom', themes = {{ custom = {{ progress_fill = {{ fg = '#0a5096' }}, progress_shell = {{ fg = '#123456' }} {completion} }} }} }}")).unwrap();
+        h.press(KeyCode::Char('r'));
+        row_icon(&mut h, "Fix login", "\u{e0b6}████\u{e0b4}");
+        assert_eq!(harness::cell_fg(&h, "\u{e0b6}"), Some(expected));
+    }
 }
