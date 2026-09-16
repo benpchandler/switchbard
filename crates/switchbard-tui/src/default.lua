@@ -159,35 +159,40 @@ return {
       },
       columns = { id = "label", project = "link", goal = "link" },
     },
+    -- A warm paper canvas, not near-white: TASK-239 softened this from an
+    -- earlier #f5f2eb/#1f2830 pairing the owner found too bright and too
+    -- high-contrast (body text landed above Lc 95). Body ink now lands
+    -- within roughly Lc 75-90 against the canvas (tests/legibility.rs
+    -- asserts both the floor and this ceiling).
     light = {
       progress_fill = { fg = "#245dcc" },
       progress_complete = { fg = "#b81e35" },
       progress_empty = { fg = "#245dcc" },
       progress_shell = { fg = "#c5d4eb" },
-      background = "#f5f2eb",
-      title_repo     = { fg = "#f5f2eb", bg = "#355b7b", bold = true },
+      background = "#ece4d3",
+      title_repo     = { fg = "#ece4d3", bg = "#355b7b", bold = true },
       title          = { fg = "#59616b" },
       navigation_active = { fg = "#315f65", bold = true, underline = true },
       context = { fg = "#59616b" },
       border         = { fg = "#a3a9ae" },
       header         = { fg = "#3d4d5e", bold = true },
       heading        = { fg = "#334b63", bold = true },
-      selected       = { bg = "#e1e5e9" },
+      selected       = { bg = "#e5ddcd" },
       label          = { fg = "#59616b" },
-      text           = { fg = "#1f2830" },
+      text           = { fg = "#27231b" },
       link           = { fg = "#355b7b" },
-      chip           = { fg = "#f5f2eb", bg = "#355b7b" },
-      attention_badge= { fg = "#f5f2eb", bg = "#355b7b", bold = true },
+      chip           = { fg = "#ece4d3", bg = "#355b7b" },
+      attention_badge= { fg = "#ece4d3", bg = "#355b7b", bold = true },
       keys           = { fg = "#315f65" },
       hint           = { fg = "#59616b" },
       status         = { fg = "#59616b" },
       accent         = { fg = "#315f65" },
-      working        = { bg = "#dfe9e2", bold = true },
+      working        = { bg = "#badaca", bold = true },
       emphasis = {
         quiet = { fg = "#59616b", dim = false },
         strong = { bold = true },
         alert = { fg = "#8a302d", bold = true },
-        band = { bg = "#e5ddd0" },
+        band = { bg = "#ecdcae" },
         struck = { strikethrough = true },
       },
       highlights = {

@@ -143,6 +143,25 @@ fn every_colored_preset_keeps_body_secondary_and_roles_readable_on_rendered_band
     }
 }
 
+// TASK-239: the owner tried the pre-existing light preset and found it too
+// bright and too high-contrast (body text measured above Lc 95 against a
+// near-white canvas). The floor above catches a preset that goes too low;
+// this catches the opposite regression by also asserting a ceiling, so a
+// future edit can't silently walk `light` back toward that near-black-on-
+// near-white pairing.
+#[test]
+fn light_preset_body_text_stays_within_the_softened_contrast_band() {
+    let mut h = Harness::new();
+    command(&mut h, "theme light");
+    let foreground = cell_fg(&h, "Write onboarding guide").expect("light body renders");
+    let background = cell_bg(&h, "Write onboarding guide").expect("light body renders");
+    let value = measure(foreground, background).abs();
+    assert!(
+        (75.0..=90.0).contains(&value),
+        "light body: {foreground:?}/{background:?} = Lc {value:.2}, expected 75..90"
+    );
+}
+
 #[test]
 fn working_cycle_preserves_readability_and_disable_keeps_a_steady_band() {
     for name in COLORED_PRESETS {

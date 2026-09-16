@@ -11,6 +11,7 @@ pub mod highlight;
 pub mod inbox;
 pub mod legibility;
 mod navigation;
+mod oklch;
 pub mod page;
 pub mod paint;
 mod paint_eval;
