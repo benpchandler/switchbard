@@ -32,8 +32,8 @@ cargo test -p switchbard-core <pat>   # single test by name substring
 ```
 
 Run the narrowest test that proves your change (`cargo test -p <crate> <pattern>`).
-Run `mise run preflight` once, before pushing; a push to `no-mistakes` runs it for you,
-so do not run it again first.
+Do not run `mise run preflight` by hand before pushing: the pre-push hook runs it on
+every push (and the `no-mistakes` pipeline runs it for pushes to that remote).
 
 Prefer plain Cargo? Each `mise` task maps to the obvious `cargo fmt` / `cargo clippy` / `cargo test` / `cargo build --release`.
 
