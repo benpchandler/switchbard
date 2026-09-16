@@ -21,18 +21,30 @@ use switchbard_tui::{config, tty, view, views};
     about = "Terminal UI for switchbard"
 )]
 struct Cli {
-    /// Repository root holding a backlog/ directory (default: current directory)
-    #[arg(long)]
+    /// Repository scope in the centralized database (default: current directory)
+    #[arg(long, global = true)]
     repo: Option<PathBuf>,
     /// Open the saved default view instead of the last session (self-restarts still resume)
     #[arg(long)]
     fresh: bool,
+    /// Set up this repository before opening the UI
+    #[arg(long)]
+    setup: bool,
+    /// Accept setup defaults without a prompt (requires --setup)
+    #[arg(long, requires = "setup")]
+    yes: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Register this repository in the centralized database without opening the UI
+    Init {
+        /// Accept setup defaults without a prompt
+        #[arg(long)]
+        yes: bool,
+    },
     /// Summarize the local event log: what is used, what is slow, what failed
     Stats,
     /// Print where the config and event log live
@@ -45,7 +57,18 @@ enum Command {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if cli.setup && cli.command.is_some() {
+        bail!("--setup opens the UI; use sbt init --yes for setup without the UI");
+    }
     match cli.command {
+        Some(Command::Init { yes }) => {
+            let root = cli
+                .repo
+                .unwrap_or(std::env::current_dir()?)
+                .canonicalize()?;
+            switchbard_tui::onboarding::ensure_workspace(&root, true, yes)?;
+            Ok(())
+        }
         Some(Command::Stats) => {
             let Some(path) = telemetry::default_log_path() else {
                 bail!("no home directory");
@@ -92,14 +115,19 @@ fn main() -> Result<()> {
             print!("{}", switchbard_core::build_id_report());
             Ok(())
         }
-        None => run(cli.repo.unwrap_or(std::env::current_dir()?), cli.fresh),
+        None => run(
+            cli.repo.unwrap_or(std::env::current_dir()?),
+            cli.fresh,
+            cli.setup,
+            cli.yes,
+        ),
     }
 }
 
-fn run(repo_root: PathBuf, fresh: bool) -> Result<()> {
+fn run(repo_root: PathBuf, fresh: bool, setup: bool, yes: bool) -> Result<()> {
     let repo_root = repo_root.canonicalize()?;
-    if !switchbard_core::backlog_repo_available(&repo_root)? {
-        bail!("{} has no backlog/ directory", repo_root.display());
+    if !switchbard_tui::onboarding::ensure_workspace(&repo_root, setup, yes)? {
+        return Ok(());
     }
     let telemetry = match telemetry::default_log_path() {
         Some(path) => Telemetry::to_file(&path),

@@ -1,5 +1,6 @@
 //! Shared, flexible document authority. Payload bytes are never projected back into storage.
 mod established;
+mod onboarding;
 mod source_drift;
 pub use source_drift::{LegacySourceDrift, LegacySourceState};
 mod exchange;

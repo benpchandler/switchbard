@@ -1,6 +1,6 @@
 # sbt - switchbard terminal UI
 
-Binary `sbt` (this crate). Run in a backlog repo: `sbt`, `sbt stats`, `sbt paths`. Install off a feature branch: `bash scripts/install-switchbard.sh --branch --hold sbt` (guarded, holds this build from the 60s auto-install sweep for 2h; TASK-227).
+Binary `sbt` (this crate). Run in a configured repository: `sbt`, `sbt stats`, `sbt paths`. First launch offers centralized workspace setup; `sbt init --yes` configures without opening the UI. Install off a feature branch: `bash scripts/install-switchbard.sh --branch --hold sbt` (guarded, holds this build from the 60s auto-install sweep for 2h; TASK-227).
 
 ## Standing commitments (owner-set, 2026-09-02)
 1. Everything the user might tune lives in Lua (`~/.switchbard/tui.lua`, hot reload). New feature => new config surface only if a user would plausibly change it.

@@ -53,8 +53,8 @@ const MAX_ROOT_WALK: usize = 64;
     long_about = "Read and write Backlog-format tasks through switchbard's native write \
                   layer — the same implementation the Switchbard GUI and switchbard-dispatch \
                   use, and the replacement for the external `backlog` CLI's write path.\n\n\
-                  REPO RESOLUTION: commands act on the Backlog repo containing the \
-                  current directory (a registered repository or nearest backlog/ directory), or the \
+                  REPO RESOLUTION: commands act on the configured repository containing the \
+                  current directory (a central database workspace or legacy task repository), or the \
                   one named by --repo (--project <DIR> is a deprecated alias).\n\n\
                   STORAGE: after explicit per-kind migration, the central Switchbard database \
                   owns reads and writes across worktrees. Legacy source files remain preserved. \
@@ -103,7 +103,7 @@ const MAX_ROOT_WALK: usize = 64;
 )]
 struct Cli {
     /// Repo root to act on (default: nearest ancestor of the current
-    /// directory containing a backlog/ directory)
+    /// directory registered in centralized storage or containing legacy task data)
     #[arg(long, global = true, value_name = "DIR")]
     repo: Option<PathBuf>,
 
@@ -470,14 +470,14 @@ fn resolve_repo(explicit: Option<&Path>) -> Result<PathBuf> {
             return Ok(root.to_path_buf());
         }
         bail!(
-            "{} is not a Backlog repo (no backlog/ directory there)",
+            "{} has no Switchbard workspace configured; run sbt --repo <DIR> init to set one up in the centralized database",
             root.display()
         );
     }
     let cwd = std::env::current_dir().context("cannot read the current directory")?;
     find_repo_root(&cwd)?.ok_or_else(|| {
         anyhow!(
-            "no Backlog repo found at or above {} — run inside one, or pass --repo <repo-root>",
+            "no Switchbard workspace found at or above {}; run sbt init to set one up in the centralized database, or pass --repo <repo-root>",
             cwd.display()
         )
     })

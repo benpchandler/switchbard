@@ -37,13 +37,15 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 - **Binary:** `crates/switchbard-gui/src/main.rs` → `switchbard` (loads config, expands
   worktrees, hands to `HiveApp`). Core is library-only.
 - **Debugging examples:** `probe`, `probe_services`, `classify_check`, `sweep`.
-- **Backing stores:** no DB. `~/.switchbard/config.toml` (atomic write-tmp-then-rename),
+- **Backing stores:** centralized task database through core storage adapters, with per-kind legacy compatibility (see [central storage](central-storage.md)); `~/.switchbard/config.toml` (atomic write-tmp-then-rename),
   service logs in `$TMPDIR/switchbard-logs/`, perf ledger JSON in `docs/perf/runs/`,
   on-disk agent-context cache.
 - **Platforms:** macOS (unsigned DMG) + Linux (build from source). CI runs both
   (macos-latest + ubuntu-latest); `release-linux.yml` ships Linux artifacts.
 
 ## Recently implemented
+
+- **Centralized terminal onboarding (owner-directed 2026-09-16).** SBT probes the core repository onboarding contract and offers one default-No confirmation for an unconfigured workspace. `sbt init [--yes]` sets up without opening the UI; `sbt --setup [--yes]` sets up and opens it. Fresh setup atomically registers repository identity, activates all native kinds and stores default task configuration. Mixed/legacy repositories retain authority and require reviewed migration. Frontends use typed core status/setup hooks independent of the storage engine. State and evidence: [SBT onboarding](sbt-onboarding.md).
 
 - **Matrix-style progress capsule (owner-directed 2026-09-16).** The existing Progress column becomes a compact rounded blue pill that fills with retained-criterion coverage and turns red at exactly 100%, with a smooth empty surface and matching caps. It preserves manual Done, exact numeric details, saved column identity and configurable fallback rendering. State and visual evidence: `docs/tui-matrix-pill.md`.
 

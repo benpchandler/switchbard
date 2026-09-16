@@ -77,6 +77,14 @@ Switchbard can own task data in one local database at `~/.switchbard/switchbard.
 
 Use `sb --repo /path/to/repo storage status` to inspect authority. `storage migrate --kind project` previews all linked worktrees and relevant local branches; apply requires the exact preview digest and creates a verified private backup. Divergent copies refuse cutover until reconciled. See [the migration guide](docs/central-storage.md) for commands, collaboration, and recovery.
 
+## Terminal setup
+
+Run `sbt` inside your repository. If no workspace is configured, it offers to create one in the centralized database with one confirmation. Existing centralized repositories work without a `backlog/` folder; legacy repositories keep their existing authority until explicitly migrated.
+
+Use `sbt init` to set up without opening the UI, `sbt init --yes` for unattended setup, or `sbt --setup --yes` to set up and open the UI. Add `--repo /path/to/repo` to choose a repository. Setup keeps default task IDs and statuses; themes, projects, and agent integrations can be configured later. See [onboarding and recovery](docs/sbt-onboarding.md).
+
+If your shell says `sbt: command not found`, the terminal binary is missing or outside `PATH`. From a Switchbard source checkout on `main`, run `mise run install` to install both `sb` and `sbt`, then run `sbt` in your repository.
+
 ## Terminal views
 
 `sbt` resumes the last view for each repo. Use `sbt --fresh` for the saved default, `v h` to browse automatic history, and `v s <number>` to keep a restored arrangement in a slot. History retains 30 days with count and byte ceilings; auto-painted colors follow the current palette. See [resume and history](docs/tui-view-history.md) for controls, limits, and recovery, and [formatting and emphasis roles](docs/emphasis-roles/guide.md) for scan hierarchy and paint controls.

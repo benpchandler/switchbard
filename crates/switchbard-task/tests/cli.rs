@@ -454,7 +454,7 @@ fn outside_a_project_the_error_names_the_escape_hatch() {
 
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("no Backlog repo"), "{err}");
+    assert!(err.contains("no Switchbard workspace"), "{err}");
     assert!(
         err.contains("--repo"),
         "the error names the escape hatch: {err}"
