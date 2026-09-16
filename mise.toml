@@ -27,7 +27,7 @@ run = "cargo clippy --workspace --all-targets"
 [tasks.test]
 description = "Run the full workspace test suite (warnings denied by [workspace.lints] in Cargo.toml), then the sbt tty-hangup proof against a real pty"
 run = [
-  "cargo test --workspace --all-targets",
+  "cargo test --workspace --all-targets -- --test-threads=4",
   { task = "test-sbt-hangup" },
 ]
 

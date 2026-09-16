@@ -174,6 +174,10 @@ mise run bundle        # macOS: Switchbard.app in this worktree's Cargo target
 mise run package       # macOS: DMG + sha256 in this worktree's Cargo target
 ```
 
+The full workspace test harness uses four test threads so competing temporary
+repository fixtures do not starve one another's bounded storage locks; tests
+that exercise internal writer races remain concurrent.
+
 Prefer plain Cargo? Every task above maps to the obvious `cargo fmt` / `cargo clippy` / `cargo test` / `cargo build --release` invocation. The tracked pre-commit hook checks formatting, while pre-push runs the complete `mise run preflight` gate. Both hooks scrub Git's exported worktree variables before starting nested tools, and the installer uses a worktree-relative hook path. A push to the local `no-mistakes` gate does not duplicate preflight because that delivery pipeline runs the same trusted command before its upstream push. A hook can still be bypassed with `--no-verify`, so GitHub Actions remains the merge authority.
 
 CI runs formatting once on Linux and runs Clippy plus the full Rust tests on both macOS and Linux. The expensive live mission-sidecar proofs run only when mission code, its pinned helper, dependencies, or the CI routing contract changes. Because `main` is not branch-protected, CI also verifies the actual post-merge commit on every push to `main`.
