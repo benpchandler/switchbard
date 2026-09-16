@@ -79,9 +79,9 @@ Use `sb --repo /path/to/repo storage status` to inspect authority. `storage migr
 
 ## Terminal setup
 
-Run `sbt` inside your repository. If no workspace is configured, it offers to create one in the centralized database with one confirmation. Existing centralized repositories work without a `backlog/` folder; legacy repositories keep their existing authority until explicitly migrated.
+Run `sbt` inside your repository. If no workspace is configured, it explains setup and lets you choose suggested settings or customize task references and workflow stages before creating anything. Existing centralized repositories work without a `backlog/` folder; legacy repositories keep their existing authority until explicitly migrated.
 
-Use `sbt init` to set up without opening the UI, `sbt init --yes` for unattended setup, or `sbt --setup --yes` to set up and open the UI. Add `--repo /path/to/repo` to choose a repository. Setup keeps default task IDs and statuses; themes, projects, and agent integrations can be configured later. See [onboarding and recovery](docs/sbt-onboarding.md).
+Use `sbt init` to set up without opening the UI, `sbt init --yes` for unattended setup, or `sbt --setup --yes` to set up and open the UI. Add `--repo /path/to/repo` to choose a repository. For example, `sbt init --yes --task-prefix IW --status Inbox --status Doing --status Done` creates references such as `IW-1` and starts new tasks in `Inbox`. Repeat `--status` for each stage. `Done` marks completed tasks; other labels are work stages. Themes, projects, and agent integrations can be configured later. See [onboarding and recovery](docs/sbt-onboarding.md).
 
 If your shell says `sbt: command not found`, the terminal binary is missing or outside `PATH`. From a Switchbard source checkout on `main`, run `mise run install` to install both `sb` and `sbt`, then run `sbt` in your repository.
 

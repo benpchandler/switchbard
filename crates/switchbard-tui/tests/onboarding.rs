@@ -111,7 +111,7 @@ fn interactive_confirmation_default_decline_eof_and_accept() {
     let script = r#"
 import os, pty, select, subprocess, sys, time
 binary, root = sys.argv[1:]
-for index, answer in enumerate([b'\n', b'n\n', b'\x04', b'yes\n']):
+for index, answer in enumerate([b'\n', b'n\n', b'\x04', b'yes\n\n']):
     database = os.path.join(root, 'state-' + str(index) + '.sqlite3')
     master, slave = pty.openpty()
     process = subprocess.Popen([binary, '--repo', root, 'init'], stdin=slave, stdout=slave, stderr=slave,
@@ -125,7 +125,7 @@ for index, answer in enumerate([b'\n', b'n\n', b'\x04', b'yes\n']):
     os.write(master, answer)
     assert process.wait(timeout=10) == 0, output
     os.close(master)
-    assert os.path.exists(database) == (answer == b'yes\n'), (answer, output)
+    assert os.path.exists(database) == (answer == b'yes\n\n'), (answer, output)
 assert not os.path.exists(os.path.join(root, 'backlog'))
 "#;
     let output = Command::new("python3")
@@ -165,7 +165,17 @@ fn fresh_workspace_real_app_creates_and_changes_status_centrally() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use switchbard_tui::app::{App, AppPaths};
     let root = tempfile::tempdir().expect("repo");
-    switchbard_core::setup_repository(root.path()).expect("setup");
+    let choices = switchbard_core::RepositorySetupOptions {
+        task_prefix: "iw".into(),
+        statuses: vec![
+            "Inbox".into(),
+            "Doing".into(),
+            "Done".into(),
+            "Review: \"legal\"".into(),
+            "Waiting, external".into(),
+        ],
+    };
+    switchbard_core::setup_repository_with_options(root.path(), &choices).expect("custom setup");
     let mut app = App::open(
         root.path(),
         AppPaths {
@@ -183,8 +193,8 @@ fn fresh_workspace_real_app_creates_and_changes_status_centrally() {
         app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
     }
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert_eq!(app.selected_task().expect("created").id, "TASK-1");
-    assert_eq!(app.selected_task().expect("created").status, "To Do");
+    assert_eq!(app.selected_task().expect("created").id, "IW-1");
+    assert_eq!(app.selected_task().expect("created").status, "Inbox");
     for ch in "tsDone".chars() {
         app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
     }
@@ -202,8 +212,28 @@ fn fresh_workspace_real_app_creates_and_changes_status_centrally() {
     assert_eq!(loaded.tasks.len(), 1);
     assert_eq!(loaded.tasks[0].status, "Done");
     assert_eq!(
-        switchbard_core::assignable_statuses(&loaded),
-        ["To Do", "In Progress", "Done"]
+        loaded.configured_statuses,
+        [
+            "Inbox",
+            "Doing",
+            "Done",
+            "Review: \"legal\"",
+            "Waiting, external"
+        ]
+    );
+    let statuses = switchbard_core::backlog::status_config::add_standard_statuses(root.path())
+        .expect("add standard statuses");
+    assert!(statuses.contains(&"Review: \"legal\"".into()));
+    assert!(statuses.contains(&"Waiting, external".into()));
+    for ch in "tnAnother central task".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.selected_task()
+            .expect("new initial stage retained")
+            .status,
+        "Inbox"
     );
     assert!(!root.path().join("backlog").exists());
 }
@@ -236,4 +266,141 @@ fn registered_legacy_scope_is_not_silently_activated_by_init() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("reviewed migration"));
     assert!(!store.authority(&repo, "task").expect("authority"));
     assert_eq!(store.change_sequence().expect("sequence"), sequence);
+}
+
+#[test]
+fn cli_custom_options_validate_and_never_overwrite_existing_workspace() {
+    let root = tempfile::tempdir().expect("repo");
+    let database = root.path().join("central.sqlite3");
+    let args = [
+        "init",
+        "--yes",
+        "--task-prefix",
+        "iw",
+        "--status",
+        "Inbox",
+        "--status",
+        "Doing",
+        "--status",
+        "Done",
+    ];
+    let output = run(root.path(), &database, &args);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let store = Store::open_existing(&database)
+        .expect("store")
+        .expect("created");
+    let repo = store
+        .repository(root.path())
+        .expect("identity")
+        .expect("registered");
+    let config = store
+        .read(&repo, "config", "backlog/config.yml")
+        .expect("config")
+        .expect("document");
+    let text = String::from_utf8(config.content).expect("text");
+    assert!(text.contains("IW"));
+    assert!(text.contains("default_status: \"Inbox\""));
+    let sequence = store.change_sequence().expect("sequence");
+    assert!(run(root.path(), &database, &args).status.success());
+    assert!(!run(
+        root.path(),
+        &database,
+        &["init", "--yes", "--task-prefix", "DIFFERENT"]
+    )
+    .status
+    .success());
+    assert_eq!(store.change_sequence().expect("sequence"), sequence);
+}
+
+#[test]
+fn invalid_custom_flags_fail_before_database_creation() {
+    for args in [
+        vec!["--task-prefix", "IW"],
+        vec!["init", "--yes", "--task-prefix", "bad prefix"],
+        vec!["init", "--yes", "--task-prefix=-X"],
+        vec!["init", "--yes", "--status", "Inbox", "--status", "inbox"],
+        vec!["init", "--yes", "--status", ""],
+    ] {
+        let root = tempfile::tempdir().expect("repo");
+        let database = root.path().join("central.sqlite3");
+        assert!(
+            !run(root.path(), &database, &args).status.success(),
+            "{args:?}"
+        );
+        assert!(!database.exists(), "{args:?}");
+    }
+}
+
+#[test]
+fn interactive_custom_settings_recovery_confirmation_and_eof() {
+    let root = tempfile::tempdir().expect("repo");
+    let script = r#"
+import os, pty, select, subprocess, sys, time
+binary, root = sys.argv[1:]
+cases = [
+    ([(b'Set it up now?', b'y\n'), (b'Use these settings', b'c\n'), (b'Task ID prefix', b'iw\n'), (b'Workflow stages,', b'Inbox, Doing, Done\n'), (b'Create this workspace', b'y\n')], True),
+    ([(b'Set it up now?', b'y\n'), (b'Use these settings', b'c\n'), (b'Task ID prefix', b'bad prefix\n'), (b'Please try again.', b'iw\n'), (b'Workflow stages,', b'Inbox, inbox\n'), (b'Please try again.', b'Inbox, Doing, Done\n'), (b'Create this workspace', b'y\n')], True),
+    ([(b'Set it up now?', b'y\n'), (b'Use these settings', b'c\n'), (b'Task ID prefix', b'iw\n'), (b'Workflow stages,', b'Inbox, Done\n'), (b'Create this workspace', b'n\n')], False),
+    ([(b'Set it up now?', b'y\n'), (b'Use these settings', b'\x04')], False),
+    ([(b'Set it up now?', b'y\n'), (b'Use these settings', b'c\n'), (b'Task ID prefix', b'\x04')], False),
+    ([(b'Set it up now?', b'y\n'), (b'Use these settings', b'c\n'), (b'Task ID prefix', b'iw\n'), (b'Workflow stages,', b'\n'), (b'Create this workspace', b'y\n')], True),
+]
+for index, (events, created) in enumerate(cases):
+    database = os.path.join(root, 'custom-' + str(index) + '.sqlite3')
+    master, slave = pty.openpty()
+    flags = ['--status', 'Review, legal', '--status', 'Done'] if index == 5 else []
+    process = subprocess.Popen([binary, '--repo', root, 'init'] + flags, stdin=slave, stdout=slave, stderr=slave,
+        env=dict(os.environ, SWITCHBARD_DATABASE=database))
+    os.close(slave)
+    output = b''
+    cursor = 0
+    deadline = time.monotonic() + 10
+    try:
+        for token, answer in events:
+            while token not in output[cursor:]:
+                assert time.monotonic() < deadline, (index, output)
+                if select.select([master], [], [], 0.1)[0]: output += os.read(master, 65536)
+            cursor = output.index(token, cursor) + len(token)
+            os.write(master, answer)
+        while process.poll() is None:
+            assert time.monotonic() < deadline, (index, output)
+            if select.select([master], [], [], 0.1)[0]:
+                try: output += os.read(master, 65536)
+                except OSError: pass
+        assert process.returncode == 0, (index, output)
+        assert os.path.exists(database) == created, (index, output)
+    finally:
+        if process.poll() is None: process.kill(); process.wait()
+        os.close(master)
+assert not os.path.exists(os.path.join(root, 'backlog'))
+"#;
+    let output = Command::new("python3")
+        .args(["-c", script, env!("CARGO_BIN_EXE_sbt")])
+        .arg(root.path())
+        .output()
+        .expect("custom PTY journey");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let store = Store::open(root.path().join("custom-5.sqlite3")).expect("comma label state");
+    let repo = store
+        .repository(root.path())
+        .expect("identity")
+        .expect("registered");
+    let config = store
+        .read(&repo, "config", "backlog/config.yml")
+        .expect("read")
+        .expect("config");
+    let text = String::from_utf8(config.content).expect("text");
+    assert!(
+        text.contains("statuses: [\"Review, legal\",\"Done\"]"),
+        "{text}"
+    );
+    assert!(text.contains("default_status: \"Review, legal\""), "{text}");
 }

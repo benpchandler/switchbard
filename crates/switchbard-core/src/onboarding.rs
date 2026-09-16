@@ -34,5 +34,16 @@ pub fn repository_onboarding_status(root: &Path) -> Result<RepositoryOnboardingS
 pub fn setup_repository(root: &Path) -> Result<crate::storage::RepositoryId> {
     let root = root.canonicalize()?;
     ensure!(root.is_dir(), "repository root must be a directory");
-    crate::storage::Store::open_default()?.setup_repository(&root)
+    crate::storage::Store::open_default()?.setup_repository(&root, None)
+}
+
+/// Explicit choices cannot overwrite an existing workspace configuration.
+pub fn setup_repository_with_options(
+    root: &Path,
+    options: &crate::RepositorySetupOptions,
+) -> Result<crate::storage::RepositoryId> {
+    let options = options.validated()?;
+    let root = root.canonicalize()?;
+    ensure!(root.is_dir(), "repository root must be a directory");
+    crate::storage::Store::open_default()?.setup_repository(&root, Some(&options))
 }
