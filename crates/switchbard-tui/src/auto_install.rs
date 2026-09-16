@@ -1,16 +1,17 @@
 //! sbt's read-only view of the auto-install pipeline (TASK-227).
 //!
 //! `scripts/install-switchbard.sh` and `scripts/auto-install-main.sh` are the
-//! only writers of two small JSON files describing what happened the last
-//! time sb/sbt were installed: a hold marker while a manual branch install is
-//! protected from being overwritten, and a receipt of the last install
-//! attempt. This module is the only place sbt reads them, so the startup
+//! only writers of one small JSON file: a receipt of the last install
+//! attempt. This module is the only place sbt reads it, so the startup
 //! banner and any future surface agree with each other and with the scripts'
-//! own log line.
+//! own log line. Since TASK-272 an install is a one-way street - main
+//! replaces a running branch build only once that branch is merged or
+//! deleted on origin - so a `refused` receipt is usually "waiting for a
+//! merge", and the banner says so rather than sounding an alarm.
 
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 /// The same variable the install scripts honor
@@ -31,24 +32,12 @@ pub fn state_dir() -> Option<PathBuf> {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct HoldMarker {
-    branch: String,
-    until: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
 struct InstallReceipt {
     outcome: String,
     #[serde(default)]
     reason: Option<String>,
     #[serde(default)]
     from_branch: Option<String>,
-}
-
-fn read_hold(dir: &Path, now: DateTime<Utc>) -> Option<HoldMarker> {
-    let bytes = std::fs::read(dir.join("hold.json")).ok()?;
-    let hold: HoldMarker = serde_json::from_slice(&bytes).ok()?;
-    (hold.until > now).then_some(hold)
 }
 
 fn read_receipt(dir: &Path) -> Option<InstallReceipt> {
@@ -75,22 +64,31 @@ pub fn updated_status_line(prev_build: Option<&str>) -> String {
     line
 }
 
+/// The guard's own wording for "main does not contain the running build's
+/// branch yet" - the ordinary, expected wait, not a fault.
+const WAITING_FOR_MERGE: &str = "main does not yet contain";
+
 /// A one-line notice for an ordinary (non-restart) launch when auto-install
-/// has something the owner should know: an active hold, or a refused
-/// attempt. `None` when there is nothing to say - the common case.
+/// has something the owner should know: a wait for a merge, a refused
+/// attempt, or a failed build. `None` when there is nothing to say - the
+/// common case. `_now` is kept so a future time-based notice has its clock
+/// injected rather than read.
 #[must_use]
-pub fn pending_notice(dir: Option<&Path>, now: DateTime<Utc>) -> Option<String> {
+pub fn pending_notice(dir: Option<&Path>, _now: DateTime<Utc>) -> Option<String> {
     let dir = dir?;
-    if let Some(hold) = read_hold(dir, now) {
-        let until = hold.until.with_timezone(&Local).format("%H:%M");
-        return Some(format!(
-            "auto-install is holding {} until {until} - `mise run install --force` updates now",
-            hold.branch
-        ));
-    }
     let receipt = read_receipt(dir)?;
     let reason = receipt.reason.as_deref().unwrap_or("reason not recorded");
     match receipt.outcome.as_str() {
+        "refused" if reason.starts_with(WAITING_FOR_MERGE) => {
+            let branch = receipt
+                .from_branch
+                .as_deref()
+                .unwrap_or("an unrecognized branch");
+            Some(format!(
+                "auto-install is waiting for {branch} to merge before installing main - \
+                 `mise run install --force` installs main now"
+            ))
+        }
         "refused" => {
             let branch = receipt
                 .from_branch
@@ -155,37 +153,31 @@ mod tests {
     }
 
     #[test]
-    fn an_unexpired_hold_names_the_branch_and_a_resolving_gesture() {
+    fn a_wait_for_merge_reads_as_waiting_not_as_a_refusal() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let now = Utc::now();
-        let until = now + chrono::Duration::hours(1);
         write(
             dir.path(),
-            "hold.json",
-            &format!(
-                r#"{{"branch": "feat/x", "until": "{}"}}"#,
-                until.to_rfc3339()
-            ),
+            "last-install.json",
+            r#"{"outcome": "refused", "reason": "main does not yet contain a321320f (branch 'feat/tui-filter-cleanup', still open on origin); merge or delete it", "from_branch": "feat/tui-filter-cleanup"}"#,
         );
-        let notice = pending_notice(Some(dir.path()), now).expect("hold notice");
-        assert!(notice.contains("feat/x"), "{notice}");
-        assert!(notice.contains("--force"), "{notice}");
+        let notice = pending_notice(Some(dir.path()), Utc::now()).expect("waiting notice");
+        assert!(
+            notice.starts_with("auto-install is waiting for feat/tui-filter-cleanup to merge"),
+            "{notice}"
+        );
+        assert!(!notice.contains("refused"), "{notice}");
+        assert!(notice.contains("mise run install --force"), "{notice}");
     }
 
     #[test]
-    fn an_expired_hold_produces_no_notice_on_its_own() {
+    fn a_leftover_hold_file_is_ignored() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let now = Utc::now();
-        let until = now - chrono::Duration::hours(1);
         write(
             dir.path(),
             "hold.json",
-            &format!(
-                r#"{{"branch": "feat/x", "until": "{}"}}"#,
-                until.to_rfc3339()
-            ),
+            r#"{"branch": "feat/x", "until": "2999-01-01T00:00:00Z"}"#,
         );
-        assert_eq!(pending_notice(Some(dir.path()), now), None);
+        assert_eq!(pending_notice(Some(dir.path()), Utc::now()), None);
     }
 
     #[test]
@@ -224,35 +216,6 @@ mod tests {
             r#"{"outcome": "installed"}"#,
         );
         assert_eq!(pending_notice(Some(dir.path()), Utc::now()), None);
-    }
-
-    #[test]
-    fn a_held_receipt_alone_produces_no_notice_the_hold_file_already_did() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        write(dir.path(), "last-install.json", r#"{"outcome": "held"}"#);
-        assert_eq!(pending_notice(Some(dir.path()), Utc::now()), None);
-    }
-
-    #[test]
-    fn a_hold_takes_priority_over_a_stale_refused_receipt() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let now = Utc::now();
-        let until = now + chrono::Duration::minutes(30);
-        write(
-            dir.path(),
-            "last-install.json",
-            r#"{"outcome": "refused", "reason": "stale reason from before the hold"}"#,
-        );
-        write(
-            dir.path(),
-            "hold.json",
-            &format!(
-                r#"{{"branch": "feat/y", "until": "{}"}}"#,
-                until.to_rfc3339()
-            ),
-        );
-        let notice = pending_notice(Some(dir.path()), now).expect("hold notice");
-        assert!(notice.contains("feat/y"), "{notice}");
     }
 
     #[test]

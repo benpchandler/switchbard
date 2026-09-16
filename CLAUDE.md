@@ -70,39 +70,43 @@ worktree that predates a feature ends up reinstalled over one that has it
 
 Install through `mise run install` (both binaries) or `scripts/install-switchbard.sh`
 directly, never a bare `cargo install --path`; both re-exec a running `sbt` the
-moment the file on disk changes. On `main`, that install just needs to move
-forward and refuses otherwise (`--force` overrides and prints what is being
-dropped). Off `main`, it is gated behind explicit intent (TASK-227): pass
-`--branch` to acknowledge "this is deliberately not main", and `--hold [30m|2h|...]`
-(default 2h, **capped at 24h, and refused on `main`** - there is nothing to hold
-main back from) to tell the auto-install agent to leave that install alone for a
-while - it is temporary by construction and the agent reclaims it the moment the
-hold lapses (or immediately, if it ever finds a hold naming `main` - that can only
-be stale or hand-edited), printing/receipting exactly what it drops. There is no
+moment the file on disk changes. **An install is a one-way street (TASK-272):**
+it may only ever add to what is running. A candidate must contain the installed
+build's commit, or the installed build must be *delivered* - its branch's PR
+merged (this repo squash-merges, so the branch commit itself never lands on
+main) or its branch deleted on origin. Otherwise it refuses, with a receipt naming
+the installed commit and branch and what would be dropped; `--force` is the one
+override and prints exactly what it drops. Off `main`, a manual install also
+needs `--branch` to acknowledge "this is deliberately not main" (TASK-227). The
+auto-install agent obeys the same rule: a branch installed on purpose stays until
+it merges, then main replaces it within a minute; there is no timer and no hold
+(`--hold` is refused as removed). "Cannot verify" - origin unreachable, or an
+installed commit with no branch name to ask about - refuses closed. There is no
 separate "TUI install" task; `crates/switchbard-tui/CLAUDE.md`'s per-slice loop
-uses this same guard with `--branch --hold`, re-run each slice.
+uses this same guard with `--branch`.
 
 Every `sb`/`sbt` build is committed **both-or-neither**: `install-switchbard.sh`
 builds every named target into a scratch root first (a same-filesystem `mv` into
 `~/.cargo/bin` only once *all* of them build cleanly), so a compile error in one
 binary can never leave the other newer than it. A build failure writes a `failed`
 receipt naming which binary and why, and exits 1 without touching either binary -
-`failed` joins `installed`/`refused`/`held` as a receipt outcome and something
+`failed` joins `installed`/`refused` as a receipt outcome and something
 sbt's startup banner surfaces. Every wait on the network or an external binary
 (`git fetch`, `git clone`, `build-id`) is timeout-bounded; a `--main-authority`
 fetch that fails or times out refuses closed with its own receipt rather than
-silently treating an unreachable origin as "nothing to update". The receipt and
-hold files are themselves written atomically (temp file + `mv` in the same
-directory), so a reader can never observe a half-written one.
+silently treating an unreachable origin as "nothing to update". The receipt is
+itself written atomically (temp file + `mv` in the same directory), so a reader
+can never observe a half-written one.
 
 Every binary stamps its own commit and branch at compile time
 (`switchbard-core/build.rs` -> `switchbard_core::build_identity`), surfaced by
 `--version`, by the `build-id` subcommand, and in sbt's `session_start` event -
 so "which build am I on" is always answerable. Every install attempt (installed,
-refused, held, failed) leaves a receipt at `~/.switchbard/auto-install/last-install.json`
-(`SWITCHBARD_AUTO_INSTALL_DIR` overrides the directory); sbt reads it and any
-active hold to show a one-line startup banner rather than letting either drift
-unnoticed the way a silent refusal did for ten hours on 2026-09-13 (TASK-227).
+refused, failed) leaves a receipt at `~/.switchbard/auto-install/last-install.json`
+(`SWITCHBARD_AUTO_INSTALL_DIR` overrides the directory); sbt reads it to show a
+one-line startup banner - "waiting for <branch> to merge" for the ordinary wait -
+rather than letting a refusal drift unnoticed the way one did for ten hours on
+2026-09-13 (TASK-227).
 `--disable` on `auto-install-enable` removes the launchd agent; the log is
 `~/.switchbard/auto-install/auto-install.log`.
 

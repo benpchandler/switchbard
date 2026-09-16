@@ -53,7 +53,7 @@ mkdir -p "$STATE_DIR"
 outcome="${TEST_STUB_OUTCOME:-installed}"
 printf '{"outcome": "%s"}' "$outcome" > "$STATE_DIR/last-install.json"
 case "$outcome" in
-    installed|held) exit 0 ;;
+    installed) exit 0 ;;
     *) exit 1 ;;
 esac
 STUB
@@ -96,7 +96,7 @@ else
 fi
 
 # --- outcome-to-log dispatch -------------------------------------------
-for outcome in installed held refused failed; do
+for outcome in installed refused failed; do
     state="$WORK/state-$outcome"
     run "$state" env TEST_STUB_OUTCOME="$outcome"
     log_contents="$(cat "$state/auto-install.log" 2>/dev/null)"
@@ -110,14 +110,6 @@ for outcome in installed held refused failed; do
                 fail "outcome=installed did not log an 'installed <sha>' line" "$log_contents"
             else
                 echo "ok: outcome=installed dispatches to an 'installed' log line"
-            fi
-            ;;
-        held)
-            if grep -qE ' installed [0-9a-f]+$' "$state/auto-install.log" \
-                || [[ "$log_contents" == *"refused"* || "$log_contents" == *"failed"* ]]; then
-                fail "outcome=held should log nothing beyond the guard's own 'holding' line" "$log_contents"
-            else
-                echo "ok: outcome=held adds no extra dispatch line (the guard already logged it)"
             fi
             ;;
         refused)

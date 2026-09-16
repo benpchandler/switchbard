@@ -8,30 +8,31 @@
 # install from a tree that predates a feature therefore deletes that feature
 # from every running session at once, with no prompt and no version change.
 #
-# TWO CALLERS, TWO RULES (TASK-227)
+# ONE RULE, ONE DIRECTION (TASK-272, replacing TASK-227's timed hold)
 #
-# A human standing in a worktree and the unattended launchd agent
-# (`scripts/auto-install-main.sh`) need different answers to "is this safe":
+# An install may only ever ADD to what the user is running, never take it
+# away. Whatever calls this script - a human in a worktree or the unattended
+# launchd agent (`scripts/auto-install-main.sh`, `--main-authority`) - the
+# candidate build has to contain the installed build's commit, or the
+# installed build has to be *delivered*: its branch's PR merged (this repo
+# squash-merges, so the branch commit itself is never an ancestor of main
+# afterwards) or its branch deleted on origin (merged and cleaned up, or
+# abandoned - either way there is nothing left to protect). Otherwise the
+# install is refused, with a receipt naming the installed commit and branch
+# and what would be dropped. `--force` is the one explicit override and
+# prints exactly what it drops.
 #
-# - A human's worktree may legitimately be a feature branch that does not
-#   (yet) contain everything main has, or vice versa. The rule for a manual
-#   install is ANCESTRY: refuse unless the target contains every commit the
-#   running binary already has. `--force` overrides.
-# - The unattended agent only ever installs origin/main's own tip, passed
-#   with `--main-authority`. There main IS the authority, so a running build
-#   that main does not contain (a feature branch someone installed on
-#   purpose) is not a downgrade to refuse - it is exactly the case this repo
-#   needs auto-install to resolve on its own. `--main-authority` never
-#   refuses on ancestry; it installs and prints precisely what is dropped.
-#   It still refuses if the checkout is not actually origin/main's tip -
-#   that would mean the flag is being used somewhere it should not be.
+# So a feature branch installed on purpose stays installed until it merges,
+# and main replaces it within a minute of that merge - no timer to set, no
+# hold to expire early or late, no session shadowing another's work.
+# "Cannot verify" (unreachable origin, an installed commit and branch this
+# checkout cannot see) refuses closed, as a failed fetch already did.
 #
-# A manual install from any branch but main must now pass `--branch`,
-# so "I meant to install a feature branch" is always an explicit choice,
-# never an accident of `cd`. `--hold <duration>` (default 2h) additionally
-# tells the auto-install agent to leave that choice alone for a while.
+# A manual install from any branch but main must pass `--branch`, so "I
+# meant to install a feature branch" is always an explicit choice, never an
+# accident of `cd`.
 #
-# Every attempt (installed, refused, held, failed) leaves a durable receipt at
+# Every attempt (installed, refused, failed) leaves a durable receipt at
 # `$STATE_DIR/last-install.json` so a person - or sbt's startup banner - can
 # see what happened without reading the log.
 
@@ -43,29 +44,28 @@ usage: install-switchbard.sh [options] [sbt|sb]...
 
 Installs the named binaries (default: both) from this worktree.
 
-  --force            install even when a guard below would refuse
+  --force            install even when a guard below would refuse; prints
+                      exactly what is dropped
   --dry-run          report the decision for each binary and install nothing
   --branch           acknowledge an intentional install from a non-main branch
-  --hold [DURATION]  protect that branch install from auto-install for DURATION
-                      (30m, 2h, ...; default 2h, capped at 24h). Implies
-                      --branch. Refused on main - there is nothing to hold
-                      main back from.
   --main-authority   for the auto-install agent only: the target tree must be
-                      origin/main's own tip; never refuses on ancestry, only
-                      on that precondition. Prints what it drops.
+                      origin/main's own tip. Installs only once main contains
+                      the running build, or that build's branch has been
+                      merged (PR) or deleted on origin; refuses otherwise.
 
-Every attempt (installed, refused, held, failed) leaves a receipt at
+Every attempt (installed, refused, failed) leaves a receipt at
 $SWITCHBARD_AUTO_INSTALL_DIR/last-install.json (default
 ~/.switchbard/auto-install/last-install.json).
 
-Exit codes: 0 an install happened, would happen (--dry-run), or an unexpired
-hold left it alone. 1 refused, or a build failed (nothing is ever replaced
-when a build fails - see perform_installs below).
+Exit codes: 0 an install happened or would happen (--dry-run). 1 refused, or
+a build failed (nothing is ever replaced when a build fails - see
+perform_installs below).
 USAGE
 }
 
 STATE_DIR="${SWITCHBARD_AUTO_INSTALL_DIR:-$HOME/.switchbard/auto-install}"
-HOLD_FILE="$STATE_DIR/hold.json"
+# TASK-227's timed hold marker. No longer written; swept if one is left over.
+LEGACY_HOLD_FILE="$STATE_DIR/hold.json"
 RECEIPT_FILE="$STATE_DIR/last-install.json"
 MAX_DROPPED=20
 
@@ -73,7 +73,6 @@ FORCE=0
 DRY_RUN=0
 BRANCH_ACK=0
 MAIN_AUTHORITY=0
-HOLD_DURATION=""
 TARGETS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -81,13 +80,8 @@ while [[ $# -gt 0 ]]; do
         --dry-run) DRY_RUN=1 ;;
         --branch) BRANCH_ACK=1 ;;
         --hold)
-            BRANCH_ACK=1
-            if [[ $# -ge 2 && "$2" =~ ^[0-9]+[mh]$ ]]; then
-                HOLD_DURATION="$2"
-                shift
-            else
-                HOLD_DURATION="2h"
-            fi
+            echo "install-switchbard.sh: --hold was removed (TASK-272): a branch install now stays until its branch is merged or deleted on origin; nothing to hold." >&2
+            exit 1
             ;;
         --main-authority) MAIN_AUTHORITY=1 ;;
         -h|--help) usage; exit 0 ;;
@@ -139,26 +133,7 @@ installed_field() {
 installed_commit() { installed_field "$1" commit; }
 installed_branch() { installed_field "$1" branch; }
 
-# --- portable UTC timestamp helpers (macOS `date` vs. GNU `date`) ----------
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
-iso_to_epoch() {
-    date -u -d "$1" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null || echo 0
-}
-iso_after_now() {
-    local secs="$1"
-    date -u -d "+${secs} seconds" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-        || date -u -j -v "+${secs}S" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null
-}
-duration_to_seconds() {
-    local d="$1"
-    if [[ "$d" =~ ^([0-9]+)m$ ]]; then
-        echo $(( 10#${BASH_REMATCH[1]} * 60 ))
-    elif [[ "$d" =~ ^([0-9]+)h$ ]]; then
-        echo $(( 10#${BASH_REMATCH[1]} * 3600 ))
-    else
-        echo 7200
-    fi
-}
 
 # --- tiny hand-rolled JSON, so a comma or a quote in a commit subject can
 # never produce a receipt sbt's parser trips on ------------------------------
@@ -194,8 +169,8 @@ atomic_write() {
 }
 
 write_receipt() {
-    local outcome="$1" from_commit="$2" from_branch="$3" to_commit="$4" to_branch="$5" reason="$6" hold_until="$7"
-    shift 7
+    local outcome="$1" from_commit="$2" from_branch="$3" to_commit="$4" to_branch="$5" reason="$6"
+    shift 6
     mkdir -p "$STATE_DIR"
     local body
     body="$(cat <<JSON
@@ -208,8 +183,7 @@ write_receipt() {
   "to_commit": $(json_str_or_null "$to_commit"),
   "to_branch": $(json_str_or_null "$to_branch"),
   "dropped": $(json_array "$@"),
-  "reason": $(json_str_or_null "$reason"),
-  "hold_until": $(json_str_or_null "$hold_until")
+  "reason": $(json_str_or_null "$reason")
 }
 JSON
 )"
@@ -222,6 +196,49 @@ dropped_commits() {
     git rev-list --max-count="$MAX_DROPPED" "$head..$prior" 2>/dev/null | while read -r sha; do
         printf '%s %s\n' "$(git rev-parse --short "$sha")" "$(git log -1 --format=%s "$sha")"
     done
+}
+
+# --- has the installed build been delivered to origin? (TASK-272) ----------
+# Answers for a running build whose commit is NOT an ancestor of the
+# candidate. Prints one line - `merged <n>`, `deleted`, `open <sha>` - and
+# exits 0; exits 1 when the question cannot be answered (no branch name to
+# ask about, origin unreachable), which the caller treats as "refuse".
+#
+# `gh` is asked whether a merged PR has this head branch because this repo
+# squash-merges: after that the branch commit is never on main, yet every
+# line of it is. A missing or failing `gh` is simply "not known merged".
+delivered_state() {
+    local branch="$1" listing
+    case "$branch" in
+        ""|HEAD|main|origin/main) return 1 ;;
+    esac
+    if ! listing="$(run_with_timeout 30 git ls-remote --heads origin "refs/heads/$branch" 2>/dev/null)"; then
+        return 1
+    fi
+    if [[ -z "$listing" ]]; then
+        echo deleted
+        return 0
+    fi
+    if command -v gh >/dev/null 2>&1; then
+        local merged
+        merged="$(run_with_timeout 30 gh pr list --head "$branch" --state merged --limit 1 --json number --jq '.[0].number' 2>/dev/null || true)"
+        if [[ "$merged" =~ ^[0-9]+$ ]]; then
+            echo "merged $merged"
+            return 0
+        fi
+    fi
+    echo "open ${listing%%[[:space:]]*}"
+    return 0
+}
+
+# Best effort: make the installed build's commits visible here so the
+# dropped list can be printed. Failure is not an answer to anything.
+fetch_installed_branch() {
+    local branch="$1"
+    case "$branch" in
+        ""|HEAD|main|origin/main) return 0 ;;
+    esac
+    run_with_timeout 60 git fetch -q origin "refs/heads/$branch" 2>/dev/null || true
 }
 
 # Where `cargo install --path` would put the binaries by default - the same
@@ -268,7 +285,7 @@ perform_installs() {
             last_line="$(tail -1 "$TMP_INSTALL_ROOT/$binary.stderr" 2>/dev/null | cut -c1-200)"
             REASON="cargo install failed for $binary (exit $status): ${last_line:-no output captured}"
             echo "$binary: REFUSED - $REASON" >&2
-            write_receipt failed "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" "$TO_BRANCH_LABEL" "$REASON" ""
+            write_receipt failed "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" "$TO_BRANCH_LABEL" "$REASON"
             exit 1
         fi
     done
@@ -281,63 +298,28 @@ perform_installs() {
 HEAD_COMMIT="$(git rev-parse HEAD)"
 CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 
-if [[ -n "$HOLD_DURATION" ]]; then
-    HOLD_SECONDS="$(duration_to_seconds "$HOLD_DURATION")"
-    if [[ "$HOLD_SECONDS" -gt 86400 ]]; then
-        REASON="--hold $HOLD_DURATION exceeds the 24h cap"
-        echo "REFUSED - $REASON." >&2
-        write_receipt refused "" "" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON" ""
-        exit 1
-    fi
-    if [[ "$CURRENT_BRANCH" == "main" ]]; then
-        REASON="--hold on main is meaningless - main is never held back from itself"
-        echo "REFUSED - $REASON." >&2
-        write_receipt refused "" "" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON" ""
-        exit 1
-    fi
-fi
-
 if [[ $MAIN_AUTHORITY -eq 1 ]]; then
     mkdir -p "$STATE_DIR"
-    if [[ -f "$HOLD_FILE" ]]; then
-        hold_branch="$(sed -n 's/.*"branch": *"\([^"]*\)".*/\1/p' "$HOLD_FILE" | head -1)"
-        hold_until="$(sed -n 's/.*"until": *"\([^"]*\)".*/\1/p' "$HOLD_FILE" | head -1)"
-        if [[ "$hold_branch" == "main" ]]; then
-            # Only a manual install writes this file, and it now refuses to
-            # write one for main - a hold naming main here is stale or hand-
-            # edited, and holding "main" back from main is meaningless.
-            echo "dropping an invalid hold on main (a hold protects a non-main branch, never main)" >&2
-            rm -f "$HOLD_FILE"
-        else
-            hold_epoch="$(iso_to_epoch "$hold_until")"
-            now_epoch="$(date -u +%s)"
-            if [[ -n "$hold_until" && "$hold_epoch" -gt "$now_epoch" && $FORCE -eq 0 ]]; then
-                echo "holding $hold_branch until $hold_until"
-                write_receipt held "" "$hold_branch" "$HEAD_COMMIT" origin/main "manual hold active" "$hold_until"
-                exit 0
-            fi
-            rm -f "$HOLD_FILE"
-        fi
-    fi
+    rm -f "$LEGACY_HOLD_FILE"
 
     if [[ $FORCE -eq 0 ]]; then
         if ! run_with_timeout 60 git fetch -q origin main 2>/dev/null; then
             REASON="could not verify origin/main (git fetch failed or timed out)"
             echo "REFUSED - $REASON; --main-authority requires it." >&2
-            write_receipt refused "" "" "$HEAD_COMMIT" origin/main "$REASON" ""
+            write_receipt refused "" "" "$HEAD_COMMIT" origin/main "$REASON"
             exit 1
         fi
         ORIGIN_MAIN="$(git rev-parse origin/main 2>/dev/null || true)"
         if [[ -z "$ORIGIN_MAIN" ]]; then
             REASON="cannot resolve origin/main in this checkout"
             echo "REFUSED - $REASON; --main-authority requires it." >&2
-            write_receipt refused "" "" "$HEAD_COMMIT" origin/main "$REASON" ""
+            write_receipt refused "" "" "$HEAD_COMMIT" origin/main "$REASON"
             exit 1
         fi
         if [[ "$HEAD_COMMIT" != "$ORIGIN_MAIN" ]]; then
             REASON="this checkout ($(git rev-parse --short "$HEAD_COMMIT")) is not origin/main's tip ($(git rev-parse --short "$ORIGIN_MAIN"))"
             echo "REFUSED - $REASON; --main-authority only installs origin/main's own tip." >&2
-            write_receipt refused "" "" "$HEAD_COMMIT" origin/main "$REASON" ""
+            write_receipt refused "" "" "$HEAD_COMMIT" origin/main "$REASON"
             exit 1
         fi
     fi
@@ -346,45 +328,80 @@ if [[ $MAIN_AUTHORITY -eq 1 ]]; then
     FROM_BRANCH=""
     DROPPED=()
     REASON=""
+    REFUSED=0
     for binary in "${TARGETS[@]}"; do
         prior="$(installed_commit "$binary")"
         prior_branch="$(installed_branch "$binary")"
         if [[ -z "$prior" ]]; then
             echo "$binary: no build stamp on the installed binary; installing $(git rev-parse --short "$HEAD_COMMIT")"
+            continue
         elif [[ "$prior" == "$HEAD_COMMIT" ]]; then
             echo "$binary: already built from $(git rev-parse --short "$HEAD_COMMIT"); reinstalling"
-        elif git cat-file -e "${prior}^{commit}" 2>/dev/null && git merge-base --is-ancestor "$prior" "$HEAD_COMMIT" 2>/dev/null; then
+            continue
+        fi
+        fetch_installed_branch "$prior_branch"
+        if git cat-file -e "${prior}^{commit}" 2>/dev/null && git merge-base --is-ancestor "$prior" "$HEAD_COMMIT" 2>/dev/null; then
             echo "$binary: $(git rev-parse --short "$prior") -> $(git rev-parse --short "$HEAD_COMMIT") (+$(git rev-list --count "$prior".."$HEAD_COMMIT") commits)"
+            continue
+        fi
+        # Not an ancestor. Delivered (merged PR / branch gone) installs and
+        # prints what is dropped; anything else refuses - main waits.
+        THIS_DROPPED=()
+        THIS_REFUSED=0
+        if git cat-file -e "${prior}^{commit}" 2>/dev/null; then
+            while IFS= read -r line; do THIS_DROPPED+=("$line"); done < <(dropped_commits "$prior" "$HEAD_COMMIT")
         else
-            THIS_DROPPED=()
-            if git cat-file -e "${prior}^{commit}" 2>/dev/null; then
-                # origin/main itself moved backward relative to what is
-                # already running (a force-push) is a distinct, more alarming
-                # case than "a stray feature branch was installed" - label it.
-                if git merge-base --is-ancestor "$HEAD_COMMIT" "$prior" 2>/dev/null; then
-                    THIS_REASON="rewind: origin/main is behind the installed build's branch '$prior_branch'"
-                else
-                    THIS_REASON="dropping branch '$prior_branch', not on origin/main"
-                fi
-                while IFS= read -r line; do THIS_DROPPED+=("$line"); done < <(dropped_commits "$prior" "$HEAD_COMMIT")
-                echo "$binary: main authority - $THIS_REASON ($(git rev-list --count "$HEAD_COMMIT".."$prior") commit(s)):" >&2
-                printf '  %s\n' "${THIS_DROPPED[@]+"${THIS_DROPPED[@]}"}" >&2
-            else
-                THIS_REASON="dropping unknown commit $prior from branch '$prior_branch'"
-                THIS_DROPPED=("$prior (unknown commit; not reachable in this repository)")
-                echo "$binary: main authority - $THIS_REASON; origin/main is authoritative" >&2
-            fi
-            # sbt is what reads the receipt; prefer its story, else keep the
-            # first divergence seen so the receipt is never empty.
-            if [[ "$binary" == "sbt" || -z "$FROM_COMMIT" ]]; then
-                FROM_COMMIT="$prior"
-                FROM_BRANCH="$prior_branch"
-                DROPPED=("${THIS_DROPPED[@]+"${THIS_DROPPED[@]}"}")
-                REASON="$THIS_REASON"
-            fi
+            THIS_DROPPED=("$prior (unknown commit; not reachable in this repository)")
+        fi
+        if [[ $FORCE -eq 1 ]]; then
+            THIS_REASON="--force: dropping branch '$prior_branch' ($prior), not on origin/main"
+        elif git cat-file -e "${prior}^{commit}" 2>/dev/null && git merge-base --is-ancestor "$HEAD_COMMIT" "$prior" 2>/dev/null; then
+            # origin/main moved backward relative to what is running (a
+            # force-push): never silently install the older tip.
+            THIS_REASON="rewind: origin/main is behind the installed build's branch '$prior_branch'"
+            THIS_REFUSED=1
+        else
+            state="$(delivered_state "$prior_branch" || true)"
+            case "$state" in
+                "merged "*)
+                    THIS_REASON="branch '$prior_branch' merged as PR #${state#merged }; main now carries it"
+                    ;;
+                deleted)
+                    THIS_REASON="branch '$prior_branch' no longer exists on origin; nothing left to protect"
+                    ;;
+                "open "*)
+                    THIS_REASON="main does not yet contain $(git rev-parse --short "$prior" 2>/dev/null || echo "$prior") (branch '$prior_branch', still open on origin); merge or delete it"
+                    THIS_REFUSED=1
+                    ;;
+                *)
+                    THIS_REASON="cannot verify whether $prior (branch '${prior_branch:-unknown}') was delivered to origin"
+                    THIS_REFUSED=1
+                    ;;
+            esac
+        fi
+        if [[ $THIS_REFUSED -eq 1 ]]; then
+            echo "$binary: REFUSED - $THIS_REASON." >&2
+            echo "  installed: $prior; origin/main: $(git rev-parse --short "$HEAD_COMMIT"). Would drop:" >&2
+            REFUSED=1
+        else
+            echo "$binary: $THIS_REASON; dropping $(git rev-list --count "$HEAD_COMMIT".."$prior" 2>/dev/null || echo '?') commit(s):" >&2
+        fi
+        printf '  %s\n' "${THIS_DROPPED[@]+"${THIS_DROPPED[@]}"}" >&2
+        # sbt is what reads the receipt; prefer its story, else keep the
+        # first divergence seen so the receipt is never empty.
+        if [[ "$binary" == "sbt" || -z "$FROM_COMMIT" ]]; then
+            FROM_COMMIT="$prior"
+            FROM_BRANCH="$prior_branch"
+            DROPPED=("${THIS_DROPPED[@]+"${THIS_DROPPED[@]}"}")
+            REASON="$THIS_REASON"
         fi
     done
     TO_BRANCH_LABEL=origin/main
+    if [[ $REFUSED -eq 1 ]]; then
+        echo "REFUSED - not installing any of: ${TARGETS[*]} (neither binary moves while either refuses)." >&2
+        write_receipt refused "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" origin/main "$REASON" "${DROPPED[@]+"${DROPPED[@]}"}"
+        exit 1
+    fi
     if [[ $DRY_RUN -eq 1 ]]; then
         for binary in "${TARGETS[@]}"; do
             echo "$binary: dry run; not installing"
@@ -395,7 +412,7 @@ if [[ $MAIN_AUTHORITY -eq 1 ]]; then
     # bash 3.2 (macOS's /bin/bash) treats a *declared-but-empty* array as
     # unset under `set -u`; the `+` guard is the portable way to expand
     # "zero or more elements" without tripping that quirk.
-    write_receipt installed "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" origin/main "$REASON" "" "${DROPPED[@]+"${DROPPED[@]}"}"
+    write_receipt installed "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" origin/main "$REASON" "${DROPPED[@]+"${DROPPED[@]}"}"
     exit 0
 fi
 
@@ -403,7 +420,7 @@ fi
 if [[ "$CURRENT_BRANCH" != "main" && $BRANCH_ACK -eq 0 && $FORCE -eq 0 ]]; then
     REASON="installing branch '$CURRENT_BRANCH', not main; re-run with --branch to confirm"
     echo "REFUSED - $REASON." >&2
-    write_receipt refused "" "" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON" ""
+    write_receipt refused "" "" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON"
     exit 1
 fi
 
@@ -448,7 +465,7 @@ done
 
 if [[ $REFUSED -eq 1 && $FORCE -eq 0 ]]; then
     echo "REFUSED - not installing any of: ${TARGETS[*]} (neither binary moves while either refuses)." >&2
-    write_receipt refused "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON" ""
+    write_receipt refused "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" "$CURRENT_BRANCH" "$REASON"
     exit 1
 fi
 if [[ $REFUSED -eq 1 ]]; then
@@ -464,15 +481,9 @@ else
     perform_installs "${TARGETS[@]}"
 fi
 
-HOLD_UNTIL=""
-if [[ -n "$HOLD_DURATION" && $DRY_RUN -eq 0 ]]; then
-    mkdir -p "$STATE_DIR"
-    HOLD_UNTIL="$(iso_after_now "$(duration_to_seconds "$HOLD_DURATION")")"
-    atomic_write "{\"branch\": $(json_str_or_null "$CURRENT_BRANCH"), \"until\": $(json_str_or_null "$HOLD_UNTIL")}" "$HOLD_FILE"
-    echo "auto-install replaces this with main after $HOLD_UNTIL"
-elif [[ "$CURRENT_BRANCH" != "main" && $DRY_RUN -eq 0 ]]; then
-    echo "auto-install replaces this with main within the next check (~60s); pass --hold to delay that"
+if [[ "$CURRENT_BRANCH" != "main" && $DRY_RUN -eq 0 ]]; then
+    echo "auto-install replaces this with main within a minute of '$CURRENT_BRANCH' being merged or deleted on origin"
 fi
 
-write_receipt installed "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" "$CURRENT_BRANCH" "" "$HOLD_UNTIL"
+write_receipt installed "$FROM_COMMIT" "$FROM_BRANCH" "$HEAD_COMMIT" "$CURRENT_BRANCH" ""
 exit 0
