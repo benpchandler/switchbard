@@ -1313,6 +1313,48 @@ fn edit_assigns_a_named_ball_holder_and_replaces_prior_holder() {
 }
 
 #[test]
+fn work_claim_refuses_a_completed_task_and_leaves_it_untouched() {
+    let dir = fixture_project();
+    let root = dir.path();
+    let work = tempfile::tempdir().unwrap();
+    let pid = std::process::id().to_string();
+    ok_stdout(root, &["create", "Finished work"]);
+    ok_stdout(root, &["edit", "TASK-1", "-s", "Done"]);
+    ok_stdout(root, &["complete", "TASK-1"]);
+    let before = ok_stdout(root, &["view", "TASK-1"]);
+
+    let out = work_bin(
+        root,
+        work.path(),
+        &[
+            "work",
+            "claim",
+            "TASK-1",
+            "--session",
+            "sess-done",
+            "--pid",
+            pid.as_str(),
+        ],
+        None,
+    );
+    assert!(
+        !out.status.success(),
+        "a completed task must not be claimed"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("not an active task (it is completed)"),
+        "{stderr}"
+    );
+    assert_eq!(ok_stdout(root, &["view", "TASK-1"]), before);
+    assert!(!work.path().join("sess-done.json").exists());
+    assert!(!work
+        .path()
+        .join(switchbard_core::WORK_HISTORY_FILE)
+        .exists());
+}
+
+#[test]
 fn work_claim_release_and_pass_round_trip_through_the_board() {
     let dir = fixture_project();
     let root = dir.path();
