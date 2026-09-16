@@ -174,7 +174,7 @@ mise run bundle        # macOS: Switchbard.app in this worktree's Cargo target
 mise run package       # macOS: DMG + sha256 in this worktree's Cargo target
 ```
 
-The full workspace test harness uses four test threads so competing temporary
+The full workspace test harness uses one test thread so competing temporary
 repository fixtures do not starve one another's bounded storage locks; tests
 that exercise internal writer races remain concurrent.
 
