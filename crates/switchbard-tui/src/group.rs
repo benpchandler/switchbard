@@ -253,7 +253,57 @@ pub fn rows(
         .filter(|index| !top.contains(index))
         .collect();
     top.clear();
-    rows.extend(sections(tasks, &ordered, levels, headings, 0));
+    rows.extend(sections(tasks, &ordered, levels, headings, 0, false));
+    rows
+}
+
+/// Planned is an ordered section, not an exception to the requested outline.
+/// Grouping changes the presentation across groups; each leaf retains the
+/// canonical planned sequence and turning the outline off restores it exactly.
+pub fn planned_rows(
+    tasks: &[BacklogTask],
+    ordered: &[usize],
+    levels: &[Column],
+    headings: &Headings<'_>,
+    planned: &[String],
+) -> Vec<Row> {
+    let top: Vec<usize> = planned
+        .iter()
+        .filter_map(|id| {
+            ordered
+                .iter()
+                .copied()
+                .find(|&index| tasks[index].id == *id)
+        })
+        .collect();
+    if top.is_empty() {
+        return sections(tasks, ordered, levels, headings, 0, false);
+    }
+    let members: HashSet<usize> = top.iter().copied().collect();
+    let remaining: Vec<usize> = ordered
+        .iter()
+        .copied()
+        .filter(|index| !members.contains(index))
+        .collect();
+    let nested: Vec<Column> = levels
+        .iter()
+        .copied()
+        .filter(|column| *column != Column::Planning)
+        .collect();
+    let mut rows = vec![Row::Heading {
+        value: "Planned".into(),
+        text: format!("Planned · {}", top.len()),
+        depth: 0,
+    }];
+    rows.extend(sections(tasks, &top, &nested, headings, 1, true));
+    if !remaining.is_empty() {
+        rows.push(Row::Heading {
+            value: "Other tasks".into(),
+            text: "Other tasks".into(),
+            depth: 0,
+        });
+        rows.extend(sections(tasks, &remaining, levels, headings, 1, false));
+    }
     rows
 }
 
@@ -265,12 +315,15 @@ fn sections(
     levels: &[Column],
     headings: &Headings<'_>,
     depth: usize,
+    preserve_order: bool,
 ) -> Vec<Row> {
     let Some((&column, inner)) = levels.split_first() else {
-        return with_subissues_under_parents(tasks, ordered)
-            .into_iter()
-            .map(Row::Task)
-            .collect();
+        let ordered = if preserve_order {
+            ordered.to_vec()
+        } else {
+            with_subissues_under_parents(tasks, ordered)
+        };
+        return ordered.into_iter().map(Row::Task).collect();
     };
     let mut rows = Vec::new();
     for key in section_keys(tasks, ordered, column, headings) {
@@ -287,7 +340,14 @@ fn sections(
             value: key,
             depth,
         });
-        rows.extend(sections(tasks, &members, inner, headings, depth + 1));
+        rows.extend(sections(
+            tasks,
+            &members,
+            inner,
+            headings,
+            depth + 1,
+            preserve_order,
+        ));
     }
     rows
 }
