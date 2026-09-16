@@ -159,7 +159,7 @@ fn w_passes_the_task_ending_every_claim_and_dropping_the_ball() {
     )
     .unwrap();
     switchbard_core::set_backlog_ball(&h.root, &id, Some(switchbard_core::Ball::Agent)).unwrap();
-    h.app.tick();
+    h.tick_until_tasks_settle();
     show_work_column(&mut h);
     let screen = h.press(KeyCode::Char('w'));
     assert!(

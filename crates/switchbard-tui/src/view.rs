@@ -37,7 +37,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let [navigation, notification, body, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(u16::from(
-            !app.pull_requests.notifications.is_empty() || app.pr_merge.ongoing().is_some(),
+            !app.pull_requests.notifications.is_empty()
+                || app.pr_merge.ongoing().is_some()
+                || app.report.message().is_some(),
         )),
         Constraint::Min(0),
         Constraint::Length(footer_height),
@@ -75,6 +77,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 }
 
 fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
+    if let Some(message) = app.report.message() {
+        let message = if app.report.is_pending() {
+            message.to_string()
+        } else {
+            format!(
+                "{message} · {} dismiss",
+                app.config
+                    .bindings_for(&Action::DismissNotifications)
+                    .join("/")
+            )
+        };
+        frame.render_widget(
+            Paragraph::new(message).style(app.config.theme.style(Surface::Status)),
+            area,
+        );
+        return;
+    }
     let alerts = &app.pull_requests.notifications;
     let Some(message) = app.pr_merge.ongoing().or_else(|| alerts.latest()) else {
         return;

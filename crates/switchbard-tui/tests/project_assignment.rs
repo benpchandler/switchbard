@@ -7,7 +7,7 @@ use harness::*;
 fn project_picker_assigns_cancels_and_clears_membership() {
     let mut h = Harness::new();
     seed_project(&h.root, "Delivery", "In Progress", None);
-    h.app.tick();
+    h.tick_until_tasks_settle();
     let id = h.app.selected_task().unwrap().id.clone();
     let screen = h.type_text("tp");
     assert!(screen.contains("Delivery"), "{screen}");

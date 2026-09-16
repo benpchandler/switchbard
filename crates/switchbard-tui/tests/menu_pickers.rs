@@ -204,7 +204,7 @@ fn menu_render_evidence() {
         h.terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         if keys == "tp" {
             seed_project(&h.root, "Delivery", "In Progress", None);
-            h.app.tick();
+            h.tick_until_tasks_settle();
         }
         if keys == "tr" {
             h.type_text("t1");
@@ -230,7 +230,7 @@ fn task_menu_keeps_its_target_when_external_tasks_reorder_the_list() {
     let target = h.app.selected_task().unwrap().id.clone();
     h.press(KeyCode::Char('t'));
     seed(&h.root, "A new first task", "To Do", &[]);
-    h.app.tick();
+    h.tick_until_tasks_settle();
     h.type_text("sDone");
     h.press(KeyCode::Enter);
     assert_eq!(
@@ -259,7 +259,7 @@ fn vanished_task_cancels_its_menu_instead_of_retargeting() {
     let path = h.app.selected_task().unwrap().path.clone();
     h.press(KeyCode::Char('t'));
     std::fs::remove_file(path).unwrap();
-    h.app.tick();
+    h.tick_until_tasks_settle();
     let screen = h.render();
     assert!(h.app.picker.is_none(), "{screen}");
     assert_eq!(h.app.mode, Mode::Browse);

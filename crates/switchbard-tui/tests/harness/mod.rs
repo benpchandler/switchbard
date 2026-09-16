@@ -89,6 +89,32 @@ impl Harness {
         self.render()
     }
 
+    pub fn tick_until_tasks_settle(&mut self) {
+        for _ in 0..1000 {
+            self.app.tick();
+            if !self.app.task_refresh_pending() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("task refresh did not settle");
+    }
+
+    pub fn wait_report(&mut self) -> String {
+        for _ in 0..600 {
+            self.app.tick();
+            let screen = self.render();
+            if !self.app.report.is_pending() && self.app.total_tasks() >= 4 {
+                return screen;
+            }
+            if !self.app.report.is_pending() && self.app.config.report_repo.is_some() {
+                return screen;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("report did not complete: {}", self.render());
+    }
+
     pub fn selected_title(&self) -> String {
         self.app.selected_task().unwrap().title.clone()
     }

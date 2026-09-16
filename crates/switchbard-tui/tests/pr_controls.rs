@@ -220,7 +220,7 @@ fn task_reload_while_pr_page_is_active_keeps_task_filter_sort_and_selection() {
     h.next_list_page();
     set_filter(&mut h, "status:merged");
     seed(&h.root, "Another theme task", "To Do", &["ui"]);
-    h.app.tick();
+    h.tick_until_tasks_settle();
     h.next_list_page();
     assert_eq!(h.app.state, task_state);
     assert_eq!(h.selected_title(), selected);
@@ -251,7 +251,7 @@ fn live_pr_paint_links_and_saved_view_survive_page_switch_and_restart() {
     // Task storage is re-read at most once per second; wait out the throttle so
     // the tick below observes the reference just written (see central_storage.rs).
     std::thread::sleep(std::time::Duration::from_millis(1050));
-    h.app.tick();
+    h.tick_until_tasks_settle();
     set_filter(&mut h, &format!("tasks:{task_id}"));
     assert_eq!(
         numbers(&h),

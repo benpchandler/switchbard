@@ -105,7 +105,19 @@ impl App {
 
     /// The second `open` gesture (or `l`/`Right`): give the pane focus.
     /// A no-op with nothing selected — there is nowhere to put a cursor.
+    fn defer_detail_read(&mut self) -> bool {
+        if self.report.is_pending() || self.task_refresh_pending() {
+            self.status =
+                "Task refresh or report save in progress; retry editing when finished".into();
+            return true;
+        }
+        false
+    }
+
     pub(super) fn enter_detail_focus(&mut self) {
+        if self.defer_detail_read() {
+            return;
+        }
         if self.selected_task().is_none() {
             self.status = "nothing selected".to_string();
             return;
@@ -245,6 +257,7 @@ impl App {
     /// single-line capture, the help screen, or Inbox is showing — none of
     /// those have the stable list/detail split `detail_hit` describes.
     pub fn handle_mouse(&mut self, event: MouseEvent) {
+        self.interaction_generation = self.interaction_generation.wrapping_add(1);
         if !matches!(self.mode, Mode::Browse | Mode::DetailFocus) {
             return;
         }
@@ -519,6 +532,9 @@ impl App {
     /// mid-draft against the old content there, and the stale refusal on
     /// save is the correct outcome, not a reload target to silently move.
     pub(super) fn begin_detail_edit(&mut self) -> bool {
+        if self.defer_detail_read() {
+            return false;
+        }
         let Some(task) = self.selected_task() else {
             self.status = "nothing selected".to_string();
             return false;
@@ -564,6 +580,11 @@ impl App {
 
     /// Every save verifies the authoritative identity and content captured at edit start.
     fn checked_draft(&self, id: &str) -> Result<&DetailDraft, String> {
+        if self.report.is_pending() || self.task_refresh_pending() {
+            return Err(
+                "Task refresh or report save in progress; retry editing when finished".into(),
+            );
+        }
         let draft = self
             .detail_draft
             .as_ref()

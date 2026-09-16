@@ -212,7 +212,7 @@ fn disappeared_source_cancels_on_reload_without_editing_another_task() {
     h.type_text("dark");
     let selected = h.app.selected_task().unwrap().path.clone();
     std::fs::remove_file(selected).unwrap();
-    h.app.tick();
+    h.tick_until_tasks_settle();
     let screen = h.render();
     assert!(screen.contains("task action canceled"), "{screen}");
     assert!(h.app.picker.is_none());

@@ -19,7 +19,7 @@ pub enum ReportKind {
 }
 
 impl ReportKind {
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             ReportKind::Bug => "bug",
             ReportKind::Idea => "idea",

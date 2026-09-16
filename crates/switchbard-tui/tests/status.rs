@@ -85,7 +85,7 @@ fn disappearing_status_target_cancels_without_editing_another_task() {
     let path = h.app.selected_task().unwrap().path.clone();
     h.type_text("ts");
     std::fs::remove_file(path).unwrap();
-    h.app.tick();
+    h.tick_until_tasks_settle();
     assert!(h.app.picker.is_none(), "{}", h.render());
     assert!(h.app.tasks().iter().all(|t| t.status != "Done"));
 }

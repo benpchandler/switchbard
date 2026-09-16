@@ -33,7 +33,7 @@ fn long_detail() -> Harness {
         },
     )
     .unwrap();
-    h.app.tick();
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Char('/'));
     h.type_text("label:scroll-fixture");
     h.press(KeyCode::Enter);
