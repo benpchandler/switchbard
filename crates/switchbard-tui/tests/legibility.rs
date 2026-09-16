@@ -96,7 +96,10 @@ fn every_colored_preset_keeps_body_secondary_and_roles_readable_on_rendered_band
         command(&mut h, &format!("theme {name}"));
         gate(&h, "Fix login", 75.0, &format!("{name} selected"));
         gate(&h, "Write onboarding guide", 75.0, &format!("{name} body"));
-        gate(&h, "4 title", 60.0, &format!("{name} header"));
+        // TASK-234 split the header cell into a "4" key span (Surface::Keys)
+        // and a "title" label span (Surface::Header, still bold); gate the
+        // label's own ink/background pair rather than the leading digit's.
+        gate(&h, "title", 60.0, &format!("{name} header"));
         command(&mut h, "group status");
         gate(&h, "▸ To Do", 60.0, &format!("{name} heading"));
         command(&mut h, "group off");

@@ -234,7 +234,8 @@ fn draw_cells(
         &app.config.palette,
         crate::paint::PaintScope::Header,
     ));
-    crate::list_presentation::header(frame, rect, &cells, texts, style);
+    let labels: Vec<Line<'static>> = texts.iter().cloned().map(Line::from).collect();
+    crate::list_presentation::header(frame, rect, &cells, &labels, style);
     if let Some(sort) = app.state.sort {
         if let Some(index) = app
             .state

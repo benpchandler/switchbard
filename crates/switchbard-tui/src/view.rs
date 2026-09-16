@@ -127,6 +127,11 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         &app.config.palette,
         paint::PaintScope::Title,
     );
+    // TASK-235: the title line carries only the repo chip, the shown count and
+    // the view name. The filter and every view setting used to be packed onto
+    // this one line (`table_title`, below) and stopped fitting once a filter
+    // grew past a few terms; they now render inside the frame body and the
+    // footer hint bar (see the filter line and `view_settings_summary` below).
     let title = Line::from(vec![
         Span::styled(format!(" {repo} "), theme.style(Surface::TitleRepo)),
         Span::styled(
@@ -136,18 +141,6 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         Span::styled(
             format!(" {} ", app.view_label()),
             theme.style(Surface::Title).patch(title_paint),
-        ),
-        Span::styled(
-            if app.state.filter.is_empty() {
-                String::new()
-            } else {
-                format!(" / {} ", app.state.filter)
-            },
-            theme.style(Surface::Context),
-        ),
-        Span::styled(
-            table_title(app),
-            theme.style(Surface::Hint).patch(title_paint),
         ),
     ]);
     let block = Block::default()
@@ -160,16 +153,42 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         app.detail_hit.list_rows.clear();
         return;
     }
+    let table_area = draw_filter_line(frame, app, &theme, inner);
     let mut cursor = TableCursor {
         scroll: app.scroll,
         selected: app.selected,
         page_size: app.page_size,
         highlight: true,
     };
-    let list_rows = draw_task_rows(frame, app, &app.state, &app.rows, &mut cursor, inner);
+    let list_rows = draw_task_rows(frame, app, &app.state, &app.rows, &mut cursor, table_area);
     app.scroll = cursor.scroll;
     app.page_size = cursor.page_size;
     app.detail_hit.list_rows = list_rows;
+}
+
+/// The active filter's own full-width line inside the list frame, directly
+/// below the title border and above the header row: wraps at `inner`'s width,
+/// omitted (no reserved row) when there is no filter. Returns the remaining
+/// area for the header and task rows. `/` still opens the same filter for
+/// editing (`draw_footer`'s `Mode::Filter` line); this is only the read view.
+fn draw_filter_line(frame: &mut Frame, app: &App, theme: &Theme, inner: Rect) -> Rect {
+    if app.state.filter.is_empty() {
+        return inner;
+    }
+    let text = format!("/ {}", app.state.filter);
+    let height =
+        wrapped_height(&Line::from(text.as_str()), inner.width).min(inner.height.saturating_sub(1));
+    let [filter_area, table_area] =
+        Layout::vertical([Constraint::Length(height), Constraint::Min(0)]).areas(inner);
+    if height > 0 {
+        frame.render_widget(
+            Paragraph::new(text)
+                .style(theme.style(Surface::Context))
+                .wrap(Wrap { trim: false }),
+            filter_area,
+        );
+    }
+    table_area
 }
 
 struct TableCursor {
@@ -207,7 +226,18 @@ fn draw_task_rows(
         .collect();
     let header_area = Rect { height: 1, ..inner };
     let cells = crate::list_presentation::cells(header_area, &widths);
-    let headers: Vec<String> = state
+    let header_paint = paint::scoped_style(
+        &state.paint,
+        theme,
+        &app.config.palette,
+        paint::PaintScope::Header,
+    );
+    let header_style = theme.style(Surface::Header).patch(header_paint);
+    // TASK-234: the number reads as the key that selects the column, so it
+    // gets the same ink as other key hints (`Surface::Keys`) instead of
+    // sharing the label's style.
+    let key_style = theme.style(Surface::Keys).patch(header_paint);
+    let headers: Vec<Line<'static>> = state
         .columns
         .iter()
         .enumerate()
@@ -217,21 +247,13 @@ fn draw_task_rows(
             } else {
                 column.header(registry).to_string()
             };
-            format!("{} {}", index + 1, label)
+            Line::from(vec![
+                Span::styled((index + 1).to_string(), key_style),
+                Span::styled(format!(" {label}"), header_style),
+            ])
         })
         .collect();
-    crate::list_presentation::header(
-        frame,
-        header_area,
-        &cells,
-        &headers,
-        theme.style(Surface::Header).patch(paint::scoped_style(
-            &state.paint,
-            theme,
-            &app.config.palette,
-            paint::PaintScope::Header,
-        )),
-    );
+    crate::list_presentation::header(frame, header_area, &cells, &headers, header_style);
     if let Some(sort) = state.sort {
         if let Some(index) = state
             .columns
@@ -498,7 +520,13 @@ fn fitted_width(
     (header.max(widest) as u16).min(max.max(header as u16))
 }
 
-fn table_title(app: &App) -> String {
+/// Every view setting (sort, shown columns, glyph mode, hidden statuses,
+/// pin, row layout, paint rule count, outline and its initiatives, live
+/// work count) as one `·`-joined summary. TASK-235 moved this off the list
+/// title line — it did not fit once a filter grew past a few terms — into
+/// the bottom hint bar (`browse_footer`); `None` when nothing is set, so
+/// the caller adds no stray separator.
+fn view_settings_summary(app: &App) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     if let Some(sort) = app.state.sort {
         parts.push(sort.label(app.registry()));
@@ -539,7 +567,7 @@ fn table_title(app: &App) -> String {
         n => parts.push(format!("working:{n}")),
     }
 
-    format!(" {} ", parts.join(" · "))
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 /// The editable task detail pane (TASK-222): one line per `FieldRow`, in the
@@ -754,6 +782,25 @@ fn wrapped_offset(lines: &[Line<'_>], upto: usize, width: u16) -> u16 {
         .iter()
         .map(|line| wrapped_height(line, width))
         .fold(0u16, u16::saturating_add)
+}
+
+/// `text` verbatim within `max_chars`; otherwise clipped with a trailing `…`
+/// so the result never exceeds `max_chars`. Empty at `max_chars == 0`
+/// (TASK-235: the footer drops the view-settings summary rather than crowd
+/// the key hints it never truncates).
+fn truncate_with_ellipsis(text: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    if max_chars == 1 {
+        return "…".to_string();
+    }
+    let mut clipped: String = text.chars().take(max_chars - 1).collect();
+    clipped.push('…');
+    clipped
 }
 
 /// The rendered text for one detail-pane row. Structured fields carry a
@@ -1073,11 +1120,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 theme.style(Surface::Hint),
             ),
         ])],
-        Mode::Browse if !app.status.is_empty() => vec![Line::from(Span::styled(
-            app.status.clone(),
-            theme.style(Surface::Status),
-        ))],
-        Mode::Browse => vec![browse_footer(app)],
+        Mode::Browse => vec![browse_footer(app, theme, area.width)],
     };
     frame.render_widget(Paragraph::new(lines), area);
 }
@@ -1164,9 +1207,44 @@ fn draw_detail_input(frame: &mut Frame, app: &App, area: Rect, kind: crate::app:
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// The footer while browsing: what is in effect as a chip, the situation, then
-/// the keys with their letters on the `keys` surface.
-fn browse_footer(app: &App) -> Line<'static> {
+/// The footer while browsing: the status message from the last action, or key
+/// hints when there isn't one, then (Tasks only, TASK-235)
+/// [`view_settings_summary`] — row layout, hidden statuses, outline, pin,
+/// glyphs, paint count, working count, sort, shown columns — which used to
+/// pack onto the list title line. A status message used to hide that summary
+/// outright, since it took over this whole line; it now gets its own trailing
+/// span instead, always muted (`Surface::Hint`) and truncated from the right
+/// with an ellipsis when `width` is too narrow, so the primary text (status
+/// or key hints) never loses room to it.
+fn browse_footer(app: &App, theme: &Theme, width: u16) -> Line<'static> {
+    let (primary, primary_style) = if !app.status.is_empty() {
+        (app.status.clone(), theme.style(Surface::Status))
+    } else {
+        (browse_hints(app), theme.style(Surface::Hint))
+    };
+    let mut spans = vec![Span::styled(primary.clone(), primary_style)];
+    if app.page == Page::Tasks {
+        if let Some(settings) = view_settings_summary(app) {
+            let separator = "   ";
+            let budget = usize::from(width)
+                .saturating_sub(primary.chars().count())
+                .saturating_sub(separator.len());
+            let settings = truncate_with_ellipsis(&settings, budget);
+            if !settings.is_empty() {
+                spans.push(Span::styled(
+                    format!("{separator}{settings}"),
+                    theme.style(Surface::Hint),
+                ));
+            }
+        }
+    }
+    Line::from(spans)
+}
+
+/// The key-hint text `browse_footer` shows when there is no status message:
+/// the page's own action keys, plus the split/focus hints once a detail pane
+/// is open.
+fn browse_hints(app: &App) -> String {
     let actions = if app.page == Page::Inbox {
         vec![(Action::Page, "page"), (Action::Help, "keys")]
     } else if app.page == Page::Agents {
@@ -1204,7 +1282,7 @@ fn browse_footer(app: &App) -> Line<'static> {
             app.config.bindings_for(&Action::FocusPane).join("/")
         ));
     }
-    Line::from(Span::styled(text, app.config.theme.style(Surface::Hint)))
+    text
 }
 
 fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rect) {

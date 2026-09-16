@@ -81,10 +81,20 @@ fn f_then_column_number_picks_a_value_from_the_data() {
         !screen_after_enter.contains("1 To Do"),
         "picker still open: {screen_after_enter}"
     );
+    // TASK-235: the filter renders on its own line inside the frame (line 2),
+    // not the title line (line 1).
     assert!(
-        screen_after_enter.lines().nth(1).is_some_and(
-            |context| context.contains("1/3 shown") && context.contains("/ status:inprogress")
-        ),
+        screen_after_enter
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("1/3 shown")),
+        "{screen} {screen_after_enter}"
+    );
+    assert!(
+        screen_after_enter
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ status:inprogress")),
         "{screen} {screen_after_enter}"
     );
     assert_eq!(h.app.state.filter, "status:inprogress");
@@ -93,9 +103,17 @@ fn f_then_column_number_picks_a_value_from_the_data() {
     h.press(KeyCode::Char('2'));
     let screen = h.press(KeyCode::Char('1'));
     assert!(
-        screen.lines().nth(1).is_some_and(
-            |context| context.contains("2/3 shown") && context.contains("/ status:todo")
-        ),
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("2/3 shown")),
+        "replacing the status term: {screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ status:todo")),
         "replacing the status term: {screen}"
     );
     assert_eq!(h.app.state.filter, "status:todo");
@@ -124,10 +142,19 @@ fn space_in_picker_toggles_values_and_writes_the_shortest_filter() {
     );
     let screen = h.press(KeyCode::Char(' '));
     assert!(screen.contains(" To Do"), "unchecked: {screen}");
+    // TASK-235: the filter is on its own line (line 2) below the title (line 1).
     assert!(
-        screen.lines().nth(1).is_some_and(
-            |context| context.contains("1/3 shown") && context.contains("/ status:!todo")
-        ),
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("1/3 shown")),
+        "{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ status:!todo")),
         "{screen}"
     );
     h.press(KeyCode::Char('j'));
@@ -136,15 +163,29 @@ fn space_in_picker_toggles_values_and_writes_the_shortest_filter() {
         screen
             .lines()
             .nth(1)
-            .is_some_and(|context| context.contains("0/3 shown")
-                && context.contains("/ status:!todo status:!inprogress")),
+            .is_some_and(|context| context.contains("0/3 shown")),
+        "{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ status:!todo status:!inprogress")),
         "{screen}"
     );
     let screen = h.press(KeyCode::Char(' '));
     assert!(
-        screen.lines().nth(1).is_some_and(
-            |context| context.contains("1/3 shown") && context.contains("/ status:!todo")
-        ),
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("1/3 shown")),
+        "re-shown: {screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ status:!todo")),
         "re-shown: {screen}"
     );
     h.press(KeyCode::Char('k'));
@@ -191,9 +232,14 @@ fn editing_the_filter_relabels_the_view_as_custom() {
         screen
             .lines()
             .nth(1)
-            .is_some_and(|context| context.contains("1/3 shown")
-                && context.contains(" custom ")
-                && context.contains("/ status:inprogress pri:medium")),
+            .is_some_and(|context| context.contains("1/3 shown") && context.contains(" custom ")),
+        "{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ status:inprogress pri:medium")),
         "{screen}"
     );
     assert_eq!(h.app.state.filter, "status:inprogress pri:medium");
@@ -213,9 +259,17 @@ fn typing_in_the_picker_narrows_and_a_unique_match_applies_at_once() {
     );
     let screen = h.type_text("d");
     assert!(
-        screen.lines().nth(1).is_some_and(
-            |context| context.contains("2/3 shown") && context.contains("/ status:todo")
-        ),
+        screen
+            .lines()
+            .nth(1)
+            .is_some_and(|context| context.contains("2/3 shown")),
+        "{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ status:todo")),
         "{screen}"
     );
     h.press(KeyCode::Char('f'));
@@ -225,8 +279,14 @@ fn typing_in_the_picker_narrows_and_a_unique_match_applies_at_once() {
         screen
             .lines()
             .nth(1)
-            .is_some_and(|context| context.contains("1/3 shown")
-                && context.contains("/ status:todo pri:high")),
+            .is_some_and(|context| context.contains("1/3 shown")),
+        "stacked: {screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .nth(2)
+            .is_some_and(|context| context.contains("/ status:todo pri:high")),
         "stacked: {screen}"
     );
 }

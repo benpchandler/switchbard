@@ -84,12 +84,12 @@ fn draw_prs(frame: &mut Frame, app: &App, state: &ViewState, area: Rect, scroll:
     let header = Rect { height: 1, ..body };
     let widths = crate::pr_view::column_widths(app, state, body.width);
     let cells = crate::list_presentation::cells(header, &widths);
-    let headers = state
+    let headers: Vec<Line<'static>> = state
         .columns
         .iter()
         .enumerate()
-        .map(|(i, c)| format!("{} {}", i + 1, c.header(app.registry())))
-        .collect::<Vec<_>>();
+        .map(|(i, c)| Line::from(format!("{} {}", i + 1, c.header(app.registry()))))
+        .collect();
     crate::list_presentation::header(
         frame,
         header,

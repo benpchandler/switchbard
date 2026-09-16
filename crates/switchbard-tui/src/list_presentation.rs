@@ -63,16 +63,20 @@ pub(crate) fn cells(area: Rect, widths: &[Constraint]) -> std::rc::Rc<[Rect]> {
         .split(area)
 }
 
+/// `labels[n]` fills `cells[n]` verbatim, so a caller that wants a header
+/// cell in more than one ink (TASK-234: the column number in one surface,
+/// the name in another) builds that `Line`'s spans itself; `style` is the
+/// row's background and the base every span patches over.
 pub(crate) fn header(
     frame: &mut Frame,
     area: Rect,
     cells: &[Rect],
-    labels: &[String],
+    labels: &[Line<'static>],
     style: Style,
 ) {
     frame.render_widget(Paragraph::new("").style(style), area);
     for (label, cell) in labels.iter().zip(cells).take(area.width as usize) {
-        frame.render_widget(Paragraph::new(label.as_str()).style(style), *cell);
+        frame.render_widget(Paragraph::new(label.clone()).style(style), *cell);
     }
 }
 
