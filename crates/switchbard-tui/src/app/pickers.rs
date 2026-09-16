@@ -1,7 +1,5 @@
 //! Column, filter, and sort pickers, and the one key handler every picker shares.
 
-use std::str::FromStr;
-
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Mode};
@@ -902,7 +900,13 @@ impl App {
                     && matches
                         .first()
                         .is_some_and(|option| matches!(option.payload, Payload::Column(_)));
-                if matches.len() == 1 && (!toggles || legacy_column_pick) {
+                let composing_roles = matches!(purpose, PickerPurpose::PaintColor(_))
+                    && (["quiet", "strong", "alert", "band", "struck"]
+                        .iter()
+                        .any(|role| role.starts_with(&picker.typed))
+                        || picker.typed.contains('+')
+                        || picker.typed.starts_with('p'));
+                if matches.len() == 1 && (!toggles || legacy_column_pick) && !composing_roles {
                     self.apply_picked_value();
                 }
             }
@@ -978,7 +982,7 @@ impl App {
         self.mode = Mode::Browse;
         let typed = picker.typed.trim().to_string();
         let picked = picker.highlighted().or_else(|| match picker.purpose {
-            PickerPurpose::PaintColor(_) if ratatui::style::Color::from_str(&typed).is_ok() => {
+            PickerPurpose::PaintColor(_) if crate::paint::validate_roles(&typed).is_ok() => {
                 Some(PickOption::text(typed.clone(), 0))
             }
             _ => None,
@@ -1115,6 +1119,19 @@ impl App {
                         self.state.columns.len()
                     );
                 }
+            }
+            (PickerPurpose::PaintTarget, Payload::SelectedRowValues) => {
+                self.open_paint_row_values()
+            }
+            (PickerPurpose::PaintTarget, Payload::GroupHeadings) => self.open_paint_headings(),
+            (
+                PickerPurpose::PaintTarget
+                | PickerPurpose::PaintRowValues
+                | PickerPurpose::PaintHeadings,
+                Payload::PaintScope(pick),
+            ) => {
+                self.paint_return = None;
+                self.open_paint_color_picker(pick);
             }
             (PickerPurpose::PaintTarget, Payload::DeleteAllPaint) => self.clear_all_paint(),
             (PickerPurpose::PaintTarget, Payload::OrderRules) => self.open_paint_rules_picker(),

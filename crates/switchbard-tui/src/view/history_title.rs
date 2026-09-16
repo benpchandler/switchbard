@@ -50,6 +50,9 @@ pub(crate) fn title(state: &ViewState, page: Page, registry: &ColumnRegistry) ->
                 format!(" · colored by {}", display_column(*column, registry))
             }
             PaintRule::Rows { .. } => " · highlighted rows".into(),
+            PaintRule::Heading { .. } => " · styled groups".into(),
+            PaintRule::Header { .. } => " · styled headers".into(),
+            PaintRule::Title { .. } => " · styled navigation".into(),
             PaintRule::Column { column, .. } => {
                 format!(" · highlighted {}", display_column(*column, registry))
             }
