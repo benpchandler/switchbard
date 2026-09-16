@@ -179,7 +179,7 @@ return {
       heading        = { fg = "#334b63", bold = true },
       selected       = { bg = "#e5ddcd" },
       label          = { fg = "#59616b" },
-      text           = { fg = "#2b271f" },
+      text           = { fg = "#27231b" },
       link           = { fg = "#355b7b" },
       chip           = { fg = "#ece4d3", bg = "#355b7b" },
       attention_badge= { fg = "#ece4d3", bg = "#355b7b", bold = true },
