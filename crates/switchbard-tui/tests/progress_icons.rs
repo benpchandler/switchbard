@@ -61,9 +61,15 @@ fn show_progress(h: &mut Harness) {
 
 fn row_icon(h: &mut Harness, title: &str, icon: &str) {
     let screen = h.render();
+    // TASK-235's filter line ("│/ <filter>") can itself contain `title` when
+    // the caller filtered by it (`select_task_titled`); skip it so this finds
+    // the actual task row, not the filter echoing the same text above it.
     let row = screen
         .lines()
-        .find(|line| line.starts_with('│') && line.contains(title))
+        .find(|line| {
+            line.strip_prefix('│')
+                .is_some_and(|rest| !rest.starts_with('/') && rest.contains(title))
+        })
         .unwrap();
     assert!(row.contains(icon), "expected {icon}: {row}");
 }
