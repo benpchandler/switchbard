@@ -3,7 +3,7 @@
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
@@ -61,6 +61,24 @@ pub(crate) fn cells(area: Rect, widths: &[Constraint]) -> std::rc::Rc<[Rect]> {
     Layout::horizontal(widths.iter().copied())
         .spacing(1)
         .split(area)
+}
+
+/// One numbered header cell (TASK-234): the 1-based `index`'s digits in
+/// `key_style` (the same ink as other key hints — the number is the key that
+/// selects the column), a space, then `label` in `label_style`. Every numbered
+/// header in the app (Tasks, Pull Requests) builds its header row from this so
+/// the split stays one fact in one place rather than two renderings of the
+/// same convention.
+pub(crate) fn keyed_header(
+    index: usize,
+    label: &str,
+    key_style: Style,
+    label_style: Style,
+) -> Line<'static> {
+    Line::from(vec![
+        Span::styled((index + 1).to_string(), key_style),
+        Span::styled(format!(" {label}"), label_style),
+    ])
 }
 
 /// `labels[n]` fills `cells[n]` verbatim, so a caller that wants a header

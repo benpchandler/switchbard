@@ -84,19 +84,24 @@ fn draw_prs(frame: &mut Frame, app: &App, state: &ViewState, area: Rect, scroll:
     let header = Rect { height: 1, ..body };
     let widths = crate::pr_view::column_widths(app, state, body.width);
     let cells = crate::list_presentation::cells(header, &widths);
+    // TASK-234: same split as the live Tasks and PR headers, so a history
+    // card looks like the page it is a miniature of.
+    let header_style = app.config.theme.style(Surface::Header);
+    let key_style = app.config.theme.style(Surface::Keys);
     let headers: Vec<Line<'static>> = state
         .columns
         .iter()
         .enumerate()
-        .map(|(i, c)| Line::from(format!("{} {}", i + 1, c.header(app.registry()))))
+        .map(|(i, c)| {
+            crate::list_presentation::keyed_header(
+                i,
+                c.header(app.registry()),
+                key_style,
+                header_style,
+            )
+        })
         .collect();
-    crate::list_presentation::header(
-        frame,
-        header,
-        &cells,
-        &headers,
-        app.config.theme.style(Surface::Header),
-    );
+    crate::list_presentation::header(frame, header, &cells, &headers, header_style);
     for (offset, index) in visible
         .iter()
         .skip(scroll)

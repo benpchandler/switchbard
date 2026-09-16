@@ -247,10 +247,7 @@ fn draw_task_rows(
             } else {
                 column.header(registry).to_string()
             };
-            Line::from(vec![
-                Span::styled((index + 1).to_string(), key_style),
-                Span::styled(format!(" {label}"), header_style),
-            ])
+            crate::list_presentation::keyed_header(index, &label, key_style, header_style)
         })
         .collect();
     crate::list_presentation::header(frame, header_area, &cells, &headers, header_style);

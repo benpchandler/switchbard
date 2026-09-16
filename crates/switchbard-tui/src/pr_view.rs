@@ -174,26 +174,15 @@ fn list(frame: &mut Frame, app: &mut App, area: Rect) {
         .state
         .columns
         .iter()
-        .enumerate()
-        .map(|(i, column)| {
-            format!(
-                "{} {}",
-                i + 1,
-                if *column == crate::columns::Column::Checks && area.width < 70 {
-                    "Ck"
-                } else {
-                    column.header(app.registry())
-                }
-            )
+        .map(|column| {
+            if *column == crate::columns::Column::Checks && area.width < 70 {
+                "Ck".to_string()
+            } else {
+                column.header(app.registry()).to_string()
+            }
         })
         .collect();
-    draw_cells(
-        frame,
-        app,
-        header,
-        &headers,
-        app.config.theme.style(Surface::Header),
-    );
+    draw_cells(frame, app, header, &headers);
     for (offset, index) in app
         .pull_requests
         .visible
@@ -219,23 +208,28 @@ fn list(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-fn draw_cells(
-    frame: &mut Frame,
-    app: &App,
-    rect: Rect,
-    texts: &[String],
-    style: ratatui::style::Style,
-) {
+fn draw_cells(frame: &mut Frame, app: &App, rect: Rect, labels: &[String]) {
     let widths = column_widths(app, &app.state, rect.width);
     let cells = crate::list_presentation::cells(rect, &widths);
-    let style = style.patch(crate::paint::scoped_style(
+    let header_paint = crate::paint::scoped_style(
         &app.state.paint,
         &app.config.theme,
         &app.config.palette,
         crate::paint::PaintScope::Header,
-    ));
-    let labels: Vec<Line<'static>> = texts.iter().cloned().map(Line::from).collect();
-    crate::list_presentation::header(frame, rect, &cells, &labels, style);
+    );
+    let header_style = app.config.theme.style(Surface::Header).patch(header_paint);
+    // TASK-234: same split as the Tasks header — the number reads as the key
+    // that selects the column, so it gets the `keys` ink instead of sharing
+    // the label's style (one convention, one helper: list_presentation).
+    let key_style = app.config.theme.style(Surface::Keys).patch(header_paint);
+    let headers: Vec<Line<'static>> = labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| {
+            crate::list_presentation::keyed_header(index, label, key_style, header_style)
+        })
+        .collect();
+    crate::list_presentation::header(frame, rect, &cells, &headers, header_style);
     if let Some(sort) = app.state.sort {
         if let Some(index) = app
             .state
