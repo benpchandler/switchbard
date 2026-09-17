@@ -87,6 +87,7 @@ fn completed_checklist_shows_review_without_completing_and_zero_is_unmeasured() 
         }
     }
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     let screen = h.render();
     assert!(screen.contains("Review 1/1 100%"), "{screen}");
     assert!(screen.contains("Unmeasured"), "{screen}");
@@ -146,6 +147,7 @@ fn planned_filter_group_and_order_work_independently_of_status() {
     let _ = set_task_planning(&h.root, "TASK-2", PlanningState::Planned).unwrap();
     let _ = set_task_planning(&h.root, "TASK-3", PlanningState::Planned).unwrap();
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     select_task_titled(&mut h, "Write onboarding guide");
     h.type_text("tr1");
     assert_eq!(h.app.top, vec!["TASK-3", "TASK-2"]);

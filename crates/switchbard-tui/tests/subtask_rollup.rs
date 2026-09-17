@@ -13,6 +13,7 @@ fn a_parent_with_children_shows_a_done_total_badge_after_its_title() {
     seed_child(&h.root, "Pick a palette", "Done", "TASK-2");
     seed_child(&h.root, "Wire the toggle", "To Do", "TASK-2");
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     let screen = h.render();
 
     assert!(
@@ -37,6 +38,7 @@ fn completing_the_last_open_child_updates_the_badge() {
     seed_child(&h.root, "Pick a palette", "Done", "TASK-2");
     let other = seed_child(&h.root, "Wire the toggle", "To Do", "TASK-2");
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     let screen = h.render();
     assert!(screen.contains("Add dark theme  [1/2]"), "{screen}");
 
@@ -50,6 +52,7 @@ fn completing_the_last_open_child_updates_the_badge() {
     )
     .unwrap();
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     let screen = h.render();
     assert!(screen.contains("Add dark theme  [2/2]"), "{screen}");
 }

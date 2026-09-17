@@ -21,6 +21,7 @@ fn grouped_harness() -> Harness {
         Some("TASK-6"),
     );
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Esc);
     h
 }
