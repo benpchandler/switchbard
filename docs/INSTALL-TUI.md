@@ -34,6 +34,43 @@ Git must be installed to work with repositories. Local task setup and use requir
 
 The Linux archive uses a static musl build and does not require desktop libraries. macOS archives are native binaries; broad compatibility with older macOS versions is not yet established. Check the release notes for the tested OS versions.
 
+## Connect GitHub (optional)
+
+Switchbard runs the `gh` executable on your terminal's `PATH`. It reuses GitHub CLI authentication; it does not run its own OAuth flow, ask for your password, or maintain a Switchbard token store. The installer does not install `gh` or log you in. Local tasks still work without it.
+
+Install [GitHub CLI](https://cli.github.com/), then authenticate from your terminal:
+
+```sh
+gh auth login --hostname github.com --web
+gh auth status --hostname github.com
+```
+
+In your repository, verify the account and repository that `gh` can access before opening the Pull Requests page:
+
+```sh
+git remote -v
+gh repo view --json nameWithOwner,url
+gh pr list --limit 5
+```
+
+If those commands fail, fix the CLI login or repository access first. Git push credentials or an SSH key do not establish `gh` API authentication. Multiple accounts use GitHub CLI's active account for the host. `GH_TOKEN` or `GITHUB_TOKEN` in the launching terminal override stored authentication; review your environment without printing tokens. Organization SSO or token approval policies may require additional authorization from the organization.
+
+GitHub CLI normally saves browser-login credentials in the system credential store, but can fall back to a plaintext file if that store is unavailable. Check `gh auth status` for the location. See the official [login](https://cli.github.com/manual/gh_auth_login), [environment](https://cli.github.com/manual/gh_help_environment), and [authentication status](https://cli.github.com/manual/gh_auth_status) documentation. Do not include token output or unreviewed authentication details in a public bug report.
+
+### Permissions and actions
+
+| Feature | Access used |
+| --- | --- |
+| Local tasks and setup | Local files/database; no GitHub permission |
+| PR list, checks, reviews, and merge readiness | Read access to the repository and associated metadata |
+| Confirmed PR merge | Repository merge permission and a token permitted to perform the mutation; GitHub policies still apply |
+
+Switchbard does not request a separate permission grant or narrow your existing `gh` credentials. Standard `gh auth login` uses GitHub CLI's OAuth permissions; classic-token login documents `repo`, `read:org`, and `gist`, which are broader than simply reading PRs. A custom fine-grained read-only token may restrict writes, but a complete minimum-permission token recipe has not been validated for this alpha's GraphQL queries. We do not promise one here.
+
+Opening the PR page performs reads. Merging requires a separate confirmation, a fresh observation, and matching PR head; it does not use an admin bypass. A successful merge never marks the local task Done automatically. Missing `gh`, expired credentials, an inaccessible repository, network errors, or restricted metadata show an error or unknown state, rather than proving that there are no PRs or that checks passed. Retry after fixing the underlying problem. Enterprise-host compatibility and organization-specific permission combinations are not comprehensively verified.
+
+The alpha has no built-in GitHub connection wizard, account switcher, or diagnostic command. Use the checks above to establish access. Installing Switchbard also does not install or authenticate Claude Code or Codex.
+
 ## Manual download
 
 A terminal release contains these platform archives with matching `.sha256` files:

@@ -78,7 +78,7 @@ To choose a repository explicitly, run `sbt --repo /path/to/repo`. For unattende
 
 - Organize tasks into initiatives, projects, and sub-issues, with criteria, dependencies, due dates, and custom fields.
 - Filter, sort, group, and paint terminal views. Your last view resumes per repository, with bounded view history.
-- Inspect repository pull requests and their checks, review, and merge observations. GitHub features require the optional GitHub CLI and authentication.
+- Inspect repository pull requests and their checks, review, and merge observations. GitHub features reuse optional `gh` authentication; the installer does not install or log in to it. See [GitHub setup and permissions](docs/INSTALL-TUI.md#connect-github-optional).
 - See local coding-agent sessions and task claims. Integrations depend on the agent tools installed on your machine.
 - Use `sb` to create, inspect, and update tasks from scripts or agents through the same core write layer.
 
@@ -102,7 +102,7 @@ sb --repo /path/to/repo storage backup --file /private/path/switchbard-backup.sq
 
 Keep legacy task files under your normal backup/version-control policy too. See [central storage and recovery](docs/central-storage.md) for authority, migration, export, and restore. Public release installation does not enable background updates; upgrading is an explicit choice. The author's source auto-install loop is a separate opt-in developer workflow.
 
-When reporting a bug, include `sbt build-id`, your OS and terminal, the steps to reproduce, and the error shown. Do not post private task text or unreviewed logs. TUI commands `:bug` and `:idea` capture tasks in your current repository; they do not submit GitHub issues.
+When reporting a bug, include `sbt build-id`, your OS and terminal, the steps to reproduce, and the error shown. Do not post private task text or unreviewed logs. Capture shortcuts can differ between the published alpha and newer source builds; neither route submits a GitHub issue automatically.
 
 ## Build and configure from scratch
 
