@@ -17,13 +17,23 @@ import time
 
 def wait_screen(fd, text):
     screen = b""
+    started = time.monotonic()
     deadline = time.monotonic() + 8
+    repainted = False
     while time.monotonic() < deadline:
         ready, _, _ = select.select([fd], [], [], 0.1)
         if ready:
             screen += os.read(fd, 65536)
             if text in screen:
                 return
+        if not repainted and time.monotonic() - started >= 0.5:
+            # The TUI paints cells incrementally.  A cursor move can split a
+            # label across the raw PTY stream, so request the terminal's
+            # normal resize repaint before treating the screen as absent.
+            for columns in (99, 100):
+                fcntl.ioctl(fd, termios.TIOCSWINSZ,
+                            struct.pack("HHHH", 24, columns, 0, 0))
+            repainted = True
     raise AssertionError(f"missing {text!r}: {screen[-4000:]!r}")
 
 
