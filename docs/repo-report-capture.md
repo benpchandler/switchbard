@@ -25,6 +25,8 @@ Repository captures use the native configured initial status, medium priority an
 | Role changes / remote access removed | N/A to local repository creation; filesystem denial is failure |
 | Forced shutdown recovery | Explicit gap: no new durable crash recovery |
 
-The source stage includes the editor and worker routing hooks. `ReportRoute` captures scope and the exact destination at draft opening; retry and queued drafts retain separate routes, so one save completing cannot erase or reroute another draft. Exact native task IDs and legacy numeric IDs both select their filed task.
+The implementation includes the editor and worker routing hooks. `ReportRoute` captures scope and the exact destination at draft opening; retry and queued drafts retain separate routes, so one save completing cannot erase or reroute another draft. Exact native task IDs and legacy numeric IDs both select their filed task.
 
-Behavioral evidence is awaiting integration of the final TASK-248 pending-storage guard and the root's build window. No visual approval or completed test gate is implied by this matrix.
+Focused validation passed after integration of the final TASK-248 pending-storage guard: 26 tests across `repo_report_capture` (6), `ball` (5), `report` (7) and `shortcuts` (8), run serially against the isolated feature target. The report contention matrix exercises the legacy direct ball action through an explicit `B = 'ball'` remap while `b` retains repository capture semantics. Formatting and whitespace checks passed.
+
+This proves the scoped behavior and rendered TestBackend journeys described above. Full delivery gates, PR/merge and installed-build proof remain pending; no owner visual approval or completed delivery is claimed. Forced-termination recovery remains outside this change.
