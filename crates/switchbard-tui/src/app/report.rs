@@ -1,10 +1,17 @@
 //! A single owned report submission; storage work never runs on the input thread.
 use super::App;
-use crate::report::{file_report, ReportContext, ReportKind};
+use crate::report::{file_scoped_report, ReportContext, ReportKind, ReportScope};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
+#[derive(Clone)]
+struct ReportRoute {
+    scope: ReportScope,
+    target: PathBuf,
+}
+
 struct ReportRequest {
+    scope: ReportScope,
     target: PathBuf,
     local: bool,
     kind: ReportKind,
@@ -20,8 +27,9 @@ impl ReportRequest {
         std::thread::Builder::new()
             .name("sbt-report".into())
             .spawn(move || {
-                let result = file_report(
+                let result = file_scoped_report(
                     &self.target,
+                    self.scope,
                     self.kind,
                     ReportContext {
                         intent: &self.intent,
@@ -50,6 +58,8 @@ pub struct ReportFlow {
     message: Option<String>,
     select_after: Option<(String, u64)>,
     retry_command: Option<String>,
+    retry_route: Option<ReportRoute>,
+    editor_route: Option<ReportRoute>,
     kind: Option<ReportKind>,
     location: String,
     selected_identity: Option<switchbard_core::BacklogStorageIdentity>,
@@ -78,28 +88,70 @@ impl ReportFlow {
 }
 
 impl App {
+    pub(super) fn open_repo_report(&mut self, kind: ReportKind) {
+        self.report.editor_route = Some(ReportRoute {
+            scope: ReportScope::Repository,
+            target: self.repo_root.clone(),
+        });
+        self.input = format!("{} ", kind.label());
+        self.mode = super::Mode::Command;
+        self.status = format!(
+            "{} for this repository; Enter saves, Esc cancels",
+            kind.label()
+        );
+    }
+
+    pub(super) fn open_report_command(&mut self) {
+        self.mode = super::Mode::Command;
+        self.input = self.report.retry_command().unwrap_or_default();
+        self.report.editor_route = if self.input.is_empty() {
+            Some(self.tool_report_route())
+        } else {
+            self.report.retry_route.clone()
+        };
+        self.status.clear();
+    }
+
+    pub(super) fn discard_report_editor(&mut self) {
+        self.report.editor_route = None;
+    }
+
+    fn tool_report_route(&self) -> ReportRoute {
+        ReportRoute {
+            scope: ReportScope::Tool,
+            target: self
+                .config
+                .report_repo
+                .clone()
+                .unwrap_or_else(|| self.repo_root.clone()),
+        }
+    }
+
     pub(super) fn file_report(&mut self, kind: ReportKind, intent: &str) {
-        if self.report.is_pending() {
-            self.status = "Saving report; draft retained, wait before submitting another".into();
+        let route = self
+            .report
+            .editor_route
+            .take()
+            .unwrap_or_else(|| self.tool_report_route());
+        if self.report.is_pending() || intent.trim().is_empty() {
+            self.status = if self.report.is_pending() {
+                "Saving report; draft retained, wait before submitting another".into()
+            } else {
+                "say what you were trying to do: :bug <text> or :idea <text>".into()
+            };
             self.input = format!("{} {intent}", kind.label());
+            self.report.editor_route = Some(route);
             self.mode = super::Mode::Command;
             return;
         }
-        if intent.trim().is_empty() {
-            self.fail("say what you were trying to do: :bug <text> or :idea <text>".into());
-            return;
-        }
-        self.start_report(kind, intent);
+        self.start_report(kind, intent, route);
     }
 
-    fn start_report(&mut self, kind: ReportKind, intent: &str) {
-        let target = self
-            .config
-            .report_repo
-            .clone()
-            .unwrap_or_else(|| self.repo_root.clone());
+    fn start_report(&mut self, kind: ReportKind, intent: &str, route: ReportRoute) {
+        let target = route.target.clone();
         let local = target == self.repo_root;
         let request = ReportRequest {
+            scope: route.scope,
             target,
             local,
             kind,
@@ -114,6 +166,7 @@ impl App {
             .and_then(|task| task.storage_identity.clone());
         self.report.kind = Some(kind);
         self.report.retry_command = Some(format!("{} {intent}", kind.label()));
+        self.report.retry_route = Some(route);
         self.report.select_after = None;
         match request.spawn() {
             Ok(rx) => {
@@ -159,6 +212,7 @@ impl App {
                     *selected = id.clone();
                 }
                 self.report.retry_command = None;
+                self.report.retry_route = None;
                 if self.report.select_after.is_some() {
                     self.task_generation = self.task_generation.wrapping_add(1);
                     self.request_task_refresh();
@@ -197,7 +251,7 @@ impl App {
         let filed = self
             .tasks
             .iter()
-            .position(|task| task.id.rsplit('-').next() == Some(id.as_str()));
+            .position(|task| task.id == *id || task.id.rsplit('-').next() == Some(id.as_str()));
         if let Some(index) = filed {
             let message = format!("filed {}", self.tasks[index].id);
             if self.status == format!("filed {id}") {

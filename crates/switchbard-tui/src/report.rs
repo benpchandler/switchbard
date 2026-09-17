@@ -1,16 +1,24 @@
-//! One command from anywhere files a bug or idea as a task in the repo being viewed,
-//! carrying the screen and the recent action trail so nothing has to be re-described.
+//! Bug and idea creation for an explicit repository or legacy tool-report scope.
+//! Both carry the screen and recent action trail captured at submission.
 
 use std::path::Path;
 
 use anyhow::{bail, Result};
-use switchbard_core::{create_task_allocating_id, NewBacklogTask};
+use switchbard_core::{
+    create_backlog_task, create_task_allocating_id, load_backlog_repo, NewBacklogTask,
+};
 
 /// Where filed bugs land, so a defect is never loose in the backlog: the
 /// standing bucket the reporter and the groomer both look in. Ideas stay
 /// unassigned - an idea's home is the project it turns out to belong to,
 /// which filing time cannot know.
 const BUG_PROJECT: &str = "Bugs";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportScope {
+    Tool,
+    Repository,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportKind {
@@ -42,21 +50,45 @@ pub struct ReportContext<'a> {
 }
 
 pub fn file_report(repo_root: &Path, kind: ReportKind, context: ReportContext) -> Result<String> {
+    file_scoped_report(repo_root, ReportScope::Tool, kind, context)
+}
+
+pub fn file_scoped_report(
+    repo_root: &Path,
+    scope: ReportScope,
+    kind: ReportKind,
+    context: ReportContext,
+) -> Result<String> {
     let intent = context.intent.trim();
     if intent.is_empty() {
         bail!("say what you were trying to do: :{} <text>", kind.label());
     }
-    let description = format!(
-        "Filed from sbt {version} while at {location}.\n\n\
+    let mut task = report_task(kind, intent, context.description(intent));
+    if scope == ReportScope::Repository {
+        apply_repository_defaults(repo_root, kind, intent, &mut task)?;
+        return create_backlog_task(repo_root, &task);
+    }
+    let (id, _path) = create_task_allocating_id(repo_root, &task)?;
+    Ok(id)
+}
+
+impl ReportContext<'_> {
+    fn description(&self, intent: &str) -> String {
+        format!(
+            "Filed from sbt {version} while at {location}.\n\n\
          Impact: {intent}\n\
          Evidence: screen and action trail below, captured at filing time.\n\n\
          ## Screen\n\n```text\n{screen}\n```\n\n## Action trail\n\n```text\n{trail}\n```",
-        version = env!("CARGO_PKG_VERSION"),
-        location = context.location,
-        screen = context.screen.trim_end(),
-        trail = context.trail.join("\n"),
-    );
-    let task = NewBacklogTask {
+            version = env!("CARGO_PKG_VERSION"),
+            location = self.location,
+            screen = self.screen.trim_end(),
+            trail = self.trail.join("\n"),
+        )
+    }
+}
+
+fn report_task(kind: ReportKind, intent: &str, description: String) -> NewBacklogTask {
+    NewBacklogTask {
         title: format!("sbt {}: {intent}", kind.label()),
         description,
         status: "To Do".to_string(),
@@ -72,7 +104,29 @@ pub fn file_report(repo_root: &Path, kind: ReportKind, context: ReportContext) -
         dependencies: Vec::new(),
         due_date: None,
         custom: Vec::new(),
+    }
+}
+
+fn apply_repository_defaults(
+    repo_root: &Path,
+    kind: ReportKind,
+    intent: &str,
+    task: &mut NewBacklogTask,
+) -> Result<()> {
+    task.title = format!("{}: {intent}", kind.label());
+    task.status.clear();
+    task.labels = vec![kind.label().to_string()];
+    task.acceptance_criteria = vec![format!(
+        "Reporter confirms this {} is addressed: {intent}",
+        kind.label()
+    )];
+    task.project = if kind == ReportKind::Bug {
+        load_backlog_repo(repo_root)?
+            .project_names()
+            .into_iter()
+            .find(|name| name == BUG_PROJECT)
+    } else {
+        None
     };
-    let (id, _path) = create_task_allocating_id(repo_root, &task)?;
-    Ok(id)
+    Ok(())
 }
