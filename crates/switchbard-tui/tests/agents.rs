@@ -335,6 +335,7 @@ fn cursor_detail_and_guarded_commands_on_the_agents_page() {
             session(&root, 4343, "sid-b", AgentActivity::Idle, "second"),
         ],
     );
+    h.press(KeyCode::Char('j'));
     assert_eq!(h.app.agents.selected, 1);
     let ball_screen = h.press(KeyCode::Char('B'));
     assert!(ball_screen.contains("ball"), "{ball_screen}");
