@@ -316,10 +316,7 @@ fn cursor_detail_and_guarded_commands_on_the_agents_page() {
         .count();
     let bug_screen = h.press(KeyCode::Char('b'));
     assert_eq!(h.app.page, Page::Agents);
-    assert!(
-        bug_screen.contains("bug for this repository"),
-        "{bug_screen}"
-    );
+    assert!(bug_screen.contains(":bug "), "{bug_screen}");
     h.press(KeyCode::Esc);
     assert_eq!(h.app.pane, Pane::None);
     assert_eq!(
@@ -331,6 +328,14 @@ fn cursor_detail_and_guarded_commands_on_the_agents_page() {
     std::fs::write(&h.config_path, "return { keys = { B = 'ball' } }").unwrap();
     h.app = harness::open_app(&h.root, &h.config_path);
     to_agents(&mut h);
+    inject(
+        &mut h,
+        vec![
+            session(&root, 4242, "sid-a", AgentActivity::Idle, "first"),
+            session(&root, 4343, "sid-b", AgentActivity::Idle, "second"),
+        ],
+    );
+    assert_eq!(h.app.agents.selected, 1);
     let ball_screen = h.press(KeyCode::Char('B'));
     assert!(ball_screen.contains("ball"), "{ball_screen}");
     h.press(KeyCode::Esc);
