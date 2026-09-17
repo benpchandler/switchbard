@@ -94,7 +94,7 @@ fn repository_capture_uses_native_status_and_existing_bugs_project_only() {
         std::fs::write(h.root.join("backlog/config.yml"),
             "project_name: fixture\nstatuses: [\"Inbox\", \"Review\", \"Done\"]\ntask_prefix: task\n").unwrap();
         if has_bugs {
-            harness::seed_project(&h.root, "Bugs", "Active", None);
+            harness::seed_project(&h.root, "Bugs", "Planned", None);
         }
         h.app = harness::open_app(&h.root, &h.config_path);
         h.press(KeyCode::Char('b'));
