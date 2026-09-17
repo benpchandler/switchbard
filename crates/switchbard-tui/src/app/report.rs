@@ -69,6 +69,9 @@ impl ReportFlow {
     pub fn is_pending(&self) -> bool {
         self.pending.is_some()
     }
+    pub fn has_retained_draft(&self) -> bool {
+        self.retry_command.is_some()
+    }
     pub fn message(&self) -> Option<&str> {
         self.message.as_deref()
     }

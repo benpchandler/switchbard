@@ -6,6 +6,7 @@ pub mod columns;
 pub mod config;
 mod date_fields;
 mod detail_pane;
+pub mod experiments;
 pub mod group;
 pub mod highlight;
 pub mod inbox;

@@ -1,6 +1,6 @@
 use std::io::Write;
 use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::Arc;
@@ -164,6 +164,11 @@ fn run(
     app.restore_session(resumed.as_deref(), fresh);
     let prev_build = std::env::var(switchbard_tui::auto_install::PREV_BUILD_ENV).ok();
     app.show_startup_banner(resumed.is_some(), prev_build.as_deref());
+    let (experiments, warning) = switchbard_tui::experiments::ExperimentStore::load();
+    app.experiments = experiments;
+    if let Some(warning) = warning {
+        app.status = format!("Experiments: {warning}");
+    }
     let shutdown = ShutdownSignals::register()?;
     let hung_up = Arc::new(AtomicBool::new(false));
     tty::spawn_hangup_watch(Arc::clone(&hung_up), Arc::clone(&shutdown.requested))?;
@@ -197,19 +202,11 @@ fn run(
     // restore only matters when the terminal is still ours. After a hangup
     // or a signal there may be nothing left to restore, and reporting that
     // would itself write to the dead terminal.
-    let exit = outcome?;
+    outcome?;
     if !hung_up.load(Ordering::Relaxed) && !shutdown.requested.load(Ordering::Relaxed) {
         restore?;
     }
-    match exit {
-        Exit::Quit => Ok(()),
-        Exit::Restart => restart_into_new_binary(&app),
-    }
-}
-
-enum Exit {
-    Quit,
-    Restart,
+    Ok(())
 }
 
 /// What `ratatui::init` does - raw mode, alternate screen, a panic hook
@@ -224,13 +221,17 @@ fn init_terminal() -> std::io::Result<ratatui::DefaultTerminal> {
         let _ = restore_terminal();
         previous(info);
     }));
+    enter_terminal()?;
+    ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))
+}
+
+fn enter_terminal() -> std::io::Result<()> {
     crossterm::terminal::enable_raw_mode()?;
     crossterm::execute!(
         std::io::stdout(),
         crossterm::terminal::EnterAlternateScreen,
         event::EnableMouseCapture
-    )?;
-    ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))
+    )
 }
 
 /// The inverse of [`init_terminal`], without ratatui's `eprintln!` on
@@ -282,7 +283,7 @@ fn drive(
     app: &mut App,
     events: &Receiver<Event>,
     stop: Stop<'_>,
-) -> Result<Exit> {
+) -> Result<()> {
     let binary = InstalledBinary::current();
     app.tick();
     let mut last_tick = Instant::now();
@@ -293,7 +294,7 @@ fn drive(
             // the hangup watch or SIGHUP has necessarily flagged it; give
             // them one bounded moment before calling it a real error.
             if stop.asked_within(DRAW_FAILURE_GRACE) {
-                return Ok(Exit::Quit);
+                return Ok(());
             }
             return Err(error.into());
         }
@@ -305,7 +306,7 @@ fn drive(
         let input = match events.recv_timeout(wait) {
             Ok(event) => Some(event),
             Err(RecvTimeoutError::Timeout) => None,
-            Err(RecvTimeoutError::Disconnected) if stop.asked() => return Ok(Exit::Quit),
+            Err(RecvTimeoutError::Disconnected) if stop.asked() => return Ok(()),
             Err(RecvTimeoutError::Disconnected) => {
                 return Err(anyhow::anyhow!("terminal event reader stopped"))
             }
@@ -319,21 +320,71 @@ fn drive(
         if !input_ready || last_tick.elapsed() >= Duration::from_millis(500) {
             app.tick();
             last_tick = Instant::now();
-            if app.mode == switchbard_tui::app::Mode::Browse
-                && !app.pr_merge.is_submitting()
-                && !app.agent_kill.is_submitting()
-                && !app.report.is_pending()
-                && binary.was_replaced()
-            {
-                app.telemetry
-                    .record("self_restart", binary.path.display().to_string());
-                return Ok(Exit::Restart);
-            }
+            app.update_available = binary.was_replaced();
         }
         // Polling must not starve while keyboard input remains active.
         app.tick();
+        if app.update_requested && !app.should_quit && !stop.asked() {
+            update_if_ready(terminal, app, &binary)?;
+        }
     }
-    Ok(Exit::Quit)
+    Ok(())
+}
+
+fn update_if_ready(
+    terminal: &mut ratatui::DefaultTerminal,
+    app: &mut App,
+    binary: &InstalledBinary,
+) -> Result<()> {
+    app.update_available = binary.was_replaced();
+    if !app.update_available {
+        app.update_requested = false;
+        app.status = "Already running the latest installed build".into();
+    } else if app.pr_merge.is_submitting()
+        || app.agent_kill.is_submitting()
+        || app.report.is_pending()
+    {
+        app.status = "Update waiting for the current save or action to finish".into();
+    } else if app.report.has_retained_draft() {
+        app.update_requested = false;
+        app.status =
+            "Update paused; : restores your unsaved report. Save it, then update again".into();
+    } else if app.mode != switchbard_tui::app::Mode::Browse {
+        app.status = "Update waiting; finish or cancel the current edit or menu".into();
+    } else {
+        apply_update(terminal, app, binary)?;
+    }
+    Ok(())
+}
+
+fn apply_update(
+    terminal: &mut ratatui::DefaultTerminal,
+    app: &mut App,
+    binary: &InstalledBinary,
+) -> Result<()> {
+    app.update_requested = false;
+    if let Err(error) = app.checkpoint_session() {
+        app.status = format!("Update paused; could not save your current view: {error}");
+        app.telemetry.record("error", app.status.clone());
+        return Ok(());
+    }
+    app.telemetry
+        .record("self_restart", binary.path.display().to_string());
+    let result = restore_terminal()
+        .map_err(anyhow::Error::from)
+        .and_then(|()| {
+            app.telemetry.finish();
+            restart_into_new_binary(app, &binary.path)
+        });
+    // A successful exec never returns. Keep this App and its event reader
+    // alive if the candidate cannot start, and redraw the previous session.
+    enter_terminal()?;
+    terminal.clear()?;
+    if let Err(error) = result {
+        app.status = format!("Update failed; still running this build: {error}");
+        app.telemetry.record("error", app.status.clone());
+    }
+    Ok(())
 }
 
 const RESUME_ENV: &str = "SBT_RESUME";
@@ -373,8 +424,8 @@ impl Drop for ShutdownSignals {
     }
 }
 
-/// A fresh `cargo install` swaps the file under us; re-exec so the running
-/// tab is always the newest build without the user restarting anything.
+/// Notice a replaced installation while the running tab stays on its current
+/// build until the owner requests an update.
 struct InstalledBinary {
     path: PathBuf,
     seen: Option<SystemTime>,
@@ -393,8 +444,7 @@ impl InstalledBinary {
     }
 }
 
-fn restart_into_new_binary(app: &App) -> Result<()> {
-    let exe = std::env::current_exe()?;
+fn restart_into_new_binary(app: &App, exe: &Path) -> Result<()> {
     let error = std::process::Command::new(exe)
         .args(std::env::args_os().skip(1))
         .env(RESUME_ENV, app.resume_state())

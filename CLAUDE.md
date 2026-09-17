@@ -27,6 +27,8 @@ Config is persisted at `~/.switchbard/config.toml`. Service logs land in `$TMPDI
 
 ## Common commands
 
+**Owner-directed rapid exploration (2026-09-17).** For work explicitly scoped to the experiment loop, use [docs/tui-experiments.md](docs/tui-experiments.md): compile and make bounded manual observations, commit frequently, and do not write or run automated tests during exploration. Record unrelated failures without diverting into their repair. Routine backend fixes preserving intended behavior need no owner acceptance; experimental product behavior does. This overrides per-slice test requirements for this workflow, not remote branch protection or delivery checks.
+
 ```sh
 mise install                          # install pinned Rust (1.95.0) from mise.toml
 mise run hooks-install                # install tracked local Git gates
@@ -82,8 +84,9 @@ worktree that predates a feature ends up reinstalled over one that has it
 (TASK-172, twice).
 
 Install through `mise run install` (both binaries) or `scripts/install-switchbard.sh`
-directly, never a bare `cargo install --path`; both re-exec a running `sbt` the
-moment the file on disk changes. **An install is a one-way street (TASK-272):**
+directly, never a bare `cargo install --path`. A running `sbt` advertises a replaced
+binary and re-execs only on `:update` or Settings > Update now, preserving its view.
+Fresh launches use the installed build. **An install is a one-way street (TASK-272):**
 it may only ever add to what is running. A candidate must contain the installed
 build's commit, or the installed build must be *delivered* - its branch's PR
 merged (this repo squash-merges, so the branch commit itself never lands on

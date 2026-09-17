@@ -40,7 +40,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Constraint::Length(u16::from(
             !app.pull_requests.notifications.is_empty()
                 || app.pr_merge.ongoing().is_some()
-                || app.report.message().is_some(),
+                || app.report.message().is_some()
+                || app.experiment_notice().is_some(),
         )),
         Constraint::Min(0),
         Constraint::Length(footer_height),
@@ -97,6 +98,12 @@ fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
     }
     let alerts = &app.pull_requests.notifications;
     let Some(message) = app.pr_merge.ongoing().or_else(|| alerts.latest()) else {
+        if let Some(message) = app.experiment_notice() {
+            frame.render_widget(
+                Paragraph::new(message).style(app.config.theme.style(Surface::Status)),
+                area,
+            );
+        }
         return;
     };
     let dismiss = app
@@ -1054,6 +1061,11 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
         ("v<n>", "open view; vs<n> save it (vsd = default)"),
         ("v h", "view history; Enter restores; vs<n> saves a slot"),
         (
+            ":experiments",
+            "enable, disable, keep or remove new features",
+        ),
+        (":update", "use the latest installed build when ready"),
+        (
             "sbt --fresh",
             "launch saved default instead of last session",
         ),
@@ -1064,6 +1076,9 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
         ]));
     }
     if app.page == Page::Tasks {
+        if app.experiments.is_enabled("task-edit-shortcut") {
+            lines.push(help_entry("t e", "edit selected task", theme));
+        }
         lines.push(help_entry(
             "t c c",
             "cancel task with confirmation; Esc keeps it",
@@ -1687,6 +1702,11 @@ fn picker_title(
         PickerPurpose::ChoosePaintRule(action) => format!("{action:?} paint rule"),
         PickerPurpose::ColumnActions(column) => column.name(registry).to_string(),
         PickerPurpose::Settings => "settings".to_string(),
+        PickerPurpose::Experiments => "Experiments".to_string(),
+        PickerPurpose::Experiment(id) => crate::experiments::catalog()
+            .iter()
+            .find(|spec| spec.id == id)
+            .map_or_else(|| "Experiment".to_string(), |spec| spec.title.to_string()),
         PickerPurpose::Goals(id) => format!("{id} · goals"),
         PickerPurpose::Organize => "organize by".to_string(),
         PickerPurpose::Ball => "ball".to_string(),

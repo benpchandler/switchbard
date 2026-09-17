@@ -3,6 +3,7 @@
 
 pub mod agent_kill;
 mod detail_edit;
+mod experiments;
 mod filter_completion;
 mod new_task;
 pub mod paint_flow;
@@ -116,6 +117,10 @@ pub struct App {
     pub config: Config,
     config_path: Option<PathBuf>,
     pub settings: SettingsStore,
+    pub experiments: crate::experiments::ExperimentStore,
+    /// A compiled replacement exists at the installed path; only explicit intent restarts.
+    pub update_available: bool,
+    pub update_requested: bool,
     config_seen: Option<SystemTime>,
     tasks_seen: Option<SystemTime>,
     storage_seen: Option<u64>,
@@ -240,7 +245,16 @@ pub struct App {
 fn command_allowed_off_lists(verb: &str) -> bool {
     matches!(
         verb,
-        "" | "q" | "quit" | "reload" | "page" | "help" | "bug" | "idea" | "dismiss"
+        "" | "q"
+            | "quit"
+            | "reload"
+            | "page"
+            | "help"
+            | "bug"
+            | "idea"
+            | "dismiss"
+            | "experiments"
+            | "update"
     )
 }
 
@@ -282,6 +296,9 @@ impl App {
             config_seen: config_path.as_deref().and_then(config::modified_at),
             config_path,
             settings,
+            experiments: crate::experiments::ExperimentStore::load_from(None).0,
+            update_available: false,
+            update_requested: false,
             tasks_seen: None,
             storage_seen: None,
             storage_checked: None,
@@ -1215,7 +1232,18 @@ impl App {
             return Vec::new();
         }
         let mut names: Vec<String> = [
-            "bug", "idea", "outline", "paint", "palette", "theme", "reload", "page", "help", "q",
+            "bug",
+            "idea",
+            "outline",
+            "paint",
+            "palette",
+            "theme",
+            "reload",
+            "page",
+            "help",
+            "q",
+            "experiments",
+            "update",
         ]
         .iter()
         .map(|name| name.to_string())
@@ -1629,6 +1657,8 @@ impl App {
             "help" => self.apply(&Action::Help),
             "q" | "quit" => self.request_quit(),
             "reload" => self.apply(&Action::Reload),
+            "experiments" => self.open_experiments(),
+            "update" => self.request_update(),
             "open" => self.apply(&Action::OpenBrowser),
             "dismiss" => self.apply(&Action::DismissNotifications),
             "paint" => self.replace_paint(rest.trim()),
@@ -1925,6 +1955,23 @@ impl App {
                 Payload::RowSpacing,
             ));
         }
+        options.push(PickOption::keyed(
+            'e',
+            format!(
+                "Experiments · {} to try",
+                self.experiments.unreviewed_count()
+            ),
+            Payload::Experiments,
+        ));
+        options.push(PickOption::keyed(
+            'u',
+            if self.update_available {
+                "Update now"
+            } else {
+                "Update: current build"
+            },
+            Payload::Update,
+        ));
         options.push(PickOption::keyed(
             'g',
             "Use hidden-status settings in every repo",

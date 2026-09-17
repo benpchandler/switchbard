@@ -20,6 +20,13 @@ impl App {
             Payload::TaskAction(TaskAction::New),
         )];
         if self.selected_task().is_some() {
+            if self.experiments.is_enabled("task-edit-shortcut") {
+                options.push(PickOption::keyed(
+                    'e',
+                    "Edit task",
+                    Payload::TaskAction(TaskAction::Edit),
+                ));
+            }
             for (key, label, action) in [
                 ('b', "Assign ball", TaskAction::Ball),
                 ('s', "Status", TaskAction::Status),
@@ -77,6 +84,7 @@ impl App {
 
     fn run_task_action(&mut self, action: TaskAction) {
         match action {
+            TaskAction::Edit => self.open_experimental_task_editor(),
             TaskAction::Cancel => self.open_task_cancellation(),
             TaskAction::New => self.open_new_task(),
             TaskAction::Ball => self.open_ball_picker(),
@@ -888,6 +896,8 @@ impl App {
                 let toggles = matches!(
                     purpose,
                     PickerPurpose::Settings
+                        | PickerPurpose::Experiments
+                        | PickerPurpose::Experiment(_)
                         | PickerPurpose::Goals(_)
                         | PickerPurpose::Task
                         | PickerPurpose::TaskPlanning(_)
@@ -1080,6 +1090,14 @@ impl App {
             (PickerPurpose::SaveView, Payload::ViewSlot(slot)) => self.save_view(slot),
             (PickerPurpose::GlobalView, Payload::ViewSlot(slot)) => self.promote_view(slot),
             (PickerPurpose::Settings, Payload::GlobalSettings) => self.promote_settings(),
+            (PickerPurpose::Settings, Payload::Experiments) => self.open_experiments(),
+            (PickerPurpose::Settings | PickerPurpose::Experiments, Payload::Update) => {
+                self.request_update()
+            }
+            (PickerPurpose::Experiments, Payload::Experiment(id)) => self.open_experiment(&id),
+            (PickerPurpose::Experiment(id), Payload::ExperimentDecision(decision)) => {
+                self.decide_experiment(&id, decision)
+            }
             (PickerPurpose::Views, Payload::TitleWrapping) => self.cycle_row_layout(true),
             (PickerPurpose::Settings, Payload::RowSpacing) => self.cycle_row_layout(false),
             (PickerPurpose::Columns, Payload::ColumnAction(ColumnAction::Move)) => {

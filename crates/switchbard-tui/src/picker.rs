@@ -57,6 +57,8 @@ pub enum PickerPurpose {
     ColumnActions(Column),
     /// `,`: standing preferences under every view.
     Settings,
+    Experiments,
+    Experiment(String),
     /// `tg`: the repo's goals, marked where the named task is attached; picking toggles.
     Goals(String),
     /// `o`: what to organize the list by; the current choice is marked.
@@ -158,6 +160,7 @@ impl ColumnAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskAction {
     New,
+    Edit,
     Cancel,
     Ball,
     Append,
@@ -226,6 +229,10 @@ pub enum Payload {
     RenameView,
     DeleteView,
     GlobalSettings,
+    Experiments,
+    Experiment(String),
+    ExperimentDecision(crate::experiments::ExperimentDecision),
+    Update,
     TitleWrapping,
     RowSpacing,
     Project(Option<String>),
@@ -418,7 +425,9 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
             "↑/↓ select · key or Enter picks · h back · Esc closes"
         }
         PickerPurpose::ColumnActions(_) => "letter picks · esc",
-        PickerPurpose::Settings => "↑↓/jk select · →/l open · ←/h back · Esc closes",
+        PickerPurpose::Settings | PickerPurpose::Experiments | PickerPurpose::Experiment(_) => {
+            "↑↓/jk select · →/l open · ←/h back · Esc closes"
+        }
         PickerPurpose::Goals(_) => "number or name attaches or detaches · esc",
         PickerPurpose::Organize => {
             "number or name organizes · the current one again flattens · x off · esc"
