@@ -55,3 +55,18 @@ raise "mission-sidecar condition lost" unless condition.include?("needs.change-s
 raise "delivery preflight command lost" unless delivery.dig("commands", "lint") == "mise run preflight"
 
 puts "CI workflow contract: PASS"
+
+terminal = YAML.safe_load(File.read(File.join(repo_root, ".github/workflows/release-tui.yml")), aliases: true)
+terminal_triggers = terminal["on"] || terminal[true]
+raise "terminal release must build PR artifacts" unless terminal_triggers.key?("pull_request")
+raise "terminal release must support draft builds" unless terminal_triggers.key?("workflow_dispatch")
+raise "publishing must not replace public assets" if terminal_triggers.key?("release")
+raise "builds must have read-only contents permission" unless terminal.dig("permissions", "contents") == "read"
+terminal_jobs = terminal.fetch("jobs")
+platforms = terminal_jobs.dig("binaries", "strategy", "matrix", "include").map { |entry| entry.fetch("platform") }
+raise "terminal platform coverage changed" unless platforms.sort == %w[linux-x86_64 macos-arm64 macos-x86_64]
+publisher = terminal_jobs.fetch("publish")
+raise "publish must wait for all platform builds" unless publisher.fetch("needs") == "binaries"
+raise "PRs must not publish" unless publisher.fetch("if") == "github.event_name != 'pull_request'"
+raise "only publisher needs contents write" unless publisher.dig("permissions", "contents") == "write"
+puts "Terminal release workflow contract: PASS"

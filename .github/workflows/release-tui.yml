@@ -1,0 +1,152 @@
+name: release-tui
+
+# Build on PRs; attach verified terminal binaries only to an existing draft release.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release-tui.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/switchbard-core/**'
+      - 'crates/switchbard-task/**'
+      - 'crates/switchbard-tui/**'
+      - 'scripts/install-release.sh'
+      - 'scripts/test-install-release.sh'
+      - 'scripts/test-install-release-package.sh'
+      - 'mise.toml'
+      - '.cargo/**'
+      - 'rust-toolchain*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (for example v0.4.0-alpha.1)
+        required: true
+        type: string
+
+concurrency:
+  group: release-tui-${{ inputs.tag || github.event.pull_request.number || github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_TARGET_DIR: target
+
+jobs:
+  binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            platform: macos-arm64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            platform: macos-x86_64
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+            platform: linux-x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Resolve and validate release tag
+        id: release
+        if: github.event_name != 'pull_request'
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag || github.sha }}
+          fetch-depth: 0
+      - uses: jdx/mise-action@v4
+      - name: Install build target
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          rustup target add "$BUILD_TARGET"
+          if [[ "$BUILD_TARGET" == x86_64-unknown-linux-musl ]]; then
+            sudo apt-get update
+            sudo apt-get install -y musl-tools
+          fi
+      - name: Build standalone terminal binaries
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: cargo build --locked --release --target "$BUILD_TARGET" -p switchbard-task -p switchbard-tui
+      - name: Clean-home first-run smoke test
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          binary_dir="$PWD/target/$BUILD_TARGET/release"
+          smoke_home="$RUNNER_TEMP/switchbard-smoke-home"
+          mkdir -p "$smoke_home" "$RUNNER_TEMP/switchbard-smoke-repo"
+          git -C "$RUNNER_TEMP/switchbard-smoke-repo" init
+          env HOME="$smoke_home" "$binary_dir/sbt" --repo "$RUNNER_TEMP/switchbard-smoke-repo" init --yes
+          env HOME="$smoke_home" "$binary_dir/sbt" --repo "$RUNNER_TEMP/switchbard-smoke-repo" init --yes
+          env HOME="$smoke_home" "$binary_dir/sb" --repo "$RUNNER_TEMP/switchbard-smoke-repo" create "Release smoke task"
+          env HOME="$smoke_home" "$binary_dir/sb" --repo "$RUNNER_TEMP/switchbard-smoke-repo" list | grep -F "Release smoke task"
+      - name: Smoke test and package
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist stage
+          for binary in sb sbt; do
+            if [[ "$BUILD_TARGET" == x86_64-unknown-linux-musl ]]; then
+              if readelf -l "target/$BUILD_TARGET/release/$binary" | grep -q INTERP; then
+                echo "Linux release must not require a dynamic loader" >&2
+                exit 1
+              fi
+            fi
+            "target/$BUILD_TARGET/release/$binary" --version
+            install -m 755 "target/$BUILD_TARGET/release/$binary" "stage/$binary"
+          done
+          cp LICENSE stage/LICENSE
+          asset="switchbard-tui-$PLATFORM.tar.gz"
+          tar -C stage -czf "dist/$asset" sb sbt LICENSE
+          cd dist
+          if command -v sha256sum >/dev/null; then sha256sum "$asset" > "$asset.sha256";
+          else shasum -a 256 "$asset" > "$asset.sha256"; fi
+      - name: Verify installer
+        run: bash scripts/test-install-release.sh
+      - name: Install actual archive and verify first-run journey
+        run: bash scripts/test-install-release-package.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminal-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: terminal-*
+          merge-multiple: true
+          path: dist
+      - name: Upload all verified release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"
+          if [[ "$is_draft" != true ]]; then
+            echo "Refusing to replace assets on a published release; prepare a draft release first" >&2
+            exit 1
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --clobber

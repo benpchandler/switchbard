@@ -5,14 +5,10 @@ name: release-linux
 # (`mise run package` + `gh release create`); this job adds the Linux asset on
 # top so every release carries both platforms.
 #
-# Triggers:
-#   - release: published  → fires automatically when a release is published.
-#   - workflow_dispatch    → manual run against an existing tag (used to backfill
-#                            past releases, e.g. v0.3.0).
+# The GUI is deprecated. Keep manual backfills for historical releases only;
+# public terminal releases use release-tui.yml and do not build the GUI.
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:

@@ -8,6 +8,15 @@ Guidance for Claude Code when working in this repository. Repo-specific deltas o
 
 ## What Switchbard is
 
+Switchbard's primary product is now the `sbt` terminal workspace, with `sb` as
+its scriptable task frontend. Public distribution ships these two binaries;
+see `docs/INSTALL-TUI.md`. The GUI is deprecated: retain its code and regression
+coverage, but do not add GUI features or require GUI/mission-sidecar packaging
+for a TUI release. The source auto-install loop below is an opt-in maintainer
+workflow, separate from public versioned binary installations.
+
+### Legacy GUI
+
 A cross-platform (macOS + Linux) local desktop dashboard — a single native egui/eframe window, no webview — that:
 - Scans the OS every few seconds for listening processes (`lsof` on macOS, `/proc` on Linux), attributing each back to a git worktree by walking the process `cwd`.
 - Detects what each repo *would* start by reading its own declarations: `Procfile` / `Procfile.dev`, `package.json` scripts, `Makefile`, `docker-compose.yml`, `scripts/*.sh`.

@@ -31,7 +31,7 @@ Repository path defaults to the current directory and can be overridden with `--
 | Pointer, touch, zoom, theme states | Not applicable to line-based confirmation |
 | Binary absent | Shell cannot run onboarding; use supported installation route |
 
-If the shell reports `sbt: command not found`, install Switchbard's `sb` and `sbt` binaries using the repository's supported `mise run install` route, then run `sbt init`. The binary cannot detect its own absence; this differs from an unconfigured repository.
+If the shell reports `sbt: command not found`, install Switchbard's `sb` and `sbt` binaries using [the public TUI installation guide](INSTALL-TUI.md), ensure the install directory is on `PATH`, then run `sbt init`. The source `mise run install` route and opt-in main auto-install loop are developer workflows, separate from public release installation. The binary cannot detect its own absence; this differs from an unconfigured repository.
 
 Arbitrary external editors cannot join Switchbard's repository lock. Empty inventories and branch/worktree digests are rechecked inside the write transaction immediately before activation, but a file written after that check remains a migration exception rather than being imported. Registration, six authorities, and configuration share one database transaction; failure rolls back those records. Interruption before consent writes nothing, and interrupted transactions rely on database rollback. Concurrent setup is serialized by the repository identity lock.
 
