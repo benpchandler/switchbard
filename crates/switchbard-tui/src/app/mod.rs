@@ -1471,7 +1471,7 @@ impl App {
             return;
         }
         if !self.page.allows(action) {
-            self.status = "Switch to Tasks or Pull Requests to use list controls".to_string();
+            self.status = format!("{} works on {}", action.name(), action.where_it_works());
             return;
         }
         if self.scroll_detail_reading(action) {
@@ -1484,12 +1484,11 @@ impl App {
             return;
         }
         match action {
-            Action::Merge => self.status = "Switch to Pull Requests to merge a PR".into(),
-            Action::KillAgent => self.status = "Switch to Agents to signal an agent".into(),
-            Action::Mark => {
-                self.status = "Switch to Pull Requests to mark PRs for bulk merge".into()
+            // The availability gate above already refused these on this page;
+            // the arm exists so a future gate change cannot silently drop them.
+            Action::OpenBrowser | Action::Merge | Action::Mark | Action::KillAgent => {
+                self.status = format!("{} works on {}", action.name(), action.where_it_works());
             }
-            Action::OpenBrowser => self.status = "Switch to Pull Requests to open a PR".into(),
             Action::DismissNotifications => {
                 if !self.report.dismiss() {
                     self.pull_requests.dismiss_notifications();

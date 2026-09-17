@@ -8,7 +8,7 @@ fn browser_action_requires_a_selected_pr_and_leaves_tasks_unchanged() {
     let selected = h.selected_title();
     assert!(h
         .press(KeyCode::Char('u'))
-        .contains("Switch to Pull Requests"));
+        .contains("open_browser works on the Pull Requests page"));
     h.next_list_page();
     assert!(h.press(KeyCode::Char('u')).contains("No PR selected"));
     h.type_text(":open");

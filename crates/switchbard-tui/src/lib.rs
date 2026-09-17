@@ -23,7 +23,7 @@ pub mod pr_view;
 pub mod pull_requests;
 pub mod report;
 pub mod settings;
-mod shortcuts;
+pub mod shortcuts;
 pub mod sort;
 pub mod tasks;
 pub mod telemetry;

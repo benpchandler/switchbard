@@ -245,3 +245,41 @@ fn help_explains_history_and_fresh_launch_on_both_list_pages() {
         );
     }
 }
+
+#[test]
+fn the_locked_vocabulary_stays_bound_and_page_independent() {
+    let h = Harness::new();
+    let bound: Vec<_> = h.app.config.keys.values().copied().collect();
+    assert!(
+        switchbard_tui::shortcuts::missing_locked(bound.into_iter()).is_empty(),
+        "default.lua must bind every locked action, each on a page-independent tier"
+    );
+}
+
+#[test]
+fn unbinding_a_locked_action_is_reported_as_a_configuration_warning() {
+    let mut h = Harness::new();
+    // Taking `q` for another action leaves `quit` with no key at all; sbt must
+    // say so rather than silently losing a key the user can press anywhere.
+    std::fs::write(&h.config_path, "return { keys = { q = 'help' } }")
+        .expect("write real Lua configuration");
+    h.app = open_app(&h.root, &h.config_path);
+    let warnings = h.app.config.warnings.join("\n");
+    assert!(warnings.contains("quit"), "{warnings}");
+}
+
+#[test]
+fn a_pr_only_key_names_its_page_on_tasks() {
+    let mut h = Harness::new();
+    let help = h.press(KeyCode::Char('?'));
+    assert!(
+        !help.contains("open_browser"),
+        "help on Tasks must not offer a PR-only action: {help}"
+    );
+    h.press(KeyCode::Esc);
+    let screen = h.press(KeyCode::Char('u'));
+    assert!(
+        screen.contains("open_browser works on the Pull Requests page"),
+        "{screen}"
+    );
+}

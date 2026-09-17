@@ -760,6 +760,7 @@ impl RawConfig {
                 (_, None) => warnings.push(format!("unknown action '{action}' for key '{key}'")),
             }
         }
+        warnings.extend(crate::shortcuts::missing_locked(keys.values().copied()));
         let (mut raw_styles, mut raw_columns) = match self.theme_name.as_deref() {
             Some(name) => match self.themes.get(name) {
                 Some((styles, columns)) => (styles.clone(), columns.clone()),

@@ -49,8 +49,9 @@ fn unbound_key_is_reported_and_help_lists_bindings() {
     assert!(screen.contains("z is not bound"), "{screen}");
     let screen = h.press(KeyCode::Char('?'));
     assert!(screen.contains("quit"), "{screen}");
-    let screen = h.press(KeyCode::PageDown);
     assert!(screen.contains(":bug"), "{screen}");
+    let screen = h.press(KeyCode::PageDown);
+    assert!(screen.contains(":theme"), "help scrolls on: {screen}");
     assert!(h
         .app
         .telemetry
