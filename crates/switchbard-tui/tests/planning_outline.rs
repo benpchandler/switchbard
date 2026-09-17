@@ -271,6 +271,7 @@ fn legacy_expedite_stays_flat_above_project_groups() {
     seed_project(&h.root, "Atlas", "In Progress", None);
     seed_in_project(&h.root, "Atlas task", "To Do", "Atlas", None);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Esc);
     h.type_text("t1");
     let expedited = h.selected_title();

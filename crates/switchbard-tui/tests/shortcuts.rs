@@ -15,6 +15,7 @@ fn canonical_and_legacy_task_prefixes_create_tasks_and_advertise_the_same_action
         )
         .expect("write real Lua configuration");
         h.app.tick();
+        h.tick_until_tasks_settle();
         let screen = h.press(KeyCode::Char('?'));
         assert!(screen.contains("x n"), "{screen}");
         assert!(
@@ -41,6 +42,7 @@ fn direct_new_task_binding_is_discoverable_and_creates_on_disk() {
     std::fs::write(&h.config_path, "return { keys = { x = 'new_task' } }")
         .expect("write real Lua configuration");
     h.app.tick();
+    h.tick_until_tasks_settle();
     let screen = h.press(KeyCode::Char('?'));
     assert!(screen.contains("t n x"), "{screen}");
     h.press(KeyCode::Esc);

@@ -165,6 +165,7 @@ fn narrow_fixture() -> Harness {
         &[],
     );
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Esc);
     h.app.state.columns = vec![Column::Id, Column::Status, Column::Title];
     h.terminal = Terminal::new(TestBackend::new(58, 22)).unwrap();
@@ -206,6 +207,7 @@ fn capped_unicode_titles_navigation_grouping_and_tiny_viewports_are_bounded() {
         &[],
     );
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Esc);
     h.type_text("vlll");
     h.press(KeyCode::Esc);
@@ -254,6 +256,7 @@ fn capped_title_shows_overflow_when_zero_width_remainder_fits() {
     )
     .unwrap();
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Esc);
     h.type_text("vl");
     h.press(KeyCode::Esc);
@@ -274,6 +277,7 @@ fn many_wrapped_tasks_scroll_by_visible_tasks_and_keep_selection_after_resize() 
         );
     }
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Esc);
     h.app.state.columns = vec![Column::Id, Column::Title];
     h.type_text("vl");
@@ -334,6 +338,7 @@ fn spacing_never_hides_selected_task_or_an_otherwise_fitting_group_heading() {
         None,
     );
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Esc);
     h.type_text("o1");
     h.press(KeyCode::Char('g'));

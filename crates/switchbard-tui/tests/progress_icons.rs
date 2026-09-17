@@ -95,6 +95,7 @@ fn measured_boundaries_render_without_rounding_to_empty_or_complete() {
         }
         checked = target;
         h.press(KeyCode::Char('r'));
+        h.tick_until_tasks_settle();
         row_icon(&mut h, "Fix login", icon);
         let screen = h.render();
         let y = screen
@@ -145,10 +146,12 @@ fn measured_boundaries_render_without_rounding_to_empty_or_complete() {
     )
     .unwrap();
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     row_icon(&mut h, "Fix login", "███▉");
     coverage(&h, "TASK-2", 201, 1);
     coverage(&h, "TASK-3", 0, 0);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     row_icon(&mut h, "Add dark", "▏███");
     h.type_text("vp");
     h.type_text("sprog");
@@ -211,6 +214,7 @@ fn descendants_canceled_and_manual_done_share_checklist_truth() {
     )
     .unwrap();
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     row_icon(&mut h, "Fix login", "▌███");
     row_icon(&mut h, "Add dark", "████");
     row_icon(&mut h, "Write onboarding", "-");
@@ -258,6 +262,7 @@ fn default_adjacency_saved_view_picker_custom_glyph_and_layouts() {
     coverage(&h, "TASK-2", 8, 1);
     coverage(&h, "TASK-3", 0, 0);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     for (title, total, checked) in [
         ("No checked outcomes", 1, 0),
         ("Half checked outcomes", 2, 1),
@@ -269,6 +274,7 @@ fn default_adjacency_saved_view_picker_custom_glyph_and_layouts() {
         coverage(&h, &task.id, total, checked);
     }
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     for (width, height) in [(140, 24), (100, 20), (60, 12), (40, 8)] {
         h.terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let screen = h.render();
@@ -293,6 +299,7 @@ fn compact_progress_header_keeps_percent_at_two_digit_positions() {
     h.app = open_app(&h.root, &h.config_path);
     h.terminal = Terminal::new(TestBackend::new(180, 20)).unwrap();
     let screen = h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     assert!(harness::header_line(&screen).contains("10 %"), "{screen}");
     row_icon(&mut h, "Fix login", "████");
 }
@@ -304,6 +311,7 @@ fn pill_theme_selection_working_and_ascii_fallback() {
     show_progress(&mut h);
     coverage(&h, "TASK-1", 8, 4);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     select_task_titled(&mut h, "Fix login redirect loop");
     for (theme, color) in [
         ("berg", Color::Rgb(82, 143, 255)),
@@ -411,6 +419,7 @@ fn ascii_compact_fallback_uses_ascii_endpoints() {
     coverage(&h, "TASK-2", 1, 0);
     coverage(&h, "TASK-3", 1, 1);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
     let screen = h.render();
     row_icon(&mut h, "Fix login", "+");
@@ -440,6 +449,7 @@ fn complete_color_and_clean_shell_preserve_painted_rows() {
         for checked in [0, 1] {
             coverage(&h, "TASK-1", 1, checked);
             h.press(KeyCode::Char('r'));
+            h.tick_until_tasks_settle();
             h.type_text(&format!(":theme {theme}"));
             h.press(KeyCode::Enter);
             row_icon(&mut h, "Fix login", "\u{e0b6}████\u{e0b4}");
@@ -480,6 +490,7 @@ fn legacy_custom_theme_retains_fill_unless_completion_is_configured() {
     ] {
         std::fs::write(&h.config_path, format!("return {{ theme = 'custom', themes = {{ custom = {{ progress_fill = {{ fg = '#0a5096' }}, progress_shell = {{ fg = '#123456' }} {completion} }} }} }}")).unwrap();
         h.press(KeyCode::Char('r'));
+        h.tick_until_tasks_settle();
         row_icon(&mut h, "Fix login", "\u{e0b6}████\u{e0b4}");
         assert_eq!(harness::cell_fg(&h, "\u{e0b6}"), Some(expected));
     }

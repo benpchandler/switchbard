@@ -88,6 +88,7 @@ fn completed_checklist_shows_review_without_completing_and_zero_is_unmeasured() 
     }
     h.press(KeyCode::Char('r'));
     h.tick_until_tasks_settle();
+    h.tick_until_tasks_settle();
     let screen = h.render();
     assert!(screen.contains("Review 1/1 100%"), "{screen}");
     assert!(screen.contains("Unmeasured"), "{screen}");
@@ -196,6 +197,7 @@ fn descendant_criteria_are_weighted_individually_and_detail_edits_keep_execution
         }
     }
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     select_task_titled(&mut h, "Fix login redirect loop");
     assert_eq!(
         h.app
