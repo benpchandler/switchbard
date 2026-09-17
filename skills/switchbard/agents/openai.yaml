@@ -1,0 +1,4 @@
+interface:
+  display_name: "Switchbard"
+  short_description: "Set up tasks and preserve agent session handoffs"
+  default_prompt: "Use $switchbard to read the assigned task and preserve progress through sb."

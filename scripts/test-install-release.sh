@@ -6,7 +6,11 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/mock" "$scratch/package" "$scratch/downloads"
 for binary in sb sbt; do
-  printf '#!/bin/sh\nprintf "fixture %s\\n"\n' "$binary" > "$scratch/package/$binary"
+  cat > "$scratch/package/$binary" <<'BINARY'
+#!/bin/sh
+if [ "$#" -gt 0 ] && [ "$1" != --version ]; then exit 1; fi
+BINARY
+  printf 'printf "fixture %s\\n"\n' "$binary" >> "$scratch/package/$binary"
   chmod +x "$scratch/package/$binary"
 done
 cat > "$scratch/mock/uname" <<'MOCK'
@@ -50,6 +54,9 @@ make_release linux-x86_64
 run_install --version v0.4.0-alpha.1 --bin-dir "$scratch/path with spaces" > "$scratch/output"
 [[ "$("$scratch/path with spaces/sb" --version)" == 'fixture sb' ]]
 [[ "$("$scratch/path with spaces/sbt" --version)" == 'fixture sbt' ]]
+for command in 'sbt doctor' 'sbt doctor --github' 'sbt agent-prompt' 'sbt skill install --agent both'; do
+  grep -Fq "$command" "$scratch/output"
+done
 grep -q '/download/v0.4.0-alpha.1/' "$scratch/urls"
 expect_failure run_install --bin-dir "$scratch/path with spaces"
 run_install --replace --bin-dir "$scratch/path with spaces" > "$scratch/output"
@@ -62,7 +69,11 @@ grep -q 'checksum mismatch' "$scratch/error"
 [[ "$("$scratch/path with spaces/sbt")" == 'fixture sbt' ]]
 # A second binary commit failure restores the original pair.
 for binary in sb sbt; do
-  printf '#!/bin/sh\nprintf "new fixture %s\\n"\n' "$binary" > "$scratch/package/$binary"
+  cat > "$scratch/package/$binary" <<'BINARY'
+#!/bin/sh
+if [ "$#" -gt 0 ] && [ "$1" != --version ]; then exit 1; fi
+BINARY
+  printf 'printf "new fixture %s\\n"\n' "$binary" >> "$scratch/package/$binary"
 done
 make_release linux-x86_64
 cat > "$scratch/mock/mv" <<'MOCK'

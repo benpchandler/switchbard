@@ -1,6 +1,6 @@
 # Use Switchbard alongside Claude Code or Codex
 
-Keep `sbt` open beside your coding session. The TUI is your view of the work; `sb` is the command interface your agent can use. Both use the same task write layer. The public installation contains no agent skill and modifies no Claude or Codex settings.
+Keep `sbt` open beside your coding session. The TUI is your view of the work; `sb` is the command interface your agent can use. Both use the same task write layer. New terminal builds embed the shared skill and setup prompt. Run `sbt skill install --agent both` to install personal instructions, or choose `claude` or `codex`. This explicit command writes skill files, while registering no hooks and changing no credentials. The older v0.4.0-alpha.1 lacks these commands. See [developer onboarding](developer-onboarding.md).
 
 ## Capture, work, hand off, review
 
