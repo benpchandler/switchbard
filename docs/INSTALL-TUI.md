@@ -13,7 +13,7 @@ bash "$installer" --version v0.4.0-alpha.1
 rm -f "$installer"
 ```
 
-The example selects an alpha release explicitly. It works once that tag has compatible TUI assets; this documentation does not imply they have already been published. Without `--version`, the installer chooses GitHub's latest stable release, which may still be an older GUI-only release. An absent TUI asset produces an error rather than installing the GUI. Use the source route below while the first terminal release is unavailable.
+The example selects the published first TUI alpha explicitly. Without `--version`, the installer chooses GitHub's latest stable release, which may still be an older GUI-only release. An absent TUI asset produces an error rather than installing the GUI. Use the source route below if you prefer to build your own binaries.
 
 The installer downloads the matching archive and `.sha256` file, verifies the checksum, and installs both tools into `~/.local/bin`. It refuses to replace existing binaries without `--replace`. To choose a different directory, add `--bin-dir /path/to/bin`.
 
@@ -76,11 +76,35 @@ Install Rust 1.95 or newer, Git, and a native C toolchain (Xcode Command Line To
 
 ```sh
 git clone https://github.com/benpchandler/switchbard.git
-cargo build --manifest-path switchbard/Cargo.toml --release -p switchbard-task -p switchbard-tui
+cargo build --locked --manifest-path switchbard/Cargo.toml --release -p switchbard-task -p switchbard-tui
 ./switchbard/target/release/sbt --repo /path/to/your/repo
 ```
 
-These commands use Cargo's default target directory. If `CARGO_TARGET_DIR` is set, binaries are under that directory instead. Copy both binaries into a directory on `PATH` if desired. Contributors using Mise should follow [CLAUDE.md](../CLAUDE.md) for the guarded source installer and repository gates.
+These commands use Cargo's default target directory. If `CARGO_TARGET_DIR` is set, binaries are under that directory instead. To install the pair yourself, choose an empty directory on your `PATH`, or explicitly back up any existing binaries before replacing them:
+
+```sh
+mkdir -p "$HOME/.local/bin"
+install -m 755 switchbard/target/release/sb "$HOME/.local/bin/sb"
+install -m 755 switchbard/target/release/sbt "$HOME/.local/bin/sbt"
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+These copy commands replace files at the destination; they do not apply the maintainer installer's lineage checks. Run them only when you have chosen to replace that pair. Use the actual build directory if you set `CARGO_TARGET_DIR`.
+
+### Configure your own workspace
+
+Run `sbt --repo /path/to/your/git/repo` and choose customization at the setup prompt, or supply your settings explicitly:
+
+```sh
+sbt --repo /path/to/your/git/repo init --yes \
+  --task-prefix APP --status Inbox --status Doing --status Done
+```
+
+The first stage is the initial status; keep `Done` for completed tasks. Prefixes normalize to uppercase. New workspaces use the local central database and create no repository `backlog/` directory. Re-running setup preserves existing settings; these flags configure a new workspace, rather than reset one. Existing legacy workspaces retain their storage until an explicit migration. See [onboarding](sbt-onboarding.md) and [storage and recovery](central-storage.md).
+
+Building from source does not require a Claude or Codex account. Install and authenticate your chosen agent separately; install `gh` and run `gh auth login` only if you want GitHub features. See [agent workflows](agent-workflows.md) to connect your sessions through CLI instructions.
+
+Contributors using Mise should follow [CLAUDE.md](../CLAUDE.md) for the guarded source installer and repository gates.
 
 ## Report an alpha bug
 
