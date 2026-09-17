@@ -48,3 +48,11 @@ Evidence logs: `/tmp/task248-baseline.txt`, `/tmp/task248-detail-baseline.log`, 
 The change does not add durable crash recovery for forced process termination, terminal loss, or machine shutdown. Existing bounded terminal-hangup exit behavior remains intact. It removes blocking work from report submission and automatic refresh, without claiming to reduce the underlying storage operation's duration or make every unrelated mutation asynchronous.
 
 Thread-spawn failure and worker-channel disconnect are handled and reviewed but not forcibly injected. Report-specific maximum-length multiline content is not separately exercised. There is no owner visual-approval claim. Installed `sbt` was still `5a9e9ae` at closeout; this fix is a validated local commit awaiting delivery.
+
+## Final pending-storage boundary validation
+
+A fresh real-key `t d` journey on the delivery branch exposed a remaining foreground write while the report banner said Saving. With a real two-second `RepositoryLock`, Done blocked for 2.059631333 seconds and mutated the selected task. This regression now passes the 500 ms bound.
+
+One App guard owns the report-save or task-refresh pending rule, including a queued refresh before the worker starts. Synchronous status/project/parent/cancellation preparation and task creation, status, planning, parent, project, rank, ball, work passing, goal assignment and cancellation writes defer at their actual entry points. Detail focus uses the same guard. A new-task draft remains editable and survives a deferred submit. Read-only menus and navigation remain available; Reload requests a background task refresh with honest pending feedback.
+
+`tests/report.rs` now exercises the real task-menu, picker and command paths under both pending report and pending refresh contention. Every attempted interaction stays below 500 ms; original task files remain byte-identical, only one report is created, and ordinary Done, Reload and new-task capture recover afterward. A status picker prepared before refresh starts cannot bypass the guard. The existing Saving, success, failure/retry, Unicode, cross-page, narrow-terminal, duplicate and detail-refresh evidence remains applicable. These behavioral checks do not claim owner visual approval or forced-termination recovery.

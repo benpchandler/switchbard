@@ -105,17 +105,8 @@ impl App {
 
     /// The second `open` gesture (or `l`/`Right`): give the pane focus.
     /// A no-op with nothing selected — there is nowhere to put a cursor.
-    fn defer_detail_read(&mut self) -> bool {
-        if self.report.is_pending() || self.task_refresh_pending() {
-            self.status =
-                "Task refresh or report save in progress; retry editing when finished".into();
-            return true;
-        }
-        false
-    }
-
     pub(super) fn enter_detail_focus(&mut self) {
-        if self.defer_detail_read() {
+        if self.defer_task_storage() {
             return;
         }
         if self.selected_task().is_none() {
@@ -532,7 +523,7 @@ impl App {
     /// mid-draft against the old content there, and the stale refusal on
     /// save is the correct outcome, not a reload target to silently move.
     pub(super) fn begin_detail_edit(&mut self) -> bool {
-        if self.defer_detail_read() {
+        if self.defer_task_storage() {
             return false;
         }
         let Some(task) = self.selected_task() else {

@@ -189,3 +189,165 @@ fn focused_detail_adopts_background_refresh_without_storage_io_on_tick() {
     h.press(KeyCode::Enter);
     assert_eq!(h.app.selected_task().unwrap().status, "Done");
 }
+
+#[test]
+fn report_pending_defers_done_without_blocking() {
+    let mut h = Harness::new();
+    h.type_text(":idea pending guard");
+    let root = h.root.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let _lock = switchbard_core::storage::RepositoryLock::acquire(&root).unwrap();
+        tx.send(()).unwrap();
+        std::thread::sleep(Duration::from_secs(2));
+    });
+    rx.recv().unwrap();
+    h.press(KeyCode::Enter);
+    let started = Instant::now();
+    h.press(KeyCode::Char('t'));
+    let screen = h.press(KeyCode::Char('d'));
+    let elapsed = started.elapsed();
+    holder.join().unwrap();
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "Done blocked for {elapsed:?}: {screen}"
+    );
+    assert!(screen.contains("retry editing"), "{screen}");
+    assert_ne!(h.app.selected_task().unwrap().status, "Done");
+    h.wait_report();
+    assert_eq!(h.app.total_tasks(), 4);
+}
+
+#[test]
+fn pending_storage_defers_all_task_entry_points_and_reload_recovers() {
+    for report in [true, false] {
+        let mut h = Harness::new();
+        let initial = std::fs::read_dir(h.root.join("backlog/tasks"))
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let bytes = std::fs::read(&path).unwrap();
+                (path, bytes)
+            })
+            .collect::<Vec<_>>();
+        if report {
+            h.type_text(":idea all task entry points");
+        }
+        let root = h.root.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let _lock = switchbard_core::storage::RepositoryLock::acquire(&root).unwrap();
+            tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_secs(2));
+        });
+        rx.recv().unwrap();
+        if report {
+            h.press(KeyCode::Enter);
+        } else {
+            h.press(KeyCode::Char('r'));
+            assert!(h.app.task_refresh_pending());
+            h.type_text("td");
+            assert!(h.app.status.contains("retry editing"));
+            h.app.tick();
+            assert!(h.app.task_refresh_pending());
+        }
+        for sequence in [
+            "td",
+            "ts",
+            "tp",
+            "ta",
+            "tc",
+            "tl\n",
+            "tb1",
+            "tra",
+            "trx",
+            "tr1",
+            "b",
+            "w",
+            ":goal unavailable\n",
+        ] {
+            let started = Instant::now();
+            let mut screen = String::new();
+            for character in sequence.chars() {
+                screen = h.press(if character == '\n' {
+                    KeyCode::Enter
+                } else {
+                    KeyCode::Char(character)
+                });
+            }
+            let elapsed = started.elapsed();
+            assert!(
+                elapsed < Duration::from_millis(500),
+                "{sequence:?} blocked for {elapsed:?}: {screen}"
+            );
+            assert!(
+                h.app.status.contains("retry editing"),
+                "{sequence:?}: {screen}"
+            );
+            h.press(KeyCode::Esc);
+        }
+        h.type_text("tnretained draft");
+        let started = Instant::now();
+        let screen = h.press(KeyCode::Enter);
+        assert!(started.elapsed() < Duration::from_millis(500), "{screen}");
+        assert_eq!(h.app.input, "retained draft");
+        assert_eq!(h.app.mode, switchbard_tui::app::Mode::NewTask);
+        assert!(h.app.status.contains("retry editing"));
+        h.press(KeyCode::Esc);
+        let started = Instant::now();
+        let screen = h.press(KeyCode::Char('r'));
+        assert!(started.elapsed() < Duration::from_millis(500), "{screen}");
+        assert!(screen.contains("Task refresh requested"), "{screen}");
+        h.press(KeyCode::Char('j'));
+        h.press(KeyCode::Enter);
+        assert!(h.render().contains("Add dark theme"));
+        h.press(KeyCode::Esc);
+        holder.join().unwrap();
+        if report {
+            h.wait_report();
+        } else {
+            h.tick_until_tasks_settle();
+        }
+        assert_eq!(h.app.total_tasks(), if report { 4 } else { 3 });
+        for (path, bytes) in initial {
+            assert_eq!(
+                std::fs::read(path).unwrap(),
+                bytes,
+                "pending edit wrote a task"
+            );
+        }
+        h.type_text("td");
+        assert_eq!(h.app.selected_task().unwrap().status, "Done");
+        h.press(KeyCode::Char('r'));
+        h.tick_until_tasks_settle();
+        assert_eq!(h.app.selected_task().unwrap().status, "Done");
+    }
+}
+
+#[test]
+fn picker_prepared_before_refresh_cannot_write_while_pending() {
+    let mut h = Harness::new();
+    h.type_text("ts");
+    let original = h.app.selected_task().unwrap().status.clone();
+    let root = h.root.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let _lock = switchbard_core::storage::RepositoryLock::acquire(&root).unwrap();
+        tx.send(()).unwrap();
+        std::thread::sleep(Duration::from_secs(2));
+    });
+    rx.recv().unwrap();
+    h.app.tick();
+    assert!(h.app.task_refresh_pending());
+    let started = Instant::now();
+    let screen = h.press(KeyCode::Enter);
+    assert!(started.elapsed() < Duration::from_millis(500), "{screen}");
+    assert!(h.app.status.contains("retry editing"));
+    assert_eq!(h.app.selected_task().unwrap().status, original);
+    holder.join().unwrap();
+    h.tick_until_tasks_settle();
+    h.type_text("tnnormal capture recovered");
+    h.press(KeyCode::Enter);
+    assert_eq!(h.app.total_tasks(), 4);
+    assert_eq!(h.selected_title(), "normal capture recovered");
+}

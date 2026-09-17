@@ -8,6 +8,9 @@ use crate::picker::{Payload, PickOption, PickerPurpose};
 
 impl App {
     pub(super) fn open_task_parent_picker(&mut self) {
+        if self.defer_task_storage() {
+            return;
+        }
         let Some(id) = self.selected_task().map(|task| task.id.clone()) else {
             self.status = "no task selected".to_string();
             return;
@@ -76,6 +79,9 @@ impl App {
     }
 
     pub(super) fn change_task_parent(&mut self, id: &str, parent: Option<&str>) {
+        if self.defer_task_storage() {
+            return;
+        }
         match move_backlog_task(&self.repo_root, id, parent) {
             Ok(new_id) => {
                 let selected = new_id.as_deref().unwrap_or(id);

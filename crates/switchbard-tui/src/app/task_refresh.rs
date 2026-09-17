@@ -84,13 +84,22 @@ pub(super) struct TaskRefresh {
 }
 
 impl App {
+    pub(super) fn defer_task_storage(&mut self) -> bool {
+        if self.report.is_pending() || self.task_refresh_pending() {
+            self.status =
+                "Task refresh or report save in progress; retry editing when finished".into();
+            return true;
+        }
+        false
+    }
+
     pub(super) fn request_task_refresh(&mut self) {
         self.task_refresh.force = true;
         self.storage_checked = None;
     }
 
     pub fn task_refresh_pending(&self) -> bool {
-        self.task_refresh.pending.is_some()
+        self.task_refresh.force || self.task_refresh.pending.is_some()
     }
 
     pub(super) fn tick_task_refresh(&mut self) {
