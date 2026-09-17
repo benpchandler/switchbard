@@ -4,9 +4,9 @@
 return {
   -- key -> action. Keys: single chars, "enter", "esc", "tab", "up", "down",
   -- "pagedown", "pageup", "home", "end", "shift-tab", "ctrl-<char>". Actions: down, up, top, bottom, page_down, page_up, open, new_task,
-  -- back, focus_pane, filter, filter_column, sort_column, columns, paint, ball, pass, outline, task, settings, view, command, reload, help, quit, page, merge, mark, open_browser, dismiss_notifications.
+  -- back, focus_pane, filter, filter_column, sort_column, columns, paint, ball, pass, outline, task, settings, view, command, reload, help, quit, page, merge, mark, open_browser, dismiss_notifications, kill_agent.
   keys = {
-    j = "down", k = "up", down = "down", up = "up",
+    j = "down", k = "up", K = "kill_agent", down = "down", up = "up",
     g = "top", G = "bottom", home = "top", ["end"] = "bottom",
     pagedown = "page_down", pageup = "page_up",
     ["ctrl-d"] = "page_down", ["ctrl-u"] = "page_up",

@@ -535,7 +535,9 @@ impl App {
     }
 
     pub(super) fn request_quit(&mut self) {
-        if self.pr_merge.is_submitting() {
+        if self.agent_kill.is_submitting() {
+            self.status = "Agent signal pending; wait for the result before quitting".into();
+        } else if self.pr_merge.is_submitting() {
             self.status = "Merge submitting; wait for the result before quitting".into();
         } else {
             self.should_quit = true;

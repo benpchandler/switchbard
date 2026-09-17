@@ -13,6 +13,7 @@ pub enum Action {
     FocusPane,
     OpenBrowser,
     Merge,
+    KillAgent,
     /// Toggle the cursor row's bulk-merge mark (PR page).
     Mark,
     DismissNotifications,
@@ -40,6 +41,7 @@ pub enum Action {
 
 #[derive(Clone, Copy)]
 enum Availability {
+    Agents,
     Tasks,
     /// Task and PR pages: the ones with a filterable, paintable list view.
     Lists,
@@ -75,6 +77,7 @@ const ACTIONS: &[(Action, &str, Availability)] = &[
     (Action::Reload, "reload", Availability::Everywhere),
     (Action::OpenBrowser, "open_browser", Availability::Lists),
     (Action::Merge, "merge", Availability::Lists),
+    (Action::KillAgent, "kill_agent", Availability::Agents),
     (Action::Mark, "mark", Availability::Lists),
     (
         Action::DismissNotifications,
@@ -120,6 +123,7 @@ impl Action {
 
     pub(crate) fn available_on(&self, page: Page) -> bool {
         match self.metadata().1 {
+            Availability::Agents => page == Page::Agents,
             Availability::Tasks => page == Page::Tasks,
             Availability::Lists => page.has_list_view(),
             Availability::Cursor => page.has_cursor(),

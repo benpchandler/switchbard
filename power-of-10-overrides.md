@@ -7,7 +7,7 @@ firm floor; this file records only what is *repo-specific*.
 ## Threat tier
 
 **LOW** — local-first desktop app: no network service, no telemetry, no account, no
-multi-tenant data, no irreversible money/PII operations. Destructive actions are worktree removal and owner-confirmed GitHub PR merging.
+multi-tenant data, no irreversible money/PII operations. Destructive actions are worktree removal, owner-confirmed GitHub PR merging and selected agent PID termination. The agent termination boundary names cached PID reuse/wrong-target threats: precise native identity, fail-closed ancestry protection and a fully visible explicit confirmation are required; final positive-PID signalling remains non-atomic with the identity read.
 PR merging names the wrong-revision/identity threat: core revalidation plus the
 server expected-head guard, a durable intent receipt, and post-write readback are
 required. GitHub does not provide an atomic base/policy/account guard.
@@ -27,7 +27,7 @@ relax the Power-of-10 floor here; the public-craft bar can only make it stricter
 
 ## Earned exceptions
 
-**None.** The repo currently claims no exception to any Power-of-10 rule.
+**Rule 9, selected agent termination native boundary (TASK-246).** `agent_kill` uses libc positive-PID SIGTERM, macOS fixed-buffer process queries and Linux's pointer-free `_SC_CLK_TCK` scalar query. Every public preparation/execution validates PID 2..i32::MAX, rejects self/ancestors via a 64-step cycle-checked native walk and matches exact start/kind/cwd/executable identities. The syscall never receives zero/negative PID and never escalates to a group or SIGKILL. Native buffers use libc-defined integer-only C structs, valid zero initialization, exact sizes and checked byte counts; executable buffers are fixed writable arrays. Written safety proofs accompany each unsafe block, including the test-only pointer-free getppid query. Bounded probes run off the UI thread. Both platforms retain a final identity-read-to-signal race because this slice uses positive PID rather than an atomic OS process handle.
 
 ## Known debt (NOT exceptions — pay down, don't grandfather)
 

@@ -341,6 +341,7 @@ fn command_needs_you(theme: ThemeChoice, suffix: &str) {
     drop(runs);
     *app.agent_sessions.lock().unwrap() = vec![AgentSession {
         pid: 5150,
+        process_identity: None,
         kind: AgentProcessKind::Claude,
         repo_name: Some(common::REPO_NAME.to_string()),
         worktree_path: Some(PathBuf::from(format!("{REPO_PATH}/.worktrees/feature-x"))),

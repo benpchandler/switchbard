@@ -812,6 +812,7 @@ mod tests {
     fn session(pid: u32, activity: AgentActivity, started: Option<u64>) -> AgentSession {
         AgentSession {
             pid,
+            process_identity: None,
             kind: AgentProcessKind::Claude,
             cwd: None,
             repo_name: None,
@@ -962,6 +963,7 @@ mod tests {
         ];
         let row = |pid: u32, cwd: &str| switchbard_core::AgentProcessRow {
             pid,
+            process_identity: None,
             kind: AgentProcessKind::Claude,
             cwd: Some(PathBuf::from(cwd)),
             started_unix: None,

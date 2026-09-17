@@ -1,4 +1,5 @@
 pub mod agent_context;
+pub mod agent_kill;
 pub mod agent_sessions;
 pub mod agent_status;
 pub mod attribution;
@@ -49,9 +50,14 @@ pub use agent_context::{
     save_agent_context_cache_to, scan_agent_context, AgentContextItem, AgentContextMap, AgentHook,
     AgentHookWarning, AgentKind, ContextKind, ContextScope,
 };
+pub use agent_kill::{
+    prepare_agent_termination, probe_agent_identity, terminate_agent, AgentProcessIdentity,
+    AgentTerminationOutcome, PreparedAgentTermination,
+};
 pub use agent_sessions::{
-    attribute_agent_sessions, merge_agent_rows, parse_claude_agents_listing, scan_agent_sessions,
-    AgentActivity, AgentProcessKind, AgentProcessRow, AgentScan, AgentSession,
+    attribute_agent_sessions, authenticate_agent_rows, merge_agent_rows,
+    parse_claude_agents_listing, scan_agent_sessions, AgentActivity, AgentProcessKind,
+    AgentProcessRow, AgentScan, AgentSession,
 };
 pub use agent_status::{
     default_agent_status_dir, load_agent_status, load_agent_statuses, parse_status_line_payload,
