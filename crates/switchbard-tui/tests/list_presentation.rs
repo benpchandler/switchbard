@@ -11,6 +11,7 @@ fn large_list_keeps_last_selection_visible_after_resize_and_filter() {
         seed(&h.root, &format!("Scale item {index:03}"), "To Do", &[]);
     }
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Esc);
     for (width, height) in [(100, 20), (48, 8), (160, 30)] {
         h.terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -39,6 +40,7 @@ fn long_unicode_picker_labels_are_clipped_and_navigation_retains_focus() {
     let name = format!("東京{}", "LongProject".repeat(20));
     seed_project(&h.root, &name, "Planned", None);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Esc);
     h.terminal = Terminal::new(TestBackend::new(42, 9)).unwrap();
     h.type_text("tp");
@@ -64,6 +66,7 @@ fn one_body_slot_keeps_grouped_selected_task_visible_instead_of_heading() {
         None,
     );
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Esc);
     h.type_text("o1");
     h.press(KeyCode::Char('g'));
