@@ -340,8 +340,8 @@ struct EditArgs {
     #[arg(long, value_name = "ID|none")]
     parent: Option<String>,
     /// Pass the ball - who acts next: `me`, `agent`, a named person, or `none`
-    /// to drop it (stored as a ball:<holder> label; sbt's `b` key cycles the
-    /// me / agent / none shortcuts)
+    /// to drop it (stored as a ball:<holder> label; use sbt's `t b`
+    /// task-menu action)
     #[arg(long, value_name = "me|agent|PERSON|none")]
     ball: Option<String>,
     /// Add one label, leaving the rest untouched
