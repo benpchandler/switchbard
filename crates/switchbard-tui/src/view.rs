@@ -264,6 +264,15 @@ fn draw_task_rows(
             _ if state.glyph_columns.contains(column) => {
                 Constraint::Length((2 + app.glyph_legend(*column).chars().count()).max(3) as u16)
             }
+            // `[x] `/`[ ] ` prefixes the id, exactly like the PR list's own
+            // bulk-merge mark, only once a selection exists to show.
+            Column::Id if !app.task_selection.marked.is_empty() => match column.max_width(registry)
+            {
+                Some(max) => Constraint::Length(
+                    fitted_width(app, state, rows, *column, max, index + 1).saturating_add(4),
+                ),
+                None => Constraint::Min(24),
+            },
             column => match column.max_width(registry) {
                 Some(max) => {
                     Constraint::Length(fitted_width(app, state, rows, *column, max, index + 1))
@@ -410,6 +419,13 @@ fn draw_task_rows(
                         column.cell_text(registry, task, &app.goals, &app.relations.blocked);
                     let text = if state.glyph_columns.contains(column) && !value.is_empty() {
                         app.config.glyph(*column, &value)
+                    } else if *column == Column::Id && !app.task_selection.marked.is_empty() {
+                        let mark = if app.task_selection.is_marked(&task.id) {
+                            "[x]"
+                        } else {
+                            "[ ]"
+                        };
+                        format!("{mark} {}", app.cell_for_view(state, *column, task))
                     } else {
                         app.cell_for_view(state, *column, task)
                     };

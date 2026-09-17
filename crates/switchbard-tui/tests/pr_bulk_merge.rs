@@ -78,7 +78,7 @@ fn space_marks_open_prs_and_shows_a_checkbox() {
     assert!(!plain.contains("[x]") && !plain.contains("[ ]"), "{plain}");
 
     h.press(KeyCode::Char(' '));
-    assert_eq!(h.app.pull_requests.marked.len(), 1);
+    assert_eq!(h.app.pull_requests.selection.marked.len(), 1);
     assert!(
         h.app.status.contains("Marked for merge (1)"),
         "{}",
@@ -97,7 +97,7 @@ fn space_marks_open_prs_and_shows_a_checkbox() {
     // A merged PR cannot be marked.
     h.press(KeyCode::Char(' '));
     assert!(h.app.status.contains("Only open"), "{}", h.app.status);
-    assert_eq!(h.app.pull_requests.marked.len(), 2);
+    assert_eq!(h.app.pull_requests.selection.marked.len(), 2);
 
     // Toggling again unmarks.
     h.app.pull_requests.step(isize::MIN);
@@ -107,7 +107,7 @@ fn space_marks_open_prs_and_shows_a_checkbox() {
 
     // Esc clears marks before it touches anything else.
     h.press(KeyCode::Esc);
-    assert!(h.app.pull_requests.marked.is_empty());
+    assert!(h.app.pull_requests.selection.marked.is_empty());
     assert!(!h.render().contains("[ ]"));
 }
 
@@ -146,5 +146,5 @@ fn moving_the_cursor_drops_an_unconfirmed_queue_but_keeps_the_marks() {
     settle_merge(&mut h);
     assert!(h.app.pr_merge.queue.is_none());
     // Marks are not the queue: they stay until merged or cleared.
-    assert_eq!(h.app.pull_requests.marked.len(), 2);
+    assert_eq!(h.app.pull_requests.selection.marked.len(), 2);
 }

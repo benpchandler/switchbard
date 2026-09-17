@@ -29,16 +29,24 @@ impl App {
         self.status.clear();
     }
 
-    pub(super) fn change_task_project(&mut self, id: &str, project: Option<&str>) {
-        if self.defer_task_storage() {
-            return;
-        }
+    /// The one write that sets a task's project, shared by the single-row and
+    /// bulk paths so they can never disagree about what assigning one means.
+    fn write_project(&self, id: &str, project: Option<&str>) -> Result<(), String> {
         let patch = switchbard_core::BacklogTaskPatch {
             project: project.map(str::to_string),
             clear_project: project.is_none(),
             ..Default::default()
         };
-        match switchbard_core::edit_backlog_task(&self.repo_root, id, &patch) {
+        switchbard_core::edit_backlog_task(&self.repo_root, id, &patch)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub(super) fn change_task_project(&mut self, id: &str, project: Option<&str>) {
+        if self.defer_task_storage() {
+            return;
+        }
+        match self.write_project(id, project) {
             Ok(_) => {
                 self.reload_tasks();
                 self.select_task(id);
@@ -50,5 +58,39 @@ impl App {
             }
             Err(error) => self.fail(format!("{id}: {error}")),
         }
+    }
+
+    /// `t p` with a non-empty selection: every marked task instead of just
+    /// `primary` (the task the picker opened against).
+    pub(super) fn apply_task_project(&mut self, primary: &str, project: Option<&str>) {
+        if self.defer_task_storage() {
+            return;
+        }
+        let ids = super::task_bulk::targets(self, primary);
+        if ids.len() == 1 {
+            self.change_task_project(&ids[0], project);
+            return;
+        }
+        let mut failures = Vec::new();
+        for id in &ids {
+            if let Err(error) = self.write_project(id, project) {
+                failures.push(super::task_bulk::BulkFailure {
+                    id: id.clone(),
+                    error,
+                });
+            }
+        }
+        self.reload_tasks();
+        let label = project.unwrap_or("Unassigned");
+        self.telemetry.record(
+            "action",
+            format!(
+                "bulk_project {label} {}/{}",
+                ids.len() - failures.len(),
+                ids.len()
+            ),
+        );
+        self.status =
+            super::task_bulk::summarize(&format!("project → {label}"), ids.len(), &failures);
     }
 }

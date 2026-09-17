@@ -22,6 +22,7 @@ pub mod pr_notifications;
 pub mod pr_view;
 pub mod pull_requests;
 pub mod report;
+pub mod selection;
 pub mod settings;
 pub mod shortcuts;
 pub mod sort;

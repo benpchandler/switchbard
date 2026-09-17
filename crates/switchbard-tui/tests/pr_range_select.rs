@@ -202,8 +202,12 @@ fn a_closed_pr_inside_the_swept_range_is_not_marked() {
     assert!(screen.contains("[x] #44"), "{screen}");
 }
 
+// `mark`/`extend_down`/`extend_up` are shared-list actions: both list pages
+// advertise the same chords, since a bulk apply on Tasks uses exactly this
+// range-select mechanism. See
+// `tests/task_range_select.rs::help_lists_the_selection_keys_on_tasks_and_pull_requests`.
 #[test]
-fn the_new_chords_appear_in_pr_help_and_not_in_tasks_help() {
+fn the_new_chords_appear_on_both_list_pages_help() {
     let mut h = Harness::new();
     h.next_list_page();
     let pr_help = h.press(KeyCode::Char('?'));
@@ -219,6 +223,6 @@ fn the_new_chords_appear_in_pr_help_and_not_in_tasks_help() {
 
     h.next_list_page();
     let tasks_help = h.press(KeyCode::Char('?'));
-    assert!(!tasks_help.contains("extend_down"), "{tasks_help}");
-    assert!(!tasks_help.contains("extend_up"), "{tasks_help}");
+    assert!(tasks_help.contains("extend_down"), "{tasks_help}");
+    assert!(tasks_help.contains("extend_up"), "{tasks_help}");
 }

@@ -14,12 +14,13 @@ pub enum Action {
     OpenBrowser,
     Merge,
     KillAgent,
-    /// Toggle the cursor row's bulk-merge mark (PR page).
+    /// Toggle the cursor row's bulk-selection mark: a bulk merge on Pull
+    /// Requests, a bulk apply of the next value picked on Tasks.
     Mark,
-    /// Word-processor-style range select: extend the bulk-merge mark from an
-    /// anchor to the cursor, one row down at a time (PR page).
+    /// Word-processor-style range select: extend the bulk-selection mark
+    /// from an anchor to the cursor, one row down at a time.
     ExtendMarkDown,
-    /// The same range select, one row up (PR page).
+    /// The same range select, one row up.
     ExtendMarkUp,
     DismissNotifications,
     NewTask,
@@ -133,17 +134,9 @@ const ACTIONS: &[(Action, &str, Availability)] = &[
     ),
     (Action::Merge, "merge", Availability::PullRequests),
     (Action::KillAgent, "kill_agent", Availability::Agents),
-    (Action::Mark, "mark", Availability::PullRequests),
-    (
-        Action::ExtendMarkDown,
-        "extend_down",
-        Availability::PullRequests,
-    ),
-    (
-        Action::ExtendMarkUp,
-        "extend_up",
-        Availability::PullRequests,
-    ),
+    (Action::Mark, "mark", Availability::Lists),
+    (Action::ExtendMarkDown, "extend_down", Availability::Lists),
+    (Action::ExtendMarkUp, "extend_up", Availability::Lists),
     (
         Action::DismissNotifications,
         "dismiss_notifications",
