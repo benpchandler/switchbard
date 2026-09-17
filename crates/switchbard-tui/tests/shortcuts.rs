@@ -277,7 +277,11 @@ fn a_pr_only_key_names_its_page_on_tasks() {
         "help on Tasks must not offer a PR-only action: {help}"
     );
     h.press(KeyCode::Esc);
-    let screen = h.press(KeyCode::Char('u'));
+    h.app.handle_key(crossterm::event::KeyEvent::new(
+        KeyCode::Char('o'),
+        crossterm::event::KeyModifiers::CONTROL,
+    ));
+    let screen = h.render();
     assert!(
         screen.contains("open_browser works on the Pull Requests page"),
         "{screen}"
