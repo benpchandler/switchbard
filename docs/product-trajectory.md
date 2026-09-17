@@ -57,9 +57,9 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 
 - **Complete task details and confirmed cancellation (owner-directed 2026-09-15).** The TUI exposes all currently modeled fields in initially expanded, collapsible sections without field-hiding preferences. Existing editing remains available. `t c c` cancels the explicitly confirmed task through the native archive lifecycle, preserving its record and leaving children and agent processes untouched; stale drafts refuse and no reason is required. State/stress contract and evidence: `docs/tui-detail-sections-cancel.md`.
 
-## Planned
+- **Selected agent PID termination (owner-directed 2026-09-16, TASK-246).** Agents offers configurable uppercase K, an explicit Cancel-default confirmation and off-thread SIGTERM to one freshly authenticated positive PID. It does not terminate a process group, escalate automatically, edit tasks or manually release claims. Existing dead-agent pruning remains normal lifecycle. Contract and evidence: [selected agent termination](tui-agent-kill.md).
 
-- **Selected agent PID termination (owner-directed2026-09-16, TASK-246).** Agents offers configurable uppercase K, an explicit Cancel-default confirmation and off-thread SIGTERM to one freshly authenticated positive PID. It does not terminate a process group, escalate automatically, edit tasks or manually release claims. Existing dead-agent pruning remains normal lifecycle. Contract and evidence: [selected agent termination](tui-agent-kill.md).
+## Planned
 
 - **Recognizable view-history previews (owner-directed 2026-09-14, TASK-154 reopened).** Render each history entry as its own compact card containing a plain-language title, relative time and miniature table using the saved arrangement against current cached data. Multiple cards and their tables must be visible simultaneously; a list with one shared selected preview does not meet this requirement. Show actual headings, grouping and palette-aware paint, clearly label current data, and preserve the active view while browsing. Review one real example before broad visual acceptance. State and stress evidence: `docs/history-preview-review.md`.
 
