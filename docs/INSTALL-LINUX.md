@@ -8,4 +8,4 @@ The TUI runs in a terminal without X11, Wayland, OpenGL, or the GUI mission side
 
 The desktop GUI is deprecated. Older [GitHub Releases](https://github.com/benpchandler/switchbard/releases) may contain `switchbard-*-linux-x86_64.tar.gz`, whose executable is `switchbard`. These are historical GUI packages, not the current `sb`/`sbt` terminal package.
 
-GUI source remains in `crates/switchbard-gui`. Building it requires a native desktop session and the relevant X11/Wayland, xkbcommon, and OpenGL libraries; browser opening uses `xdg-open`. Those desktop dependencies are unnecessary for the terminal tools. The historical Linux GUI package may also include its pinned xplan mission sidecar.
+GUI source remains in `crates/switchbard-gui`. Running it requires a native desktop session and the relevant X11/Wayland, xkbcommon, and OpenGL libraries; browser opening uses `xdg-open`. Those desktop dependencies are unnecessary for the terminal tools. The historical Linux GUI package may also include its pinned xplan mission sidecar.
