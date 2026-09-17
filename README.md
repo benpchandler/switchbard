@@ -44,8 +44,8 @@ The TUI release installer installs `sb` and `sbt` together without Rust, Node, P
 
 ```sh
 installer=$(mktemp)
-curl -fsSL https://raw.githubusercontent.com/benpchandler/switchbard/v0.4.0-alpha.2/scripts/install-release.sh -o "$installer"
-bash "$installer" --version v0.4.0-alpha.2
+curl -fsSL https://raw.githubusercontent.com/benpchandler/switchbard/v0.4.0-alpha.1/scripts/install-release.sh -o "$installer"
+bash "$installer" --version v0.4.0-alpha.1
 rm -f "$installer"
 ```
 
@@ -59,7 +59,9 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## Check your setup and connect your agent
 
-From your Git repository:
+The onboarding commands below are in the current source and are scheduled for
+the upcoming alpha2 release. The published alpha1 binary does not contain
+these commands. From your Git repository:
 
 ```sh
 sbt doctor

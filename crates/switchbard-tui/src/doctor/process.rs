@@ -56,7 +56,13 @@ pub(super) fn run(mut command: Command, seconds: u64) -> Result<Vec<u8>, ProbeEr
     });
     let status = wait(&mut child, seconds);
     let cleanup = cleanup(&mut child);
-    let status = status?;
+    let status = match status {
+        Ok(status) => status,
+        Err(error) => {
+            let _ = cleanup;
+            return Err(error);
+        }
+    };
     cleanup?;
     if !status.success() {
         return Err(ProbeError::Failed);

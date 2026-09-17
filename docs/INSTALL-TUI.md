@@ -8,8 +8,8 @@ Use a terminal with Bash, `curl`, `tar`, and a SHA-256 utility (`shasum` on macO
 
 ```sh
 installer=$(mktemp)
-curl -fsSL https://raw.githubusercontent.com/benpchandler/switchbard/v0.4.0-alpha.2/scripts/install-release.sh -o "$installer"
-bash "$installer" --version v0.4.0-alpha.2
+curl -fsSL https://raw.githubusercontent.com/benpchandler/switchbard/v0.4.0-alpha.1/scripts/install-release.sh -o "$installer"
+bash "$installer" --version v0.4.0-alpha.1
 rm -f "$installer"
 ```
 
@@ -69,7 +69,7 @@ Switchbard does not request a separate permission grant or narrow your existing 
 
 Opening the PR page performs reads. Merging requires a separate confirmation, a fresh observation, and matching PR head; it does not use an admin bypass. A successful merge never marks the local task Done automatically. Missing `gh`, expired credentials, an inaccessible repository, network errors, or restricted metadata show an error or unknown state, rather than proving that there are no PRs or that checks passed. Retry after fixing the underlying problem. The current PR page accepts canonical `github.com` repositories only; GitHub Enterprise hosts are unsupported. Organization-specific permission combinations are not comprehensively verified.
 
-New terminal builds offer `sbt doctor --github` to check access with actionable results and `sbt agent-prompt` for agent-assisted setup. They have no account switcher or automatic login. The older v0.4.0-alpha.1 lacks these commands. See [developer onboarding](developer-onboarding.md). Installing Switchbard also does not install or authenticate Claude Code or Codex.
+Current source and the upcoming alpha2 release offer `sbt doctor --github` to check access with actionable results and `sbt agent-prompt` for agent-assisted setup. The published v0.4.0-alpha.1 lacks these commands. They have no account switcher or automatic login. See [developer onboarding](developer-onboarding.md). Installing Switchbard also does not install or authenticate Claude Code or Codex.
 
 ## Manual download
 

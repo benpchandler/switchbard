@@ -302,6 +302,34 @@ fn sb_mismatch_and_timeout_do_not_block_local_tasks_and_hanging_git_is_bounded()
 }
 
 #[test]
+fn timed_out_probe_kills_its_owned_process_group() {
+    let fixture = Fixture::new();
+    let marker = fixture.home.join("child-pid");
+    fixture.tool(
+        "git",
+        &format!(
+            "sleep 30 & child=$!; printf '%s' \"$child\" > '{}' ; wait \"$child\"",
+            marker.display()
+        ),
+    );
+    let (output, _report) = fixture.json(false);
+    assert_eq!(output.status.code(), Some(1));
+    let child: i32 = fs::read_to_string(&marker).unwrap().parse().unwrap();
+    let deadline = Instant::now() + std::time::Duration::from_secs(2);
+    while Instant::now() < deadline {
+        let status = Command::new("kill")
+            .args(["-0", &child.to_string()])
+            .status()
+            .unwrap();
+        if !status.success() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    panic!("timed-out probe descendant still exists: {child}");
+}
+
+#[test]
 fn explicit_database_override_is_respected_and_empty_override_is_rejected() {
     let fixture = Fixture::new();
     let path = fixture.home.join("custom.sqlite3");
