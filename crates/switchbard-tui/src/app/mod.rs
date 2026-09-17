@@ -8,12 +8,14 @@ mod new_task;
 pub mod paint_flow;
 mod pickers;
 pub mod pr_merge;
+pub mod report;
 pub mod resume;
 mod session;
 mod slots;
 mod task_cancel;
 mod task_parent;
 mod task_project;
+mod task_refresh;
 mod task_status;
 
 pub use filter_completion::FilterCompletionHint;
@@ -32,7 +34,7 @@ use crate::columns::{Column, ColumnRegistry};
 use crate::config::{self, Action, Config, KeyChord};
 use crate::group::{self, Grouping, Row};
 use crate::picker::{ColumnPurpose, Payload, PickOption, PickerPurpose, ValuePicker};
-use crate::report::{self, ReportContext, ReportKind};
+use crate::report::ReportKind;
 use crate::settings::{Scope as SettingsScope, SettingsStore};
 use crate::sort;
 use crate::tasks::{self, Filter, GoalSummary, ProjectSummary};
@@ -217,6 +219,10 @@ pub struct App {
     pub picker: Option<ValuePicker>,
     picker_parents: Vec<ValuePicker>,
     pub pr_merge: pr_merge::MergeFlow,
+    pub report: report::ReportFlow,
+    task_refresh: task_refresh::TaskRefresh,
+    task_generation: u64,
+    interaction_generation: u64,
     pub task_cancel: task_cancel::CancelFlow,
     pub agent_kill: agent_kill::AgentKillFlow,
     pub column_purpose: ColumnPurpose,
@@ -337,6 +343,10 @@ impl App {
             telemetry,
             should_quit: false,
             pr_merge: pr_merge::MergeFlow::default(),
+            report: report::ReportFlow::default(),
+            task_refresh: task_refresh::TaskRefresh::default(),
+            task_generation: 0,
+            interaction_generation: 0,
             task_cancel: task_cancel::CancelFlow::default(),
             agent_kill: agent_kill::AgentKillFlow::default(),
         };
@@ -692,26 +702,8 @@ impl App {
                 self.reload_config();
             }
         }
-        if self
-            .storage_checked
-            .is_none_or(|last| last.elapsed() >= Duration::from_secs(1))
-        {
-            self.storage_checked = Some(Instant::now());
-            match switchbard_core::storage::current_change_sequence() {
-                Ok(sequence) => {
-                    let now = config::modified_at(&self.repo_root.join("backlog/tasks"));
-                    if self.storage_retry || sequence != self.storage_seen || now != self.tasks_seen
-                    {
-                        self.storage_seen = sequence;
-                        self.reload_tasks();
-                    }
-                }
-                Err(error) => {
-                    self.storage_retry = true;
-                    self.fail(format!("task storage: {error}"));
-                }
-            }
-        }
+        self.tick_report();
+        self.tick_task_refresh();
         self.reload_work();
         self.tick_agents();
     }
@@ -845,9 +837,14 @@ impl App {
     }
 
     pub fn handle_key(&mut self, event: KeyEvent) {
-        if event.kind == KeyEventKind::Release {
+        if event.kind == KeyEventKind::Release
+            || (self.mode == Mode::Command
+                && event.code == KeyCode::Enter
+                && event.kind == KeyEventKind::Repeat)
+        {
             return;
         }
+        self.interaction_generation = self.interaction_generation.wrapping_add(1);
         match self.mode {
             Mode::Browse => self.handle_browse_key(event),
             Mode::Filter => self.handle_filter_key(event),
@@ -1287,6 +1284,9 @@ impl App {
     }
 
     fn handle_command_key(&mut self, event: KeyEvent) {
+        if event.code == KeyCode::Enter && event.kind != KeyEventKind::Press {
+            return;
+        }
         match event.code {
             KeyCode::Esc => {
                 self.mode = Mode::Browse;
@@ -1471,7 +1471,11 @@ impl App {
                 self.status = "Switch to Pull Requests to mark PRs for bulk merge".into()
             }
             Action::OpenBrowser => self.status = "Switch to Pull Requests to open a PR".into(),
-            Action::DismissNotifications => self.pull_requests.dismiss_notifications(),
+            Action::DismissNotifications => {
+                if !self.report.dismiss() {
+                    self.pull_requests.dismiss_notifications();
+                }
+            }
             Action::Page => {
                 self.dismiss_agent_preparation();
                 self.cancel_pr_merge();
@@ -1538,7 +1542,7 @@ impl App {
             Action::Group => self.open_organize_picker(),
             Action::Command => {
                 self.mode = Mode::Command;
-                self.input.clear();
+                self.input = self.report.retry_command().unwrap_or_default();
                 self.status.clear();
             }
             Action::Reload => {
@@ -1696,53 +1700,6 @@ impl App {
         self.config.theme = theme.clone();
         self.status = format!("theme {name} · keep it: theme = \"{name}\" in tui.lua");
         self.telemetry.record("action", format!("theme {name}"));
-    }
-
-    fn file_report(&mut self, kind: ReportKind, intent: &str) {
-        let location = self.location();
-        let trail = self.telemetry.trail();
-        let context = ReportContext {
-            intent,
-            location: &location,
-            screen: &self.last_screen,
-            trail: &trail,
-        };
-        let target = self
-            .config
-            .report_repo
-            .clone()
-            .unwrap_or_else(|| self.repo_root.clone());
-        let elsewhere = target != self.repo_root;
-        match report::file_report(&target, kind, context) {
-            Ok(bare_id) if elsewhere => {
-                let repo = target
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                self.status = format!("filed {bare_id} in {repo}");
-                self.telemetry
-                    .record("report", format!("{kind:?} {bare_id} in {repo}"));
-            }
-            Ok(bare_id) => {
-                self.reload_tasks();
-                let filed = self
-                    .tasks
-                    .iter()
-                    .position(|task| task.id.rsplit('-').next() == Some(bare_id.as_str()));
-                let shown_id = filed
-                    .map(|index| self.tasks[index].id.clone())
-                    .unwrap_or(bare_id);
-                if let Some(row) = filed
-                    .and_then(|index| self.rows.iter().position(|row| *row == Row::Task(index)))
-                {
-                    self.select(row);
-                }
-                self.status = format!("filed {shown_id}");
-                self.telemetry
-                    .record("report", format!("{kind:?} {shown_id}"));
-            }
-            Err(error) => self.fail(error.to_string()),
-        }
     }
 
     fn toggle_page_state(&mut self) {
@@ -2068,11 +2025,16 @@ impl App {
     }
 
     fn reload_tasks(&mut self) {
+        self.task_generation = self.task_generation.wrapping_add(1);
+        self.tasks_seen = config::modified_at(&self.repo_root.join("backlog/tasks"));
+        self.accept_tasks(tasks::load(&self.repo_root), true);
+    }
+
+    fn accept_tasks(&mut self, loaded: anyhow::Result<tasks::Backlog>, refresh_detail: bool) {
         let kept = self
             .selected_task()
             .map(|task| (task.storage_identity.clone(), task.id.clone()));
-        self.tasks_seen = config::modified_at(&self.repo_root.join("backlog/tasks"));
-        match tasks::load(&self.repo_root) {
+        match loaded {
             Ok(backlog) => {
                 if self.storage_retry {
                     self.status = "task storage reconnected".into();
@@ -2118,7 +2080,7 @@ impl App {
                 // `Detail*` picker hold a draft against the *old* content,
                 // and a stale refusal there is the correct outcome, not
                 // something to silently paper over.
-                if self.mode == Mode::DetailFocus {
+                if refresh_detail && self.mode == Mode::DetailFocus {
                     self.begin_detail_edit();
                 }
             } else if self.mode == Mode::BallName

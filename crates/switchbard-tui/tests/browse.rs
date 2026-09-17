@@ -63,7 +63,7 @@ fn unbound_key_is_reported_and_help_lists_bindings() {
 fn external_task_edits_show_up_on_tick() {
     let mut h = Harness::new();
     seed(&h.root, "Task added by sb", "To Do", &[]);
-    h.app.tick();
+    h.tick_until_tasks_settle();
     let screen = h.render();
     assert!(screen.contains("Task added by sb"), "{screen}");
     assert!(screen.contains("4/4"), "{screen}");
@@ -177,7 +177,8 @@ fn colon_bug_files_a_task_carrying_screen_and_trail() {
     let selected_id = h.app.selected_task().unwrap().id.clone();
     h.press(KeyCode::Char(':'));
     h.type_text("bug wanted to sort by priority");
-    let screen = h.press(KeyCode::Enter);
+    h.press(KeyCode::Enter);
+    let screen = h.wait_report();
     assert!(screen.contains("filed TASK-4"), "{screen}");
     assert_eq!(h.selected_title(), "sbt bug: wanted to sort by priority");
     assert!(
@@ -210,6 +211,7 @@ fn colon_idea_files_without_a_project() {
     h.press(KeyCode::Char(':'));
     h.type_text("idea group by assignee");
     h.press(KeyCode::Enter);
+    h.wait_report();
     assert_eq!(h.selected_title(), "sbt idea: group by assignee");
     let filed = std::fs::read_dir(h.root.join("backlog/tasks"))
         .unwrap()
@@ -246,7 +248,8 @@ fn colon_shows_completions_and_tab_accepts() {
     let screen = h.next_list_page();
     assert!(screen.contains(":bug▏"), "{screen}");
     h.type_text(" tab test");
-    let screen = h.press(KeyCode::Enter);
+    h.press(KeyCode::Enter);
+    let screen = h.wait_report();
     assert!(screen.contains("filed TASK-4"), "{screen}");
 }
 
@@ -297,6 +300,7 @@ fn reports_file_into_the_configured_repo_not_the_one_being_browsed() {
     h.press(KeyCode::Char(':'));
     h.type_text("bug the footer overlaps");
     h.press(KeyCode::Enter);
+    h.wait_report();
     assert!(h.app.status.starts_with("filed 1 in "), "{}", h.app.status);
     assert_eq!(
         h.app.total_tasks(),

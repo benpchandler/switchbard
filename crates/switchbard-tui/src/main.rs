@@ -322,6 +322,7 @@ fn drive(
             if app.mode == switchbard_tui::app::Mode::Browse
                 && !app.pr_merge.is_submitting()
                 && !app.agent_kill.is_submitting()
+                && !app.report.is_pending()
                 && binary.was_replaced()
             {
                 app.telemetry

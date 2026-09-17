@@ -96,7 +96,7 @@ fn title_edit_prefills_saves_and_round_trips_non_ascii() {
     let mut h = Harness::new();
     let title = "Résumé café 日本語";
     seed(&h.root, title, "To Do", &[]);
-    h.app.tick();
+    h.tick_until_tasks_settle();
     select_task_titled(&mut h, title);
     let id = h.app.selected_task().unwrap().id.clone();
     // Filter by id instead of the title text about to change: a title
@@ -214,7 +214,7 @@ fn due_date_validates_clears_and_rejects_garbage() {
 fn status_priority_and_project_pickers_write_through_the_native_layer() {
     let mut h = Harness::new();
     seed_project(&h.root, "Delivery", "In Progress", None);
-    h.app.tick();
+    h.tick_until_tasks_settle();
     select_task_titled(&mut h, "Add dark theme");
     let id = h.app.selected_task().unwrap().id.clone();
     h.press(KeyCode::Enter);
@@ -436,7 +436,7 @@ fn background_reload_refreshes_the_stale_guard_while_cursor_focused() {
         },
     )
     .unwrap();
-    h.app.tick();
+    h.tick_until_tasks_settle();
     assert_eq!(
         h.app.tasks().iter().find(|t| t.id == id).unwrap().priority,
         "high",
@@ -468,7 +468,7 @@ fn background_reload_refreshes_the_stale_guard_while_cursor_focused() {
 fn read_only_task_shows_fields_but_refuses_every_edit() {
     let mut h = Harness::new();
     seed(&h.root, "Migrated into drafts", "To Do", &[]);
-    h.app.tick();
+    h.tick_until_tasks_settle();
     let task = h
         .app
         .tasks()
@@ -618,7 +618,7 @@ fn zero_and_many_labels_render_as_none_or_a_joined_list() {
         "To Do",
         &["a", "b", "c", "d", "e"],
     );
-    h.app.tick();
+    h.tick_until_tasks_settle();
 
     select_task_titled(&mut h, "No labels here");
     let screen = h.press(KeyCode::Enter);
@@ -659,7 +659,7 @@ fn many_acceptance_items_scroll_the_cursor_into_view() {
         custom: Vec::new(),
     };
     switchbard_core::create_task_allocating_id(&h.root, &task).unwrap();
-    h.app.tick();
+    h.tick_until_tasks_settle();
 
     select_task_titled(&mut h, "Many AC task");
     h.press(KeyCode::Enter);
@@ -693,7 +693,7 @@ fn cursor_stays_visible_after_resize() {
         custom: Vec::new(),
     };
     switchbard_core::create_task_allocating_id(&h.root, &task).unwrap();
-    h.app.tick();
+    h.tick_until_tasks_settle();
 
     select_task_titled(&mut h, "Many AC task");
     h.press(KeyCode::Enter);
@@ -729,7 +729,7 @@ fn long_description_pages_into_the_acceptance_section_without_moving_cursor_or_s
         custom: Vec::new(),
     };
     switchbard_core::create_task_allocating_id(&h.root, &task).unwrap();
-    h.app.tick();
+    h.tick_until_tasks_settle();
 
     select_task_titled(&mut h, "Long description task");
     let selected = h.selected_title();
@@ -777,7 +777,7 @@ fn long_unbroken_title_wraps_and_stays_on_screen() {
     let mut h = Harness::new();
     let title: String = "Q".repeat(500);
     seed(&h.root, &title, "To Do", &[]);
-    h.app.tick();
+    h.tick_until_tasks_settle();
     select_task_titled(&mut h, &title);
     h.press(KeyCode::Enter);
     let screen = h.press(KeyCode::Enter);
@@ -868,7 +868,7 @@ fn wheel_scrolls_the_detail_pane_and_is_bounded_without_touching_focus_or_select
         custom: Vec::new(),
     };
     switchbard_core::create_task_allocating_id(&h.root, &task).unwrap();
-    h.app.tick();
+    h.tick_until_tasks_settle();
     select_task_titled(&mut h, "Wheel task");
     // A first `open` only opens the pane; the list keeps keyboard focus, and
     // the wheel must scroll the pane without changing either.

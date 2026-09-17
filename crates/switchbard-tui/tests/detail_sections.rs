@@ -114,7 +114,7 @@ fn full_record_contents_remain_reachable_in_narrow_and_short_viewports() {
     let mut text = std::fs::read_to_string(&task.path).unwrap();
     text.push_str("\n## Implementation Plan\n\nPlan 日本語\n\n## Implementation Notes\n\nNotes café\n\n## Final Summary\n\nSummary approved\n\n## Definition of Done\n\n- [ ] #1 Result usable\n");
     std::fs::write(&task.path, text).unwrap();
-    h.app.tick();
+    h.tick_until_tasks_settle();
     open(&mut h);
     for _ in 0..8 {
         h.press(KeyCode::Char('j'));

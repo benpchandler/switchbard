@@ -136,7 +136,7 @@ fn bounded_input_and_external_creation_keep_capture_safe() {
     assert!(screen.contains("limit"), "{screen}");
     assert!(h.app.input.len() <= 1024);
     seed(&h.root, "External addition", "To Do", &[]);
-    h.app.tick();
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Enter);
     assert_eq!(h.app.total_tasks(), 5);
     assert_eq!(h.selected_title().len(), 1024);

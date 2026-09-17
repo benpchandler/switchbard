@@ -75,7 +75,7 @@ fn a_dispatching_task_reads_as_agent_without_a_ball_label() {
     let mut h = Harness::new();
     let id = h.app.selected_task().unwrap().id.clone();
     switchbard_core::set_backlog_label(&h.root, &id, "dispatching", true).unwrap();
-    h.app.tick();
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Char('/'));
     let screen = h.type_text("ball:agent");
     assert!(
@@ -90,7 +90,7 @@ fn named_ball_holder_renders_filters_and_b_drops_it() {
     let mut h = Harness::new();
     let id = h.app.selected_task().unwrap().id.clone();
     switchbard_core::set_backlog_label(&h.root, &id, "ball:nick", true).unwrap();
-    h.app.tick();
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Char('c'));
     h.type_text("ba"); // "b" alone is now ambiguous with the `blocked` column
     h.press(KeyCode::Esc);
@@ -124,7 +124,7 @@ fn task_chord_ball_picker_selects_a_person_or_enters_a_new_one() {
 
     let other_id = h.app.tasks()[1].id.clone();
     switchbard_core::set_backlog_label(&h.root, &other_id, "ball:nick", true).unwrap();
-    h.app.tick();
+    h.tick_until_tasks_settle();
 
     h.press(KeyCode::Char('t'));
     let screen = h.press(KeyCode::Char('b'));

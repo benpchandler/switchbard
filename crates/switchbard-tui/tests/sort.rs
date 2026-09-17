@@ -88,7 +88,7 @@ fn numeric_ids_and_equal_text_have_deterministic_order_through_real_keys() {
     for _ in 0..9 {
         seed(&h.root, "Duplicate title", "To Do", &[]);
     }
-    h.app.tick();
+    h.tick_until_tasks_settle();
     choose_sort(&mut h, "id", "ascending");
     let screen = h.render();
     assert!(screen.contains("↑id"), "{screen}");

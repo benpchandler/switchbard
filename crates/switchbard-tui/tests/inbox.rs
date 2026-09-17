@@ -75,6 +75,7 @@ fn inbox_reports_help_and_narrow_render_are_real() {
     h.press(KeyCode::Esc);
     h.type_text(":idea Inbox should retain visible next actions");
     h.press(KeyCode::Enter);
+    h.wait_report();
     assert!(h.app.tasks().iter().any(|task| task
         .title
         .contains("Inbox should retain visible next actions")));

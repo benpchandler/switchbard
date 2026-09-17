@@ -25,7 +25,7 @@ fn command(h: &mut Harness, text: &str) {
 fn priority_completion_navigation_and_sort_are_distinct_without_color_alone() {
     let mut h = Harness::new();
     seed(&h.root, "Completed handoff", "Done", &[]);
-    h.app.tick();
+    h.tick_until_tasks_settle();
     h.render();
     assert!(cell(&h, "Write onboarding")
         .modifier
@@ -66,7 +66,7 @@ fn grouping_paints_raw_value_without_matching_its_rollup_and_keeps_selection() {
         "Delivery",
         None,
     );
-    h.app.tick();
+    h.tick_until_tasks_settle();
     command(&mut h, "outline project");
     command(
         &mut h,
@@ -93,7 +93,7 @@ fn hierarchy_survives_small_empty_wrapped_and_wide_boards() {
         "To Do",
         &[],
     );
-    h.app.tick();
+    h.tick_until_tasks_settle();
     command(&mut h, "outline status");
     command(
         &mut h,
@@ -188,7 +188,7 @@ fn priority_cells_distinguish_importance_completion_and_explicit_paint() {
 
     let mut h = Harness::new();
     seed_with_priority(&h.root, "Completed urgent handoff", "Done", &[], "high");
-    h.app.tick();
+    h.tick_until_tasks_settle();
     h.render();
     let alert = h
         .app

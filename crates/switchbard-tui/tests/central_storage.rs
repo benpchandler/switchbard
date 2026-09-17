@@ -56,7 +56,7 @@ fn central_refresh_preserves_selection_after_reparent() {
     .expect("capture");
     store.apply_migration(&plan).expect("cutover");
     drop(store);
-    harness.app.tick();
+    harness.tick_until_tasks_settle();
     let selected = harness
         .app
         .selected_task()
@@ -77,7 +77,7 @@ fn central_refresh_preserves_selection_after_reparent() {
         .expect("changed id");
     let started = std::time::Instant::now();
     std::thread::sleep(std::time::Duration::from_millis(1050));
-    harness.app.tick();
+    harness.tick_until_tasks_settle();
     assert!(started.elapsed() < std::time::Duration::from_secs(2));
     let selected = harness.app.selected_task().expect("retained selection");
     assert_eq!(selected.id, new_id);
@@ -99,7 +99,7 @@ fn central_refresh_preserves_selection_after_reparent() {
     )
     .expect("external edit");
     std::thread::sleep(std::time::Duration::from_millis(1050));
-    harness.app.tick();
+    harness.tick_until_tasks_settle();
     assert_eq!(
         harness.app.selected_task().expect("selected").title,
         "Changed centrally"
@@ -111,7 +111,7 @@ fn central_refresh_preserves_selection_after_reparent() {
     let backup = std::fs::read(&database).expect("fixture backup");
     std::fs::write(&database, b"invalid sqlite fixture").expect("inject unavailable store");
     std::thread::sleep(std::time::Duration::from_millis(1050));
-    harness.app.tick();
+    harness.tick_until_tasks_settle();
     assert_eq!(
         harness
             .app
@@ -122,7 +122,7 @@ fn central_refresh_preserves_selection_after_reparent() {
     );
     std::fs::write(&database, backup).expect("restore fixture");
     std::thread::sleep(std::time::Duration::from_millis(1050));
-    harness.app.tick();
+    harness.tick_until_tasks_settle();
     assert_eq!(
         harness.app.selected_task().expect("reconnected task").id,
         new_id
