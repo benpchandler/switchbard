@@ -31,6 +31,10 @@ mise run install                      # install sb + sbt from this worktree (ref
 cargo test -p switchbard-core <pat>   # single test by name substring
 ```
 
+To find code, use the LSP (find references, call hierarchy) for symbols such as
+functions, types, and their callers, and grep for literal text such as arguments,
+config keys, and messages.
+
 Run the narrowest test that proves your change (`cargo test -p <crate> <pattern>`).
 Do not run `mise run preflight` by hand before pushing: the pre-push hook runs it on
 every push (and the `no-mistakes` pipeline runs it for pushes to that remote).
@@ -163,7 +167,7 @@ Re-exports are **explicit in `src/lib.rs`** (no glob re-exports). Module map:
 - `mission_sidecar_protocol` - typed frames for the strict helper protocol (`hello`, `queue_mission`, `get_pending_decision`, `resume_decision`); the UI never builds mission JSON directly.
 - `mission_supervisor` - verifies and runs the bundled xplan one-shot helper: manifest-pinned payload digests, one process per request, bounded stdio reads/joins, process-group reaping.
 - `git_probe` — read-only `git status` / ahead-behind / fetch age / recent commits.
-- `work_sessions` - the live-work store (`~/.switchbard/work/<session>.json`): which tasks a running agent session has claimed, live while its pid is. `sb work claim/release/pass/list/hook` and `sbt`'s `w` write only through it; `.claude/settings.json` hooks call `sb work hook` to enforce claim-before-edit and no-stop-while-claimed (TASK-150).
+- `work_sessions` - the live-work store (`~/.switchbard/work/<session>.json`): which tasks a running agent session has claimed, live while its pid is. `work_history` appends every claim start and end to `history.jsonl` in the same directory, the record of how long each task was worked. `sb work claim/release/pass/list/hook` and `sbt`'s `w` write only through it; `.claude/settings.json` hooks call `sb work hook` to enforce claim-before-edit and no-stop-while-claimed (TASK-150).
 - `pr_merge` - guarded direct GitHub merge: core eligibility, exact-head confirmation, bounded command/readback and exclusive durable operation receipts. Call blocking APIs off the input thread.
 - `git_env` — `git_cmd()`: every git call goes through it; see Git safety below.
 - `spawn` / `kill` — `spawn_in_session()` (own session/process group) + `kill_pgid()` → `KillOutcome`.
