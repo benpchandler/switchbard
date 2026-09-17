@@ -13,7 +13,7 @@ bash "$installer" --version v0.4.0-alpha.1
 rm -f "$installer"
 ```
 
-The example selects the developer-onboarding TUI alpha explicitly. Without `--version`, the installer chooses GitHub's latest stable release, which may still be an older GUI-only release. An absent TUI asset produces an error rather than installing the GUI. Use the source route below if you prefer to build your own binaries.
+The example selects the published first TUI alpha explicitly. Without `--version`, the installer chooses GitHub's latest stable release, which may still be an older GUI-only release. An absent TUI asset produces an error rather than installing the GUI. Use the source route below if you prefer to build your own binaries.
 
 The installer downloads the matching archive and `.sha256` file, verifies the checksum, and installs both tools into `~/.local/bin`. It refuses to replace existing binaries without `--replace`. To choose a different directory, add `--bin-dir /path/to/bin`.
 

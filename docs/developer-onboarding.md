@@ -1,6 +1,6 @@
 # Check your setup and connect Claude Code or Codex
 
-These commands ship with v0.4.0-alpha.2 and newer terminal builds; v0.4.0-alpha.1 predates them. Existing `sbt` first launch still prompts for workspace setup. Experienced users can continue that path without running diagnostics or installing skills.
+These commands are in current source and the upcoming v0.4.0-alpha.2 release; v0.4.0-alpha.1 predates them. Existing `sbt` first launch still prompts for workspace setup. Experienced users can continue that path without running diagnostics or installing skills.
 
 ## Diagnose before configuring
 

@@ -8,7 +8,7 @@ Keep the work visible while your agent codes. Use `sbt` to browse tasks and pull
 
 The supported interface is **`sbt`**, the terminal UI. **`sb`** provides the same task write layer for scripts and agents. The desktop GUI is deprecated; its source and older releases remain available, but new product work and public installation focus on the TUI.
 
-In `v0.4.0-alpha.2` and current source builds, from any `sbt` page press `i` to capture an idea or `b` to capture a bug for the repository being viewed; Enter saves once and Esc cancels. These captures use the repository's native defaults and keep their destination pinned through saving and retry. The task menu's `t b` still assigns the ball. Colon commands `:bug` and `:idea` remain the legacy tool-report route; see [repository idea and bug capture](docs/repo-report-capture.md) for routing and state details.
+In current source builds and the upcoming alpha2 release, from any `sbt` page press `i` to capture an idea or `b` to capture a bug for the repository being viewed; Enter saves once and Esc cancels. These captures use the repository's native defaults and keep their destination pinned through saving and retry. The task menu's `t b` still assigns the ball. Colon commands `:bug` and `:idea` remain the legacy tool-report route; see [repository idea and bug capture](docs/repo-report-capture.md) for routing and state details.
 
 ## Work alongside your agent
 
@@ -49,7 +49,7 @@ bash "$installer" --version v0.4.0-alpha.1
 rm -f "$installer"
 ```
 
-The example installs the developer-onboarding TUI alpha explicitly. The installer defaults to `~/.local/bin`; follow its `PATH` guidance if needed. Older GUI-only releases cannot be installed with it; you can also [build and configure from source](docs/INSTALL-TUI.md#build-from-source). No npm package or Homebrew formula is currently provided.
+The example installs the published first TUI alpha explicitly. The installer defaults to `~/.local/bin`; follow its `PATH` guidance if needed. Older GUI-only releases cannot be installed with it; you can also [build and configure from source](docs/INSTALL-TUI.md#build-from-source). No npm package or Homebrew formula is currently provided.
 
 If `~/.local/bin` is outside your `PATH`, add it to your shell configuration and open a new terminal:
 
