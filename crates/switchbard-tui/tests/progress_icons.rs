@@ -384,6 +384,7 @@ fn unmeasured_only_view_stays_a_dash_when_column_is_compact() {
         coverage(&h, id, 0, 0);
     }
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     for width in [100, 40] {
         h.terminal = Terminal::new(TestBackend::new(width, 12)).unwrap();
         let screen = h.render();
