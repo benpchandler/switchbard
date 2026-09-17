@@ -338,7 +338,14 @@ fn cursor_detail_and_guarded_commands_on_the_agents_page() {
     h.press(KeyCode::Char('j'));
     assert_eq!(h.app.agents.selected, 1);
     let ball_screen = h.press(KeyCode::Char('B'));
-    assert!(ball_screen.contains("ball"), "{ball_screen}");
+    assert!(
+        ball_screen.contains("Switch to Tasks or Pull Requests"),
+        "{ball_screen}"
+    );
+    assert!(h.app.picker.is_none());
+    assert_eq!(h.app.state, tasks);
+    assert_eq!(h.app.page, Page::Agents);
+    assert_eq!(h.app.agents.row().unwrap().pid, 4343);
     h.press(KeyCode::Esc);
     for key in ['1', 't', 'v', 'w', 'm', '/', 'f', 's', 'p', ','] {
         h.press(KeyCode::Char(key));
