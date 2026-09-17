@@ -67,11 +67,30 @@ class TerminalScreen:
             column = int(parts[1] or b"1") - 1 if len(parts) > 1 else 0
             self.row = max(0, min(self.rows - 1, row))
             self.column = max(0, min(self.columns - 1, column))
-        elif final == ord("J") and body in (b"2", b"3"):
-            self.cells = [[" "] * self.columns for _ in range(self.rows)]
-        elif final == ord("K"):
-            for column in range(self.column, self.columns):
-                self.cells[self.row][column] = " "
+        elif final in (ord("J"), ord("K")) and body in (b"", b"0", b"1", b"2", b"3"):
+            mode = int(body or b"0")
+            if final == ord("K"):
+                self._erase_line(mode)
+            else:
+                self._erase_display(mode)
+
+    def _erase_line(self, mode):
+        if mode not in (0, 1, 2):
+            return
+        start = 0 if mode in (1, 2) else self.column
+        end = self.column + 1 if mode == 1 else self.columns
+        self.cells[self.row][start:end] = [" "] * (end - start)
+
+    def _erase_display(self, mode):
+        # 3J clears saved scrollback, which this visible-screen observer does not retain.
+        if mode == 3:
+            return
+        cursor = self.row * self.columns + self.column
+        start = 0 if mode in (1, 2) else cursor
+        end = cursor + 1 if mode == 1 else self.rows * self.columns
+        for position in range(start, end):
+            row, column = divmod(position, self.columns)
+            self.cells[row][column] = " "
 
     def contains(self, text):
         return any(text in "".join(row) for row in self.cells)
@@ -84,6 +103,36 @@ def screen_decoder_self_test():
     assert not screen.contains("signal0")
     screen.feed(b"\x1b[1;4Hnal0")
     assert screen.contains("signal0")
+    screen.feed(b"\x1b[1;12H\x1b[2K")
+    assert not screen.contains("signal0")
+    assert screen.cells[0] == [" "] * 12
+    screen_erase_self_test()
+
+
+def screen_erase_self_test():
+    expected = {
+        ("K", ""): ["ABCDEF", "GH    ", "MNOPQR"],
+        ("K", "0"): ["ABCDEF", "GH    ", "MNOPQR"],
+        ("K", "1"): ["ABCDEF", "   JKL", "MNOPQR"],
+        ("K", "2"): ["ABCDEF", "      ", "MNOPQR"],
+        ("K", "3"): ["ABCDEF", "GHIJKL", "MNOPQR"],
+        ("J", ""): ["ABCDEF", "GH    ", "      "],
+        ("J", "0"): ["ABCDEF", "GH    ", "      "],
+        ("J", "1"): ["      ", "   JKL", "MNOPQR"],
+        ("J", "2"): ["      ", "      ", "      "],
+        ("J", "3"): ["ABCDEF", "GHIJKL", "MNOPQR"],
+    }
+    for (command, mode), rows in expected.items():
+        screen = TerminalScreen(rows=3, columns=6)
+        screen.feed(b"\x1b[1;1HABCDEF\x1b[2;1HGHIJKL\x1b[3;1HMNOPQR")
+        screen.feed(b"\x1b[2;3")
+        assert screen.pending == b"\x1b[2;3"
+        screen.feed(b"H\x1b[")
+        assert screen.pending == b"\x1b["
+        screen.feed((mode + command).encode())
+        assert screen.pending == b""
+        assert screen.cells == [list(row) for row in rows], (command, mode, screen.cells)
+        assert (screen.row, screen.column) == (1, 2)
 
 
 def wait_screen(fd, text, resize_width=None):
