@@ -96,6 +96,10 @@ fn observation(app: &App) -> String {
     let prs = &app.pull_requests;
     let Some(snapshot) = &prs.snapshot else {
         return match &prs.error {
+            Some(error) if error.starts_with("Cannot run gh:") => format!(
+                "{} · GitHub CLI is optional; install gh for PRs, then use refresh to retry.",
+                prs.refresh_label()
+            ),
             Some(error) => format!(
                 "{} · Unavailable: {error}. Use refresh to retry.",
                 prs.refresh_label()
