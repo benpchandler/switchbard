@@ -17,9 +17,9 @@ license = "MIT"
 repository = "https://github.com/benpchandler/switchbard"
 homepage = "https://github.com/benpchandler/switchbard"
 readme = "README.md"
-description = "Local-first dashboard for dev servers and git worktrees"
+description = "Local-first terminal workspace for tasks, pull requests, and coding agents"
 keywords = ["devtools", "git", "worktree", "macos", "linux"]
-categories = ["development-tools", "gui"]
+categories = ["development-tools", "command-line-utilities"]
 
 [workspace.dependencies]
 anyhow = "1"

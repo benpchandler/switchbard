@@ -6,13 +6,11 @@ and scope is ambiguous, STOP and ask the owner, then record the answer here.
 
 ## What switchbard is becoming
 
-An **open-source desktop dashboard** — "one window for every agent, worktree, and port
-on your machine." A single native egui/eframe window (no webview) that scans the OS for
-listening processes, attributes each to a git worktree, reads each repo's own
-declarations to predict what it *would* start, probes git state, and gives one control
-surface to start/stop/kill services, open `:port`, and run the worktree lifecycle.
-Local-first: no telemetry, no account, no daemon. Alpha, v0.3.0, MIT, public
-(benpchandler/switchbard). The author dogfoods it daily.
+An **open-source terminal workspace** for tasks, pull requests, and coding agents. `sbt` is the supported interactive interface; `sb` is the script and agent frontend over the same core write layer. Local-first: no cloud account or uploaded usage analytics. The TUI keeps local diagnostic events. Early alpha, MIT, public (benpchandler/switchbard). The author dogfoods it daily.
+
+**Public TUI alpha direction (owner-directed 2026-09-17).** Ship an accelerated, self-contained terminal install before adding package-manager distribution. Publish checksum-verifiable `sb`/`sbt` archives for macOS arm64, macOS x86_64, and Linux x86_64, with an explicit installer and no Rust, Node, Python, or GUI sidecar requirement for consumers. Public installation does not enable unattended updates. Keep first launch explained, cancellable, and safe for existing task storage; disclose early-alpha limits and give users backup and bug-report routes. npm and Homebrew remain future distribution choices, not current availability claims.
+
+**GUI deprecated (owner-directed 2026-09-17).** Stop presenting the egui desktop application as the main product or recommended install. Retain its source, earlier artifacts, and historical functionality; focus new product development, onboarding, and public documentation on the TUI. Existing GUI-oriented entries below describe retained capabilities or earlier direction; they do not authorize new GUI feature work.
 
 ## Cost-of-failure tier
 
@@ -34,14 +32,12 @@ mapping, intent-level `//!` docs, zero-warning builds, the WCAG-AA legibility co
 
 ## Current entry points
 
-- **Binary:** `crates/switchbard-gui/src/main.rs` → `switchbard` (loads config, expands
-  worktrees, hands to `HiveApp`). Core is library-only.
+- **Supported binaries:** `crates/switchbard-tui/src/main.rs` → `sbt`; `crates/switchbard-task/src/main.rs` → `sb`. Core is library-only. The deprecated `switchbard-gui` binary remains in source.
 - **Debugging examples:** `probe`, `probe_services`, `classify_check`, `sweep`.
 - **Backing stores:** centralized task database through core storage adapters, with per-kind legacy compatibility (see [central storage](central-storage.md)); `~/.switchbard/config.toml` (atomic write-tmp-then-rename),
   service logs in `$TMPDIR/switchbard-logs/`, perf ledger JSON in `docs/perf/runs/`,
   on-disk agent-context cache.
-- **Platforms:** macOS (unsigned DMG) + Linux (build from source). CI runs both
-  (macos-latest + ubuntu-latest); `release-linux.yml` ships Linux artifacts.
+- **Platforms:** public terminal release targets are macOS arm64/x86_64 and Linux x86_64. CI runs macOS and Linux. Earlier DMG and Linux GUI artifacts are historical; terminal assets require a TUI release.
 
 ## Recently implemented
 

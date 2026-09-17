@@ -1,205 +1,87 @@
-<h1 align="center">Switchbard</h1>
+# Switchbard
 
-<p align="center"><em>One window for every agent, worktree, and port on your machine.</em></p>
+A local-first terminal workspace for tasks, pull requests, and coding agents.
 
-<p align="center">
-  <a href="https://github.com/benpchandler/switchbard/releases"><img src="https://img.shields.io/github/v/release/benpchandler/switchbard?include_prereleases&sort=semver&color=2b8a3e" alt="Latest release"></a>
-  <a href="https://github.com/benpchandler/switchbard/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/benpchandler/switchbard/ci.yml?branch=main&label=CI" alt="CI status"></a>
-  <a href="https://github.com/benpchandler/switchbard/releases"><img src="https://img.shields.io/github/downloads/benpchandler/switchbard/total?color=555&label=downloads" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey" alt="Platform: macOS and Linux">
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/benpchandler/switchbard?color=blue" alt="License: MIT"></a>
-</p>
+**Early alpha.** Switchbard is developed quickly and dogfooded daily. Expect bugs and changing behavior. Start with a small repository, keep backups, and report problems through [GitHub Issues](https://github.com/benpchandler/switchbard/issues).
 
-<p align="center">
-  <img src="docs/assets/switchbard-agent-worktrees.png" width="860" alt="Switchbard showing several agent worktrees and the local services each one is running">
-</p>
-
-When Claude, Codex, and other agents each hack in their own git worktree, your
-machine quietly fills up with local servers, dirty branches, and mystery ports —
-and `localhost:3000`, `:5173`, and `:8080` all start to blur together.
-
-**Switchbard is a native macOS/Linux dashboard that shows what's listening,
-which worktree it came from, and whether it's safe to open, stop, or clean up —
-all in one window, with no telemetry and no cloud account.**
-
-> **Status: alpha.** macOS ships a downloadable DMG; Linux builds from source.
-> The author dogfoods it daily — expect rough edges around first-run UX and
-> packaging.
-
-## Features
-
-- 🔍 **Sees every listener, live.** Scans the OS every few seconds for processes
-  bound to a port — no guessing which terminal tab owns `:3000`.
-- 🧭 **Attributes processes to worktrees.** Walks each process's `cwd` to map a
-  listener back to the exact repo and git worktree that started it.
-- 🧩 **Detects services from your repo's own files.** Reads `Procfile` /
-  `Procfile.dev`, `package.json` scripts, `Makefile` targets,
-  `docker-compose.yml`, and `scripts/*.sh`, and surfaces what each would start
-  and which port it would bind.
-- 🌱 **Full worktree lifecycle.** Create a worktree (new or existing branch),
-  give it a memorable label, and remove it when you're done — the remove dialog
-  enumerates uncommitted changes and running services, and can optionally delete
-  the local branch with per-check safety (merged into main? checked out
-  elsewhere?) so you never drop unlanded work by accident.
-- 📊 **Git state at a glance.** Dirty / clean, ahead / behind upstream, and
-  commit activity (Burst / Active / Slow / Idle) per worktree.
-- 🎛️ **One control surface.** Start a service, stop a process group, kill an
-  external squatter holding the port you need, or open `:port` in the browser of
-  your choice.
-- 🛰️ **Mission Command supervision (first slice).** A Missions view over xplan's
-  local mission projection: review the exact mission contract, queue it, and
-  answer held decisions through a bundled one-shot helper - verified, spawned
-  per request, no runtime Python, and xplan stays the sole writer. Helper
-  health and projection freshness are reported independently.
-- 🔒 **Local-first.** No telemetry, no account, no background daemon. Config is a
-  hand-editable TOML at `~/.switchbard/config.toml`.
-
-## Task Queue
-
-Switchbard doesn't just watch agents work - it can hand them the work. Tee a
-Backlog task up with `sb queue send` and it joins the dispatch queue at its
-stack-rank position; rank order alone decides what gets picked up next. The
-[LangGraph orchestrator](orchestrator/README.md) drains the queue: it claims
-each task, runs a headless agent against it in a fresh worktree, verifies the
-result, and opens a PR - or hands the claim back as an honest failure. Live
-progress for every run streams into the GUI's Dispatches view.
-
-```sh
-sb queue send TASK-42      # tee it up; it queues at its stack-rank position
-sb queue list              # the live queue, in pickup order
-cd orchestrator && uv run python -m switchbard_orchestrator drain \
-    --repo ~/Dev/yourrepo --gate "mise run ci"
-```
-
-## Central task storage
-
-Switchbard can own task data in one local database at `~/.switchbard/switchbard.sqlite3`, shared by repositories and their linked worktrees. Migration is explicit and gradual: initiatives, projects, config, ranking, goals, then tasks. Full document content stays extensible, including custom fields and sections. Source files remain preserved after their kind switches to database authority; ordinary edits no longer modify them.
-
-Use `sb --repo /path/to/repo storage status` to inspect authority. `storage migrate --kind project` previews all linked worktrees and relevant local branches; apply requires the exact preview digest and creates a verified private backup. Divergent copies refuse cutover until reconciled. See [the migration guide](docs/central-storage.md) for commands, collaboration, and recovery.
-
-## Terminal setup
-
-Run `sbt` inside your repository. If no workspace is configured, it explains setup and lets you choose suggested settings or customize task references and workflow stages before creating anything. Existing centralized repositories work without a `backlog/` folder; legacy repositories keep their existing authority until explicitly migrated.
-
-Use `sbt init` to set up without opening the UI, `sbt init --yes` for unattended setup, or `sbt --setup --yes` to set up and open the UI. Add `--repo /path/to/repo` to choose a repository. For example, `sbt init --yes --task-prefix IW --status Inbox --status Doing --status Done` creates references such as `IW-1` and starts new tasks in `Inbox`. Repeat `--status` for each stage. `Done` marks completed tasks; other labels are work stages. Themes, projects, and agent integrations can be configured later. See [onboarding and recovery](docs/sbt-onboarding.md).
-
-If your shell says `sbt: command not found`, the terminal binary is missing or outside `PATH`. From a Switchbard source checkout on `main`, run `mise run install` to install both `sb` and `sbt`, then run `sbt` in your repository.
-
-## Terminal views
-
-`sbt` resumes the last view for each repo. Use `sbt --fresh` for the saved default, `v h` to browse automatic history, and `v s <number>` to keep a restored arrangement in a slot. History retains 30 days with count and byte ceilings; auto-painted colors follow the current palette. See [resume and history](docs/tui-view-history.md) for controls, limits, and recovery, and [formatting and emphasis roles](docs/emphasis-roles/guide.md) for scan hierarchy and paint controls.
+The supported interface is **`sbt`**, the terminal UI. **`sb`** provides the same task write layer for scripts and agents. The desktop GUI is deprecated; its source and older releases remain available, but new product work and public installation focus on the TUI.
 
 ## Install
 
-### macOS
-
-Download the latest `Switchbard-*-macos-arm64.dmg` from the
-[**Releases page**](https://github.com/benpchandler/switchbard/releases), open
-it, and drag `Switchbard.app` into `Applications`.
-
-> Switchbard is unsigned and unnotarized. On first launch, open it from Finder
-> with **Control-click → Open**, then confirm the unidentified-developer prompt.
-> Full notes: [docs/INSTALL-MAC.md](docs/INSTALL-MAC.md).
-
-<details>
-<summary>Build from source instead</summary>
+The TUI release installer installs `sb` and `sbt` together without Rust, Node, Python, or a desktop application. Release targets are macOS Apple Silicon, macOS Intel, and Linux x86_64. It verifies the published archive checksum before installing.
 
 ```sh
-git clone https://github.com/benpchandler/switchbard
-cd switchbard
-cargo build --release -p switchbard-gui
-bash scripts/bundle-mac.sh        # produces target/release/Switchbard.app
-open target/release/Switchbard.app
+installer=$(mktemp)
+curl -fsSL https://raw.githubusercontent.com/benpchandler/switchbard/v0.4.0-alpha.1/scripts/install-release.sh -o "$installer"
+bash "$installer" --version v0.4.0-alpha.1
+rm -f "$installer"
 ```
 
-Bundling embeds the pinned xplan mission sidecar and requires
-`XPLAN_SIDECAR_SOURCE` and `XPLAN_SIDECAR_ARCHIVE`; run `bash
-scripts/bundle-mac.sh` without them to print the exact recipe for producing
-both inputs.
+The example selects the first alpha tag explicitly and requires that release to contain the TUI archives. The installer defaults to `~/.local/bin`; follow its `PATH` guidance if needed. Older GUI-only releases cannot be installed with it; if no compatible TUI release is available yet, use the source route in [the installation guide](docs/INSTALL-TUI.md). No npm package or Homebrew formula is currently provided.
 
-Or put the bare binary on your `PATH`:
+If `~/.local/bin` is outside your `PATH`, add it to your shell configuration and open a new terminal:
 
 ```sh
-cargo install --git https://github.com/benpchandler/switchbard --bin switchbard
+export PATH="$HOME/.local/bin:$PATH"
 ```
-</details>
 
-### Linux
+## First run
 
-Download the prebuilt `switchbard-*-linux-x86_64.tar.gz` from the
-[**Releases page**](https://github.com/benpchandler/switchbard/releases), unpack
-it, and run the binary:
+Open a terminal in an existing Git repository, then run:
 
 ```sh
-tar -xzf switchbard-*-linux-x86_64.tar.gz
-./switchbard-*-linux-x86_64/switchbard
+sbt
 ```
 
-The binary `dlopen`s a few shared libraries at runtime (libxkbcommon,
-libwayland / X11, libGL) and uses `xdg-open` to launch ports — any normal
-desktop session already has them. No `.deb` / `.rpm` / `.AppImage` (or ARM
-build) yet; see [docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md) for those and for
-building from source. Switchbard reads Linux listeners straight from `/proc`, so
-it never needs `lsof`.
+For an unconfigured repository, Switchbard explains setup and asks before creating a workspace. Accept suggested task references and workflow stages, or customize them. Setup stores the workspace locally; it creates no `backlog/` directory. Existing legacy workspaces keep their current storage until you explicitly migrate them.
 
-## Quick start
+- Press **`?`** for the current keyboard controls.
+- Press **`t`**, then **`n`** to create your first task.
+- Press **Enter** to inspect the selected task; **Tab** switches pages.
+- Press **`q`** to quit.
 
-1. Launch Switchbard — it opens with no repos configured.
-2. Click **➕ Add** in the right sidebar and pick a folder containing a git
-   repository. Switchbard enumerates its worktrees and starts probing.
-3. Repeat for every repo you care about. Rows light up as services start,
-   branches drift, or ports get held.
+To choose a repository explicitly, run `sbt --repo /path/to/repo`. For unattended setup, run `sbt --repo /path/to/repo init --yes`. See [onboarding and recovery](docs/sbt-onboarding.md) for customization, cancellation, and existing-workspace behavior.
 
-Configuration lives at `~/.switchbard/config.toml`. Logs of services Switchbard
-started land in `$TMPDIR/switchbard-logs/`.
+## What you can do
 
-## How it works
+- Organize tasks into initiatives, projects, and sub-issues, with criteria, dependencies, due dates, and custom fields.
+- Filter, sort, group, and paint terminal views. Your last view resumes per repository, with bounded view history.
+- Inspect repository pull requests and their checks, review, and merge observations. GitHub features require the optional GitHub CLI and authentication.
+- See local coding-agent sessions and task claims. Integrations depend on the agent tools installed on your machine.
+- Use `sb` to create, inspect, and update tasks from scripts or agents through the same core write layer.
 
-Switchbard is a four-crate Cargo workspace with no webview — a single native
-[egui](https://github.com/emilk/egui) /
-[eframe](https://github.com/emilk/egui/tree/master/crates/eframe) window:
+```sh
+sb --help
+sb --repo /path/to/repo list
+sbt build-id
+```
 
-- **`switchbard-core`** — domain logic, zero UI deps: the listener scanner,
-  service detectors, git probes, port-conflict classifier, and the
-  `ResolvedService` model. Heavily unit-tested.
-- **`switchbard-gui`** — the egui app. Worker threads run the long probes
-  (`lsof` on macOS, `/proc` on Linux, `git status`, `git log`) off the UI
-  thread, so the window never blocks. The scanner kicks every 3s and the GUI
-  re-renders only when state changes.
-- **`switchbard-dispatch`** — a thin headless binary reusing `switchbard-core`
-  that drains the dispatch queue with the GUI closed. See
-  [docs/INSTALL-DISPATCH.md](docs/INSTALL-DISPATCH.md).
-- **`switchbard-task`** — the `sb` CLI, a terminal/agent frontend for
-  Backlog-format tasks over the same native write layer as the GUI.
+Some pages and integrations are still incomplete. Task completion is explicit; checked criteria or a merged PR do not automatically mark a task Done.
+
+## Local data and alpha recovery
+
+Switchbard requires no account and sends no usage analytics. Task data is stored locally, normally in `~/.switchbard/switchbard.sqlite3`; legacy repositories may still use Backlog-format files. The TUI writes local diagnostic events to `~/.switchbard/tui-events.jsonl`, which can contain repository paths and action details. Review diagnostic material before sharing it publicly.
+
+Before upgrades or important changes, create a database backup:
+
+```sh
+sb --repo /path/to/repo storage backup --file /private/path/switchbard-backup.sqlite3
+```
+
+Keep legacy task files under your normal backup/version-control policy too. See [central storage and recovery](docs/central-storage.md) for authority, migration, export, and restore. Public release installation does not enable background updates; upgrading is an explicit choice. The author's source auto-install loop is a separate opt-in developer workflow.
+
+When reporting a bug, include `sbt build-id`, your OS and terminal, the steps to reproduce, and the error shown. Do not post private task text or unreviewed logs. TUI commands `:bug` and `:idea` capture tasks in your current repository; they do not submit GitHub issues.
 
 ## Development
 
+Build the terminal tools with Rust 1.95 or newer and a native C compiler:
+
 ```sh
-mise install           # pins Rust 1.95.0 from mise.toml (mise is optional)
-mise run hooks-install # install fast pre-commit and complete pre-push gates
-mise run preflight     # fmt + clippy + tests, including developer-gate tests
-mise run bundle        # macOS: Switchbard.app in this worktree's Cargo target
-mise run package       # macOS: DMG + sha256 in this worktree's Cargo target
+git clone https://github.com/benpchandler/switchbard.git
+cargo build --manifest-path switchbard/Cargo.toml --release -p switchbard-task -p switchbard-tui
+./switchbard/target/release/sbt --repo /path/to/your/repo
 ```
 
-The full workspace test harness uses one test thread so competing temporary
-repository fixtures do not starve one another's bounded storage locks; tests
-that exercise internal writer races remain concurrent.
+Mise pins the repository toolchain. Contributors should read [CLAUDE.md](CLAUDE.md), install the tracked hooks with `mise run hooks-install`, and use the repository's validation gates. Core domain logic lives in `switchbard-core`, the terminal UI in `switchbard-tui`, and the `sb` CLI in `switchbard-task`. The deprecated GUI and optional dispatch/orchestrator components remain separate from the public terminal install.
 
-Prefer plain Cargo? Every task above maps to the obvious `cargo fmt` / `cargo clippy` / `cargo test` / `cargo build --release` invocation. The tracked pre-commit hook checks formatting, while pre-push runs the complete `mise run preflight` gate. Both hooks scrub Git's exported worktree variables before starting nested tools, and the installer uses a worktree-relative hook path. A push to the local `no-mistakes` gate does not duplicate preflight because that delivery pipeline runs the same trusted command before its upstream push. A hook can still be bypassed with `--no-verify`, so GitHub Actions remains the merge authority.
-
-CI runs formatting once on Linux and runs Clippy plus the full Rust tests on both macOS and Linux. The expensive live mission-sidecar proofs run only when mission code, its pinned helper, dependencies, or the CI routing contract changes. Because `main` is not branch-protected, CI also verifies the actual post-merge commit on every push to `main`.
-Mise gives each worktree its own `CARGO_TARGET_DIR` under the platform cache, so
-a build or test run always links that worktree's sources; print the resolved
-location with `mise exec -- printenv CARGO_TARGET_DIR`, and reclaim the ones no
-live worktree owns with `mise run target-prune` (it lists them; `-- --yes`
-removes them). Set the variable explicitly to override it. Plain
-Cargo without the mise environment still uses `target/`.
-
-## Contributing
-
-PRs welcome. Keep changes scoped, install the tracked hooks, run `mise run preflight` before pushing, and include a one-line "why" in the commit body. The codebase favors small modules and explicit names - read the current source for ground truth.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+[Installation](docs/INSTALL-TUI.md) · [View history](docs/tui-view-history.md) · [Task planning](docs/task-planning-progress.md) · [MIT license](LICENSE)

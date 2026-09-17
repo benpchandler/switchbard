@@ -1,0 +1,32 @@
+name: Bug report
+description: Report a problem with the Switchbard terminal app or installer.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for trying the alpha. Please include enough detail to reproduce the problem. Remove private repository names, task content, tokens, and personal paths from logs before sharing.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version and environment
+      description: Paste `sbt --version` and include your OS, architecture, terminal, and installation method. If installation failed, include the requested release version.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include commands or keys, and whether this was a first launch or an existing workspace.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Error output or screenshot
+      description: Optional. Share only the relevant, redacted excerpt. Local diagnostic logs can contain task content and paths.
