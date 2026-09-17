@@ -14,6 +14,18 @@ const EXPECTED_MERGE_POLL_SECONDS: u64 = 3;
 /// and falling back to the routine cadence with a notification.
 const EXPECTED_MERGE_WINDOW_SECONDS: u64 = 90;
 
+/// A word-processor-style shift-up/shift-down range select, anchored at the
+/// row the first extend started from. `added` is the sweep's own bookkeeping
+/// of which ids it has marked so far, kept separate from `marked` itself: a
+/// row `space` marked outside the sweep is never in `added`, so contracting
+/// the range back over it leaves it alone (only what the sweep put there is
+/// the sweep's to take away).
+#[derive(Debug, Clone, Default)]
+struct RangeSweep {
+    anchor_id: String,
+    added: std::collections::BTreeSet<String>,
+}
+
 /// One outstanding "this PR should show merged soon" expectation (TASK-204).
 /// Single-slot by design: a second confirmed merge while one is outstanding
 /// replaces it. The traded-off case (two merges landing within the same
@@ -50,6 +62,8 @@ pub struct PullRequests {
     expected_merge: Option<ExpectedMerge>,
     /// PR ids marked for a bulk merge (`mark`); consumed in visible order by `m`.
     pub marked: std::collections::BTreeSet<String>,
+    /// The in-progress shift-up/shift-down range select, if one is live.
+    range_sweep: Option<RangeSweep>,
 }
 
 impl PullRequests {
@@ -353,6 +367,82 @@ impl PullRequests {
         }
     }
 
+    /// Word-processor-style range select: the first call anchors at the
+    /// cursor row; each further call moves the cursor by `delta` (`1` or
+    /// `-1`) and marks every open PR between the anchor and the new cursor,
+    /// inclusive, unmarking any the range has left behind. Only rows this
+    /// sweep itself marked are ever unmarked (`RangeSweep::added`); a row
+    /// `space` marked outside the sweep survives a contraction that passes
+    /// back over it. Returns the number of rows currently marked, for the
+    /// caller's status line.
+    pub fn extend_mark(&mut self, delta: isize) -> usize {
+        if self.snapshot.is_none() {
+            return self.marked.len();
+        }
+        let anchor_id = match &self.range_sweep {
+            Some(sweep) => sweep.anchor_id.clone(),
+            None => match self.row() {
+                Some(row) => row.id.clone(),
+                None => return self.marked.len(),
+            },
+        };
+        self.step(delta);
+        let Some(anchor_position) = self.position_of(&anchor_id) else {
+            // The anchor row is no longer visible (filtered out from under
+            // the sweep); nothing sane left to sweep against.
+            self.range_sweep = None;
+            return self.marked.len();
+        };
+        let lo = anchor_position.min(self.selected);
+        let hi = anchor_position.max(self.selected);
+        let in_range: std::collections::BTreeSet<String> = self.visible[lo..=hi]
+            .iter()
+            .filter_map(|&index| self.snapshot.as_ref().and_then(|s| s.rows.get(index)))
+            .filter(|row| row.lifecycle == PrLifecycle::Open)
+            .map(|row| row.id.clone())
+            .collect();
+        let sweep = self.range_sweep.get_or_insert_with(|| RangeSweep {
+            anchor_id: anchor_id.clone(),
+            added: std::collections::BTreeSet::new(),
+        });
+        // Rows the range no longer covers: only the ones this sweep put there
+        // itself come back off; a row already marked before the sweep ever
+        // touched it (`space`, or a leftover from before) was never recorded
+        // in `added`, so it is left exactly as it was.
+        for id in &sweep.added {
+            if !in_range.contains(id) {
+                self.marked.remove(id);
+            }
+        }
+        sweep.added.retain(|id| in_range.contains(id));
+        // Rows newly covered: mark them, and record only the ones that were
+        // not already marked, so a pre-existing mark is never claimed as the
+        // sweep's own to later take back.
+        for id in &in_range {
+            if !sweep.added.contains(id) && !self.marked.contains(id) {
+                sweep.added.insert(id.clone());
+            }
+            self.marked.insert(id.clone());
+        }
+        self.marked.len()
+    }
+
+    /// The visible position of PR `id`, for the range sweep's anchor.
+    fn position_of(&self, id: &str) -> Option<usize> {
+        self.visible.iter().position(|&index| {
+            self.snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.rows.get(index))
+                .is_some_and(|row| row.id == id)
+        })
+    }
+
+    /// Drop the in-progress range-select anchor: any plain cursor move, page
+    /// switch, filter change, or mark clear starts the next extend fresh.
+    pub fn reset_range_sweep(&mut self) {
+        self.range_sweep = None;
+    }
+
     /// Marked PR ids in the order the list shows them: the bulk-merge order.
     pub fn marked_in_view_order(&self) -> Vec<String> {
         let Some(snapshot) = &self.snapshot else {
@@ -372,6 +462,7 @@ impl PullRequests {
 
     pub fn clear_marks(&mut self) {
         self.marked.clear();
+        self.reset_range_sweep();
     }
 
     pub fn values(&self, column: crate::columns::Column, row: &PrListRow) -> Vec<String> {

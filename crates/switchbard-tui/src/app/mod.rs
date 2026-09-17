@@ -1364,9 +1364,24 @@ impl App {
                 | Action::Bottom
                 | Action::PageDown
                 | Action::PageUp
+                | Action::ExtendMarkDown
+                | Action::ExtendMarkUp
         ) {
             self.cancel_pr_merge();
             self.cancel_pr_merge_queue("cursor moved");
+        }
+        // A plain cursor move (as opposed to an extend) starts the next
+        // range select fresh, from wherever the cursor lands.
+        if matches!(
+            action,
+            Action::Down
+                | Action::Up
+                | Action::Top
+                | Action::Bottom
+                | Action::PageDown
+                | Action::PageUp
+        ) {
+            self.pull_requests.reset_range_sweep();
         }
         match action {
             Action::OpenBrowser => self.open_pr_browser(),
@@ -1378,6 +1393,8 @@ impl App {
             Action::Bottom => self.pull_requests.step(isize::MAX),
             Action::PageDown => self.pull_requests.step(self.page_size as isize),
             Action::PageUp => self.pull_requests.step(-(self.page_size as isize)),
+            Action::ExtendMarkDown => self.extend_pr_mark(1),
+            Action::ExtendMarkUp => self.extend_pr_mark(-1),
             Action::Open => {
                 self.detail_read_focus = false;
                 self.pull_requests.detail_scroll = 0;
@@ -1486,7 +1503,12 @@ impl App {
         match action {
             // The availability gate above already refused these on this page;
             // the arm exists so a future gate change cannot silently drop them.
-            Action::OpenBrowser | Action::Merge | Action::Mark | Action::KillAgent => {
+            Action::OpenBrowser
+            | Action::Merge
+            | Action::Mark
+            | Action::ExtendMarkDown
+            | Action::ExtendMarkUp
+            | Action::KillAgent => {
                 self.status = format!("{} works on {}", action.name(), action.where_it_works());
             }
             Action::DismissNotifications => {
@@ -1727,6 +1749,7 @@ impl App {
             std::mem::swap(&mut self.views, &mut self.inactive_views);
             std::mem::swap(&mut self.view, &mut self.inactive_view);
         }
+        self.pull_requests.reset_range_sweep();
         self.page = page;
         if page.has_list_view() {
             self.state.sanitize(page, &self.registry);
@@ -1752,6 +1775,7 @@ impl App {
         if self.page == Page::PullRequests {
             self.state.filter = text.clone();
             self.pull_requests.filter = text;
+            self.pull_requests.reset_range_sweep();
             self.pull_requests.refilter();
             return;
         }

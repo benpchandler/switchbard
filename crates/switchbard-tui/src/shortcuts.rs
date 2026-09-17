@@ -16,6 +16,11 @@ pub enum Action {
     KillAgent,
     /// Toggle the cursor row's bulk-merge mark (PR page).
     Mark,
+    /// Word-processor-style range select: extend the bulk-merge mark from an
+    /// anchor to the cursor, one row down at a time (PR page).
+    ExtendMarkDown,
+    /// The same range select, one row up (PR page).
+    ExtendMarkUp,
     DismissNotifications,
     NewTask,
     RepoIdea,
@@ -129,6 +134,16 @@ const ACTIONS: &[(Action, &str, Availability)] = &[
     (Action::Merge, "merge", Availability::PullRequests),
     (Action::KillAgent, "kill_agent", Availability::Agents),
     (Action::Mark, "mark", Availability::PullRequests),
+    (
+        Action::ExtendMarkDown,
+        "extend_down",
+        Availability::PullRequests,
+    ),
+    (
+        Action::ExtendMarkUp,
+        "extend_up",
+        Availability::PullRequests,
+    ),
     (
         Action::DismissNotifications,
         "dismiss_notifications",

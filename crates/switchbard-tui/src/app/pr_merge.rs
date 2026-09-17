@@ -200,6 +200,13 @@ impl App {
         }
     }
 
+    /// Word-processor-style shift-up/shift-down range select: extend (or
+    /// contract) the bulk-merge mark from the sweep's anchor to the cursor.
+    pub(super) fn extend_pr_mark(&mut self, delta: isize) {
+        let count = self.pull_requests.extend_mark(delta);
+        self.status = format!("Marked for merge ({count}); m merges all in list order, Esc clears");
+    }
+
     /// Stop a bulk merge before its next PR starts. Never interrupts a merge
     /// that is already submitting; that one finishes and reports on its own.
     pub(super) fn cancel_pr_merge_queue(&mut self, reason: &str) {

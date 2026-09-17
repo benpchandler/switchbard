@@ -3,8 +3,8 @@
 -- Every key is optional; anything you leave out falls back to this file.
 return {
   -- key -> action. Keys: single chars, "enter", "esc", "tab", "up", "down",
-  -- "pagedown", "pageup", "home", "end", "shift-tab", "ctrl-<char>". Actions: down, up, top, bottom, page_down, page_up, open, new_task,
-  -- back, focus_pane, filter, filter_column, sort_column, columns, paint, repo_idea, repo_bug, ball, pass, outline, task, settings, view, command, reload, help, quit, page, merge, mark, open_browser, dismiss_notifications, kill_agent.
+  -- "pagedown", "pageup", "home", "end", "shift-tab", "shift-up", "shift-down", "ctrl-<char>". Actions: down, up, top, bottom, page_down, page_up, open, new_task,
+  -- back, focus_pane, filter, filter_column, sort_column, columns, paint, repo_idea, repo_bug, ball, pass, outline, task, settings, view, command, reload, help, quit, page, merge, mark, extend_down, extend_up, open_browser, dismiss_notifications, kill_agent.
   keys = {
     j = "down", k = "up", x = "kill_agent", down = "down", up = "up",
     g = "top", e = "bottom", home = "top", ["end"] = "bottom",
@@ -12,7 +12,9 @@ return {
     ["ctrl-d"] = "page_down", ["ctrl-u"] = "page_up",
     enter = "open", esc = "back", tab = "page", ["shift-tab"] = "focus_pane",
     ["/"] = "filter", f = "filter_column", s = "sort_column", [":"] = "command",
-    c = "columns", p = "paint", i = "repo_idea", b = "repo_bug", w = "pass", o = "outline", t = "task", v = "view", [","] = "settings", r = "reload", ["ctrl-o"] = "open_browser", m = "merge", space = "mark", n = "dismiss_notifications", ["?"] = "help", q = "quit",
+    c = "columns", p = "paint", i = "repo_idea", b = "repo_bug", w = "pass", o = "outline", t = "task", v = "view", [","] = "settings", r = "reload", ["ctrl-o"] = "open_browser", m = "merge", space = "mark",
+    ["shift-down"] = "extend_down", ["shift-up"] = "extend_up",
+    n = "dismiss_notifications", ["?"] = "help", q = "quit",
   },
 
   -- Colors: ANSI names (cyan, gray, darkgray, ...) follow your terminal palette;

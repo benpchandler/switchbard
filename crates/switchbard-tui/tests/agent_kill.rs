@@ -331,7 +331,12 @@ fn a_signal_ignoring_agent_is_not_reported_as_exited() {
         child,
         _exe_dir: dir,
     };
-    for _ in 0..100 {
+    // A freshly compiled fixture's first exec can take well over half a second
+    // on a machine busy running the rest of this suite, so wait on a deadline
+    // rather than a fixed tick count (the old 100x5ms flaked roughly one run
+    // in three).
+    let ready_by = std::time::Instant::now() + Duration::from_secs(10);
+    while std::time::Instant::now() < ready_by {
         if h.root.join("ready").exists() {
             break;
         }
