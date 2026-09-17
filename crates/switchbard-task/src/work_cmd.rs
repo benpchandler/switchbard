@@ -130,6 +130,15 @@ fn work_dir() -> Result<PathBuf> {
 fn claim(root: &Path, dir: &Path, id: &str, identity: &WorkIdentity) -> Result<()> {
     let repo = load(root)?;
     let task = resolve(&repo, id)?;
+    // Claiming moves the task to In Progress, so a completed, archived or
+    // draft task would be silently reopened.
+    if !task.editable() {
+        bail!(
+            "{} is not an active task (it is {}); only active tasks can be claimed",
+            task.id,
+            task.source.label()
+        );
+    }
     let session = switchbard_core::claim_work(dir, identity, root, &task.id)?;
     // Board-visible side effects are best effort, like `queue claim`: a
     // failure costs a stale pill, not the claim itself.

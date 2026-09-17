@@ -32,6 +32,7 @@
 //! ball) go through the backlog mutation layer as usual - this store never
 //! touches task files.
 
+use crate::work_history::{append_work_events, WorkEvent, WorkEventKind};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -132,26 +133,41 @@ pub fn claim_work(
     task_id: &str,
 ) -> Result<WorkSession> {
     std::fs::create_dir_all(dir).with_context(|| format!("creating work dir {}", dir.display()))?;
-    let mut session = load_work_session(dir, &identity.session_id)?
-        .filter(|session| session.claims_in(repo_root) && !session.abandoned)
-        .unwrap_or_else(|| WorkSession {
-            session_id: identity.session_id.clone(),
-            agent: identity.agent.clone(),
-            pid: identity.pid,
-            repo_root: repo_root.to_path_buf(),
-            claims: Vec::new(),
-            started_at: now(),
-            stop_blocks: 0,
-            abandoned: false,
-        });
+    let existing = load_work_session(dir, &identity.session_id)?;
+    let (kept, replaced) = match existing {
+        Some(session) if session.claims_in(repo_root) && !session.abandoned => {
+            (Some(session), None)
+        }
+        other => (None, other),
+    };
+    if let Some(replaced) = &replaced {
+        append_work_events(dir, &claim_events(replaced, WorkEventKind::Replaced, None))?;
+    }
+    let mut session = kept.unwrap_or_else(|| WorkSession {
+        session_id: identity.session_id.clone(),
+        agent: identity.agent.clone(),
+        pid: identity.pid,
+        repo_root: repo_root.to_path_buf(),
+        claims: Vec::new(),
+        started_at: now(),
+        stop_blocks: 0,
+        abandoned: false,
+    });
     session.pid = identity.pid;
-    if !session.holds(task_id) {
+    let newly_claimed = !session.holds(task_id);
+    if newly_claimed {
         session.claims.push(WorkClaim {
             task_id: task_id.to_string(),
             claimed_at: now(),
         });
     }
     save(dir, &session)?;
+    if newly_claimed {
+        append_work_events(
+            dir,
+            &claim_events(&session, WorkEventKind::Claimed, Some(task_id)),
+        )?;
+    }
     Ok(session)
 }
 
@@ -169,6 +185,10 @@ pub fn release_work(dir: &Path, session_id: &str, task_id: &str) -> Result<WorkS
     }
     session.claims.retain(|claim| claim.task_id != task_id);
     save(dir, &session)?;
+    append_work_events(
+        dir,
+        &claim_events(&session, WorkEventKind::Released, Some(task_id)),
+    )?;
     Ok(session)
 }
 
@@ -180,6 +200,10 @@ pub fn pass_work(dir: &Path, repo_root: &Path, task_id: &str) -> Result<Vec<Work
         if session.holds(task_id) {
             session.claims.retain(|claim| claim.task_id != task_id);
             save(dir, &session)?;
+            append_work_events(
+                dir,
+                &claim_events(&session, WorkEventKind::Passed, Some(task_id)),
+            )?;
             released.push(session);
         }
     }
@@ -205,7 +229,9 @@ pub fn list_work_sessions(dir: &Path, repo_root: &Path) -> Result<Vec<WorkSessio
             continue;
         };
         if !pid_alive(session.pid) {
-            let _ = std::fs::remove_file(&path);
+            if std::fs::remove_file(&path).is_ok() && !session.abandoned {
+                append_work_events(dir, &claim_events(&session, WorkEventKind::Pruned, None))?;
+            }
             continue;
         }
         if session.claims_in(repo_root) {
@@ -240,16 +266,26 @@ pub fn record_stop_block(dir: &Path, session_id: &str) -> Result<u32> {
 /// The Stop hook let the session go with claims still held.
 pub fn abandon_work_session(dir: &Path, session_id: &str) -> Result<()> {
     if let Some(mut session) = load_work_session(dir, session_id)? {
+        if session.abandoned {
+            return Ok(());
+        }
         session.abandoned = true;
         save(dir, &session)?;
+        append_work_events(dir, &claim_events(&session, WorkEventKind::Abandoned, None))?;
     }
     Ok(())
 }
 
 /// The session ended: its record is gone, claims and all.
 pub fn end_work_session(dir: &Path, session_id: &str) -> Result<()> {
+    let session = load_work_session(dir, session_id)?;
     match std::fs::remove_file(record_path(dir, session_id)) {
-        Ok(()) => Ok(()),
+        Ok(()) => match session.filter(|session| !session.abandoned) {
+            Some(session) => {
+                append_work_events(dir, &claim_events(&session, WorkEventKind::Ended, None))
+            }
+            None => Ok(()),
+        },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),
     }
@@ -275,6 +311,33 @@ pub fn held_ids(session: &WorkSession) -> String {
         .map(|claim| claim.task_id.as_str())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// One `kind` event for `task_id`, or for every claim `session` holds when `None`.
+fn claim_events(
+    session: &WorkSession,
+    kind: WorkEventKind,
+    task_id: Option<&str>,
+) -> Vec<WorkEvent> {
+    let at = now();
+    let ids: Vec<&str> = match task_id {
+        Some(id) => vec![id],
+        None => session
+            .claims
+            .iter()
+            .map(|claim| claim.task_id.as_str())
+            .collect(),
+    };
+    ids.into_iter()
+        .map(|id| WorkEvent {
+            at: at.clone(),
+            event: kind,
+            task_id: id.to_string(),
+            session_id: session.session_id.clone(),
+            agent: session.agent.clone(),
+            repo_root: session.repo_root.clone(),
+        })
+        .collect()
 }
 
 fn same_repo(a: &Path, b: &Path) -> bool {
@@ -329,6 +392,77 @@ mod tests {
             pid: std::process::id(),
             agent: "claude".to_string(),
         }
+    }
+
+    fn events(dir: &Path) -> Vec<(WorkEventKind, String)> {
+        crate::work_history::read_work_history(dir)
+            .unwrap()
+            .into_iter()
+            .map(|event| (event.event, event.task_id))
+            .collect()
+    }
+
+    #[test]
+    fn history_records_each_claim_start_and_end_once() {
+        use WorkEventKind::*;
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        claim_work(dir.path(), &me(), &repo, "TASK-1").unwrap();
+        claim_work(dir.path(), &me(), &repo, "TASK-1").unwrap();
+        claim_work(dir.path(), &me(), &repo, "TASK-2").unwrap();
+        release_work(dir.path(), &me().session_id, "TASK-1").unwrap();
+        pass_work(dir.path(), &repo, "TASK-2").unwrap();
+        claim_work(dir.path(), &me(), &repo, "TASK-3").unwrap();
+        let other = dir.path().join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        claim_work(dir.path(), &me(), &other, "TASK-4").unwrap();
+        end_work_session(dir.path(), &me().session_id).unwrap();
+        end_work_session(dir.path(), &me().session_id).unwrap();
+        let expected = [
+            (Claimed, "TASK-1"),
+            (Claimed, "TASK-2"),
+            (Released, "TASK-1"),
+            (Passed, "TASK-2"),
+            (Claimed, "TASK-3"),
+            (Replaced, "TASK-3"),
+            (Claimed, "TASK-4"),
+            (Ended, "TASK-4"),
+        ];
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(kind, id)| (kind, id.to_string()))
+            .collect();
+        assert_eq!(events(dir.path()), expected);
+    }
+
+    #[test]
+    fn history_records_abandoned_and_pruned_claims_without_duplicates() {
+        use WorkEventKind::*;
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        claim_work(dir.path(), &me(), &repo, "TASK-1").unwrap();
+        abandon_work_session(dir.path(), &me().session_id).unwrap();
+        abandon_work_session(dir.path(), &me().session_id).unwrap();
+        end_work_session(dir.path(), &me().session_id).unwrap();
+        let dead = WorkIdentity {
+            session_id: "dead-session".to_string(),
+            pid: 0,
+            agent: "codex".to_string(),
+        };
+        claim_work(dir.path(), &dead, &repo, "TASK-2").unwrap();
+        assert!(list_work_sessions(dir.path(), &repo).unwrap().is_empty());
+        let expected: Vec<_> = [
+            (Claimed, "TASK-1"),
+            (Abandoned, "TASK-1"),
+            (Claimed, "TASK-2"),
+            (Pruned, "TASK-2"),
+        ]
+        .into_iter()
+        .map(|(kind, id)| (kind, id.to_string()))
+        .collect();
+        assert_eq!(events(dir.path()), expected);
     }
 
     #[test]
