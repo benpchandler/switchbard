@@ -18,6 +18,8 @@ fn goal_harness() -> Harness {
     seed_goal(&h.root, "lenders-live", "journeys", 3, Some("Chase"), &[]);
     seed_goal(&h.root, "docs-shipped", "guides", 1, None, &["TASK-3"]);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
+    h.render();
     h.press(KeyCode::Esc);
     h
 }
