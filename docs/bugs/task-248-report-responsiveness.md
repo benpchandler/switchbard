@@ -6,6 +6,8 @@
 
 Periodic task refreshes also run off-thread. Stale results cannot replace newer local mutations. Focused detail refreshes read the backlog and authoritative edit snapshot under one repository fence in the worker; completion performs no storage reads. Entering or applying an edit defers while the report or refresh is pending. Read-only pane navigation remains available. Selection follows the filed task only when the original context remains current.
 
+Only a pending report save defers ordinary quit or binary reexec; a queued or active task refresh remains cancellable by those lifecycle actions.
+
 TASK-248 is the canonical tracker: high priority, Bugs project, labels tui/bug/performance. This change is isolated on `fix/idea-report-responsive`, based on the reconciled `origin/main` at `5e699a5c1b4bd4fe892e5a28c84f27dc3702be25`. Both the primary checkout and new worktree were initially clean. No PR, merge, or installation was performed in this implementation slice; full workspace CI remains a before-merge gate.
 
 ## Reproduction and validation
@@ -48,3 +50,11 @@ Evidence logs: `/tmp/task248-baseline.txt`, `/tmp/task248-detail-baseline.log`, 
 The change does not add durable crash recovery for forced process termination, terminal loss, or machine shutdown. Existing bounded terminal-hangup exit behavior remains intact. It removes blocking work from report submission and automatic refresh, without claiming to reduce the underlying storage operation's duration or make every unrelated mutation asynchronous.
 
 Thread-spawn failure and worker-channel disconnect are handled and reviewed but not forcibly injected. Report-specific maximum-length multiline content is not separately exercised. There is no owner visual-approval claim. Installed `sbt` was still `5a9e9ae` at closeout; this fix is a validated local commit awaiting delivery.
+
+## Final pending-storage boundary validation
+
+A fresh real-key `t d` journey on the delivery branch exposed a remaining foreground write while the report banner said Saving. With a real two-second `RepositoryLock`, Done blocked for 2.059631333 seconds and mutated the selected task. This regression now passes the 500 ms bound.
+
+One App guard owns the report-save or task-refresh pending rule, including a queued refresh before the worker starts. Synchronous status/project/parent/cancellation preparation and task creation, status, planning, parent, project, rank, ball, work passing, goal assignment and cancellation writes defer at their actual entry points. Detail focus uses the same guard. A new-task draft remains editable and survives a deferred submit. Read-only menus and navigation remain available; Reload requests a background task refresh with honest pending feedback.
+
+`tests/report.rs` now exercises the real task-menu, picker and command paths under both pending report and pending refresh contention. Every attempted interaction stays below 500 ms; original task files remain byte-identical, only one report is created, and ordinary Done, Reload and new-task capture recover afterward. A status picker prepared before refresh starts cannot bypass the guard. The existing Saving, success, failure/retry, Unicode, cross-page, narrow-terminal, duplicate and detail-refresh evidence remains applicable. These behavioral checks do not claim owner visual approval or forced-termination recovery.

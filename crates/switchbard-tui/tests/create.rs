@@ -102,6 +102,7 @@ fn configurable_shortcut_and_help() {
     let mut h = Harness::new();
     std::fs::write(&h.config_path, "return { keys = { x = 'new_task' } }").unwrap();
     h.app.tick();
+    h.tick_until_tasks_settle();
     let screen = h.press(KeyCode::Char('?'));
     assert!(screen.contains("new_task"), "{screen}");
     h.press(KeyCode::Char('x'));
@@ -118,6 +119,7 @@ fn unicode_input_survives_resize_tick_and_long_titles() {
     for (width, height) in [(40, 8), (100, 20), (160, 30)] {
         h.terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         h.app.tick();
+        h.tick_until_tasks_settle();
         let screen = h.render();
         assert!(screen.contains('終'), "{screen}");
     }
@@ -205,6 +207,7 @@ fn task_new_chord_is_discoverable_and_old_a_is_unbound() {
     assert_eq!(h.app.total_tasks(), 3);
     std::fs::write(&h.config_path, "return { keys = { x = 'task' } }").unwrap();
     h.app.tick();
+    h.tick_until_tasks_settle();
     h.type_text("xnRebound prefix");
     h.press(KeyCode::Enter);
     assert_eq!(h.selected_title(), "Rebound prefix");

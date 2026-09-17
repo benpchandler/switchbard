@@ -124,6 +124,7 @@ fn self_and_subissues_are_excluded_and_tasks_with_children_explain_the_block() {
     let mut h = Harness::new();
     seed_in_project(&h.root, "Child of dark", "To Do", "UI", Some("2"));
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     open_parent(&mut h);
     let options = &h.app.picker.as_ref().unwrap().options;
     assert!(!options.iter().any(|o| o.label.contains("Fix login")));
@@ -187,6 +188,7 @@ fn only_task_has_no_eligible_parent_and_empty_repo_has_no_parent_action() {
         }
     }
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     let screen = open_parent(&mut h);
     assert!(screen.contains("No eligible parent tasks"), "{screen}");
     h.press(KeyCode::Esc);
@@ -194,6 +196,7 @@ fn only_task_has_no_eligible_parent_and_empty_repo_has_no_parent_action() {
         std::fs::remove_file(task.path).unwrap();
     }
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Char('t'));
     assert!(!h
         .app

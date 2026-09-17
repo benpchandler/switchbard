@@ -794,6 +794,9 @@ impl App {
 
     /// `w`: the owner passes the selected task; every session's claim on it ends.
     fn pass_work(&mut self) {
+        if self.defer_task_storage() {
+            return;
+        }
         let Some(task) = self.selected_task() else {
             self.status = "no task selected".to_string();
             return;
@@ -872,6 +875,9 @@ impl App {
     /// `n` creates a task, and `g` opens goals.
     /// `t<n>`: the selected task takes place `n` in the top list; the rest shift down.
     fn set_rank(&mut self, place: usize) {
+        if self.defer_task_storage() {
+            return;
+        }
         let Some(task) = self.selected_task() else {
             self.status = "no task selected".to_string();
             return;
@@ -913,6 +919,9 @@ impl App {
     }
 
     fn drop_rank(&mut self) {
+        if self.defer_task_storage() {
+            return;
+        }
         let Some(task) = self.selected_task() else {
             self.status = "no task selected".to_string();
             return;
@@ -973,6 +982,9 @@ impl App {
     }
 
     fn assign_ball(&mut self, ball: Option<Ball>) {
+        if self.defer_task_storage() {
+            return;
+        }
         let Some(task) = self.selected_task() else {
             self.status = "no task selected".to_string();
             return;
@@ -1143,6 +1155,9 @@ impl App {
     /// `:goal <name>` or a pick in the `tg` panel: attach the selected task to the
     /// goal, or detach it when already attached.
     pub(super) fn toggle_goal_link(&mut self, name: &str) {
+        if self.defer_task_storage() {
+            return;
+        }
         let Some(task) = self.selected_task() else {
             self.status = "no task selected".to_string();
             return;
@@ -1547,12 +1562,8 @@ impl App {
             }
             Action::Reload => {
                 self.reload_config();
-                self.reload_tasks();
-                self.status = if self.page == Page::Tasks {
-                    format!("reloaded {} tasks", self.tasks.len())
-                } else {
-                    "reloaded".to_string()
-                };
+                self.request_task_refresh();
+                self.status = "Task refresh requested".into();
             }
             Action::Help => {
                 self.help_scroll = 0;
@@ -1571,6 +1582,9 @@ impl App {
     /// native status edit, not archival: completed-task retention stays a
     /// separate, explicit lifecycle decision.
     fn mark_done(&mut self) {
+        if self.defer_task_storage() {
+            return;
+        }
         let Some(task) = self.selected_task() else {
             self.status = "no task selected".to_string();
             return;

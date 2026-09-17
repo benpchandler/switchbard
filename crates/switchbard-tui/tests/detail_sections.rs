@@ -161,6 +161,7 @@ fn historical_subtasks_remain_visible_in_parent_details() {
     switchbard_core::complete_backlog_task(&h.root, &completed).unwrap();
     switchbard_core::archive_backlog_task(&h.root, &archived).unwrap();
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Char('/'));
     h.type_text("Add dark theme");
     h.press(KeyCode::Enter);

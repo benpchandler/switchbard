@@ -6,6 +6,9 @@ use super::App;
 
 impl App {
     pub(super) fn open_task_status_picker(&mut self) {
+        if self.defer_task_storage() {
+            return;
+        }
         let Some(id) = self.selected_task().map(|task| task.id.clone()) else {
             self.status = "no task selected".to_string();
             return;
@@ -34,6 +37,9 @@ impl App {
     }
 
     pub(super) fn change_task_status(&mut self, id: &str, status: &str) {
+        if self.defer_task_storage() {
+            return;
+        }
         let patch = switchbard_core::BacklogTaskPatch {
             status: Some(status.to_string()),
             ..Default::default()
@@ -61,6 +67,9 @@ impl App {
     }
 
     pub(super) fn change_task_planning(&mut self, id: &str, value: &str) {
+        if self.defer_task_storage() {
+            return;
+        }
         let planning = match value.parse::<switchbard_core::PlanningState>() {
             Ok(planning) => planning,
             Err(error) => {

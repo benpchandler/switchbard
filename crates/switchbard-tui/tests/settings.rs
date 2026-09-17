@@ -12,6 +12,7 @@ fn hiding_a_status_applies_under_every_view_and_a_view_that_names_status_wins() 
     let mut h = Harness::new();
     seed(&h.root, "Old finished thing", "Done", &[]);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     assert_eq!(visible_titles(&h).len(), 4);
     let screen = h.press(KeyCode::Char(','));
     assert!(screen.contains("┌ settings ─"), "{screen}");
@@ -53,6 +54,7 @@ fn g_in_the_panel_promotes_this_repos_settings_to_every_repo() {
     let mut h = Harness::new();
     seed(&h.root, "Old finished thing", "Done", &[]);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Char(','));
     h.type_text("done");
     h.press(KeyCode::Enter);
@@ -73,6 +75,7 @@ fn theme_command_switches_surfaces_reports_unknown_names_and_yields_to_reload() 
     let mut h = Harness::new();
     seed(&h.root, "Ship the thing", "todo", &[]);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
 
     let berg_border = h.app.config.theme.style(Surface::Border).fg;
 
@@ -120,6 +123,7 @@ fn theme_command_switches_surfaces_reports_unknown_names_and_yields_to_reload() 
     h.type_text("theme darkroom");
     h.press(KeyCode::Enter);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     assert_eq!(
         h.app.config.theme.style(Surface::Border).fg,
         berg_border,

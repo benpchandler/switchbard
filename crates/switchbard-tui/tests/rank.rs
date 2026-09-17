@@ -43,6 +43,7 @@ fn ranks_are_ordered_open_ended_appendable_and_droppable() {
         seed(&h.root, &format!("Extra {n}"), "To Do", &[]);
     }
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     for (title, keys) in [
         ("Extra 4", "1"),
         ("Extra 5", "1"),
@@ -137,6 +138,7 @@ fn grouped() -> Harness {
     seed_in_project(&h.root, "Chase portal login", "To Do", "Chase", None);
     seed_in_project(&h.root, "Chase portal MFA", "To Do", "Chase", None);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Esc);
     h
 }

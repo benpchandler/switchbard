@@ -15,6 +15,7 @@ fn blocked_filter_shows_only_tasks_with_an_open_dependency() {
     // dependent starts blocked.
     seed_with_deps(&h.root, "Ship checkout", "To Do", &["TASK-2"]);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
 
     h.press(KeyCode::Char('/'));
     let screen = h.type_text("blocked:yes");
@@ -35,6 +36,7 @@ fn blocked_filter_accepts_true_false_as_yes_no_aliases() {
     let mut h = Harness::new();
     seed_with_deps(&h.root, "Ship checkout", "To Do", &["TASK-2"]);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
 
     h.press(KeyCode::Char('/'));
     let screen = h.type_text("blocked:true");
@@ -59,6 +61,7 @@ fn a_task_whose_dependency_is_done_is_not_blocked() {
     // TASK-1 ("Fix login redirect loop") is "In Progress", not done.
     seed_with_deps(&h.root, "Ship checkout", "Done", &["TASK-1"]);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
 
     h.press(KeyCode::Char('/'));
     let screen = h.type_text("blocked:yes");
@@ -73,6 +76,7 @@ fn blocked_row_renders_in_the_hint_style() {
     let mut h = Harness::new();
     seed_with_deps(&h.root, "Ship checkout", "To Do", &["TASK-2"]);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.render();
 
     let hint = h.app.config.theme.style(Surface::Hint).fg;
@@ -90,6 +94,7 @@ fn detail_pane_lists_blocked_by_and_blocks() {
     h.terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 28)).unwrap();
     seed_with_deps(&h.root, "Ship checkout", "To Do", &["TASK-2"]);
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
 
     h.press(KeyCode::Char('/'));
     h.type_text("blocked:yes");

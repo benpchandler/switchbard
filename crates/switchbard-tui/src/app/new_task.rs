@@ -46,6 +46,9 @@ impl App {
     }
 
     fn create_task(&mut self) {
+        if self.defer_task_storage() {
+            return;
+        }
         let title = self.input.trim();
         if title.is_empty() {
             self.fail("title is required".to_string());

@@ -50,6 +50,7 @@ fn empty_task_menu_still_creates_and_escape_does_not_write() {
         std::fs::remove_file(file.unwrap().path()).unwrap();
     }
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     h.press(KeyCode::Char('t'));
     assert!(h.app.picker.is_some());
     h.press(KeyCode::Esc);

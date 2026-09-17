@@ -483,6 +483,7 @@ fn read_only_task_shows_fields_but_refuses_every_edit() {
     // immediate one the same way a user would (`r`), since this is the
     // second reload this test needs within the same instant.
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
 
     select_task_titled(&mut h, "Migrated into drafts");
     let id = h.app.selected_task().unwrap().id.clone();

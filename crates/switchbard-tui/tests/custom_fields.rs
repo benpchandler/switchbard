@@ -399,6 +399,8 @@ fn a_field_declared_while_running_joins_the_catalog_on_the_next_reload() {
         .expect("declared before the reload");
     h.press(KeyCode::Char('r'));
     h.press(KeyCode::Esc);
+    h.tick_until_tasks_settle();
+    h.render();
     assert!(h.app.registry().parse("stage").is_some(), "the new field");
     assert_eq!(
         h.app.registry().parse("counterparty"),

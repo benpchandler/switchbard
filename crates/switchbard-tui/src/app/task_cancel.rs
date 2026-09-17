@@ -28,6 +28,9 @@ impl CancelFlow {
 
 impl App {
     pub(super) fn open_task_cancellation(&mut self) {
+        if self.defer_task_storage() {
+            return;
+        }
         let Some(id) = self.selected_task().map(|task| task.id.clone()) else {
             return;
         };
@@ -69,6 +72,9 @@ impl App {
     }
 
     fn confirm_task_cancellation(&mut self) {
+        if self.defer_task_storage() {
+            return;
+        }
         if !self.task_cancel.confirmation_visible {
             self.status = "Show the full cancellation confirmation before confirming".into();
             return;
