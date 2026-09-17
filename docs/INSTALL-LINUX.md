@@ -1,6 +1,6 @@
 # Installing Switchbard on Linux
 
-Switchbard's supported interface is now the terminal UI. Install `sb` and `sbt` using [the TUI installation guide](INSTALL-TUI.md). The initial prebuilt Linux target is x86_64; other architectures require a source build. There is no `.deb`, `.rpm`, or AppImage package.
+Switchbard's supported interface is now the terminal UI. Install `sb` and `sbt` using [the TUI installation guide](INSTALL-TUI.md). The supported public release targets and source-build instructions are maintained there. There is no `.deb`, `.rpm`, or AppImage package.
 
 The TUI runs in a terminal without X11, Wayland, OpenGL, or the GUI mission sidecar. GitHub and agent integrations require their respective optional tools. See the installation guide for runtime requirements and source builds.
 
