@@ -32,10 +32,10 @@ pub(crate) fn title(state: &ViewState, page: Page, registry: &ColumnRegistry) ->
         format!("Filtered {}", subject.to_lowercase())
     };
     if state.group.is_auto() {
-        title.push_str(" · automatically grouped");
+        title.push_str(" · automatically outlined");
     } else if !state.group.is_flat() {
         title.push_str(&format!(
-            " · grouped by {}",
+            " · outlined by {}",
             state
                 .group
                 .levels()
@@ -50,7 +50,7 @@ pub(crate) fn title(state: &ViewState, page: Page, registry: &ColumnRegistry) ->
                 format!(" · colored by {}", display_column(*column, registry))
             }
             PaintRule::Rows { .. } => " · highlighted rows".into(),
-            PaintRule::Heading { .. } => " · styled groups".into(),
+            PaintRule::Heading { .. } => " · styled outline headings".into(),
             PaintRule::Header { .. } => " · styled headers".into(),
             PaintRule::Title { .. } => " · styled navigation".into(),
             PaintRule::Column { column, .. } => {

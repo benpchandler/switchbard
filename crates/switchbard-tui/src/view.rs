@@ -1673,7 +1673,7 @@ fn picker_title(
         PickerPurpose::PaintColumn => "paint which column".to_string(),
         PickerPurpose::PaintTarget => "paint".to_string(),
         PickerPurpose::PaintRowValues => "selected row values".to_string(),
-        PickerPurpose::PaintHeadings => "paint group heading".to_string(),
+        PickerPurpose::PaintHeadings => "paint outline heading".to_string(),
         PickerPurpose::PaintHighlight => "highlight · step 1 of 2".to_string(),
         PickerPurpose::PaintText => "text · step 2 of 2".to_string(),
         PickerPurpose::PaintRules => "paint rules · top is the base".to_string(),
