@@ -6,7 +6,7 @@
 
 Periodic task refreshes also run off-thread. Stale results cannot replace newer local mutations. Focused detail refreshes read the backlog and authoritative edit snapshot under one repository fence in the worker; completion performs no storage reads. Entering or applying an edit defers while the report or refresh is pending. Read-only pane navigation remains available. Selection follows the filed task only when the original context remains current.
 
-TASK-248 is the canonical tracker: high priority, Bugs project, labels tui/bug/performance. Implementation is isolated on `fix/idea-report-responsive`, based on fetched `origin/main` at `5a9e9ae8ba8a636c2fce43cb4651e620f5e47cc4`. Both the primary checkout and new worktree were initially clean. No PR, merge, or installation was performed; full workspace CI remains a before-merge gate.
+TASK-248 is the canonical tracker: high priority, Bugs project, labels tui/bug/performance. This change is isolated on `fix/idea-report-responsive`, based on the reconciled `origin/main` at `5e699a5c1b4bd4fe892e5a28c84f27dc3702be25`. Both the primary checkout and new worktree were initially clean. No PR, merge, or installation was performed in this implementation slice; full workspace CI remains a before-merge gate.
 
 ## Reproduction and validation
 
