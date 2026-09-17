@@ -58,11 +58,10 @@
 //! ## Read-only and bounded
 //!
 //! This module only ever reads process tables (`ps`) or `/proc`. It has no
-//! kill path of its own — Command's Kill action for a fleet row is the
-//! *existing* dispatch kill (`dispatch_kill::kill_dispatch_run`), gated to
-//! dispatch-run rows only; an interactive session found here has no kill
-//! affordance at all (see the GUI's `ui::places::command` module doc for why
-//! that is a deliberate scope boundary, not an oversight).
+//! kill path of its own. The native scan may capture a process identity
+//! for the TUI Agents tab's separately confirmed termination action in
+//! [`crate::agent_kill`]. Registry-only rows have no such identity and cannot
+//! authorize that action. The GUI's fleet Kill remains dispatch-only.
 
 use crate::agent_status::is_safe_file_stem;
 use crate::attribution::{most_specific_worktree, sort_by_specificity};
@@ -85,6 +84,8 @@ pub const MAX_LISTING_BYTES: usize = 4 * 1024 * 1024;
 /// another agent process. A helper sits a handful of levels below its
 /// session; the bound keeps a cyclic or absurdly deep table from looping.
 pub const MAX_ANCESTOR_DEPTH: usize = 64;
+/// Native kill identity acquisition adds at most this many per-PID probes.
+pub const MAX_NATIVE_IDENTITY_PROBES: usize = 512;
 
 /// Which agent CLI a session belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +139,8 @@ impl AgentActivity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentProcessRow {
     pub pid: u32,
+    /// Native process identity captured by the OS scan, never by a registry listing.
+    pub process_identity: Option<crate::agent_kill::AgentProcessIdentity>,
     pub kind: AgentProcessKind,
     pub cwd: Option<PathBuf>,
     /// The CLI's own session id (`sessionId` in the Claude listing) — the
@@ -171,6 +174,8 @@ pub struct AgentProcessRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentSession {
     pub pid: u32,
+    /// See [`AgentProcessRow::process_identity`], retained for safe termination.
+    pub process_identity: Option<crate::agent_kill::AgentProcessIdentity>,
     pub kind: AgentProcessKind,
     /// The process's working directory, kept past attribution because the
     /// derived-default session name is built from its basename.
@@ -205,7 +210,7 @@ pub struct AgentScan {
 /// Which binary names count as an interactive agent CLI — see this module's
 /// doc for why this is an exact match on the process's own command name, not
 /// a substring or argv scan.
-fn classify_command(name: &str) -> Option<AgentProcessKind> {
+pub(crate) fn classify_command(name: &str) -> Option<AgentProcessKind> {
     match name {
         "claude" => Some(AgentProcessKind::Claude),
         "codex" => Some(AgentProcessKind::Codex),
@@ -229,6 +234,7 @@ pub fn attribute_agent_sessions(
             let matched = most_specific_worktree(row.cwd.as_deref(), &sorted);
             AgentSession {
                 pid: row.pid,
+                process_identity: row.process_identity.clone(),
                 kind: row.kind,
                 cwd: row.cwd.clone(),
                 repo_name: matched.map(|w| w.repo_name.clone()),
@@ -303,18 +309,43 @@ fn has_agent_ancestor(
 
 fn scan_processes() -> Result<Vec<AgentProcessRow>> {
     #[cfg(target_os = "linux")]
-    {
-        linux::scan()
-    }
+    let rows = linux::scan()?;
     #[cfg(not(target_os = "linux"))]
-    {
-        scan_ps()
+    let rows = scan_ps()?;
+    Ok(authenticate_agent_rows(rows))
+}
+
+/// Discovery supplies PID hints, not kill identity. The native capture
+/// brackets cwd/executable with precise birth reads and owns displayed age.
+pub fn authenticate_agent_rows(mut rows: Vec<AgentProcessRow>) -> Vec<AgentProcessRow> {
+    for row in rows.iter_mut().take(MAX_NATIVE_IDENTITY_PROBES) {
+        row.process_identity = None;
+        if let Ok(identity) = crate::agent_kill::probe_agent_identity(row.pid) {
+            let contradiction = row.kind != identity.kind
+                || row.cwd.as_ref().is_some_and(|cwd| *cwd != identity.cwd)
+                || birth_contradicts(row.started_unix, identity.started_unix);
+            row.kind = identity.kind;
+            row.cwd = Some(identity.cwd.clone());
+            row.started_unix = identity.started_unix;
+            if !contradiction {
+                row.process_identity = Some(identity);
+            }
+        }
     }
+    rows
+}
+
+// Seconds-only source fields cannot prove a birth match. More than two
+// seconds differs despite ps elapsed rounding/read timing, so fails closed.
+fn birth_contradicts(source: Option<u64>, native: Option<u64>) -> bool {
+    source.zip(native).is_some_and(|(a, b)| a.abs_diff(b) > 2)
 }
 
 /// Join the OS scan and the Claude listing on pid. A listed session wins
-/// (it knows its own state, name and session id) and borrows the scan's
-/// pgid, plus cwd and start time when the listing lacked them; a scanned
+/// for observational state, name and session id. An authenticated native
+/// capture owns kind/cwd/start; registry contradictions disable its kill
+/// capability. pgid remains independent fleet dedup metadata. Otherwise
+/// the listing borrows cwd/start when absent; a scanned
 /// process the listing did not name is kept as it was. Sorted by pid so
 /// two consecutive scans of the same machine compare equal.
 pub fn merge_agent_rows(
@@ -323,8 +354,18 @@ pub fn merge_agent_rows(
 ) -> Vec<AgentProcessRow> {
     let mut merged = Vec::with_capacity(scanned.len() + listed.len());
     for mut row in listed {
+        row.process_identity = None;
         if let Some(position) = scanned.iter().position(|seen| seen.pid == row.pid) {
             let seen = scanned.swap_remove(position);
+            if let Some(identity) = seen.process_identity {
+                let contradiction = row.kind != identity.kind
+                    || row.cwd.as_ref().is_some_and(|cwd| *cwd != identity.cwd)
+                    || birth_contradicts(row.started_unix, identity.started_unix);
+                row.kind = identity.kind;
+                row.cwd = Some(identity.cwd.clone());
+                row.started_unix = identity.started_unix;
+                row.process_identity = (!contradiction).then_some(identity);
+            }
             row.pgid = seen.pgid;
             if row.cwd.is_none() {
                 row.cwd = seen.cwd;
@@ -375,6 +416,7 @@ pub fn parse_claude_agents_listing(raw: &str) -> Result<Vec<AgentProcessRow>> {
             let pid = session.pid?;
             Some(AgentProcessRow {
                 pid,
+                process_identity: None,
                 kind: AgentProcessKind::Claude,
                 cwd: session.cwd,
                 started_unix: session.started_at.map(|ms| ms / 1000),
@@ -490,6 +532,7 @@ fn parse_ps_table(raw: &str, now: u64) -> PsTable {
         let started_unix = parse_ps_etime(parsed.etime).map(|elapsed| now.saturating_sub(elapsed));
         table.agents.push(AgentProcessRow {
             pid: parsed.pid,
+            process_identity: None,
             kind,
             cwd: None,
             started_unix,
@@ -616,6 +659,7 @@ mod linux {
             let pgid = fields.as_deref().and_then(pgid_from_fields);
             out.push(AgentProcessRow {
                 pid,
+                process_identity: None,
                 kind,
                 cwd,
                 started_unix,
@@ -698,6 +742,7 @@ mod tests {
     fn row(pid: u32, kind: AgentProcessKind, cwd: Option<&str>) -> AgentProcessRow {
         AgentProcessRow {
             pid,
+            process_identity: None,
             kind,
             cwd: cwd.map(PathBuf::from),
             started_unix: Some(1_000),

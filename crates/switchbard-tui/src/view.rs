@@ -67,6 +67,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_footer(frame, app, footer);
     app.pr_merge.confirmation_visible = false;
     app.task_cancel.confirmation_visible = false;
+    app.agent_kill.confirmation_visible = false;
     if let Some(picker) = app.picker.clone() {
         draw_picker(frame, app, &picker, body);
     }
@@ -1277,6 +1278,7 @@ fn browse_hints(app: &App) -> String {
         vec![(Action::Page, "page"), (Action::Help, "keys")]
     } else if app.page == Page::Agents {
         vec![
+            (Action::KillAgent, "kill"),
             (Action::Open, "detail"),
             (Action::Reload, "poll"),
             (Action::Page, "page"),
@@ -1344,7 +1346,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         .min(body.width.saturating_sub(4) as usize) as u16;
     let width = if matches!(
         picker.purpose,
-        PickerPurpose::Merge | PickerPurpose::TaskCancel
+        PickerPurpose::Merge | PickerPurpose::TaskCancel | PickerPurpose::AgentKill
     ) {
         body.width.saturating_sub(4)
     } else {
@@ -1560,7 +1562,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         );
     let block = if !matches!(
         picker.purpose,
-        PickerPurpose::Merge | PickerPurpose::TaskCancel
+        PickerPurpose::Merge | PickerPurpose::TaskCancel | PickerPurpose::AgentKill
     ) && rows.len().saturating_add(4) > height as usize
     {
         let navigation = if matches!(picker.purpose, PickerPurpose::TaskParent(_)) && width >= 28 {
@@ -1591,9 +1593,11 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
     };
     if matches!(
         picker.purpose,
-        PickerPurpose::Merge | PickerPurpose::TaskCancel
+        PickerPurpose::Merge | PickerPurpose::TaskCancel | PickerPurpose::AgentKill
     ) {
-        let confirmation_lines = if picker.purpose == PickerPurpose::TaskCancel {
+        let confirmation_lines = if picker.purpose == PickerPurpose::AgentKill {
+            app.agent_kill.confirmation_lines()
+        } else if picker.purpose == PickerPurpose::TaskCancel {
             app.task_cancel.confirmation_lines()
         } else {
             app.pr_merge.confirmation_lines()
@@ -1613,7 +1617,9 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
             picker.selected,
             true,
         );
-        if picker.purpose == PickerPurpose::TaskCancel {
+        if picker.purpose == PickerPurpose::AgentKill {
+            app.agent_kill.confirmation_visible = visible;
+        } else if picker.purpose == PickerPurpose::TaskCancel {
             app.task_cancel.confirmation_visible = visible;
         } else {
             app.pr_merge.confirmation_visible = visible;
@@ -1660,6 +1666,7 @@ fn picker_title(
         PickerPurpose::Ball => "ball".to_string(),
         PickerPurpose::Merge => "Confirm PR merge".to_string(),
         PickerPurpose::TaskCancel => "Cancel task?".to_string(),
+        PickerPurpose::AgentKill => "Signal selected agent?".to_string(),
         PickerPurpose::Task => "task".to_string(),
         PickerPurpose::TopList => if legacy_order {
             "task · top list"

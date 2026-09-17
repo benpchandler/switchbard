@@ -289,6 +289,7 @@ fn command_fleet_mixed_app(theme: ThemeChoice) -> HiveApp {
     seed_two_dispatch_tasks(&app);
     *app.agent_sessions.lock().unwrap() = vec![AgentSession {
         pid: 5150,
+        process_identity: None,
         kind: AgentProcessKind::Claude,
         repo_name: Some(REPO_NAME.to_string()),
         worktree_path: Some(PathBuf::from(format!("{REPO_PATH}/.worktrees/feature-x"))),

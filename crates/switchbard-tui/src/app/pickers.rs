@@ -517,6 +517,14 @@ impl App {
         if self
             .picker
             .as_ref()
+            .is_some_and(|p| p.purpose == PickerPurpose::AgentKill)
+        {
+            self.handle_agent_kill_key(event);
+            return;
+        }
+        if self
+            .picker
+            .as_ref()
             .is_some_and(|p| p.purpose == PickerPurpose::TaskCancel)
         {
             self.handle_task_cancel_key(event);

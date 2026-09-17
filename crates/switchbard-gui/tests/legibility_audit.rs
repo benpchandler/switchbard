@@ -764,6 +764,7 @@ fn seed_command_fleet(app: &mut HiveApp) {
     seed_dispatch_runs(app);
     *app.agent_sessions.lock().unwrap() = vec![switchbard_core::AgentSession {
         pid: 5150,
+        process_identity: None,
         kind: switchbard_core::AgentProcessKind::Claude,
         repo_name: Some(REPO_NAME.to_string()),
         worktree_path: Some(PathBuf::from(format!("{REPO_PATH}/.worktrees/feature-x"))),

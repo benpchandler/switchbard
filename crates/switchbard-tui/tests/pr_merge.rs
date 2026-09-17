@@ -4,6 +4,56 @@ use crossterm::event::KeyCode;
 use harness::*;
 use std::time::{Duration, Instant};
 
+#[test]
+fn confirmed_merge_keeps_internal_receipt_out_of_the_screen() {
+    let mut h = Harness::new();
+    h.app.accept_merge_result(switchbard_core::PrMergeResult {
+        outcome: switchbard_core::PrMergeOutcome::Confirmed,
+        message: "Merged benpchandler/switchbard#193; GitHub readback confirmed d8017b0cacf4210d74ab5ea1374f4b4ac860065a".into(),
+        receipt_path: Some(h.root.join("internal-merge-receipt.json")),
+    });
+    for (width, height) in [(40, 8), (100, 24), (160, 40)] {
+        h.terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        let screen = h.render();
+        assert!(!screen.contains("readback"), "{screen}");
+        assert!(!screen.contains("Merge receipt"), "{screen}");
+        assert!(screen.contains("Merged"), "{screen}");
+        assert!(!screen.contains("internal-merge-receipt"), "{screen}");
+    }
+    let retained = h.app.pr_merge.last_result.as_ref().unwrap();
+    assert!(retained.message.contains("readback confirmed"));
+    assert!(retained.receipt_path.is_some());
+    h.press(KeyCode::Char('n'));
+    assert!(!h.render().contains("PR Merged"));
+}
+
+#[test]
+fn unsuccessful_merge_retains_actionable_outcome_without_receipt_alert() {
+    for (outcome, label) in [
+        (switchbard_core::PrMergeOutcome::Rejected, "Merge rejected"),
+        (
+            switchbard_core::PrMergeOutcome::OutcomeUnknown,
+            "Merge outcome unknown",
+        ),
+    ] {
+        let mut h = Harness::new();
+        h.app.accept_merge_result(switchbard_core::PrMergeResult {
+            outcome,
+            message: "Inspect GitHub before retrying".into(),
+            receipt_path: Some(h.root.join("internal-merge-receipt.json")),
+        });
+        let screen = h.render();
+        assert!(screen.contains(label), "{screen}");
+        assert!(
+            screen.contains("Inspect GitHub before retrying"),
+            "{screen}"
+        );
+        assert!(!screen.contains("Merge receipt"), "{screen}");
+        assert!(!screen.contains("Merged PR"), "{screen}");
+    }
+}
+
 fn settle_prs(h: &mut Harness) {
     let deadline = Instant::now() + Duration::from_secs(100);
     while h.app.pull_requests.loading() && Instant::now() < deadline {

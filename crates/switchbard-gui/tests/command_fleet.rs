@@ -152,6 +152,7 @@ fn app_with_fleet(
 fn interactive_session(pid: u32) -> AgentSession {
     AgentSession {
         pid,
+        process_identity: None,
         kind: AgentProcessKind::Claude,
         repo_name: None,
         worktree_path: Some(PathBuf::from(format!("{REPO_PATH}/.worktrees/feature-x"))),
@@ -240,6 +241,7 @@ fn a_dispatch_runs_own_claude_process_never_double_rows() {
     );
     let shadow_session = AgentSession {
         pid: 42,
+        process_identity: None,
         kind: AgentProcessKind::Claude,
         repo_name: None,
         worktree_path: Some(run.worktree_path.clone()),

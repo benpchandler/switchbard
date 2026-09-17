@@ -58,6 +58,7 @@ pub struct MergeFlow {
     pending: Option<Receiver<Reply>>,
     prepared: Option<PreparedPrMerge>,
     target: Option<(String, String)>,
+    target_number: Option<u64>,
     dismissed: bool,
     submitting: bool,
     refresh_after_result: bool,
@@ -237,6 +238,7 @@ impl App {
         let root = self.repo_root.clone();
         let (tx, rx) = mpsc::sync_channel(1);
         self.pr_merge.target = Some((row.id.clone(), row.head_oid.clone()));
+        self.pr_merge.target_number = Some(row.number);
         self.pr_merge.dismissed = false;
         match std::thread::Builder::new()
             .name("sbt-merge-prepare".into())
@@ -485,18 +487,21 @@ impl App {
         }
     }
 
-    fn accept_merge_result(&mut self, result: PrMergeResult) {
+    /// Apply a completed core merge result without performing a GitHub write.
+    pub fn accept_merge_result(&mut self, result: PrMergeResult) {
         self.pr_merge.submitting = false;
-        let outcome = match result.outcome {
-            PrMergeOutcome::Confirmed => "Merge confirmed",
-            PrMergeOutcome::Rejected => "Merge rejected",
-            PrMergeOutcome::OutcomeUnknown => "Merge outcome unknown",
+        self.status = match result.outcome {
+            PrMergeOutcome::Confirmed => self.pr_merge.target_number.map_or_else(
+                || "Merged PR".into(),
+                |number| format!("Merged PR #{number}"),
+            ),
+            PrMergeOutcome::Rejected => format!("Merge rejected: {}", result.message),
+            PrMergeOutcome::OutcomeUnknown => format!("Merge outcome unknown: {}", result.message),
         };
-        self.status = format!("{outcome}: {}", result.message);
+        self.telemetry.record("merge_result", &result.message);
         if let Some(path) = &result.receipt_path {
-            self.pull_requests
-                .notifications
-                .push(format!("Merge receipt: {}", path.display()));
+            self.telemetry
+                .record("merge_receipt", path.display().to_string());
         }
         self.pull_requests.notifications.push(self.status.clone());
         if let Some((id, head_oid)) = self.pr_merge.merge_expectation(&result) {
@@ -530,7 +535,9 @@ impl App {
     }
 
     pub(super) fn request_quit(&mut self) {
-        if self.pr_merge.is_submitting() {
+        if self.agent_kill.is_submitting() {
+            self.status = "Agent signal pending; wait for the result before quitting".into();
+        } else if self.pr_merge.is_submitting() {
             self.status = "Merge submitting; wait for the result before quitting".into();
         } else {
             self.should_quit = true;

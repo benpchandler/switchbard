@@ -26,6 +26,7 @@ fn session(
 ) -> AgentSession {
     AgentSession {
         pid,
+        process_identity: None,
         kind: AgentProcessKind::Claude,
         cwd: Some(root.to_path_buf()),
         repo_name: Some("fixture".into()),

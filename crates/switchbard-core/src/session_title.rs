@@ -242,6 +242,7 @@ mod tests {
     fn session(pid: u32, name: Option<&str>, cwd: &str, id: Option<&str>) -> AgentSession {
         AgentSession {
             pid,
+            process_identity: None,
             kind: AgentProcessKind::Claude,
             cwd: Some(PathBuf::from(cwd)),
             repo_name: None,

@@ -171,6 +171,7 @@ Re-exports are **explicit in `src/lib.rs`** (no glob re-exports). Module map:
 - `pr_merge` - guarded direct GitHub merge: core eligibility, exact-head confirmation, bounded command/readback and exclusive durable operation receipts. Call blocking APIs off the input thread.
 - `git_env` — `git_cmd()`: every git call goes through it; see Git safety below.
 - `spawn` / `kill` — `spawn_in_session()` (own session/process group) + `kill_pgid()` → `KillOutcome`.
+- `agent_kill` - separate selected agent positive-PID SIGTERM boundary, precise native identity and bounded protected ancestor chain; no process-group kill or automatic escalation. Call preparation and termination off-thread.
 - `config` — `~/.switchbard/config.toml` load/save; persisted form is `Vec<Repo>` + UI defaults.
 
 ### `crates/switchbard-gui` — egui/eframe app

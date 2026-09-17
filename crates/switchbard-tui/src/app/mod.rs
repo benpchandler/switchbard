@@ -1,6 +1,7 @@
 //! Application state and the single place key events turn into state changes.
 //! Submodules extend `App` by concept: `pickers`, `paint_flow`, `slots`.
 
+pub mod agent_kill;
 mod detail_edit;
 mod filter_completion;
 mod new_task;
@@ -217,6 +218,7 @@ pub struct App {
     picker_parents: Vec<ValuePicker>,
     pub pr_merge: pr_merge::MergeFlow,
     pub task_cancel: task_cancel::CancelFlow,
+    pub agent_kill: agent_kill::AgentKillFlow,
     pub column_purpose: ColumnPurpose,
     pub status: String,
     pub last_screen: String,
@@ -336,6 +338,7 @@ impl App {
             should_quit: false,
             pr_merge: pr_merge::MergeFlow::default(),
             task_cancel: task_cancel::CancelFlow::default(),
+            agent_kill: agent_kill::AgentKillFlow::default(),
         };
         app.reload_tasks();
         app.reload_work();
@@ -681,6 +684,7 @@ impl App {
         self.refresh_calendar_day();
         self.refresh_pr_state();
         self.tick_pr_merge();
+        self.tick_agent_kill();
         if let Some(path) = self.config_path.as_deref() {
             let now = config::modified_at(path);
             if now != self.config_seen {
@@ -864,6 +868,7 @@ impl App {
         {
             self.cancel_pr_merge();
         }
+        self.reconcile_agent_preparation();
     }
 
     /// After `t`: digits rank, `b` assigns the ball, `d` marks Done, `p` pins,
@@ -1389,6 +1394,7 @@ impl App {
         }
         match action {
             Action::Down => self.agents.step(1),
+            Action::KillAgent => self.open_agent_kill(),
             Action::Up => self.agents.step(-1),
             Action::Top => self.agents.step(isize::MIN),
             Action::Bottom => self.agents.step(isize::MAX),
@@ -1460,12 +1466,14 @@ impl App {
         }
         match action {
             Action::Merge => self.status = "Switch to Pull Requests to merge a PR".into(),
+            Action::KillAgent => self.status = "Switch to Agents to signal an agent".into(),
             Action::Mark => {
                 self.status = "Switch to Pull Requests to mark PRs for bulk merge".into()
             }
             Action::OpenBrowser => self.status = "Switch to Pull Requests to open a PR".into(),
             Action::DismissNotifications => self.pull_requests.dismiss_notifications(),
             Action::Page => {
+                self.dismiss_agent_preparation();
                 self.cancel_pr_merge();
                 self.cancel_pr_merge_queue("left the PR list");
                 self.switch_page(self.page.toggle());
@@ -1496,6 +1504,7 @@ impl App {
                 }
             },
             Action::Back => {
+                self.dismiss_agent_preparation();
                 self.cancel_pr_merge();
                 self.cancel_pr_merge_queue("Esc");
                 if self.pane != Pane::None {
