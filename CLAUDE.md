@@ -142,12 +142,12 @@ When touching egui render paths (`crates/switchbard-gui/src/app.rs` or `crates/s
 
 ## Architecture
 
-Four-crate Cargo workspace, plus one Python package: `orchestrator/` is the
+Five-crate Cargo workspace, plus one Python package: `orchestrator/` is the
 LangGraph orchestration agent (uv-managed, its own pytest suite - `cd
 orchestrator && uv run pytest`; not part of `mise run ci` yet). It drains the
 dispatch queue via the `sb queue` protocol and never edits task
 files - see `orchestrator/README.md` and the trajectory's *Task Queue
-orchestration* entry. `switchbard-core` has **zero UI dependencies** and is heavily unit-tested; `switchbard-gui` is the only place egui appears; `switchbard-dispatch` is a thin headless binary over `switchbard-core` that drains the dispatch queue with the GUI closed; `switchbard-task` (installed binary: `sb`) is the terminal/agent frontend for Backlog-format tasks over the same native write layer (format fork, TASK-66).
+orchestration* entry. `switchbard-core` has **zero UI dependencies** and is heavily unit-tested; `switchbard-tui` is the primary ratatui frontend over that core; `switchbard-gui` is the only place egui appears; `switchbard-dispatch` is a thin headless binary over `switchbard-core` that drains the dispatch queue with the GUI closed; `switchbard-task` (installed binary: `sb`) is the terminal/agent frontend for Backlog-format tasks over the same native write layer (format fork, TASK-66).
 
 Mission Command uses one bundled xplan one-shot helper process per request. Switchbard may supervise only the strict `hello`, `queue_mission`, `get_pending_decision`, and `resume_decision` protocol through `switchbard-core`; xplan owns every mission write, while the egui layer renders cached state and emits typed intentions without process or filesystem I/O.
 
