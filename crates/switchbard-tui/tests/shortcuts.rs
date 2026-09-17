@@ -100,7 +100,7 @@ fn narrow_help_keeps_report_instructions_accessible_without_moving_tasks() {
         assert!(found, "report instruction never accessible: {screen}");
         assert_eq!(h.selected_title(), selected);
         assert!(h.press(KeyCode::Char('g')).contains("new_task"));
-        h.press(KeyCode::Char('G'));
+        h.press(KeyCode::Char('e'));
         h.press(KeyCode::Esc);
         assert!(h.press(KeyCode::Char('?')).contains("new_task"));
     }

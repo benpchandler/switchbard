@@ -15,7 +15,7 @@ fn large_list_keeps_last_selection_visible_after_resize_and_filter() {
     h.press(KeyCode::Esc);
     for (width, height) in [(100, 20), (48, 8), (160, 30)] {
         h.terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        let screen = h.press(KeyCode::Char('G'));
+        let screen = h.press(KeyCode::Char('e'));
         let selected = h.selected_title();
         assert!(
             screen.contains(&selected),

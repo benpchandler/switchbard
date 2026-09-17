@@ -286,7 +286,7 @@ fn many_wrapped_tasks_scroll_by_visible_tasks_and_keep_selection_after_resize() 
     h.press(KeyCode::Esc);
     for (width, height) in [(48, 16), (80, 22), (35, 6)] {
         h.terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        h.press(KeyCode::Char('G'));
+        h.press(KeyCode::Char('e'));
         assert!(h
             .render()
             .contains(h.selected_title().split_whitespace().next().unwrap()));

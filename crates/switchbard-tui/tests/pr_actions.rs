@@ -7,10 +7,10 @@ fn browser_action_requires_a_selected_pr_and_leaves_tasks_unchanged() {
     let mut h = Harness::new();
     let selected = h.selected_title();
     assert!(h
-        .press(KeyCode::Char('O'))
+        .press(KeyCode::Char('u'))
         .contains("Switch to Pull Requests"));
     h.next_list_page();
-    assert!(h.press(KeyCode::Char('O')).contains("No PR selected"));
+    assert!(h.press(KeyCode::Char('u')).contains("No PR selected"));
     h.type_text(":open");
     assert!(h.press(KeyCode::Enter).contains("No PR selected"));
     h.next_list_page();
@@ -30,7 +30,7 @@ fn selected_pr_opens_in_the_real_browser() {
         h.app.tick();
     }
     let url = h.app.pull_requests.row().expect("actual PR").url.clone();
-    h.press(KeyCode::Char('O'));
+    h.press(KeyCode::Char('u'));
     assert_eq!(h.app.status, format!("Opened {url}"));
     assert!(h.render().contains("Opened https://github.com/"));
 }

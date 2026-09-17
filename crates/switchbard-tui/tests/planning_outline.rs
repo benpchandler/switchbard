@@ -153,7 +153,7 @@ fn migrated_planned_tasks_honor_project_outline() {
         ]
     );
     assert_eq!(h.app.top, planned);
-    h.press(KeyCode::Char('G'));
+    h.press(KeyCode::Char('e'));
     let selected = h.app.selected_task().unwrap().id.clone();
     let mut displayed = task_ids(&h);
     displayed.sort();
@@ -249,7 +249,7 @@ fn mixed_planning_keeps_groups_missing_projects_filters_and_navigation() {
     h.terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(46, 10)).unwrap();
     let screen = h.render();
     assert!(screen.contains("Atlas"), "{screen}");
-    h.press(KeyCode::Char('G'));
+    h.press(KeyCode::Char('e'));
     assert_eq!(h.selected_title(), "Investigate Beacon");
     assert!(h.render().contains("Beacon"));
     h.press(KeyCode::Char('g'));
