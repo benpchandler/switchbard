@@ -1026,7 +1026,7 @@ impl App {
                 Payload::TaskAction(action),
             ) => self.run_task_action(action),
             (PickerPurpose::TaskParent(id), Payload::Parent(parent)) => {
-                self.change_task_parent(&id, parent.as_deref())
+                self.apply_task_parent(&id, parent.as_deref())
             }
             (PickerPurpose::TaskProject(id), Payload::Project(project)) => {
                 self.apply_task_project(&id, project.as_deref())
