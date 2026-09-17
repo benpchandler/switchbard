@@ -24,12 +24,13 @@ use crate::filter::Filter;
 use crate::group::Grouping;
 use crate::list_settings::ListSettings;
 use crate::paint::{parse_rules, rules_text, PaintRule};
-use crate::sort::Sort;
+use crate::sort::{self, Sort};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ViewState {
     pub filter: String,
-    pub sort: Option<Sort>,
+    /// The sort stack, layer 1 first; empty when the list is unsorted.
+    pub sort: Vec<Sort>,
     /// Shown columns in display order.
     pub columns: Vec<Column>,
     /// Columns shown as glyphs instead of text.
@@ -64,8 +65,8 @@ impl ViewState {
         if !self.filter.is_empty() {
             parts.push(self.filter.clone());
         }
-        if let Some(sort) = self.sort {
-            parts.push(sort.label(registry));
+        if !self.sort.is_empty() {
+            parts.push(sort::stack_label(&self.sort, registry));
         }
         if let Some(columns) = self.columns_label(registry) {
             parts.push(columns);
@@ -208,7 +209,7 @@ pub fn starter_views() -> Vec<ViewState> {
     .into_iter()
     .map(|filter| ViewState {
         filter: filter.to_string(),
-        sort: None,
+        sort: Vec::new(),
         columns: Column::DEFAULT_SHOWN.to_vec(),
         glyph_columns: Vec::new(),
         abbreviated: Column::DEFAULT_ABBREVIATED.to_vec(),
@@ -652,11 +653,13 @@ impl ViewState {
             .collect();
         self.sort = self
             .sort
+            .iter()
             .map(|sort| Sort {
                 column: canonical(sort.column),
-                ..sort
+                ..*sort
             })
-            .filter(|sort| catalog.contains(&sort.column));
+            .filter(|sort| catalog.contains(&sort.column))
+            .collect();
         self.paint.retain_mut(|rule| match rule {
             PaintRule::ByColumn { column, .. } | PaintRule::Column { column, .. } => {
                 *column = canonical(*column);
@@ -704,7 +707,7 @@ impl Default for ViewState {
     fn default() -> ViewState {
         ViewState {
             filter: String::new(),
-            sort: None,
+            sort: Vec::new(),
             columns: Column::DEFAULT_SHOWN.to_vec(),
             glyph_columns: Vec::new(),
             abbreviated: Column::DEFAULT_ABBREVIATED.to_vec(),
@@ -761,7 +764,7 @@ fn parse_view(
     }
     Ok(ViewState {
         filter: prune_filter(&field("filter")?, &orphans),
-        sort: Sort::parse(&sort, registry),
+        sort: sort::parse_stack(&sort, registry),
         columns: parse_columns(&columns, registry),
         glyph_columns: glyphs
             .split(',')
@@ -899,8 +902,12 @@ fn validate_view_rules(entry: &Table, registry: &ColumnRegistry) -> Result<(), S
             .map_err(|e| e.to_string())
     };
     let sort = field("sort")?;
-    if !sort.is_empty()
-        && Sort::parse(&sort, registry).is_none()
+    // Every layer must read, or the view would silently sort by fewer columns
+    // than it says it does.
+    if sort
+        .split(',')
+        .filter(|layer| !layer.trim().is_empty())
+        .any(|layer| Sort::parse(layer, registry).is_none())
         && !names_an_undeclared_field(&sort, registry)
     {
         return Err("unsupported saved sort".into());
@@ -999,7 +1006,7 @@ impl ViewState {
             || Filter::parse(&self.filter, registry)
                 .fields()
                 .any(|field| unsupported(field.column()))
-            || self.sort.is_some_and(|s| unsupported(s.column))
+            || self.sort.iter().any(|s| unsupported(s.column))
             || (!scope.supports_row_layout()
                 && self.row_layout != crate::row_layout::RowLayout::default())
             || (!scope.supports_grouping() && !self.group.is_flat())
@@ -1059,12 +1066,7 @@ fn lua_view(view: &ViewState, registry: &ColumnRegistry) -> String {
     format!(
         "{{ filter = {}, sort = {}, columns = {}{glyphs}{paint}{group}{abbreviated}{pin}{name}{row_layout} }}",
         lua_string(&view.filter),
-        lua_string(
-            &view
-                .sort
-                .map(|sort| sort.to_text(registry))
-                .unwrap_or_default()
-        ),
+        lua_string(&sort::stack_to_text(&view.sort, registry)),
         lua_string(&columns_save_text(&view.columns, registry)),
     )
 }

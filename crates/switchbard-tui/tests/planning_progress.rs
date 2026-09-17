@@ -244,12 +244,12 @@ fn planning_sort_is_available_from_hidden_column_and_survives_saved_view_reload(
     let mut h = Harness::new();
     h.type_text("spl");
     h.press(KeyCode::Char('a'));
-    assert_eq!(h.app.state.sort.unwrap().column, Column::Planning);
+    assert_eq!(h.app.state.sort.first().unwrap().column, Column::Planning);
     let rows = harness::screen_rows(&h);
     assert_eq!(rows.last().unwrap(), "Fix login redirect loop");
     h.type_text("vs1");
     h.app = open_app(&h.root, &h.config_path);
-    assert_eq!(h.app.state.sort.unwrap().column, Column::Planning);
+    assert_eq!(h.app.state.sort.first().unwrap().column, Column::Planning);
     let screen = h.render();
     assert!(screen.contains("planning"), "{screen}");
 }

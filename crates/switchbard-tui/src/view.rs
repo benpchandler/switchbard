@@ -308,7 +308,9 @@ fn draw_task_rows(
         })
         .collect();
     crate::list_presentation::header(frame, header_area, &cells, &headers, header_style);
-    if let Some(sort) = state.sort {
+    // Every layer's column is marked, not only the first: a cascading sort
+    // that shows one underline reads as a sort by one column.
+    for sort in &state.sort {
         if let Some(index) = state
             .columns
             .iter()
@@ -589,8 +591,8 @@ fn fitted_width(
 /// the caller adds no stray separator.
 fn view_settings_summary(app: &App) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
-    if let Some(sort) = app.state.sort {
-        parts.push(sort.label(app.registry()));
+    if !app.state.sort.is_empty() {
+        parts.push(crate::sort::stack_label(&app.state.sort, app.registry()));
     }
     if let Some(label) = app.state.columns_label(app.registry()) {
         parts.push(label);
@@ -1064,6 +1066,10 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
         (":view <name>  :reload  :q", ""),
         ("f/s <col#>", "filter/sort by column"),
         (
+            "s … Tab",
+            "another sort layer to break the ties above it; Enter done, ←/⌫ undo, Esc cancels",
+        ),
+        (
             "/ … Tab",
             "complete a filter key or value; Esc keeps it as typed",
         ),
@@ -1157,6 +1163,20 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 lines.push(Line::styled(app.status.clone(), theme.style(Surface::Status)));
             }
             lines
+        }
+        // The locked breadcrumb, where there is no picker left to carry it.
+        Mode::SortEntry => {
+            let hint = if app.status.is_empty() {
+                "tab adds a layer · enter done · ←/⌫ undo · esc cancels".to_string()
+            } else {
+                app.status.clone()
+            };
+            vec![Line::from(vec![
+                Span::styled(" sort ", theme.style(Surface::Accent)),
+                Span::raw(app.sort_breadcrumb()),
+                Span::styled("▏", theme.style(Surface::Accent)),
+                Span::styled(format!("   {hint}"), theme.style(Surface::Hint)),
+            ])]
         }
         Mode::PickValue if app.picker.is_some() => {
             vec![Line::from(Span::styled(
@@ -1420,10 +1440,12 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                 (PickerPurpose::Filter(field), Payload::Text(value)) => {
                     Filter::field_allows(app.filter_text(), *field, value, app.registry())
                 }
-                (PickerPurpose::Sort(_), Payload::Order(order)) => {
-                    app.state.sort.is_some_and(|sort| sort.order == *order)
-                }
-                (PickerPurpose::Sort(_), Payload::NoSort) => app.state.sort.is_none(),
+                (PickerPurpose::Sort(column), Payload::Order(order)) => app
+                    .state
+                    .sort
+                    .iter()
+                    .any(|sort| sort.column == *column && sort.order == *order),
+                (PickerPurpose::Sort(_), Payload::NoSort) => app.state.sort.is_empty(),
                 (
                     PickerPurpose::ChooseColumn(_)
                     | PickerPurpose::Columns
@@ -1600,6 +1622,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                     previewed.as_deref(),
                     app.registry(),
                     app.legacy_order,
+                    app.sort_entry.as_ref().map(|_| app.sort_breadcrumb()),
                 ),
         );
     let block = if !matches!(
@@ -1677,7 +1700,19 @@ fn picker_title(
     previewed: Option<&str>,
     registry: &crate::columns::ColumnRegistry,
     legacy_order: bool,
+    sort_breadcrumb: Option<String>,
 ) -> String {
+    // While `s` is building a stack, the title *is* the breadcrumb: which layer
+    // you are on and what the ones above it settled on, growing as you type. It
+    // starts empty and stays the title for every step, so the one place to look
+    // never moves.
+    let sorting = matches!(
+        picker.purpose,
+        PickerPurpose::Sort(_) | PickerPurpose::ChooseColumn(ColumnPurpose::Sort)
+    );
+    if let (true, Some(breadcrumb)) = (sorting, sort_breadcrumb) {
+        return format!(" sort {breadcrumb}▏");
+    }
     let subject = match &picker.purpose {
         PickerPurpose::Filter(field) => field.keyword(registry).to_string(),
         PickerPurpose::Sort(column) => format!("sort by {}", column.header(registry)),

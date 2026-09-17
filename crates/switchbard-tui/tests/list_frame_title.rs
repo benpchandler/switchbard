@@ -58,6 +58,8 @@ fn title_line_holds_only_repo_count_and_view_name_with_settings_in_the_footer() 
         h.press(KeyCode::Char('s'));
         h.press(KeyCode::Char('3'));
         h.press(KeyCode::Char('1'));
+        // Enter settles the sort breadcrumb; until then it owns the footer.
+        h.press(KeyCode::Enter);
         let screen = h.render();
         let title = screen.lines().nth(1).unwrap_or_default();
         assert!(title.contains("shown"), "{width}x{height}: {screen}");
@@ -208,6 +210,8 @@ fn footer_settings_are_muted_after_the_key_hints_and_truncate_before_them() {
     h.press(KeyCode::Char('s'));
     h.press(KeyCode::Char('3'));
     h.press(KeyCode::Char('1'));
+    // Enter settles the sort breadcrumb; until then it owns the footer.
+    h.press(KeyCode::Enter);
     let screen = h.render();
     let footer = screen.lines().last().unwrap_or_default();
     assert!(footer.contains("keys"), "key hints present: {footer}");
@@ -260,6 +264,8 @@ fn sort_underline_and_header_paint_still_cover_the_whole_split_cell() {
     h.press(KeyCode::Char('s'));
     h.press(KeyCode::Char('3'));
     h.press(KeyCode::Char('1'));
+    // Enter settles the sort breadcrumb; until then it owns the footer.
+    h.press(KeyCode::Enter);
     h.render();
     assert!(
         cell_style(&h, "3 pri", 0)

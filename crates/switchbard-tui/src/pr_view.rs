@@ -133,8 +133,11 @@ fn observation(app: &App) -> String {
         },
         {
             let mut active = String::new();
-            if let Some(sort) = app.state.sort {
-                active.push_str(&format!(" · {}", sort.label(app.registry())));
+            if !app.state.sort.is_empty() {
+                active.push_str(&format!(
+                    " · {}",
+                    crate::sort::stack_label(&app.state.sort, app.registry())
+                ));
             }
             if !app.state.paint.is_empty() {
                 active.push_str(&format!(" · paint:{}", app.state.paint.len()));
@@ -234,7 +237,7 @@ fn draw_cells(frame: &mut Frame, app: &App, rect: Rect, labels: &[String]) {
         })
         .collect();
     crate::list_presentation::header(frame, rect, &cells, &headers, header_style);
-    if let Some(sort) = app.state.sort {
+    for sort in &app.state.sort {
         if let Some(index) = app
             .state
             .columns

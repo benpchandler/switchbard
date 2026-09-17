@@ -38,7 +38,8 @@ pub struct PullRequests {
     pub scroll: usize,
     pub detail_scroll: u16,
     pub filter: String,
-    pub sort: Option<crate::sort::Sort>,
+    /// The sort stack, layer 1 first; empty when the list is unsorted.
+    pub sort: Vec<crate::sort::Sort>,
     pending_selection: Option<String>,
     pub visible: Vec<usize>,
     requested_limit: usize,
@@ -469,7 +470,7 @@ impl PullRequests {
         let selected = restored
             .clone()
             .or_else(|| self.row().map(|row| row.id.clone()));
-        let visible = self.visible_for(&self.filter, self.sort);
+        let visible = self.visible_for(&self.filter, &self.sort);
         self.visible = visible;
         self.selected = selected
             .and_then(|id| {
@@ -487,7 +488,7 @@ impl PullRequests {
         self.scroll = self.scroll.min(self.selected);
     }
 
-    pub(crate) fn visible_for(&self, query: &str, sort: Option<crate::sort::Sort>) -> Vec<usize> {
+    pub(crate) fn visible_for(&self, query: &str, sort: &[crate::sort::Sort]) -> Vec<usize> {
         let filter = crate::tasks::Filter::parse(query, &self.registry);
         let mut visible: Vec<usize> = self
             .snapshot
@@ -503,14 +504,19 @@ impl PullRequests {
             })
             .unwrap_or_default();
         if let Some(snapshot) = &self.snapshot {
-            if let Some(sort) = sort {
+            if !sort.is_empty() {
                 visible.sort_by(|&a, &b| self.compare(&snapshot.rows[a], &snapshot.rows[b], sort));
             }
         }
         visible
     }
 
-    fn compare(&self, a: &PrListRow, b: &PrListRow, sort: crate::sort::Sort) -> std::cmp::Ordering {
+    fn compare(
+        &self,
+        a: &PrListRow,
+        b: &PrListRow,
+        sort: &[crate::sort::Sort],
+    ) -> std::cmp::Ordering {
         crate::sort::compare_values(
             &self.column_adapter(a),
             &self.column_adapter(b),

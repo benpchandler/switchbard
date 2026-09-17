@@ -9,7 +9,7 @@ use crate::picker::{
     ColumnAction, ColumnPurpose, PaintPick, Payload, PickOption, PickerPurpose, TaskAction,
     ValuePicker,
 };
-use crate::sort::{self, Sort};
+use crate::sort;
 use crate::tasks::{self, Filter, FilterField};
 
 impl App {
@@ -505,12 +505,54 @@ impl App {
                 PickOption::numbered(order.label(column, &self.registry), Payload::Order(order))
             })
             .collect();
-        options.push(PickOption::numbered("none", Payload::NoSort));
+        // At depth one "none" is plainly "do not sort"; under a layer it has to
+        // say that it drops every layer, not just this one.
+        let clear = match self.sort_entry.as_ref() {
+            Some(entry) if !entry.layers.is_empty() => "none (clears every layer)",
+            _ => "none",
+        };
+        options.push(PickOption::numbered(clear, Payload::NoSort));
         self.open_picker(PickerPurpose::Sort(column), options);
         self.telemetry.record(
             "action",
             format!("sort_column {}", column.header(&self.registry)),
         );
+    }
+
+    /// While a sort entry is in flight, the breadcrumb owns stepping back and
+    /// abandoning: `←`/`⌫`/Shift-Tab undo the step just taken rather than popping
+    /// a picker parent, and `Esc` restores the stack `s` was pressed over.
+    /// Returns whether the key was the breadcrumb's to answer.
+    fn handle_sort_entry_picker_key(&mut self, event: KeyEvent) -> bool {
+        if self.sort_entry.is_none() {
+            return false;
+        }
+        let Some(picker) = self.picker.as_ref() else {
+            return false;
+        };
+        let sorting = matches!(
+            picker.purpose,
+            PickerPurpose::Sort(_) | PickerPurpose::ChooseColumn(ColumnPurpose::Sort)
+        );
+        if !sorting {
+            return false;
+        }
+        let typed_empty = picker.typed.is_empty();
+        let stepping_back = event.code == KeyCode::BackTab
+            || (event.code == KeyCode::Tab
+                && event
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::SHIFT));
+        match event.code {
+            KeyCode::Esc => self.cancel_sort_entry(),
+            KeyCode::Left => self.sort_entry_undo(),
+            KeyCode::Backspace | KeyCode::Delete if typed_empty => self.sort_entry_undo(),
+            _ if stepping_back => self.sort_entry_undo(),
+            // Already mid-layer; the next layer waits for this one to lock.
+            KeyCode::Tab => {}
+            _ => return false,
+        }
+        true
     }
 
     pub(super) fn handle_pick_value_key(&mut self, event: KeyEvent) {
@@ -541,6 +583,9 @@ impl App {
         if event.code == KeyCode::Tab && self.picker.as_ref().is_some_and(|p| p.purpose.is_detail())
         {
             self.cancel_detail_and_switch_page();
+            return;
+        }
+        if self.handle_sort_entry_picker_key(event) {
             return;
         }
         if self.handle_parent_search_key(event) {
@@ -1095,7 +1140,13 @@ impl App {
             }
             (PickerPurpose::ChooseColumnAction(action), Payload::Column(column)) => {
                 self.run_column_action(column, action);
-                self.open_columns_picker();
+                // Only a toggle returns to the menu: an action that opened its
+                // own picker would otherwise be buried by it the same frame.
+                if self.picker.as_ref().is_some_and(|picker| {
+                    picker.purpose == PickerPurpose::ChooseColumnAction(action)
+                }) {
+                    self.open_columns_picker();
+                }
             }
 
             (PickerPurpose::Merge, Payload::CancelMerge) => self.cancel_pr_merge(),
@@ -1109,18 +1160,9 @@ impl App {
                 );
             }
             (PickerPurpose::Sort(column), Payload::Order(order)) => {
-                self.state.sort = Some(Sort { column, order });
-                self.refilter();
-                self.telemetry.record(
-                    "action",
-                    format!("sort_pick {}:{:?}", column.header(&self.registry), order),
-                );
+                self.lock_sort_layer(column, order)
             }
-            (PickerPurpose::Sort(_), Payload::NoSort) => {
-                self.state.sort = None;
-                self.refilter();
-                self.telemetry.record("action", "sort_pick none");
-            }
+            (PickerPurpose::Sort(_), Payload::NoSort) => self.clear_sort_entry(),
             (PickerPurpose::ChooseColumn(_), Payload::Column(column)) => {
                 self.open_column_purpose(column)
             }

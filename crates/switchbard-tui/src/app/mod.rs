@@ -12,6 +12,7 @@ pub mod report;
 pub mod resume;
 mod session;
 mod slots;
+mod sort_entry;
 mod task_bulk;
 mod task_cancel;
 mod task_parent;
@@ -57,6 +58,9 @@ pub enum Mode {
     /// The detail pane has input focus: j/k move the cursor row, Enter/l
     /// opens the row's editor, Esc/h/Left returns focus to the list.
     DetailFocus,
+    /// A sort layer has just locked and the breadcrumb is showing: Tab adds a
+    /// layer, Enter finishes, ←/⌫/Shift-Tab step back (`app::sort_entry`).
+    SortEntry,
     /// A single-line field the detail pane is editing (see `DetailInputKind`).
     DetailInput(DetailInputKind),
 }
@@ -225,6 +229,9 @@ pub struct App {
     pub agents: crate::agents::Agents,
     pub picker: Option<ValuePicker>,
     picker_parents: Vec<ValuePicker>,
+    /// The sort stack being typed, from `s` until Enter or Esc; `None` the rest
+    /// of the time. `sort_entry.rs` owns every transition it goes through.
+    pub sort_entry: Option<sort_entry::SortEntry>,
     pub pr_merge: pr_merge::MergeFlow,
     pub report: report::ReportFlow,
     task_refresh: task_refresh::TaskRefresh,
@@ -345,6 +352,7 @@ impl App {
             agents: crate::agents::Agents::new(),
             picker: None,
             picker_parents: Vec::new(),
+            sort_entry: None,
             column_purpose: ColumnPurpose::Filter,
             status: String::new(),
             last_screen: String::new(),
@@ -519,10 +527,7 @@ impl App {
             self.page,
             self.view_label(),
             self.state.filter,
-            self.state
-                .sort
-                .map(|sort| sort.to_text(&self.registry))
-                .unwrap_or_default(),
+            sort::stack_to_text(&self.state.sort, &self.registry),
             self.pane
         )
     }
@@ -902,6 +907,7 @@ impl App {
             Mode::RenameView => self.handle_rename_view_key(event),
             Mode::DetailFocus => self.handle_detail_focus_key(event),
             Mode::DetailInput(_) => self.handle_detail_input_key(event),
+            Mode::SortEntry => self.handle_sort_entry_key(event),
         }
         if !self.merge_target_current()
             || (self.mode != Mode::Browse
@@ -1685,7 +1691,7 @@ impl App {
                 self.status.clear();
             }
             Action::FilterColumn => self.open_column_chooser(ColumnPurpose::Filter),
-            Action::SortColumn => self.open_column_chooser(ColumnPurpose::Sort),
+            Action::SortColumn => self.begin_sort_entry(),
             Action::Columns => self.open_columns_picker(),
             Action::Paint => self.open_paint_target_picker(),
             Action::Ball => self.pass_ball(),
@@ -1899,7 +1905,7 @@ impl App {
     fn refilter(&mut self) {
         if self.page == Page::PullRequests {
             self.pull_requests.filter = self.state.filter.clone();
-            self.pull_requests.sort = self.state.sort;
+            self.pull_requests.sort.clone_from(&self.state.sort);
             self.pull_requests.refilter();
             return;
         }
@@ -1919,6 +1925,72 @@ impl App {
         self.select(self.selected);
     }
 
+    /// Two tasks under a sort stack: each layer in turn, then the tiebreak
+    /// `sort::compare_values` gives every list. Checklist and Progress are the
+    /// one pair of columns no `ColumnValues` adapter can answer - their value
+    /// is cached coverage, not a task field - so this is where a layer naming
+    /// them is decided, and the rest defer to `sort`.
+    fn compare_tasks(
+        &self,
+        a: usize,
+        b: usize,
+        layers: &[crate::sort::Sort],
+    ) -> std::cmp::Ordering {
+        layers
+            .iter()
+            .map(|sort| self.compare_task_layer(a, b, *sort))
+            .find(|ordering| ordering.is_ne())
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| sort::tiebreak(&self.task_values(a), &self.task_values(b)))
+    }
+
+    fn compare_task_layer(
+        &self,
+        a: usize,
+        b: usize,
+        sort: crate::sort::Sort,
+    ) -> std::cmp::Ordering {
+        if matches!(sort.column, Column::Checklist | Column::Progress) {
+            let progress = |index: usize| {
+                self.checklist
+                    .get(&self.tasks[index].id)
+                    .and_then(|coverage| coverage.percentage())
+            };
+            // An unmeasured task is not a low percentage, so it sits last
+            // whichever way the measured ones run - the rule `due` follows.
+            return match (progress(a), progress(b)) {
+                (Some(a), Some(b)) => {
+                    let cmp = a.total_cmp(&b);
+                    if sort.order == crate::sort::Order::Descending {
+                        cmp.reverse()
+                    } else {
+                        cmp
+                    }
+                }
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (Some(_), None) => std::cmp::Ordering::Less,
+                _ => std::cmp::Ordering::Equal,
+            };
+        }
+        sort::compare_layer(
+            &self.task_values(a),
+            &self.task_values(b),
+            sort,
+            &self.registry,
+        )
+    }
+
+    /// The shared column adapter over one loaded task, by index.
+    fn task_values(&self, index: usize) -> crate::column_values::TaskValues<'_> {
+        crate::column_values::TaskValues {
+            registry: &self.registry,
+            task: &self.tasks[index],
+            top: &self.top,
+            goals: &self.goals,
+            blocked: &self.relations.blocked,
+        }
+    }
+
     pub(crate) fn project_tasks(&self, state: &ViewState) -> TaskProjection {
         let base = self.settings.effective().base_filter(&state.filter);
         let filter = Filter::parse(&format!("{base} {}", state.filter), &self.registry);
@@ -1932,40 +2004,8 @@ impl App {
                 )
             })
             .collect();
-        if let Some(sort) = state.sort {
-            if matches!(sort.column, Column::Checklist | Column::Progress) {
-                visible.sort_by(|&a, &b| {
-                    let progress = |index: usize| {
-                        self.checklist
-                            .get(&self.tasks[index].id)
-                            .and_then(|p| p.percentage())
-                    };
-                    let order = match (progress(a), progress(b)) {
-                        (Some(a), Some(b)) => {
-                            let cmp = a.total_cmp(&b);
-                            if sort.order == crate::sort::Order::Descending {
-                                cmp.reverse()
-                            } else {
-                                cmp
-                            }
-                        }
-                        (None, Some(_)) => std::cmp::Ordering::Greater,
-                        (Some(_), None) => std::cmp::Ordering::Less,
-                        _ => std::cmp::Ordering::Equal,
-                    };
-                    order.then_with(|| self.tasks[a].id.cmp(&self.tasks[b].id))
-                });
-            } else {
-                sort::apply(
-                    &self.registry,
-                    &self.tasks,
-                    &mut visible,
-                    sort,
-                    &self.top,
-                    &self.goals,
-                    &self.relations.blocked,
-                );
-            }
+        if !state.sort.is_empty() {
+            visible.sort_by(|&a, &b| self.compare_tasks(a, b, &state.sort));
         }
         let pinned: &[String] = if state.pin_top { &self.top } else { &[] };
         let headings = group::Headings {

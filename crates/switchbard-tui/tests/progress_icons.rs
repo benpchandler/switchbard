@@ -156,7 +156,7 @@ fn measured_boundaries_render_without_rounding_to_empty_or_complete() {
     h.type_text("vp");
     h.type_text("sprog");
     h.press(KeyCode::Char('a'));
-    assert_eq!(h.app.state.sort.unwrap().column, Column::Progress);
+    assert_eq!(h.app.state.sort.first().unwrap().column, Column::Progress);
     assert_eq!(
         harness::screen_rows(&h),
         vec![
