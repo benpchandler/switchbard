@@ -8,7 +8,10 @@ use switchbard_tui::app::Mode;
 fn settle(h: &mut Harness, expected: usize) -> String {
     for _ in 0..600 {
         h.app.tick();
-        if !h.app.report.is_pending() && h.app.total_tasks() == expected {
+        if !h.app.report.is_pending()
+            && !h.app.task_refresh_pending()
+            && h.app.total_tasks() == expected
+        {
             return h.render();
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -245,4 +248,35 @@ fn queued_repository_draft_keeps_scope_while_first_save_completes() {
         .tasks()
         .iter()
         .any(|task| task.title == "bug: second local bug"));
+}
+
+#[test]
+fn repository_keys_open_from_focused_task_detail() {
+    let mut h = Harness::new();
+    let tool = redirected(&mut h);
+    for (key, kind) in [('i', "idea"), ('b', "bug")] {
+        h.press(KeyCode::Enter);
+        h.press(KeyCode::Enter);
+        assert_eq!(h.app.mode, Mode::DetailFocus);
+        let screen = h.press(KeyCode::Char(key));
+        assert_eq!(h.app.mode, Mode::Command, "{screen}");
+        assert_eq!(h.app.input, format!("{kind} "));
+        h.type_text("focused detail capture");
+        h.press(KeyCode::Enter);
+        let expected = if key == 'i' { 4 } else { 5 };
+        let screen = settle(&mut h, expected);
+        assert!(screen.contains("filed TASK-"), "{screen}");
+        assert!(h
+            .app
+            .tasks()
+            .iter()
+            .any(|task| task.title == format!("{kind}: focused detail capture")));
+        h.press(KeyCode::Esc);
+    }
+    assert_eq!(
+        std::fs::read_dir(tool.path().join("backlog/tasks"))
+            .unwrap()
+            .count(),
+        0
+    );
 }
