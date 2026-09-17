@@ -15,7 +15,11 @@ import termios
 import time
 
 
-def wait_screen(fd, text):
+def wait_screen(fd, text, resize_width=None):
+    if resize_width is not None:
+        fcntl.ioctl(
+            fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, resize_width, 0, 0)
+        )
     screen = b""
     started = time.monotonic()
     deadline = time.monotonic() + 8
@@ -88,7 +92,8 @@ def timer_checkpoint_then_forced_exit(binary, repo, env, views_dir):
     try:
         wait_screen(master, b"Tasks")
         os.write(master, b"/timercheckpoint\r")
-        wait_screen(master, b"timercheckpoint")
+        wait_screen(master, b"timercheckpoint", resize_width=99)
+        fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
         deadline = started + 40
         durable = False
         while time.monotonic() < deadline:
