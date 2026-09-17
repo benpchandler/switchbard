@@ -6,6 +6,8 @@ and scope is ambiguous, STOP and ask the owner, then record the answer here.
 
 ## What switchbard is becoming
 
+**Numbered detail experiments (owner-directed 2026-09-17, TASK-254/TASK-253).** The rapid exploration build adds E002 (assignees and created/updated near the top of task detail) and E003 (hide empty Definition of Done; place populated requirements after acceptance). Both are independent default-off presentation options under Experiments; Keep/Remove persists owner decisions without altering task completion. Numbers are permanent and never reused. Scope, registry, and manual evidence: `docs/tui-experiments.md`. Local availability does not imply owner acceptance or main delivery.
+
 An **open-source terminal workspace** for tasks, pull requests, and coding agents. `sbt` is the supported interactive interface; `sb` is the script and agent frontend over the same core write layer. Local-first: no cloud account or uploaded usage analytics. The TUI keeps local diagnostic events. Early alpha, MIT, public (benpchandler/switchbard). The author dogfoods it daily.
 
 **Public TUI alpha direction (owner-directed 2026-09-17).** Ship an accelerated, self-contained terminal install before adding package-manager distribution. Publish checksum-verifiable `sb`/`sbt` archives for macOS arm64, macOS x86_64, and Linux x86_64, with an explicit installer and no Rust, Node, Python, or GUI sidecar requirement for consumers. Public installation does not enable unattended updates. Keep first launch explained, cancellable, and safe for existing task storage; disclose early-alpha limits and give users backup and bug-report routes. npm and Homebrew remain future distribution choices, not current availability claims.

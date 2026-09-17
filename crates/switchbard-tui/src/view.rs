@@ -1706,7 +1706,10 @@ fn picker_title(
         PickerPurpose::Experiment(id) => crate::experiments::catalog()
             .iter()
             .find(|spec| spec.id == id)
-            .map_or_else(|| "Experiment".to_string(), |spec| spec.title.to_string()),
+            .map_or_else(
+                || "Experiment".to_string(),
+                |spec| format!("E{:03} · {}", spec.number, spec.title),
+            ),
         PickerPurpose::Goals(id) => format!("{id} · goals"),
         PickerPurpose::Organize => "organize by".to_string(),
         PickerPurpose::Ball => "ball".to_string(),

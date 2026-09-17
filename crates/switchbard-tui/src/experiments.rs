@@ -13,19 +13,58 @@ use serde_json::Value;
 const MAX_FILE_BYTES: usize = 128 * 1024;
 
 pub struct ExperimentSpec {
+    /// Permanent display number; never renumber or reuse after retirement.
+    pub number: u16,
     pub id: &'static str,
     pub task: &'static str,
     pub title: &'static str,
     pub description: &'static str,
 }
 
-pub fn catalog() -> &'static [ExperimentSpec] {
-    &[ExperimentSpec {
+const CATALOG: &[ExperimentSpec] = &[
+    ExperimentSpec {
+        number: 1,
         id: "task-edit-shortcut",
         task: "TASK-251",
         title: "Quick task editing",
         description: "Open the selected task editor with t e.",
-    }]
+    },
+    ExperimentSpec {
+        number: 2,
+        id: "detail-metadata-first",
+        task: "TASK-254",
+        title: "Task metadata at the top",
+        description: "See assignees and created/updated dates at the top of task details.",
+    },
+    ExperimentSpec {
+        number: 3,
+        id: "detail-compact-done",
+        task: "TASK-253",
+        title: "Quieter Definition of Done",
+        description:
+            "Hide empty Definition of Done; show populated ones beside acceptance criteria.",
+    },
+];
+
+// Reject accidental duplicate numbers at compile time, before they can be displayed.
+const _: () = {
+    let mut index = 0;
+    while index < CATALOG.len() {
+        assert!(CATALOG[index].number > 0, "experiment numbers start at 1");
+        let mut other = index + 1;
+        while other < CATALOG.len() {
+            assert!(
+                CATALOG[index].number != CATALOG[other].number,
+                "duplicate experiment number"
+            );
+            other += 1;
+        }
+        index += 1;
+    }
+};
+
+pub fn catalog() -> &'static [ExperimentSpec] {
+    CATALOG
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

@@ -28,7 +28,8 @@ pub(super) fn lines(app: &App, task: &BacklogTask, section: Section) -> Vec<Stri
             }
         }
         Section::Relations => relations(app, task),
-        Section::Metadata => metadata(task),
+        Section::AtAGlance => at_a_glance(task),
+        Section::Metadata => metadata(task, app.detail_presentation().metadata_first),
         Section::Properties | Section::Description => Vec::new(),
     }
 }
@@ -90,15 +91,23 @@ fn relations(app: &App, task: &BacklogTask) -> Vec<String> {
     lines
 }
 
-fn metadata(task: &BacklogTask) -> Vec<String> {
-    let mut lines = vec![
-        format!("task ID: {}", task.id),
+fn at_a_glance(task: &BacklogTask) -> Vec<String> {
+    vec![
         format!("assignees: {}", list(&task.assignees)),
         format!("created: {}", value(task.created_date.as_deref())),
         format!("updated: {}", value(task.updated_date.as_deref())),
+    ]
+}
+
+fn metadata(task: &BacklogTask, metadata_first: bool) -> Vec<String> {
+    let mut lines = vec![format!("task ID: {}", task.id)];
+    if !metadata_first {
+        lines.extend(at_a_glance(task));
+    }
+    lines.extend([
         format!("lifecycle: {}", task.source.label()),
         format!("source path: {}", task.path.display()),
-    ];
+    ]);
     if let Some(identity) = &task.storage_identity {
         lines.extend([
             format!("repository ID: {}", identity.repository_id),

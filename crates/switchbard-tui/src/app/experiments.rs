@@ -7,7 +7,9 @@ use crate::picker::{Payload, PickOption, PickerPurpose};
 
 impl App {
     pub(super) fn open_experiments(&mut self) {
+        let previous_rows = self.detail_rows();
         let warning = self.experiments.reload();
+        self.reconcile_experiment_detail_rows(previous_rows);
         let mut options = catalog()
             .iter()
             .map(|spec| {
@@ -19,7 +21,10 @@ impl App {
                     ExperimentReview::RemovalRequested => "removal requested",
                 };
                 PickOption::numbered(
-                    format!("{} · {enabled} · {review}", spec.title),
+                    format!(
+                        "E{:03} · {} · {enabled} · {review}",
+                        spec.number, spec.title
+                    ),
                     Payload::Experiment(spec.id.to_string()),
                 )
             })
@@ -63,13 +68,15 @@ impl App {
         })
         .collect();
         self.open_picker(PickerPurpose::Experiment(id.to_string()), options);
-        self.status = format!("{} · {}", spec.task, spec.description);
+        self.status = format!("E{:03} · {} · {}", spec.number, spec.task, spec.description);
     }
 
     pub(super) fn decide_experiment(&mut self, id: &str, decision: ExperimentDecision) {
+        let previous_rows = self.detail_rows();
         match self.experiments.set_decision(id, decision) {
             Ok(()) => {
                 self.open_experiments();
+                self.reconcile_experiment_detail_rows(previous_rows);
                 self.status = match decision {
                     ExperimentDecision::Enable => "Enabled · try it now",
                     ExperimentDecision::Disable => "Disabled",
@@ -87,6 +94,19 @@ impl App {
                 self.fail(format!("Decision not saved: {error:#}"));
             }
         }
+    }
+
+    fn reconcile_experiment_detail_rows(&mut self, previous: Vec<crate::detail_pane::FieldRow>) {
+        let rows = self.detail_rows();
+        if previous == rows {
+            return;
+        }
+        self.detail_cursor = previous
+            .get(self.detail_cursor)
+            .and_then(|selected| rows.iter().position(|row| row == selected))
+            .unwrap_or(0);
+        self.detail_scroll = 0;
+        self.detail_scroll_anchor = None;
     }
 
     pub(super) fn request_update(&mut self) {

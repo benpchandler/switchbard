@@ -13,6 +13,7 @@ use switchbard_core::BacklogTask;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Section {
     Properties,
+    AtAGlance,
     Description,
     Acceptance,
     Relations,
@@ -25,8 +26,9 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Properties,
+        Self::AtAGlance,
         Self::Description,
         Self::Acceptance,
         Self::Relations,
@@ -41,6 +43,7 @@ impl Section {
     pub fn label(self) -> &'static str {
         match self {
             Self::Properties => "Properties",
+            Self::AtAGlance => "At a glance (read-only)",
             Self::Description => "Description",
             Self::Acceptance => "Acceptance criteria",
             Self::Relations => "Relations",
@@ -148,6 +151,42 @@ pub fn field_rows(task: &BacklogTask, blocked_by: usize, blocks: usize) -> Vec<F
         Section::Metadata,
     ] {
         rows.push(FieldRow::Content(section));
+    }
+    rows
+}
+
+/// Presentation changes leave the original fields and criterion indices intact.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DetailPresentation {
+    pub metadata_first: bool,
+    pub compact_done: bool,
+}
+
+pub fn presented_field_rows(
+    task: &BacklogTask,
+    blocked_by: usize,
+    blocks: usize,
+    presentation: DetailPresentation,
+) -> Vec<FieldRow> {
+    let mut rows = Vec::new();
+    for row in field_rows(task, blocked_by, blocks) {
+        if presentation.metadata_first && row == FieldRow::Description {
+            rows.push(FieldRow::Content(Section::AtAGlance));
+        }
+        if presentation.compact_done {
+            if row == FieldRow::Content(Section::DefinitionOfDone) {
+                continue;
+            }
+            if row.section() == Section::Relations
+                && rows
+                    .last()
+                    .is_some_and(|last| last.section() == Section::Acceptance)
+                && !task.definition_of_done.is_empty()
+            {
+                rows.push(FieldRow::Content(Section::DefinitionOfDone));
+            }
+        }
+        rows.push(row);
     }
     rows
 }

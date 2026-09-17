@@ -20,6 +20,24 @@ Decisions persist globally across repositories and updates. Failed writes leave 
 
 Decisions live in `~/.switchbard/experiments.json`; `SWITCHBARD_EXPERIMENTS_FILE` selects a separate file for isolated sessions, and an empty override refuses mutation. Reopening Experiments refreshes another window's decisions. A removal request is durable intent for the agent's next sweep, not an automatically dispatched job.
 
+## Permanent experiment numbers
+
+Experiment numbers are assigned explicitly in the compiled catalog, never inferred from picker position. A compile-time invariant rejects zero and duplicate numbers. Retain the registry below after promotion or removal, never renumber existing experiments, and allocate above the highest reserved number. The stable string ID remains the persistence key, preserving earlier decisions.
+
+| Number | Stable ID | Task | Scope |
+| --- | --- | --- | --- |
+| E001 | `task-edit-shortcut` | TASK-251 | `t e` opens task editing |
+| E002 | `detail-metadata-first` | TASK-254 | Assignees and created/updated near the top; technical metadata stays below |
+| E003 | `detail-compact-done` | TASK-253 | Empty DoD omitted; populated DoD beside acceptance criteria |
+
+Next unused number: E004. Keep/Remove/Enable/Disable never change an experiment number. Do not reuse a retired entry's number or persistence ID.
+
+## Detail experiment batch
+
+Objective: put two existing board ideas into the one live TUI as independently reviewable changes. Owner requests fast implementation and permanent unique experiment numbers. Authorizes local implementation, commit, guarded installation, and live manual review; excludes automated tests, unrelated repairs, automatic acceptance, and inferring Done. Root owns catalog/control integration and delivery; the detail_experiments worker owns the shared detail-row and read-only content projection. Both features default off, preserve task data and backend progress, and compose with E001. No live database fixtures are created.
+
+Pre-implementation state matrix: off/off preserves current rows; each feature individually changes only its own presentation; both together compose. Empty/missing metadata uses Not set; long assignee lists and dates wrap normally. Empty DoD is omitted only with E003, populated/checked/unchecked/multiline DoD stays visible next to acceptance and remains read-only. Acceptance retains its native edit semantics. Collapsed sections and expand/collapse-all use the same row model. Toggle/reload preserves cursor row identity when it survives and resets bounded scroll; hidden rows fall back to the first row. No task selected gives the existing empty pane. Narrow/short/wide containers reuse wrap and scrolling. Menus retain Keep/Remove and numbers across restart. No new data mutations, permissions, network dependencies, or loading/saving states. Manual terminal observations cover off/each/both, empty/populated, collapse and narrow; any unexercised paths remain explicit evidence gaps.
+
 ## Quiet feature follow-through
 
 Reserve the `feature-maintenance` label for the proposed Make permanent / Remove implementation follow-up tasks. Normal TUI task lists hide these records. An explicit positive `label:feature-maintenance` filter reveals them; that filter can also be saved as a view. Other labels, free-text searches, and negative label filters do not accidentally reveal maintenance. Original feature tasks stay visible. CLI queries, dispatch, parent details, dependencies, and progress calculations retain all records.
@@ -44,6 +62,8 @@ Visibility matrix before implementation: default/empty/ordinary filters hide mai
 | Pointer / touch / web zoom / roles | N/A for this keyboard-driven local menu; terminal font and size remain user-controlled | N/A |
 
 ## Objective ledger
+
+- E002/E003 batch (2026-09-17): debug build passed; independent source review found no verified regressions. Manually exercised off/off, E002 only, E003 only, both on, empty DoD (TASK-36), populated checked/unchecked DoD (TASK-41), collapse-all and individual expansion, disable, Keep, Remove and re-enable with stable E numbers, plus 150x50 and 90x28 terminal layouts. Used native `sb storage backup`/`restore`/`rebind` to create an isolated copy of real task data; its independent experiment decisions do not alter the owner's acceptance. Terminal readbacks: `/tmp/sbt-experiments-review.Gp7Uue/{e002-only,e003-only,e003-empty,both-collapsed,both-populated-done,both-narrow}.txt`. No automated tests written or run. Gaps: pointer interaction, restart persistence for the new entries, populated assignee lists, and archived-task navigation are source-reviewed, not separately exercised. Existing non-Git scratch-repository notification persists; it is unrelated to the feature changes.
 
 - Maintenance visibility (2026-09-17): compiled `switchbard-tui`; manually observed an isolated two-task board at 120x32. Default and cleared filters show only the ordinary task, positive `label:feature-maintenance` shows only the maintenance task, and negative selection leaves it hidden. Native CLI still lists both. No automated tests written or run. Saved/history views share the same projection; scale and those navigation paths were not separately exercised. Existing scratch-board configuration and non-Git-repository notices remain unrelated fixture limitations.
 

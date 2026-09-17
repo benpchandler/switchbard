@@ -86,16 +86,24 @@ impl App {
         true
     }
 
-    /// The selected task's field rows in the pane's fixed order; `view` walks
+    pub(crate) fn detail_presentation(&self) -> detail_pane::DetailPresentation {
+        detail_pane::DetailPresentation {
+            metadata_first: self.experiments.is_enabled("detail-metadata-first"),
+            compact_done: self.experiments.is_enabled("detail-compact-done"),
+        }
+    }
+
+    /// The selected task's field rows in the pane's presentation order; `view` walks
     /// the same list to render, so cursor and rendering can never disagree
     /// about what row is what (Rule 2: one owning definition).
     pub fn detail_rows(&self) -> Vec<FieldRow> {
         match self.selected_task() {
             Some(task) => detail_pane::visible_rows(
-                detail_pane::field_rows(
+                detail_pane::presented_field_rows(
                     task,
                     self.relations.blocked_by.get(&task.id).map_or(0, Vec::len),
                     self.relations.blocks.get(&task.id).map_or(0, Vec::len),
+                    self.detail_presentation(),
                 ),
                 &self.detail_collapsed,
             ),
