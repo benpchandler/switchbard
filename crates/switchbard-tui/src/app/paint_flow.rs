@@ -167,7 +167,7 @@ impl App {
         {
             options.push(PickOption::keyed(
                 'g',
-                "current group headings",
+                "current outline headings",
                 Payload::GroupHeadings,
             ));
         }

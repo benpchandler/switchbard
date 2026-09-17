@@ -9,7 +9,7 @@ Press `p` from Tasks or Pull Requests:
 - A numbered column paints its values. `auto` assigns palette slots.
 - `r` paints the selected row; `f` paints the active filter.
 - `e` lists values on the selected row. Selecting a value formats matching values wherever they appear. As before, the first categorical rule is the whole-row base; later categorical rules affect their own column.
-- `g` offers the selected task's current group headings, including the top section. Ordinary task navigation still skips group headings.
+- `g` offers the selected task's current outline headings, including the top section. Ordinary task navigation still skips outline headings.
 - `h` paints column headings; `t` paints navigation and the list title. The filter, the footer's view-settings summary and attention badges keep their own surfaces — `t`'s title paint covers the title line only (repo chip, shown count, view name), not the settings that moved to the footer hint bar (TASK-235): those are facts about the view, not part of the title, and stay on `Surface::Hint`.
 - `c` paints a whole column; `o` manages rule order; `d` clears all paint.
 - Whatever the scope, the highlight and the text are chosen in that order, and the rule they compose is the same text `:paint` takes.

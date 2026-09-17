@@ -40,7 +40,7 @@ fn colored_grouped_preview_shows_current_tasks_without_changing_live_view() {
     capture(&h, "tasks-2-views-menu");
     let screen = h.type_text("h");
     capture(&h, "tasks-3-history-preview");
-    assert!(screen.contains("Tasks · grouped by Status"), "{screen}");
+    assert!(screen.contains("Tasks · outlined by Status"), "{screen}");
     assert!(screen.contains("Current data · 3 matches"), "{screen}");
     assert!(screen.contains("Write onboarding guide"), "{screen}");
     assert!(screen.contains("▸ To Do"), "{screen}");
