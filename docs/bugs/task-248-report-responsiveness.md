@@ -2,7 +2,7 @@
 
 ## Outcome
 
-`:idea` and `:bug` capture their context and destination, then save through the core write layer on a single background worker. A persistent banner shows saving, success, or failure across pages. Pending duplicate submissions retain their text instead of creating another task; failures retain a retry draft. Ordinary quit and binary reexec wait for the pending result.
+The legacy `:idea` and `:bug` tool-report commands capture their context and destination, then save through the core write layer on a single background worker. Repository-scoped `i`/`b` capture is separately documented in [repo-report-capture.md](../repo-report-capture.md). A persistent banner shows saving, success, or failure across pages. Pending duplicate submissions retain their text instead of creating another task; failures retain a retry draft. Ordinary quit and binary reexec wait for the pending result.
 
 Periodic task refreshes also run off-thread. Stale results cannot replace newer local mutations. Focused detail refreshes read the backlog and authoritative edit snapshot under one repository fence in the worker; completion performs no storage reads. Entering or applying an edit defers while the report or refresh is pending. Read-only pane navigation remains available. Selection follows the filed task only when the original context remains current.
 

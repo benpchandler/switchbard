@@ -89,6 +89,8 @@ If your shell says `sbt: command not found`, the terminal binary is missing or o
 
 `sbt` resumes the last view for each repo. Use `sbt --fresh` for the saved default, `v h` to browse automatic history, and `v s <number>` to keep a restored arrangement in a slot. History retains 30 days with count and byte ceilings; auto-painted colors follow the current palette. See [resume and history](docs/tui-view-history.md) for controls, limits, and recovery, and [formatting and emphasis roles](docs/emphasis-roles/guide.md) for scan hierarchy and paint controls.
 
+From any `sbt` page, press `i` to capture an idea or `b` to capture a bug for the repository being viewed; Enter saves once and Esc cancels. These captures use the repository's native defaults and keep their destination pinned through saving and retry. The task menu's `t b` still assigns the ball. Colon commands `:bug` and `:idea` remain the legacy tool-report route; see [repository idea and bug capture](docs/repo-report-capture.md) for routing and state details.
+
 ## Install
 
 ### macOS
