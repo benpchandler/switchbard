@@ -248,6 +248,14 @@ impl Filter {
         self.terms.iter().filter_map(Term::field)
     }
 
+    /// Explicit positive selection, distinct from a missing field or exclusion.
+    pub fn explicitly_includes(&self, field: FilterField, value: &str) -> bool {
+        let value = loose(value);
+        self.terms.iter().any(|term| {
+            matches!(term, Term::AnyOf(selected, values) if *selected == field && values.contains(&value))
+        })
+    }
+
     pub fn matches_row(&self, row: &impl crate::column_values::ColumnValues) -> bool {
         let text = row.text();
         let text: Vec<&str> = text.iter().map(String::as_str).collect();

@@ -20,6 +20,14 @@ Decisions persist globally across repositories and updates. Failed writes leave 
 
 Decisions live in `~/.switchbard/experiments.json`; `SWITCHBARD_EXPERIMENTS_FILE` selects a separate file for isolated sessions, and an empty override refuses mutation. Reopening Experiments refreshes another window's decisions. A removal request is durable intent for the agent's next sweep, not an automatically dispatched job.
 
+## Quiet feature follow-through
+
+Reserve the `feature-maintenance` label for the proposed Make permanent / Remove implementation follow-up tasks. Normal TUI task lists hide these records. An explicit positive `label:feature-maintenance` filter reveals them; that filter can also be saved as a view. Other labels, free-text searches, and negative label filters do not accidentally reveal maintenance. Original feature tasks stay visible. CLI queries, dispatch, parent details, dependencies, and progress calculations retain all records.
+
+This is a presentation rule, not deletion or completion. Keep/Remove still only persist experiment decisions; automatic follow-up creation and dispatch are not connected yet. When connected, they must apply this label to each maintenance task.
+
+Visibility matrix before implementation: default/empty/ordinary filters hide maintenance; explicit label selection and saved/history views reveal it; clearing the selection hides it again; positive OR lists include it only when named; negative filters never opt in. Reload reuses the projection rule. Labels use the existing normalized matching. Mixed ordinary/maintenance rows use the existing sorting and grouping after exclusion. CLI and dependency facts remain unchanged. There are no new controls, writes, network requests, or permission states; layout, input, and failure handling use existing views. Manual terminal observations will cover default, explicit selection, clearing, and exclusion; saved/history navigation and large-list performance remain source-reviewed only.
+
 ## State and stress matrix
 
 | State | Expected behavior | Evidence path |
@@ -36,6 +44,8 @@ Decisions live in `~/.switchbard/experiments.json`; `SWITCHBARD_EXPERIMENTS_FILE
 | Pointer / touch / web zoom / roles | N/A for this keyboard-driven local menu; terminal font and size remain user-controlled | N/A |
 
 ## Objective ledger
+
+- Maintenance visibility (2026-09-17): compiled `switchbard-tui`; manually observed an isolated two-task board at 120x32. Default and cleared filters show only the ordinary task, positive `label:feature-maintenance` shows only the maintenance task, and negative selection leaves it hidden. Native CLI still lists both. No automated tests written or run. Saved/history views share the same projection; scale and those navigation paths were not separately exercised. Existing scratch-board configuration and non-Git-repository notices remain unrelated fixture limitations.
 
 - Objective: continuous creation in one live TUI with owner-paced feature review.
 - Authorized: local implementation, small commits, experiment workflow and first board feature; no automated tests. No broad backlog drain or product decisions inferred from silence.

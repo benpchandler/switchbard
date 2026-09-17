@@ -1816,7 +1816,19 @@ impl App {
     pub(crate) fn project_tasks(&self, state: &ViewState) -> TaskProjection {
         let base = self.settings.effective().base_filter(&state.filter);
         let filter = Filter::parse(&format!("{base} {}", state.filter), &self.registry);
+        // Hide follow-through from ordinary views while retaining agent/task authority.
+        let maintenance_label = "feature-maintenance";
+        let show_maintenance =
+            filter.explicitly_includes(crate::filter::FilterField::Label, maintenance_label);
+        let maintenance_key = Filter::loose_key(maintenance_label);
         let mut visible: Vec<usize> = (0..self.tasks.len())
+            .filter(|&index| {
+                show_maintenance
+                    || !self.tasks[index]
+                        .labels
+                        .iter()
+                        .any(|label| Filter::loose_key(label) == maintenance_key)
+            })
             .filter(|&index| {
                 filter.matches(
                     &self.registry,
