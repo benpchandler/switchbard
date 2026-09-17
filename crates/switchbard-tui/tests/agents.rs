@@ -311,7 +311,43 @@ fn cursor_detail_and_guarded_commands_on_the_agents_page() {
     );
     h.press(KeyCode::Esc);
     assert_eq!(h.app.pane, Pane::None);
-    for key in ['1', 't', 'v', 'b', 'w', 'm', '/', 'f', 's', 'p', ','] {
+    let writes_before_bug = std::fs::read_dir(h.root.join("backlog/tasks"))
+        .unwrap()
+        .count();
+    let bug_screen = h.press(KeyCode::Char('b'));
+    assert_eq!(h.app.page, Page::Agents);
+    assert!(bug_screen.contains(":bug "), "{bug_screen}");
+    h.press(KeyCode::Esc);
+    assert_eq!(h.app.pane, Pane::None);
+    assert_eq!(
+        std::fs::read_dir(h.root.join("backlog/tasks"))
+            .unwrap()
+            .count(),
+        writes_before_bug
+    );
+    std::fs::write(&h.config_path, "return { keys = { B = 'ball' } }").unwrap();
+    h.app = harness::open_app(&h.root, &h.config_path);
+    to_agents(&mut h);
+    inject(
+        &mut h,
+        vec![
+            session(&root, 4242, "sid-a", AgentActivity::Idle, "first"),
+            session(&root, 4343, "sid-b", AgentActivity::Idle, "second"),
+        ],
+    );
+    h.press(KeyCode::Char('j'));
+    assert_eq!(h.app.agents.selected, 1);
+    let ball_screen = h.press(KeyCode::Char('B'));
+    assert!(
+        ball_screen.contains("Switch to Tasks or Pull Requests"),
+        "{ball_screen}"
+    );
+    assert!(h.app.picker.is_none());
+    assert_eq!(h.app.state, tasks);
+    assert_eq!(h.app.page, Page::Agents);
+    assert_eq!(h.app.agents.row().unwrap().pid, 4343);
+    h.press(KeyCode::Esc);
+    for key in ['1', 't', 'v', 'w', 'm', '/', 'f', 's', 'p', ','] {
         h.press(KeyCode::Char(key));
         assert!(h.app.picker.is_none(), "{key} opened a picker");
         assert_eq!(h.app.state, tasks, "{key} changed the task view");

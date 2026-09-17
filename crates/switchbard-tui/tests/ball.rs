@@ -1,4 +1,4 @@
-//! `b`: who holds the ball.
+//! `t b`: who holds the ball.
 
 mod harness;
 
@@ -6,7 +6,7 @@ use crossterm::event::KeyCode;
 use harness::*;
 
 #[test]
-fn b_passes_the_ball_me_agent_nobody_and_writes_the_label() {
+fn task_menu_assigns_ball_me_agent_nobody_and_writes_the_label() {
     let mut h = Harness::new();
     let id = h.app.selected_task().unwrap().id.clone();
     h.press(KeyCode::Char('c'));
@@ -16,7 +16,7 @@ fn b_passes_the_ball_me_agent_nobody_and_writes_the_label() {
     h.type_text("ba");
     h.press(KeyCode::Esc);
     assert!(header_line(&h.render()).contains("5 ball"));
-    let screen = h.press(KeyCode::Char('b'));
+    let screen = h.type_text("tb1");
     assert!(screen.contains(&format!("{id}: ball → me")), "{screen}");
     let file = std::fs::read_dir(h.root.join("backlog/tasks"))
         .unwrap()
@@ -25,7 +25,7 @@ fn b_passes_the_ball_me_agent_nobody_and_writes_the_label() {
         .find(|t| t.contains(&format!("id: {id}")))
         .unwrap();
     assert!(file.contains("- ball:me\n"), "{file}");
-    let screen = h.press(KeyCode::Char('b'));
+    let screen = h.type_text("tb2");
     assert!(screen.contains("ball → agent"), "{screen}");
     assert_eq!(
         h.app
@@ -37,7 +37,7 @@ fn b_passes_the_ball_me_agent_nobody_and_writes_the_label() {
             .count(),
         1
     );
-    let screen = h.press(KeyCode::Char('b'));
+    let screen = h.type_text("tb3");
     assert!(screen.contains("ball dropped"), "{screen}");
     assert!(!h
         .app
@@ -52,7 +52,7 @@ fn b_passes_the_ball_me_agent_nobody_and_writes_the_label() {
 fn ball_filters_sorts_and_the_starter_view_is_my_inbox() {
     let mut h = Harness::new();
     h.press(KeyCode::Char('j'));
-    h.press(KeyCode::Char('b'));
+    h.type_text("tb1");
     let mine = h.app.selected_task().unwrap().title.clone();
     h.press(KeyCode::Char('v'));
     let screen = h.press(KeyCode::Char('5'));
@@ -86,7 +86,7 @@ fn a_dispatching_task_reads_as_agent_without_a_ball_label() {
 }
 
 #[test]
-fn named_ball_holder_renders_filters_and_b_drops_it() {
+fn named_ball_holder_renders_filters_and_task_menu_drops_it() {
     let mut h = Harness::new();
     let id = h.app.selected_task().unwrap().id.clone();
     switchbard_core::set_backlog_label(&h.root, &id, "ball:nick", true).unwrap();
@@ -103,7 +103,7 @@ fn named_ball_holder_renders_filters_and_b_drops_it() {
     );
     h.press(KeyCode::Esc);
     h.press(KeyCode::Char('h'));
-    let screen = h.press(KeyCode::Char('b'));
+    let screen = h.type_text("tb3");
     assert!(screen.contains("ball dropped"), "{screen}");
     let file = std::fs::read_dir(h.root.join("backlog/tasks"))
         .unwrap()

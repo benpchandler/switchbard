@@ -32,6 +32,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Mode::NewTask => 3,
         Mode::DetailInput(_) => 2,
         Mode::Filter if app.filter_completion_hint().is_some() => 2,
+        Mode::Command if !app.status.is_empty() => 2,
         _ => 1,
     };
     let [navigation, notification, body, footer] = Layout::vertical([
@@ -1126,15 +1127,21 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             }
             lines
         }
-        Mode::Command => vec![Line::from(vec![
-            Span::styled(":", theme.style(Surface::Accent)),
-            Span::raw(app.input.clone()),
-            Span::styled("▏", theme.style(Surface::Accent)),
-            Span::styled(
-                format!("   {}", app.command_completions().join("  ")),
-                theme.style(Surface::Hint),
-            ),
-        ])],
+        Mode::Command => {
+            let mut lines = vec![Line::from(vec![
+                Span::styled(":", theme.style(Surface::Accent)),
+                Span::raw(app.input.clone()),
+                Span::styled("▏", theme.style(Surface::Accent)),
+                Span::styled(
+                    format!("   {}", app.command_completions().join("  ")),
+                    theme.style(Surface::Hint),
+                ),
+            ])];
+            if !app.status.is_empty() {
+                lines.push(Line::styled(app.status.clone(), theme.style(Surface::Status)));
+            }
+            lines
+        }
         Mode::PickValue if app.picker.is_some() => {
             vec![Line::from(Span::styled(
                 app.status.clone(),

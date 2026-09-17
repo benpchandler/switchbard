@@ -3,7 +3,7 @@ use crossterm::event::KeyCode;
 use harness::*;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
-use switchbard_tui::page::Page;
+use switchbard_tui::{app::Mode, page::Page};
 
 #[test]
 fn inbox_cycles_and_resumes_both_list_states_without_mutation() {
@@ -23,7 +23,14 @@ fn inbox_cycles_and_resumes_both_list_states_without_mutation() {
         "{screen}"
     );
     assert!(!screen.contains("Add dark theme"));
+    h.press(KeyCode::Char('b'));
+    assert_eq!(h.app.mode, Mode::Command);
+    h.press(KeyCode::Esc);
+    assert_eq!(h.app.pane, switchbard_tui::app::Pane::None);
     for key in ['1', 't', 'v', 'b', 'w', 'm', '/', 'f', 's', 'p', ','] {
+        if key == 'b' {
+            continue;
+        }
         h.press(KeyCode::Char(key));
         assert!(h.app.picker.is_none());
         assert_eq!(h.app.state, tasks);

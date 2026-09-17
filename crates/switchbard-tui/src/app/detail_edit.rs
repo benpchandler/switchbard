@@ -159,6 +159,12 @@ impl App {
 
     pub(super) fn handle_detail_focus_key(&mut self, event: KeyEvent) {
         let chord = KeyChord::from_event(&event);
+        if let Some(action @ (Action::RepoIdea | Action::RepoBug | Action::Command)) =
+            self.config.keys.get(&chord).cloned()
+        {
+            self.apply(&action);
+            return;
+        }
         if self.config.keys.get(&chord) == Some(&Action::FocusPane) {
             self.toggle_detail_focus();
             return;

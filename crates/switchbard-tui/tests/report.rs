@@ -222,6 +222,8 @@ fn report_pending_defers_done_without_blocking() {
 fn pending_storage_defers_all_task_entry_points_and_reload_recovers() {
     for report in [true, false] {
         let mut h = Harness::new();
+        std::fs::write(&h.config_path, "return { keys = { B = 'ball' } }").unwrap();
+        h.app = harness::open_app(&h.root, &h.config_path);
         let initial = std::fs::read_dir(h.root.join("backlog/tasks"))
             .unwrap()
             .map(|entry| {
@@ -262,7 +264,7 @@ fn pending_storage_defers_all_task_entry_points_and_reload_recovers() {
             "tra",
             "trx",
             "tr1",
-            "b",
+            "B",
             "w",
             ":goal unavailable\n",
         ] {

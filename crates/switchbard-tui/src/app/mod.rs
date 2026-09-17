@@ -1306,6 +1306,7 @@ impl App {
             KeyCode::Esc => {
                 self.mode = Mode::Browse;
                 self.input.clear();
+                self.discard_report_editor();
             }
             KeyCode::Tab => {
                 if let Some(first) = self.command_completions().first() {
@@ -1317,6 +1318,9 @@ impl App {
                 let command = std::mem::take(&mut self.input);
                 let started = Instant::now();
                 self.run_command(command.trim());
+                if self.mode != Mode::Command {
+                    self.discard_report_editor();
+                }
                 self.telemetry.record_timed(
                     "action",
                     format!(
@@ -1503,6 +1507,8 @@ impl App {
                 self.status.clear();
             }
             Action::NewTask => self.open_new_task(),
+            Action::RepoIdea => self.open_repo_report(ReportKind::Idea),
+            Action::RepoBug => self.open_repo_report(ReportKind::Bug),
             Action::Down => self.step(1),
             Action::Up => self.step(-1),
             Action::Top => self.select(0),
@@ -1555,11 +1561,7 @@ impl App {
             Action::Settings => self.open_settings(),
             Action::Rank => self.open_task_picker(),
             Action::Group => self.open_organize_picker(),
-            Action::Command => {
-                self.mode = Mode::Command;
-                self.input = self.report.retry_command().unwrap_or_default();
-                self.status.clear();
-            }
+            Action::Command => self.open_report_command(),
             Action::Reload => {
                 self.reload_config();
                 self.request_task_refresh();

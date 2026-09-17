@@ -6,6 +6,8 @@ A local-first terminal workspace for tasks, pull requests, and coding agents.
 
 The supported interface is **`sbt`**, the terminal UI. **`sb`** provides the same task write layer for scripts and agents. The desktop GUI is deprecated; its source and older releases remain available, but new product work and public installation focus on the TUI.
 
+From any `sbt` page, press `i` to capture an idea or `b` to capture a bug for the repository being viewed; Enter saves once and Esc cancels. These captures use the repository's native defaults and keep their destination pinned through saving and retry. The task menu's `t b` still assigns the ball. Colon commands `:bug` and `:idea` remain the legacy tool-report route; see [repository idea and bug capture](docs/repo-report-capture.md) for routing and state details.
+
 ## Install
 
 The TUI release installer installs `sb` and `sbt` together without Rust, Node, Python, or a desktop application. Release targets are macOS Apple Silicon, macOS Intel, and Linux x86_64. It verifies the published archive checksum before installing.
