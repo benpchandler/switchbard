@@ -70,13 +70,19 @@ fn page_binding_is_configurable_and_help_is_available_on_both_pages() {
 #[test]
 fn page_survives_self_restart_and_hidden_task_commands_do_nothing() {
     let mut h = Harness::new();
+    std::fs::write(&h.config_path, "return { keys = { B = 'ball' } }").unwrap();
+    h.app.tick();
     h.press(KeyCode::Char('j'));
     let selected = h.selected_title();
     let before = h.app.state.clone();
     h.next_list_page();
     h.type_text(":group status");
     h.press(KeyCode::Enter);
-    h.type_text("bw");
+    h.press(KeyCode::Char('B'));
+    h.press(KeyCode::Char('w'));
+    let screen = h.press(KeyCode::Char('b'));
+    assert!(screen.contains(":bug "), "{screen}");
+    h.press(KeyCode::Esc);
     h.next_list_page();
     assert_eq!(h.app.state, before);
     h.next_list_page();
