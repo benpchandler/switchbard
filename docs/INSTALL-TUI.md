@@ -8,12 +8,12 @@ Use a terminal with Bash, `curl`, `tar`, and a SHA-256 utility (`shasum` on macO
 
 ```sh
 installer=$(mktemp)
-curl -fsSL https://raw.githubusercontent.com/benpchandler/switchbard/v0.4.0-alpha.1/scripts/install-release.sh -o "$installer"
-bash "$installer" --version v0.4.0-alpha.1
+curl -fsSL https://raw.githubusercontent.com/benpchandler/switchbard/v0.4.0-alpha.2/scripts/install-release.sh -o "$installer"
+bash "$installer" --version v0.4.0-alpha.2
 rm -f "$installer"
 ```
 
-The example selects the published first TUI alpha explicitly. Without `--version`, the installer chooses GitHub's latest stable release, which may still be an older GUI-only release. An absent TUI asset produces an error rather than installing the GUI. Use the source route below if you prefer to build your own binaries.
+The example selects the developer-onboarding TUI alpha explicitly. Without `--version`, the installer chooses GitHub's latest stable release, which may still be an older GUI-only release. An absent TUI asset produces an error rather than installing the GUI. Use the source route below if you prefer to build your own binaries.
 
 The installer downloads the matching archive and `.sha256` file, verifies the checksum, and installs both tools into `~/.local/bin`. It refuses to replace existing binaries without `--replace`. To choose a different directory, add `--bin-dir /path/to/bin`.
 
@@ -69,7 +69,7 @@ Switchbard does not request a separate permission grant or narrow your existing 
 
 Opening the PR page performs reads. Merging requires a separate confirmation, a fresh observation, and matching PR head; it does not use an admin bypass. A successful merge never marks the local task Done automatically. Missing `gh`, expired credentials, an inaccessible repository, network errors, or restricted metadata show an error or unknown state, rather than proving that there are no PRs or that checks passed. Retry after fixing the underlying problem. The current PR page accepts canonical `github.com` repositories only; GitHub Enterprise hosts are unsupported. Organization-specific permission combinations are not comprehensively verified.
 
-The alpha has no built-in GitHub connection wizard, account switcher, or diagnostic command. Use the checks above to establish access. Installing Switchbard also does not install or authenticate Claude Code or Codex.
+New terminal builds offer `sbt doctor --github` to check access with actionable results and `sbt agent-prompt` for agent-assisted setup. They have no account switcher or automatic login. The older v0.4.0-alpha.1 lacks these commands. See [developer onboarding](developer-onboarding.md). Installing Switchbard also does not install or authenticate Claude Code or Codex.
 
 ## Manual download
 

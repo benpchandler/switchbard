@@ -95,4 +95,13 @@ case ":${PATH:-}:" in
   *":$bin_dir:"*) ;;
   *) printf "Add this directory to your shell PATH: export PATH=\"%s:\$PATH\"\n" "$bin_dir" ;;
 esac
-printf '%s\n' 'From a git repository, run: sbt' 'Switchbard is alpha software. Back up important task data before upgrading.'
+printf '%s\n' \
+  'From your git repository:' \
+  '  sbt doctor                         Check Git, workspace and terminal readiness' \
+  '  sbt                                Open the terminal app and set up your workspace' \
+  '  sbt doctor --github                Optional: check GitHub CLI and authentication' \
+  '  sbt agent-prompt                   Print a copyable setup prompt for your agent' \
+  '  sbt skill install --agent both     Optional: install Claude and Codex instructions' \
+  'Use --agent claude or --agent codex to install instructions for only that agent.' \
+  'Existing system Git and GitHub CLI are reused.' \
+  'Switchbard is alpha software. Back up important task data before upgrading.'

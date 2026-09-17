@@ -856,3 +856,9 @@ branch install block every other session's merged work for hours, and the
 ancestry rule needs no timer. A manual install off main is still an explicit
 choice (`--branch`), never silent and never itself evidence that a task is
 done - only origin/main runs unattended.
+
+## Terminal developer onboarding (owner-approved 2026-09-17)
+
+The public package remains two self-contained terminal binaries with embedded SQLite. `sbt doctor` checks local readiness and gives next actions without creating a workspace or migrating an existing store. Text is for terminal readers; `--json` is for scripts and agents. GitHub network/authentication checks are explicit through `--github`, while local tasks remain independent of optional gh and coding-agent installations. Required failures have a nonzero diagnostic exit, optional omissions are clearly labeled. The command does not install OS tools, log in, or modify shell configuration.
+
+Agent instructions are embedded from the canonical `skills/switchbard` source. `sbt agent-prompt` prints a copyable setup request; `sbt skill show` exposes the instruction payload and `sbt skill install --agent claude|codex|both` writes personal skill files only on explicit request, preserving custom instructions unless `--replace` is chosen. Pre-existing symlink targets are refused and paths are rechecked during writes; personal directories must not be rearranged concurrently. No automatic hooks, credential grants, Codex live-claim attribution, or task completion follow from skill installation. Runtime diagnosis and installer guidance retain the experienced developer's existing tools and minimal first-launch path.
