@@ -15,30 +15,100 @@ import termios
 import time
 
 
+class TerminalScreen:
+    """Small stateful decoder for the crossterm sequences this harness sees."""
+
+    def __init__(self, rows=24, columns=100):
+        self.rows = rows
+        self.columns = columns
+        self.cells = [[" "] * columns for _ in range(rows)]
+        self.row = 0
+        self.column = 0
+        self.pending = b""
+
+    def feed(self, data):
+        data = self.pending + data
+        self.pending = b""
+        index = 0
+        while index < len(data):
+            byte = data[index]
+            if byte == 0x1b:
+                end = index + 1
+                if end == len(data):
+                    self.pending = data[index:]
+                    break
+                if data[end] != ord("["):
+                    index += 2
+                    continue
+                end += 1
+                while end < len(data) and not (0x40 <= data[end] <= 0x7e):
+                    end += 1
+                if end == len(data):
+                    self.pending = data[index:]
+                    break
+                self._csi(data[index + 2:end], data[end])
+                index = end + 1
+                continue
+            if byte == 0x0d:
+                self.column = 0
+            elif byte == 0x0a:
+                self.row = min(self.rows - 1, self.row + 1)
+            elif byte == 0x08:
+                self.column = max(0, self.column - 1)
+            elif 0x20 <= byte <= 0x7e:
+                self.cells[self.row][self.column] = chr(byte)
+                self.column = min(self.columns - 1, self.column + 1)
+            index += 1
+
+    def _csi(self, body, final):
+        if final in (ord("H"), ord("f")):
+            parts = body.lstrip(b"?").split(b";")
+            row = int(parts[0] or b"1") - 1
+            column = int(parts[1] or b"1") - 1 if len(parts) > 1 else 0
+            self.row = max(0, min(self.rows - 1, row))
+            self.column = max(0, min(self.columns - 1, column))
+        elif final == ord("J") and body in (b"2", b"3"):
+            self.cells = [[" "] * self.columns for _ in range(self.rows)]
+        elif final == ord("K"):
+            for column in range(self.column, self.columns):
+                self.cells[self.row][column] = " "
+
+    def contains(self, text):
+        return any(text in "".join(row) for row in self.cells)
+
+
+def screen_decoder_self_test():
+    screen = TerminalScreen(rows=2, columns=12)
+    screen.feed(b"\x1b[1;1Hsig")
+    screen.feed(b"\x1b[2;1Hnal0")
+    assert not screen.contains("signal0")
+    screen.feed(b"\x1b[1;4Hnal0")
+    assert screen.contains("signal0")
+
+
 def wait_screen(fd, text, resize_width=None):
     if resize_width is not None:
         fcntl.ioctl(
             fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, resize_width, 0, 0)
         )
-    screen = b""
+    screen = TerminalScreen(columns=resize_width or 100)
     started = time.monotonic()
     deadline = time.monotonic() + 8
     repainted = False
     while time.monotonic() < deadline:
         ready, _, _ = select.select([fd], [], [], 0.1)
         if ready:
-            screen += os.read(fd, 65536)
-            if text in screen:
+            screen.feed(os.read(fd, 65536))
+            if screen.contains(text.decode() if isinstance(text, bytes) else text):
                 return
         if resize_width is None and not repainted and time.monotonic() - started >= 0.5:
             # The TUI paints cells incrementally.  A cursor move can split a
             # label across the raw PTY stream, so request the terminal's
             # normal resize repaint before treating the screen as absent.
-            for columns in (99, 100):
-                fcntl.ioctl(fd, termios.TIOCSWINSZ,
-                            struct.pack("HHHH", 24, columns, 0, 0))
+            fcntl.ioctl(fd, termios.TIOCSWINSZ,
+                        struct.pack("HHHH", 24, 99, 0, 0))
             repainted = True
-    raise AssertionError(f"missing {text!r}: {screen[-4000:]!r}")
+    raise AssertionError(f"missing {text!r}: {screen.cells[-4:]!r}")
 
 
 def wait_exit(child, master):
@@ -93,7 +163,6 @@ def timer_checkpoint_then_forced_exit(binary, repo, env, views_dir):
         wait_screen(master, b"Tasks")
         os.write(master, b"/timercheckpoint\r")
         wait_screen(master, b"timercheckpoint", resize_width=99)
-        fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
         deadline = started + 40
         durable = False
         while time.monotonic() < deadline:
@@ -128,6 +197,7 @@ def timer_checkpoint_then_forced_exit(binary, repo, env, views_dir):
 
 
 with tempfile.TemporaryDirectory(prefix="sbt-signal-resume-") as directory:
+    screen_decoder_self_test()
     root = Path(directory)
     binary = str(root / "sbt")
     shutil.copy2(sys.argv[1], binary)
