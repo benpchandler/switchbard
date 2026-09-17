@@ -30,7 +30,7 @@ def wait_screen(fd, text, resize_width=None):
             screen += os.read(fd, 65536)
             if text in screen:
                 return
-        if not repainted and time.monotonic() - started >= 0.5:
+        if resize_width is None and not repainted and time.monotonic() - started >= 0.5:
             # The TUI paints cells incrementally.  A cursor move can split a
             # label across the raw PTY stream, so request the terminal's
             # normal resize repaint before treating the screen as absent.
