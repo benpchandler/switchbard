@@ -485,7 +485,7 @@ impl App {
                 self.open_picker(PickerPurpose::Filter(field), options);
             }
             None => {
-                self.mode = Mode::Filter;
+                self.begin_filter_edit();
                 self.status = format!(
                     "{} is free text: type to search",
                     column.header(&self.registry)

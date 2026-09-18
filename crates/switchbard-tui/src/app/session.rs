@@ -2,12 +2,21 @@
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::{resume, App};
+use super::{resume, App, Mode};
 use crate::page::Page;
 use crate::picker::{Payload, PickOption, PickerPurpose};
 use crate::views::ViewState;
 
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(30);
+
+#[derive(PartialEq, Eq)]
+pub(super) struct SessionArrangement {
+    page: Page,
+    slot: usize,
+    inactive_slot: usize,
+    active: ViewState,
+    inactive: ViewState,
+}
 
 impl App {
     /// One status line at session start, never repeated per tick (TASK-227).
@@ -67,6 +76,54 @@ impl App {
         self.status = "resumed last view · v h history · --fresh opens saved default".into();
     }
 
+    pub(super) fn begin_filter_edit(&mut self) {
+        self.filter_resume_before_edit = self.resume_state();
+        let text = self.filter_text().to_string();
+        self.filter_before_edit = text.clone();
+        self.mode = Mode::Filter;
+        if !text.is_empty() && !text.ends_with(' ') {
+            self.set_filter(format!("{text} "));
+        }
+    }
+
+    pub(super) fn restore_filter_selection(&mut self) {
+        let resume::Restored::Record(record) =
+            resume::decode(Some(&self.filter_resume_before_edit))
+        else {
+            self.fail("filter baseline unreadable".into());
+            return;
+        };
+        if self.page == Page::PullRequests {
+            self.pull_requests.selected = record.pr_selected;
+            self.pull_requests.restore_selection(record.pr_id);
+            self.pull_requests.refilter();
+        } else {
+            self.select(record.task_selected);
+        }
+    }
+
+    pub(super) fn session_arrangement(&self) -> SessionArrangement {
+        let mut active = self.state.clone();
+        if self.mode == Mode::Filter {
+            active.filter.clone_from(&self.filter_before_edit);
+        }
+        SessionArrangement {
+            page: self.page,
+            slot: self.view,
+            inactive_slot: self.inactive_view,
+            active,
+            inactive: self.inactive_state.clone(),
+        }
+    }
+
+    pub(super) fn checkpoint_arrangement_change(&mut self, before: SessionArrangement) {
+        if before != self.session_arrangement() {
+            if let Err(error) = self.checkpoint_resume() {
+                self.fail(format!("resume not saved: {error}"));
+            }
+        }
+    }
+
     /// Timer and all graceful exits use this one capture path. Slots are never written.
     pub fn checkpoint_session(&mut self) -> Result<(), String> {
         let now = epoch_seconds();
@@ -74,10 +131,11 @@ impl App {
         if let Err(error) = self.checkpoint_resume() {
             errors.push(format!("resume not saved: {error}"));
         }
+        let arrangement = self.session_arrangement();
         let (tasks, prs) = if self.page == Page::PullRequests {
-            (&self.inactive_state, &self.state)
+            (&arrangement.inactive, &arrangement.active)
         } else {
-            (&self.state, &self.inactive_state)
+            (&arrangement.active, &arrangement.inactive)
         };
         for (page, state) in [(Page::Tasks, tasks), (Page::PullRequests, prs)] {
             if let Err(error) = self.history.capture(page, state, &self.registry, now) {
@@ -93,12 +151,16 @@ impl App {
     }
 
     fn checkpoint_resume(&mut self) -> Result<(), String> {
-        let state = self.resume_state();
+        let state = if self.mode == Mode::Filter {
+            self.filter_resume_before_edit.clone()
+        } else {
+            self.resume_state()
+        };
         let resume::Restored::Record(record) = resume::decode(Some(&state)) else {
             return Err("outgoing resume record is unreadable".into());
         };
         validate_resume_views(&record, &self.registry)?;
-        self.resume_store.checkpoint(&state)
+        self.resume_store.checkpoint(&record.encode())
     }
 
     /// A monotonic deadline keeps rapid input from starving persistence.
