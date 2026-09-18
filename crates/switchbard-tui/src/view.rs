@@ -1402,7 +1402,13 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         return;
     }
     let theme = &app.config.theme;
-    let hint = picker::hint(picker);
+    let hint = if picker.purpose == PickerPurpose::Columns
+        && app.experiments.is_enabled("direct-column-move")
+    {
+        "↑↓ select · r move shown column · m reorder all · Esc"
+    } else {
+        picker::hint(picker)
+    };
     let labels: Vec<String> = picker
         .options
         .iter()
@@ -1580,7 +1586,10 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                 Span::styled(
                     format!(
                         "{:<2}",
-                        if matches!(picker.purpose, PickerPurpose::TaskParent(_)) {
+                        if matches!(
+                            picker.purpose,
+                            PickerPurpose::TaskParent(_) | PickerPurpose::MoveColumn(_)
+                        ) {
                             String::new()
                         } else {
                             keys.get(index).cloned().unwrap_or_default()
@@ -1649,7 +1658,15 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         PickerPurpose::Merge | PickerPurpose::TaskCancel | PickerPurpose::AgentKill
     ) && rows.len().saturating_add(4) > height as usize
     {
-        let navigation = if matches!(picker.purpose, PickerPurpose::TaskParent(_)) && width >= 28 {
+        let navigation = if matches!(picker.purpose, PickerPurpose::MoveColumn(_)) {
+            if width >= 44 {
+                "←/→ move Enter keep Esc undo"
+            } else if width >= 28 {
+                "←/→ move Enter Esc"
+            } else {
+                "←/→ Esc"
+            }
+        } else if matches!(picker.purpose, PickerPurpose::TaskParent(_)) && width >= 28 {
             "↑↓ Enter saves Esc"
         } else if width >= 28 {
             "↑↓ →open ←back Esc"
@@ -1726,6 +1743,12 @@ fn picker_title(
         PickerPurpose::ChooseColumn(ColumnPurpose::Filter) => "filter by column".to_string(),
         PickerPurpose::ChooseColumn(ColumnPurpose::Sort) => "sort by column".to_string(),
         PickerPurpose::Columns => "columns".to_string(),
+        PickerPurpose::MoveColumn(column) => format!(
+            "move {} · {}/{}",
+            column.name(registry),
+            picker.selected + 1,
+            picker.options.len()
+        ),
         PickerPurpose::MoveColumns(placed) => format!(
             "move columns: {}",
             placed

@@ -74,10 +74,11 @@ impl App {
         if let Err(error) = self.checkpoint_resume() {
             errors.push(format!("resume not saved: {error}"));
         }
+        let state = self.view_state_for_persistence();
         let (tasks, prs) = if self.page == Page::PullRequests {
-            (&self.inactive_state, &self.state)
+            (&self.inactive_state, &state)
         } else {
-            (&self.state, &self.inactive_state)
+            (&state, &self.inactive_state)
         };
         for (page, state) in [(Page::Tasks, tasks), (Page::PullRequests, prs)] {
             if let Err(error) = self.history.capture(page, state, &self.registry, now) {

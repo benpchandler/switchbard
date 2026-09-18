@@ -48,8 +48,15 @@ Experiment numbers are assigned explicitly in the compiled catalog, never inferr
 | E004 | `bug-dispatch` | TASK-143 | Filed bugs can start Codex work with Inbox handoffs |
 | E005 | `glyph-column-name` | TASK-286 | Glyph columns show their column name in the header |
 | E006 | `action-input-wrap` | TASK-205 | Long command drafts wrap and keep the cursor visible |
+| E007 | `direct-column-move` | TASK-212 | Preview moving one column with Left/Right and explicit keep/undo |
 
-Next unused number: E007. Keep/Remove/Enable/Disable never change an experiment number. Do not reuse a retired entry's number or persistence ID.
+Next unused number: E008. Keep/Remove/Enable/Disable never change an experiment number. Do not reuse a retired entry's number or persistence ID.
+
+## E007: direct column positioning
+
+Objective: make TASK-212 directly reviewable as the next independent experiment. A column number then `m` enters a move preview for that column; Left/Right or h/l changes its position, Enter accepts, and Esc restores the original order. For columns beyond header shortcuts 1-9, `c`, arrows, then `r` moves the highlighted shown column; hidden columns must first be shown. Global `c m` retains its existing whole-order flow; disabling E007 restores the old header-menu action. Root owns catalog, renderer title, docs, native task truth and delivery; column_move owns picker behavior and checkpoint projection. The interaction works independently on Tasks and Pull Requests. Existing task data, selected task and sort/filter/paint stay unchanged; reordering the active page does not rearrange the inactive page. The catalog page only selects where Try opens. Preview must not leak into resume/history before acceptance. No automated tests, automatic owner acceptance or live synthetic data.
+
+Pre-implementation state matrix: default-off/kept/removal use existing experiment semantics; left/middle/right position and repeated edge moves, one column/empty defensive state, >9 columns and custom names; enter/escape/reopen, h/l aliases, unrelated keys ignored, Tasks/PR pages; normal/narrow/short screens with scrolling picker; live periodic checkpoint and graceful interruption preserve original order until Enter. There is no new network, async loading, permission or task-write path. Persistence failures remain existing resume/history errors. Manual native terminal observations will cover common move/accept/cancel/edge/resize/off behavior; checkpoint projection and extreme catalog widths will be source-reviewed if not exercised. Appearance uses existing plain picker styling, with no additional status colors.
 
 ## E006: readable command drafts
 
@@ -89,6 +96,8 @@ Visibility matrix before implementation: default/empty/ordinary filters hide mai
 | Pointer / touch / web zoom / roles | N/A for this keyboard-driven local menu; terminal font and size remain user-controlled | N/A |
 
 ## Objective ledger
+
+- E007 (2026-09-18): compiled and independently source-reviewed. Manual isolated terminal observations covered header-number/m entry, Left/Right preview, repeated left-edge moves, ignored Tab, Enter accept, Esc undo, Tasks/PR independence, `c`/arrows/`r` entry and 100x30/48x14 layouts. During a live preview, the periodic resume file retained accepted Tasks order and untouched PR order. Readbacks: `/tmp/sbt-experiments-review.Gp7Uue/e007-before.txt`, `e007-preview.txt`, `e007-narrow.txt`. Review added the alternate Columns-menu route because browse header shortcuts stop at nine. Gaps: actual >9-column fixture, one-column view, custom long names, rightmost repetition and process hangup are source-reviewed; the scratch repository cannot display live PR data. No automated tests or task-data mutations. Owner acceptance remains open.
 
 - E006 growth feedback (2026-09-18): removed the fixed four-row ceiling. Reproduced the old cropped start at 72x20; the same draft now occupies six rows with its opening sentence and cursor visible. Resizing to 40x12 bounded the input to available height and retained its tail/cursor. Native capture also retains its status row. Readbacks: `/tmp/sbt-experiments-review.Gp7Uue/e006-growth-before.txt` and `e006-growth-after.txt`. Compilation passed; no automated tests. Owner Keep decision remains unchanged.
 

@@ -71,6 +71,14 @@ const CATALOG: &[ExperimentSpec] = &[
         title: "Long ideas should stay readable while you type",
         description: "Type :idea and a few sentences. Input should wrap and keep the cursor visible. Esc cancels; Off returns to one line.",
     },
+    ExperimentSpec {
+        number: 7,
+        page: crate::page::Page::Tasks,
+        id: "direct-column-move",
+        task: "TASK-212",
+        title: "Move a column without rebuilding the whole layout",
+        description: "Press a column number, then m. Left/Right moves it; Enter keeps the position, Esc restores it. Off uses the old number-order menu.",
+    },
 ];
 
 // Reject accidental duplicate numbers at compile time, before they can be displayed.

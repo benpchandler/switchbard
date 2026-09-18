@@ -180,7 +180,14 @@ impl App {
                     || (self.page == crate::page::Page::Tasks && column.abbreviable())
             })
             .map(|action| {
-                PickOption::keyed(action.key(), action.label(), Payload::ColumnAction(action))
+                let label = if action == ColumnAction::Move
+                    && self.experiments.is_enabled("direct-column-move")
+                {
+                    "move this column"
+                } else {
+                    action.label()
+                };
+                PickOption::keyed(action.key(), label, Payload::ColumnAction(action))
             })
             .collect();
         self.open_picker(PickerPurpose::ColumnActions(column), options);
@@ -202,6 +209,9 @@ impl App {
             ColumnAction::Hide => self.toggle_column(column),
             ColumnAction::Earlier => self.move_column(column, -1),
             ColumnAction::Later => self.move_column(column, 1),
+            ColumnAction::Move if self.experiments.is_enabled("direct-column-move") => {
+                self.open_column_move(column);
+            }
             ColumnAction::Move => {
                 self.move_origin = Some(self.state.columns.clone());
                 let options = self.shown_column_options();
@@ -522,6 +532,9 @@ impl App {
     }
 
     pub(super) fn handle_pick_value_key(&mut self, event: KeyEvent) {
+        if self.handle_column_move_key(event) {
+            return;
+        }
         if self.handle_experiment_key(event) {
             return;
         }
@@ -832,6 +845,19 @@ impl App {
                 picker.selected = 0;
             }
             KeyCode::Char(' ') => self.toggle_picked_value(),
+            KeyCode::Char('r')
+                if purpose == PickerPurpose::Columns
+                    && typed_empty
+                    && event.modifiers.is_empty()
+                    && self.experiments.is_enabled("direct-column-move") =>
+            {
+                match picker.highlighted().map(|option| option.payload) {
+                    Some(Payload::Column(column)) if self.state.columns.contains(&column) => {
+                        self.open_column_move(column);
+                    }
+                    _ => self.status = "Select a shown column to move".into(),
+                }
+            }
             KeyCode::Char('m') if purpose == PickerPurpose::Columns && typed_empty => {
                 self.move_origin = Some(self.state.columns.clone());
                 let options = self.shown_column_options();

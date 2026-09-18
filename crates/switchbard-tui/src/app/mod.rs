@@ -7,6 +7,7 @@ mod experiment_island;
 mod experiments;
 use crate::experiment_feedback::ExperimentFeedbackStore;
 pub use experiment_island::{IslandAction, IslandHit, IslandUi};
+mod column_move;
 mod filter_completion;
 mod inbox;
 mod new_task;
@@ -565,20 +566,11 @@ impl App {
 
     /// Preserve the page and task view across a self-restart; old task-only records still read.
     pub fn resume_state(&self) -> String {
+        let state = self.view_state_for_persistence();
         let (tasks, task_slot, prs, pr_slot) = if self.page != Page::PullRequests {
-            (
-                &self.state,
-                self.view,
-                &self.inactive_state,
-                self.inactive_view,
-            )
+            (&state, self.view, &self.inactive_state, self.inactive_view)
         } else {
-            (
-                &self.inactive_state,
-                self.inactive_view,
-                &self.state,
-                self.view,
-            )
+            (&self.inactive_state, self.inactive_view, &state, self.view)
         };
         resume::ResumeRecord {
             pr_page: self.page == Page::PullRequests,
