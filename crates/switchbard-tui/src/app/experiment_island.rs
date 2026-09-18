@@ -6,8 +6,7 @@ use ratatui::layout::{Position, Rect};
 
 #[derive(Clone, Copy, Debug)]
 pub enum IslandAction {
-    Toggle,
-    Review,
+    Options,
     Feedback,
     Hide,
     Submit,
@@ -232,39 +231,7 @@ impl App {
                 Ok(()) => self.island.message = None,
                 Err(error) => self.island.error = Some(format!("Could not hide: {error:#}")),
             },
-            IslandAction::Review => {
-                if self.experiments.state(&id).review
-                    == crate::experiments::ExperimentReview::Unreviewed
-                {
-                    let previous = self.detail_rows();
-                    match self.experiments.set_decision(&id, ExperimentDecision::Keep) {
-                        Ok(()) => {
-                            self.reconcile_experiment_detail_rows(previous);
-                            self.island.error = None;
-                        }
-                        Err(error) => {
-                            self.island.error = Some(format!("Could not keep: {error:#}"))
-                        }
-                    }
-                } else {
-                    self.open_experiment(&id);
-                }
-            }
-            IslandAction::Toggle => {
-                let previous = self.detail_rows();
-                let decision = if self.experiments.is_enabled(&id) {
-                    ExperimentDecision::Disable
-                } else {
-                    ExperimentDecision::Enable
-                };
-                match self.experiments.set_decision(&id, decision) {
-                    Ok(()) => {
-                        self.reconcile_experiment_detail_rows(previous);
-                        self.island.error = None;
-                    }
-                    Err(error) => self.island.error = Some(format!("Could not toggle: {error:#}")),
-                }
-            }
+            IslandAction::Options => self.open_experiment(&id),
             IslandAction::Next => {
                 let specs = catalog();
                 if let Some(index) = specs.iter().position(|spec| spec.id == id) {

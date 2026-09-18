@@ -1,8 +1,7 @@
 //! Pinned testing directions and a small, persistent feedback editor.
 use crate::{
     app::{App, IslandAction, IslandHit},
-    config::Surface,
-    experiments::{catalog, ExperimentReview},
+    experiments::catalog,
 };
 use ratatui::{
     layout::Rect,
@@ -31,7 +30,7 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let background = app.config.theme.style(Surface::Selected);
+    let background = app.config.theme.canvas_style();
     frame.render_widget(Paragraph::new("").style(background), area);
     let title = format!(" E{:03} {}", spec.number, spec.title);
     if app.island.editing {
@@ -44,35 +43,9 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         draw_editor(frame, app, area, spec.description, background);
         return;
     }
-    let state = app.experiments.state(spec.id);
-    let (review, review_color) = match state.review {
-        ExperimentReview::Unreviewed => ("Keep", "green"),
-        ExperimentReview::Kept => ("Kept", "green"),
-        ExperimentReview::RemovalRequested => ("Remove", "red"),
-    };
-    let feedback = if !app.experiment_feedback.draft(spec.id).is_empty() {
-        "Draft"
-    } else if app.experiment_feedback.submission_count(spec.id) > 0 {
-        "Saved"
-    } else {
-        "Feedback"
-    };
     let controls = [
-        (
-            if state.enabled { "On" } else { "Off" },
-            3,
-            if state.enabled { "cyan" } else { "gray" },
-            IslandAction::Toggle,
-        ),
-        (review, 6, review_color, IslandAction::Review),
-        (
-            feedback,
-            8,
-            if feedback == "Saved" { "green" } else { "cyan" },
-            IslandAction::Feedback,
-        ),
-        ("Next", 4, "gray", IslandAction::Next),
-        ("x", 1, "gray", IslandAction::Hide),
+        ("Feedback", 8, "gray", IslandAction::Feedback),
+        ("More", 4, "gray", IslandAction::Options),
     ];
     // Preserve the experiment number and a title fragment, even in a narrow pane.
     let budget = area.width.saturating_sub(16);
@@ -127,11 +100,11 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             == 1
         {
             let status = if !app.experiment_feedback.draft(spec.id).is_empty() {
-                "Feedback draft saved · Feedback resumes it".to_string()
+                "Draft saved"
+            } else if app.experiment_feedback.submission_count(spec.id) > 0 {
+                "Feedback saved"
             } else {
-                app.island.message.clone().unwrap_or_else(|| {
-                    "Feedback saves what happened · Next changes instructions".into()
-                })
+                ""
             };
             text(frame, row(area, 2), format!(" {status}"), background);
         }
@@ -221,7 +194,7 @@ fn draw_editor(frame: &mut Frame, app: &mut App, area: Rect, description: &str, 
     ] {
         if x + width as u16 + 2 <= footer.right() {
             let button = Rect::new(x, footer.y, width as u16 + 2, 1);
-            draw_button(frame, app, button, label, width, "cyan", action, style);
+            draw_button(frame, app, button, label, width, "gray", action, style);
             x += button.width + 1;
         }
     }

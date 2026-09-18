@@ -63,8 +63,29 @@ impl App {
                 PickOption::keyed(key, label, Payload::ExperimentDecision(decision))
             }),
         );
+        if self.experiment_feedback.active() == Some(id) {
+            options.push(PickOption::keyed(
+                'n',
+                "Next experiment instructions",
+                Payload::ExperimentNext,
+            ));
+            options.push(PickOption::keyed(
+                'h',
+                "Hide instructions · keep current settings",
+                Payload::ExperimentHide,
+            ));
+        }
         self.open_picker(PickerPurpose::Experiment(id.to_string()), options);
-        self.status = format!("E{:03} · {} · {}", spec.number, spec.task, spec.description);
+        let review = match state.review {
+            crate::experiments::ExperimentReview::Unreviewed => "Not reviewed",
+            crate::experiments::ExperimentReview::Kept => "Kept",
+            crate::experiments::ExperimentReview::RemovalRequested => "Removal requested",
+        };
+        self.status = format!(
+            "E{:03} · {} · {review}",
+            spec.number,
+            if state.enabled { "On" } else { "Off" }
+        );
     }
 
     pub(super) fn decide_experiment(&mut self, id: &str, decision: ExperimentDecision) {

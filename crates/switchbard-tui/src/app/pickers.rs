@@ -2,7 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::app::{App, Mode};
+use crate::app::{App, IslandAction, Mode};
 use crate::ball::Ball;
 use crate::columns::Column;
 use crate::picker::{
@@ -1100,6 +1100,12 @@ impl App {
             (PickerPurpose::Experiments, Payload::Experiment(id)) => self.open_experiment(&id),
             (PickerPurpose::Experiment(id), Payload::ExperimentTry) => {
                 self.begin_experiment_trial(&id)
+            }
+            (PickerPurpose::Experiment(_), Payload::ExperimentNext) => {
+                self.apply_island_action(IslandAction::Next)
+            }
+            (PickerPurpose::Experiment(_), Payload::ExperimentHide) => {
+                self.apply_island_action(IslandAction::Hide)
             }
             (PickerPurpose::Experiment(id), Payload::ExperimentDecision(decision)) => {
                 self.decide_experiment(&id, decision)

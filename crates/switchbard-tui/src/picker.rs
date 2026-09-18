@@ -188,6 +188,8 @@ pub enum PaintRuleAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Payload {
     ExperimentTry,
+    ExperimentNext,
+    ExperimentHide,
     /// A value of a field, a color name, or a sort order label.
     Text(String),
     Column(Column),
