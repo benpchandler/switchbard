@@ -1405,7 +1405,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
     let hint = if picker.purpose == PickerPurpose::Columns
         && app.experiments.is_enabled("direct-column-move")
     {
-        "↑↓ select · r move shown column · m reorder all · Esc"
+        "↑↓/jk select · r move shown column · m reorder all · Esc"
     } else {
         picker::hint(picker)
     };
@@ -1586,10 +1586,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
                 Span::styled(
                     format!(
                         "{:<2}",
-                        if matches!(
-                            picker.purpose,
-                            PickerPurpose::TaskParent(_) | PickerPurpose::MoveColumn(_)
-                        ) {
+                        if matches!(picker.purpose, PickerPurpose::TaskParent(_)) {
                             String::new()
                         } else {
                             keys.get(index).cloned().unwrap_or_default()
@@ -1660,11 +1657,19 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
     {
         let navigation = if matches!(picker.purpose, PickerPurpose::MoveColumn(_)) {
             if width >= 44 {
-                "←/→ move Enter keep Esc undo"
+                "arrows/jk move · # position · Enter/Esc"
             } else if width >= 28 {
-                "←/→ move Enter Esc"
+                "↑↓/# Enter/Esc"
             } else {
-                "←/→ Esc"
+                "↑↓/# Esc"
+            }
+        } else if picker.purpose == PickerPurpose::Columns
+            && app.experiments.is_enabled("direct-column-move")
+        {
+            if width >= 40 {
+                "↑↓/jk select · r move · Esc"
+            } else {
+                "↑↓ r move Esc"
             }
         } else if matches!(picker.purpose, PickerPurpose::TaskParent(_)) && width >= 28 {
             "↑↓ Enter saves Esc"

@@ -424,7 +424,9 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::ChooseColumn(_) => "number or name · hidden columns listed last · esc",
         PickerPurpose::Columns => "↑↓/jk select · →/l open · ←/h back · Esc closes",
         PickerPurpose::MoveColumns(_) => "type column numbers in the order you want · enter done",
-        PickerPurpose::MoveColumn(_) => "←→/hl move · Enter accepts · Esc restores",
+        PickerPurpose::MoveColumn(_) => {
+            "arrows/jk move · number inserts · Enter accepts · Esc restores"
+        }
         PickerPurpose::PaintValues(_) => "value then color · repeats · h back · esc done",
         PickerPurpose::PaintColumn | PickerPurpose::PaintHeadings => {
             "number or name · h back · esc"

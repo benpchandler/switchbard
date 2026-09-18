@@ -1130,9 +1130,10 @@ impl App {
             (PickerPurpose::Experiment(_), Payload::ExperimentNext) => {
                 self.apply_island_action(IslandAction::Next)
             }
-            (PickerPurpose::Experiment(_), Payload::ExperimentHide) => {
-                self.apply_island_action(IslandAction::Hide)
-            }
+            (
+                PickerPurpose::Experiments | PickerPurpose::Experiment(_),
+                Payload::ExperimentHide,
+            ) => self.apply_island_action(IslandAction::Hide),
             (PickerPurpose::Experiment(id), Payload::ExperimentDecision(decision)) => {
                 self.decide_experiment(&id, decision)
             }

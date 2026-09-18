@@ -226,6 +226,7 @@ fn notice(payload: &Payload) -> &'static str {
             .map_or("This experiment is unavailable in this build.", |spec| {
                 spec.description
             }),
+        Payload::ExperimentHide => "Leave feature settings and saved feedback unchanged.",
         Payload::Update => "Load the installed build; your saved experiment choices carry forward.",
         _ => "Open this option for details.",
     }

@@ -1638,6 +1638,7 @@ impl App {
             Action::Ball => self.pass_ball(),
             Action::Pass => self.pass_work(),
             Action::Settings => self.open_settings(),
+            Action::Experiments => self.open_experiments(),
             Action::Rank => self.open_task_picker(),
             Action::Group => self.open_organize_picker(),
             Action::Command => self.open_report_command(),

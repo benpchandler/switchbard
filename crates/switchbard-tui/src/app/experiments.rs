@@ -19,6 +19,13 @@ impl App {
                 )
             })
             .collect::<Vec<_>>();
+        if self.experiment_feedback.active().is_some() {
+            options.push(PickOption::keyed(
+                'h',
+                "Hide bottom pane",
+                Payload::ExperimentHide,
+            ));
+        }
         if self.update_available {
             options.push(PickOption::keyed('u', "Update now", Payload::Update));
         }

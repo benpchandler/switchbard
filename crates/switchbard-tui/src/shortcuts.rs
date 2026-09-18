@@ -37,6 +37,7 @@ pub enum Action {
     Page,
     Group,
     Settings,
+    Experiments,
     /// The task chord: rank digits, Ball, top-list, status, and goals actions.
     Rank,
 }
@@ -76,6 +77,7 @@ const ACTIONS: &[(Action, &str, Availability)] = &[
     (Action::Pass, "pass", Availability::Tasks),
     (Action::Group, "outline", Availability::Tasks),
     (Action::Settings, "settings", Availability::Tasks),
+    (Action::Experiments, "experiments", Availability::Everywhere),
     (Action::Rank, "task", Availability::Tasks),
     (Action::Command, "command", Availability::Everywhere),
     (Action::Reload, "reload", Availability::Everywhere),

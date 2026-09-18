@@ -77,7 +77,7 @@ const CATALOG: &[ExperimentSpec] = &[
         id: "direct-column-move",
         task: "TASK-212",
         title: "Move a column without rebuilding the whole layout",
-        description: "Press a column number, then m. Left/Right moves it; Enter keeps the position, Esc restores it. Off uses the old number-order menu.",
+        description: "Press 4 then m. Use arrows or j/k, or type 1 to move it first. Enter keeps the order; Esc restores it.",
     },
 ];
 
