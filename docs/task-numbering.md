@@ -21,11 +21,22 @@ Two facts make this cheaper to fix than it looks:
 
 ## Direction
 
-1. **One flat sequential number per repository, for every task including sub-issues.** Allocated once at creation, never reused, never changed - a one-way door. `TASK-312` is a sub-issue of `TASK-88` because its parent field says so.
-2. **Always write the parent field** on create and on move. Keep decimal-id parsing as a read-only fallback so existing ids keep resolving.
-3. **Reparent becomes a field update.** No rename, no dependency rewrite, no id remap, no stale selection. Most of `move_backlog_task` and the bulk-reparent remap in `crates/switchbard-tui/src/app/task_parent.rs` deletes.
-4. **Existing decimal ids keep their names forever.** They are already unique and already stable; nothing migrates. The repository simply stops minting new ones.
-5. **Show lineage instead of encoding it**: indentation in the outline and a parent chip on the row and in `sb view`, computed from the parent field the way roll-up and goal pace already are.
+1. **One flat sequential number per repository, for every task including sub-issues.** Allocated once at creation, never reused, never changed. `TASK-312` is a sub-issue of `TASK-88` because its parent field says so. The sequence is per repository, not global; looking across repositories uses the repository's own abbreviation, which is what the configured task prefix already is (`TASK-`, `LED-`).
+2. **Always write the parent field** on create and on move.
+3. **Identity is the bare number; `88.312` is a display name.** The dotted form is computed from the parent field at render time and never persisted - not in a filename, not in `id:`, not in a dependency list, not in a branch name. A reparent changes what is displayed and nothing that is stored.
+4. **The suffix is authoritative and the prefix is a hint.** `312`, `88.312` and a stale `60.312` from an old commit all resolve to the same task. A stale prefix resolves with a correction ("TASK-312, now under TASK-88") rather than failing - strictly better than today, where a stale reference resolves to nothing.
+5. **Display shows one level of parent.** `60.88.312` is derivable and unreadable; nesting is capped at one level anyway.
+6. **Reparent becomes a field update.** No rename, no dependency rewrite, no id remap, no stale selection. Most of `move_backlog_task` and the bulk-reparent remap in `crates/switchbard-tui/src/app/task_parent.rs` deletes.
+
+## The one-time renumber
+
+Existing decimal ids are folded into the flat sequence in creation order (owner-directed). This repository has nine of them - `TASK-80.1` through `80.4` including `80.2` in `completed/`, and `TASK-141.1` through `141.5`.
+
+Evidence gathered 2026-09-17: none of the nine appears in any commit message on any branch, so no git history goes stale. They appear 101 times **inside** the repository - task bodies, `backlog/ranking.yml`, and other tasks' prose.
+
+The migration therefore rewrites structural references (filename, `id:`, parent, dependencies, ranking) and **writes a permanent alias from each old id to its new one**. The resolver honors aliases forever, so the prose mentions keep resolving and no historical note has to be edited to stay correct. Aliases are append-only: an id that ever named a task keeps naming it.
+
+This renumber is the only one. Live renumbering on any ongoing rule is rejected below.
 
 ## Rejected: live renumbering
 
@@ -39,8 +50,10 @@ The number is already unique per repository and stable for life, so it is a perf
 
 A second, user-visible identifier would mean two answers to "which task is this", which is the failure shape this repository keeps hitting. An internal surrogate earns its place only if two repositories' backlogs merge into one namespace, and that is the moment to add it, with a display-number migration named explicitly rather than assumed.
 
-## Open questions
+## Settled, and what is not implied
 
-- Does the flat sequence allocate per repository or per central database? Per repository keeps `TASK-<n>` short and matches today's `configured_task_prefix`; the central database would have to tolerate the same number in two repositories, which the repo-identity composite already does.
-- Does anything outside `switchbard-core` parse a decimal id to infer a parent? The fallback must stay for existing ids either way, but a second parser would be a competing authority.
-- Nesting is capped at one level today (core refuses a sub-issue as a parent). Flat ids remove the structural reason for that cap. Whether to lift it is a separate product question, not implied by this change.
+Settled: the sequence is per repository, and cross-repository views prefix the repository's abbreviation. Sub-issues draw from the same sequence as top-level tasks, so promoting one is also just a field change.
+
+To verify while implementing: every place that parses a decimal id to infer a parent must route through the one resolver, or it becomes a competing authority. `crates/switchbard-core/src/backlog/ranking.rs` is the known one.
+
+Not implied: nesting is capped at one level today because core refuses a sub-issue as a parent. Flat ids remove the structural reason for that cap, but whether to lift it is a separate product question.
