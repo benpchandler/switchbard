@@ -11,6 +11,7 @@ Binary `sbt` (this crate). Run in a configured repository: `sbt`, `sbt stats`, `
 6. Minimalism: cut what telemetry shows unused. Prove usefulness before adding.
 7. This file stays under 50 lines and is updated every slice.
 8. Telemetry (`~/.switchbard/tui-events.jsonl`) records key, action, timing, error. `sbt stats` is how we learn what is used, slow, or unbound.
+9. Default keys are lowercase only (owner-set, 2026-09-17): never bind a shifted letter in `default.lua`, and never propose one; find a lowercase key or a two-key sequence instead. Users may still bind uppercase in their own `tui.lua`.
 ## Module map
 - `app/agent_kill.rs` - configurable K (`kill_agent`) prepares native selected-PID identity off-thread; Cancel-default picker requires Enter and complete visible warnings. Core revalidates start/kind/cwd/executable and protects self/ancestors before positive-PID SIGTERM; no group/escalation/task edit/manual claim release. Normal dead-agent claim pruning remains. State/evidence: `docs/tui-agent-kill.md`.
 - `app/task_cancel.rs` - `t c c` archives only the selected task after a fully visible confirmation; Enter/Esc keep it. Core snapshot guards read authoritative storage for detail edits and reject changed records; children and live agents remain unchanged. Detail sections initially expose every modeled field; `z` toggles, `Z` collapses all, `A` expands all, and header clicks fold without writes.
