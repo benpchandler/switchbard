@@ -61,6 +61,11 @@ pub struct ReportFlow {
     retry_route: Option<ReportRoute>,
     editor_route: Option<ReportRoute>,
     kind: Option<ReportKind>,
+    /// Where a filed bug should start its Codex run, retained because the
+    /// async refactor consumes the route into the spawned request. `None`
+    /// whenever the `bug-dispatch` experiment is off, which is what keeps
+    /// `:bug` capture-only.
+    dispatch_target: Option<std::path::PathBuf>,
     location: String,
     selected_identity: Option<switchbard_core::BacklogStorageIdentity>,
 }
@@ -168,6 +173,9 @@ impl App {
             .selected_task()
             .and_then(|task| task.storage_identity.clone());
         self.report.kind = Some(kind);
+        self.report.dispatch_target = (kind == ReportKind::Bug
+            && self.experiments.is_enabled("bug-dispatch"))
+        .then(|| request.target.clone());
         self.report.retry_command = Some(format!("{} {intent}", kind.label()));
         self.report.retry_route = Some(route);
         self.report.select_after = None;
@@ -220,10 +228,21 @@ impl App {
                     self.task_generation = self.task_generation.wrapping_add(1);
                     self.request_task_refresh();
                 }
-                format!("filed {id}")
+                let dispatch = self.report.dispatch_target.take().map(|target| {
+                    let bare = id.split_once(" in ").map_or(id.as_str(), |(id, _)| id);
+                    (target, bare.to_string())
+                });
+                let message = format!("filed {id}");
+                if let Some((target, bare)) = dispatch {
+                    self.publish_report(message, failed);
+                    self.enqueue_bug(&target, &bare);
+                    return;
+                }
+                message
             }
             Err(error) => {
                 self.report.select_after = None;
+                self.report.dispatch_target = None;
                 format!("Report failed; : restores draft - {error}")
             }
         };

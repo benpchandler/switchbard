@@ -5,6 +5,7 @@ pub mod agent_kill;
 mod detail_edit;
 mod experiments;
 mod filter_completion;
+mod inbox;
 mod new_task;
 pub mod paint_flow;
 mod pickers;
@@ -109,6 +110,7 @@ pub(crate) struct TaskProjection {
 }
 
 pub struct App {
+    pub inbox: crate::inbox_state::Inbox,
     pub repo_root: PathBuf,
     /// What columns exist: the built-ins plus every field this repo declares.
     /// Rebuilt once per task reload (never per frame) and shared with the view
@@ -256,6 +258,12 @@ fn command_allowed_off_lists(verb: &str) -> bool {
             | "dismiss"
             | "experiments"
             | "update"
+            | "publish"
+            | "retry"
+            | "inbox"
+            | "dispatch"
+            | "diff"
+            | "reconcile"
     )
 }
 
@@ -291,7 +299,16 @@ impl App {
             ViewStore::load_for_page(Arc::clone(&registry), global_views, repo_views, Page::Tasks);
         let mut pull_requests = crate::pull_requests::PullRequests::default();
         pull_requests.set_registry(Arc::clone(&registry));
+        let inbox_path = std::env::var_os("SWITCHBARD_BUG_RUN_DB")
+            .map(PathBuf::from)
+            .or_else(|| {
+                work_dir
+                    .as_ref()
+                    .map(|p| p.with_file_name("bug-runs.sqlite3"))
+            });
+        let inbox = crate::inbox_state::Inbox::new(inbox_path);
         let mut app = App {
+            inbox,
             repo_root: repo_root.to_path_buf(),
             registry,
             config_seen: config_path.as_deref().and_then(config::modified_at),
@@ -725,6 +742,8 @@ impl App {
         self.tick_task_refresh();
         self.reload_work();
         self.tick_agents();
+        self.inbox
+            .tick(&self.repo_root, self.config.report_repo.as_deref());
     }
 
     /// Collect the agent poll and start the next one when due; the page's
@@ -867,6 +886,14 @@ impl App {
             return;
         }
         self.interaction_generation = self.interaction_generation.wrapping_add(1);
+        if self.inbox.publish_confirmation.is_some() {
+            self.handle_publish_confirmation(event);
+            return;
+        }
+        if self.inbox.editing {
+            self.handle_inbox_reply(event);
+            return;
+        }
         match self.mode {
             Mode::Browse => self.handle_browse_key(event),
             Mode::Filter => self.handle_filter_key(event),
@@ -1246,10 +1273,20 @@ impl App {
             "q",
             "experiments",
             "update",
+            "inbox",
+            "dispatch",
         ]
         .iter()
         .map(|name| name.to_string())
         .collect();
+        if self.page == Page::Inbox {
+            names.extend([
+                "publish".to_owned(),
+                "retry".to_owned(),
+                "diff".to_owned(),
+                "reconcile".to_owned(),
+            ]);
+        }
         if self.page == Page::PullRequests {
             names.push("more".to_string());
         }
@@ -1262,6 +1299,9 @@ impl App {
     }
 
     fn handle_browse_key(&mut self, event: KeyEvent) {
+        if self.page == Page::Inbox && self.pane != Pane::Help && self.handle_inbox_binding(event) {
+            return;
+        }
         self.picker_parents.clear();
         if event.code == KeyCode::Enter && event.kind == KeyEventKind::Repeat {
             return;
@@ -1510,6 +1550,9 @@ impl App {
         if self.page == Page::PullRequests && self.apply_pr_action(action) {
             return;
         }
+        if self.page == Page::Inbox && self.apply_inbox_action(action) {
+            return;
+        }
         if self.page == Page::Agents && self.apply_agents_action(action) {
             return;
         }
@@ -1684,6 +1727,19 @@ impl App {
                 }
             },
             "goal" => self.toggle_goal_link(rest.trim()),
+            "inbox" => self.switch_page(Page::Inbox),
+            "dispatch" => {
+                self.status.clear();
+                let target = self
+                    .config
+                    .report_repo
+                    .clone()
+                    .unwrap_or_else(|| self.repo_root.clone());
+                self.enqueue_bug(&target, rest.trim());
+            }
+            "diff" if self.page == Page::Inbox => self.inbox.show_diff(),
+            "reconcile" if self.page == Page::Inbox => self.inbox.reconcile(),
+            "publish" | "retry" => self.inbox_command(verb),
             "bug" => self.file_report(ReportKind::Bug, rest),
             "idea" => self.file_report(ReportKind::Idea, rest),
             "" => {}

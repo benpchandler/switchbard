@@ -45,4 +45,6 @@ pub mod view_history;
 
 pub mod progress;
 
+pub mod bug_supervisor;
+pub mod inbox_state;
 pub mod onboarding;

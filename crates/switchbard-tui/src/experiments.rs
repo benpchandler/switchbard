@@ -43,6 +43,13 @@ const CATALOG: &[ExperimentSpec] = &[
         title: "Hide empty Definition of Done and move existing requirements beside acceptance criteria",
         description: "Empty sections disappear; populated requirements move below acceptance criteria with their checks intact.",
     },
+    ExperimentSpec {
+        number: 4,
+        id: "bug-dispatch",
+        task: "TASK-143",
+        title: "Send a filed bug straight to Codex and answer it in Inbox",
+        description: "With it on, :bug files the report and starts a Codex run in its own worktree; watch Inbox for its question. Off, :bug only files, like :idea.",
+    },
 ];
 
 // Reject accidental duplicate numbers at compile time, before they can be displayed.

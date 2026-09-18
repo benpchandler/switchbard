@@ -556,6 +556,9 @@ pub struct Config {
     /// Where `:bug` and `:idea` file: sbt's own repo, not the one being browsed.
     /// `None` files into the current repo.
     pub report_repo: Option<PathBuf>,
+    pub inbox_keys: HashMap<KeyChord, String>,
+    pub bug_codex_binary: String,
+    pub bug_gate_command: String,
     /// The working-row pulse period; 0 keeps the row lit steadily.
     pub work_period_ms: u64,
     /// Redraws per period: how smooth the fade is.
@@ -670,6 +673,9 @@ struct RawConfig {
     palette: Vec<String>,
     palette_name: Option<String>,
     report_repo: Option<String>,
+    inbox_keys: HashMap<String, String>,
+    bug_codex_binary: Option<String>,
+    bug_gate_command: Option<String>,
     work_period_ms: Option<u64>,
     work_frames: Option<u64>,
     pr_refresh_seconds: Option<u64>,
@@ -692,6 +698,9 @@ impl RawConfig {
             palette: string_list(&table, "palette")?,
             palette_name: table.get::<Option<String>>("palette").ok().flatten(),
             report_repo: table.get::<Option<String>>("report_repo").ok().flatten(),
+            inbox_keys: string_map(&table, "inbox_keys")?,
+            bug_codex_binary: table.get::<Option<String>>("bug_codex_binary")?,
+            bug_gate_command: table.get::<Option<String>>("bug_gate_command")?,
             work_period_ms: work_setting(&table, "period_ms"),
             work_frames: work_setting(&table, "frames"),
             pr_refresh_seconds: table
@@ -728,6 +737,13 @@ impl RawConfig {
             self.palette_name = over.palette_name;
             self.palette = Vec::new();
         }
+        self.inbox_keys.extend(over.inbox_keys);
+        if over.bug_codex_binary.is_some() {
+            self.bug_codex_binary = over.bug_codex_binary;
+        }
+        if over.bug_gate_command.is_some() {
+            self.bug_gate_command = over.bug_gate_command;
+        }
         if over.report_repo.is_some() {
             self.report_repo = over.report_repo;
         }
@@ -750,6 +766,20 @@ impl RawConfig {
     }
 
     fn into_config(self, mut warnings: Vec<String>, registry: &ColumnRegistry) -> Config {
+        let mut inbox_keys = HashMap::new();
+        for (key, action) in self.inbox_keys {
+            if action == "none" {
+                continue;
+            }
+            match KeyChord::parse(&key) {
+                Some(chord)
+                    if matches!(action.as_str(), "diff" | "publish" | "retry" | "reconcile") =>
+                {
+                    inbox_keys.insert(chord, action);
+                }
+                _ => warnings.push(format!("invalid Inbox binding {key} = {action}")),
+            }
+        }
         let mut keys = HashMap::new();
         for (key, action) in self.keys {
             match (KeyChord::parse(&key), Action::parse(&action)) {
@@ -859,6 +889,11 @@ impl RawConfig {
             palettes,
             themes,
             report_repo,
+            inbox_keys,
+            bug_codex_binary: self.bug_codex_binary.unwrap_or_else(|| "codex".into()),
+            bug_gate_command: self
+                .bug_gate_command
+                .unwrap_or_else(|| "mise run ci".into()),
             work_period_ms: self.work_period_ms.unwrap_or(DEFAULT_WORK_PERIOD_MS),
             work_frames: self.work_frames.unwrap_or(DEFAULT_WORK_FRAMES).max(1),
             pr_refresh_seconds: self.pr_refresh_seconds.unwrap_or(60).clamp(30, 3600),

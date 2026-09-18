@@ -868,3 +868,14 @@ done - only origin/main runs unattended.
 The public package remains two self-contained terminal binaries with embedded SQLite. `sbt doctor` checks local readiness and gives next actions without creating a workspace or migrating an existing store. Text is for terminal readers; `--json` is for scripts and agents. GitHub network/authentication checks are explicit through `--github`, while local tasks remain independent of optional gh and coding-agent installations. Required failures have a nonzero diagnostic exit, optional omissions are clearly labeled. The command does not install OS tools, log in, or modify shell configuration.
 
 Agent instructions are embedded from the canonical `skills/switchbard` source. `sbt agent-prompt` prints a copyable setup request; `sbt skill show` exposes the instruction payload and `sbt skill install --agent claude|codex|both` writes personal skill files only on explicit request, preserving custom instructions unless `--replace` is chosen. Pre-existing symlink targets are refused and paths are rechecked during writes; personal directories must not be rearranged concurrently. No automatic hooks, credential grants, Codex live-claim attribution, or task completion follow from skill installation. Runtime diagnosis and installer guidance retain the experienced developer's existing tools and minimal first-launch path.
+which now polls every minute instead of five) makes origin/main's own tip
+authoritative: it never refuses on ancestry, only replaces a running build main
+doesn't contain and prints/receipts exactly what was dropped. A manual install
+off main is now an explicit, temporary choice (`--branch`, `--hold`), never
+silent and never itself evidence that a task is done - only origin/main runs
+unattended. sbt reads the receipt and any hold to show a one-line startup
+banner instead of the fleet drifting unnoticed.
+
+## Bug filing to Codex and Inbox (TASK-143, owner-directed 2026-09-16)
+
+The owner narrowed TASK-143 to bugs: file the report, then dispatch an agent, with Codex preferred. `:bug` captures the report first and queues a core-owned Codex run; `:idea` remains capture-only. An isolated execution worktree and a detached one-shot supervisor support questions, same-thread replies, review feedback and explicitly requested PR publication through Inbox. Execution state is separate from canonical task content and from the existing Claude dispatch-label queue. The original report snapshot, process identity, agent thread, owner drafts/messages and reviewed head are durable. Publication must use the reviewed commit and leave human acceptance and merge separate. Unknown outcomes never authorize a duplicate writer. Configuration, recovery and evidence are in `docs/bug-dispatch/README.md`; the required live human/agent paired journey remains a distinct acceptance gate.
