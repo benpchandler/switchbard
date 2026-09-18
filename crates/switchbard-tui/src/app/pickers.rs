@@ -544,7 +544,7 @@ impl App {
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::SHIFT));
         match event.code {
-            KeyCode::Esc => self.cancel_sort_entry(),
+            KeyCode::Esc => self.commit_sort_entry(),
             KeyCode::Left => self.sort_entry_undo(),
             KeyCode::Backspace | KeyCode::Delete if typed_empty => self.sort_entry_undo(),
             _ if stepping_back => self.sort_entry_undo(),

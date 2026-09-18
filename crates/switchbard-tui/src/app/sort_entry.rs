@@ -4,8 +4,12 @@
 //! its order list, and an order *locks* that layer - applied to the list at once,
 //! and written into the breadcrumb. From there `Tab` starts the next layer, `Enter`
 //! finishes, and `←`/`Backspace`/`Shift-Tab` walk back out of the breadcrumb a step
-//! at a time, exactly reversing how it was built. `Esc` abandons the entry and puts
-//! back the stack the view had.
+//! at a time, exactly reversing how it was built. `Esc` settles it too: every picker
+//! in sbt applies as you pick and closes on Esc without taking anything back, and a
+//! sort that re-orders the list under you as each layer locks is no place to start
+//! carrying a second meaning. Undo is the only way back, and it is enough - walking
+//! off the front of the breadcrumb leaves the list unsorted, which is what undoing
+//! every layer asked for.
 //!
 //! The stage is never stored: it is read from what is open. A column picker means
 //! "choosing a column", an order picker means "choosing that column's order", and no
@@ -25,8 +29,6 @@ pub struct SortEntry {
     /// Layers locked so far. Applied to the list as each one locks, so the
     /// breadcrumb and the rows on screen never disagree.
     pub layers: Vec<Sort>,
-    /// What the view sorted by when entry began; Esc puts this back.
-    pub original: Vec<Sort>,
 }
 
 /// What the breadcrumb is waiting for right now.
@@ -45,7 +47,6 @@ impl App {
     pub(super) fn begin_sort_entry(&mut self) {
         self.sort_entry = Some(SortEntry {
             layers: self.state.sort.clone(),
-            original: self.state.sort.clone(),
         });
         self.open_column_chooser(ColumnPurpose::Sort);
     }
@@ -139,7 +140,9 @@ impl App {
             }
             // Nothing typed for this layer yet: undo the layer above it.
             (Stage::Column | Stage::Locked, Some(layer)) => self.reopen_sort_layer(layer),
-            (Stage::Column | Stage::Locked, None) => self.cancel_sort_entry(),
+            // Every layer has been undone: that is a deliberate "no sort", so
+            // it settles as one rather than resurrecting what `s` opened over.
+            (Stage::Column | Stage::Locked, None) => self.commit_sort_entry(),
         }
         self.telemetry.record("action", "sort_undo");
     }
@@ -158,7 +161,8 @@ impl App {
         self.open_sort_picker(layer.column);
     }
 
-    /// `Enter`: the stack stands as the breadcrumb shows it.
+    /// `Enter`, `Esc`, or any key the breadcrumb has no use for: the stack
+    /// stands as the breadcrumb shows it.
     pub(super) fn commit_sort_entry(&mut self) {
         let Some(entry) = self.sort_entry.take() else {
             return;
@@ -174,20 +178,6 @@ impl App {
             .record("action", format!("sort_done {stack}"));
     }
 
-    /// `Esc`: the view goes back to the stack it had before `s`.
-    pub(super) fn cancel_sort_entry(&mut self) {
-        let Some(entry) = self.sort_entry.take() else {
-            return;
-        };
-        self.state.sort = entry.original;
-        self.picker = None;
-        self.picker_parents.clear();
-        self.mode = Mode::Browse;
-        self.refilter();
-        self.status.clear();
-        self.telemetry.record("action", "sort_cancel");
-    }
-
     /// `none` in the order list: the whole stack goes, and so does the entry.
     pub(super) fn clear_sort_entry(&mut self) {
         self.sort_entry = None;
@@ -200,8 +190,9 @@ impl App {
     }
 
     /// The locked stage, where the breadcrumb is the whole interface. Its own
-    /// keys are Tab, Enter, undo and Esc; anything else settles the stack and is
-    /// handled as an ordinary browse key, so the breadcrumb never traps anyone.
+    /// keys are Tab and undo; Enter and Esc both settle it, and anything else
+    /// settles it too and is handled as an ordinary browse key, so the breadcrumb
+    /// never traps anyone.
     pub(super) fn handle_sort_entry_key(&mut self, event: KeyEvent) {
         let stepping_back = event.code == KeyCode::BackTab
             || (event.code == KeyCode::Tab && event.modifiers.contains(KeyModifiers::SHIFT));
@@ -212,8 +203,7 @@ impl App {
         match event.code {
             KeyCode::Tab => self.sort_entry_next_layer(),
             KeyCode::Left | KeyCode::Backspace | KeyCode::Delete => self.sort_entry_undo(),
-            KeyCode::Enter => self.commit_sort_entry(),
-            KeyCode::Esc => self.cancel_sort_entry(),
+            KeyCode::Enter | KeyCode::Esc => self.commit_sort_entry(),
             _ => {
                 self.commit_sort_entry();
                 self.handle_browse_key(event);

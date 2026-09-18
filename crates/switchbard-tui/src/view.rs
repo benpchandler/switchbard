@@ -1067,7 +1067,7 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
         ("f/s <col#>", "filter/sort by column"),
         (
             "s … Tab",
-            "another sort layer to break the ties above it; Enter done, ←/⌫ undo, Esc cancels",
+            "another sort layer to break the ties above it; Enter/Esc done, ←/⌫ undo",
         ),
         (
             "/ … Tab",
@@ -1167,7 +1167,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         // The locked breadcrumb, where there is no picker left to carry it.
         Mode::SortEntry => {
             let hint = if app.status.is_empty() {
-                "tab adds a layer · enter done · ←/⌫ undo · esc cancels".to_string()
+                "tab adds a layer · enter/esc done · ←/⌫ undo".to_string()
             } else {
                 app.status.clone()
             };

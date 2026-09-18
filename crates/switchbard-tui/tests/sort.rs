@@ -239,20 +239,41 @@ fn left_backspace_and_shift_tab_each_step_back_one_breadcrumb_crumb() {
     assert!(h.app.sort_breadcrumb().is_empty());
 }
 
-/// Esc is abandon, not confirm: the view goes back to the stack it had.
+/// Esc settles, it does not take anything back - the same thing it does in every
+/// other sbt picker, which all apply as you pick.
 #[test]
-fn esc_restores_the_stack_the_entry_started_from() {
+fn esc_settles_the_stack_the_way_enter_does() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('s'));
+    h.type_text("ia");
+    h.press(KeyCode::Tab);
+    h.type_text("td");
+    let shown = h.app.state.sort.clone();
+    assert_eq!(shown.len(), 2);
+    h.press(KeyCode::Esc);
+    assert_eq!(h.app.state.sort, shown);
+    assert!(h.app.sort_breadcrumb().is_empty());
+    assert!(h.app.picker.is_none());
+}
+
+/// Undoing every layer is a deliberate "no sort", so walking off the front of the
+/// breadcrumb leaves the list unsorted rather than resurrecting what `s` opened over.
+#[test]
+fn undoing_past_the_first_crumb_leaves_the_list_unsorted() {
     let mut h = Harness::new();
     h.press(KeyCode::Char('s'));
     h.type_text("ia");
     h.press(KeyCode::Enter);
-    let settled = h.app.state.sort.clone();
+    assert_eq!(h.app.state.sort.len(), 1);
 
+    // Reopening seeds the breadcrumb with the stack already in force, so undo
+    // walks back through it: the order, the column, then off the front.
     h.press(KeyCode::Char('s'));
-    h.type_text("td");
-    assert_ne!(h.app.state.sort, settled);
-    h.press(KeyCode::Esc);
-    assert_eq!(h.app.state.sort, settled);
+    h.press(KeyCode::Left);
+    assert!(h.app.state.sort.is_empty(), "the order is undone first");
+    h.press(KeyCode::Left);
+    h.press(KeyCode::Left);
+    assert!(h.app.picker.is_none());
     assert!(h.app.sort_breadcrumb().is_empty());
 }
 
