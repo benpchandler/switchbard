@@ -5,6 +5,13 @@ use harness::Harness;
 use std::time::{Duration, Instant};
 use switchbard_tui::app::Mode;
 
+fn capture_harness() -> Harness {
+    let h = Harness::new();
+    std::fs::write(h.root.join("backlog/config.yml"),
+        "project_name: fixture\nstatuses: [\"Not started\", \"To Do\", \"In Progress\", \"Done\"]\ntask_prefix: task\n").unwrap();
+    h
+}
+
 fn settle(h: &mut Harness, expected: usize) -> String {
     for _ in 0..600 {
         h.app.tick();
@@ -41,7 +48,7 @@ fn redirected(h: &mut Harness) -> tempfile::TempDir {
 
 #[test]
 fn repository_keys_work_on_every_page_and_ignore_tool_redirect() {
-    let mut h = Harness::new();
+    let mut h = capture_harness();
     let tool = redirected(&mut h);
     for page in 0..4 {
         for (key, kind) in [('i', "idea"), ('b', "bug")] {
@@ -60,9 +67,15 @@ fn repository_keys_work_on_every_page_and_ignore_tool_redirect() {
                 .iter()
                 .find(|task| task.title == title)
                 .unwrap();
-            assert_eq!(task.priority, "medium");
+            assert_eq!(task.priority, "low");
+            assert_eq!(task.status, "Not started");
+            assert_eq!(task.planning, switchbard_core::PlanningState::Considering);
+            assert!(task.assignees.is_empty());
             assert_eq!(task.labels, vec![kind]);
-            assert!(task.project.is_none());
+            assert_eq!(
+                task.project.as_deref(),
+                Some(if kind == "bug" { "Bugs" } else { "Ideas" })
+            );
             assert!(!task.acceptance_criteria[0]
                 .text
                 .contains("behaviour in sbt"));
@@ -88,11 +101,11 @@ fn repository_keys_work_on_every_page_and_ignore_tool_redirect() {
 }
 
 #[test]
-fn repository_capture_uses_native_status_and_existing_bugs_project_only() {
+fn repository_capture_uses_unplanned_low_defaults_with_or_without_project_definitions() {
     for has_bugs in [false, true] {
-        let mut h = Harness::new();
+        let mut h = capture_harness();
         std::fs::write(h.root.join("backlog/config.yml"),
-            "project_name: fixture\nstatuses: [\"Inbox\", \"Review\", \"Done\"]\ntask_prefix: task\n").unwrap();
+            "project_name: fixture\nstatuses: [\"In Progress\", \"Not started\", \"Done\"]\ntask_prefix: task\n").unwrap();
         if has_bugs {
             harness::seed_project(&h.root, "Bugs", "Planned", None);
         }
@@ -107,8 +120,11 @@ fn repository_capture_uses_native_status_and_existing_bugs_project_only() {
             .iter()
             .find(|task| task.title == "bug: native repository defect")
             .unwrap();
-        assert_eq!(task.status, "Inbox");
-        assert_eq!(task.project.as_deref(), has_bugs.then_some("Bugs"));
+        assert_eq!(task.status, "Not started");
+        assert_eq!(task.priority, "low");
+        assert_eq!(task.planning, switchbard_core::PlanningState::Considering);
+        assert!(task.assignees.is_empty());
+        assert_eq!(task.project.as_deref(), Some("Bugs"));
         h.press(KeyCode::Char('i'));
         h.type_text("native repository idea");
         h.press(KeyCode::Enter);
@@ -119,14 +135,17 @@ fn repository_capture_uses_native_status_and_existing_bugs_project_only() {
             .iter()
             .find(|task| task.title == "idea: native repository idea")
             .unwrap();
-        assert_eq!(task.status, "Inbox");
-        assert!(task.project.is_none());
+        assert_eq!(task.status, "Not started");
+        assert_eq!(task.priority, "low");
+        assert_eq!(task.planning, switchbard_core::PlanningState::Considering);
+        assert!(task.assignees.is_empty());
+        assert_eq!(task.project.as_deref(), Some("Ideas"));
     }
 }
 
 #[test]
 fn empty_cancelled_and_remapped_captures_do_not_write() {
-    let mut h = Harness::new();
+    let mut h = capture_harness();
     h.press(KeyCode::Char('i'));
     h.press(KeyCode::Enter);
     assert!(!h.app.report.is_pending());
@@ -156,7 +175,7 @@ fn empty_cancelled_and_remapped_captures_do_not_write() {
 
 #[test]
 fn failed_repository_draft_retries_same_target_despite_redirect_reload() {
-    let mut h = Harness::new();
+    let mut h = capture_harness();
     let tool = redirected(&mut h);
     let lock = h.root.join(".switchbard-storage.lock");
     std::fs::remove_file(&lock).unwrap();
@@ -211,7 +230,7 @@ fn failed_repository_draft_retries_same_target_despite_redirect_reload() {
 
 #[test]
 fn queued_repository_draft_keeps_scope_while_first_save_completes() {
-    let mut h = Harness::new();
+    let mut h = capture_harness();
     let tool = redirected(&mut h);
     h.press(KeyCode::Char('i'));
     h.type_text("first local idea");
@@ -252,7 +271,7 @@ fn queued_repository_draft_keeps_scope_while_first_save_completes() {
 
 #[test]
 fn repository_keys_open_from_focused_task_detail() {
-    let mut h = Harness::new();
+    let mut h = capture_harness();
     let tool = redirected(&mut h);
     for (key, kind) in [('i', "idea"), ('b', "bug")] {
         h.press(KeyCode::Enter);
@@ -279,4 +298,18 @@ fn repository_keys_open_from_focused_task_detail() {
             .count(),
         0
     );
+}
+
+#[test]
+fn repository_capture_refuses_unsupported_not_started_without_writes() {
+    let mut h = Harness::new();
+    h.press(KeyCode::Char('i'));
+    h.type_text("requires the requested status");
+    h.press(KeyCode::Enter);
+    let screen = settle(&mut h, 3);
+    assert!(screen.contains("Report failed"), "{screen}");
+    assert!(screen.contains("Not started"), "{screen}");
+    let repo = switchbard_core::load_backlog_repo(&h.root).unwrap();
+    assert_eq!(repo.tasks.len(), 3);
+    assert!(!repo.project_names().iter().any(|name| name == "Ideas"));
 }
