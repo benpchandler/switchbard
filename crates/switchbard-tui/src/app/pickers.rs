@@ -1026,10 +1026,10 @@ impl App {
                 Payload::TaskAction(action),
             ) => self.run_task_action(action),
             (PickerPurpose::TaskParent(id), Payload::Parent(parent)) => {
-                self.change_task_parent(&id, parent.as_deref())
+                self.apply_task_parent(&id, parent.as_deref())
             }
             (PickerPurpose::TaskProject(id), Payload::Project(project)) => {
-                self.change_task_project(&id, project.as_deref())
+                self.apply_task_project(&id, project.as_deref())
             }
             (PickerPurpose::TaskPlanning(id), Payload::Text(planning)) => {
                 self.change_task_planning(&id, &planning)
@@ -1038,7 +1038,7 @@ impl App {
                 self.commit_detail_planning(&planning)
             }
             (PickerPurpose::TaskStatus(id), Payload::Text(status)) => {
-                self.change_task_status(&id, &status)
+                self.apply_task_status(&id, &status)
             }
             (PickerPurpose::DetailStatus(_), Payload::Text(status)) => {
                 self.commit_detail_status(&status)
@@ -1200,7 +1200,7 @@ impl App {
                 self.open_goal_picker();
                 self.toggle_goal_link(&name)
             }
-            (PickerPurpose::Ball, Payload::Ball(ball)) => self.assign_ball(ball),
+            (PickerPurpose::Ball, Payload::Ball(ball)) => self.apply_ball(ball),
             (PickerPurpose::Ball, Payload::NewBallHolder) => {
                 self.mode = Mode::BallName;
                 self.input.clear();

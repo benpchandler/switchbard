@@ -152,7 +152,7 @@ impl App {
         if self.pr_merge.prepared.is_some() {
             return;
         }
-        if !self.pull_requests.marked.is_empty() {
+        if !self.pull_requests.selection.marked.is_empty() {
             let ids = self.pull_requests.marked_in_view_order();
             let Some(first) = ids.first().cloned() else {
                 self.status =
@@ -187,17 +187,24 @@ impl App {
     pub(super) fn toggle_pr_mark(&mut self) {
         match self.pull_requests.toggle_mark() {
             Ok(true) => {
-                let count = self.pull_requests.marked.len();
+                let count = self.pull_requests.selection.marked.len();
                 self.status =
                     format!("Marked for merge ({count}); m merges all in list order, Esc clears");
                 self.pull_requests.step(1);
             }
             Ok(false) => {
-                let count = self.pull_requests.marked.len();
+                let count = self.pull_requests.selection.marked.len();
                 self.status = format!("Unmarked ({count} marked)");
             }
             Err(reason) => self.status = reason.into(),
         }
+    }
+
+    /// Word-processor-style shift-up/shift-down range select: extend (or
+    /// contract) the bulk-merge mark from the sweep's anchor to the cursor.
+    pub(super) fn extend_pr_mark(&mut self, delta: isize) {
+        let count = self.pull_requests.extend_mark(delta);
+        self.status = format!("Marked for merge ({count}); m merges all in list order, Esc clears");
     }
 
     /// Stop a bulk merge before its next PR starts. Never interrupts a merge
@@ -512,7 +519,7 @@ impl App {
             if result.outcome == PrMergeOutcome::Confirmed {
                 queue.merged += 1;
                 if let Some((id, _)) = &self.pr_merge.target {
-                    self.pull_requests.marked.remove(id);
+                    self.pull_requests.selection.marked.remove(id);
                 }
                 self.pr_merge.advance_after_refresh = true;
             } else {

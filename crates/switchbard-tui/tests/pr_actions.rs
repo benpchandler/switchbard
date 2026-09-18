@@ -1,16 +1,21 @@
 mod harness;
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use harness::*;
+
+/// The configured `open_browser` chord: Ctrl+O.
+fn open_browser(h: &mut Harness) -> String {
+    h.app
+        .handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    h.render()
+}
 
 #[test]
 fn browser_action_requires_a_selected_pr_and_leaves_tasks_unchanged() {
     let mut h = Harness::new();
     let selected = h.selected_title();
-    assert!(h
-        .press(KeyCode::Char('O'))
-        .contains("Switch to Pull Requests"));
+    assert!(open_browser(&mut h).contains("open_browser works on the Pull Requests page"));
     h.next_list_page();
-    assert!(h.press(KeyCode::Char('O')).contains("No PR selected"));
+    assert!(open_browser(&mut h).contains("No PR selected"));
     h.type_text(":open");
     assert!(h.press(KeyCode::Enter).contains("No PR selected"));
     h.next_list_page();
@@ -30,7 +35,7 @@ fn selected_pr_opens_in_the_real_browser() {
         h.app.tick();
     }
     let url = h.app.pull_requests.row().expect("actual PR").url.clone();
-    h.press(KeyCode::Char('O'));
+    open_browser(&mut h);
     assert_eq!(h.app.status, format!("Opened {url}"));
     assert!(h.render().contains("Opened https://github.com/"));
 }

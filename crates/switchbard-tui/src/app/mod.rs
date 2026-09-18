@@ -12,10 +12,12 @@ pub mod report;
 pub mod resume;
 mod session;
 mod slots;
+mod task_bulk;
 mod task_cancel;
 mod task_parent;
 mod task_project;
 mod task_refresh;
+mod task_selection;
 mod task_status;
 
 pub use filter_completion::FilterCompletionHint;
@@ -213,6 +215,10 @@ pub struct App {
     /// between focus and save.
     detail_draft: Option<detail_edit::DetailDraft>,
     pub page: Page,
+    /// Marked task ids and the live shift-up/shift-down sweep, if any: the
+    /// same shared shape as `PullRequests::selection`, so bulk actions apply
+    /// to every marked task rather than only the cursor row.
+    pub task_selection: crate::selection::Selection,
     pub pull_requests: crate::pull_requests::PullRequests,
     /// The Agents page: this repo's live sessions, polled off-thread.
     pub agents: crate::agents::Agents,
@@ -332,6 +338,7 @@ impl App {
             detail_hit: crate::detail_pane::Hit::default(),
             detail_draft: None,
             page: Page::Tasks,
+            task_selection: crate::selection::Selection::default(),
             pull_requests,
             agents: crate::agents::Agents::new(),
             picker: None,
@@ -792,41 +799,75 @@ impl App {
         ))
     }
 
-    /// `w`: the owner passes the selected task; every session's claim on it ends.
+    /// `w`: the owner passes the selected task, or every marked one — every
+    /// session's claim on it ends.
     fn pass_work(&mut self) {
         if self.defer_task_storage() {
             return;
         }
-        let Some(task) = self.selected_task() else {
-            self.status = "no task selected".to_string();
-            return;
-        };
-        let id = task.id.clone();
         let Some(dir) = self.work_dir.clone() else {
             self.fail("no work store: no home directory".to_string());
             return;
         };
-        match switchbard_core::pass_work(&dir, &self.repo_root, &id) {
-            Ok(released) if released.is_empty() => {
-                self.status = format!("{id}: no session is working it");
-            }
-            Ok(released) => {
-                let _ = switchbard_core::set_backlog_ball(&self.repo_root, &id, None);
-                self.status = format!(
-                    "{id}: passed · released from {}",
-                    released
-                        .iter()
-                        .map(WorkSession::short_id)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-                self.telemetry
-                    .record("action", format!("pass {}", released.len()));
-                self.reload_work();
-                self.reload_tasks();
-            }
-            Err(error) => self.fail(format!("{id}: {error}")),
+        if self.task_selection.marked.is_empty() && self.selected_task().is_none() {
+            self.status = "no task selected".to_string();
+            return;
         }
+        let primary = self
+            .selected_task()
+            .map(|task| task.id.clone())
+            .unwrap_or_default();
+        let ids = task_bulk::targets(self, &primary);
+        if ids.len() == 1 {
+            let id = &ids[0];
+            match switchbard_core::pass_work(&dir, &self.repo_root, id) {
+                Ok(released) if released.is_empty() => {
+                    self.status = format!("{id}: no session is working it");
+                }
+                Ok(released) => {
+                    let _ = switchbard_core::set_backlog_ball(&self.repo_root, id, None);
+                    self.status = format!(
+                        "{id}: passed · released from {}",
+                        released
+                            .iter()
+                            .map(WorkSession::short_id)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                    self.telemetry
+                        .record("action", format!("pass {}", released.len()));
+                    self.reload_work();
+                    self.reload_tasks();
+                }
+                Err(error) => self.fail(format!("{id}: {error}")),
+            }
+            return;
+        }
+        let mut released_total = 0;
+        let mut failures = Vec::new();
+        for id in &ids {
+            match switchbard_core::pass_work(&dir, &self.repo_root, id) {
+                Ok(released) => {
+                    if !released.is_empty() {
+                        released_total += released.len();
+                        let _ = switchbard_core::set_backlog_ball(&self.repo_root, id, None);
+                    }
+                }
+                Err(error) => failures.push(task_bulk::BulkFailure {
+                    id: id.clone(),
+                    error: error.to_string(),
+                }),
+            }
+        }
+        self.reload_work();
+        self.reload_tasks();
+        self.telemetry
+            .record("action", format!("bulk_pass {released_total}"));
+        self.status = task_bulk::summarize(
+            &format!("passed · {released_total} claims released"),
+            ids.len(),
+            &failures,
+        );
     }
 
     fn refresh_calendar_day(&mut self) {
@@ -978,7 +1019,7 @@ impl App {
         };
         let current = Ball::of(task);
         let next = Ball::next(current.as_ref());
-        self.assign_ball(next);
+        self.apply_ball(next);
     }
 
     fn assign_ball(&mut self, ball: Option<Ball>) {
@@ -1006,6 +1047,39 @@ impl App {
         }
     }
 
+    /// `b`/`t b` with a non-empty selection: every marked task instead of
+    /// just the cursor row.
+    fn apply_ball(&mut self, ball: Option<Ball>) {
+        if self.task_selection.marked.is_empty() {
+            self.assign_ball(ball);
+            return;
+        }
+        if self.defer_task_storage() {
+            return;
+        }
+        let ids = self.marked_tasks_in_view_order();
+        let mut failures = Vec::new();
+        for id in &ids {
+            if let Err(error) = switchbard_core::set_backlog_ball(&self.repo_root, id, ball.clone())
+            {
+                failures.push(task_bulk::BulkFailure {
+                    id: id.clone(),
+                    error: error.to_string(),
+                });
+            }
+        }
+        self.reload_tasks();
+        let verb = match &ball {
+            Some(ball) => format!("ball → {}", ball.text()),
+            None => "ball dropped".to_string(),
+        };
+        self.telemetry.record(
+            "action",
+            format!("bulk_ball {}", ball.as_ref().map(Ball::text).unwrap_or("")),
+        );
+        self.status = task_bulk::summarize(&verb, ids.len(), &failures);
+    }
+
     fn handle_ball_name_key(&mut self, event: KeyEvent) {
         match event.code {
             KeyCode::Esc => self.open_ball_picker(),
@@ -1016,7 +1090,7 @@ impl App {
                 Ok(Some(Ball::Other(holder))) => {
                     self.input.clear();
                     self.mode = Mode::Browse;
-                    self.assign_ball(Some(Ball::Other(holder)));
+                    self.apply_ball(Some(Ball::Other(holder)));
                 }
                 Ok(_) => {
                     self.status = "enter a named person, or choose me, agent, or none".to_string()
@@ -1152,8 +1226,11 @@ impl App {
         self.telemetry.record("action", "goal_picker".to_string());
     }
 
-    /// `:goal <name>` or a pick in the `tg` panel: attach the selected task to the
-    /// goal, or detach it when already attached.
+    /// `:goal <name>` or a pick in the `tg` panel: attach the selected task
+    /// (or every marked one) to the goal, or detach when already attached.
+    /// Whether this attaches or detaches is decided once, from the cursor
+    /// task's current membership; every marked task then moves the same way,
+    /// through the one core call the batch was already built to take.
     pub(super) fn toggle_goal_link(&mut self, name: &str) {
         if self.defer_task_storage() {
             return;
@@ -1162,7 +1239,7 @@ impl App {
             self.status = "no task selected".to_string();
             return;
         };
-        let id = task.id.clone();
+        let primary = task.id.clone();
         let Some(goal) = self.goals.iter().find(|goal| goal.name == name) else {
             let names: Vec<&str> = self.goals.iter().map(|goal| goal.name.as_str()).collect();
             self.fail(if names.is_empty() {
@@ -1176,20 +1253,27 @@ impl App {
             .inputs
             .tasks
             .iter()
-            .any(|t| t.eq_ignore_ascii_case(&id));
-        let ids = [id.clone()];
+            .any(|t| t.eq_ignore_ascii_case(&primary));
+        let ids = task_bulk::targets(self, &primary);
+        let verb = if attached {
+            "detached from"
+        } else {
+            "attached to"
+        };
         let result = if attached {
             switchbard_core::detach_goal_inputs(&self.repo_root, name, &ids, &[])
-                .map(|_| "detached from")
         } else {
             switchbard_core::attach_goal_inputs(&self.repo_root, name, &ids, &[])
-                .map(|_| "attached to")
         };
         match result {
-            Ok(verb) => {
+            Ok(_) => {
                 self.telemetry.record(
                     "action",
-                    format!("goal_{} {name}", if attached { "detach" } else { "attach" }),
+                    format!(
+                        "goal_{} {name} {}",
+                        if attached { "detach" } else { "attach" },
+                        ids.len()
+                    ),
                 );
                 self.reload_tasks();
                 let highlighted = self.picker.as_ref().map(|p| p.selected);
@@ -1202,9 +1286,13 @@ impl App {
                         picker.selected = row;
                     }
                 }
-                self.status = format!("{id} {verb} {name}");
+                self.status = if ids.len() == 1 {
+                    format!("{primary} {verb} {name}")
+                } else {
+                    format!("{} tasks {verb} {name}", ids.len())
+                };
             }
-            Err(error) => self.fail(format!("{id}: {error}")),
+            Err(error) => self.fail(format!("goal {name}: {error}")),
         }
     }
 
@@ -1364,9 +1452,24 @@ impl App {
                 | Action::Bottom
                 | Action::PageDown
                 | Action::PageUp
+                | Action::ExtendMarkDown
+                | Action::ExtendMarkUp
         ) {
             self.cancel_pr_merge();
             self.cancel_pr_merge_queue("cursor moved");
+        }
+        // A plain cursor move (as opposed to an extend) starts the next
+        // range select fresh, from wherever the cursor lands.
+        if matches!(
+            action,
+            Action::Down
+                | Action::Up
+                | Action::Top
+                | Action::Bottom
+                | Action::PageDown
+                | Action::PageUp
+        ) {
+            self.pull_requests.reset_range_sweep();
         }
         match action {
             Action::OpenBrowser => self.open_pr_browser(),
@@ -1378,6 +1481,8 @@ impl App {
             Action::Bottom => self.pull_requests.step(isize::MAX),
             Action::PageDown => self.pull_requests.step(self.page_size as isize),
             Action::PageUp => self.pull_requests.step(-(self.page_size as isize)),
+            Action::ExtendMarkDown => self.extend_pr_mark(1),
+            Action::ExtendMarkUp => self.extend_pr_mark(-1),
             Action::Open => {
                 self.detail_read_focus = false;
                 self.pull_requests.detail_scroll = 0;
@@ -1471,7 +1576,7 @@ impl App {
             return;
         }
         if !self.page.allows(action) {
-            self.status = "Switch to Tasks or Pull Requests to use list controls".to_string();
+            self.status = format!("{} works on {}", action.name(), action.where_it_works());
             return;
         }
         if self.scroll_detail_reading(action) {
@@ -1483,13 +1588,34 @@ impl App {
         if self.page == Page::Agents && self.apply_agents_action(action) {
             return;
         }
+        // A plain cursor move (as opposed to an extend) starts the Tasks
+        // page's next range select fresh, from wherever the cursor lands;
+        // the PR page does the same in `apply_pr_action`.
+        if self.page == Page::Tasks
+            && matches!(
+                action,
+                Action::Down
+                    | Action::Up
+                    | Action::Top
+                    | Action::Bottom
+                    | Action::PageDown
+                    | Action::PageUp
+            )
+        {
+            self.task_selection.reset_sweep();
+        }
         match action {
-            Action::Merge => self.status = "Switch to Pull Requests to merge a PR".into(),
-            Action::KillAgent => self.status = "Switch to Agents to signal an agent".into(),
-            Action::Mark => {
-                self.status = "Switch to Pull Requests to mark PRs for bulk merge".into()
+            // The availability gate above already refused these on any page
+            // without a matching tier; the arm exists so a future gate
+            // change cannot silently drop them.
+            Action::OpenBrowser | Action::Merge | Action::KillAgent => {
+                self.status = format!("{} works on {}", action.name(), action.where_it_works());
             }
-            Action::OpenBrowser => self.status = "Switch to Pull Requests to open a PR".into(),
+            // Reachable here only on Tasks: `apply_pr_action` already
+            // handled these on Pull Requests, the only other Lists page.
+            Action::Mark => self.toggle_task_mark(),
+            Action::ExtendMarkDown => self.extend_task_mark(1),
+            Action::ExtendMarkUp => self.extend_task_mark(-1),
             Action::DismissNotifications => {
                 if !self.report.dismiss() {
                     self.pull_requests.dismiss_notifications();
@@ -1536,8 +1662,14 @@ impl App {
                     self.close_detail_pane();
                 } else if self.page.has_list_view() && !self.filter_text().is_empty() {
                     self.set_filter(String::new());
-                } else if self.page == Page::PullRequests && !self.pull_requests.marked.is_empty() {
+                } else if self.page == Page::PullRequests
+                    && !self.pull_requests.selection.marked.is_empty()
+                {
                     self.pull_requests.clear_marks();
+                    self.status = "Marks cleared".into();
+                    return;
+                } else if self.page == Page::Tasks && !self.task_selection.marked.is_empty() {
+                    self.task_selection.clear();
                     self.status = "Marks cleared".into();
                     return;
                 }
@@ -1728,6 +1860,8 @@ impl App {
             std::mem::swap(&mut self.views, &mut self.inactive_views);
             std::mem::swap(&mut self.view, &mut self.inactive_view);
         }
+        self.pull_requests.reset_range_sweep();
+        self.task_selection.reset_sweep();
         self.page = page;
         if page.has_list_view() {
             self.state.sanitize(page, &self.registry);
@@ -1753,10 +1887,12 @@ impl App {
         if self.page == Page::PullRequests {
             self.state.filter = text.clone();
             self.pull_requests.filter = text;
+            self.pull_requests.reset_range_sweep();
             self.pull_requests.refilter();
             return;
         }
         self.state.filter = text;
+        self.task_selection.reset_sweep();
         self.refilter();
     }
 
@@ -1870,6 +2006,7 @@ impl App {
     pub(super) fn set_group(&mut self, grouping: Grouping) {
         let kept = self.selected_task().map(|task| task.id.clone());
         self.state.group = grouping;
+        self.task_selection.reset_sweep();
         self.refilter();
         if let Some(id) = kept {
             if let Some(row) = self
@@ -2071,6 +2208,9 @@ impl App {
                 self.fail(error.to_string());
             }
         }
+        let tasks = &self.tasks;
+        self.task_selection
+            .retain(|id| tasks.iter().any(|task| task.id == id));
         self.refilter_tasks();
         if let Some((identity, id)) = kept {
             if let Some(row) = self.rows.iter().position(|row| match row {

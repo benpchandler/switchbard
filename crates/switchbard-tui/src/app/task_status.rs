@@ -36,15 +36,23 @@ impl App {
         self.status.clear();
     }
 
-    pub(super) fn change_task_status(&mut self, id: &str, status: &str) {
-        if self.defer_task_storage() {
-            return;
-        }
+    /// The one write that sets a task's status, shared by the single-row and
+    /// bulk paths so they can never disagree about what a status change is.
+    fn write_status(&self, id: &str, status: &str) -> Result<(), String> {
         let patch = switchbard_core::BacklogTaskPatch {
             status: Some(status.to_string()),
             ..Default::default()
         };
-        match switchbard_core::edit_backlog_task(&self.repo_root, id, &patch) {
+        switchbard_core::edit_backlog_task(&self.repo_root, id, &patch)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub(super) fn change_task_status(&mut self, id: &str, status: &str) {
+        if self.defer_task_storage() {
+            return;
+        }
+        match self.write_status(id, status) {
             Ok(_) => {
                 self.reload_tasks();
                 self.select_task(id);
@@ -54,6 +62,39 @@ impl App {
             }
             Err(error) => self.fail(format!("{id}: {error}")),
         }
+    }
+
+    /// `t s` with a non-empty selection: every marked task instead of just
+    /// `primary` (the task the picker opened against).
+    pub(super) fn apply_task_status(&mut self, primary: &str, status: &str) {
+        if self.defer_task_storage() {
+            return;
+        }
+        let ids = super::task_bulk::targets(self, primary);
+        if ids.len() == 1 {
+            self.change_task_status(&ids[0], status);
+            return;
+        }
+        let mut failures = Vec::new();
+        for id in &ids {
+            if let Err(error) = self.write_status(id, status) {
+                failures.push(super::task_bulk::BulkFailure {
+                    id: id.clone(),
+                    error,
+                });
+            }
+        }
+        self.reload_tasks();
+        self.telemetry.record(
+            "action",
+            format!(
+                "bulk_status {status} {}/{}",
+                ids.len() - failures.len(),
+                ids.len()
+            ),
+        );
+        self.status =
+            super::task_bulk::summarize(&format!("status → {status}"), ids.len(), &failures);
     }
 }
 

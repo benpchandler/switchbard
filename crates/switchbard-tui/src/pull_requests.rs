@@ -48,8 +48,11 @@ pub struct PullRequests {
     remaining_seconds: u64,
     last_open_count: Option<(u64, std::time::SystemTime)>,
     expected_merge: Option<ExpectedMerge>,
-    /// PR ids marked for a bulk merge (`mark`); consumed in visible order by `m`.
-    pub marked: std::collections::BTreeSet<String>,
+    /// PR ids marked for a bulk merge (`mark`/`extend_down`/`extend_up`);
+    /// consumed in visible order by `m`. `Selection` is the one shared owner
+    /// of the mark set and its range-select sweep with the Tasks page
+    /// (`App::task_selection`).
+    pub selection: crate::selection::Selection,
 }
 
 impl PullRequests {
@@ -211,11 +214,11 @@ impl PullRequests {
                 if self.pending_selection.is_none() {
                     self.pending_selection = self.row().map(|row| row.id.clone());
                 }
-                self.marked.retain(|id| {
+                self.selection.retain(|id| {
                     snapshot
                         .rows
                         .iter()
-                        .any(|row| &row.id == id && row.lifecycle == PrLifecycle::Open)
+                        .any(|row| row.id == id && row.lifecycle == PrLifecycle::Open)
                 });
                 self.snapshot = Some(snapshot);
                 self.error = None;
@@ -345,12 +348,58 @@ impl PullRequests {
             return Err("Only open PRs can be marked for merge");
         }
         let id = row.id.clone();
-        if self.marked.remove(&id) {
-            Ok(false)
-        } else {
-            self.marked.insert(id);
-            Ok(true)
+        Ok(self.selection.toggle(&id))
+    }
+
+    /// Word-processor-style range select: the first call anchors at the
+    /// cursor row; each further call moves the cursor by `delta` (`1` or
+    /// `-1`) and marks every open PR between the anchor and the new cursor,
+    /// inclusive, unmarking any the range has left behind (`Selection`
+    /// tracks which marks are the sweep's own to take back). Returns the
+    /// number of rows currently marked, for the caller's status line.
+    pub fn extend_mark(&mut self, delta: isize) -> usize {
+        if self.snapshot.is_none() {
+            return self.selection.marked.len();
         }
+        let anchor_id = match self.selection.sweep_anchor() {
+            Some(anchor) => anchor.to_string(),
+            None => match self.row() {
+                Some(row) => row.id.clone(),
+                None => return self.selection.marked.len(),
+            },
+        };
+        self.step(delta);
+        let Some(anchor_position) = self.position_of(&anchor_id) else {
+            // The anchor row is no longer visible (filtered out from under
+            // the sweep); nothing sane left to sweep against.
+            self.selection.reset_sweep();
+            return self.selection.marked.len();
+        };
+        let lo = anchor_position.min(self.selected);
+        let hi = anchor_position.max(self.selected);
+        let in_range: std::collections::BTreeSet<String> = self.visible[lo..=hi]
+            .iter()
+            .filter_map(|&index| self.snapshot.as_ref().and_then(|s| s.rows.get(index)))
+            .filter(|row| row.lifecycle == PrLifecycle::Open)
+            .map(|row| row.id.clone())
+            .collect();
+        self.selection.extend(anchor_id, in_range)
+    }
+
+    /// The visible position of PR `id`, for the range sweep's anchor.
+    fn position_of(&self, id: &str) -> Option<usize> {
+        self.visible.iter().position(|&index| {
+            self.snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.rows.get(index))
+                .is_some_and(|row| row.id == id)
+        })
+    }
+
+    /// Drop the in-progress range-select anchor: any plain cursor move, page
+    /// switch, filter change, or mark clear starts the next extend fresh.
+    pub fn reset_range_sweep(&mut self) {
+        self.selection.reset_sweep();
     }
 
     /// Marked PR ids in the order the list shows them: the bulk-merge order.
@@ -361,17 +410,17 @@ impl PullRequests {
         self.visible
             .iter()
             .filter_map(|index| snapshot.rows.get(*index))
-            .filter(|row| self.marked.contains(&row.id))
+            .filter(|row| self.selection.is_marked(&row.id))
             .map(|row| row.id.clone())
             .collect()
     }
 
     pub fn is_marked(&self, row: &PrListRow) -> bool {
-        self.marked.contains(&row.id)
+        self.selection.is_marked(&row.id)
     }
 
     pub fn clear_marks(&mut self) {
-        self.marked.clear();
+        self.selection.clear();
     }
 
     pub fn values(&self, column: crate::columns::Column, row: &PrListRow) -> Vec<String> {

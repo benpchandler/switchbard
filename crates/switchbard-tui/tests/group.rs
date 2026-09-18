@@ -111,7 +111,7 @@ fn cursor_skips_headings_and_lands_on_tasks() {
     assert_eq!(h.selected_title(), "Ally intake form");
     h.press(KeyCode::Char('k'));
     assert_eq!(h.selected_title(), "Chase rate sheet");
-    h.press(KeyCode::Char('G'));
+    h.press(KeyCode::Char('e'));
     assert_eq!(h.selected_title(), "Add dark theme");
     h.press(KeyCode::Char('g'));
     assert_eq!(h.selected_title(), "Chase portal login");

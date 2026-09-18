@@ -35,6 +35,11 @@ pub use crate::shortcuts::Action;
 pub struct KeyChord {
     pub code: KeyCode,
     pub ctrl: bool,
+    /// Shift held on a non-`Char` code (arrows, function keys, ...). A `Char`
+    /// already carries Shift as its uppercase form, so this is always `false`
+    /// for one; `BackTab` also carries it in its own code identity (see
+    /// `shift-tab` below), so this stays `false` for it too.
+    pub shift: bool,
 }
 
 impl KeyChord {
@@ -43,11 +48,24 @@ impl KeyChord {
             Some(rest) => (true, rest),
             None => (false, text),
         };
+        // `shift-tab` is its own token (BackTab), not the generic shift
+        // prefix below, so a user file written before shift existed keeps
+        // meaning exactly what it always did.
+        if rest == "shift-tab" || rest == "backtab" {
+            return Some(KeyChord {
+                code: KeyCode::BackTab,
+                ctrl,
+                shift: false,
+            });
+        }
+        let (shift, rest) = match rest.strip_prefix("shift-") {
+            Some(rest) => (true, rest),
+            None => (false, rest),
+        };
         let code = match rest {
             "enter" => KeyCode::Enter,
             "esc" => KeyCode::Esc,
             "tab" => KeyCode::Tab,
-            "shift-tab" | "backtab" => KeyCode::BackTab,
             "pagedown" => KeyCode::PageDown,
             "pageup" => KeyCode::PageUp,
             "up" => KeyCode::Up,
@@ -61,17 +79,28 @@ impl KeyChord {
             single if single.chars().count() == 1 => KeyCode::Char(single.chars().next()?),
             _ => return None,
         };
-        Some(KeyChord { code, ctrl })
+        // A `Char` already spells Shift as its uppercase form; a `shift-`
+        // prefix in front of one would be a second, conflicting encoding.
+        let shift = shift && !matches!(code, KeyCode::Char(_));
+        Some(KeyChord { code, ctrl, shift })
     }
 
     pub fn from_event(event: &KeyEvent) -> KeyChord {
+        let code = if event.code == KeyCode::Tab && event.modifiers.contains(KeyModifiers::SHIFT) {
+            KeyCode::BackTab
+        } else {
+            event.code
+        };
+        // Only non-`Char` codes take the flag: a `Char` already carries
+        // Shift as its uppercase form (setting it here too would make
+        // every existing `Shift+<letter>` binding stop matching), and
+        // `BackTab` already carries it in its own code identity.
+        let shift = event.modifiers.contains(KeyModifiers::SHIFT)
+            && !matches!(code, KeyCode::Char(_) | KeyCode::BackTab);
         KeyChord {
-            code: if event.code == KeyCode::Tab && event.modifiers.contains(KeyModifiers::SHIFT) {
-                KeyCode::BackTab
-            } else {
-                event.code
-            },
+            code,
             ctrl: event.modifiers.contains(KeyModifiers::CONTROL),
+            shift,
         }
     }
 
@@ -81,6 +110,11 @@ impl KeyChord {
             KeyCode::Char(' ') => "space".to_string(),
             KeyCode::Char(c) => c.to_string(),
             other => format!("{other:?}").to_lowercase(),
+        };
+        let key = if self.shift {
+            format!("shift-{key}")
+        } else {
+            key
         };
         if self.ctrl {
             format!("ctrl-{key}")
@@ -760,6 +794,7 @@ impl RawConfig {
                 (_, None) => warnings.push(format!("unknown action '{action}' for key '{key}'")),
             }
         }
+        warnings.extend(crate::shortcuts::missing_locked(keys.values().copied()));
         let (mut raw_styles, mut raw_columns) = match self.theme_name.as_deref() {
             Some(name) => match self.themes.get(name) {
                 Some((styles, columns)) => (styles.clone(), columns.clone()),

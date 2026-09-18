@@ -14,8 +14,14 @@ pub enum Action {
     OpenBrowser,
     Merge,
     KillAgent,
-    /// Toggle the cursor row's bulk-merge mark (PR page).
+    /// Toggle the cursor row's bulk-selection mark: a bulk merge on Pull
+    /// Requests, a bulk apply of the next value picked on Tasks.
     Mark,
+    /// Word-processor-style range select: extend the bulk-selection mark
+    /// from an anchor to the cursor, one row down at a time.
+    ExtendMarkDown,
+    /// The same range select, one row up.
+    ExtendMarkUp,
     DismissNotifications,
     NewTask,
     RepoIdea,
@@ -45,12 +51,54 @@ pub enum Action {
 enum Availability {
     Agents,
     Tasks,
+    PullRequests,
     /// Task and PR pages: the ones with a filterable, paintable list view.
     Lists,
     /// Every page with a cursor, the Agents page included.
     Cursor,
     Everywhere,
 }
+
+impl Availability {
+    /// The one sentence naming where an action works, so a page that refuses a
+    /// key and the help that offers it can never disagree about it.
+    fn where_it_works(self) -> &'static str {
+        match self {
+            Self::Agents => "the Agents page",
+            Self::Tasks => "the Tasks page",
+            Self::PullRequests => "the Pull Requests page",
+            Self::Lists => "Tasks and Pull Requests",
+            Self::Cursor => "any page with a cursor",
+            Self::Everywhere => "every page",
+        }
+    }
+
+    /// Whether this tier means the same thing on every page it appears on.
+    /// Only these carry [`LOCKED`] actions.
+    fn is_fixed_vocabulary(self) -> bool {
+        matches!(self, Self::Cursor | Self::Everywhere)
+    }
+}
+
+/// The fixed vocabulary: keys whose meaning never changes between pages, so a
+/// user's fingers can trust them anywhere. No page may reassign one, every one
+/// must declare a [`Availability::is_fixed_vocabulary`] tier, and `default.lua`
+/// must bind every one of them. [`missing_locked`] reports any drift.
+pub const LOCKED: &[Action] = &[
+    Action::Page,
+    Action::Back,
+    Action::Down,
+    Action::Up,
+    Action::Top,
+    Action::Bottom,
+    Action::PageDown,
+    Action::PageUp,
+    Action::Open,
+    Action::Command,
+    Action::Reload,
+    Action::Help,
+    Action::Quit,
+];
 
 // Ordered as displayed in help: action, canonical Lua name, page availability.
 const ACTIONS: &[(Action, &str, Availability)] = &[
@@ -79,10 +127,16 @@ const ACTIONS: &[(Action, &str, Availability)] = &[
     (Action::Rank, "task", Availability::Tasks),
     (Action::Command, "command", Availability::Everywhere),
     (Action::Reload, "reload", Availability::Everywhere),
-    (Action::OpenBrowser, "open_browser", Availability::Lists),
-    (Action::Merge, "merge", Availability::Lists),
+    (
+        Action::OpenBrowser,
+        "open_browser",
+        Availability::PullRequests,
+    ),
+    (Action::Merge, "merge", Availability::PullRequests),
     (Action::KillAgent, "kill_agent", Availability::Agents),
     (Action::Mark, "mark", Availability::Lists),
+    (Action::ExtendMarkDown, "extend_down", Availability::Lists),
+    (Action::ExtendMarkUp, "extend_up", Availability::Lists),
     (
         Action::DismissNotifications,
         "dismiss_notifications",
@@ -129,9 +183,37 @@ impl Action {
         match self.metadata().1 {
             Availability::Agents => page == Page::Agents,
             Availability::Tasks => page == Page::Tasks,
+            Availability::PullRequests => page == Page::PullRequests,
             Availability::Lists => page.has_list_view(),
             Availability::Cursor => page.has_cursor(),
             Availability::Everywhere => true,
         }
     }
+
+    /// What to tell the user who pressed this key on a page that refuses it.
+    pub(crate) fn where_it_works(&self) -> &'static str {
+        self.metadata().1.where_it_works()
+    }
+}
+
+/// Every locked action that `bound` never binds, plus every one whose catalog
+/// tier lets a page take it away. A non-empty result means the fixed vocabulary
+/// has drifted: a key the user is entitled to press everywhere has gone missing
+/// or become page-local.
+pub fn missing_locked(bound: impl Iterator<Item = Action>) -> Vec<String> {
+    let bound: Vec<Action> = bound.collect();
+    LOCKED
+        .iter()
+        .filter_map(|action| {
+            let (name, availability) = action.metadata();
+            if !availability.is_fixed_vocabulary() {
+                return Some(format!(
+                    "locked action '{name}' is limited to {}; it must work on every page it appears on",
+                    availability.where_it_works()
+                ));
+            }
+            (!bound.contains(action))
+                .then(|| format!("locked action '{name}' has no key bound; it must stay reachable"))
+        })
+        .collect()
 }

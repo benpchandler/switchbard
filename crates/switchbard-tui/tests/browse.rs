@@ -49,8 +49,19 @@ fn unbound_key_is_reported_and_help_lists_bindings() {
     assert!(screen.contains("z is not bound"), "{screen}");
     let screen = h.press(KeyCode::Char('?'));
     assert!(screen.contains("quit"), "{screen}");
-    let screen = h.press(KeyCode::PageDown);
-    assert!(screen.contains(":bug"), "{screen}");
+    // The command hints sit below the key grid; how far down depends on how
+    // many keys are bound, so scroll until they show rather than assuming a page.
+    let mut screen = screen;
+    for _ in 0..4 {
+        if screen.contains(":bug") {
+            break;
+        }
+        screen = h.press(KeyCode::PageDown);
+    }
+    assert!(
+        screen.contains(":bug"),
+        "help scrolls to the commands: {screen}"
+    );
     assert!(h
         .app
         .telemetry

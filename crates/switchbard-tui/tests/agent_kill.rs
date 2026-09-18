@@ -96,7 +96,7 @@ fn agents(h: &mut Harness) {
     h.press(KeyCode::Tab);
 }
 fn confirm(h: &mut Harness) -> String {
-    h.press(KeyCode::Char('K'));
+    h.press(KeyCode::Char('x'));
     settle(h, |h| h.app.mode == Mode::PickValue)
 }
 
@@ -105,7 +105,7 @@ fn agents_offer_a_discoverable_kill_action_without_rebinding_navigation() {
     let mut h = Harness::new();
     h.press(KeyCode::Tab);
     h.press(KeyCode::Tab);
-    let screen = h.press(KeyCode::Char('K'));
+    let screen = h.press(KeyCode::Char('x'));
     assert!(screen.contains("No agent selected"), "{screen}");
     let screen = h.press(KeyCode::Char('?'));
     assert!(screen.contains("kill_agent"), "{screen}");
@@ -124,7 +124,7 @@ fn cancellation_and_letter_digit_shortcuts_never_signal_an_agent() {
         "{screen}"
     );
     assert!(screen.contains("Unsaved work may be lost"), "{screen}");
-    for key in ['c', '2', 'K'] {
+    for key in ['c', '2', 'x'] {
         h.press(KeyCode::Char(key));
         assert!(lease.child.try_wait().unwrap().is_none());
     }
@@ -172,7 +172,7 @@ fn enter_sends_to_selected_pid_off_thread_and_neighbor_and_records_survive() {
     h.press(KeyCode::Enter);
     assert!(start.elapsed() < Duration::from_millis(200));
     assert!(h.app.agent_kill.is_submitting());
-    h.press(KeyCode::Char('K'));
+    h.press(KeyCode::Char('x'));
     assert!(h.app.status.contains("pending"));
     h.press(KeyCode::Char('q'));
     assert!(!h.app.should_quit);
@@ -259,13 +259,13 @@ fn stale_process_and_selection_change_are_visible_refusals() {
 }
 
 #[test]
-fn configured_action_and_help_agree_and_lowercase_k_still_navigates() {
+fn configured_action_and_help_agree_and_a_remapped_default_still_navigates() {
     let mut h = Harness::new();
     let a = Lease::new(&h);
     let b = Lease::new(&h);
     std::fs::write(
         &h.config_path,
-        "return { keys = { X = 'kill_agent', K = 'up' } }",
+        "return { keys = { X = 'kill_agent', x = 'up' } }",
     )
     .unwrap();
     h.app = harness::open_app(&h.root, &h.config_path);
@@ -275,6 +275,9 @@ fn configured_action_and_help_agree_and_lowercase_k_still_navigates() {
     assert!(h.render().contains("X kill"));
     h.press(KeyCode::Char('j'));
     assert_eq!(h.app.agents.selected, 1);
+    h.press(KeyCode::Char('x'));
+    assert_eq!(h.app.agents.selected, 0);
+    h.press(KeyCode::Char('j'));
     h.press(KeyCode::Char('k'));
     assert_eq!(h.app.agents.selected, 0);
     assert!(h.press(KeyCode::Char('?')).contains("kill_agent"));
@@ -292,7 +295,7 @@ fn interrupted_preparation_never_reopens_or_signals_after_returning() {
         let rows = vec![lease.row(&h)];
         inject(&mut h, rows);
         agents(&mut h);
-        h.press(KeyCode::Char('K'));
+        h.press(KeyCode::Char('x'));
         h.press(interruption);
         if interruption == KeyCode::Tab {
             h.press(KeyCode::Tab);
@@ -328,7 +331,12 @@ fn a_signal_ignoring_agent_is_not_reported_as_exited() {
         child,
         _exe_dir: dir,
     };
-    for _ in 0..100 {
+    // A freshly compiled fixture's first exec can take well over half a second
+    // on a machine busy running the rest of this suite, so wait on a deadline
+    // rather than a fixed tick count (the old 100x5ms flaked roughly one run
+    // in three).
+    let ready_by = std::time::Instant::now() + Duration::from_secs(10);
+    while std::time::Instant::now() < ready_by {
         if h.root.join("ready").exists() {
             break;
         }
@@ -385,7 +393,7 @@ fn unavailable_native_identity_is_an_explicit_refusal_not_an_endless_check() {
     row.process_identity = None;
     inject(&mut h, vec![row]);
     agents(&mut h);
-    let screen = h.press(KeyCode::Char('K'));
+    let screen = h.press(KeyCode::Char('x'));
     assert!(screen.contains("identity unavailable"), "{screen}");
     assert!(!screen.contains("Checking agent identity"));
     assert!(!h.app.agent_kill.is_pending());

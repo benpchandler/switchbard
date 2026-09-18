@@ -260,7 +260,7 @@ pub(crate) fn column_widths(
         .columns
         .iter()
         .map(|column| match column {
-            crate::columns::Column::Id if !app.pull_requests.marked.is_empty() => {
+            crate::columns::Column::Id if !app.pull_requests.selection.marked.is_empty() => {
                 Constraint::Length(11)
             }
             crate::columns::Column::Id => Constraint::Length(7),
@@ -294,7 +294,7 @@ pub(crate) fn draw_row(
         .map(|column| {
             let values = column.pr_values(row, links);
             match column {
-                crate::columns::Column::Id if !app.pull_requests.marked.is_empty() => {
+                crate::columns::Column::Id if !app.pull_requests.selection.marked.is_empty() => {
                     let mark = if app.pull_requests.is_marked(row) {
                         "[x]"
                     } else {
