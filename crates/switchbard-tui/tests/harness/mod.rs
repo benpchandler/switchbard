@@ -457,3 +457,23 @@ pub fn seed_goal(
         switchbard_core::attach_goal_inputs(root, name, &ids, &[]).unwrap();
     }
 }
+
+/// The list's title border row - the one carrying repo, count and view name.
+///
+/// Callers want *that row*, not "line 1". Spelling it as an absolute index
+/// silently also asserts "nothing is ever added above the list", so one new
+/// row of chrome turns every such test red without a behaviour changing.
+pub fn title_border(screen: &str) -> &str {
+    screen
+        .lines()
+        .find(|line| line.trim_start().starts_with('\u{250c}'))
+        .unwrap_or_default()
+}
+
+/// The row directly under the title border - the header, or the filter line
+/// once one is set. Encodes the adjacency these callers actually check.
+pub fn under_title_border(screen: &str) -> Option<&str> {
+    let mut lines = screen.lines();
+    lines.find(|line| line.trim_start().starts_with('\u{250c}'))?;
+    lines.next()
+}

@@ -59,7 +59,7 @@ fn title_line_holds_only_repo_count_and_view_name_with_settings_in_the_footer() 
         h.press(KeyCode::Char('3'));
         h.press(KeyCode::Char('1'));
         let screen = h.render();
-        let title = screen.lines().nth(1).unwrap_or_default();
+        let title = title_border(&screen);
         assert!(title.contains("shown"), "{width}x{height}: {screen}");
         for marker in ["≈pri", "outline:status", "cols:"] {
             assert!(
@@ -81,12 +81,12 @@ fn title_line_holds_only_repo_count_and_view_name_with_settings_in_the_footer() 
 #[test]
 fn title_line_shows_the_saved_slot_name_and_relabels_to_custom_once_edited() {
     let mut h = Harness::new();
-    let title = h.render().lines().nth(1).unwrap_or_default().to_string();
+    let title = title_border(&h.render()).to_string();
     assert!(title.contains(" v1 "), "{title}");
     h.press(KeyCode::Char('/'));
     h.type_text("label:ui");
     let screen = h.press(KeyCode::Enter);
-    let title = screen.lines().nth(1).unwrap_or_default();
+    let title = title_border(&screen);
     assert!(title.contains(" custom "), "{screen}");
 }
 
@@ -100,20 +100,14 @@ fn filter_line_is_absent_with_no_filter_and_present_once_one_is_set() {
         let screen = h.render();
         // No filter: the header follows the title border directly, no blank row.
         assert!(
-            screen
-                .lines()
-                .nth(2)
-                .is_some_and(|line| line.contains("1 id")),
+            under_title_border(&screen).is_some_and(|line| line.contains("1 id")),
             "{width}x{height}: {screen}"
         );
         h.press(KeyCode::Char('/'));
         h.type_text("status:todo");
         let screen = h.press(KeyCode::Enter);
         assert!(
-            screen
-                .lines()
-                .nth(2)
-                .is_some_and(|line| line.contains("/ status:todo")),
+            under_title_border(&screen).is_some_and(|line| line.contains("/ status:todo")),
             "{width}x{height}: {screen}"
         );
     }
@@ -180,10 +174,7 @@ fn filter_editing_still_opens_with_slash_and_the_footer_shows_the_live_draft() {
     assert!(footer.contains("dark"), "{screen}");
     // The in-frame filter line mirrors the same live value.
     assert!(
-        screen
-            .lines()
-            .nth(2)
-            .is_some_and(|line| line.contains("/ dark")),
+        under_title_border(&screen).is_some_and(|line| line.contains("/ dark")),
         "{screen}"
     );
     // Esc mid-edit keeps the live value (it only leaves editing); committing
@@ -191,10 +182,7 @@ fn filter_editing_still_opens_with_slash_and_the_footer_shows_the_live_draft() {
     h.press(KeyCode::Enter);
     let screen = h.press(KeyCode::Esc);
     assert!(
-        !screen
-            .lines()
-            .nth(2)
-            .is_some_and(|line| line.contains("/ dark")),
+        !under_title_border(&screen).is_some_and(|line| line.contains("/ dark")),
         "esc clears the filter line too: {screen}"
     );
 }

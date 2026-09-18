@@ -14,9 +14,7 @@ fn lists_every_task_with_repo_name_and_count() {
     assert!(screen.contains("Fix login redirect loop"), "{screen}");
     assert!(screen.contains("Add dark theme"), "{screen}");
     assert!(
-        screen
-            .lines()
-            .nth(1)
+        Some(title_border(&screen))
             .is_some_and(|context| context.contains("3/3 shown") && context.contains(" v1 ")),
         "{screen}"
     );

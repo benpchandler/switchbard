@@ -191,6 +191,14 @@ impl App {
         if self.update_available {
             return Some(":update · New build ready".into());
         }
+        // Every experiment is a Tasks-page feature, so the nudge is only
+        // actionable there. Elsewhere it cost a body row for nothing - and
+        // that row is what clipped the Agents detail pane's last line.
+        // `:update` above is about the binary, not tasks, so it still shows
+        // on every page.
+        if self.page != Page::Tasks {
+            return None;
+        }
         match self.experiments.unreviewed_count() {
             0 => None,
             1 => Some(":experiments · 1 feature to try".into()),

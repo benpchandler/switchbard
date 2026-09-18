@@ -20,10 +20,7 @@ fn s_then_column_offers_semantic_and_plain_orders() {
     let screen = h.press(KeyCode::Char('1'));
     // TASK-235 moved the sort label into the footer's view-settings summary.
     assert!(
-        screen
-            .lines()
-            .nth(1)
-            .is_some_and(|context| context.contains("3/3 shown")),
+        Some(title_border(&screen)).is_some_and(|context| context.contains("3/3 shown")),
         "{screen}"
     );
     assert!(screen.contains("≈pri"), "{screen}");
@@ -62,17 +59,12 @@ fn sort_survives_filtering_and_title_sorts_alphabetically() {
     h.press(KeyCode::Enter);
     let screen = h.render();
     assert!(
-        screen
-            .lines()
-            .nth(1)
+        Some(title_border(&screen))
             .is_some_and(|context| context.contains("2/3 shown") && context.contains(" custom ")),
         "{screen}"
     );
     assert!(
-        screen
-            .lines()
-            .nth(2)
-            .is_some_and(|context| context.contains("/ status:todo")),
+        under_title_border(&screen).is_some_and(|context| context.contains("/ status:todo")),
         "{screen}"
     );
     assert!(screen.contains("↑title"), "{screen}");

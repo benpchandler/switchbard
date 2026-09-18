@@ -3,6 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use harness::*;
 use std::time::Duration;
 use switchbard_core::bug_run::{AgentOutcome, Run, RunOptions, RunState, Store};
+use switchbard_tui::experiments::{ExperimentDecision, ExperimentStore};
 
 fn repository(h: &Harness) {
     let output = std::process::Command::new("git")
@@ -151,12 +152,43 @@ fn review_requires_explicit_publish_and_preserves_feedback() {
     assert!(h.app.status.contains("saved review reply"));
 }
 
+/// Default state: `:bug` files the report and starts nothing, so it leaves no
+/// worktree or branch behind. Guards the claim that the experiment gates only
+/// the Codex run, never the filing.
+#[test]
+fn bug_files_only_while_the_experiment_is_off() {
+    let mut h = Harness::new();
+    repository(&h);
+    assert!(!h.app.experiments.is_enabled("bug-dispatch"));
+    h.type_text(":bug Login redirects to the wrong destination");
+    h.press(KeyCode::Enter);
+    h.wait_report();
+    assert!(h.app.status.contains("filed"), "{}", h.app.status);
+    let store = Store::open(h.root.join("bug-runs.sqlite3")).unwrap();
+    assert!(
+        store.list(&h.root).unwrap().is_empty(),
+        "capture-only must not start a run"
+    );
+}
+
 #[test]
 fn bug_files_before_dispatch_and_idea_stays_capture_only() {
     let mut h = Harness::new();
     repository(&h);
+    // Dispatching is experiment 4; filing is not. Turn it on to prove the
+    // dispatching contract - `bug_files_only_while_the_experiment_is_off`
+    // proves the other half.
+    let (store, warning) = ExperimentStore::load_from(Some(h.root.join("experiments.json")));
+    assert!(warning.is_none(), "{warning:?}");
+    h.app.experiments = store;
+    h.app
+        .experiments
+        .set_decision("bug-dispatch", ExperimentDecision::Enable)
+        .unwrap();
+    assert!(h.app.experiments.is_enabled("bug-dispatch"));
     h.type_text(":bug Login redirects to the wrong destination");
     h.press(KeyCode::Enter);
+    h.wait_report();
     assert!(h.app.status.contains("filed"));
     let store = Store::open(h.root.join("bug-runs.sqlite3")).unwrap();
     let runs = store.list(&h.root).unwrap();
