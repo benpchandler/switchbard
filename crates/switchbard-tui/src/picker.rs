@@ -400,7 +400,10 @@ impl ValuePicker {
 pub fn hint(picker: &ValuePicker) -> &'static str {
     match &picker.purpose {
         PickerPurpose::Filter(_) => "number or name picks one · space toggles · esc",
-        PickerPurpose::Sort(_) => "number or name picks · esc",
+        PickerPurpose::Sort(_) => "number or name picks the order · ← undoes · esc done",
+        PickerPurpose::ChooseColumn(ColumnPurpose::Sort) => {
+            "number or name picks · hidden columns listed last · ← undoes · esc done"
+        }
         PickerPurpose::ChooseColumn(_) => "number or name · hidden columns listed last · esc",
         PickerPurpose::Columns => "↑↓/jk select · →/l open · ←/h back · Esc closes",
         PickerPurpose::MoveColumns(_) => "type column numbers in the order you want · enter done",

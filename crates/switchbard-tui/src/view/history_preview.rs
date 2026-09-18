@@ -38,7 +38,7 @@ pub(super) fn draw(
 }
 
 fn draw_prs(frame: &mut Frame, app: &App, state: &ViewState, area: Rect, scroll: usize) -> usize {
-    let visible = app.pull_requests.visible_for(&state.filter, state.sort);
+    let visible = app.pull_requests.visible_for(&state.filter, &state.sort);
     let scroll = scroll.min(visible.len().saturating_sub(1));
     let mut suffix = if app
         .pull_requests

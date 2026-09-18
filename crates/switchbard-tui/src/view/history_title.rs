@@ -63,10 +63,15 @@ pub(crate) fn title(state: &ViewState, page: Page, registry: &ColumnRegistry) ->
 
 pub(super) fn details(state: &ViewState, registry: &ColumnRegistry) -> String {
     let mut parts = Vec::new();
-    if let Some(sort) = state.sort {
+    if !state.sort.is_empty() {
         parts.push(format!(
             "Sorted by {}",
-            display_column(sort.column, registry)
+            state
+                .sort
+                .iter()
+                .map(|sort| display_column(sort.column, registry))
+                .collect::<Vec<_>>()
+                .join(", then ")
         ));
     }
     if !state.paint.is_empty() {

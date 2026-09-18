@@ -206,7 +206,7 @@ fn live_pr_sort_filter_and_refresh_preserve_identity_and_task_state() {
     set_filter(&mut h, "");
     h.next_list_page();
     assert_eq!(h.app.state.filter, "");
-    assert!(h.app.state.sort.is_none());
+    assert!(h.app.state.sort.is_empty());
 }
 
 #[test]
@@ -215,6 +215,9 @@ fn task_reload_while_pr_page_is_active_keeps_task_filter_sort_and_selection() {
     h.type_text("/theme");
     h.press(KeyCode::Enter);
     h.type_text("s41");
+    // Enter settles the breadcrumb; while it is open Tab means "another sort
+    // layer", not "next page".
+    h.press(KeyCode::Enter);
     let task_state = h.app.state.clone();
     let selected = h.selected_title();
     h.next_list_page();

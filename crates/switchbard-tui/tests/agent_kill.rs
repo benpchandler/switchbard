@@ -340,7 +340,7 @@ fn a_signal_ignoring_agent_is_not_reported_as_exited() {
         if h.root.join("ready").exists() {
             break;
         }
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::sleep(Duration::from_millis(10));
     }
     assert!(
         h.root.join("ready").exists(),

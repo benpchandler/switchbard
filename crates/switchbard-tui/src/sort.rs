@@ -1,10 +1,12 @@
 //! Sort orders picked with `s <column>`: plain ascending/descending, or the semantic
 //! order a column's vocabulary already implies (high before low, To Do before Done).
+//!
+//! A view sorts by a *stack* of these, not one: layer 1 orders the list, layer 2
+//! breaks its ties, and so on to [`MAX_LAYERS`]. The stack is what `s` builds as a
+//! breadcrumb (`app::sort_entry`), what a saved view writes (`stack_to_text`), and
+//! what every comparator walks (`compare_values`). One column appears at most once.
 
 use std::cmp::Ordering;
-use std::collections::HashSet;
-
-use switchbard_core::{BacklogTask, GoalDef};
 
 use crate::columns::{Column, ColumnRegistry};
 
@@ -75,6 +77,52 @@ impl Sort {
     }
 }
 
+/// How many layers one sort stack may carry. Five is what a breadcrumb line reads
+/// cleanly at, and deeper than that no list has distinguishable ties left.
+pub const MAX_LAYERS: usize = 5;
+
+/// What separates one layer from the next, on screen and in the breadcrumb.
+pub const LAYER_SEPARATOR: &str = " \u{203a} ";
+
+/// The stack as a breadcrumb: `\u{2191}id \u{203a} \u{2248}pri`. Empty when nothing is sorted.
+pub fn stack_label(layers: &[Sort], registry: &ColumnRegistry) -> String {
+    layers
+        .iter()
+        .map(|sort| sort.label(registry))
+        .collect::<Vec<_>>()
+        .join(LAYER_SEPARATOR)
+}
+
+/// The saved form: one `column:order` per layer, comma-separated. A declared
+/// field writes itself as `field:<name>`, which never contains a comma.
+pub fn stack_to_text(layers: &[Sort], registry: &ColumnRegistry) -> String {
+    layers
+        .iter()
+        .map(|sort| sort.to_text(registry))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Reads `stack_to_text` back, and a single `column:order` from before stacks
+/// existed. Unreadable layers drop; a repeated column keeps its first place;
+/// anything past [`MAX_LAYERS`] is discarded rather than silently honoured.
+pub fn parse_stack(text: &str, registry: &ColumnRegistry) -> Vec<Sort> {
+    let mut layers: Vec<Sort> = Vec::new();
+    for part in text.split(',').filter(|part| !part.trim().is_empty()) {
+        let Some(sort) = Sort::parse(part, registry) else {
+            continue;
+        };
+        if layers.iter().any(|layer| layer.column == sort.column) {
+            continue;
+        }
+        layers.push(sort);
+        if layers.len() == MAX_LAYERS {
+            break;
+        }
+    }
+    layers
+}
+
 /// Orders offered for a column; semantic only where the vocabulary has one.
 pub fn orders_for(column: Column, registry: &ColumnRegistry) -> Vec<Order> {
     if column.spec(registry).vocabulary().is_empty() {
@@ -84,48 +132,36 @@ pub fn orders_for(column: Column, registry: &ColumnRegistry) -> Vec<Order> {
     }
 }
 
-pub fn apply(
-    registry: &ColumnRegistry,
-    tasks: &[BacklogTask],
-    visible: &mut [usize],
-    sort: Sort,
-    top: &[String],
-    goals: &[GoalDef],
-    blocked: &HashSet<String>,
-) {
-    visible.sort_by(|&a, &b| compare(registry, &tasks[a], &tasks[b], sort, top, goals, blocked));
-}
-
-fn compare(
-    registry: &ColumnRegistry,
-    a: &BacklogTask,
-    b: &BacklogTask,
-    sort: Sort,
-    top: &[String],
-    goals: &[GoalDef],
-    blocked: &HashSet<String>,
-) -> Ordering {
-    compare_values(
-        &crate::column_values::TaskValues {
-            registry,
-            task: a,
-            top,
-            goals,
-            blocked,
-        },
-        &crate::column_values::TaskValues {
-            registry,
-            task: b,
-            top,
-            goals,
-            blocked,
-        },
-        sort,
-        registry,
-    )
-}
-
+/// The stack, layer by layer, then the tiebreak every list shares: numeric id,
+/// then identity. Deciding ties in one place is what makes a sort reproducible
+/// whatever the order rows arrived in.
 pub fn compare_values(
+    a: &impl crate::column_values::ColumnValues,
+    b: &impl crate::column_values::ColumnValues,
+    layers: &[Sort],
+    registry: &ColumnRegistry,
+) -> Ordering {
+    layers
+        .iter()
+        .map(|sort| compare_layer(a, b, *sort, registry))
+        .find(|ordering| ordering.is_ne())
+        .unwrap_or(Ordering::Equal)
+        .then_with(|| tiebreak(a, b))
+}
+
+/// The shared last word on two rows a sort stack could not separate.
+pub fn tiebreak(
+    a: &impl crate::column_values::ColumnValues,
+    b: &impl crate::column_values::ColumnValues,
+) -> Ordering {
+    a.numeric_key(Column::Id)
+        .cmp(&b.numeric_key(Column::Id))
+        .then_with(|| a.identity().cmp(b.identity()))
+}
+
+/// One layer's verdict, with no tiebreak of its own: `Equal` here is what
+/// hands the decision to the next layer.
+pub fn compare_layer(
     a: &impl crate::column_values::ColumnValues,
     b: &impl crate::column_values::ColumnValues,
     sort: Sort,
@@ -155,9 +191,7 @@ pub fn compare_values(
                 Order::Descending => b.cmp(&a),
             },
         };
-        return ordering
-            .then_with(|| a.numeric_key(Column::Id).cmp(&b.numeric_key(Column::Id)))
-            .then_with(|| a.identity().cmp(b.identity()));
+        return ordering;
     }
     let plain = || {
         if sort.column.spec(registry).numeric {
@@ -183,14 +217,12 @@ pub fn compare_values(
         Order::Descending => plain().reverse(),
     };
     ordering
-        .then_with(|| a.numeric_key(Column::Id).cmp(&b.numeric_key(Column::Id)))
-        .then_with(|| a.identity().cmp(b.identity()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use switchbard_core::BacklogTaskSource;
+    use switchbard_core::{BacklogTask, BacklogTaskSource};
 
     fn task(id: &str, due: Option<&str>) -> BacklogTask {
         BacklogTask {
@@ -221,24 +253,32 @@ mod tests {
         }
     }
 
-    fn ordered(tasks: &[BacklogTask], order: Order) -> Vec<String> {
+    fn sorted(tasks: &[BacklogTask], layers: &[Sort]) -> Vec<String> {
         let goals = [];
-        let mut visible: Vec<usize> = (0..tasks.len()).collect();
         let blocked = std::collections::HashSet::new();
         let registry = ColumnRegistry::builtin_only();
-        apply(
-            &registry,
+        let mut visible: Vec<usize> = (0..tasks.len()).collect();
+        visible.sort_by(|&a, &b| {
+            let of = |index: usize| crate::column_values::TaskValues {
+                registry: &registry,
+                task: &tasks[index],
+                top: &[],
+                goals: &goals,
+                blocked: &blocked,
+            };
+            compare_values(&of(a), &of(b), layers, &registry)
+        });
+        visible.into_iter().map(|i| tasks[i].id.clone()).collect()
+    }
+
+    fn ordered(tasks: &[BacklogTask], order: Order) -> Vec<String> {
+        sorted(
             tasks,
-            &mut visible,
-            Sort {
+            &[Sort {
                 column: Column::Due,
                 order,
-            },
-            &[],
-            &goals,
-            &blocked,
-        );
-        visible.into_iter().map(|i| tasks[i].id.clone()).collect()
+            }],
+        )
     }
 
     #[test]
@@ -273,5 +313,83 @@ mod tests {
     fn two_absent_due_dates_break_ties_by_id() {
         let tasks = [task("TASK-2", None), task("TASK-1", None)];
         assert_eq!(ordered(&tasks, Order::Ascending), vec!["TASK-1", "TASK-2"]);
+    }
+
+    /// Layer two is what decides rows layer one calls equal; without it the
+    /// shared tiebreak (numeric id) would answer instead.
+    #[test]
+    fn a_second_layer_breaks_the_first_layers_ties() {
+        let mut tasks = [
+            task("TASK-1", Some("2026-09-20")),
+            task("TASK-2", Some("2026-09-20")),
+            task("TASK-3", Some("2026-09-14")),
+        ];
+        tasks[0].title = "zebra".to_string();
+        tasks[1].title = "apple".to_string();
+        let layers = [
+            Sort {
+                column: Column::Due,
+                order: Order::Ascending,
+            },
+            Sort {
+                column: Column::Title,
+                order: Order::Ascending,
+            },
+        ];
+        assert_eq!(sorted(&tasks, &layers), ["TASK-3", "TASK-2", "TASK-1"]);
+    }
+
+    #[test]
+    fn a_stack_round_trips_through_its_saved_text() {
+        let registry = ColumnRegistry::builtin_only();
+        let layers = [
+            Sort {
+                column: Column::Priority,
+                order: Order::Semantic,
+            },
+            Sort {
+                column: Column::Id,
+                order: Order::Descending,
+            },
+        ];
+        let text = stack_to_text(&layers, &registry);
+        assert_eq!(text, "priority:semantic,id:descending");
+        assert_eq!(parse_stack(&text, &registry), layers);
+    }
+
+    /// A view saved before stacks existed carries one `column:order` and no
+    /// comma; it must still read back as a one-layer stack.
+    #[test]
+    fn a_single_saved_sort_reads_back_as_one_layer() {
+        let registry = ColumnRegistry::builtin_only();
+        assert_eq!(
+            parse_stack("pri:semantic", &registry),
+            [Sort {
+                column: Column::Priority,
+                order: Order::Semantic,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_repeated_column_keeps_its_first_place_and_the_stack_stops_at_the_limit() {
+        let registry = ColumnRegistry::builtin_only();
+        assert_eq!(
+            parse_stack("pri:semantic,pri:ascending", &registry),
+            [Sort {
+                column: Column::Priority,
+                order: Order::Semantic,
+            }]
+        );
+        let every = [
+            "id:ascending",
+            "title:ascending",
+            "status:ascending",
+            "pri:ascending",
+            "due:ascending",
+            "labels:ascending",
+        ]
+        .join(",");
+        assert_eq!(parse_stack(&every, &registry).len(), MAX_LAYERS);
     }
 }

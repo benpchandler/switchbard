@@ -50,7 +50,8 @@ fn priority_completion_navigation_and_sort_are_distinct_without_color_alone() {
     );
     h.type_text("s3");
     h.press(KeyCode::Char('1'));
-    h.press(KeyCode::Esc);
+    // Enter settles the sort breadcrumb; until then it owns the footer.
+    h.press(KeyCode::Enter);
     assert!(cell(&h, "3 pri").modifier.contains(Modifier::UNDERLINED));
     assert!(!cell(&h, "2 status").modifier.contains(Modifier::UNDERLINED));
 }
