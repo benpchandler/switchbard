@@ -60,7 +60,7 @@ fn picker_block(
     count: usize,
 ) -> Block<'static> {
     let mut title = format!(
-        " Experiments · {}/{count}",
+        " Experiments · {}/{count} · Turn On, Esc, go to Tasks, then follow Try",
         if count == 0 { 0 } else { selected + 1 }
     );
     if !picker.typed.is_empty() {
@@ -136,10 +136,7 @@ fn entry(
     }
     ListItem::new(vec![
         title,
-        Line::styled(
-            format!("  Notice: {}", notice(&option.payload)),
-            notice_style,
-        ),
+        Line::styled(format!("  Try: {}", notice(&option.payload)), notice_style),
     ])
     .style(style)
 }
