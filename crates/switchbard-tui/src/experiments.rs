@@ -63,6 +63,14 @@ const CATALOG: &[ExperimentSpec] = &[
         title: "Name a glyph column in its header instead of stacking every glyph there",
         description: "Look at a glyph column's header: it reads the column's name. Off, it reads as every glyph in the column run together, which is unreadable past about three values.",
     },
+    ExperimentSpec {
+        number: 6,
+        page: crate::page::Page::Tasks,
+        id: "action-input-wrap",
+        task: "TASK-205",
+        title: "Long ideas should stay readable while you type",
+        description: "Type :idea and a few sentences. Input should wrap and keep the cursor visible. Esc cancels; Off returns to one line.",
+    },
 ];
 
 // Reject accidental duplicate numbers at compile time, before they can be displayed.

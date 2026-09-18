@@ -6,6 +6,8 @@ and scope is ambiguous, STOP and ask the owner, then record the answer here.
 
 ## What switchbard is becoming
 
+**Readable idea capture (owner-directed experiment loop, 2026-09-18, TASK-205).** E006 lets long command drafts wrap while keeping the typing cursor visible. It preserves Enter/Esc and report submission behavior, and remains independently switchable during owner review.
+
 **Numbered detail experiments (owner-directed 2026-09-17, TASK-254/TASK-253).** The rapid exploration build adds E002 (assignees and created/updated near the top of task detail) and E003 (hide empty Definition of Done; place populated requirements after acceptance). Both are independent default-off presentation options under Experiments; Keep/Remove persists owner decisions without altering task completion. Numbers are permanent and never reused. Scope, registry, and manual evidence: `docs/tui-experiments.md`. Local availability does not imply owner acceptance or main delivery.
 
 An **open-source terminal workspace** for tasks, pull requests, and coding agents. `sbt` is the supported interactive interface; `sb` is the script and agent frontend over the same core write layer. Local-first: no cloud account or uploaded usage analytics. The TUI keeps local diagnostic events. Early alpha, MIT, public (benpchandler/switchbard). The author dogfoods it daily.

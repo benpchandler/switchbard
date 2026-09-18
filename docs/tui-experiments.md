@@ -47,8 +47,15 @@ Experiment numbers are assigned explicitly in the compiled catalog, never inferr
 | E003 | `detail-compact-done` | TASK-253 | Empty DoD omitted; populated DoD beside acceptance criteria |
 | E004 | `bug-dispatch` | TASK-143 | Filed bugs can start Codex work with Inbox handoffs |
 | E005 | `glyph-column-name` | TASK-286 | Glyph columns show their column name in the header |
+| E006 | `action-input-wrap` | TASK-205 | Long command drafts wrap and keep the cursor visible |
 
-Next unused number: E006. Keep/Remove/Enable/Disable never change an experiment number. Do not reuse a retired entry's number or persistence ID.
+Next unused number: E007. Keep/Remove/Enable/Disable never change an experiment number. Do not reuse a retired entry's number or persistence ID.
+
+## E006: readable command drafts
+
+Objective: implement board TASK-205 as an independent default-off experiment. Root owns flag/catalog, layout integration, native task truth and delivery; command_wrap owns the bounded command renderer. Preserve input bytes, cancellation/submission semantics, pending-report safety, saved views, all prior experiments and manual acceptance. No automated tests or live synthetic reports. Owner authorization continues for commit, push and guarded live install. Empty and short drafts retain completion; multiline wrapping and long unbroken words keep the cursor at the visible tail, using terminal display width and a bounded draft viewport. Status/error text retains its own row. Input still submits on Enter and cancels on Esc.
+
+Pre-implementation state/stress matrix: E006 off preserves one-line footer; on with empty/short/long/very long drafts; :idea/:bug/other commands; whitespace, CJK/emoji/combining glyphs; no-status/status/error; 72x20 and 134x36, tiny width/height, island present/hidden, Tasks/PRs; typing/backspace/Tab completion/Esc, repeated resize and no accidental submit. Rendering performs no I/O and changes no permissions/network/persistence. No new asynchronous lifecycle. Existing report submission failure/retry semantics remain; their status must stay visible. Manual isolated terminal reproduction shows input and cursor clipped before implementation: `/tmp/sbt-experiments-review.Gp7Uue/e006-before.txt`. Extreme inputs and theme variants will be source-reviewed unless explicitly exercised.
 
 ## Detail experiment batch
 
@@ -80,6 +87,8 @@ Visibility matrix before implementation: default/empty/ordinary filters hide mai
 | Pointer / touch / web zoom / roles | N/A for this keyboard-driven local menu; terminal font and size remain user-controlled | N/A |
 
 ## Objective ledger
+
+- E006 (2026-09-18): debug compilation and independent source review passed. Manually reproduced old cutoff, then observed wrapping at 72x20, 134x36 and 52x12; more than four rows kept the trailing cursor, CJK/emoji/combining text and an unbroken identifier remained readable, and repository capture retained its status row. Backspace/Esc and resize exercised without filing sample reports. Evidence: `/tmp/sbt-experiments-review.Gp7Uue/e006-before.txt`, `e006-long-unicode.txt`, `e006-status-short.txt`. Source-reviewed gaps: failed-report retry, one-cell terminal widths, greater-than-16-KiB drafts and theme variants. Rendering caps its inspected tail at 16 KiB; extremely short footers prioritize cursor over status. No automated tests.
 
 - Quiet island refinement (2026-09-18): compilation and manual native terminal observations at 134x36 and 72x15 covered neutral compact layout, clicking More and Feedback, retained Keep/Remove menu entries, Next switching instructions, Hide removing the island, repinning and feedback open/Esc. Readback: `/tmp/sbt-experiments-review.Gp7Uue/island-quiet-narrow.txt`. Theme variants and extreme terminal heights remain gaps; persistence behavior is unchanged. No automated tests.
 

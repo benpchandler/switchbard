@@ -1,5 +1,6 @@
 //! Rendering. Reads `App`, writes a frame, and leaves a text copy of the screen behind.
 
+mod command_input;
 mod detail_content;
 mod experiment_island;
 mod experiment_picker;
@@ -32,14 +33,26 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Paragraph::new("").style(app.config.theme.canvas_style()),
         frame.area(),
     );
+    let wrap_command = app.mode == Mode::Command && app.experiments.is_enabled("action-input-wrap");
     let footer_height = match app.mode {
+        Mode::Command if wrap_command => command_input::height(
+            app,
+            frame.area().width,
+            frame.area().height.saturating_sub(5).max(1),
+        ),
         Mode::NewTask => 3,
         Mode::DetailInput(_) => 2,
         Mode::Filter if app.filter_completion_hint().is_some() => 2,
         Mode::Command if !app.status.is_empty() => 2,
         _ => 1,
     };
-    let island_height = experiment_island::height(app, frame.area().height.saturating_sub(5));
+    let island_budget = if wrap_command {
+        footer_height.saturating_add(4)
+    } else {
+        5
+    };
+    let island_height =
+        experiment_island::height(app, frame.area().height.saturating_sub(island_budget));
     let [navigation, notification, body, island, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(u16::from(
@@ -1140,6 +1153,10 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
+    if app.mode == Mode::Command && app.experiments.is_enabled("action-input-wrap") {
+        command_input::draw(frame, app, area);
+        return;
+    }
     if app.mode == Mode::NewTask {
         draw_new_task(frame, app, area);
         return;
