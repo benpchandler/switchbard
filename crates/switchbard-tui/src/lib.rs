@@ -1,3 +1,4 @@
+pub mod agent_skill;
 pub mod agents;
 pub mod app;
 pub mod auto_install;
@@ -6,6 +7,7 @@ pub mod columns;
 pub mod config;
 mod date_fields;
 mod detail_pane;
+pub mod doctor;
 pub mod experiments;
 pub mod group;
 pub mod highlight;

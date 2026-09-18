@@ -1,5 +1,7 @@
 //! Shared, flexible document authority. Payload bytes are never projected back into storage.
+mod diagnostics;
 mod established;
+pub use diagnostics::{inspect_database, DatabaseInspection, WorkspaceInspection};
 mod onboarding;
 mod source_drift;
 pub use source_drift::{LegacySourceDrift, LegacySourceState};

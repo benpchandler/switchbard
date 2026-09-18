@@ -69,7 +69,7 @@ Switchbard does not request a separate permission grant or narrow your existing 
 
 Opening the PR page performs reads. Merging requires a separate confirmation, a fresh observation, and matching PR head; it does not use an admin bypass. A successful merge never marks the local task Done automatically. Missing `gh`, expired credentials, an inaccessible repository, network errors, or restricted metadata show an error or unknown state, rather than proving that there are no PRs or that checks passed. Retry after fixing the underlying problem. The current PR page accepts canonical `github.com` repositories only; GitHub Enterprise hosts are unsupported. Organization-specific permission combinations are not comprehensively verified.
 
-The alpha has no built-in GitHub connection wizard, account switcher, or diagnostic command. Use the checks above to establish access. Installing Switchbard also does not install or authenticate Claude Code or Codex.
+Current source and the upcoming alpha2 release offer `sbt doctor --github` to check access with actionable results and `sbt agent-prompt` for agent-assisted setup. The published v0.4.0-alpha.1 lacks these commands. They have no account switcher or automatic login. See [developer onboarding](developer-onboarding.md). Installing Switchbard also does not install or authenticate Claude Code or Codex.
 
 ## Manual download
 

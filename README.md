@@ -8,7 +8,7 @@ Keep the work visible while your agent codes. Use `sbt` to browse tasks and pull
 
 The supported interface is **`sbt`**, the terminal UI. **`sb`** provides the same task write layer for scripts and agents. The desktop GUI is deprecated; its source and older releases remain available, but new product work and public installation focus on the TUI.
 
-In source builds from current `main` (newer than `v0.4.0-alpha.1`), from any `sbt` page press `i` to capture an idea or `b` to capture a bug for the repository being viewed; Enter saves once and Esc cancels. These captures use the repository's native defaults and keep their destination pinned through saving and retry. The task menu's `t b` still assigns the ball. Colon commands `:bug` and `:idea` remain the legacy tool-report route; see [repository idea and bug capture](docs/repo-report-capture.md) for routing and state details.
+In current source builds and the upcoming alpha2 release, from any `sbt` page press `i` to capture an idea or `b` to capture a bug for the repository being viewed; Enter saves once and Esc cancels. These captures use Not started, Considering (unplanned), low priority and no assignee, with Ideas/Bugs project membership, and keep their destination pinned through saving and retry. The task menu's `t b` still assigns the ball. Colon commands `:bug` and `:idea` remain the legacy tool-report route; see [repository idea and bug capture](docs/repo-report-capture.md) for routing and state details.
 
 ## Work alongside your agent
 
@@ -25,7 +25,7 @@ sb list
 
 Ask your agent: "Read TASK-1 with `sb view TASK-1`. Follow this repository's instructions, implement the task, run the relevant checks, and append progress and remaining work with `sb edit TASK-1 --append-notes`. Ask before marking it Done."
 
-Replace `TASK-1` with the ID returned by `sb create`. Both agents can use the CLI through their terminal tools. The release does not install an agent skill or change your agent configuration.
+Replace `TASK-1` with the ID returned by `sb create`. Both agents can use the CLI through their terminal tools. The release includes offline agent instructions. Install them explicitly with `sbt skill install --agent both`; existing custom skills are preserved. It does not register hooks or change credentials.
 
 ### Resume after a reset or switch sessions
 
@@ -56,6 +56,21 @@ If `~/.local/bin` is outside your `PATH`, add it to your shell configuration and
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+## Check your setup and connect your agent
+
+The onboarding commands below are in the current source and are scheduled for
+the upcoming alpha2 release. The published alpha1 binary does not contain
+these commands. From your Git repository:
+
+```sh
+sbt doctor
+sbt doctor --github       # optional remote GitHub access check
+sbt skill install --agent both
+sbt agent-prompt          # copy this into a Claude Code or Codex session
+```
+
+SQLite is embedded; no database installation or server is needed. `doctor` reports readiness and next steps without creating a workspace. Remote checks are opt-in. Skills install to your personal Claude Code and Codex skill directories, with separate `--agent claude` or `--agent codex` choices. Inspect the payload with `sbt skill show`. See [diagnostics and agent setup](docs/developer-onboarding.md) for JSON output, repair steps, custom instructions, and limitations.
 
 ## First run
 

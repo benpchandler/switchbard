@@ -51,6 +51,20 @@ enum Command {
         #[arg(long)]
         yes: bool,
     },
+    /// Check local readiness without configuring a workspace
+    Doctor {
+        /// Emit a structured report for scripts and agents
+        #[arg(long)]
+        json: bool,
+        /// Also check GitHub authentication and repository read access
+        #[arg(long)]
+        github: bool,
+    },
+    /// Print a copyable setup prompt for Claude Code or Codex
+    AgentPrompt,
+    /// Show or explicitly install embedded agent instructions
+    #[command(subcommand)]
+    Skill(switchbard_tui::agent_skill::SkillCommand),
     /// Summarize the local event log: what is used, what is slow, what failed
     Stats,
     /// Print where the config and event log live
@@ -76,6 +90,14 @@ fn main() -> Result<()> {
             switchbard_tui::onboarding::ensure_workspace(&root, true, yes, choices)?;
             Ok(())
         }
+        Some(Command::Doctor { json, github }) => {
+            std::process::exit(switchbard_tui::doctor::run(cli.repo, github, json)?);
+        }
+        Some(Command::AgentPrompt) => {
+            switchbard_tui::agent_skill::print_prompt();
+            Ok(())
+        }
+        Some(Command::Skill(command)) => switchbard_tui::agent_skill::run(command),
         Some(Command::Stats) => {
             let Some(path) = telemetry::default_log_path() else {
                 bail!("no home directory");

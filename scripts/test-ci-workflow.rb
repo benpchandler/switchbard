@@ -65,6 +65,12 @@ raise "builds must have read-only contents permission" unless terminal.dig("perm
 terminal_jobs = terminal.fetch("jobs")
 platforms = terminal_jobs.dig("binaries", "strategy", "matrix", "include").map { |entry| entry.fetch("platform") }
 raise "terminal platform coverage changed" unless platforms.sort == %w[linux-x86_64 macos-arm64 macos-x86_64]
+terminal_steps = terminal_jobs.fetch("binaries").fetch("steps")
+package_test = terminal_steps.index { |step| step["run"] == "bash scripts/test-install-release-package.sh dist" }
+artifact_upload = terminal_steps.index { |step| step["uses"] == "actions/upload-artifact@v4" }
+unless package_test && artifact_upload && package_test < artifact_upload
+  raise "actual installed package journey must pass before release artifacts are uploaded"
+end
 publisher = terminal_jobs.fetch("publish")
 raise "publish must wait for all platform builds" unless publisher.fetch("needs") == "binaries"
 raise "PRs must not publish" unless publisher.fetch("if") == "github.event_name != 'pull_request'"

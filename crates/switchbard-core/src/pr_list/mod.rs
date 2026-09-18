@@ -13,6 +13,12 @@ pub const DEFAULT_PULL_REQUEST_LIMIT: usize = 100;
 /// Hard allocation/query row bound, independently protected by the 4 MiB stream cap.
 pub const MAX_PULL_REQUESTS: usize = 1000;
 
+/// Validate a GitHub CLI repository response using the PR surface's canonical
+/// github.com identity rules, without network access or repository writes.
+pub fn parse_repository_identity(data: &[u8]) -> Result<(String, String), String> {
+    parse::repository(data)
+}
+
 #[derive(Debug, Clone)]
 pub struct PrSnapshot {
     pub repository: String,

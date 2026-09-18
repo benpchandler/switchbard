@@ -226,10 +226,14 @@ impl PullRequests {
     }
 
     fn fail(&mut self, error: String) {
-        if self.error.as_ref() != Some(&error) {
+        if self.error.as_ref() != Some(&error) && !Self::missing_github_cli(&error) {
             self.notifications.push(format!("Refresh failed: {error}"));
         }
         self.error = Some(error);
+    }
+
+    fn missing_github_cli(error: &str) -> bool {
+        error.starts_with("Cannot run gh:")
     }
 
     fn observe_notifications(&mut self, snapshot: &PrSnapshot) {
@@ -555,6 +559,16 @@ mod tests {
         prs.accept(Ok(snapshot("owner/new", Err("offline".into()))));
 
         assert_eq!(prs.last_open_count(), None);
+    }
+
+    #[test]
+    fn missing_github_cli_does_not_create_repeated_notifications() {
+        let mut prs = PullRequests::default();
+        prs.fail("Cannot run gh: No such file or directory".into());
+        prs.fail("Cannot run gh: No such file or directory".into());
+
+        assert!(prs.notifications.is_empty());
+        assert!(prs.error.is_some());
     }
 
     fn pr_row(id: &str, number: u64, head_oid: &str, lifecycle: PrLifecycle) -> PrListRow {
