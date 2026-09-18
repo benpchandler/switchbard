@@ -3,7 +3,10 @@
 
 pub mod agent_kill;
 mod detail_edit;
+mod experiment_island;
 mod experiments;
+use crate::experiment_feedback::ExperimentFeedbackStore;
+pub use experiment_island::{IslandAction, IslandHit, IslandUi};
 mod filter_completion;
 mod new_task;
 pub mod paint_flow;
@@ -118,6 +121,8 @@ pub struct App {
     config_path: Option<PathBuf>,
     pub settings: SettingsStore,
     pub experiments: crate::experiments::ExperimentStore,
+    pub experiment_feedback: ExperimentFeedbackStore,
+    pub island: IslandUi,
     /// A compiled replacement exists at the installed path; only explicit intent restarts.
     pub update_available: bool,
     pub update_requested: bool,
@@ -255,6 +260,8 @@ fn command_allowed_off_lists(verb: &str) -> bool {
             | "idea"
             | "dismiss"
             | "experiments"
+            | "feedback"
+            | "island"
             | "update"
     )
 }
@@ -298,6 +305,8 @@ impl App {
             config_path,
             settings,
             experiments: crate::experiments::ExperimentStore::load_from(None).0,
+            experiment_feedback: ExperimentFeedbackStore::load_from(None).0,
+            island: IslandUi::default(),
             update_available: false,
             update_requested: false,
             tasks_seen: None,
@@ -867,6 +876,9 @@ impl App {
             return;
         }
         self.interaction_generation = self.interaction_generation.wrapping_add(1);
+        if self.handle_island_key(event) {
+            return;
+        }
         match self.mode {
             Mode::Browse => self.handle_browse_key(event),
             Mode::Filter => self.handle_filter_key(event),
@@ -1245,6 +1257,8 @@ impl App {
             "help",
             "q",
             "experiments",
+            "feedback",
+            "island",
             "update",
         ]
         .iter()
@@ -1660,6 +1674,12 @@ impl App {
             "q" | "quit" => self.request_quit(),
             "reload" => self.apply(&Action::Reload),
             "experiments" => self.open_experiments(),
+            "feedback" => self.open_experiment_feedback(),
+            "island" => match rest.trim() {
+                "hide" => self.apply_island_action(IslandAction::Hide),
+                "next" => self.apply_island_action(IslandAction::Next),
+                _ => self.open_experiments(),
+            },
             "update" => self.request_update(),
             "open" => self.apply(&Action::OpenBrowser),
             "dismiss" => self.apply(&Action::DismissNotifications),

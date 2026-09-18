@@ -8,6 +8,7 @@ pub mod config;
 mod date_fields;
 mod detail_pane;
 pub mod doctor;
+pub mod experiment_feedback;
 pub mod experiments;
 pub mod group;
 pub mod highlight;

@@ -43,20 +43,26 @@ impl App {
         } else {
             ('e', "Enable", ExperimentDecision::Enable)
         };
-        let options = [
-            toggle,
-            ('a', "Keep · enable and accept", ExperimentDecision::Keep),
-            (
-                'r',
-                "Remove · disable and request removal",
-                ExperimentDecision::Remove,
-            ),
-        ]
-        .into_iter()
-        .map(|(key, label, decision)| {
-            PickOption::keyed(key, label, Payload::ExperimentDecision(decision))
-        })
-        .collect();
+        let mut options = vec![PickOption::keyed(
+            't',
+            "Try · pin instructions and close menu",
+            Payload::ExperimentTry,
+        )];
+        options.extend(
+            [
+                toggle,
+                ('a', "Keep · enable and accept", ExperimentDecision::Keep),
+                (
+                    'r',
+                    "Remove · disable and request removal",
+                    ExperimentDecision::Remove,
+                ),
+            ]
+            .into_iter()
+            .map(|(key, label, decision)| {
+                PickOption::keyed(key, label, Payload::ExperimentDecision(decision))
+            }),
+        );
         self.open_picker(PickerPurpose::Experiment(id.to_string()), options);
         self.status = format!("E{:03} · {} · {}", spec.number, spec.task, spec.description);
     }
@@ -91,7 +97,10 @@ impl App {
         }
     }
 
-    fn reconcile_experiment_detail_rows(&mut self, previous: Vec<crate::detail_pane::FieldRow>) {
+    pub(super) fn reconcile_experiment_detail_rows(
+        &mut self,
+        previous: Vec<crate::detail_pane::FieldRow>,
+    ) {
         let rows = self.detail_rows();
         if previous == rows {
             return;
@@ -119,6 +128,10 @@ impl App {
             return false;
         };
         let decision = match event.code {
+            KeyCode::Char('t') => {
+                self.begin_experiment_trial(&id);
+                return true;
+            }
             KeyCode::Char(' ') => {
                 if self.experiments.is_enabled(&id) {
                     ExperimentDecision::Disable

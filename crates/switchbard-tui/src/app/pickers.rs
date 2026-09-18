@@ -1098,6 +1098,9 @@ impl App {
                 self.request_update()
             }
             (PickerPurpose::Experiments, Payload::Experiment(id)) => self.open_experiment(&id),
+            (PickerPurpose::Experiment(id), Payload::ExperimentTry) => {
+                self.begin_experiment_trial(&id)
+            }
             (PickerPurpose::Experiment(id), Payload::ExperimentDecision(decision)) => {
                 self.decide_experiment(&id, decision)
             }

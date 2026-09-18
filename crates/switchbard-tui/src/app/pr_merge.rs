@@ -535,7 +535,11 @@ impl App {
     }
 
     pub(super) fn request_quit(&mut self) {
-        if self.report.is_pending() {
+        if self.island.dirty {
+            self.island.editing = true;
+            self.status =
+                "Feedback draft has not saved; keep this session open and retry saving".into();
+        } else if self.report.is_pending() {
             self.status = "Saving report; wait for the result before quitting".into();
         } else if self.agent_kill.is_submitting() {
             self.status = "Agent signal pending; wait for the result before quitting".into();

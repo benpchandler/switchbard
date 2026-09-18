@@ -191,6 +191,12 @@ fn run(
     if let Some(warning) = warning {
         app.status = format!("Experiments: {warning}");
     }
+    let (feedback, warning) =
+        switchbard_tui::experiment_feedback::ExperimentFeedbackStore::load(&app.repo_root);
+    app.experiment_feedback = feedback;
+    if let Some(warning) = warning {
+        app.status = warning;
+    }
     let shutdown = ShutdownSignals::register()?;
     let hung_up = Arc::new(AtomicBool::new(false));
     tty::spawn_hangup_watch(Arc::clone(&hung_up), Arc::clone(&shutdown.requested))?;
@@ -367,6 +373,9 @@ fn update_if_ready(
         || app.report.is_pending()
     {
         app.status = "Update waiting for the current save or action to finish".into();
+    } else if app.island.editing || app.island.dirty {
+        app.update_requested = false;
+        app.status = "Update paused; save or close experiment feedback first".into();
     } else if app.report.has_retained_draft() {
         app.update_requested = false;
         app.status =

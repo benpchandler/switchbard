@@ -60,7 +60,7 @@ fn picker_block(
     count: usize,
 ) -> Block<'static> {
     let mut title = format!(
-        " Experiments · {}/{count} · Turn On, Esc, go to Tasks, then follow Try",
+        " Experiments · {}/{count} · t Try pins instructions and opens the right page",
         if count == 0 { 0 } else { selected + 1 }
     );
     if !picker.typed.is_empty() {
@@ -74,7 +74,7 @@ fn picker_block(
         .style(theme.canvas_style())
         .border_style(theme.style(Surface::Accent))
         .title(format!("{title} "))
-        .title_bottom(" ↑↓ select · space on/off · a keep · r remove · Enter more · Esc close ")
+        .title_bottom(" t Try + pin · space on/off · a keep · r remove · Enter more · Esc close ")
 }
 
 fn entry(
@@ -141,7 +141,7 @@ fn entry(
     .style(style)
 }
 
-fn semantic_color(app: &App, name: &str) -> Color {
+pub(super) fn semantic_color(app: &App, name: &str) -> Color {
     app.config
         .theme
         .emphasis_style(name, &app.config.palette)

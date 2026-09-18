@@ -187,6 +187,7 @@ pub enum PaintRuleAction {
 /// What a row means when picked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Payload {
+    ExperimentTry,
     /// A value of a field, a color name, or a sort order label.
     Text(String),
     Column(Column),

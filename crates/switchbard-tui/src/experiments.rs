@@ -19,11 +19,13 @@ pub struct ExperimentSpec {
     pub task: &'static str,
     pub title: &'static str,
     pub description: &'static str,
+    pub page: crate::page::Page,
 }
 
 const CATALOG: &[ExperimentSpec] = &[
     ExperimentSpec {
         number: 1,
+        page: crate::page::Page::Tasks,
         id: "task-edit-shortcut",
         task: "TASK-251",
         title: "Open the selected task directly in the editor with t e",
@@ -31,6 +33,7 @@ const CATALOG: &[ExperimentSpec] = &[
     },
     ExperimentSpec {
         number: 2,
+        page: crate::page::Page::Tasks,
         id: "detail-metadata-first",
         task: "TASK-254",
         title: "Move assignees and created/updated dates near the top of task details",
@@ -38,6 +41,7 @@ const CATALOG: &[ExperimentSpec] = &[
     },
     ExperimentSpec {
         number: 3,
+        page: crate::page::Page::Tasks,
         id: "detail-compact-done",
         task: "TASK-253",
         title: "Hide empty Definition of Done and move existing requirements beside acceptance criteria",

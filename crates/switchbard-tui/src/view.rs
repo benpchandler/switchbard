@@ -1,6 +1,7 @@
 //! Rendering. Reads `App`, writes a frame, and leaves a text copy of the screen behind.
 
 mod detail_content;
+mod experiment_island;
 mod experiment_picker;
 mod history_picker;
 mod history_preview;
@@ -26,6 +27,7 @@ use crate::views::{columns_text, Scope};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     app.experiment_hits.clear();
+    app.island.hits.clear();
     frame.render_widget(
         Paragraph::new("").style(app.config.theme.canvas_style()),
         frame.area(),
@@ -37,7 +39,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Mode::Command if !app.status.is_empty() => 2,
         _ => 1,
     };
-    let [navigation, notification, body, footer] = Layout::vertical([
+    let island_height = experiment_island::height(app, frame.area().height.saturating_sub(5));
+    let [navigation, notification, body, island, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(u16::from(
             !app.pull_requests.notifications.is_empty()
@@ -46,6 +49,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 || app.experiment_notice().is_some(),
         )),
         Constraint::Min(0),
+        Constraint::Length(island_height),
         Constraint::Length(footer_height),
     ])
     .areas(frame.area());
@@ -71,6 +75,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
     draw_footer(frame, app, footer);
+    experiment_island::draw(frame, app, island);
     app.pr_merge.confirmation_visible = false;
     app.task_cancel.confirmation_visible = false;
     app.agent_kill.confirmation_visible = false;
@@ -1067,6 +1072,14 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
             "enable, disable, keep or remove new features",
         ),
         (":update", "use the latest installed build when ready"),
+        (
+            ":feedback",
+            "comment on the pinned experiment; Ctrl-S submits, Esc keeps draft",
+        ),
+        (
+            ":island next / hide",
+            "switch pinned instructions or hide without disabling",
+        ),
         (
             "sbt --fresh",
             "launch saved default instead of last session",
