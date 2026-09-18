@@ -26,23 +26,22 @@ const CATALOG: &[ExperimentSpec] = &[
         number: 1,
         id: "task-edit-shortcut",
         task: "TASK-251",
-        title: "Quick task editing",
-        description: "Open the selected task editor with t e.",
+        title: "Open the selected task directly in the editor with t e",
+        description: "Press t e: focus moves into task details so j/k selects fields and Enter edits.",
     },
     ExperimentSpec {
         number: 2,
         id: "detail-metadata-first",
         task: "TASK-254",
-        title: "Task metadata at the top",
-        description: "See assignees and created/updated dates at the top of task details.",
+        title: "Move assignees and created/updated dates near the top of task details",
+        description: "Look below Properties for At a glance; assignees and dates no longer repeat at the bottom.",
     },
     ExperimentSpec {
         number: 3,
         id: "detail-compact-done",
         task: "TASK-253",
-        title: "Quieter Definition of Done",
-        description:
-            "Hide empty Definition of Done; show populated ones beside acceptance criteria.",
+        title: "Hide empty Definition of Done and move existing requirements beside acceptance criteria",
+        description: "Empty sections disappear; populated requirements move below acceptance criteria with their checks intact.",
     },
 ];
 

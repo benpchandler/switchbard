@@ -22,6 +22,8 @@ Decisions live in `~/.switchbard/experiments.json`; `SWITCHBARD_EXPERIMENTS_FILE
 
 ## Permanent experiment numbers
 
+Owner review copy (2026-09-17): the experiment list uses the full available terminal width, with one title line and one Notice line per entry. Permanent numbers and current on/off/review state remain visible. State matrix: empty search explains no matches; normal entries and Update each have two lines; selection/number shortcuts still operate on entries rather than lines; a short viewport scrolls whole entries; narrow widths clip long lines while retaining two-row structure; below two usable rows asks for more height. No new decisions or writes. Compile and manual terminal readbacks cover wide, narrow, short, search, selection and action menus; arbitrary huge catalogs and pointer navigation remain unexercised.
+
 Experiment numbers are assigned explicitly in the compiled catalog, never inferred from picker position. A compile-time invariant rejects zero and duplicate numbers. Retain the registry below after promotion or removal, never renumber existing experiments, and allocate above the highest reserved number. The stable string ID remains the persistence key, preserving earlier decisions.
 
 | Number | Stable ID | Task | Scope |
@@ -62,6 +64,8 @@ Visibility matrix before implementation: default/empty/ordinary filters hide mai
 | Pointer / touch / web zoom / roles | N/A for this keyboard-driven local menu; terminal font and size remain user-controlled | N/A |
 
 ## Objective ledger
+
+- Experiment review copy (2026-09-17): compiled and manually observed the full-width two-line menu at 134x35; at 90x9, moving selection to E003 scrolls title/Notice pairs together. Verified empty type-ahead and clearing it, and opening the corresponding decision menu by number/Enter. Current readback: `/tmp/sbt-experiments-review.Gp7Uue/experiment-two-line-menu.txt`. Keep/Remove handlers and decision records are unchanged. Narrow one-line text clips at the available edge; no wrapping into extra rows. No automated tests.
 
 - E002/E003 batch (2026-09-17): debug build passed; independent source review found no verified regressions. Manually exercised off/off, E002 only, E003 only, both on, empty DoD (TASK-36), populated checked/unchecked DoD (TASK-41), collapse-all and individual expansion, disable, Keep, Remove and re-enable with stable E numbers, plus 150x50 and 90x28 terminal layouts. Used native `sb storage backup`/`restore`/`rebind` to create an isolated copy of real task data; its independent experiment decisions do not alter the owner's acceptance. Terminal readbacks: `/tmp/sbt-experiments-review.Gp7Uue/{e002-only,e003-only,e003-empty,both-collapsed,both-populated-done,both-narrow}.txt`. No automated tests written or run. Gaps: pointer interaction, restart persistence for the new entries, populated assignee lists, and archived-task navigation are source-reviewed, not separately exercised. Existing non-Git scratch-repository notification persists; it is unrelated to the feature changes.
 

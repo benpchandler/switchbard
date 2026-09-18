@@ -1,6 +1,7 @@
 //! Rendering. Reads `App`, writes a frame, and leaves a text copy of the screen behind.
 
 mod detail_content;
+mod experiment_picker;
 mod history_picker;
 mod history_preview;
 pub(crate) mod history_title;
@@ -1357,6 +1358,10 @@ fn browse_hints(app: &App) -> String {
 }
 
 fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rect) {
+    if picker.purpose == PickerPurpose::Experiments {
+        experiment_picker::draw(frame, app, picker, body);
+        return;
+    }
     if picker.purpose == PickerPurpose::History {
         history_picker::draw(frame, app, picker, body);
         return;
@@ -1387,7 +1392,10 @@ fn draw_picker(frame: &mut Frame, app: &mut App, picker: &ValuePicker, body: Rec
         .min(body.width.saturating_sub(4) as usize) as u16;
     let width = if matches!(
         picker.purpose,
-        PickerPurpose::Merge | PickerPurpose::TaskCancel | PickerPurpose::AgentKill
+        PickerPurpose::Merge
+            | PickerPurpose::TaskCancel
+            | PickerPurpose::AgentKill
+            | PickerPurpose::Experiment(_)
     ) {
         body.width.saturating_sub(4)
     } else {
