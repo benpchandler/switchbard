@@ -4,7 +4,7 @@
 
 A typed report scope and pinned target travel with a capture draft, submission and failed retry. Repository capture ignores the legacy `report_repo` redirect; colon `:bug` and `:idea` retain their existing tool-report behavior. Config reload cannot reroute a failed capture to another repository. Changing the report verb changes kind within the same draft scope; canceling discards the active draft scope.
 
-Repository captures use the native configured initial status, medium priority and no assignee. Ideas are unassigned to a project. Bugs use an existing Bugs project when available, otherwise remain unassigned. Titles, labels and acceptance criteria describe the repository request without asserting an sbt defect. Per-action project, status, priority and other settings remain follow-up work.
+Repository captures start Not started, Considering (unplanned), low priority and without an assignee. Ideas belong to Ideas and bugs belong to Bugs. Name-keyed membership makes the bucket available even without a separate project definition. If the repository does not declare Not started, saving fails visibly and preserves the retry draft instead of substituting another status. Titles, labels and acceptance criteria describe the repository request without asserting an sbt defect. Per-action project, status, priority and other settings remain follow-up work.
 
 ## State and stress matrix
 
@@ -14,7 +14,7 @@ Repository captures use the native configured initial status, medium priority an
 | Every page / cancellation / keyboard focus | Tasks, PRs, Agents, Inbox; Esc leaves no task |
 | Saving / queued / duplicates / navigation | Two-second real RepositoryLock, bounded input, one record |
 | Failure / retry / redirect / config changes | Real storage failure, restored same-scope pinned target despite report_repo |
-| Native status / Bugs present or absent | Custom status fixtures and project membership assertion |
+| Not started override / unplanned / low / project definitions present or absent | Noninitial Not started fixture, persisted planning/priority/assignee/project assertions, unsupported-status no-write failure |
 | Unicode / long content / narrow-short / normal-wide | Real command draft, 40x8 and normal rendered result |
 | Remapping / help / existing task ball | Lua custom keys, catalog help, t b native ball action |
 | Stale / conflict / interruption | TASK-248 guards retained; submission retry does not infer task completion |

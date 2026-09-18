@@ -4,14 +4,10 @@
 use std::path::Path;
 
 use anyhow::{bail, Result};
-use switchbard_core::{
-    create_backlog_task, create_task_allocating_id, load_backlog_repo, NewBacklogTask,
-};
+use switchbard_core::{create_backlog_task, create_task_allocating_id, NewBacklogTask};
 
-/// Where filed bugs land, so a defect is never loose in the backlog: the
-/// standing bucket the reporter and the groomer both look in. Ideas stay
-/// unassigned - an idea's home is the project it turns out to belong to,
-/// which filing time cannot know.
+/// Standing bug bucket. Legacy tool ideas retain their unassigned project;
+/// repository captures use the owner-selected Bugs and Ideas buckets.
 const BUG_PROJECT: &str = "Bugs";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,7 +61,7 @@ pub fn file_scoped_report(
     }
     let mut task = report_task(kind, intent, context.description(intent));
     if scope == ReportScope::Repository {
-        apply_repository_defaults(repo_root, kind, intent, &mut task)?;
+        apply_repository_defaults(kind, intent, &mut task);
         return create_backlog_task(repo_root, &task);
     }
     let (id, _path) = create_task_allocating_id(repo_root, &task)?;
@@ -107,26 +103,18 @@ fn report_task(kind: ReportKind, intent: &str, description: String) -> NewBacklo
     }
 }
 
-fn apply_repository_defaults(
-    repo_root: &Path,
-    kind: ReportKind,
-    intent: &str,
-    task: &mut NewBacklogTask,
-) -> Result<()> {
+fn apply_repository_defaults(kind: ReportKind, intent: &str, task: &mut NewBacklogTask) {
     task.title = format!("{}: {intent}", kind.label());
-    task.status.clear();
+    task.status = "Not started".to_string();
+    task.priority = "low".to_string();
     task.labels = vec![kind.label().to_string()];
     task.acceptance_criteria = vec![format!(
         "Reporter confirms this {} is addressed: {intent}",
         kind.label()
     )];
-    task.project = if kind == ReportKind::Bug {
-        load_backlog_repo(repo_root)?
-            .project_names()
-            .into_iter()
-            .find(|name| name == BUG_PROJECT)
-    } else {
-        None
-    };
-    Ok(())
+    // Membership creates the bucket even without a separate project definition.
+    task.project = Some(match kind {
+        ReportKind::Bug => BUG_PROJECT.to_string(),
+        ReportKind::Idea => "Ideas".to_string(),
+    });
 }
