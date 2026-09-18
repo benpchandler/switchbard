@@ -254,6 +254,14 @@ pub struct PickOption {
     pub payload: Payload,
 }
 
+#[derive(Clone)]
+pub struct ExperimentButtonHit {
+    pub area: ratatui::layout::Rect,
+    pub id: String,
+    /// None opens the existing decision menu for an already reviewed feature.
+    pub decision: Option<crate::experiments::ExperimentDecision>,
+}
+
 impl PickOption {
     pub fn text(label: impl Into<String>, count: usize) -> PickOption {
         let label = label.into();

@@ -522,6 +522,9 @@ impl App {
     }
 
     pub(super) fn handle_pick_value_key(&mut self, event: KeyEvent) {
+        if self.handle_experiment_key(event) {
+            return;
+        }
         if self
             .picker
             .as_ref()

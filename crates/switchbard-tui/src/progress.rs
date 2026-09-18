@@ -1,7 +1,10 @@
 //! A bounded capsule projection of the authoritative cached checklist count.
-use crate::config::{Surface, Theme};
+use crate::{
+    config::{Surface, Theme},
+    legibility,
+};
 use ratatui::{
-    style::Style,
+    style::{Color, Style},
     text::{Line, Span},
 };
 use switchbard_core::ChecklistProgress;
@@ -56,11 +59,7 @@ pub(crate) fn pill(
     let empty = row.patch(theme.style(Surface::ProgressEmpty));
     let shell = theme.style(Surface::ProgressShell).fg;
     let cap_empty = shell.map_or(empty, |color| row.fg(color));
-    let caps = if mode == ProgressStyle::Ascii {
-        ["(", ")"]
-    } else {
-        ["\u{e0b6}", "\u{e0b4}"]
-    };
+    let caps = capsule_caps(mode);
     let mut spans = Vec::with_capacity(6);
     spans.push(Span::styled(
         caps[0],
@@ -76,6 +75,67 @@ pub(crate) fn pill(
         if units == 32 { fill } else { cap_empty },
     ));
     Line::from(spans)
+}
+
+fn capsule_caps(mode: ProgressStyle) -> [&'static str; 2] {
+    if mode == ProgressStyle::Ascii {
+        ["(", ")"]
+    } else {
+        ["\u{e0b6}", "\u{e0b4}"]
+    }
+}
+
+/// A fixed-width capsule for short control words, sharing progress caps.
+pub(crate) fn word_pill(
+    label: &str,
+    width: usize,
+    fill: Color,
+    row: Style,
+    mode: ProgressStyle,
+) -> Line<'static> {
+    let caps = capsule_caps(mode);
+    Line::from(vec![
+        Span::styled(caps[0], row.fg(fill)),
+        Span::styled(centered_word(label, width), row.fg(word_ink(fill)).bg(fill)),
+        Span::styled(caps[1], row.fg(fill)),
+    ])
+}
+
+fn centered_word(label: &str, width: usize) -> String {
+    let mut word = String::new();
+    let mut occupied = 0;
+    for character in label.chars().take(width) {
+        let cells = Span::raw(character.to_string()).width();
+        if occupied + cells > width {
+            break;
+        }
+        word.push(character);
+        occupied += cells;
+    }
+    let left = (width - occupied) / 2;
+    let right = width - occupied - left;
+    format!("{}{word}{}", " ".repeat(left), " ".repeat(right))
+}
+
+fn word_ink(fill: Color) -> Color {
+    let dark = Color::Rgb(0, 0, 0);
+    let light = Color::Rgb(255, 255, 255);
+    match (
+        legibility::contrast(dark, fill),
+        legibility::contrast(light, fill),
+    ) {
+        (Some(dark_lc), Some(light_lc)) if dark_lc.abs() >= light_lc.abs() => dark,
+        (Some(_), Some(_)) => light,
+        _ => match fill {
+            Color::White
+            | Color::Gray
+            | Color::Yellow
+            | Color::LightYellow
+            | Color::LightGreen
+            | Color::LightCyan => dark,
+            _ => light,
+        },
+    }
 }
 
 fn body_cell(

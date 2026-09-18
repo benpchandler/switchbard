@@ -25,6 +25,7 @@ use crate::tasks::Filter;
 use crate::views::{columns_text, Scope};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    app.experiment_hits.clear();
     frame.render_widget(
         Paragraph::new("").style(app.config.theme.canvas_style()),
         frame.area(),

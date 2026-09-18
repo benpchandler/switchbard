@@ -211,6 +211,7 @@ pub struct App {
     /// Where the last frame put the list/detail split and each row, so a
     /// mouse event can be routed to the right pane and row.
     pub detail_hit: crate::detail_pane::Hit,
+    pub experiment_hits: Vec<crate::picker::ExperimentButtonHit>,
     /// The pre-write snapshot a detail-pane save checks before writing:
     /// `edit_backlog_task_expected`'s revision guard only fires for a
     /// centrally-stored task, so this raw-content compare is the "or
@@ -347,6 +348,7 @@ impl App {
             detail_viewport: 0,
             detail_scroll_anchor: None,
             detail_hit: crate::detail_pane::Hit::default(),
+            experiment_hits: Vec::new(),
             detail_draft: None,
             page: Page::Tasks,
             pull_requests,

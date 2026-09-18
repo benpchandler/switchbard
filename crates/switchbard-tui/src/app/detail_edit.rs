@@ -263,6 +263,9 @@ impl App {
     /// those have the stable list/detail split `detail_hit` describes.
     pub fn handle_mouse(&mut self, event: MouseEvent) {
         self.interaction_generation = self.interaction_generation.wrapping_add(1);
+        if self.handle_experiment_mouse(event) {
+            return;
+        }
         if !matches!(self.mode, Mode::Browse | Mode::DetailFocus) {
             return;
         }

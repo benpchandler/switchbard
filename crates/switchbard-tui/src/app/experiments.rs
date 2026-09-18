@@ -1,7 +1,7 @@
 //! Owner-paced feature decisions and the request to use an installed update.
 
 use super::{App, Mode, Pane};
-use crate::experiments::{catalog, ExperimentDecision, ExperimentReview};
+use crate::experiments::{catalog, ExperimentDecision};
 use crate::page::Page;
 use crate::picker::{Payload, PickOption, PickerPurpose};
 
@@ -13,18 +13,8 @@ impl App {
         let mut options = catalog()
             .iter()
             .map(|spec| {
-                let state = self.experiments.state(spec.id);
-                let enabled = if state.enabled { "on" } else { "off" };
-                let review = match state.review {
-                    ExperimentReview::Unreviewed => "to try",
-                    ExperimentReview::Kept => "kept",
-                    ExperimentReview::RemovalRequested => "removal requested",
-                };
                 PickOption::numbered(
-                    format!(
-                        "E{:03} · {} · {enabled} · {review}",
-                        spec.number, spec.title
-                    ),
+                    format!("E{:03} · {}", spec.number, spec.title),
                     Payload::Experiment(spec.id.to_string()),
                 )
             })
@@ -76,6 +66,11 @@ impl App {
         match self.experiments.set_decision(id, decision) {
             Ok(()) => {
                 self.open_experiments();
+                if let Some(picker) = self.picker.as_mut() {
+                    picker.selected = picker.options.iter().position(|option| {
+                        matches!(&option.payload, Payload::Experiment(candidate) if candidate == id)
+                    }).unwrap_or(0);
+                }
                 self.reconcile_experiment_detail_rows(previous_rows);
                 self.status = match decision {
                     ExperimentDecision::Enable => "Enabled · try it now",
@@ -107,6 +102,63 @@ impl App {
             .unwrap_or(0);
         self.detail_scroll = 0;
         self.detail_scroll_anchor = None;
+    }
+
+    pub(super) fn handle_experiment_key(&mut self, event: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::KeyCode;
+        let Some(picker) = self.picker.as_ref().filter(|picker| {
+            picker.purpose == PickerPurpose::Experiments
+                && picker.typed.is_empty()
+                && picker.number.is_empty()
+                && event.modifiers.is_empty()
+        }) else {
+            return false;
+        };
+        let Some(Payload::Experiment(id)) = picker.highlighted().map(|option| option.payload)
+        else {
+            return false;
+        };
+        let decision = match event.code {
+            KeyCode::Char(' ') => {
+                if self.experiments.is_enabled(&id) {
+                    ExperimentDecision::Disable
+                } else {
+                    ExperimentDecision::Enable
+                }
+            }
+            KeyCode::Char('a') => ExperimentDecision::Keep,
+            KeyCode::Char('r') => ExperimentDecision::Remove,
+            _ => return false,
+        };
+        self.decide_experiment(&id, decision);
+        true
+    }
+
+    pub(super) fn handle_experiment_mouse(&mut self, event: crossterm::event::MouseEvent) -> bool {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        if self.mode != Mode::PickValue
+            || !self
+                .picker
+                .as_ref()
+                .is_some_and(|picker| picker.purpose == PickerPurpose::Experiments)
+        {
+            return false;
+        }
+        if event.kind == MouseEventKind::Down(MouseButton::Left) {
+            let position = ratatui::layout::Position::new(event.column, event.row);
+            if let Some(hit) = self
+                .experiment_hits
+                .iter()
+                .find(|hit| hit.area.contains(position))
+                .cloned()
+            {
+                match hit.decision {
+                    Some(decision) => self.decide_experiment(&hit.id, decision),
+                    None => self.open_experiment(&hit.id),
+                }
+            }
+        }
+        true
     }
 
     pub(super) fn request_update(&mut self) {
