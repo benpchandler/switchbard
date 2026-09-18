@@ -9,7 +9,6 @@ use ratatui::Frame;
 use crate::app::App;
 use crate::config::Surface;
 
-const MAX_DRAFT_ROWS: usize = 4;
 const MAX_RENDER_BYTES: usize = 16 * 1024;
 const MAX_COMPLETION_INPUT_BYTES: usize = 64;
 
@@ -20,9 +19,12 @@ pub(super) fn height(app: &App, width: u16, available: u16) -> u16 {
     let rows = if width == 1 {
         1
     } else {
-        draft(app).line_count(width - 1).clamp(1, MAX_DRAFT_ROWS) as u16
+        draft(app)
+            .line_count(width - 1)
+            .clamp(1, usize::from(available)) as u16
     };
-    (rows + u16::from(!app.status.is_empty())).min(available)
+    rows.saturating_add(u16::from(!app.status.is_empty()))
+        .min(available)
 }
 
 pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
