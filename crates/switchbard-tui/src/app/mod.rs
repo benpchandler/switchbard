@@ -185,6 +185,7 @@ pub struct App {
     /// space `Action::Filter` adds for convenience): restored verbatim on
     /// Esc, so live typing or a completion never outlives a canceled edit.
     filter_before_edit: String,
+    filter_resume_before_edit: String,
     pub pane: Pane,
     /// Cursor row inside the focused detail pane (`detail_edit`'s `FieldRow`
     /// list for the selected task); meaningless while `pane != Pane::Detail`.
@@ -328,6 +329,7 @@ impl App {
             mode: Mode::Browse,
             input: String::new(),
             filter_before_edit: String::new(),
+            filter_resume_before_edit: String::new(),
             pane: Pane::None,
             detail_cursor: 0,
             detail_collapsed: std::collections::BTreeSet::new(),
@@ -888,6 +890,7 @@ impl App {
         {
             return;
         }
+        let arrangement = self.session_arrangement();
         self.interaction_generation = self.interaction_generation.wrapping_add(1);
         match self.mode {
             Mode::Browse => self.handle_browse_key(event),
@@ -910,6 +913,7 @@ impl App {
             self.cancel_pr_merge();
         }
         self.reconcile_agent_preparation();
+        self.checkpoint_arrangement_change(arrangement);
     }
 
     /// After `t`: digits rank, `b` assigns the ball, `d` marks Done, `p` pins,
@@ -1364,6 +1368,7 @@ impl App {
                 self.mode = Mode::Browse;
                 let restored = std::mem::take(&mut self.filter_before_edit);
                 self.set_filter(restored);
+                self.restore_filter_selection();
                 self.telemetry.record("action", "filter_cancel");
             }
             KeyCode::Enter => {
@@ -1676,13 +1681,8 @@ impl App {
                 self.status.clear();
             }
             Action::Filter => {
-                self.mode = Mode::Filter;
+                self.begin_filter_edit();
                 self.status.clear();
-                let text = self.filter_text().to_string();
-                self.filter_before_edit = text.clone();
-                if !text.is_empty() && !text.ends_with(' ') {
-                    self.set_filter(format!("{text} "));
-                }
             }
             Action::FilterColumn => self.open_column_chooser(ColumnPurpose::Filter),
             Action::SortColumn => self.open_column_chooser(ColumnPurpose::Sort),
