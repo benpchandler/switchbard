@@ -169,7 +169,25 @@ impl App {
         self.status = "Checking the installed update".into();
     }
 
+    /// Whether a modal confirmation owns the screen. Its full identity must
+    /// fit before it can fire (`submit_agent_kill`), and the notification row
+    /// is taken out of the body to make it, so an advisory banner must yield
+    /// that row rather than shrink a confirmation into refusing itself.
+    fn confirmation_open(&self) -> bool {
+        self.picker.as_ref().is_some_and(|picker| {
+            matches!(
+                picker.purpose,
+                crate::picker::PickerPurpose::AgentKill
+                    | crate::picker::PickerPurpose::TaskCancel
+                    | crate::picker::PickerPurpose::Merge
+            )
+        })
+    }
+
     pub fn experiment_notice(&self) -> Option<String> {
+        if self.confirmation_open() {
+            return None;
+        }
         if self.update_available {
             return Some(":update · New build ready".into());
         }
