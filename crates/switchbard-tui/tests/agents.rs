@@ -339,7 +339,7 @@ fn cursor_detail_and_guarded_commands_on_the_agents_page() {
     assert_eq!(h.app.agents.selected, 1);
     let ball_screen = h.press(KeyCode::Char('B'));
     assert!(
-        ball_screen.contains("Switch to Tasks or Pull Requests"),
+        ball_screen.contains("ball works on the Tasks page"),
         "{ball_screen}"
     );
     assert!(h.app.picker.is_none());

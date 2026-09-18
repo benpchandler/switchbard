@@ -1054,7 +1054,10 @@ impl App {
             self.assign_ball(ball);
             return;
         }
-        let ids: Vec<String> = self.task_selection.marked.iter().cloned().collect();
+        if self.defer_task_storage() {
+            return;
+        }
+        let ids = self.marked_tasks_in_view_order();
         let mut failures = Vec::new();
         for id in &ids {
             if let Err(error) = switchbard_core::set_backlog_ball(&self.repo_root, id, ball.clone())

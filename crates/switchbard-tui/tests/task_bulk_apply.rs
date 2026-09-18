@@ -97,7 +97,9 @@ fn bulk_ball_applies_to_every_marked_task() {
     let mut h = Harness::new();
     let (a, b, cursor) = mark_two_leave_cursor_on_third(&mut h);
 
-    let screen = h.press(KeyCode::Char('b'));
+    h.press(KeyCode::Char('t'));
+    h.press(KeyCode::Char('b')); // the task chord's ball picker
+    let screen = h.press(KeyCode::Char('1')); // first offer: me
     assert!(screen.contains("ball → me: 2 tasks"), "{screen}");
 
     let repo = load_backlog_repo(&h.root).unwrap();
@@ -142,6 +144,7 @@ fn bulk_reparent_applies_to_every_marked_task_and_not_the_unmarked_cursor() {
     let mut h = Harness::new();
     seed(&h.root, "Ship release notes", "To Do", &[]); // TASK-4: the new parent target
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     mark(&mut h, "TASK-1");
     mark(&mut h, "TASK-3");
     select_task(&mut h, "TASK-2"); // cursor lands on an unmarked row
@@ -185,6 +188,7 @@ fn bulk_reparent_of_a_marked_parent_and_its_marked_child_moves_both_without_orph
     seed(&h.root, "Ship release notes", "To Do", &[]); // TASK-4: the new parent target
     let child_id = seed_child(&h.root, "Split login into steps", "To Do", "TASK-1");
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     mark(&mut h, "TASK-1"); // the current parent
     mark(&mut h, &child_id); // its own current child, also marked
     select_task(&mut h, "TASK-2");
@@ -240,6 +244,7 @@ fn bulk_reparent_selection_follows_moved_tasks_to_their_new_ids() {
     let mut h = Harness::new();
     seed(&h.root, "Ship release notes", "To Do", &[]); // TASK-4
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     mark(&mut h, "TASK-1");
     mark(&mut h, "TASK-3");
     select_task(&mut h, "TASK-2");
@@ -304,6 +309,7 @@ fn with_no_marks_reparent_still_applies_to_the_cursor_row_only() {
     let mut h = Harness::new();
     seed(&h.root, "Ship release notes", "To Do", &[]); // TASK-4
     h.press(KeyCode::Char('r'));
+    h.tick_until_tasks_settle();
     select_task(&mut h, "TASK-1");
     assert!(h.app.task_selection.marked.is_empty());
 
