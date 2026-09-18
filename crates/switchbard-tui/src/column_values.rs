@@ -79,12 +79,19 @@ impl ColumnValues for TaskValues<'_> {
             // carries under that field's name; absent is no value at all,
             // the same shape `due` uses, so `name:none` and the `no <name>`
             // section both mean "unset".
-            Column::Custom(_) => task
-                .custom
-                .get(column.name(self.registry))
-                .cloned()
-                .into_iter()
-                .collect(),
+            Column::Custom(_) => {
+                let name = column.name(self.registry);
+                let value = if let Some(field) = name.strip_prefix("project.") {
+                    self.registry
+                        .projects
+                        .iter()
+                        .find(|project| Some(&project.name) == task.project.as_ref())
+                        .and_then(|project| project.custom.get(field))
+                } else {
+                    task.custom.get(name)
+                };
+                value.cloned().into_iter().collect()
+            }
         }
     }
     fn query_values(&self, column: Column) -> Vec<String> {

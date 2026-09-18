@@ -27,6 +27,7 @@ impl App {
                 ('d', "Mark Done", TaskAction::Done),
                 ('c', "Cancel task…", TaskAction::Cancel),
                 ('p', "Link project", TaskAction::Project),
+                ('f', "Edit shared project fields", TaskAction::ProjectFields),
                 ('a', "Link parent task", TaskAction::Parent),
                 (
                     'r',
@@ -84,6 +85,7 @@ impl App {
             TaskAction::Status => self.open_task_status_picker(),
             TaskAction::Planning => self.open_task_planning_picker(),
             TaskAction::Project => self.open_task_project_picker(),
+            TaskAction::ProjectFields => self.open_project_fields(),
             TaskAction::Parent => self.open_task_parent_picker(),
             TaskAction::TopList => self.open_top_list_picker(),
             TaskAction::Drop => self.drop_rank(),
@@ -937,6 +939,7 @@ impl App {
                         | PickerPurpose::Task
                         | PickerPurpose::TaskPlanning(_)
                         | PickerPurpose::TaskStatus(_)
+                        | PickerPurpose::ProjectFieldValue
                         | PickerPurpose::TaskProject(_)
                         | PickerPurpose::DetailPlanning(_)
                         | PickerPurpose::DetailStatus(_)
@@ -1060,6 +1063,10 @@ impl App {
         };
         let parent = picker.clone();
         match (picker.purpose, picked.payload) {
+            (PickerPurpose::ProjectFields, Payload::Text(field)) => self.open_project_field(&field),
+            (PickerPurpose::ProjectFieldValue, Payload::Text(value)) => {
+                self.save_project_field(&value)
+            }
             (PickerPurpose::PaintRules, Payload::PaintRuleAction(action)) => {
                 self.open_paint_rule_action(action)
             }

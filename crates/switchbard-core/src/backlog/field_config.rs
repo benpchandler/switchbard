@@ -161,13 +161,8 @@ pub fn valid_field_name(name: &str) -> bool {
 /// Shape checks a declaration must pass before it can be written: a valid,
 /// non-colliding name, and `values` present iff the kind is `enum`, with no
 /// blank or duplicate entries.
-fn validate_decl_shape(decl: &FieldDecl) -> Result<()> {
-    ensure!(
-        valid_field_name(&decl.name),
-        "field name `{}` must start with a lowercase letter and contain only \
-         lowercase letters, digits, or `_`",
-        decl.name
-    );
+pub(super) fn validate_decl_shape(decl: &FieldDecl) -> Result<()> {
+    validate_decl_structure(decl)?;
     ensure!(
         !BUILTIN_FIELD_KEYS.contains(&decl.name.as_str()),
         "field name `{}` collides with a built-in task key",
@@ -178,6 +173,17 @@ fn validate_decl_shape(decl: &FieldDecl) -> Result<()> {
         "field name `{}` is reserved: a list surface already answers to it as a \
          column, a filter keyword, or a grouping word, so a field of that name \
          could never be shown, filtered, sorted, or grouped by its own name",
+        decl.name
+    );
+    Ok(())
+}
+
+/// Shared name syntax and value-kind rules, independent of entity scope.
+pub(super) fn validate_decl_structure(decl: &FieldDecl) -> Result<()> {
+    ensure!(
+        valid_field_name(&decl.name),
+        "field name `{}` must start with a lowercase letter and contain only \
+         lowercase letters, digits, or `_`",
         decl.name
     );
     if decl.kind == FieldKind::Enum {
@@ -308,19 +314,101 @@ pub fn declared_fields(root: &Path) -> Result<Vec<FieldDecl>> {
 }
 
 fn fields_from_config_text(text: &str) -> Vec<FieldDecl> {
+    fields_from_config_key(text, "fields")
+}
+
+pub(super) fn fields_from_config_key(text: &str, key: &str) -> Vec<FieldDecl> {
     let Ok(value) = serde_yaml::from_str::<Value>(text) else {
         return Vec::new();
     };
     let Some(mapping) = value.as_mapping() else {
         return Vec::new();
     };
-    let Some(Value::Sequence(items)) = mapping.get(Value::String("fields".to_string())) else {
+    let Some(Value::Sequence(items)) = mapping.get(Value::String(key.to_string())) else {
         return Vec::new();
     };
-    items.iter().filter_map(field_decl_from_yaml).collect()
+    items
+        .iter()
+        .filter_map(|item| field_decl_from_yaml(item, key))
+        .collect()
 }
 
-fn field_decl_from_yaml(item: &Value) -> Option<FieldDecl> {
+fn strict_fields_from_config_key(text: &str, key: &str) -> Result<Vec<FieldDecl>> {
+    let value: Value =
+        serde_yaml::from_str(text).context("cannot edit malformed backlog configuration")?;
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    let mapping = value
+        .as_mapping()
+        .context("backlog configuration must be a mapping")?;
+    let Some(items) = mapping.get(Value::String(key.into())) else {
+        return Ok(Vec::new());
+    };
+    let items = items
+        .as_sequence()
+        .ok_or_else(|| anyhow!("{key} must be a list"))?;
+    let mut names = BTreeSet::new();
+    items
+        .iter()
+        .map(|item| {
+            let map = item
+                .as_mapping()
+                .ok_or_else(|| anyhow!("invalid declaration in {key}"))?;
+            for (name, value) in map {
+                match name.as_str() {
+                    Some("name" | "kind") => {
+                        ensure!(value.is_string(), "field name and kind must be strings")
+                    }
+                    Some("values") => ensure!(
+                        value
+                            .as_sequence()
+                            .is_some_and(|items| items.iter().all(Value::is_string)),
+                        "field values must be strings"
+                    ),
+                    Some("groupable") => {
+                        ensure!(value.is_bool(), "field groupable must be boolean")
+                    }
+                    _ => bail!("unsupported declaration property in {key}; refusing to discard it"),
+                }
+            }
+            let field = field_decl_from_yaml(item, key)
+                .ok_or_else(|| anyhow!("invalid declaration in {key}"))?;
+            if key == "fields" {
+                validate_decl_shape(&field)?;
+            }
+            ensure!(
+                map.get(Value::String("name".into()))
+                    .and_then(Value::as_str)
+                    == Some(field.name.as_str()),
+                "field names must not have surrounding whitespace"
+            );
+            if let Some(values) = map
+                .get(Value::String("values".into()))
+                .and_then(Value::as_sequence)
+            {
+                ensure!(
+                    values
+                        .iter()
+                        .map(Value::as_str)
+                        .eq(field.values.iter().map(|value| Some(value.as_str()))),
+                    "field values must be nonempty and have no surrounding whitespace"
+                );
+            }
+            if key == "project_fields" {
+                super::project_field_config::validate_project_decl(&field)?;
+            }
+            ensure!(
+                names.insert(field.name.clone()),
+                "duplicate field `{}` in {key}",
+                field.name
+            );
+            Ok(field)
+        })
+        .collect()
+}
+
+fn field_decl_from_yaml(item: &Value, key: &str) -> Option<FieldDecl> {
     let map = item.as_mapping()?;
     let name = map
         .get(Value::String("name".to_string()))?
@@ -333,8 +421,9 @@ fn field_decl_from_yaml(item: &Value) -> Option<FieldDecl> {
     // so it is not a field. Consistent with how a malformed name is treated
     // here — not a field, never fatal to the rest of the list.
     if !valid_field_name(&name)
-        || BUILTIN_FIELD_KEYS.contains(&name.as_str())
-        || RESERVED_FIELD_NAMES.contains(&name.as_str())
+        || (key == "fields"
+            && (BUILTIN_FIELD_KEYS.contains(&name.as_str())
+                || RESERVED_FIELD_NAMES.contains(&name.as_str())))
     {
         return None;
     }
@@ -411,6 +500,14 @@ fn with_fields_edit(
     repo_root: &Path,
     transform: impl FnOnce(&mut Vec<FieldDecl>) -> Result<()>,
 ) -> Result<Vec<FieldDecl>> {
+    with_fields_key_edit(repo_root, "fields", transform)
+}
+
+pub(super) fn with_fields_key_edit(
+    repo_root: &Path,
+    key: &str,
+    transform: impl FnOnce(&mut Vec<FieldDecl>) -> Result<()>,
+) -> Result<Vec<FieldDecl>> {
     super::aggregate_storage::with_edit(repo_root, "config", "backlog/config.yml", |edit| {
         let path = if edit.is_central() {
             repo_root.join("backlog/config.yml")
@@ -423,9 +520,13 @@ fn with_fields_edit(
         } else {
             edit.text(&path)?
         };
-        let mut fields = fields_from_config_text(&original);
+        let mut fields = strict_fields_from_config_key(&original, key)?;
         transform(&mut fields)?;
-        let out = splice_fields_block(&original, &fields);
+        let out = splice_fields_key_block(&original, &fields, key);
+        ensure!(
+            strict_fields_from_config_key(&out, key)? == fields,
+            "field edit did not round-trip; configuration unchanged"
+        );
         if !edit.stage(&out) {
             super::write::atomic_write(&path, &out)
                 .with_context(|| format!("writing {}", path.display()))?;
@@ -492,11 +593,11 @@ pub fn remove_field_decl(repo_root: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn render_fields_block(fields: &[FieldDecl]) -> Vec<String> {
+fn render_fields_block(fields: &[FieldDecl], key: &str) -> Vec<String> {
     if fields.is_empty() {
-        return vec!["fields: []".to_string()];
+        return vec![format!("{key}: []")];
     }
-    let mut lines = vec!["fields:".to_string()];
+    let mut lines = vec![format!("{key}:")];
     for field in fields {
         lines.push(format!("  - name: {}", field.name));
         lines.push(format!("    kind: {}", field.kind.as_str()));
@@ -526,27 +627,41 @@ fn quote_yaml(value: &str) -> String {
 /// Deliberately not a YAML parse-then-reserialize of the whole document —
 /// see `super::status_config::parse_statuses_line`'s doc for why: it would
 /// reformat every other key and strip comments.
-fn fields_block_span(lines: &[&str]) -> Option<(usize, usize)> {
-    let start = lines
-        .iter()
-        .position(|l| *l == "fields:" || l.starts_with("fields: "))?;
-    if lines[start] != "fields:" {
+fn fields_block_span(lines: &[&str], key: &str) -> Option<(usize, usize)> {
+    let prefix = format!("{key}:");
+    let start = lines.iter().position(|line| {
+        line.strip_prefix(&prefix)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+    })?;
+    let tail = lines[start].strip_prefix(&prefix)?.trim();
+    if !tail.is_empty() && !tail.starts_with('#') {
         return Some((start, start + 1));
     }
     let mut end = start + 1;
-    while end < lines.len() && (lines[end].starts_with(' ') || lines[end].starts_with('\t')) {
+    while end < lines.len()
+        && (lines[end].starts_with(' ')
+            || lines[end].starts_with('\t')
+            || lines[end].trim().is_empty()
+            || lines[end].starts_with('#'))
+    {
         end += 1;
     }
     Some((start, end))
 }
 
-fn splice_fields_block(original: &str, fields: &[FieldDecl]) -> String {
+fn splice_fields_key_block(original: &str, fields: &[FieldDecl], key: &str) -> String {
     let lines: Vec<&str> = original.lines().collect();
-    let rendered = render_fields_block(fields);
+    let rendered = render_fields_block(fields, key);
     let mut out_lines: Vec<String> = Vec::with_capacity(lines.len() + rendered.len());
-    match fields_block_span(&lines) {
+    match fields_block_span(&lines, key) {
         Some((start, end)) => {
             out_lines.extend(lines[..start].iter().map(|s| (*s).to_string()));
+            out_lines.extend(
+                lines[start + 1..end]
+                    .iter()
+                    .filter(|line| line.trim_start().starts_with('#'))
+                    .map(|line| (*line).to_string()),
+            );
             out_lines.extend(rendered);
             out_lines.extend(lines[end..].iter().map(|s| (*s).to_string()));
         }

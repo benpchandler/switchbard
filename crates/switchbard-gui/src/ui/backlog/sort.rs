@@ -921,6 +921,7 @@ mod tests {
             target_date: None,
             initiative: None,
             lead: None,
+            custom: Default::default(),
             description: String::new(),
             path: PathBuf::from("/tmp/fixture/backlog/projects/Fresh.md"),
         }];

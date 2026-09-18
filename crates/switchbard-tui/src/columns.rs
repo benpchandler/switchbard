@@ -516,6 +516,7 @@ pub struct ColumnRegistry {
     /// One entry per custom field seen this session, in first-seen order;
     /// `FieldId` indexes it. Append-only — see the module doc.
     custom: Vec<ColumnSpec>,
+    pub projects: Vec<switchbard_core::ProjectDef>,
 }
 
 impl ColumnRegistry {
@@ -529,7 +530,12 @@ impl ColumnRegistry {
     /// a custom column is an addition to the table, never a precondition for it.
     pub fn for_repo(root: &Path) -> ColumnRegistry {
         let mut registry = ColumnRegistry::builtin_only();
-        registry.refresh(&switchbard_core::declared_fields(root).unwrap_or_default());
+        let mut fields = switchbard_core::declared_fields(root).unwrap_or_default();
+        fields.extend(project_declarations(root));
+        registry.refresh(&fields);
+        registry.projects = switchbard_core::load_backlog_repo(root)
+            .map(|repo| repo.project_defs)
+            .unwrap_or_default();
         registry
     }
 
@@ -620,7 +626,8 @@ impl ColumnRegistry {
         // built-in key or a reserved surface name (`BUILTIN_FIELD_KEYS`,
         // `RESERVED_FIELD_NAMES`), so `field:status` is a malformed record to
         // preserve, not a field to drop.
-        switchbard_core::valid_field_name(bare) && self.parse(bare).is_none()
+        switchbard_core::valid_field_name(bare.strip_prefix("project.").unwrap_or(bare))
+            && self.parse(bare).is_none()
     }
 
     /// The task page's catalog: the built-in task columns, then this repo's
@@ -664,6 +671,7 @@ impl ColumnRegistry {
     pub fn reloaded(&self, decls: &[FieldDecl]) -> ColumnRegistry {
         let mut next = ColumnRegistry {
             custom: self.custom.clone(),
+            projects: self.projects.clone(),
         };
         next.refresh(decls);
         next
@@ -914,6 +922,18 @@ pub fn bare_id(id: &str) -> &str {
         Some((_, rest)) if rest.chars().next().is_some_and(|c| c.is_ascii_digit()) => rest,
         _ => id,
     }
+}
+
+/// Namespaced declarations keep shared project attributes separate from task fields.
+pub fn project_declarations(root: &Path) -> Vec<FieldDecl> {
+    switchbard_core::declared_project_fields(root)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|mut field| {
+            field.name = format!("project.{}", field.name);
+            field
+        })
+        .collect()
 }
 
 #[cfg(test)]

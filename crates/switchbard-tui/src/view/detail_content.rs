@@ -28,7 +28,7 @@ pub(super) fn lines(app: &App, task: &BacklogTask, section: Section) -> Vec<Stri
             }
         }
         Section::Relations => relations(app, task),
-        Section::Metadata => metadata(task),
+        Section::Metadata => metadata(app, task),
         Section::Properties | Section::Description => Vec::new(),
     }
 }
@@ -90,7 +90,7 @@ fn relations(app: &App, task: &BacklogTask) -> Vec<String> {
     lines
 }
 
-fn metadata(task: &BacklogTask) -> Vec<String> {
+fn metadata(app: &App, task: &BacklogTask) -> Vec<String> {
     let mut lines = vec![
         format!("task ID: {}", task.id),
         format!("assignees: {}", list(&task.assignees)),
@@ -114,6 +114,26 @@ fn metadata(task: &BacklogTask) -> Vec<String> {
             ]
             .map(str::to_string),
         );
+    }
+    if let Some(project) = app
+        .registry()
+        .projects
+        .iter()
+        .find(|project| Some(&project.name) == task.project.as_ref())
+    {
+        lines.push(format!("Project attributes: {} (shared)", project.name));
+        for column in app
+            .registry()
+            .declared_custom()
+            .filter(|column| column.name(app.registry()).starts_with("project."))
+        {
+            let name = column.name(app.registry());
+            let key = name.strip_prefix("project.").unwrap_or(name);
+            lines.push(format!(
+                "{name}: {}",
+                value(project.custom.get(key).map(String::as_str))
+            ));
+        }
     }
     if task.custom.is_empty() {
         lines.push("custom fields: Not set".to_string());

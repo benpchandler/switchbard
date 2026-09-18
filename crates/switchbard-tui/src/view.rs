@@ -1006,7 +1006,21 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = &app.config.theme;
     let entries: Vec<(String, String)> = Action::all()
         .filter(|action| app.page.allows(action))
+        .filter(|action| {
+            *action != Action::ProjectFields || !app.config.bindings_for(action).is_empty()
+        })
         .map(|action| (app.config.bindings_for(&action).join(" "), action.name()))
+        .chain((app.page == Page::Tasks).then(|| {
+            (
+                app.config
+                    .bindings_for(&Action::Rank)
+                    .iter()
+                    .map(|key| format!("{key} f"))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                "shared project fields".to_string(),
+            )
+        }))
         .chain((app.page == Page::Tasks).then(|| {
             let keys = app
                 .config
@@ -1272,7 +1286,12 @@ fn draw_new_task(frame: &mut Frame, app: &App, area: Rect) {
 /// rejected save here must stay visible next to the draft that caused it.
 fn draw_detail_input(frame: &mut Frame, app: &App, area: Rect, kind: crate::app::DetailInputKind) {
     let theme = &app.config.theme;
-    let prefix = format!(" {}: ", kind.label());
+    let label = if kind == crate::app::DetailInputKind::ProjectField {
+        "Shared project value".to_string()
+    } else {
+        kind.label().to_string()
+    };
+    let prefix = format!(" {}: ", label);
     let room = usize::from(area.width).saturating_sub(prefix.chars().count() + 1);
     let mut start = app.input.len();
     let mut width = 0;
@@ -1744,6 +1763,8 @@ fn picker_title(
         PickerPurpose::Merge => "Confirm PR merge".to_string(),
         PickerPurpose::TaskCancel => "Cancel task?".to_string(),
         PickerPurpose::AgentKill => "Signal selected agent?".to_string(),
+        PickerPurpose::ProjectFields => "Shared project fields".to_string(),
+        PickerPurpose::ProjectFieldValue => "Shared project value".to_string(),
         PickerPurpose::Task => "task".to_string(),
         PickerPurpose::TopList => if legacy_order {
             "task · top list"
