@@ -182,9 +182,45 @@ impl App {
         self.status = "Checking the installed update".into();
     }
 
+    /// Whether a modal confirmation owns the screen. Its full identity must
+    /// fit before it can fire (`submit_agent_kill`), and the notification row
+    /// is taken out of the body to make it, so an advisory banner must yield
+    /// that row rather than shrink a confirmation into refusing itself.
+    pub(crate) fn confirmation_open(&self) -> bool {
+        if self.inbox.publish_confirmation.is_some() {
+            return true;
+        }
+        self.picker.as_ref().is_some_and(|picker| {
+            matches!(
+                picker.purpose,
+                crate::picker::PickerPurpose::AgentKill
+                    | crate::picker::PickerPurpose::TaskCancel
+                    | crate::picker::PickerPurpose::Merge
+            )
+        })
+    }
+
     pub fn experiment_notice(&self) -> Option<String> {
+        if self.confirmation_open() {
+            return None;
+        }
         if self.update_available {
             return Some(":update · New build ready".into());
+        }
+        if self
+            .experiment_feedback
+            .active()
+            .is_some_and(|id| catalog().iter().any(|spec| spec.id == id))
+        {
+            return None;
+        }
+        // Every experiment is a Tasks-page feature, so the nudge is only
+        // actionable there. Elsewhere it cost a body row for nothing - and
+        // that row is what clipped the Agents detail pane's last line.
+        // `:update` above is about the binary, not tasks, so it still shows
+        // on every page.
+        if self.page != Page::Tasks {
+            return None;
         }
         match self.experiments.unreviewed_count() {
             0 => None,

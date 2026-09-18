@@ -13,6 +13,9 @@ use ratatui::{
 };
 
 pub(super) fn height(app: &App, available: u16) -> u16 {
+    if app.confirmation_open() {
+        return 0;
+    }
     if !active_id(app).is_some_and(|id| catalog().iter().any(|spec| spec.id == id)) {
         return 0;
     }

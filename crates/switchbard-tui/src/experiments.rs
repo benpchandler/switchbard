@@ -47,6 +47,22 @@ const CATALOG: &[ExperimentSpec] = &[
         title: "Hide empty Definition of Done and move existing requirements beside acceptance criteria",
         description: "In switchbard, filter to id:TASK-36 and open its details. On hides the empty Definition of Done heading; Off restores it.",
     },
+    ExperimentSpec {
+        number: 4,
+        page: crate::page::Page::Tasks,
+        id: "bug-dispatch",
+        task: "TASK-143",
+        title: "Send a filed bug straight to Codex and answer it in Inbox",
+        description: "With it on, :bug files the report and starts a Codex run in its own worktree; watch Inbox for its question. Off, :bug only files, like :idea.",
+    },
+    ExperimentSpec {
+        number: 5,
+        page: crate::page::Page::Tasks,
+        id: "glyph-column-name",
+        task: "TASK-286",
+        title: "Name a glyph column in its header instead of stacking every glyph there",
+        description: "Look at a glyph column's header: it reads the column's name. Off, it reads as every glyph in the column run together, which is unreadable past about three values.",
+    },
 ];
 
 // Reject accidental duplicate numbers at compile time, before they can be displayed.

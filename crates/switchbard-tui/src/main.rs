@@ -65,6 +65,14 @@ enum Command {
     /// Show or explicitly install embedded agent instructions
     #[command(subcommand)]
     Skill(switchbard_tui::agent_skill::SkillCommand),
+    /// Supervise one durable bug run, detached from the terminal.
+    #[command(hide = true)]
+    RunBug {
+        #[arg(long)]
+        store: PathBuf,
+        #[arg(long)]
+        run: String,
+    },
     /// Summarize the local event log: what is used, what is slow, what failed
     Stats,
     /// Print where the config and event log live
@@ -98,6 +106,9 @@ fn main() -> Result<()> {
             Ok(())
         }
         Some(Command::Skill(command)) => switchbard_tui::agent_skill::run(command),
+        Some(Command::RunBug { store, run }) => {
+            switchbard_core::bug_run::run_supervisor(&store, &run)
+        }
         Some(Command::Stats) => {
             let Some(path) = telemetry::default_log_path() else {
                 bail!("no home directory");
@@ -352,7 +363,12 @@ fn drive(
         }
         // Polling must not starve while keyboard input remains active.
         app.tick();
-        if app.update_requested && !app.should_quit && !stop.asked() {
+        if app.update_requested
+            && !app.should_quit
+            && !stop.asked()
+            && !app.inbox.editing
+            && app.inbox.publish_confirmation.is_none()
+        {
             update_if_ready(terminal, app, &binary)?;
         }
     }

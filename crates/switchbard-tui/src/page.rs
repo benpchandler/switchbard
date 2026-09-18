@@ -29,7 +29,10 @@ impl Page {
 
     /// Pages with a cursor to move and a row to open.
     pub fn has_cursor(self) -> bool {
-        matches!(self, Self::Tasks | Self::PullRequests | Self::Agents)
+        matches!(
+            self,
+            Self::Tasks | Self::PullRequests | Self::Agents | Self::Inbox
+        )
     }
 
     pub fn allows(self, action: &Action) -> bool {

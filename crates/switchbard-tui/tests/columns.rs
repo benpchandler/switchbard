@@ -66,17 +66,11 @@ fn hidden_columns_are_listed_after_shown_ones_and_stay_filterable_and_sortable()
     // TASK-235: the filter is its own line (2); the columns label moved into
     // the footer's view-settings summary.
     assert!(
-        screen
-            .lines()
-            .nth(1)
-            .is_some_and(|context| context.contains("1/3 shown")),
+        Some(title_border(&screen)).is_some_and(|context| context.contains("1/3 shown")),
         "{screen}"
     );
     assert!(
-        screen
-            .lines()
-            .nth(2)
-            .is_some_and(|context| context.contains("/ pri:high")),
+        under_title_border(&screen).is_some_and(|context| context.contains("/ pri:high")),
         "{screen}"
     );
     assert!(screen.contains("cols:id,status,title"), "{screen}");

@@ -192,7 +192,11 @@ impl App {
         else {
             return self.island.editing;
         };
-        if !self.island.editing && !matches!(self.mode, Mode::Browse | Mode::DetailFocus) {
+        if !self.island.editing
+            && (!matches!(self.mode, Mode::Browse | Mode::DetailFocus)
+                || self.inbox.editing
+                || self.inbox.publish_confirmation.is_some())
+        {
             return false;
         }
         self.apply_island_action(hit.action);

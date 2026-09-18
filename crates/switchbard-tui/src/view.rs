@@ -304,7 +304,11 @@ fn draw_task_rows(
         .iter()
         .enumerate()
         .map(|(index, column)| {
-            let label = if state.glyph_columns.contains(column) {
+            // A legend reads well for three geometric glyphs (status, ball);
+            // past that it is an unreadable run of icons where a name belongs.
+            let label = if state.glyph_columns.contains(column)
+                && !app.experiments.is_enabled("glyph-column-name")
+            {
                 app.glyph_legend(*column)
             } else {
                 column.header(registry).to_string()

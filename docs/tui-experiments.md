@@ -43,8 +43,10 @@ Experiment numbers are assigned explicitly in the compiled catalog, never inferr
 | E001 | `task-edit-shortcut` | TASK-251 | `t e` opens task editing |
 | E002 | `detail-metadata-first` | TASK-254 | Assignees and created/updated near the top; technical metadata stays below |
 | E003 | `detail-compact-done` | TASK-253 | Empty DoD omitted; populated DoD beside acceptance criteria |
+| E004 | `bug-dispatch` | TASK-143 | Filed bugs can start Codex work with Inbox handoffs |
+| E005 | `glyph-column-name` | TASK-286 | Glyph columns show their column name in the header |
 
-Next unused number: E004. Keep/Remove/Enable/Disable never change an experiment number. Do not reuse a retired entry's number or persistence ID.
+Next unused number: E006. Keep/Remove/Enable/Disable never change an experiment number. Do not reuse a retired entry's number or persistence ID.
 
 ## Detail experiment batch
 
@@ -77,7 +79,7 @@ Visibility matrix before implementation: default/empty/ordinary filters hide mai
 
 ## Objective ledger
 
-- Three-line island (2026-09-18): debug compilation and independent source review completed. Manual isolated native terminal observations covered Try, three-line compact display, expanded editor at 134x36 and 72x15, draft autosave, Esc, page navigation, process restart with restored pin/draft, and Ctrl-S atomic submission with E003/build identity and cleared draft. Evidence: `/tmp/sbt-experiments-review.Gp7Uue/island-narrow.txt` and `island-feedback.json`. Review fixed unavailable catalog IDs opening an invisible editor and pinned editor identity across another pane changing the pin. No automated tests. Gaps: same-draft conflict and inaccessible/corrupt store are source-reviewed; no recovery/merge editor is supplied for a concurrent same-draft conflict, which retains typed text and blocks closing until saved. Theme variants, 4096-character overflow, and sub-five-row terminal heights were not separately exercised. Feedback is local; it does not notify or dispatch an agent.
+- Three-line island (2026-09-18): debug compilation and independent source review completed. Manual isolated native terminal observations covered Try, three-line compact display, expanded editor at 134x36 and 72x15, draft autosave, Esc, page navigation, process restart with restored pin/draft, and Ctrl-S atomic submission with E003/build identity and cleared draft. Evidence: `/tmp/sbt-experiments-review.Gp7Uue/island-narrow.txt` and `island-feedback.json`. Review fixed unavailable catalog IDs opening an invisible editor and pinned editor identity across another pane changing the pin. No automated tests. Gaps: same-draft conflict and inaccessible/corrupt store are source-reviewed; no recovery/merge editor is supplied for a concurrent same-draft conflict, which retains typed text and blocks closing until saved. Theme variants, 4096-character overflow, and sub-five-row terminal heights were not separately exercised. Feedback is local; it does not notify or dispatch an agent. Integration preserves installed E004/E005 from `8f5db117`; the island yields its rows during destructive confirmations and cannot interrupt an Inbox draft. A pinned island replaces the extra unreviewed-feature notice; new-build availability remains visible.
 
 - Inline word pills (2026-09-17): build and independent source review passed. Manual isolated PTY observations cover Space off/on, clicking On, clicking Keep to Kept, `r` to disabled/removal requested, selection retention, and clicking the correct row after scrolling at 90x9; normal width 134 columns. Readback: `/tmp/sbt-experiments-review.Gp7Uue/word-pills.txt`. Pill widths are fixed at five and eight terminal cells with one gap; shared progress caps are unchanged. RGB fills choose black/white ink through existing contrast math; named terminal colors retain terminal-owned appearance. No automated tests. Light/custom-theme appearance and ASCII mode are source-reviewed rather than separately rendered.
 
