@@ -278,6 +278,7 @@ mod tests {
                 target_date: None,
                 initiative: None,
                 lead: None,
+                custom: Default::default(),
                 description: "not yet started".to_string(),
                 path: PathBuf::from("/tmp/fixture/backlog/projects/Empty.md"),
             }],

@@ -70,6 +70,8 @@ pub enum PickerPurpose {
     TaskStatus(String),
     TaskPlanning(String),
     TaskProject(String),
+    ProjectFields,
+    ProjectFieldValue,
     TaskParent(String),
     TopList,
     /// The detail pane's own status/priority/project/labels pickers
@@ -164,6 +166,7 @@ pub enum TaskAction {
     Status,
     Planning,
     Project,
+    ProjectFields,
     Parent,
     TopList,
     Drop,
@@ -435,6 +438,8 @@ pub fn hint(picker: &ValuePicker) -> &'static str {
         PickerPurpose::Task
         | PickerPurpose::TaskPlanning(_)
         | PickerPurpose::TaskStatus(_)
+        | PickerPurpose::ProjectFields
+        | PickerPurpose::ProjectFieldValue
         | PickerPurpose::TaskProject(_)
         | PickerPurpose::TopList
         | PickerPurpose::Views

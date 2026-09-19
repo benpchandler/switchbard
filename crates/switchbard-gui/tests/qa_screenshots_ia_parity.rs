@@ -221,6 +221,7 @@ fn tasks_grouped_header_goal_chip(theme: ThemeChoice, suffix: &str) {
             target_date: None,
             initiative: None,
             lead: None,
+            custom: Default::default(),
             description: "One global rank order across the backlog.".to_string(),
             path: PathBuf::from(format!("{REPO_PATH}/backlog/projects/Stack-Ranking.md")),
         }],

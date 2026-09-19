@@ -44,6 +44,7 @@ pub struct Backlog {
     /// columns; carried here so one repo load answers both.
     pub fields: Vec<switchbard_core::FieldDecl>,
     pub projects: Vec<ProjectSummary>,
+    pub project_defs: Vec<switchbard_core::ProjectDef>,
     /// The repo's goal definitions; the goal column derives membership from them.
     pub goals: Vec<GoalDef>,
     /// Goal headings' facts for the current week, in `goals.yml` order.
@@ -189,7 +190,13 @@ pub fn load(root: &Path) -> Result<Backlog> {
     let checklist = switchbard_core::checklist_progress(&repo);
     Ok(Backlog {
         tasks,
-        fields: repo.fields.clone(),
+        fields: repo
+            .fields
+            .iter()
+            .cloned()
+            .chain(crate::columns::project_declarations(root))
+            .collect(),
+        project_defs: repo.project_defs.clone(),
         projects,
         goals,
         goal_summaries,

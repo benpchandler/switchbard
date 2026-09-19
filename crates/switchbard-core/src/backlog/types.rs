@@ -487,6 +487,7 @@ mod tests {
         }
         fn def(name: &str) -> crate::backlog::hierarchy::ProjectDef {
             crate::backlog::hierarchy::ProjectDef {
+                custom: Default::default(),
                 name: name.to_string(),
                 status: "Planned".to_string(),
                 target_date: None,

@@ -4,7 +4,8 @@
 return {
   -- key -> action. Keys: single chars, "enter", "esc", "tab", "up", "down",
   -- "pagedown", "pageup", "home", "end", "shift-tab", "shift-up", "shift-down", "ctrl-<char>". Actions: down, up, top, bottom, page_down, page_up, open, new_task,
-  -- back, focus_pane, filter, filter_column, sort_column, columns, paint, repo_idea, repo_bug, ball, pass, outline, task, settings, view, command, reload, help, quit, page, merge, mark, extend_down, extend_up, open_browser, dismiss_notifications, kill_agent.
+  -- back, focus_pane, filter, filter_column, sort_column, columns, paint, repo_idea, repo_bug, ball, pass, outline, task, project_fields, settings, view, command, reload, help, quit, page, merge, mark, extend_down, extend_up, open_browser, dismiss_notifications, kill_agent.
+  -- Shared project fields: t f by default; bind project_fields to any key here.
   keys = {
     j = "down", k = "up", x = "kill_agent", down = "down", up = "up",
     g = "top", e = "bottom", home = "top", ["end"] = "bottom",

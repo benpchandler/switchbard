@@ -21,7 +21,10 @@ use switchbard_core::{
 pub enum ProjectCmd {
     /// List projects, one tab-separated row: name, status, done/total,
     /// percent, target date, initiative (empty columns when unset)
-    List,
+    List(ProjectListArgs),
+    /// Declare, edit, remove, or list custom project fields
+    #[command(subcommand)]
+    Field(crate::field_cmd::FieldCmd),
     /// Print one project: fields, progress, description, then its member
     /// tasks as task-list rows
     View { name: String },
@@ -39,6 +42,13 @@ pub enum ProjectCmd {
     /// ranking.yml, and goals.yml. Refuses when NEW already exists; prints
     /// `Renamed <OLD> -> <NEW>` and what was touched
     Rename { old: String, new: String },
+}
+
+#[derive(Args)]
+pub struct ProjectListArgs {
+    /// Filter by a declared custom project field (repeatable, all must match)
+    #[arg(long = "where", value_name = "NAME=VALUE")]
+    pub where_fields: Vec<String>,
 }
 
 #[derive(Args)]
@@ -61,6 +71,9 @@ pub struct ProjectCreateArgs {
     /// Project lead
     #[arg(long, value_name = "NAME")]
     pub lead: Option<String>,
+    /// Set a declared custom project field (repeatable)
+    #[arg(long = "set", value_name = "NAME=VALUE")]
+    pub set_fields: Vec<String>,
 }
 
 #[derive(Args)]
@@ -90,6 +103,12 @@ pub struct ProjectEditArgs {
     /// Remove the project lead
     #[arg(long)]
     pub clear_lead: bool,
+    /// Set a declared custom project field (repeatable)
+    #[arg(long = "set", value_name = "NAME=VALUE")]
+    pub set_fields: Vec<String>,
+    /// Clear a declared custom project field (repeatable)
+    #[arg(long = "unset", value_name = "NAME")]
+    pub unset_fields: Vec<String>,
 }
 
 #[derive(Subcommand)]
@@ -144,11 +163,22 @@ pub struct InitiativeEditArgs {
 
 pub fn run_project(root: &Path, cmd: &ProjectCmd) -> Result<()> {
     match cmd {
-        ProjectCmd::List => {
+        ProjectCmd::List(args) => {
+            let filters = project_filters(root, &args.where_fields)?;
             let repo = switchbard_core::load_backlog_repo(root)?;
             warn(&repo.warnings);
             for project in flat_projects(&compute_hierarchy_rollup(&[&repo]), &repo.ranking) {
-                println!("{}", project_row(&project));
+                let custom = repo
+                    .project_defs
+                    .iter()
+                    .find(|def| def.name == project.name)
+                    .map(|def| &def.custom);
+                if filters
+                    .iter()
+                    .all(|(name, value)| custom.and_then(|fields| fields.get(name)) == Some(value))
+                {
+                    println!("{}", project_row(&project));
+                }
             }
             Ok(())
         }
@@ -174,6 +204,7 @@ pub fn run_project(root: &Path, cmd: &ProjectCmd) -> Result<()> {
                 target_date: args.target_date.clone(),
                 initiative: args.initiative.clone(),
                 lead: args.lead.clone(),
+                set_fields: crate::field_cmd::parse_pairs(&args.set_fields)?,
                 description: args.description.clone().unwrap_or_default(),
             };
             switchbard_core::create_project_def(root, &def)?;
@@ -189,6 +220,8 @@ pub fn run_project(root: &Path, cmd: &ProjectCmd) -> Result<()> {
                 clear_initiative: args.clear_initiative,
                 lead: args.lead.clone(),
                 clear_lead: args.clear_lead,
+                set_fields: crate::field_cmd::parse_pairs(&args.set_fields)?,
+                unset_fields: args.unset_fields.clone(),
                 description: args.description.clone(),
             };
             print_outcome(
@@ -197,6 +230,7 @@ pub fn run_project(root: &Path, cmd: &ProjectCmd) -> Result<()> {
             );
             Ok(())
         }
+        ProjectCmd::Field(cmd) => crate::field_cmd::run_project_field(root, cmd),
         ProjectCmd::Complete { name } => project_lifecycle(root, name, "Completed"),
         ProjectCmd::Archive { name } => project_lifecycle(root, name, "Canceled"),
         ProjectCmd::Rename { old, new } => {
@@ -205,6 +239,21 @@ pub fn run_project(root: &Path, cmd: &ProjectCmd) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn project_filters(root: &Path, raw: &[String]) -> Result<Vec<(String, String)>> {
+    let pairs = crate::field_cmd::parse_pairs(raw)?;
+    let fields = switchbard_core::declared_project_fields(root)?;
+    for (name, value) in &pairs {
+        let field = fields
+            .iter()
+            .find(|field| &field.name == name)
+            .ok_or_else(|| {
+                anyhow::anyhow!("unknown project field `{name}` (see `sb project field list`)")
+            })?;
+        switchbard_core::validate_field_value(field, value)?;
+    }
+    Ok(pairs)
 }
 
 /// `2 tasks, def, ranking` — only the parts a rename actually touched.
@@ -390,6 +439,9 @@ fn project_view(project: &ProjectRollup, repo: &switchbard_core::BacklogRepo) ->
         out.push_str("Definition: none (reference-only — `sb project create` to add one)\n");
     }
     if let Some(def) = repo.project_defs.iter().find(|d| d.name == project.name) {
+        for (name, value) in &def.custom {
+            push_field(&mut out, name, value);
+        }
         if !def.description.is_empty() {
             out.push_str(&format!("\n{}\n", def.description));
         }

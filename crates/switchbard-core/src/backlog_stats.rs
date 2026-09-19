@@ -766,6 +766,7 @@ mod tests {
 
     fn project_def(name: &str, status: &str, initiative: Option<&str>) -> crate::ProjectDef {
         crate::ProjectDef {
+            custom: Default::default(),
             name: name.to_string(),
             status: status.to_string(),
             target_date: None,

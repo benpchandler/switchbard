@@ -91,7 +91,7 @@ To choose a repository explicitly, run `sbt --repo /path/to/repo`. For unattende
 
 ## What you can do
 
-- Organize tasks into initiatives, projects, and sub-issues, with criteria, dependencies, due dates, and custom fields.
+- Organize tasks into initiatives, projects, and sub-issues, with criteria, dependencies, due dates, and [custom task and project fields](docs/project-custom-fields.md).
 - Filter, sort, group, and paint terminal views. Your last view resumes per repository, with bounded view history.
 - Inspect repository pull requests and their checks, review, and merge observations. GitHub features reuse optional `gh` authentication; the installer does not install or log in to it. See [GitHub setup and permissions](docs/INSTALL-TUI.md#connect-github-optional).
 - See local coding-agent sessions and task claims. Integrations depend on the agent tools installed on your machine.

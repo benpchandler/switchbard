@@ -33,6 +33,7 @@ use super::write::{
     validated_single_line, yaml_scalar, WriteOutcome,
 };
 use anyhow::{bail, Context, Result};
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
@@ -53,6 +54,7 @@ pub const DEFAULT_PROJECT_STATUS: &str = "Planned";
 /// grouping always was.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectDef {
+    pub custom: BTreeMap<String, String>,
     pub name: String,
     /// One of [`PROJECT_STATUSES`] on every file this layer writes; a
     /// hand-written unknown value is kept verbatim and rendered honestly
@@ -83,6 +85,7 @@ pub struct InitiativeDef {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct NewProjectDef {
+    pub set_fields: Vec<(String, String)>,
     pub name: String,
     /// Empty means [`DEFAULT_PROJECT_STATUS`].
     pub status: String,
@@ -104,6 +107,8 @@ pub struct NewInitiativeDef {
 /// assign-or-clear pairs. `description: Some(..)` replaces the whole body.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectDefPatch {
+    pub set_fields: Vec<(String, String)>,
+    pub unset_fields: Vec<String>,
     pub status: Option<String>,
     pub target_date: Option<String>,
     pub clear_target_date: bool,
@@ -124,7 +129,9 @@ pub struct InitiativeDefPatch {
 
 impl ProjectDefPatch {
     pub fn is_empty(&self) -> bool {
-        self.status.is_none()
+        self.set_fields.is_empty()
+            && self.unset_fields.is_empty()
+            && self.status.is_none()
             && self.target_date.is_none()
             && !self.clear_target_date
             && self.initiative.is_none()
@@ -152,11 +159,13 @@ pub(super) fn load_project_defs(
     root: &Path,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<ProjectDef>> {
+    let fields = super::project_field_config::declared_project_fields(root)?;
     load_defs(
         root,
         PROJECTS_DIR,
         warnings,
         |name, status, mapping, body, path| ProjectDef {
+            custom: super::field_config::extract_custom_fields(mapping, &fields),
             name,
             status,
             target_date: yaml_string(mapping, "target_date"),
@@ -251,11 +260,17 @@ struct DefSpec<'a> {
 /// the repo already claims (whatever its slug), and refuses a slug collision
 /// — including a case-variant one — before touching the filesystem.
 pub fn create_project_def(root: &Path, def: &NewProjectDef) -> Result<PathBuf> {
-    let _repository_lock = crate::storage::RepositoryLock::fence(root, &["project"])?;
+    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
+    super::project_field_config::validate_project_field_patch(root, &def.set_fields, &[])?;
     let mut fields: Vec<(&str, Option<&str>)> = vec![
         ("initiative", def.initiative.as_deref()),
         ("lead", def.lead.as_deref()),
     ];
+    fields.extend(
+        def.set_fields
+            .iter()
+            .map(|(key, value)| (key.as_str(), Some(value.as_str()))),
+    );
     fields.retain(|(_, v)| v.is_some());
     create_def(
         root,
@@ -373,9 +388,44 @@ fn slug_collision(dir: &Path, slug: &str) -> Option<PathBuf> {
 }
 
 pub fn edit_project_def(root: &Path, name: &str, patch: &ProjectDefPatch) -> Result<WriteOutcome> {
-    let _repository_lock = crate::storage::RepositoryLock::fence(root, &["project"])?;
+    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
+    edit_project_def_inner(root, name, patch, None)
+}
+
+/// Refuse an edit if the project changed since the caller opened its editor.
+pub fn edit_project_def_if_unchanged(
+    root: &Path,
+    name: &str,
+    patch: &ProjectDefPatch,
+    expected: &ProjectDef,
+) -> Result<WriteOutcome> {
+    let _repository_lock = crate::storage::RepositoryLock::acquire(root)?;
+    edit_project_def_inner(root, name, patch, Some(expected))
+}
+
+fn edit_project_def_inner(
+    root: &Path,
+    name: &str,
+    patch: &ProjectDefPatch,
+    expected: Option<&ProjectDef>,
+) -> Result<WriteOutcome> {
+    super::project_field_config::validate_project_field_patch(
+        root,
+        &patch.set_fields,
+        &patch.unset_fields,
+    )?;
     let path = resolve_def_file(root, PROJECTS_DIR, "project", name)?;
+    let fields = super::project_field_config::declared_project_fields(root)?;
     apply_def_edit(root, &path, |fm, body| {
+        if let Some(expected) = expected {
+            validate_project_snapshot(fm, body, &path, &fields, expected)?;
+        }
+        for (key, value) in &patch.set_fields {
+            set_scalar(fm, key, &yaml_scalar(value.trim()), Some("lead"));
+        }
+        for key in &patch.unset_fields {
+            remove_key(fm, key);
+        }
         if let Some(status) = &patch.status {
             set_scalar(
                 fm,
@@ -414,6 +464,37 @@ pub fn edit_project_def(root: &Path, name: &str, patch: &ProjectDefPatch) -> Res
         }
         Ok(())
     })
+}
+
+fn validate_project_snapshot(
+    fm: &[String],
+    body: &str,
+    path: &Path,
+    fields: &[super::field_config::FieldDecl],
+    expected: &ProjectDef,
+) -> Result<()> {
+    let text = format!("---\n{}\n---\n{}", fm.join("\n"), body);
+    let (mapping, current_body) = split_frontmatter(&text);
+    let current = ProjectDef {
+        name: yaml_string(&mapping, "name").unwrap_or_else(|| {
+            path.file_stem()
+                .and_then(OsStr::to_str)
+                .unwrap_or_default()
+                .to_string()
+        }),
+        status: yaml_string(&mapping, "status").unwrap_or_else(|| DEFAULT_PROJECT_STATUS.into()),
+        target_date: yaml_string(&mapping, "target_date"),
+        initiative: yaml_string(&mapping, "initiative"),
+        lead: yaml_string(&mapping, "lead"),
+        description: current_body.trim().into(),
+        path: path.to_path_buf(),
+        custom: super::field_config::extract_custom_fields(&mapping, fields),
+    };
+    anyhow::ensure!(
+        &current == expected,
+        "project changed since the editor opened; reload and retry"
+    );
+    Ok(())
 }
 
 pub fn edit_initiative_def(
@@ -719,6 +800,7 @@ mod tests {
             &root,
             &NewProjectDef {
                 name: "Lucella cutover".to_string(),
+                set_fields: Vec::new(),
                 status: String::new(),
                 target_date: Some("2026-10-01".to_string()),
                 initiative: Some("Rebrand".to_string()),

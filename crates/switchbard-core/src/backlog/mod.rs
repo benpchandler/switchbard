@@ -19,10 +19,15 @@ pub use task_snapshot::{
 
 pub use edit_command::{edit_backlog_task_command, TaskEditRequest, TaskEditResult};
 mod field_config;
+mod project_field_config;
 pub use field_config::{
     add_field_decl, custom_field_sort_key, declared_fields, declared_value_rank, edit_field_decl,
     remove_field_decl, tasks_setting_field, valid_field_name, validate_field_value, FieldDecl,
     FieldEditPatch, FieldKind, BUILTIN_FIELD_KEYS, RESERVED_FIELD_NAMES,
+};
+pub use project_field_config::{
+    add_project_field_decl, declared_project_fields, edit_project_field_decl,
+    remove_project_field_decl,
 };
 mod checklist_progress;
 mod goals;
@@ -63,8 +68,9 @@ pub use goals::{
 
 pub use hierarchy::{
     create_initiative_def, create_project_def, edit_initiative_def, edit_project_def,
-    rename_project, InitiativeDef, InitiativeDefPatch, NewInitiativeDef, NewProjectDef, ProjectDef,
-    ProjectDefPatch, ProjectRename, DEFAULT_PROJECT_STATUS, PROJECT_STATUSES,
+    edit_project_def_if_unchanged, rename_project, InitiativeDef, InitiativeDefPatch,
+    NewInitiativeDef, NewProjectDef, ProjectDef, ProjectDefPatch, ProjectRename,
+    DEFAULT_PROJECT_STATUS, PROJECT_STATUSES,
 };
 
 pub use mutations::{

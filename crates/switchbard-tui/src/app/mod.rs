@@ -8,6 +8,7 @@ mod new_task;
 pub mod paint_flow;
 mod pickers;
 pub mod pr_merge;
+mod project_fields;
 pub mod report;
 pub mod resume;
 mod session;
@@ -72,6 +73,7 @@ pub enum DetailInputKind {
     Title,
     DueDate,
     NewLabel,
+    ProjectField,
 }
 
 impl DetailInputKind {
@@ -80,6 +82,7 @@ impl DetailInputKind {
             Self::Title => "title",
             Self::DueDate => "due date (YYYY-MM-DD, empty clears)",
             Self::NewLabel => "new label",
+            Self::ProjectField => "shared project value (empty clears)",
         }
     }
 }
@@ -130,6 +133,7 @@ pub struct App {
     tasks: Vec<BacklogTask>,
     /// Project headings' facts, by stack rank; refreshed with the tasks.
     pub projects: Vec<ProjectSummary>,
+    project_field_draft: Option<project_fields::ProjectFieldDraft>,
     /// The repo's goal definitions; the goal column derives membership from them.
     pub goals: Vec<GoalDef>,
     /// Goal headings' facts for the current week; refreshed with the tasks.
@@ -302,6 +306,7 @@ impl App {
             storage_retry: false,
             tasks: Vec::new(),
             projects: Vec::new(),
+            project_field_draft: None,
             goals: Vec::new(),
             goal_summaries: Vec::new(),
             top: Vec::new(),
@@ -1698,6 +1703,7 @@ impl App {
             Action::Pass => self.pass_work(),
             Action::Settings => self.open_settings(),
             Action::Rank => self.open_task_picker(),
+            Action::ProjectFields => self.open_project_fields(),
             Action::Group => self.open_organize_picker(),
             Action::Command => self.open_report_command(),
             Action::Reload => {
@@ -2233,7 +2239,7 @@ impl App {
                     self.status = "task storage reconnected".into();
                 }
                 self.storage_retry = false;
-                self.adopt_fields(&backlog.fields);
+                self.adopt_fields(&backlog.fields, &backlog.project_defs);
                 self.tasks = backlog.tasks;
                 self.projects = backlog.projects;
                 self.goals = backlog.goals;
@@ -2314,11 +2320,17 @@ impl App {
     /// views re-sanitized so a column whose field is gone leaves the table.
     /// Costs one comparison when `backlog/config.yml` is unchanged, which is
     /// every reload but the one after an edit.
-    fn adopt_fields(&mut self, fields: &[switchbard_core::FieldDecl]) {
-        if self.registry.is_current(fields) {
+    fn adopt_fields(
+        &mut self,
+        fields: &[switchbard_core::FieldDecl],
+        projects: &[switchbard_core::ProjectDef],
+    ) {
+        if self.registry.is_current(fields) && self.registry.projects == projects {
             return;
         }
-        self.registry = Arc::new(self.registry.reloaded(fields));
+        let mut registry = self.registry.reloaded(fields);
+        registry.projects = projects.to_vec();
+        self.registry = Arc::new(registry);
         self.views.set_registry(Arc::clone(&self.registry));
         self.inactive_views.set_registry(Arc::clone(&self.registry));
         self.pull_requests.set_registry(Arc::clone(&self.registry));

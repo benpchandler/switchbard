@@ -539,6 +539,7 @@ mod tests {
             target_date: None,
             initiative: initiative.map(str::to_string),
             lead: None,
+            custom: Default::default(),
             description: String::new(),
             path: PathBuf::from("/tmp/fixture/backlog/projects/p.md"),
         }

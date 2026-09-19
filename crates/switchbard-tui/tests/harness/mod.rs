@@ -327,6 +327,7 @@ pub fn seed_project(root: &Path, name: &str, status: &str, initiative: Option<&s
             initiative: initiative.map(str::to_string),
             lead: None,
             description: String::new(),
+            ..Default::default()
         },
     )
     .unwrap();

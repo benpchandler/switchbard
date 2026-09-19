@@ -25,7 +25,7 @@ pub(super) type DetailDraft = switchbard_core::BacklogTaskSnapshot;
 
 fn detail_input_cap(kind: DetailInputKind) -> usize {
     match kind {
-        DetailInputKind::Title => 1024,
+        DetailInputKind::Title | DetailInputKind::ProjectField => 1024,
         DetailInputKind::DueDate | DetailInputKind::NewLabel => 256,
     }
 }
@@ -468,6 +468,14 @@ impl App {
         let Mode::DetailInput(kind) = self.mode else {
             return;
         };
+        if kind == DetailInputKind::ProjectField
+            && matches!(event.code, KeyCode::Esc | KeyCode::Tab)
+        {
+            self.input.clear();
+            self.project_field_draft = None;
+            self.mode = Mode::Browse;
+            return;
+        }
         match event.code {
             KeyCode::Tab => self.cancel_detail_and_switch_page(),
             // A new-label capture came from the labels picker (`n`), so
@@ -487,10 +495,15 @@ impl App {
                 DetailInputKind::Title => self.commit_detail_title(),
                 DetailInputKind::DueDate => self.commit_detail_due_date(),
                 DetailInputKind::NewLabel => self.commit_detail_new_label(),
+                DetailInputKind::ProjectField => self.save_project_field(&self.input.clone()),
             },
             KeyCode::Backspace => {
                 self.input.pop();
-                self.status.clear();
+                self.status = if kind == DetailInputKind::ProjectField {
+                    self.project_field_context()
+                } else {
+                    String::new()
+                };
             }
             KeyCode::Char(c)
                 if !c.is_control()
@@ -501,7 +514,11 @@ impl App {
                 let cap = detail_input_cap(kind);
                 if self.input.len() + c.len_utf8() <= cap {
                     self.input.push(c);
-                    self.status.clear();
+                    self.status = if kind == DetailInputKind::ProjectField {
+                        self.project_field_context()
+                    } else {
+                        String::new()
+                    };
                 } else {
                     self.fail(format!("limit: {cap} bytes"));
                 }

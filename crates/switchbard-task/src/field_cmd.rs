@@ -19,8 +19,8 @@ pub enum FieldCmd {
     /// Edit an existing field's `values` and/or `groupable`; prints
     /// `Edited <NAME>`
     Edit(FieldEditArgs),
-    /// Remove a field's declaration; refuses while any active or completed
-    /// task still sets it (run `sb edit <ID> --unset <NAME>` on each first)
+    /// Remove a field declaration; refuses while an entity still sets it.
+    /// Unset its values first with the corresponding edit --unset command.
     Remove { name: String },
     /// List declared fields, one tab-separated row: name, kind, groupable,
     /// values (comma-joined, enum only)
@@ -66,20 +66,48 @@ pub fn run_field(root: &Path, cmd: &FieldCmd) -> Result<()> {
     }
 }
 
-fn add(root: &Path, args: &FieldAddArgs) -> Result<()> {
-    let kind = FieldKind::parse(&args.kind)?;
-    let decl = FieldDecl {
-        name: args.name.clone(),
-        kind,
-        values: args.values.clone(),
-        groupable: args.groupable,
-    };
-    switchbard_core::add_field_decl(root, decl)?;
-    println!("{}", args.name);
+/// Project declarations use the same kinds and command contract, with an
+/// independent schema and values validated by the core write boundary.
+pub fn run_project_field(root: &Path, cmd: &FieldCmd) -> Result<()> {
+    match cmd {
+        FieldCmd::Add(args) => {
+            switchbard_core::add_project_field_decl(root, declaration(args)?)?;
+            println!("{}", args.name);
+        }
+        FieldCmd::Edit(args) => {
+            let patch = edit_patch(args);
+            switchbard_core::edit_project_field_decl(root, &args.name, &patch)?;
+            println!("Edited {}", args.name);
+        }
+        FieldCmd::Remove { name } => {
+            switchbard_core::remove_project_field_decl(root, name)?;
+            println!("Removed {name}");
+        }
+        FieldCmd::List => {
+            for field in switchbard_core::declared_project_fields(root)? {
+                println!(
+                    "{}\t{}\t{}\t{}",
+                    field.name,
+                    field.kind.as_str(),
+                    field.groupable,
+                    field.values.join(",")
+                );
+            }
+        }
+    }
     Ok(())
 }
 
-fn edit(root: &Path, args: &FieldEditArgs) -> Result<()> {
+fn declaration(args: &FieldAddArgs) -> Result<FieldDecl> {
+    Ok(FieldDecl {
+        name: args.name.clone(),
+        kind: FieldKind::parse(&args.kind)?,
+        values: args.values.clone(),
+        groupable: args.groupable,
+    })
+}
+
+fn edit_patch(args: &FieldEditArgs) -> FieldEditPatch {
     let groupable = if args.groupable {
         Some(true)
     } else if args.no_groupable {
@@ -87,10 +115,21 @@ fn edit(root: &Path, args: &FieldEditArgs) -> Result<()> {
     } else {
         None
     };
-    let patch = FieldEditPatch {
+    FieldEditPatch {
         values: args.values.clone(),
         groupable,
-    };
+    }
+}
+
+fn add(root: &Path, args: &FieldAddArgs) -> Result<()> {
+    let decl = declaration(args)?;
+    switchbard_core::add_field_decl(root, decl)?;
+    println!("{}", args.name);
+    Ok(())
+}
+
+fn edit(root: &Path, args: &FieldEditArgs) -> Result<()> {
+    let patch = edit_patch(args);
     switchbard_core::edit_field_decl(root, &args.name, &patch)?;
     println!("Edited {}", args.name);
     Ok(())
